@@ -1,0 +1,11 @@
+pytz
+numpy
+pandas
+mplfinance
+matplotlib
+requests
+urllib3
+yfinance
+finance-datareader
+beautifulsoup4
+tvdatafeed
