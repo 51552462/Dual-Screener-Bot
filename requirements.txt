@@ -8,4 +8,4 @@ urllib3
 yfinance
 finance-datareader
 beautifulsoup4
-tvdatafeed
+git+https://github.com/rongardF/tvdatafeed.git
