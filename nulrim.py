@@ -7,6 +7,7 @@ import threading
 import queue
 import concurrent.futures
 from datetime import datetime
+import pytz  # 💡 [추가] 서버 시간 꼬임 방지용
 from io import StringIO
 import numpy as np
 import pandas as pd
@@ -39,11 +40,13 @@ def get_ls_token():
     headers = {"content-type": "application/x-www-form-urlencoded"}
     data = {"grant_type": "client_credentials", "appkey": APP_KEY, "appsecretkey": APP_SECRET, "scope": "oob"}
     try:
-        res = requests.post(url, headers=headers, data=data, timeout=10)
+        # ⭐️ SSL 에러 방지용 verify=False 추가
+        res = requests.post(url, headers=headers, data=data, timeout=10, verify=False)
         if res.status_code == 200:
             print("✅ LS API 통신망 연결 성공!")
             return res.json().get("access_token")
-    except: pass
+    except Exception as e:
+        print(f"❌ 토큰 발급 에러: {e}")
     return None
 
 # ================== ⭐️ 스마트 속도 제어기 (12분 단축의 핵심) ==================
@@ -70,7 +73,8 @@ adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=1)
 global_session.mount('https://', adapter)
 
 # ================== 폴더 및 유틸 ==================
-CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Nulrim_1D')
+CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 150
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -107,9 +111,7 @@ def get_krx_list_kind():
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
-    except Exception as e:
-        print(f"종목 수집 실패: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 # ================== 텔레그램 데몬 ==================
 def telegram_sender_daemon():
@@ -130,24 +132,12 @@ def telegram_sender_daemon():
                             files={"photo": f}, timeout=20, verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
                         break
                     elif res.status_code == 429: time.sleep(3)
-                    else: 
-                        print(f"\n❌ [텔레그램 에러] {res.status_code}: {res.text}")
-                        break 
+                    else: break 
                 except Exception as e:
-                    print(f"\n⚠️ [통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
-            
-        try:
-            if os.path.exists(img_path):
-                os.remove(img_path)
-                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
-        except:
-            pass
-            
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
@@ -167,6 +157,7 @@ def compute_signal(df_raw: pd.DataFrame):
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
 
+    # NumPy 연산으로 0.1초 컷
     close_arr = df['Close'].values
     open_arr = df['Open'].values
     vol_arr = df['Volume'].values
@@ -181,7 +172,11 @@ def compute_signal(df_raw: pd.DataFrame):
     ema448 = df['EMA448'].values
 
     isBullish = close_arr > open_arr
-    volSpike5 = vol_arr >= (avgvol3_arr * 5)
+    
+    # ⭐️ Infinity 무한대 에러 완벽 방어
+    with np.errstate(invalid='ignore'):
+        volSpike5 = vol_arr >= (np.nan_to_num(avgvol3_arr, nan=1.0) * 5)
+        
     moneyOk = (close_arr * vol_arr) >= MIN_TRANS_MONEY
     priceOk = close_arr >= MIN_PRICE
 
@@ -259,7 +254,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             
             return path
         except Exception as e:
-            print(f"\n❌ [차트 생성 실패] {name}({code}): {e}")
             return None
 
 # ================== 🚀 초고속 20차선 LS증권 하이브리드 엔진 ==================
@@ -269,16 +263,17 @@ def scan_market_1d():
     
     token = get_ls_token()
     if not token: 
-        print("❌ LS증권 토큰 발급 실패로 스캔 불가")
+        print("❌ LS증권 토큰 발급 실패로 스캔 불가. 5분 뒤 다시 시도합니다.")
         return
 
-    print(f"\n⚡ [일봉 전용] LS증권 20차선 초고속 병렬 스캔 시작! (예상 소요시간 13~14분 컷)")
+    print(f"\n⚡ [일봉 전용] LS증권 20차선 초고속 병렬 스캔 시작!")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     url = "https://openapi.ls-sec.co.kr:8080/stock/chart"
     
+    # 일봉 전용 API 호출 구조
     tr_cd = "t8413"
     outblock_key = "t8413OutBlock1"
 
@@ -301,9 +296,9 @@ def scan_market_1d():
 
         df_raw = None
         for retry in range(3): 
-            ls_limiter.wait()
+            ls_limiter.wait() # 스마트 통신 제어기 작동
             try:
-                res = global_session.post(url, headers=headers, data=json.dumps(body), timeout=5)
+                res = global_session.post(url, headers=headers, data=json.dumps(body), timeout=5, verify=False)
                 if res.status_code == 200:
                     data = res.json()
                     if "IGW" in data.get("rsp_cd", ""):
@@ -315,8 +310,7 @@ def scan_market_1d():
                         records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S', errors='coerce'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
                         df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
                     break
-            except Exception as e:
-                print(f"⚠️ [LS증권 통신 에러] {name}({code}): {e}")
+            except: pass
 
         is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
         hit, sig_type, df, dbg = False, "", None, {}
@@ -346,7 +340,7 @@ def scan_market_1d():
                         f"- 섹터: {sector}\n"
                         f"- 전망: {outlook}\n"
                         f"- 실적: {growth}\n\n"
-                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"Time: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
                     )
                     telegram_queue.put((chart_path, caption))
 
@@ -354,28 +348,26 @@ def scan_market_1d():
         executor.map(worker, list(stock_list.iterrows()))
 
     dt = time.time() - t0
-    print(f"\n✅ [일봉 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [5번 봇: 눌림목 1D 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
-# ================== ⏰ 스케줄러 ==================
+# ================== ⏰ [5번 봇 스케줄러] 매일 16:10 단독 작동 ==================
 def run_scheduler():
-    import pytz
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [눌림목 1D 상업용 스케줄러 자동 대기 모드]")
-    print("   - [일봉] 매일 15:00 딱 1번 실행")
+    print("🕒 [5번 봇: 눌림목 1D 상업용 스케줄러 대기 모드 - 분산 완료]")
+    print("   - [일봉 전용] 매일 16:10 (장 마감 직후 단독 실행)")
     
     while True:
-        now = datetime.now(kr_tz)
-        if now.hour == 15 and now.minute == 0:
-             print(f"🚀 [1D 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-             scan_market_1d()
-             print("💤 스캔 완료. 다음 타임(내일)까지 대기합니다...")
-             time.sleep(50 * 60) 
+        now_kr = datetime.now(kr_tz)
+        
+        # 💡 매일 16:10에만 딱 한 번 실행 (서버 부하 분산)
+        if now_kr.hour == 13 and now_kr.minute == 10:
+            print(f"🚀 [5번 봇 1D 정규 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+            scan_market_1d()
+            print("💤 스캔 완료. 다음 타임(내일)까지 대기합니다...")
+            time.sleep(50 * 60) 
         else: 
             time.sleep(10)
 
 if __name__ == "__main__":
-    # 💡 [수정완료] 시작하자마자 수동으로 1회 강제 실행되도록 추가
-    print("\n💡 [수동 테스트] 서버 켜지자마자 일봉 눌림목 즉시 1회 스캔 실행!\n")
-    scan_market_1d()
-    
+    scan_market_1d() # 시작하자마자 1회 강제 실행 테스트
     run_scheduler()
