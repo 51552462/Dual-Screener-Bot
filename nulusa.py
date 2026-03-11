@@ -33,8 +33,8 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
-CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Nulrim_1D')
+CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -104,32 +104,18 @@ def telegram_sender_daemon():
                             files={"photo": f}, timeout=20, verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
                         break
                     elif res.status_code == 429: time.sleep(3)
-                    else:
-                        print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
-                        break
                 except Exception as e:
-                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
-            
-        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
-        try:
-            if os.path.exists(img_path):
-                os.remove(img_path)
-                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
-        except:
-            pass
-            
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 # ================== ⭐️ 눌림목 핵심 로직 (트레이딩뷰 100% 동기화) ==================
-MIN_PRICE_USD = 1.0               # 페니스탁(1달러 미만) 방지
-MIN_MONEY_USD = 1_000_000         # 일 거래대금 최소 100만 달러
+MIN_PRICE_USD = 1.0               
+MIN_MONEY_USD = 1_000_000         
 
 def compute_nulrim_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500:
@@ -137,11 +123,9 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     df = df_raw.copy()
     
-    # 1. EMA 계산
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    # 2. NumPy 변환 (연산 속도 극대화)
     c = df['Close'].values
     o = df['Open'].values
     v = df['Volume'].values
@@ -149,43 +133,39 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # 3. 속도 최적화: 직전 3봉 평균 거래량 (NumPy C-Engine)
     v_1 = np.roll(v, 1); v_1[0] = 0
     v_2 = np.roll(v, 2); v_2[:2] = 0
     v_3 = np.roll(v, 3); v_3[:3] = 0
     av3 = (v_1 + v_2 + v_3) / 3
 
-    # 4. ⭐️ 거래량 및 양봉 기본 필터 
     isBullish = c > o
-    volSpike5 = v >= (av3 * 5)
+    
+    # ⭐️ 0으로 나누기 무한대 에러 완벽 차단
+    with np.errstate(invalid='ignore'):
+        volSpike5 = v >= (np.nan_to_num(av3, nan=1.0) * 5)
+        
     moneyOk = (c * v) >= MIN_MONEY_USD
     priceOk = c >= MIN_PRICE_USD
 
     condBase = priceOk & moneyOk & isBullish & volSpike5
 
-    # 5. 카테고리별 눌림목 로직 판별
-    # [Cat 1] 112선 지지
     c1_long_trend = (e112 > e224) & (e224 > e448)
     c1_short_inverse = (e30 > e20) & (e20 > e10)
     c1_position = (c < e30) & (c > e112)
     isCat112 = condBase & c1_long_trend & c1_short_inverse & c1_position
 
-    # [Cat 2] 30선 지지
     c2_full_trend = (e10 > e20) & (e20 > e30) & (e30 > e112) & (e112 > e224) & (e224 > e448)
     c2_under_20 = (c < e10) & (c < e20)
     c2_above_30 = c > e30
     isCat30 = condBase & (~isCat112) & c2_full_trend & c2_under_20 & c2_above_30
 
-    # [Cat 3] 224선 지지
     c3_mid_inverse = (e60 > e30) & (e30 > e20) & (e20 > e10)
     c3_position = (c < e112) & (c > e224)
     isCat224 = condBase & (~isCat112) & (~isCat30) & c3_mid_inverse & c3_position
 
-    # [Cat 4] 448선 지지
     c4_position = (c < e224) & (c > e448)
     isCat448 = condBase & (~isCat112) & (~isCat30) & (~isCat224) & c4_position
 
-    # 6. 타점 산출
     c112_hit = isCat112[-1]
     c30_hit = isCat30[-1]
     c224_hit = isCat224[-1]
@@ -199,9 +179,10 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     elif c224_hit: sig_type = "🛡️ 224선 지지 (중기 마지노선)"
     else: sig_type = "⚓ 448선 지지 (최후 마지노선)"
 
+    safe_avg_vol = av3[-1] if av3[-1] > 0 else 1
     dbg = {
         "last_close": float(c[-1]),
-        "vol_spike": float(v[-1] / max(1, av3[-1])),
+        "vol_spike": float(v[-1] / safe_avg_vol),
         "sig_type": sig_type
     }
     return True, sig_type, df, dbg
@@ -217,7 +198,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             
-            # 파인스크립트와 동일한 색상 및 두께 적용
             apds = [
                 mpf.make_addplot(df_cut["EMA10"], color='#FF5252', width=1, alpha=0.5),
                 mpf.make_addplot(df_cut["EMA20"], color='#FFD700', width=1, alpha=0.5),
@@ -230,7 +210,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
 
             title = f"[{dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f} | VolSpike: {dbg['vol_spike']:.1f}x"
 
-            # 🇺🇸 미국 차트는 상승이 초록, 하락이 빨강입니다.
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
@@ -240,7 +219,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             
             return path
         except Exception as e:
-            print(f"\n❌ [차트 생성 실패] {code}: {e}")
             return None
 
 # ================== 🚀 미국 주식 일봉 야후 엔진 ==================
@@ -284,7 +262,6 @@ def scan_market_1d():
                     df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                # 500봉 확보 확인
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker)
@@ -311,28 +288,27 @@ def scan_market_1d():
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                # 💡 [수정완료] 에러 숨김 해제
-                print(f"⚠️ [에러 발생] {ticker}: {e}")
+                pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [1D 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [8번 봇: US 눌림목 1D 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 # ================== ⏰ 미국 서머타임(DST) 적용 스케줄러 ==================
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [US 눌림목 상업용 스케줄러 자동 대기 모드]")
-    print("   - [일봉] 미국 현지시간(NY) 장 마감 직후: 16:11 실행")
-    print("   (서머타임 여부를 시스템이 자동 계산하여 실행합니다.)\n")
+    print("🕒 [8번 봇: US 눌림목 상업용 스케줄러 자동 대기 모드 - 분산 완료]")
+    print("   - [일봉 전용] 미국 현지시간(NY) 장 마감 직후: 16:30 단독 실행")
+    print("   (한국 봇 및 다른 미국 봇과 절대 겹치지 않습니다.)\n")
     
     while True:
         now_ny = datetime.now(ny_tz)
         
-        # 💡 [수정완료] 일봉 스캔 (뉴욕장 마감 직후 16:11 한 번만 실행 - 4번 타자)
-        if now_ny.hour == 16 and now_ny.minute == 11:
-            print(f"🚀 [US 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        # 💡 [시간 분산] 6번 봇(16:10), 7번 봇(16:20)과 겹치지 않게 16:30에 실행
+        if now_ny.hour == 16 and now_ny.minute == 20:
+            print(f"🚀 [US 눌림목 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
             time.sleep(50 * 60)
@@ -341,5 +317,4 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    # 💡 [수정완료] 충돌 방지용으로 수동 실행 코드는 지우고 스케줄러만 대기시킵니다.
     run_scheduler()
