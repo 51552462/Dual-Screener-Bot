@@ -46,7 +46,7 @@ def sanitize_filename(s: str) -> str:
 def get_smart_company_report(code: str, name: str) -> tuple:
     sector = "정보 없음"
     earnings_trend = "뚜렷한 실적 추세 없음"
-    news_summary = "최근 1주일 주요 호재/특징주 뉴스 없음" [cite: 89]
+    news_summary = "최근 1주일 주요 호재/특징주 뉴스 없음" 
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -56,7 +56,7 @@ def get_smart_company_report(code: str, name: str) -> tuple:
         if res_naver.status_code == 200:
             soup = BeautifulSoup(res_naver.text, 'html.parser')
             tag = soup.select_one('h4.h_sub.sub_tit7 a')
-            if tag: sector = tag.text.strip() [cite: 89, 90]
+            if tag: sector = tag.text.strip() 
 
         # 2. 실적 우상향 판별 (FnGuide)
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=3, verify=False)
@@ -70,7 +70,7 @@ def get_smart_company_report(code: str, name: str) -> tuple:
                 elif any(x in growth_text for x in ["감소", "적자", "악화", "하락", "부진"]):
                     earnings_trend = "📉 실적 부진 및 악화 진행 중"
                 else:
-                    earnings_trend = "보합 (특이사항 없음)" [cite: 90, 91, 92]
+                    earnings_trend = "보합 (특이사항 없음)" 
 
         # 3. 최근 호재 뉴스 추출 (네이버 금융)
         news_url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
@@ -92,10 +92,10 @@ def get_smart_company_report(code: str, name: str) -> tuple:
                     headlines.append("- " + link.text.strip())
             
             if headlines:
-                news_summary = "\n".join(headlines) [cite: 96]
+                news_summary = "\n".join(headlines) 
 
     except: pass
-    return sector, earnings_trend, news_summary [cite: 96, 97]
+    return sector, earnings_trend, news_summary 
 
 # ================== KRX 종목 리스트 고속 수집 ==================
 def get_krx_list_kind():
@@ -114,7 +114,7 @@ def get_krx_list_kind():
         df = df.rename(columns={'종목코드': 'Code', '회사명': 'Name'})
         df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)]
         return df[['Code', 'Name', 'Market']].dropna()
-    except: return pd.DataFrame() [cite: 97, 98]
+    except: return pd.DataFrame() 
 
 # ================== 텔레그램 전송 데몬 ==================
 def telegram_sender_daemon():
@@ -123,7 +123,7 @@ def telegram_sender_daemon():
         if item is None: break
             
         img_path, caption = item
-        if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)" [cite: 98, 99]
+        if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)" 
 
         if SEND_TELEGRAM:
             for attempt in range(3):
@@ -145,7 +145,7 @@ def telegram_sender_daemon():
         telegram_queue.task_done() [cite: 99, 100, 101, 102, 103, 104]
 
 sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
-sender_thread.start() [cite: 104]
+sender_thread.start() 
 
 # ================== 지표 계산 및 로직 ==================
 def add_emas(df: pd.DataFrame) -> pd.DataFrame:
@@ -153,7 +153,7 @@ def add_emas(df: pd.DataFrame) -> pd.DataFrame:
     for n in [10, 20, 30, 60, 112, 224, 448]:
         d[f'EMA{n}'] = d['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
     d['AvgVol3'] = d['Volume'].shift(1).rolling(3, min_periods=1).mean()
-    return d [cite: 104]
+    return d
 
 # [로직 1] 역배열 (1시간봉) - S1, S2
 def compute_inverse_1h(df_raw: pd.DataFrame):
@@ -165,7 +165,7 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     vol_arr = df['Volume'].values
     avgvol3_arr = df['AvgVol3'].values
     ema10, ema20, ema30 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
-    ema60, ema112, ema224, ema448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values [cite: 104, 105]
+    ema60, ema112, ema224, ema448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
     bullish = close_arr > open_arr
     alignedNow = (ema10 > ema20) & (ema20 > ema30)
@@ -176,19 +176,19 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     
     prev_close = np.roll(close_arr, 1); prev_close[0] = 0
     prev_ema224 = np.roll(ema224, 1); prev_ema224[0] = 0
-    cross224 = (close_arr > ema224) & (prev_close <= prev_ema224) [cite: 105, 106, 107]
+    cross224 = (close_arr > ema224) & (prev_close <= prev_ema224)
     
     signal1 = cross224 & bullish & alignedNow & volSpike
     
-    s1_shift3 = np.roll(signal1, 3); s1_shift3[:3] = False [cite: 107, 108]
+    s1_shift3 = np.roll(signal1, 3); s1_shift3[:3] = False 
     
     holdNow = (close_arr > ema224) & (ema10 > ema20) & (ema20 > ema30)
     holdNow_1 = np.roll(holdNow, 1); holdNow_1[0] = False
-    holdNow_2 = np.roll(holdNow, 2); holdNow_2[:2] = False [cite: 108, 109, 110]
+    holdNow_2 = np.roll(holdNow, 2); holdNow_2[:2] = False
     
     hold3 = s1_shift3 & holdNow & holdNow_1 & holdNow_2
     allAligned = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224) & (ema224 > ema448)
-    signal2 = hold3 & allAligned [cite: 110]
+    signal2 = hold3 & allAligned 
 
     is_s1, is_s2 = signal1[-1], signal2[-1]
     if not (is_s1 or is_s2): return False, None, df, {}
@@ -197,7 +197,7 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     
     # ⭐️ 0으로 나누기 방어 (max 1 적용) ⭐️
     dbg = {"last_close": float(close_arr[-1]), "vol_spike": float(vol_arr[-1]/max(1, avgvol3_arr[-1])), "sig_type": sig_type}
-    return True, sig_type, df, dbg [cite: 110, 111]
+    return True, sig_type, df, dbg 
 
 # [로직 2] 정배열 (일봉) - S1, S2, S3
 def compute_aligned_1d(df_raw: pd.DataFrame):
@@ -209,7 +209,7 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     vol_arr = df['Volume'].values
     avgvol3_arr = df['AvgVol3'].values
     ema10, ema20, ema30 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
-    ema60, ema112, ema224, ema448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values [cite: 111, 112]
+    ema60, ema112, ema224, ema448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values 
     
     isBullish = close_arr > open_arr
     
@@ -221,24 +221,24 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     
     align112 = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112)
     align224 = align112 & (ema112 > ema224)
-    align448 = align224 & (ema224 > ema448) [cite: 112]
+    align448 = align224 & (ema224 > ema448) 
     
-    prev_align448 = np.roll(align448, 1); prev_align448[0] = False [cite: 112, 113]
+    prev_align448 = np.roll(align448, 1); prev_align448[0] = False 
     
     signal3 = condBase & align448 & (~prev_align448)
     signal2 = condBase & align224 & (~signal3)
-    signal1 = condBase & align112 & (~align224) [cite: 113]
+    signal1 = condBase & align112 & (~align224) 
     
     is_s1, is_s2, is_s3 = signal1[-1], signal2[-1], signal3[-1]
     if not (is_s1 or is_s2 or is_s3): return False, None, df, {}
          
     if is_s3: sig_type = "S3 (448 완전 정배열 완성)"
     elif is_s2: sig_type = "S2 (224 정배열 상태)"
-    else: sig_type = "S1 (112 정배열 상태)" [cite: 113, 114]
+    else: sig_type = "S1 (112 정배열 상태)" 
     
     # ⭐️ 0으로 나누기 방어 (max 1 적용) ⭐️
     dbg = {"last_close": float(close_arr[-1]), "vol_spike": float(vol_arr[-1]/max(1, avgvol3_arr[-1])), "sig_type": sig_type}
-    return True, sig_type, df, dbg [cite: 114]
+    return True, sig_type, df, dbg 
 
 # ================== 차트 저장 ==================
 chart_lock = threading.Lock()
@@ -247,7 +247,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
         try:
             timestamp_ms = int(time.time() * 1000000)
             safe = sanitize_filename(f"{code}_{name}_{timeframe}")
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png") [cite: 114, 115]
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png") 
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             apds = [
@@ -258,79 +258,79 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
                 mpf.make_addplot(df_cut["EMA112"], color='blue', width=1),
                 mpf.make_addplot(df_cut["EMA224"], color='navy', width=2),
                 mpf.make_addplot(df_cut["EMA448"], color='purple', width=2),
-            ] [cite: 115, 116]
+            ] 
 
             tf_str = "1H(역배열)" if timeframe == '1h' else "1D(정배열)"
-            title = f"[{dbg['sig_type']}] {code} {name} ({tf_str})\nClose:{dbg['last_close']:.0f} | 거래량 {dbg['vol_spike']:.1f}배" [cite: 116, 117, 118]
+            title = f"[{dbg['sig_type']}] {code} {name} ({tf_str})\nClose:{dbg['last_close']:.0f} | 거래량 {dbg['vol_spike']:.1f}배" 
             
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
-            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':') [cite: 118]
+            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
             plt.close('all')
             mpf.plot(df_cut, type="candle", volume=True, addplot=apds, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
-            plt.close('all') [cite: 118, 119]
+            plt.close('all')
             
             return path
         except Exception as e:
-            return None [cite: 119]
+            return None 
 
 # ================== 🚀 야후 API 그룹 다운로드 엔진 ==================
 def scan_market(timeframe: str):
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
     
-    t0 = time.time() [cite: 119]
+    t0 = time.time() 
     
     tf_label = "1시간봉" if timeframe == '1h' else "일봉"
-    logic_name = "역배열(1시간봉)" if timeframe == '1h' else "정배열(일봉)" [cite: 120]
+    logic_name = "역배열(1시간봉)" if timeframe == '1h' else "정배열(일봉)" 
     
-    print(f"\n⚡ [궁극의 그룹 스캔 가동] 총 {len(stock_list)}개 종목 '{logic_name}' 초고속 스캔 시작!") [cite: 120]
+    print(f"\n⚡ [궁극의 그룹 스캔 가동] 총 {len(stock_list)}개 종목 '{logic_name}' 초고속 스캔 시작!") 
 
     ticker_to_info = {}
     for _, row in stock_list.iterrows():
         ticker = f"{row['Code']}.KS" if row['Market'] == 'KOSPI' else f"{row['Code']}.KQ"
-        ticker_to_info[ticker] = {'code': row['Code'], 'name': row['Name']} [cite: 120]
+        ticker_to_info[ticker] = {'code': row['Code'], 'name': row['Name']} 
     
     tickers = list(ticker_to_info.keys())
     chunk_size = 100 
-    period = "730d" if timeframe == '1h' else "3y" [cite: 121]
+    period = "730d" if timeframe == '1h' else "3y" 
 
-    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0} [cite: 121]
+    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0} 
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
         
-        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=True) [cite: 121]
+        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=True) 
         
         for ticker in chunk:
             tracker['scanned'] += 1
             info = ticker_to_info[ticker]
-            name, code = info['name'], info['code'] [cite: 122]
+            name, code = info['name'], info['code'] 
 
             try:
                 if len(chunk) == 1: df_ticker = df_batch.copy()
-                else: df_ticker = df_batch[ticker].copy() [cite: 122, 123]
+                else: df_ticker = df_batch[ticker].copy() 
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 
                 if df_ticker.index.tzinfo is not None: 
                     df_ticker.index = df_ticker.index.tz_convert('Asia/Seoul').tz_localize(None)
-                df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')] [cite: 123, 124]
+                df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')] 
 
                 if len(df_ticker) >= 500 and df_ticker['Close'].iloc[-1] >= 1000:
-                    tracker['analyzed'] += 1 [cite: 124]
+                    tracker['analyzed'] += 1 
                     
                     if timeframe == '1h': hit, sig_type, df, dbg = compute_inverse_1h(df_ticker)
-                    else: hit, sig_type, df, dbg = compute_aligned_1d(df_ticker) [cite: 124, 125]
+                    else: hit, sig_type, df, dbg = compute_aligned_1d(df_ticker) 
                     
                     if hit:
                         tracker['hits'] += 1
-                        chart_path = save_chart(df, code, name, tracker['hits'], dbg, timeframe) [cite: 125, 126]
+                        chart_path = save_chart(df, code, name, tracker['hits'], dbg, timeframe) 
                         
                         if chart_path:
                             sector, earnings_trend, news_summary = get_smart_company_report(code, name) 
-                            emoji = "🔥" if timeframe == '1h' else "💎" [cite: 126, 127, 128]
+                            emoji = "🔥" if timeframe == '1h' else "💎" 
                             
                             caption = (
                                 f"{emoji} [{dbg['sig_type']}] ({tf_label})\n\n"
@@ -342,17 +342,17 @@ def scan_market(timeframe: str):
                                 f"🔸 실적: {earnings_trend}\n"
                                 f"🔸 최근 1주 주요 뉴스:\n{news_summary}\n\n"
                                 f"Time: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
-                            ) [cite: 128, 129, 130, 131, 132]
-                            telegram_queue.put((chart_path, caption)) [cite: 132]
+                            ) 
+                            telegram_queue.put((chart_path, caption)) 
                             
             except Exception as e:
-                pass [cite: 133]
+                pass 
         
         if tracker['scanned'] % 200 == 0 or tracker['scanned'] == len(tickers):
-            print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)") [cite: 133]
+            print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)") 
 
     dt = time.time() - t0
-    print(f"\n✅ [{logic_name}] 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n") [cite: 133, 134]
+    print(f"\n✅ [{logic_name}] 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n") 
 
 # ================== ⏰ [3번 봇 스케줄러] 매시 20분 / 매일 16:00 ==================
 def run_scheduler():
@@ -381,4 +381,5 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
