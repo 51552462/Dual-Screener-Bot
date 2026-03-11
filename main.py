@@ -38,7 +38,10 @@ def start_us_bowl(): us_bowl.run_scheduler()
 def start_kr_rev(): kr_rev.run_scheduler()
 def start_kr_ema(): kr_ema.run_scheduler()
 def start_kr_bowl(): kr_bowl.run_scheduler()
-def start_kr_nul(): kr_nul.run_scheduler()
+def start_kr_nul(): 
+    print("\n💡 [수동 테스트] 서버 켜지자마자 한국장 눌림목(1D) 즉시 1회 스캔 시작!\n")
+    kr_nul.scan_market_1d()
+    kr_nul.run_scheduler()
 def start_kr_ohdole(): kr_ohdole.run_scheduler()
 
 # 📊 실시간 생존 확인(Heartbeat) 모니터링
@@ -77,3 +80,4 @@ if __name__ == "__main__":
 
     for t in threads:
         t.join()
+
