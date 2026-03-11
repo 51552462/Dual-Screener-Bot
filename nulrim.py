@@ -37,7 +37,7 @@ def get_ls_token():
     print("🔑 LS증권 OpenAPI 인증 토큰 발급 중...")
     url = "https://openapi.ls-sec.co.kr:8080/oauth2/token"
     headers = {"content-type": "application/x-www-form-urlencoded"}
-    data = {"grant_type": "client_credentials", "appkey": APP_KEY, "appsecretkey": APP_SECRET, "scope": "oob"}
+    data = {"grant_type": "client_credentials", "appkey": APP_KEY, "appsecretkey": APP_SECRET, "scope": "oob"} [cite: 142]
     try:
         res = requests.post(url, headers=headers, data=data, timeout=10)
         if res.status_code == 200:
@@ -49,7 +49,7 @@ def get_ls_token():
 # ================== ⭐️ 스마트 속도 제어기 (12분 단축의 핵심) ==================
 class LSApiRateLimiter:
     def __init__(self):
-        self.timestamps = []
+        self.timestamps = [] [cite: 143]
         self.lock = threading.Lock()
 
     def wait(self):
@@ -58,7 +58,7 @@ class LSApiRateLimiter:
             self.timestamps = [t for t in self.timestamps if now - t < 1.05]
             if len(self.timestamps) >= 3:
                 sleep_time = 1.05 - (now - self.timestamps[0])
-                if sleep_time > 0:
+                if sleep_time > 0: [cite: 144]
                     time.sleep(sleep_time)
             self.timestamps.append(time.time())
 
@@ -70,8 +70,8 @@ adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=1)
 global_session.mount('https://', adapter)
 
 # ================== 폴더 및 유틸 ==================
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Nulrim_1D')
-CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
+# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
+CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
 DISPLAY_BARS = 150
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -79,8 +79,8 @@ def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
 # ================== 기업 팩트 리포트 ==================
-def get_company_fact_report(code: str) -> tuple:
-    sector, outlook, growth = "정보 없음", "기업 현황 데이터를 불러올 수 없습니다.", "최근 실적 데이터를 불러올 수 없습니다."
+def get_company_fact_report(code: str) -> tuple: [cite: 145]
+    sector, outlook, growth = "정보 없음", "기업 현황 데이터를 불러올 수 없습니다.", "최근 실적 데이터를 불러올 수 없습니다." [cite: 146]
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
@@ -89,7 +89,7 @@ def get_company_fact_report(code: str) -> tuple:
             if tag: sector = tag.text.strip()
                 
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
-        if res_fn.status_code == 200:
+        if res_fn.status_code == 200: [cite: 147]
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
             if len(tags) >= 1: outlook = tags[0].text.strip()
             if len(tags) >= 2: growth = tags[1].text.strip()
@@ -100,7 +100,7 @@ def get_company_fact_report(code: str) -> tuple:
 def get_krx_list_kind():
     print("KRX KIND 서버에서 종목 리스트를 가져옵니다...")
     try:
-        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
+        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0] [cite: 148]
         df_ks['Market'] = 'KOSPI'
         df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
@@ -108,12 +108,14 @@ def get_krx_list_kind():
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"종목 수집 실패: {e}")
+        return pd.DataFrame()
 
 # ================== 텔레그램 데몬 ==================
 def telegram_sender_daemon():
     while True:
-        item = telegram_queue.get()
+        item = telegram_queue.get() [cite: 149]
         if item is None: break
             
         img_path, caption = item
@@ -121,24 +123,33 @@ def telegram_sender_daemon():
 
         if SEND_TELEGRAM:
             for _ in range(3):
-                try:
+                try: [cite: 150]
                     with open(img_path, 'rb') as f:
                         res = requests.post(
                             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
+                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, [cite: 151]
                             files={"photo": f}, timeout=20, verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
+                        print(f"\n📲 [텔레그램 전송 성공] {img_path}") [cite: 152]
                         break
                     elif res.status_code == 429: time.sleep(3)
                     else: 
-                        print(f"\n❌ [텔레그램 에러] {res.status_code}: {res.text}")
+                        print(f"\n❌ [텔레그램 에러] {res.status_code}: {res.text}") [cite: 153]
                         break 
                 except Exception as e:
-                    print(f"\n❌ [통신 에러] {e}")
+                    print(f"\n⚠️ [통신 에러] {e}") [cite: 154]
                     time.sleep(2)
             time.sleep(1.5)
+            
+        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
+        except:
+            pass
+            
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
@@ -153,7 +164,7 @@ def compute_signal(df_raw: pd.DataFrame):
         return False, "no_data", df_raw, {}
 
     df = df_raw.copy()
-    for n in [10, 20, 30, 60, 112, 224, 448]:
+    for n in [10, 20, 30, 60, 112, 224, 448]: [cite: 155]
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
@@ -170,7 +181,7 @@ def compute_signal(df_raw: pd.DataFrame):
     ema60 = df['EMA60'].values
     ema112 = df['EMA112'].values
     ema224 = df['EMA224'].values
-    ema448 = df['EMA448'].values
+    ema448 = df['EMA448'].values [cite: 156]
 
     isBullish = close_arr > open_arr
     volSpike5 = vol_arr >= (avgvol3_arr * 5)
@@ -184,7 +195,7 @@ def compute_signal(df_raw: pd.DataFrame):
     c1_position = (close_arr < ema30) & (close_arr > ema112)
     isCat112 = condBase & c1_long_trend & c1_short_inverse & c1_position
 
-    c2_full_trend = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema112) & (ema112 > ema224) & (ema224 > ema448)
+    c2_full_trend = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema112) & (ema112 > ema224) & (ema224 > ema448) [cite: 157]
     c2_under_20 = (close_arr < ema10) & (close_arr < ema20)
     c2_above_30 = close_arr > ema30
     isCat30 = condBase & (~isCat112) & c2_full_trend & c2_under_20 & c2_above_30
@@ -193,7 +204,7 @@ def compute_signal(df_raw: pd.DataFrame):
     c3_position = (close_arr < ema112) & (close_arr > ema224)
     isCat224 = condBase & (~isCat112) & (~isCat30) & c3_mid_inverse & c3_position
 
-    c4_position = (close_arr < ema224) & (close_arr > ema448)
+    c4_position = (close_arr < ema224) & (close_arr > ema448) [cite: 158]
     isCat448 = condBase & (~isCat112) & (~isCat30) & (~isCat224) & c4_position
 
     c112_hit = isCat112[-1]
@@ -206,7 +217,7 @@ def compute_signal(df_raw: pd.DataFrame):
 
     if c30_hit: sig_type = "🚀 30선 지지 (급등 눌림목)"
     elif c112_hit: sig_type = "💎 112선 지지 (황금 눌림목)"
-    elif c224_hit: sig_type = "🛡️ 224선 지지 (중기 마지노선)"
+    elif c224_hit: sig_type = "🛡️ 224선 지지 (중기 마지노선)" [cite: 159]
     else: sig_type = "⚓ 448선 지지 (최후 마지노선)"
 
     safe_avg_vol = avgvol3_arr[-1] if avgvol3_arr[-1] > 0 else 1
@@ -221,7 +232,7 @@ def compute_signal(df_raw: pd.DataFrame):
 
 # ================== 차트 저장 ==================
 chart_lock = threading.Lock()
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str: [cite: 160]
     with chart_lock:
         try:
             timestamp_ms = int(time.time() * 1000000)
@@ -230,17 +241,17 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             
-            apds = [
+            apds = [ [cite: 161]
                 mpf.make_addplot(df_cut["EMA10"], color='#FF5252', width=1, alpha=0.5),
                 mpf.make_addplot(df_cut["EMA20"], color='#FFD700', width=1, alpha=0.5),
                 mpf.make_addplot(df_cut["EMA30"], color='#FF00FF', width=2),
                 mpf.make_addplot(df_cut["EMA60"], color='#FF9800', width=1, alpha=0.5),
                 mpf.make_addplot(df_cut["EMA112"], color='#00E676', width=2),
-                mpf.make_addplot(df_cut["EMA224"], color='#2979FF', width=2),
+                mpf.make_addplot(df_cut["EMA224"], color='#2979FF', width=2), [cite: 162]
                 mpf.make_addplot(df_cut["EMA448"], color='#B0BEC5', width=2),
             ]
 
-            title = f"[{dbg['sig_type']}] {code} {name} (일봉)\nClose:{dbg['last_close']:.0f} | 거래량 {dbg['vol_spike']:.1f}배 폭발"
+            title = f"[{dbg['sig_type']}] {code} {name} (일봉)\nClose:{dbg['last_close']:.0f} | 거래량 {dbg['vol_spike']:.1f}배 폭발" [cite: 163]
 
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
@@ -249,7 +260,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             mpf.plot(df_cut, type="candle", volume=True, addplot=apds, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             
-            return path
+            return path [cite: 164]
         except Exception as e:
             print(f"\n❌ [차트 생성 실패] {name}({code}): {e}")
             return None
@@ -262,7 +273,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: 
         print("❌ LS증권 토큰 발급 실패로 스캔 불가")
-        return
+        return [cite: 165]
 
     print(f"\n⚡ [일봉 전용] LS증권 20차선 초고속 병렬 스캔 시작! (예상 소요시간 13~14분 컷)")
 
@@ -277,21 +288,21 @@ def scan_market_1d():
 
     def worker(row_tuple):
         _, row = row_tuple
-        name, code = row["Name"], row["Code"]
+        name, code = row["Name"], row["Code"] [cite: 166]
         
         # ⭐️ EMA448 완벽 계산을 위해 넉넉히 600봉 세팅
         body = {
             f"{tr_cd}InBlock": {
                 "shcode": code,
                 "gubun": "2", 
-                "qrycnt": 600, 
+                "qrycnt": 600,  [cite: 167]
                 "sdate": "",
                 "edate": "99999999",
                 "comp_yn": "N"
             }
         }
 
-        headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": tr_cd, "tr_cont": "N"}
+        headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": tr_cd, "tr_cont": "N"} [cite: 168]
 
         df_raw = None
         for retry in range(3): 
@@ -299,20 +310,22 @@ def scan_market_1d():
             try:
                 res = global_session.post(url, headers=headers, data=json.dumps(body), timeout=5)
                 if res.status_code == 200:
-                    data = res.json()
+                    data = res.json() [cite: 169]
                     if "IGW" in data.get("rsp_cd", ""):
                         time.sleep(1)
                         continue 
-                        
+                         [cite: 170]
                     items = data.get(outblock_key, [])
                     if items:
-                        records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S', errors='coerce'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
+                        records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S', errors='coerce'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items] [cite: 171]
                         df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
                     break
-            except: pass
+            except Exception as e:
+                # 💡 [수정완료] LS증권 통신 에러 발생 시 로그 출력
+                print(f"⚠️ [LS증권 통신 에러] {name}({code}): {e}")
 
         is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-        hit, sig_type, df, dbg = False, "", None, {}
+        hit, sig_type, df, dbg = False, "", None, {} [cite: 172]
         
         if is_valid:
             hit, sig_type, df, dbg = compute_signal(df_raw)
@@ -321,25 +334,25 @@ def scan_market_1d():
             tracker['scanned'] += 1
             if is_valid: tracker['analyzed'] += 1 
             
-            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list): [cite: 173]
                 print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
             if hit:
                 tracker['hits'] += 1
                 rank = tracker['hits']
-                chart_path = save_chart(df, code, name, rank, dbg)
+                chart_path = save_chart(df, code, name, rank, dbg) [cite: 174]
                 if chart_path:
                     sector, outlook, growth = get_company_fact_report(code)
                     caption = (
                         f"[{dbg['sig_type']}] (일봉)\n\n"
-                        f"[{name}] ({code})\n"
+                        f"[{name}] ({code})\n" [cite: 175]
                         f"- 현재가: {dbg['last_close']:,.0f}원\n"
                         f"- 거래량: 직전 3거래일 평균 대비 {dbg['vol_spike']:.1f}배 폭발\n\n"
-                        f"💡 [시장 뷰 & 기업 분석]\n"
+                        f"💡 [시장 뷰 & 기업 분석]\n" [cite: 176]
                         f"- 섹터: {sector}\n"
                         f"- 전망: {outlook}\n"
                         f"- 실적: {growth}\n\n"
-                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}" [cite: 177]
                     )
                     telegram_queue.put((chart_path, caption))
 
@@ -348,26 +361,26 @@ def scan_market_1d():
         executor.map(worker, list(stock_list.iterrows()))
 
     dt = time.time() - t0
-    print(f"\n✅ [일봉 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [일봉 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n") [cite: 178, 179]
 
 # ================== ⏰ 스케줄러 ==================
 def run_scheduler():
     import pytz
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [눌림목 1D 상업용 스케줄러 자동 대기 모드]")
-    print("   - [일봉] 매일 13:40 (오후 1시 40분 실행)")
+    print("   - [일봉] 매일 15:00 딱 1번 실행")
     
     while True:
         now = datetime.now(kr_tz)
-        # 일봉 스캔 (오후 1시 40분에 단 한 번 실행)
-        if now.hour == 13 and now.minute == 40:
-            print(f"🚀 [1D 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-            scan_market_1d()
-            print("💤 스캔 완료. 다음 타임(내일)까지 대기합니다...")
-            time.sleep(50 * 60) 
+        # 💡 [수정완료] 일봉 스캔 (오후 3시 정각(15:00)에 단 한 번 실행)
+        if now.hour == 15 and now.minute == 0:
+             print(f"🚀 [1D 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}") [cite: 180]
+             scan_market_1d()
+             print("💤 스캔 완료. 다음 타임(내일)까지 대기합니다...")
+             time.sleep(50 * 60) 
         else: 
             time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 시작하자마자 1회 강제 실행
+    # 💡 [수정완료] 충돌 방지를 위해 시작 즉시 실행(강제 실행) 코드 제거
     run_scheduler()
