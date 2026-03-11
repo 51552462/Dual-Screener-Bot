@@ -374,4 +374,8 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
+    # 💡 [수정완료] 시작하자마자 수동으로 1회 강제 실행되도록 추가
+    print("\n💡 [수동 테스트] 서버 켜지자마자 일봉 눌림목 즉시 1회 스캔 실행!\n")
+    scan_market_1d()
+    
     run_scheduler()
