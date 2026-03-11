@@ -54,18 +54,19 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Bobgeureut_Dual_KRX')
-CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
+# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
+CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
-STATE_PATH = os.path.join(TOP_FOLDER, "state_krx_bobgeureut.json")
+# 💡 [수정완료] 상태 저장 JSON 파일도 서버 현재 폴더에 저장되도록 수정
+STATE_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "state_krx_bobgeureut.json")
 
 def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
 def clear_old_charts():
-    print("🧹 차트 용량 관리를 위해 이전 이미지들을 정리합니다...")
+    print("🧹 차트 용량 관리를 위해 이전 찌꺼기 이미지들을 정리합니다...")
     try:
         for f in os.listdir(CHART_FOLDER):
             if f.endswith(".png"): os.remove(os.path.join(CHART_FOLDER, f))
@@ -180,13 +181,38 @@ def telegram_sender_daemon():
         if item is None: break
         img_path, caption = item
         if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)"
+        
         if SEND_TELEGRAM:
-            for _ in range(3):
+            for attempt in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        if requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, files={"photo": f}, timeout=20, verify=False).status_code == 200: break
-                except: time.sleep(1.5)
+                        res = requests.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
+                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, 
+                            files={"photo": f}, timeout=20, verify=False
+                        )
+                    if res.status_code == 200:
+                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
+                        break
+                    elif res.status_code == 429: time.sleep(3)
+                    else:
+                        print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
+                        break
+                except Exception as e: 
+                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
+                    time.sleep(2)
+            time.sleep(1.5)
+            
+        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
+        except:
+            pass
+            
         telegram_queue.task_done()
+
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 # ================== ⭐️ 밥그릇 3번 로직 (트레이딩뷰 100% 동기화) ==================
@@ -330,25 +356,29 @@ def scan_krx_1h():
 
     def worker(row):
         code, name = row["Code"], row["Name"]
-        df = get_tv_1h_ohlcv(code)
-        
-        if df is not None and len(df) >= 500 and df['Close'].iloc[-1] >= 1000:
-            hit, sig_type, df_res, dbg = compute_bobgeureut(df)
+        try:
+            df = get_tv_1h_ohlcv(code)
+            
+            if df is not None and len(df) >= 500 and df['Close'].iloc[-1] >= 1000:
+                hit, sig_type, df_res, dbg = compute_bobgeureut(df)
+                with console_lock:
+                    tracker['analyzed'] += 1
+                    if hit:
+                        tracker['hits'] += 1
+                        badge = _streak_badge(_update_streak(state, f"{code}:1H", today_str))
+                        title = f"[{sig_type}] {name} (1H)\nClose:{dbg['close']:.0f}  EMA224:{dbg['ema224']:.0f}  VolSpike:{dbg['vol_spike']:.1f}x"
+                        path = save_chart(df_res, code, name, tracker['hits'], title)
+                        if path:
+                            sec, out, grow = get_company_fact_report(code)
+                            msg = f"🔥 [{sig_type}] (1시간봉)\n\n[{name}] ({code}) {badge}\n- 현재가: {dbg['close']:,.0f}원\n- 224일선: {dbg['ema224']:,.0f}원\n- 거래량: {dbg['vol_spike']:.1f}배 폭발\n\n💡 [팩트 체크 리포트]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\nTime: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
+                            telegram_queue.put((path, msg))
             with console_lock:
-                tracker['analyzed'] += 1
-                if hit:
-                    tracker['hits'] += 1
-                    badge = _streak_badge(_update_streak(state, f"{code}:1H", today_str))
-                    title = f"[{sig_type}] {name} (1H)\nClose:{dbg['close']:.0f}  EMA224:{dbg['ema224']:.0f}  VolSpike:{dbg['vol_spike']:.1f}x"
-                    path = save_chart(df_res, code, name, tracker['hits'], title)
-                    if path:
-                        sec, out, grow = get_company_fact_report(code)
-                        msg = f"🔥 [{sig_type}] (1시간봉)\n\n[{name}] ({code}) {badge}\n- 현재가: {dbg['close']:,.0f}원\n- 224일선: {dbg['ema224']:,.0f}원\n- 거래량: {dbg['vol_spike']:.1f}배 폭발\n\n💡 [팩트 체크 리포트]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\nTime: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
-                        telegram_queue.put((path, msg))
-        with console_lock:
-            tracker['scanned'] += 1
-            if tracker['scanned'] % 200 == 0 or tracker['scanned'] == len(stock_list):
-                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+                tracker['scanned'] += 1
+                if tracker['scanned'] % 200 == 0 or tracker['scanned'] == len(stock_list):
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+        except Exception as e:
+            # 💡 [수정완료] TV 스캔 중 에러 발생 시 로그 출력
+            print(f"⚠️ [에러 발생] {code}: {e}")
 
     # 멀티스레딩으로 속도 극대화
     with concurrent.futures.ThreadPoolExecutor(max_workers=TV_POOL_SIZE) as executor:
@@ -405,7 +435,9 @@ def scan_krx_1d():
                             sec, out, grow = get_company_fact_report(info['code'])
                             msg = f"💎 [{sig_type}] (일봉)\n\n[{info['name']}] ({info['code']}) {badge}\n- 현재가: {dbg['close']:,.0f}원\n- 224일선: {dbg['ema224']:,.0f}원\n- 거래량: {dbg['vol_spike']:.1f}배 폭발\n\n💡 [팩트 체크 리포트]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\nTime: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
                             telegram_queue.put((path, msg))
-            except: pass
+            except Exception as e:
+                # 💡 [수정완료] 에러 숨김(pass) 해제
+                print(f"⚠️ [에러 발생] {tk}: {e}")
             
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
@@ -415,20 +447,21 @@ def scan_krx_1d():
 
 # ================== ⏰ 한국장 자동 스케줄러 ==================
 def run_scheduler():
+    # 💡 [수정완료] 타임존 완벽 적용 및 시작 시간 39분으로 세팅
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [KRX 하이브리드 자동 스케줄러 대기 모드]")
-    print("   - [1H 스캔] 매일 09:40 ~ 14:40 (매시 40분마다)")
-    print("   - [1D 스캔] 매일 15:40 (장 마감 직후)")
+    print("🕒 [KRX 밥그릇 하이브리드 상업용 스케줄러 자동 대기 모드]")
+    print("   - [1H 스캔] 매일 09:39 ~ 14:39 (매시 39분마다)")
+    print("   - [1D 스캔] 매일 15:39 (장 마감 직후 1번 실행)")
     
     while True:
         now_kr = datetime.now(kr_tz)
         
-        if now_kr.minute == 40 and (9 <= now_kr.hour <= 14):
+        if now_kr.minute == 39 and (9 <= now_kr.hour <= 14):
             print(f"🚀 [1H 정규 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_krx_1h()
             time.sleep(50 * 60) 
             
-        elif now_kr.hour == 15 and now_kr.minute == 40:
+        elif now_kr.hour == 15 and now_kr.minute == 39:
             print(f"🚀 [1D 정규 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_krx_1d()
             time.sleep(50 * 60)
@@ -436,11 +469,7 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
+    # 💡 [수정완료] 메인 파일(main.py)에서 충돌 방지를 위해 즉시 실행 코드는 제거하고 스케줄러만 호출 
+    # (단, 초기 트레이딩뷰 통신망 세팅은 필요하므로 initialize_tv_pool은 남겨둡니다)
     initialize_tv_pool()
-    print("==================================================")
-    print("💡 [초기 강제 스캔] 1H(TV) -> 1D(YF) 극한 속도 테스트")
-    scan_krx_1h()
-    scan_krx_1d()
-    print("==================================================")
-    
     run_scheduler()
