@@ -85,7 +85,7 @@ def get_smart_company_report(code: str, name: str) -> tuple:
                 if any(kw in title for keyword in ["특징주", "강세", "급등", "상한가", "수주", "계약", "돌파", "호실적", "최대", "AI"] for kw in [keyword]):
                     if title not in headlines:
                         headlines.append("- " + title)
-                if len(headlines) >= 2: break [cite: 93, 94, 95]
+                if len(headlines) >= 2: break
             
             if not headlines and news_links:
                 for link in news_links[:2]:
@@ -381,3 +381,4 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
