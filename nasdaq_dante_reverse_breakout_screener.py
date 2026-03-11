@@ -34,8 +34,8 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Dual_Reverse')
-CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
+# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
+CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -111,8 +111,18 @@ def telegram_sender_daemon():
                     elif res.status_code == 429: time.sleep(3)
                     else: break 
                 except Exception as e:
+                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
+            
+        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
+        except:
+            pass
+            
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
@@ -123,7 +133,7 @@ def add_emas(df: pd.DataFrame) -> pd.DataFrame:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
     return df
 
-# ================== ⭐️ [로직 1] 역매공파 1시간봉 (PineScript 100% 동기화) ==================
+# ================== ⭐️ [로직 1] 역매공파 1시간봉 ==================
 def compute_inverse_1h(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "no_signal", df_raw, {}
     df = add_emas(df_raw)
@@ -164,7 +174,7 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     condCrossEvent = np.zeros(len(c), dtype=bool)
     for i in range(1, 9):
         shifted_c = np.roll(c, i)
-        shifted_c[:i] = np.inf # 과거 데이터 없는 인덱스 오류 방지
+        shifted_c[:i] = np.inf 
         shifted_ema112 = np.roll(ema112, i)
         condCrossEvent |= (shifted_c < shifted_ema112)
 
@@ -183,7 +193,6 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     # 8. 최종 타점
     signalBase = condPrice & condLiquidity & condBearAlign & condHold112 & condCrossEvent & condHasAcc & condVolSpike & isCurrentBullish
 
-    # ⭐️ 9. 연산 최적화: 타점이 오늘 안 떴으면 카운터 루프 돌릴 필요 없이 즉시 종료
     if not signalBase[-1]: 
         return False, "no_signal", df, {}
 
@@ -213,10 +222,8 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     o = df['Open'].values
     v = df['Volume'].values
     
-    # 미국 최소 주가(3달러) 필터
     if c[-1] < 3.0: return False, "no_signal", df, {}
 
-    # NumPy 직전 3봉 평균 (Pandas 병목 제거)
     v_1 = np.roll(v, 1); v_1[0] = 0
     v_2 = np.roll(v, 2); v_2[:2] = 0
     v_3 = np.roll(v, 3); v_3[:3] = 0
@@ -252,7 +259,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             
-            # 1D(정배열)와 1H(역매공파) 차트 선 두께/색상 분리
             if timeframe == '1d':
                 apds = [
                     mpf.make_addplot(df_cut["EMA10"], color='red', width=1),
@@ -273,7 +279,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
             tf_str = "1H(역매공파)" if timeframe == '1h' else "1D(정배열)"
             title = f"[{dbg['sig_type']}] US Market: {code} ({tf_str})\nClose: ${dbg['last_close']:.2f} | 거래량 {dbg['vol_spike']:.1f}배"
             
-            # 🇺🇸 미국 차트는 상승이 초록, 하락이 빨강입니다.
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
@@ -312,7 +317,6 @@ def scan_market(timeframe: str):
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
         
-        # 야후 파이낸스 고속 다운로드 (미국 주식에 최적화됨)
         df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=True)
         
         for ticker in chunk:
@@ -322,7 +326,6 @@ def scan_market(timeframe: str):
             name, code = info.get('name', ''), info.get('code', '')
 
             try:
-                # 데이터 분리 오류 완벽 방어
                 if len(chunk) == 1:
                     df_ticker = df_batch.copy()
                 else:
@@ -335,7 +338,6 @@ def scan_market(timeframe: str):
                     df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                # 500봉 확보 및 미국 최저 주가(3달러) 필터
                 if len(df_ticker) >= 500 and df_ticker['Close'].iloc[-1] >= 3.0:
                     tracker['analyzed'] += 1
                     
@@ -364,7 +366,8 @@ def scan_market(timeframe: str):
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                pass
+                # 💡 [수정완료] 에러 숨김 해제
+                print(f"⚠️ [에러 발생] {ticker}: {e}")
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
@@ -383,6 +386,7 @@ def run_scheduler():
     while True:
         now_ny = datetime.now(ny_tz)
         
+        # 💡 [수정완료] 1시간봉 35분 / 일봉 16:05 (분산 세팅 1번 타자)
         if now_ny.minute == 35 and (10 <= now_ny.hour <= 15):
             print(f"🚀 [US 역매공파/1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
@@ -399,10 +403,5 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    print("==================================================")
-    print("💡 [강제 1회 스캔] 1H(역매공파) -> 1D(정배열) 순차 테스트")
-    scan_market('1h')
-    scan_market('1d')
-    print("==================================================")
-    
+    # 💡 [수정완료] 충돌 방지용으로 수동 실행 코드는 지우고 스케줄러만 대기시킵니다.
     run_scheduler()
