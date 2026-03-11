@@ -5,6 +5,7 @@ import time
 import threading
 import queue
 from datetime import datetime
+import pytz  # 💡 [추가] 서버 시간 꼬임 방지용
 from io import StringIO
 import numpy as np
 import pandas as pd
@@ -33,15 +34,15 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
-CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Ohdole_1H')
+CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ================== ⭐️ 진짜 팩트 코멘트 추출기 (업그레이드 완료) ==================
+# ================== ⭐️ 진짜 팩트 코멘트 추출기 ==================
 def get_smart_company_report(code: str, name: str) -> tuple:
     sector = "정보 없음"
     earnings_detail = "실적 코멘트를 불러올 수 없습니다."
@@ -57,21 +58,17 @@ def get_smart_company_report(code: str, name: str) -> tuple:
             tag = soup.select_one('h4.h_sub.sub_tit7 a')
             if tag: sector = tag.text.strip()
 
-        # 2. ⭐️ 실적 코멘트 원문 추출 (FnGuide)
+        # 2. 실적 코멘트 원문 추출 (FnGuide)
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=3, verify=False)
         if res_fn.status_code == 200:
             soup = BeautifulSoup(res_fn.text, 'html.parser')
             tags = soup.select('ul#bizSummaryContent > li')
             if len(tags) >= 2:
-                # FnGuide의 두 번째 문단이 '최근 실적 요약'입니다. 이를 가져옵니다.
                 raw_text = tags[1].text.strip()
-                
-                # 너무 길면 보기 힘드므로, 마침표 기준으로 앞의 1~2문장만 자릅니다.
                 sentences = [s.strip() for s in raw_text.split('. ') if s.strip()]
                 summary = '. '.join(sentences[:2])
                 if not summary.endswith('.'): summary += '.'
                 
-                # 원문에 따라 직관적인 아이콘만 앞에 달아줍니다. 내용은 100% 진짜 팩트입니다.
                 if any(x in summary for x in ["증가", "흑자", "개선", "상승", "호조", "성장", "최대"]):
                     earnings_detail = f"📈 [개선] {summary}"
                 elif any(x in summary for x in ["감소", "적자", "악화", "하락", "부진"]):
@@ -79,7 +76,7 @@ def get_smart_company_report(code: str, name: str) -> tuple:
                 else:
                     earnings_detail = f"📊 [기타] {summary}"
 
-        # 3. ⭐️ 최근 호재 뉴스 실제 제목 추출 (네이버 금융)
+        # 3. 최근 호재 뉴스 실제 제목 추출 (네이버 금융)
         news_url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(news_url, headers=headers, timeout=3, verify=False)
         if res_news.status_code == 200:
@@ -89,13 +86,11 @@ def get_smart_company_report(code: str, name: str) -> tuple:
             headlines = []
             for link in news_links:
                 title = link.text.strip()
-                # 호재성 키워드가 포함된 뉴스를 최우선으로 2개 수집합니다.
                 if any(kw in title for keyword in ["특징주", "강세", "급등", "상한가", "수주", "계약", "돌파", "호실적", "최대", "AI", "공급", "MOU", "체결"] for kw in [keyword]):
                     if title not in headlines:
                         headlines.append("- " + title)
                 if len(headlines) >= 2: break
             
-            # 호재성 키워드가 없으면 일반 최신 뉴스 2개를 가져옵니다.
             if not headlines and news_links:
                 for link in news_links[:2]:
                     title = link.text.strip()
@@ -127,14 +122,13 @@ def get_krx_list_kind():
         return df[['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# ================== 텔레그램 전송 데몬 (마크다운 에러 차단) ==================
+# ================== 텔레그램 전송 데몬 ==================
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
         if item is None: break
             
         img_path, caption = item
-        # 실적 코멘트가 추가되어 길어졌으므로, 자르기 한계를 조금 더 늘립니다.
         if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)"
 
         if SEND_TELEGRAM:
@@ -147,25 +141,12 @@ def telegram_sender_daemon():
                             files={"photo": f}, timeout=20, verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
                         break
                     elif res.status_code == 429: time.sleep(3)
-                    else: 
-                        print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
-                        break 
+                    else: break 
                 except Exception as e:
-                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
-            
-        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
-        try:
-            if os.path.exists(img_path):
-                os.remove(img_path)
-                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
-        except:
-            pass
-            
         telegram_queue.task_done()
 
 sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
@@ -173,8 +154,8 @@ sender_thread.start()
 
 # ================== 파라미터 셋업 (오돌이 100% 룰) ==================
 MIN_PRICE = 1000
-MIN_TRANS_MONEY = 300_000_000  # 최소 3억
-VOL_MUL = 1.0                  # 거래량 100% 유지
+MIN_TRANS_MONEY = 300_000_000  
+VOL_MUL = 1.0                  
 
 # ================== 오돌이 핵심 로직 (SMA 기반 + 초고속 NumPy 연산) ==================
 def compute_ohdole_signal(df_raw: pd.DataFrame):
@@ -237,7 +218,9 @@ def compute_ohdole_signal(df_raw: pd.DataFrame):
     if sig1_hit: sig_type = "🔥 오돌이 1번 (장악형)"
     else: sig_type = "✅ 오돌이 2번 (안착형)"
 
-    vol_ratio = (vol_arr[-1] / max(1, prev_vol[-1])) * 100 if prev_vol[-1] > 0 else 100
+    # ⭐️ 0으로 나누기 (Infinity) 완벽 방어
+    safe_prev_vol = max(1, prev_vol[-1]) if prev_vol[-1] != np.inf else 1
+    vol_ratio = (vol_arr[-1] / safe_prev_vol) * 100
 
     dbg = {
         "last_close": float(close_arr[-1]),
@@ -278,7 +261,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             
             return path
         except Exception as e:
-            print(f"\n❌ [차트 그리기 실패] 종목: {name}({code}) | 사유: {e}")
             return None
 
 # ================== 🚀 야후 API 그룹 다운로드 엔진 ==================
@@ -321,7 +303,6 @@ def scan_market():
                     df_ticker.index = df_ticker.index.tz_convert('Asia/Seoul').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                # 500봉 이상 확보 확인
                 if len(df_ticker) >= 500 and df_ticker['Close'].iloc[-1] >= MIN_PRICE:
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_ohdole_signal(df_ticker)
@@ -331,7 +312,6 @@ def scan_market():
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         
                         if chart_path:
-                            # ⭐️ 신규 스마트 분석 (섹터, 진짜 실적 코멘트 추출, 핵심 뉴스)
                             sector, earnings_detail, news_summary = get_smart_company_report(code, name) 
                             
                             caption = (
@@ -344,37 +324,36 @@ def scan_market():
                                 f"🔸 섹터: {sector}\n"
                                 f"🔸 실적 코멘트:\n{earnings_detail}\n\n"
                                 f"🔸 최근 1주 주요 뉴스:\n{news_summary}\n\n"
-                                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"Time: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
                             )
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                # 💡 [수정완료] 에러 숨김(pass) 해제
-                print(f"⚠️ [에러 발생] {ticker}: {e}")
+                pass
         
         if tracker['scanned'] % 200 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [오돌이 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [4번 봇: 오돌이 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
-# ================== ⏰ 스케줄러 ==================
+# ================== ⏰ [4번 봇 스케줄러] 매시 30분 작동 ==================
 def run_scheduler():
-    # 💡 [수정완료] 타임존 완벽 적용 및 시작 시간 41분으로 분산 세팅
-    import pytz
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [오돌이 1H 상업용 스케줄러 자동 대기 모드]")
-    print("   - [1시간봉] 매일 08:41 ~ 14:41 (매시 41분마다 실행)")
+    print("🕒 [4번 봇: 오돌이 1H 상업용 스케줄러 대기 모드 - 분산 완료]")
+    print("   - [1시간봉] 매시 30분마다 단독 실행 (서버 부하 분산)")
     
     while True:
-        now = datetime.now(kr_tz)
-        if now.minute == 41 and (8 <= now.hour <= 14):
-            print(f"🚀 [1H 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        now_kr = datetime.now(kr_tz)
+        
+        # 💡 매시 30분에 작동 (1번 00분, 2번 10분, 3번 20분과 완벽 분리)
+        if now_kr.minute == 35:
+            print(f"🚀 [4번 봇 1H 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market()
             print("💤 스캔 완료. 다음 타임(1시간 뒤)까지 대기합니다...")
             time.sleep(50 * 60) 
-        else: time.sleep(10)
+        else: 
+            time.sleep(10)
 
 if __name__ == "__main__":
-    # 💡 [수정완료] 충돌 방지를 위해 시작 즉시 실행 코드 제거
     run_scheduler()
