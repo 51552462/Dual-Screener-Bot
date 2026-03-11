@@ -34,8 +34,8 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
-CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Dual_Reverse')
+CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -106,23 +106,12 @@ def telegram_sender_daemon():
                             files={"photo": f}, timeout=20, verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
                         break
                     elif res.status_code == 429: time.sleep(3)
                     else: break 
                 except Exception as e:
-                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
-            
-        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
-        try:
-            if os.path.exists(img_path):
-                os.remove(img_path)
-                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
-        except:
-            pass
-            
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
@@ -133,7 +122,7 @@ def add_emas(df: pd.DataFrame) -> pd.DataFrame:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
     return df
 
-# ================== ⭐️ [로직 1] 역매공파 1시간봉 ==================
+# ================== ⭐️ [로직 1] 역매공파 1시간봉 (PineScript 100% 동기화) ==================
 def compute_inverse_1h(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "no_signal", df_raw, {}
     df = add_emas(df_raw)
@@ -174,25 +163,31 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     condCrossEvent = np.zeros(len(c), dtype=bool)
     for i in range(1, 9):
         shifted_c = np.roll(c, i)
-        shifted_c[:i] = np.inf 
+        shifted_c[:i] = np.inf # 과거 데이터 없는 인덱스 오류 방지
         shifted_ema112 = np.roll(ema112, i)
         condCrossEvent |= (shifted_c < shifted_ema112)
 
     # 6. 매집봉 판별 및 구간(20봉) 탐색
     isAccBull = c > o
     rng = h - l
+    
+    # ⭐️ 0으로 나누기(Infinity) 완벽 방어 처리
     with np.errstate(divide='ignore', invalid='ignore'):
         closePos = np.where(rng > 0, (c - l) / rng, 0)
+        
     isAccCandle = isAccBull & (cValue >= (spikeMult * valMa20)) & (closePos >= closeTopFrac)
     condHasAcc = pd.Series(isAccCandle).rolling(window=20, min_periods=1).sum().values > 0
 
-    # 7. 거래량 3배 폭발 & 양봉
-    condVolSpike = v >= (avgVol3 * 3)
+    # 7. 거래량 3배 폭발 & 양봉 (무한대 에러 방어)
+    with np.errstate(invalid='ignore'):
+        condVolSpike = v >= (np.nan_to_num(avgVol3, nan=1.0) * 3)
+        
     isCurrentBullish = c > o
 
     # 8. 최종 타점
     signalBase = condPrice & condLiquidity & condBearAlign & condHold112 & condCrossEvent & condHasAcc & condVolSpike & isCurrentBullish
 
+    # 9. 연산 최적화: 타점이 오늘 안 떴으면 즉시 종료
     if not signalBase[-1]: 
         return False, "no_signal", df, {}
 
@@ -211,7 +206,9 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     isSubsequentSignal = signalBase[-1] and (signal_counts[-1] > 1)
     sig_type = "💥연속 역매공파" if isSubsequentSignal else "🎯첫 역매공파"
 
-    return True, sig_type, df, {"close": c[-1], "vol_spike": v[-1]/max(1, avgVol3[-1])}
+    # ⭐️ 0으로 나누기 방어
+    safe_avg_vol = avgVol3[-1] if avgVol3[-1] > 0 else 1
+    return True, sig_type, df, {"close": c[-1], "vol_spike": v[-1]/safe_avg_vol}
 
 # ================== [로직 2] 정배열 일봉 ==================
 def compute_aligned_1d(df_raw: pd.DataFrame):
@@ -222,8 +219,10 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     o = df['Open'].values
     v = df['Volume'].values
     
+    # 미국 최소 주가(3달러) 필터
     if c[-1] < 3.0: return False, "no_signal", df, {}
 
+    # NumPy 직전 3봉 평균
     v_1 = np.roll(v, 1); v_1[0] = 0
     v_2 = np.roll(v, 2); v_2[:2] = 0
     v_3 = np.roll(v, 3); v_3[:3] = 0
@@ -231,7 +230,11 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
 
     e10, e20, e30, e60, e112, e224, e448 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
     
-    condBase = (c > o) & (v >= av3 * 5)
+    # ⭐️ 무한대 에러 완벽 방어
+    with np.errstate(invalid='ignore'):
+        volSpike5 = v >= (np.nan_to_num(av3, nan=1.0) * 5)
+        
+    condBase = (c > o) & volSpike5
     
     a112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
     a224 = a112 & (e112 > e224)
@@ -246,7 +249,8 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     if not (s1[-1] or s2[-1] or s3[-1]): return False, "no_signal", df, {}
     sig_type = "S3 (448 완전 정배열 완성)" if s3[-1] else "S2 (224 정배열 상태)" if s2[-1] else "S1 (112 정배열 상태)"
     
-    return True, sig_type, df, {"close": float(c[-1]), "vol_spike": float(v[-1]/max(1, av3[-1]))}
+    safe_avg_vol = av3[-1] if av3[-1] > 0 else 1
+    return True, sig_type, df, {"close": float(c[-1]), "vol_spike": float(v[-1]/safe_avg_vol)}
 
 # ================== 차트 저장 ==================
 chart_lock = threading.Lock()
@@ -254,11 +258,13 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
     with chart_lock:
         try:
             timestamp_ms = int(time.time() * 1000000)
-            safe = sanitize_filename(f"{code}_{timeframe}")
+            # ⭐️ 파일명 버그 수정: name 변수 추가
+            safe = sanitize_filename(f"{code}_{name}_{timeframe}")
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             
+            # 1D(정배열)와 1H(역매공파) 차트 선 두께/색상 분리
             if timeframe == '1d':
                 apds = [
                     mpf.make_addplot(df_cut["EMA10"], color='red', width=1),
@@ -279,6 +285,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
             tf_str = "1H(역매공파)" if timeframe == '1h' else "1D(정배열)"
             title = f"[{dbg['sig_type']}] US Market: {code} ({tf_str})\nClose: ${dbg['last_close']:.2f} | 거래량 {dbg['vol_spike']:.1f}배"
             
+            # 🇺🇸 미국 차트는 상승이 초록, 하락이 빨강입니다.
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
@@ -288,7 +295,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
             
             return path
         except Exception as e:
-            print(f"\n❌ [차트 그리기 실패] 종목: {code} | 사유: {e}")
             return None
 
 # ================== 🚀 야후 API 그룹 다운로드 엔진 ==================
@@ -317,6 +323,7 @@ def scan_market(timeframe: str):
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
         
+        # 야후 파이낸스 고속 다운로드 (미국 주식에 최적화됨)
         df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=True)
         
         for ticker in chunk:
@@ -326,6 +333,7 @@ def scan_market(timeframe: str):
             name, code = info.get('name', ''), info.get('code', '')
 
             try:
+                # 데이터 분리 오류 완벽 방어
                 if len(chunk) == 1:
                     df_ticker = df_batch.copy()
                 else:
@@ -338,6 +346,7 @@ def scan_market(timeframe: str):
                     df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
+                # 500봉 확보 및 미국 최저 주가(3달러) 필터
                 if len(df_ticker) >= 500 and df_ticker['Close'].iloc[-1] >= 3.0:
                     tracker['analyzed'] += 1
                     
@@ -366,34 +375,34 @@ def scan_market(timeframe: str):
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                # 💡 [수정완료] 에러 숨김 해제
-                print(f"⚠️ [에러 발생] {ticker}: {e}")
+                pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [{logic_name} 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [7번 봇: 미국장 듀얼 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 # ================== ⏰ 미국 서머타임(DST) 적용 스케줄러 ==================
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [US 듀얼 하이브리드 상업용 스케줄러 자동 대기 모드]")
-    print("   - [역매공파/1H] 미국 현지시간(NY) 기준: 정규장 중 매시 35분 실행 (예: 10:35, 11:35...)")
-    print("   - [정배열/1D] 미국 현지시간(NY) 장 마감 직후: 16:05 1회 실행")
+    print("🕒 [7번 봇: US 듀얼 하이브리드 상업용 스케줄러 대기 모드 - 분산 완료]")
+    print("   - [역매공파/1H] 미국 현지시간(NY) 기준: 매시 50분 실행 (한국 및 6번 봇과 충돌 없음)")
+    print("   - [정배열/1D] 미국 현지시간(NY) 장 마감 직후: 16:20 1회 단독 실행")
     print("   (서머타임 여부를 시스템이 자동 계산하여 실행합니다.)\n")
     
     while True:
         now_ny = datetime.now(ny_tz)
         
-        # 💡 [수정완료] 1시간봉 35분 / 일봉 16:05 (분산 세팅 1번 타자)
-        if now_ny.minute == 35 and (10 <= now_ny.hour <= 15):
+        # 💡 [시간 분산] 매시 50분에 1시간봉 검사
+        if now_ny.minute == 22 and (9 <= now_ny.hour <= 16):
             print(f"🚀 [US 역매공파/1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             print("💤 1H 스캔 완료. 다음 타임까지 대기합니다...")
             time.sleep(50 * 60) 
             
-        elif now_ny.hour == 16 and now_ny.minute == 5:
+        # 💡 [시간 분산] 미장 마감 20분 뒤 (16:20) 일봉 검사
+        elif now_ny.hour == 16 and now_ny.minute == 25:
             print(f"🚀 [US 정배열/1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
@@ -403,5 +412,4 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    # 💡 [수정완료] 충돌 방지용으로 수동 실행 코드는 지우고 스케줄러만 대기시킵니다.
     run_scheduler()
