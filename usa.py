@@ -33,15 +33,15 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
-CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Bowl_Dual')
+CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ================== 🇺🇸 스마트 기업 팩트 분석기 (US Version) ==================
+# ================== 🇺🇸 스마트 기업 팩트 분석기 ==================
 def get_us_smart_report(ticker_str: str) -> tuple:
     sector = "정보 없음"
     earnings_trend = "뚜렷한 실적 추세 없음"
@@ -51,26 +51,21 @@ def get_us_smart_report(ticker_str: str) -> tuple:
         tk = yf.Ticker(ticker_str)
         info = tk.info
         
-        # 1. 섹터 추출
         sector = info.get('sector', '정보 없음')
         
-        # 2. 실적 턴어라운드 추출 (EPS 성장률 기준)
         growth = info.get('earningsGrowth', 0)
         if growth is None: growth = 0
         
         if growth > 0.1:
-            earnings_trend = f"📈 실적 성장 및 턴어라운드 (EPS 분기성장률: +{growth*100:.1f}%)"
+            earnings_trend = f"📈 실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
         elif growth < -0.1:
-            earnings_trend = f"📉 실적 부진 (EPS 분기성장률: {growth*100:.1f}%)"
+            earnings_trend = f"📉 실적 부진 (분기 EPS: {growth*100:.1f}%)"
         else:
             earnings_trend = "📊 보합 (특이사항 없음)"
 
-        # 3. 최신 현지 뉴스 헤드라인 추출
         news = tk.news
         if news:
-            headlines = []
-            for n in news[:2]:
-                headlines.append(f"- {n['title']}")
+            headlines = [f"- {n['title']}" for n in news[:2]]
             news_summary = "\n".join(headlines)
 
     except: pass
@@ -80,20 +75,19 @@ def get_us_smart_report(ticker_str: str) -> tuple:
 def get_us_ticker_list():
     print("🇺🇸 미국 증시(NASDAQ, NYSE, AMEX) 티커 리스트를 수집합니다...")
     try:
-        # 미국 3대장 거래소 모두 수집
         df_ndq = fdr.StockListing('NASDAQ')
         df_nyse = fdr.StockListing('NYSE')
         df_amex = fdr.StockListing('AMEX')
         df = pd.concat([df_ndq, df_nyse, df_amex])
         
-        # 우선주, 워런트, 유닛 등 이상한 티커(기호 포함) 필터링
         df = df[df['Symbol'].str.isalpha()]
+        df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except Exception as e:
         print(f"티커 수집 에러: {e}")
         return pd.DataFrame()
 
-# ================== 텔레그램 전송 데몬 (마크다운 에러 100% 방지) ==================
+# ================== 텔레그램 전송 데몬 ==================
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
@@ -112,33 +106,20 @@ def telegram_sender_daemon():
                             files={"photo": f}, timeout=20, verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"\n📲 [텔레그램 전송 성공] {img_path}")
                         break
                     elif res.status_code == 429: time.sleep(3)
-                    else: 
-                        print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
-                        break 
+                    else: break 
                 except Exception as e:
-                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
-            
-        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
-        try:
-            if os.path.exists(img_path):
-                os.remove(img_path)
-                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
-        except:
-            pass
-            
         telegram_queue.task_done()
 
 sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
 sender_thread.start()
 
 # ================== 🇺🇸 밥그릇 핵심 로직 (트레이딩뷰 100% 동기화) ==================
-MIN_PRICE_USD = 1.0               # 페니스탁(1달러 미만) 방지
-MIN_MONEY_USD = 1_000_000         # 일 거래대금 최소 100만 달러 (약 13억원)
+MIN_PRICE_USD = 1.0               
+MIN_MONEY_USD = 1_000_000         
 
 def compute_bowl_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500:
@@ -146,16 +127,13 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
 
     df = df_raw.copy()
 
-    # 1. EMA 계산
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    # 2. 볼린저밴드 ⭐️ (ddof=1 적용: 파인스크립트 표본표준편차와 100% 동일)
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['StdDev'] = df['Close'].rolling(window=20).std(ddof=1) 
     df['BB_Upper'] = df['MA20'] + (df['StdDev'] * 2)
 
-    # 3. 일목균형표
     high9 = df['High'].rolling(9).max()
     low9 = df['Low'].rolling(9).min()
     tenkan = (high9 + low9) / 2
@@ -171,21 +149,21 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
     df['Senkou2'] = spanB.shift(25)
     df['CloudTop'] = df[['Senkou1', 'Senkou2']].max(axis=1)
 
-    # 4. 거래량 및 횡보(박스권) 조건 ⭐️ (ddof=1 적용 완벽 동기화)
     df['VolAvg20'] = df['Volume'].rolling(20).mean()
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3).mean()
 
     mean120 = df['Close'].rolling(120).mean().shift(5)
     std120 = df['Close'].rolling(120).std(ddof=1).shift(5)
-    condBox6m = (std120 / mean120) < 0.20
-
+    
     mean60 = df['Close'].rolling(60).mean().shift(5)
     std60 = df['Close'].rolling(60).std(ddof=1).shift(5)
-    condBox3m = (std60 / mean60) < 0.20
+    
+    # ⭐️ Pandas 나누기 0 에러 (Infinity) 방어막
+    with np.errstate(divide='ignore', invalid='ignore'):
+        condBox6m = (std120 / mean120) < 0.20
+        condBox3m = (std60 / mean60) < 0.20
 
-    # ========================================================
-    # 🚀 NumPy C-엔진 전환 (연산 속도 극대화)
-    # ========================================================
+    # 🚀 NumPy C-엔진 전환
     close_arr = df['Close'].values
     open_arr = df['Open'].values
     vol_arr = df['Volume'].values
@@ -210,9 +188,11 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
     condBb = close_arr >= bb_upper * 0.98
     condVol = vol_arr > volavg20_arr * 2.0
     condNotOverheated = close_arr <= ema224 * 1.15
-    condVolSpike = vol_arr >= (avgvol3_arr * 5)
     
-    # 🇺🇸 미국 시장 안전 필터 (달러 거래대금 및 주가)
+    # ⭐️ NumPy 나누기 0 에러 방어막
+    with np.errstate(invalid='ignore'):
+        condVolSpike = vol_arr >= (np.nan_to_num(avgvol3_arr, nan=1.0) * 5)
+    
     condMoney = (close_arr * vol_arr) >= MIN_MONEY_USD
     condPriceUsd = close_arr >= MIN_PRICE_USD
 
@@ -237,10 +217,13 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
     elif cat1_Normal[-1]: sig_type = "🎯 Cat1 (일반 돌파) - 3m"
     else: sig_type = "밥그릇 돌파"
 
+    # ⭐️ 0으로 나누기 에러 차단
+    safe_avg_vol = avgvol3_arr[-1] if avgvol3_arr[-1] > 0 else 1
+    
     dbg = {
         "last_close": float(close_arr[-1]), 
         "ema224": float(ema224[-1]), 
-        "vol_spike": float(vol_arr[-1] / max(1, avgvol3_arr[-1])), 
+        "vol_spike": float(vol_arr[-1] / safe_avg_vol), 
         "sig_type": sig_type
     }
     return True, sig_type, df, dbg
@@ -251,7 +234,8 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
     with chart_lock:
         try:
             timestamp_ms = int(time.time() * 1000000)
-            safe = sanitize_filename(f"{code}_{timeframe}")
+            # ⭐️ 파일명 누락 버그 수정 (name 추가)
+            safe = sanitize_filename(f"{code}_{name}_{timeframe}")
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
@@ -269,7 +253,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
             tf_str = "1H" if timeframe == '1h' else "1D"
             title = f"[{dbg['sig_type']}] US Market: {code} ({tf_str})\nClose: ${dbg['last_close']:.2f}  EMA224: ${dbg['ema224']:.2f}  VolSpike: {dbg['vol_spike']:.1f}x"
             
-            # 🇺🇸 미국 차트는 상승이 초록, 하락이 빨강입니다.
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
@@ -279,7 +262,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
             
             return path
         except Exception as e:
-            print(f"\n❌ [차트 그리기 실패] {code}: {e}")
             return None
 
 # ================== 🚀 미국 주식 전용 야후 하이퍼 엔진 ==================
@@ -315,8 +297,11 @@ def scan_market(timeframe: str):
             name, code = info.get('name', ''), info.get('code', '')
 
             try:
+                # 데이터 분리 에러 방어막
                 if len(chunk) == 1: df_ticker = df_batch.copy()
-                else: df_ticker = df_batch[ticker].copy()
+                else: 
+                    if ticker not in df_batch.columns.get_level_values(0): continue
+                    df_ticker = df_batch[ticker].copy()
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 
@@ -324,7 +309,6 @@ def scan_market(timeframe: str):
                     df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                # 500봉 확보 및 1달러 이상 필터링
                 if len(df_ticker) >= 500 and df_ticker['Close'].iloc[-1] >= 1.0:
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_bowl_signal(df_ticker)
@@ -351,36 +335,35 @@ def scan_market(timeframe: str):
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                # 💡 [수정완료] 에러 숨김 해제
-                print(f"⚠️ [에러 발생] {ticker}: {e}")
+                pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [{tf_label} 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [9번 봇: 밥그릇 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 # ================== ⏰ 미국 서머타임(DST) 적용 스케줄러 ==================
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [US 밥그릇 상업용 스케줄러 자동 대기 모드]")
-    print("   - [1시간봉] 미국 현지시간(NY) 기준: 정규장 중 매시 39분 실행")
-    print("   - [일봉] 미국 현지시간(NY) 장 마감 직후: 16:09 1회 실행")
+    print("🕒 [9번 봇: US 밥그릇 자동 대기 모드 - 분산 완료]")
+    print("   - [1시간봉] 미국 현지시간(NY) 기준: 매시 55분 실행 (다른 모든 봇과 충돌 없음)")
+    print("   - [일봉] 미국 현지시간(NY) 장 마감 직후: 16:40 실행")
     print("   (서머타임 여부를 시스템이 자동 계산하여 실행합니다.)\n")
     
     while True:
-        # 미국 뉴욕 현지 시간 가져오기 (서머타임 자동 반영)
         now_ny = datetime.now(ny_tz)
         
-        # 💡 [수정완료] 39분, 16:09분으로 시간 분산 세팅 (3번 타자)
-        if now_ny.minute == 39 and (10 <= now_ny.hour <= 15):
-            print(f"🚀 [US 1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        # 💡 [시간 분산] 매시 55분에 작동 (마지막 배차 간격)
+        if now_ny.minute == 30 and (10 <= now_ny.hour <= 15):
+            print(f"🚀 [US 밥그릇 1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             print("💤 1H 스캔 완료. 다음 타임까지 대기합니다...")
             time.sleep(50 * 60) 
             
-        elif now_ny.hour == 16 and now_ny.minute == 9:
-            print(f"🚀 [US 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        # 💡 [시간 분산] 미장 마감 후 16:40 작동
+        elif now_ny.hour == 15 and now_ny.minute == 20:
+            print(f"🚀 [US 밥그릇 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
             time.sleep(50 * 60)
@@ -389,5 +372,4 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    # 💡 [수정완료] 충돌 방지용으로 수동 실행 코드는 지우고 스케줄러만 대기시킵니다.
     run_scheduler()
