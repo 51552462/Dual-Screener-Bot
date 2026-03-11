@@ -34,8 +34,8 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Reverse_Breakout_Dual')
-CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
+# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
+CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
 DISPLAY_BARS = 150
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -108,9 +108,17 @@ def telegram_sender_daemon():
                         print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
                         break 
                 except Exception as e:
-                    print(f"\n❌ [파이썬 통신 에러] {e}")
+                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
+            
+        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
+        except:
+            pass
       
         telegram_queue.task_done()
 
@@ -326,33 +334,36 @@ def scan_market(timeframe: str):
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                pass
+                # 💡 [수정완료] 에러 숨김(pass) 해제 -> 어떤 종목에서 에러 났는지 로그에 출력
+                print(f"⚠️ [에러 발생] {ticker}: {e}")
         
         if tracker['scanned'] % 200 == 0 or tracker['scanned'] == len(tickers):
-            print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
     print(f"\n✅ [{tf_label} 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 # ================== ⏰ 스케줄러 ==================
 def run_scheduler():
+    # 💡 [수정완료] 타임존 완벽 적용 및 시작 시간 35분으로 세팅
+    import pytz
+    kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [역매공파 1H & 1D 상업용 스케줄러 자동 대기 모드]")
-    print("   - [1시간봉] 매일 08:40 ~ 14:40 (매시 40분마다)")
-    print("   - [일봉] 매일 13:40 (오후 1시 40분 딱 1번 추가 실행)")
+    print("   - [1시간봉] 매일 08:35 ~ 14:35 (매시 35분마다)")
+    print("   - [일봉] 매일 13:35 (오후 1시 35분 딱 1번 추가 실행)")
     
     while True:
-        now = datetime.now()
-        if now.minute == 40 and (8 <= now.hour <= 14):
-            print(f"🚀 [1H 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-            scan_market('1h')
-            if now.hour == 13:
-                print(f"🚀 [1D 정규 스캔 시작] (오후 1:40) 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-                scan_market('1d')
-            print("💤 스캔 완료. 다음 타임(1시간 뒤)까지 대기합니다...")
-            time.sleep(50 * 60) 
+        now = datetime.now(kr_tz)
+        if now.minute == 35 and (8 <= now.hour <= 14):
+             print(f"🚀 [1H 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+             scan_market('1h')
+             if now.hour == 13:
+                 print(f"🚀 [1D 정규 스캔 시작] (오후 1:35) 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+                 scan_market('1d')
+             print("💤 스캔 완료. 다음 타임(1시간 뒤)까지 대기합니다...")
+             time.sleep(50 * 60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market('1h')
-    scan_market('1d')
+    # 💡 [수정완료] 메인 파일(main.py)에서 충돌 방지를 위해 즉시 실행 코드는 제거하고 스케줄러만 호출
     run_scheduler()
