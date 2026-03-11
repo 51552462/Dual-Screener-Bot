@@ -33,8 +33,8 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Nulrim_1D')
-CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
+# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
+CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -107,9 +107,22 @@ def telegram_sender_daemon():
                         print(f"\n📲 [텔레그램 전송 성공] {img_path}")
                         break
                     elif res.status_code == 429: time.sleep(3)
+                    else:
+                        print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
+                        break
                 except Exception as e:
+                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
+            
+        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
+        except:
+            pass
+            
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
@@ -298,7 +311,8 @@ def scan_market_1d():
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                pass
+                # 💡 [수정완료] 에러 숨김 해제
+                print(f"⚠️ [에러 발생] {ticker}: {e}")
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
@@ -310,14 +324,14 @@ def scan_market_1d():
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
     print("🕒 [US 눌림목 상업용 스케줄러 자동 대기 모드]")
-    print("   - [일봉] 미국 현지시간(NY) 장 마감 직후: 16:05 실행")
+    print("   - [일봉] 미국 현지시간(NY) 장 마감 직후: 16:11 실행")
     print("   (서머타임 여부를 시스템이 자동 계산하여 실행합니다.)\n")
     
     while True:
         now_ny = datetime.now(ny_tz)
         
-        # 일봉 스캔 (뉴욕장 마감 직후 16:05 한 번만 실행)
-        if now_ny.hour == 16 and now_ny.minute == 5:
+        # 💡 [수정완료] 일봉 스캔 (뉴욕장 마감 직후 16:11 한 번만 실행 - 4번 타자)
+        if now_ny.hour == 16 and now_ny.minute == 11:
             print(f"🚀 [US 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
@@ -327,5 +341,5 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 시작 시 강제 1회 스캔
+    # 💡 [수정완료] 충돌 방지용으로 수동 실행 코드는 지우고 스케줄러만 대기시킵니다.
     run_scheduler()
