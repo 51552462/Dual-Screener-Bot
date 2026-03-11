@@ -33,8 +33,8 @@ SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
 # ================== 폴더 설정 ==================
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Ohdole_1H')
-CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
+# 💡 [수정완료] 서버 환경에 맞춰 현재 폴더(./charts)에 바로 저장하도록 변경
+CHART_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
@@ -70,7 +70,7 @@ def get_smart_company_report(code: str, name: str) -> tuple:
                 sentences = [s.strip() for s in raw_text.split('. ') if s.strip()]
                 summary = '. '.join(sentences[:2])
                 if not summary.endswith('.'): summary += '.'
-
+                
                 # 원문에 따라 직관적인 아이콘만 앞에 달아줍니다. 내용은 100% 진짜 팩트입니다.
                 if any(x in summary for x in ["증가", "흑자", "개선", "상승", "호조", "성장", "최대"]):
                     earnings_detail = f"📈 [개선] {summary}"
@@ -154,9 +154,18 @@ def telegram_sender_daemon():
                         print(f"\n❌ [텔레그램 서버 에러] {res.status_code}: {res.text}")
                         break 
                 except Exception as e:
-                    print(f"\n❌ [파이썬 통신 에러] {e}")
+                    print(f"\n⚠️ [파이썬 통신 에러] {e}")
                     time.sleep(2)
             time.sleep(1.5)
+            
+        # 💡 [수정완료] 텔레그램 전송 완료(또는 실패) 직후 해당 차트 즉시 삭제! (용량 0 유지)
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                print(f"🗑️ [용량 확보] 전송 완료된 차트 삭제: {img_path}")
+        except:
+            pass
+            
         telegram_queue.task_done()
 
 sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
@@ -236,6 +245,7 @@ def compute_ohdole_signal(df_raw: pd.DataFrame):
         "vol_ratio": float(vol_ratio),
         "sig_type": sig_type
     }
+ 
     return True, sig_type, df, dbg
 
 # ================== 차트 저장 ==================
@@ -339,7 +349,8 @@ def scan_market():
                             telegram_queue.put((chart_path, caption))
                             
             except Exception as e:
-                pass
+                # 💡 [수정완료] 에러 숨김(pass) 해제
+                print(f"⚠️ [에러 발생] {ticker}: {e}")
         
         if tracker['scanned'] % 200 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
@@ -349,12 +360,15 @@ def scan_market():
 
 # ================== ⏰ 스케줄러 ==================
 def run_scheduler():
+    # 💡 [수정완료] 타임존 완벽 적용 및 시작 시간 41분으로 분산 세팅
+    import pytz
+    kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [오돌이 1H 상업용 스케줄러 자동 대기 모드]")
-    print("   - [1시간봉] 매일 08:40 ~ 14:40 (매시 40분마다 실행)")
+    print("   - [1시간봉] 매일 08:41 ~ 14:41 (매시 41분마다 실행)")
     
     while True:
-        now = datetime.now()
-        if now.minute == 40 and (8 <= now.hour <= 14):
+        now = datetime.now(kr_tz)
+        if now.minute == 41 and (8 <= now.hour <= 14):
             print(f"🚀 [1H 정규 스캔 시작] 현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market()
             print("💤 스캔 완료. 다음 타임(1시간 뒤)까지 대기합니다...")
@@ -362,5 +376,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market()
+    # 💡 [수정완료] 충돌 방지를 위해 시작 즉시 실행 코드 제거
     run_scheduler()
