@@ -347,7 +347,7 @@ def run_scheduler():
         now_kr = datetime.now(kr_tz)
         
         # 💡 매시 30분에 작동 (1번 00분, 2번 10분, 3번 20분과 완벽 분리)
-        if now_kr.minute == 35:
+        if now_kr.minute == 35 and (9 <= now_kr.hour <= 15):
             print(f"🚀 [4번 봇 1H 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market()
             print("💤 스캔 완료. 다음 타임(1시간 뒤)까지 대기합니다...")
@@ -357,3 +357,4 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
