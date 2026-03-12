@@ -340,7 +340,7 @@ def run_scheduler():
     while True:
         now_kr = datetime.now(kr_tz)
         
-        if now_kr.minute == 22 and (9 <= now_kr.hour <= 15):
+        if now_kr.minute == 22 and (9 <= now_kr.hour <= 15) and now_kr.hour != 14:
             print(f"🚀 [1번 봇 1H 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_krx_1h()
             time.sleep(50 * 60) 
@@ -356,6 +356,7 @@ def run_scheduler():
 if __name__ == "__main__":
     initialize_tv_pool()
     run_scheduler()
+
 
 
 
