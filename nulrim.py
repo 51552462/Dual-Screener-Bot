@@ -1,4 +1,4 @@
-# Dante_Nulrim_1D_LS_Sniper_Final.py
+# Dante_Nulrim_1D_LS_Sniper_V2_NewLogic.py
 import os
 import re
 import time
@@ -7,7 +7,7 @@ import threading
 import queue
 import concurrent.futures
 from datetime import datetime
-import pytz  # 💡 [추가] 서버 시간 꼬임 방지용
+import pytz
 from io import StringIO
 import numpy as np
 import pandas as pd
@@ -40,7 +40,6 @@ def get_ls_token():
     headers = {"content-type": "application/x-www-form-urlencoded"}
     data = {"grant_type": "client_credentials", "appkey": APP_KEY, "appsecretkey": APP_SECRET, "scope": "oob"}
     try:
-        # ⭐️ SSL 에러 방지용 verify=False 추가
         res = requests.post(url, headers=headers, data=data, timeout=10, verify=False)
         if res.status_code == 200:
             print("✅ LS API 통신망 연결 성공!")
@@ -49,7 +48,7 @@ def get_ls_token():
         print(f"❌ 토큰 발급 에러: {e}")
     return None
 
-# ================== ⭐️ 스마트 속도 제어기 (12분 단축의 핵심) ==================
+# ================== 스마트 속도 제어기 ==================
 class LSApiRateLimiter:
     def __init__(self):
         self.timestamps = []
@@ -61,13 +60,11 @@ class LSApiRateLimiter:
             self.timestamps = [t for t in self.timestamps if now - t < 1.05]
             if len(self.timestamps) >= 3:
                 sleep_time = 1.05 - (now - self.timestamps[0])
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                if sleep_time > 0: time.sleep(sleep_time)
             self.timestamps.append(time.time())
 
 ls_limiter = LSApiRateLimiter()
 
-# 글로벌 고속 세션 (TCP Handshake 병목 제거)
 global_session = requests.Session()
 adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=1)
 global_session.mount('https://', adapter)
@@ -99,7 +96,7 @@ def get_company_fact_report(code: str) -> tuple:
     except: pass
     return sector, outlook, growth
 
-# ================== KRX 종목 리스트 고속 수집 ==================
+# ================== KRX 종목 수집 ==================
 def get_krx_list_kind():
     print("KRX KIND 서버에서 종목 리스트를 가져옵니다...")
     try:
@@ -118,7 +115,6 @@ def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
         if item is None: break
-            
         img_path, caption = item
         if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)"
 
@@ -126,97 +122,117 @@ def telegram_sender_daemon():
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(
-                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
-                            files={"photo": f}, timeout=20, verify=False
-                        )
-                    if res.status_code == 200: 
-                        break
+                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, files={"photo": f}, timeout=20, verify=False)
+                    if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                     else: break 
-                except Exception as e:
-                    time.sleep(2)
+                except Exception as e: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
-# ================== 파라미터 셋업 ==================
+# ================== ⭐️ 신규 눌림목 로직 (트레이딩뷰 100% 동기화) ==================
 MIN_PRICE = 1000                 
 MIN_TRANS_MONEY = 100_000_000  
 
-# ================== ⭐️ 눌림목 핵심 로직 (초고속 NumPy 기반) ==================
 def compute_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500:
         return False, "no_data", df_raw, {}
 
     df = df_raw.copy()
+    
+    # 1. EMA 설정
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
+    df['Lowest5'] = df['Low'].rolling(5).min()
 
-    # NumPy 연산으로 0.1초 컷
-    close_arr = df['Close'].values
-    open_arr = df['Open'].values
-    vol_arr = df['Volume'].values
-    avgvol3_arr = df['AvgVol3'].values
+    c = df['Close'].values
+    o = df['Open'].values
+    v = df['Volume'].values
+    av3 = df['AvgVol3'].values
+    lowest5 = df['Lowest5'].values
     
-    ema10 = df['EMA10'].values
-    ema20 = df['EMA20'].values
-    ema30 = df['EMA30'].values
-    ema60 = df['EMA60'].values
-    ema112 = df['EMA112'].values
-    ema224 = df['EMA224'].values
-    ema448 = df['EMA448'].values
+    e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
+    e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    isBullish = close_arr > open_arr
-    
-    # ⭐️ Infinity 무한대 에러 완벽 방어
+    # ⭐️ 스캐너용 기본 안전 필터 (거래대금 1억 이상, 3배 거래량 터진 양봉)
+    moneyOk = (c * v) >= MIN_TRANS_MONEY
+    priceOk = c >= MIN_PRICE
     with np.errstate(invalid='ignore'):
-        volSpike5 = vol_arr >= (np.nan_to_num(avgvol3_arr, nan=1.0) * 5)
-        
-    moneyOk = (close_arr * vol_arr) >= MIN_TRANS_MONEY
-    priceOk = close_arr >= MIN_PRICE
+        volSpike = v >= (np.nan_to_num(av3, nan=1.0) * 3)
+    isBullish = c > o
 
-    condBase = priceOk & moneyOk & isBullish & volSpike5
+    # 3. 배열 상태 정의
+    align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
+    align224 = align112 & (e112 > e224)
+    align448 = align224 & (e224 > e448)
 
-    c1_long_trend = (ema112 > ema224) & (ema224 > ema448)
-    c1_short_inverse = (ema30 > ema20) & (ema20 > ema10)
-    c1_position = (close_arr < ema30) & (close_arr > ema112)
-    isCat112 = condBase & c1_long_trend & c1_short_inverse & c1_position
+    # 4. 장기 기준선 유지 상태 정의
+    longKeep448 = e224 > e448 
+    longKeep224 = e112 > e224 
+    longKeep112 = e60 > e112  
 
-    c2_full_trend = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema112) & (ema112 > ema224) & (ema224 > ema448)
-    c2_under_20 = (close_arr < ema10) & (close_arr < ema20)
-    c2_above_30 = close_arr > ema30
-    isCat30 = condBase & (~isCat112) & c2_full_trend & c2_under_20 & c2_above_30
+    prev_align448 = np.roll(align448, 1); prev_align448[0] = False
+    prev_align224 = np.roll(align224, 1); prev_align224[0] = False
+    prev_align112 = np.roll(align112, 1); prev_align112[0] = False
+    
+    prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
+    prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
+    prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
-    c3_mid_inverse = (ema60 > ema30) & (ema30 > ema20) & (ema20 > ema10)
-    c3_position = (close_arr < ema112) & (close_arr > ema224)
-    isCat224 = condBase & (~isCat112) & (~isCat30) & c3_mid_inverse & c3_position
+    # 5. 기본 시그널 (S1, S2, S3)
+    s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
+    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
+    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
 
-    c4_position = (close_arr < ema224) & (close_arr > ema448)
-    isCat448 = condBase & (~isCat112) & (~isCat30) & (~isCat224) & c4_position
+    # 6. 정밀 필터링 돌파 시그널 (S4, S5) 조건 검사
+    prev_c = np.roll(c, 1); prev_c[0] = 0
+    prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
+    
+    raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
+    dipped20 = lowest5 < e20
+    raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
 
-    c112_hit = isCat112[-1]
-    c30_hit = isCat30[-1]
-    c224_hit = isCat224[-1]
-    c448_hit = isCat448[-1]
+    # ⭐️ 쿨타임 (5봉) 적용 시뮬레이터
+    s4 = np.zeros_like(c, dtype=bool)
+    s5 = np.zeros_like(c, dtype=bool)
+    last_pullback_bar = -100
 
-    if not (c112_hit or c30_hit or c224_hit or c448_hit):
+    for i in range(len(c)):
+        if raw_s4[i] and (i - last_pullback_bar > 5):
+            s4[i] = True
+            last_pullback_bar = i
+        if raw_s5[i] and not s4[i] and (i - last_pullback_bar > 5):
+            s5[i] = True
+            last_pullback_bar = i
+
+    # 7. 최종 타점 판별 (스캐너 필터와 결합)
+    cond_base = moneyOk & priceOk & volSpike
+    
+    hit1 = s1[-1] and cond_base[-1]
+    hit2 = s2[-1] and cond_base[-1]
+    hit3 = s3[-1] and cond_base[-1]
+    hit4 = s4[-1] and cond_base[-1]
+    hit5 = s5[-1] and cond_base[-1]
+
+    if not (hit1 or hit2 or hit3 or hit4 or hit5):
         return False, "no_signal", df, {}
 
-    if c30_hit: sig_type = "🚀 30선 지지 (급등 눌림목)"
-    elif c112_hit: sig_type = "💎 112선 지지 (황금 눌림목)"
-    elif c224_hit: sig_type = "🛡️ 224선 지지 (중기 마지노선)"
-    else: sig_type = "⚓ 448선 지지 (최후 마지노선)"
+    if hit5: sig_type = "S5 (지연 돌파 확정)"
+    elif hit4: sig_type = "S4 (정배열 눌림 돌파)"
+    elif hit1: sig_type = "S1 (448 재정렬 양봉)"
+    elif hit2: sig_type = "S2 (224 재정렬 양봉)"
+    elif hit3: sig_type = "S3 (112 재정렬 양봉)"
+    else: sig_type = "새로운 눌림"
 
-    safe_avg_vol = avgvol3_arr[-1] if avgvol3_arr[-1] > 0 else 1
+    safe_avg_vol = av3[-1] if av3[-1] > 0 else 1
     
     dbg = {
-        "last_close": float(close_arr[-1]),
-        "vol_spike": float(vol_arr[-1] / safe_avg_vol),
+        "last_close": float(c[-1]),
+        "vol_spike": float(v[-1] / safe_avg_vol),
         "sig_type": sig_type
     }
     
@@ -233,14 +249,15 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             
+            # 파인스크립트 컬러 완벽 매칭
             apds = [
-                mpf.make_addplot(df_cut["EMA10"], color='#FF5252', width=1, alpha=0.5),
-                mpf.make_addplot(df_cut["EMA20"], color='#FFD700', width=1, alpha=0.5),
-                mpf.make_addplot(df_cut["EMA30"], color='#FF00FF', width=2),
-                mpf.make_addplot(df_cut["EMA60"], color='#FF9800', width=1, alpha=0.5),
-                mpf.make_addplot(df_cut["EMA112"], color='#00E676', width=2),
-                mpf.make_addplot(df_cut["EMA224"], color='#2979FF', width=2),
-                mpf.make_addplot(df_cut["EMA448"], color='#B0BEC5', width=2),
+                mpf.make_addplot(df_cut["EMA10"], color='red', width=1),
+                mpf.make_addplot(df_cut["EMA20"], color='orange', width=1),
+                mpf.make_addplot(df_cut["EMA30"], color='yellow', width=1),
+                mpf.make_addplot(df_cut["EMA60"], color='green', width=1),
+                mpf.make_addplot(df_cut["EMA112"], color='blue', width=1),
+                mpf.make_addplot(df_cut["EMA224"], color='navy', width=2),
+                mpf.make_addplot(df_cut["EMA448"], color='purple', width=2),
             ]
 
             title = f"[{dbg['sig_type']}] {code} {name} (일봉)\nClose:{dbg['last_close']:.0f} | 거래량 {dbg['vol_spike']:.1f}배 폭발"
@@ -263,7 +280,7 @@ def scan_market_1d():
     
     token = get_ls_token()
     if not token: 
-        print("❌ LS증권 토큰 발급 실패로 스캔 불가. 5분 뒤 다시 시도합니다.")
+        print("❌ LS증권 토큰 발급 실패로 스캔 불가")
         return
 
     print(f"\n⚡ [일봉 전용] LS증권 20차선 초고속 병렬 스캔 시작!")
@@ -272,8 +289,6 @@ def scan_market_1d():
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     url = "https://openapi.ls-sec.co.kr:8080/stock/chart"
-    
-    # 일봉 전용 API 호출 구조
     tr_cd = "t8413"
     outblock_key = "t8413OutBlock1"
 
@@ -296,7 +311,7 @@ def scan_market_1d():
 
         df_raw = None
         for retry in range(3): 
-            ls_limiter.wait() # 스마트 통신 제어기 작동
+            ls_limiter.wait()
             try:
                 res = global_session.post(url, headers=headers, data=json.dumps(body), timeout=5, verify=False)
                 if res.status_code == 200:
@@ -331,11 +346,22 @@ def scan_market_1d():
                 chart_path = save_chart(df, code, name, rank, dbg)
                 if chart_path:
                     sector, outlook, growth = get_company_fact_report(code)
+                    
+                    # 로직별 맞춤형 코멘트
+                    msg = ""
+                    if "S1" in sig_type: msg = "S1: 224, 448선 정배열 유지 중, 꼬였던 단기 이평선이 다시 448선까지 완벽한 정배열을 이루는 양봉이 떴습니다!"
+                    elif "S2" in sig_type: msg = "S2: 112, 224선 정배열 유지 중, 꼬였던 단기 이평선이 다시 224선까지 정배열을 이루는 양봉이 떴습니다!"
+                    elif "S3" in sig_type: msg = "S3: 60, 112선 정배열 유지 중, 꼬였던 단기 이평선이 다시 112선까지 정배열을 이루는 양봉이 떴습니다!"
+                    elif "S4" in sig_type: msg = "S4: 완전 정배열 상태에서 20일선 눌림 후 10일선 위로 강하게 돌파하는 양봉이 떴습니다!"
+                    elif "S5" in sig_type: msg = "S5: 최근 눌림 이후, 이평선이 완전 정배열로 딱 맞춰지며 상승을 확정 짓는 타점이 떴습니다!"
+
                     caption = (
-                        f"[{dbg['sig_type']}] (일봉)\n\n"
+                        f"🔥 [{dbg['sig_type']}] (일봉)\n\n"
                         f"[{name}] ({code})\n"
                         f"- 현재가: {dbg['last_close']:,.0f}원\n"
-                        f"- 거래량: 직전 3거래일 평균 대비 {dbg['vol_spike']:.1f}배 폭발\n\n"
+                        f"- 거래량: 3일 평균 대비 {dbg['vol_spike']:.1f}배\n\n"
+                        f"📢 [알고리즘 브리핑]\n"
+                        f"{msg}\n\n"
                         f"💡 [시장 뷰 & 기업 분석]\n"
                         f"- 섹터: {sector}\n"
                         f"- 전망: {outlook}\n"
@@ -348,19 +374,17 @@ def scan_market_1d():
         executor.map(worker, list(stock_list.iterrows()))
 
     dt = time.time() - t0
-    print(f"\n✅ [5번 봇: 눌림목 1D 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [5번 봇: 신규 눌림목 1D 스캔 완료] 탐색: {tracker['scanned']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
-# ================== ⏰ [5번 봇 스케줄러] 매일 16:10 단독 작동 ==================
+# ================== ⏰ 스케줄러 ==================
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [5번 봇: 눌림목 1D 상업용 스케줄러 대기 모드 - 분산 완료]")
+    print("🕒 [5번 봇: 신규 눌림목 1D 스케줄러 대기 모드]")
     print("   - [일봉 전용] 매일 16:10 (장 마감 직후 단독 실행)")
     
     while True:
         now_kr = datetime.now(kr_tz)
-        
-        # 💡 매일 16:10에만 딱 한 번 실행 (서버 부하 분산)
-        if now_kr.hour == 13 and now_kr.minute == 10:
+        if now_ny.hour == 15 and now_ny.minute == 0:
             print(f"🚀 [5번 봇 1D 정규 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             print("💤 스캔 완료. 다음 타임(내일)까지 대기합니다...")
@@ -369,5 +393,4 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 시작하자마자 1회 강제 실행 테스트
     run_scheduler()
