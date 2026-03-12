@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import mplfinance as mpf
 import matplotlib
-matplotlib.use('Agg') # GUI 에러 원천 차단 [cite: 88]
+matplotlib.use('Agg') # GUI 에러 원천 차단
 import matplotlib.pyplot as plt
 import requests
 import warnings
@@ -142,7 +142,7 @@ def telegram_sender_daemon():
                 except Exception as e:
                     time.sleep(2)
             time.sleep(1.5)
-        telegram_queue.task_done() [cite: 99, 100, 101, 102, 103, 104]
+        telegram_queue.task_done() 
 
 sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
 sender_thread.start() 
@@ -381,6 +381,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
