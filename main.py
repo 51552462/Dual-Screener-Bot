@@ -1,3 +1,10 @@
+import sys
+import codecs
+
+# 💡 터미널 한글 & 이모지 깨짐 완벽 방지 (UTF-8 강제 적용)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 import threading
 import time
 import os
@@ -55,8 +62,10 @@ def status_monitor():
 if __name__ == "__main__":
     print("🚀 24시간 독립 멀티스레딩 컨트롤 타워 가동 시작...")
 
-    try: kr_bowl.initialize_tv_pool()
-    except Exception as e: print(f"TV 에러: {e}")
+    try: 
+        kr_bowl.initialize_tv_pool()
+    except Exception as e: 
+        print(f"TV 에러: {e}")
 
     threads = [
         threading.Thread(target=start_us_ema, daemon=True),
@@ -77,5 +86,3 @@ if __name__ == "__main__":
 
     for t in threads:
         t.join()
-
-
