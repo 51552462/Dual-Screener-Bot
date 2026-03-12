@@ -362,14 +362,14 @@ def run_scheduler():
         now_ny = datetime.now(ny_tz)
         
         # 💡 [시간 분산] 매시 40분에 1시간봉 검사
-        if now_ny.minute == 10 and (9 <= now_ny.hour <= 15):
+        if now_ny.minute == 10 and (9 <= now_ny.hour <= 15) and now_ny.hour != 15:
             print(f"🚀 [US 역배열/1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             print("💤 1H 스캔 완료. 다음 타임까지 대기합니다...")
             time.sleep(50 * 60) 
             
         # 💡 [시간 분산] 미장 마감 10분 뒤 (16:10) 일봉 검사
-        elif now_ny.hour == 16 and now_ny.minute == 2:
+       elif now_ny.hour == 15 and now_ny.minute == 10:
             print(f"🚀 [US 정배열/1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
@@ -380,6 +380,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
