@@ -371,7 +371,7 @@ def run_scheduler():
             time.sleep(50 * 60) 
             
         # 💡 매일 16:00에 일봉 스캔 (1, 2번 봇과 격차)
-        elif now_kr.hour == 15 and now_kr.minute == 30:
+        elif now_kr.hour == 14 and now_kr.minute == 30:
             print(f"🚀 [3번 봇 1D 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
             time.sleep(50 * 60) 
@@ -381,6 +381,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
