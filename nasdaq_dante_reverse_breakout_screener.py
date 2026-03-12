@@ -402,7 +402,7 @@ def run_scheduler():
             time.sleep(50 * 60) 
             
         # 💡 [시간 분산] 미장 마감 20분 뒤 (16:20) 일봉 검사
-      elif now_ny.hour == 14 and now_ny.minute == 20:
+       elif now_ny.hour == 14 and now_ny.minute == 20:
             print(f"🚀 [US 정배열/1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
@@ -413,6 +413,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
