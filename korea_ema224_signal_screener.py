@@ -301,7 +301,7 @@ def scan_market(timeframe: str):
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
         
-        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=True) 
+        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=False) 
         
         for ticker in chunk:
             tracker['scanned'] += 1
@@ -381,6 +381,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
