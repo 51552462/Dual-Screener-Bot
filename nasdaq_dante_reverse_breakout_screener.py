@@ -395,7 +395,7 @@ def run_scheduler():
         now_ny = datetime.now(ny_tz)
         
         # 💡 [시간 분산] 매시 50분에 1시간봉 검사
-        if now_ny.minute == 32 and (9 <= now_ny.hour <= 15):
+        if now_ny.minute == 27 and (9 <= now_ny.hour <= 15):
             print(f"🚀 [US 역매공파/1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             print("💤 1H 스캔 완료. 다음 타임까지 대기합니다...")
@@ -413,5 +413,6 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
