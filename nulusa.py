@@ -347,7 +347,7 @@ def run_scheduler():
     
     while True:
         now_ny = datetime.now(ny_tz)
-        if now_ny.hour == 15 and now_ny.minute == 0:
+        if now_ny.hour == 14 and now_ny.minute == 0:
             print(f"🚀 [US 신규 눌림목 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
@@ -357,3 +357,4 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
