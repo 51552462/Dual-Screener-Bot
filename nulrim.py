@@ -384,7 +384,7 @@ def run_scheduler():
     
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_ny.hour == 15 and now_ny.minute == 0:
+        if now_kr.hour == 14 and now_kr.minute == 0:
             print(f"🚀 [5번 봇 1D 정규 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             print("💤 스캔 완료. 다음 타임(내일)까지 대기합니다...")
@@ -394,3 +394,4 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
