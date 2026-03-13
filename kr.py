@@ -302,7 +302,7 @@ def scan_krx_1d():
 
     for i in range(0, len(tickers), 100):
         chunk = tickers[i:i+100]
-        df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=True)
+        df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         for tk in chunk:
             tracker['scanned'] += 1
             info = ticker_to_info[tk]
@@ -343,12 +343,12 @@ def run_scheduler():
         if now_kr.minute == 22 and (9 <= now_kr.hour <= 15) and now_kr.hour != 14:
             print(f"🚀 [1번 봇 1H 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_krx_1h()
-            time.sleep(50 * 60) 
+            time.sleep(60) 
             
         elif now_kr.hour == 14 and now_kr.minute == 30:
             print(f"🚀 [1번 봇 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_krx_1d()
-            time.sleep(50 * 60)
+            time.sleep(60)
             
         else: 
             time.sleep(10)
@@ -356,6 +356,7 @@ def run_scheduler():
 if __name__ == "__main__":
     initialize_tv_pool()
     run_scheduler()
+
 
 
 
