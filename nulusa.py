@@ -351,10 +351,11 @@ def run_scheduler():
             print(f"🚀 [US 신규 눌림목 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
-            time.sleep(50 * 60)
+            time.sleep(60)
         else:
             time.sleep(10)
 
 if __name__ == "__main__":
     run_scheduler()
+
 
