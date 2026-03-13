@@ -225,13 +225,13 @@ def compute_bobgeureut(df_raw: pd.DataFrame):
     signalCat1 = signalBase & isCat1
     isAligned = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224)
 
-    if (signalCat2 & isAligned)[-1]: sig_type = "💥Cat2(정배열) - 120봉 횡보"
-    elif (signalCat1 & isAligned)[-1]: sig_type = "💥Cat1(정배열) - 60봉 횡보"
-    elif (signalCat2 & (~isAligned))[-1]: sig_type = "Cat2(Buy V5) - 120봉 횡보"
-    elif (signalCat1 & (~isAligned))[-1]: sig_type = "Cat1(Buy V5) - 60봉 횡보"
-    else: sig_type = "밥그릇 돌파"
+    if (signalCat2 & isAligned)[-1]: sig_type = "💥 B (J 강조)"
+    elif (signalCat1 & isAligned)[-1]: sig_type = "💥 B (J 강조)"
+    elif (signalCat2 & (~isAligned))[-1]: sig_type = "🎯 B (일반)"
+    elif (signalCat1 & (~isAligned))[-1]: sig_type = "🎯 B (일반)"
+    else: sig_type = "🎯 B"
 
-    return True, sig_type, df, {"close": float(c[-1]), "ema224": float(ema224[-1]), "vol_spike": float(v[-1]/max(1, avgVol3[-1]))}
+    return True, sig_type, df, {"close": float(c[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, title_text: str) -> str:
@@ -239,18 +239,11 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, title_text: st
         try:
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
             dfc = df.iloc[-DISPLAY_BARS:].copy()
-            apds = [
-                mpf.make_addplot(dfc["EMA112"], color='green', width=1),
-                mpf.make_addplot(dfc["EMA224"], color='black', width=2),
-                mpf.make_addplot(dfc["BB_Upper"], color='red', type='scatter', markersize=5),
-                mpf.make_addplot(dfc["Senkou1"], color='aqua', alpha=0.3, width=1),
-                mpf.make_addplot(dfc["Senkou2"], color='aqua', alpha=0.3, width=1),
-            ]
-            fill_between = dict(y1=dfc['Senkou1'].values, y2=dfc['Senkou2'].values, alpha=0.1, color='aqua')
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
             plt.close('all')
-            mpf.plot(dfc, type="candle", volume=True, addplot=apds, fill_between=fill_between, title=title_text, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
+            # ⭐️ 차트 선 전부 제거
+            mpf.plot(dfc, type="candle", volume=True, title=title_text, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
         except: return None
@@ -275,11 +268,12 @@ def scan_krx_1h():
                 if hit:
                     tracker['hits'] += 1
                     badge = _streak_badge(_update_streak(state, f"{code}:1H", today_str))
-                    title = f"[{sig_type}] {name} (1H)\nClose:{dbg['close']:.0f}  EMA224:{dbg['ema224']:.0f}  VolSpike:{dbg['vol_spike']:.1f}x"
+                    title = f"[{sig_type}] {name} (1H)\nClose: {dbg['close']:,.0f}원"
                     path = save_chart(df_res, code, name, tracker['hits'], title)
                     if path:
                         sec, out, grow = get_company_fact_report(code)
-                        msg = f"🔥 [{sig_type}] (1H)\n\n[{name}] ({code}) {badge}\n- 현재가: {dbg['close']:,.0f}원\n- 224일선: {dbg['ema224']:,.0f}원\n- 거래량: {dbg['vol_spike']:.1f}배\n\n💡 [팩트 체크]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\nTime: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
+                        # ⭐️ 거래량/이평선 제거, 깔끔한 팩트 리포트
+                        msg = f"🔥 [{sig_type}] (1H)\n\n🏢 [{name}] ({code}) {badge}\n💰 현재가: {dbg['close']:,.0f}원\n\n💡 [기업 팩트 체크]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\n⏰ {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%m-%d %H:%M')}"
                         telegram_queue.put((path, msg))
         with console_lock:
             tracker['scanned'] += 1
@@ -320,22 +314,19 @@ def scan_krx_1d():
                     if hit:
                         tracker['hits'] += 1
                         badge = _streak_badge(_update_streak(state, f"{info['code']}:1d", today_str))
-                        title = f"[{sig_type}] {info['name']} (1D)\nClose:{dbg['close']:.0f}  EMA224:{dbg['ema224']:.0f}  VolSpike:{dbg['vol_spike']:.1f}x"
+                        title = f"[{sig_type}] {info['name']} (1D)\nClose: {dbg['close']:,.0f}원"
                         path = save_chart(df_res, info['code'], info['name'], tracker['hits'], title)
                         if path:
                             sec, out, grow = get_company_fact_report(info['code'])
-                            msg = f"💎 [{sig_type}] (1D)\n\n[{info['name']}] ({info['code']}) {badge}\n- 현재가: {dbg['close']:,.0f}원\n- 224일선: {dbg['ema224']:,.0f}원\n- 거래량: {dbg['vol_spike']:.1f}배\n\n💡 [팩트 체크]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\nTime: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
+                            msg = f"💎 [{sig_type}] (1D)\n\n🏢 [{info['name']}] ({info['code']}) {badge}\n💰 현재가: {dbg['close']:,.0f}원\n\n💡 [기업 팩트 체크]\n🔸 섹터: {sec}\n🔸 전망: {out}\n🔸 실적: {grow}\n\n⏰ {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%m-%d %H:%M')}"
                             telegram_queue.put((path, msg))
             except: pass
     _save_state(state)
     print(f"\n✅ [1번 봇 1D 완료] 정상분석: {tracker['analyzed']} | 포착: {tracker['hits']} | 시간: {(time.time() - t0)/60:.1f}분")
 
-# ================== ⏰ [1번 봇 스케줄러] 정각 / 15:30 ==================
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [1번 봇: 한국장 밥그릇 대기 모드 - 분산 완료]")
-    print("   - [1H 스캔] 매시 00분 (정각)")
-    print("   - [1D 스캔] 매일 15:30")
+    print("🕒 [1번 봇: 한국장 밥그릇 대기 모드]")
     
     while True:
         now_kr = datetime.now(kr_tz)
@@ -356,9 +347,3 @@ def run_scheduler():
 if __name__ == "__main__":
     initialize_tv_pool()
     run_scheduler()
-
-
-
-
-
-
