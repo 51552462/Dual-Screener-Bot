@@ -5,7 +5,7 @@ import time
 import threading
 import queue
 from datetime import datetime
-import pytz  # 서버 시간 꼬임 방지용
+import pytz  
 from io import StringIO
 import numpy as np
 import pandas as pd
@@ -158,14 +158,12 @@ def compute_signal(df_raw: pd.DataFrame):
     isAccBull = df['Close'] > df['Open']
     rng = df['High'] - df['Low']
     
-    # ⭐️ 0으로 나누기(Infinity) 완벽 방어 처리
     with np.errstate(divide='ignore', invalid='ignore'):
         closePos = np.where(rng > 0, (df['Close'] - df['Low']) / rng, 0)
     
     isAccCandle = isAccBull & (df['Value'] >= VALUE_SPIKE_MULT * df['ValueMA20']) & (closePos >= CLOSE_TOP_FRAC)
     condHasAcc = isAccCandle.rolling(window=ACC_LOOKBACK).sum() > 0
 
-    # ⭐️ NaN 및 Infinity 방어 후 거래량 폭발 계산
     avgVol3_arr = df['AvgVol3'].values
     vol_arr = df['Volume'].values
     with np.errstate(invalid='ignore'):
@@ -189,7 +187,7 @@ def compute_signal(df_raw: pd.DataFrame):
             signalCount += 1
 
     isSubsequentSignal = signalBase.iloc[-1] and (signalCount > 1)
-    signal_type = "💥연속 역매공파" if isSubsequentSignal else "첫 역매공파"
+    signal_type = "💥연속 역매공파" if isSubsequentSignal else "🎯첫 역매공파"
 
     dbg = {
         "last_close": float(df["Close"].iloc[-1]),
@@ -236,7 +234,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
         except Exception as e:
             return None
 
-# ================== 🚀 야후 API 그룹 다운로드 엔진 ==================
+# ================== 🚀 야후 API 엔진 (정확도 대폭발 버전) ==================
 def scan_market(timeframe: str):
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
@@ -251,25 +249,54 @@ def scan_market(timeframe: str):
         ticker_to_info[ticker] = {'code': row['Code'], 'name': row['Name']}
     
     tickers = list(ticker_to_info.keys())
-    chunk_size = 100 
+    # ⭐️ 수술 2: 야후 서버 기절 방지를 위한 최적의 배차 간격 (100 -> 40)
+    chunk_size = 40 
     period = "730d" if timeframe == '1h' else "3y"
 
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
+
+    # ⭐️ 수술 1: VIP 통신망 세팅 (끊김 방지)
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=3)
+    session.mount('https://', adapter)
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
         
-        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=False)
+        df_batch = pd.DataFrame()
+        # ⭐️ 수술 3: 야후가 빈 데이터 주면 포기하지 않고 4번 끈질기게 재시도
+        for attempt in range(4):
+            try:
+                df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=False, session=session)
+                if df_batch is not None and not df_batch.empty:
+                    break
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+        # 4번 재시도해도 안 주면 어쩔 수 없이 패스
+        if df_batch is None or df_batch.empty:
+            tracker['scanned'] += len(chunk)
+            continue
         
         for ticker in chunk:
             tracker['scanned'] += 1
-            info = ticker_to_info[ticker]
+            info = ticker_to_info.get(ticker)
+            if not info: continue
             name, code = info['name'], info['code']
 
             try:
-                if len(chunk) == 1: df_ticker = df_batch.copy()
-                else: df_ticker = df_batch[ticker].copy()
+                # ⭐️ 수술 4: 데이터 누락 및 구조 깨짐 방어막 (MultiIndex 에러 차단)
+                if len(chunk) == 1: 
+                    df_ticker = df_batch.copy()
+                else: 
+                    if isinstance(df_batch.columns, pd.MultiIndex):
+                        if ticker not in df_batch.columns.get_level_values(0): 
+                            continue # 야후가 누락시킨 종목은 안전하게 스킵
+                        df_ticker = df_batch[ticker].copy()
+                    else:
+                        continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 
@@ -312,23 +339,23 @@ def scan_market(timeframe: str):
     dt = time.time() - t0
     print(f"\n✅ [2번 봇 {tf_label} 스캔 완료] 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
-# ================== ⏰ [2번 봇 스케줄러] 매시 10분 / 매일 15:40 ==================
+# ================== ⏰ [2번 봇 스케줄러] 매시 10분 / 매일 14:20 ==================
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [2번 봇: 한국장 역매공파 자동 스케줄러 대기 모드 - 분산 완료]")
     print("   - [1H 스캔] 매시 10분마다 (서버 부하 분산)")
-    print("   - [1D 스캔] 매일 15:40 (장 마감 직후)")
+    print("   - [1D 스캔] 매일 14:20 (장 마감 직전)")
     
     while True:
         now_kr = datetime.now(kr_tz)
         
-        # 💡 매시 10분에 1시간봉 스캔 (1번 봇과 10분 격차)
+        # 💡 매시 10분에 1시간봉 스캔
         if now_kr.minute == 12 and (9 <= now_kr.hour <= 15) and now_kr.hour != 14:
             print(f"🚀 [2번 봇 1H 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             time.sleep(60) 
             
-        # 💡 매일 15:40에 일봉 스캔 (1번 봇과 10분 격차)
+        # 💡 매일 14:20에 일봉 스캔
         elif now_kr.hour == 14 and now_kr.minute == 20:
             print(f"🚀 [2번 봇 1D 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
@@ -339,9 +366,3 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
-
-
-
-
-
-
