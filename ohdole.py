@@ -286,7 +286,7 @@ def scan_market():
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
         
-        df_batch = yf.download(tickers_str, interval="1h", period=period, group_by="ticker", progress=False, threads=True)
+        df_batch = yf.download(tickers_str, interval="1h", period=period, group_by="ticker", progress=False, threads=False)
         
         for ticker in chunk:
             tracker['scanned'] += 1
@@ -351,12 +351,13 @@ def run_scheduler():
             print(f"🚀 [4번 봇 1H 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market()
             print("💤 스캔 완료. 다음 타임(1시간 뒤)까지 대기합니다...")
-            time.sleep(50 * 60) 
+            time.sleep(60) 
         else: 
             time.sleep(10)
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
