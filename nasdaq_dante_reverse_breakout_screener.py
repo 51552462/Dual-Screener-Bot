@@ -324,7 +324,7 @@ def scan_market(timeframe: str):
         tickers_str = " ".join(chunk)
         
         # 야후 파이낸스 고속 다운로드 (미국 주식에 최적화됨)
-        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=True)
+        df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=False)
         
         for ticker in chunk:
             tracker['scanned'] += 1
@@ -413,6 +413,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
