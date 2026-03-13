@@ -5,13 +5,13 @@ import time
 import threading
 import queue
 from datetime import datetime
-import pytz  # 💡 [추가] 서버 시간 꼬임 방지용 한국 시간 동기화
+import pytz
 from io import StringIO
 import numpy as np
 import pandas as pd
 import mplfinance as mpf
 import matplotlib
-matplotlib.use('Agg') # GUI 에러 원천 차단
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings
@@ -20,20 +20,15 @@ import yfinance as yf
 import logging
 from bs4 import BeautifulSoup
 
-# ==========================================
-# [보안 & 에러 숨김]
-# ==========================================
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-# ================== Telegram ==================
 TELEGRAM_TOKEN    = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
-# ================== 폴더 설정 ==================
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Dual_Screener')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
@@ -42,62 +37,26 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ================== ⭐️ 스마트 기업 팩트 분석기 ==================
-def get_smart_company_report(code: str, name: str) -> tuple:
-    sector = "정보 없음"
-    earnings_trend = "뚜렷한 실적 추세 없음"
-    news_summary = "최근 1주일 주요 호재/특징주 뉴스 없음" 
-    
+# ⭐️ 뉴스 제거 및 실적 팩트 체크로 교체
+def get_company_fact_report(code: str) -> tuple:
+    sector, outlook, growth = "정보 없음", "정보 없음", "정보 없음"
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
-        
-        # 1. 섹터 추출 (네이버)
-        res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=3, verify=False)
+        url_naver = f"https://finance.naver.com/item/main.naver?code={code}"
+        res_naver = requests.get(url_naver, headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
-            soup = BeautifulSoup(res_naver.text, 'html.parser')
-            tag = soup.select_one('h4.h_sub.sub_tit7 a')
-            if tag: sector = tag.text.strip() 
-
-        # 2. 실적 우상향 판별 (FnGuide)
-        res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=3, verify=False)
+            tag = BeautifulSoup(res_naver.text, 'html.parser').select_one('h4.h_sub.sub_tit7 a')
+            if tag: sector = tag.text.strip()
+                
+        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}"
+        res_fn = requests.get(url_fn, headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
-            soup = BeautifulSoup(res_fn.text, 'html.parser')
-            tags = soup.select('ul#bizSummaryContent > li')
-            if len(tags) >= 2:
-                growth_text = tags[1].text.strip()
-                if any(x in growth_text for x in ["증가", "흑자", "개선", "상승", "호조", "성장"]):
-                    earnings_trend = "📈 실적 턴어라운드 및 우상향 진행 중"
-                elif any(x in growth_text for x in ["감소", "적자", "악화", "하락", "부진"]):
-                    earnings_trend = "📉 실적 부진 및 악화 진행 중"
-                else:
-                    earnings_trend = "보합 (특이사항 없음)" 
-
-        # 3. 최근 호재 뉴스 추출 (네이버 금융)
-        news_url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
-        res_news = requests.get(news_url, headers=headers, timeout=3, verify=False)
-        if res_news.status_code == 200:
-            soup = BeautifulSoup(res_news.text, 'html.parser')
-            news_links = soup.select('.title a')
-            
-            headlines = []
-            for link in news_links:
-                title = link.text.strip()
-                if any(kw in title for keyword in ["특징주", "강세", "급등", "상한가", "수주", "계약", "돌파", "호실적", "최대", "AI"] for kw in [keyword]):
-                    if title not in headlines:
-                        headlines.append("- " + title)
-                if len(headlines) >= 2: break
-            
-            if not headlines and news_links:
-                for link in news_links[:2]:
-                    headlines.append("- " + link.text.strip())
-            
-            if headlines:
-                news_summary = "\n".join(headlines) 
-
+            tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
+            if len(tags) >= 1: outlook = tags[0].text.strip()
+            if len(tags) >= 2: growth = tags[1].text.strip()
     except: pass
-    return sector, earnings_trend, news_summary 
+    return sector, outlook, growth
 
-# ================== KRX 종목 리스트 고속 수집 ==================
 def get_krx_list_kind():
     print("KRX KIND 서버에서 종목 리스트를 가져옵니다...")
     try:
@@ -114,16 +73,15 @@ def get_krx_list_kind():
         df = df.rename(columns={'종목코드': 'Code', '회사명': 'Name'})
         df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)]
         return df[['Code', 'Name', 'Market']].dropna()
-    except: return pd.DataFrame() 
+    except: return pd.DataFrame()
 
-# ================== 텔레그램 전송 데몬 ==================
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
         if item is None: break
             
         img_path, caption = item
-        if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)" 
+        if len(caption) > 1000: caption = caption[:980] + "\n\n...(생략됨)"
 
         if SEND_TELEGRAM:
             for attempt in range(3):
@@ -134,20 +92,16 @@ def telegram_sender_daemon():
                             params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
                             files={"photo": f}, timeout=20, verify=False
                         )
-                    if res.status_code == 200: 
-                        break
+                    if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
-                    else: 
-                        break 
+                    else: break 
                 except Exception as e:
                     time.sleep(2)
             time.sleep(1.5)
-        telegram_queue.task_done() 
+        telegram_queue.task_done()
 
-sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
-sender_thread.start() 
+threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
-# ================== 지표 계산 및 로직 ==================
 def add_emas(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     for n in [10, 20, 30, 60, 112, 224, 448]:
@@ -155,7 +109,6 @@ def add_emas(df: pd.DataFrame) -> pd.DataFrame:
     d['AvgVol3'] = d['Volume'].shift(1).rolling(3, min_periods=1).mean()
     return d
 
-# [로직 1] 역배열 (1시간봉) - S1, S2
 def compute_inverse_1h(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, None, df_raw, {}
     df = add_emas(df_raw)
@@ -170,7 +123,6 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     bullish = close_arr > open_arr
     alignedNow = (ema10 > ema20) & (ema20 > ema30)
     
-    # ⭐️ 0으로 나누기 및 NaN 무한대 에러 완벽 방어 처리 ⭐️
     with np.errstate(invalid='ignore'):
         volSpike = vol_arr > (np.nan_to_num(avgvol3_arr, nan=1.0) * 3)
     
@@ -179,7 +131,6 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     cross224 = (close_arr > ema224) & (prev_close <= prev_ema224)
     
     signal1 = cross224 & bullish & alignedNow & volSpike
-    
     s1_shift3 = np.roll(signal1, 3); s1_shift3[:3] = False 
     
     holdNow = (close_arr > ema224) & (ema10 > ema20) & (ema20 > ema30)
@@ -193,13 +144,11 @@ def compute_inverse_1h(df_raw: pd.DataFrame):
     is_s1, is_s2 = signal1[-1], signal2[-1]
     if not (is_s1 or is_s2): return False, None, df, {}
         
-    sig_type = "S2 (유지 + 448 완전 정배열)" if is_s2 else "S1 (224 돌파 + 3배 거래량)"
+    sig_type = "💥 Y (유지)" if is_s2 else "🎯 Y (신규)"
     
-    # ⭐️ 0으로 나누기 방어 (max 1 적용) ⭐️
-    dbg = {"last_close": float(close_arr[-1]), "vol_spike": float(vol_arr[-1]/max(1, avgvol3_arr[-1])), "sig_type": sig_type}
+    dbg = {"last_close": float(close_arr[-1]), "sig_type": sig_type}
     return True, sig_type, df, dbg 
 
-# [로직 2] 정배열 (일봉) - S1, S2, S3
 def compute_aligned_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, None, df_raw, {}
     df = add_emas(df_raw)
@@ -213,7 +162,6 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     
     isBullish = close_arr > open_arr
     
-    # ⭐️ 0으로 나누기 및 NaN 무한대 에러 완벽 방어 처리 ⭐️
     with np.errstate(invalid='ignore'):
         volSpike5 = vol_arr >= (np.nan_to_num(avgvol3_arr, nan=1.0) * 5)
     
@@ -232,15 +180,13 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     is_s1, is_s2, is_s3 = signal1[-1], signal2[-1], signal3[-1]
     if not (is_s1 or is_s2 or is_s3): return False, None, df, {}
          
-    if is_s3: sig_type = "S3 (448 완전 정배열 완성)"
-    elif is_s2: sig_type = "S2 (224 정배열 상태)"
-    else: sig_type = "S1 (112 정배열 상태)" 
+    if is_s3: sig_type = "🎯 J (448 완성)"
+    elif is_s2: sig_type = "🎯 J (224 상태)"
+    else: sig_type = "🎯 J (112 상태)" 
     
-    # ⭐️ 0으로 나누기 방어 (max 1 적용) ⭐️
-    dbg = {"last_close": float(close_arr[-1]), "vol_spike": float(vol_arr[-1]/max(1, avgvol3_arr[-1])), "sig_type": sig_type}
+    dbg = {"last_close": float(close_arr[-1]), "sig_type": sig_type}
     return True, sig_type, df, dbg 
 
-# ================== 차트 저장 ==================
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, timeframe: str) -> str:
     with chart_lock:
@@ -250,39 +196,29 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, tim
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png") 
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            apds = [
-                mpf.make_addplot(df_cut["EMA10"], color='red', width=1),
-                mpf.make_addplot(df_cut["EMA20"], color='orange', width=1),
-                mpf.make_addplot(df_cut["EMA30"], color='yellow', width=1),
-                mpf.make_addplot(df_cut["EMA60"], color='green', width=1),
-                mpf.make_addplot(df_cut["EMA112"], color='blue', width=1),
-                mpf.make_addplot(df_cut["EMA224"], color='navy', width=2),
-                mpf.make_addplot(df_cut["EMA448"], color='purple', width=2),
-            ] 
 
-            tf_str = "1H(역배열)" if timeframe == '1h' else "1D(정배열)"
-            title = f"[{dbg['sig_type']}] {code} {name} ({tf_str})\nClose:{dbg['last_close']:.0f} | 거래량 {dbg['vol_spike']:.1f}배" 
+            tf_str = "1H" if timeframe == '1h' else "1D"
+            title = f"[{dbg['sig_type']}] {code} {name} ({tf_str})\nClose: {dbg['last_close']:,.0f}" 
             
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
             plt.close('all')
-            mpf.plot(df_cut, type="candle", volume=True, addplot=apds, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
+            # ⭐️ 차트 선 전부 제거
+            mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             
             return path
         except Exception as e:
             return None 
 
-# ================== 🚀 야후 API 그룹 다운로드 엔진 ==================
 def scan_market(timeframe: str):
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
     
     t0 = time.time() 
-    
     tf_label = "1시간봉" if timeframe == '1h' else "일봉"
-    logic_name = "역배열(1시간봉)" if timeframe == '1h' else "정배열(일봉)" 
+    logic_name = "Y (1시간봉)" if timeframe == '1h' else "J (일봉)" 
     
     print(f"\n⚡ [궁극의 그룹 스캔 가동] 총 {len(stock_list)}개 종목 '{logic_name}' 초고속 스캔 시작!") 
 
@@ -329,19 +265,19 @@ def scan_market(timeframe: str):
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg, timeframe) 
                         
                         if chart_path:
-                            sector, earnings_trend, news_summary = get_smart_company_report(code, name) 
+                            sector, outlook, growth = get_company_fact_report(code) 
                             emoji = "🔥" if timeframe == '1h' else "💎" 
                             
+                            # ⭐️ 초깔끔 팩트 리포트
                             caption = (
                                 f"{emoji} [{dbg['sig_type']}] ({tf_label})\n\n"
-                                f"[{name}] ({code})\n"
-                                f"- 현재가: {dbg['last_close']:,.0f}원\n"
-                                f"- 거래량: 직전 3봉 평균 대비 {dbg['vol_spike']:.1f}배 폭발\n\n"
-                                f"💡 [팩트 체크 리포트]\n"
+                                f"🏢 [{name}] ({code})\n"
+                                f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                                f"💡 [기업 팩트 체크]\n"
                                 f"🔸 섹터: {sector}\n"
-                                f"🔸 실적: {earnings_trend}\n"
-                                f"🔸 최근 1주 주요 뉴스:\n{news_summary}\n\n"
-                                f"Time: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"🔸 전망: {outlook}\n"
+                                f"🔸 실적: {growth}\n\n"
+                                f"⏰ {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%m-%d %H:%M')}"
                             ) 
                             telegram_queue.put((chart_path, caption)) 
                             
@@ -354,23 +290,17 @@ def scan_market(timeframe: str):
     dt = time.time() - t0
     print(f"\n✅ [{logic_name}] 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n") 
 
-# ================== ⏰ [3번 봇 스케줄러] 매시 20분 / 매일 16:00 ==================
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [3번 봇: 한국장 EMA224 듀얼 자동 스케줄러 대기 모드 - 분산 완료]")
-    print("   - [1H 스캔] 매시 20분마다 (서버 부하 분산)")
-    print("   - [1D 스캔] 매일 16:00 (장 마감 및 데이터 안정화 직후)") 
+    print("🕒 [3번 봇: 한국장 EMA224 대기 모드]")
     
     while True:
         now_kr = datetime.now(kr_tz)
-        
-        # 💡 매시 20분에 1시간봉 스캔 (1, 2번 봇과 격차)
         if now_kr.minute == 42 and (9 <= now_kr.hour <= 15) and now_kr.hour != 14:
             print(f"🚀 [3번 봇 1H 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             time.sleep(60) 
             
-        # 💡 매일 16:00에 일봉 스캔 (1, 2번 봇과 격차)
         elif now_kr.hour == 14 and now_kr.minute == 30:
             print(f"🚀 [3번 봇 1D 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
@@ -381,12 +311,3 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
-
-
-
-
-
-
-
-
-
