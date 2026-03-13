@@ -1,10 +1,4 @@
 import sys
-import codecs
-
-# 💡 터미널 한글 & 이모지 깨짐 완벽 방지 (UTF-8 강제 적용)
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
-
 import threading
 import time
 import os
@@ -13,6 +7,42 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
+
+# 💡 터미널 한글 & 이모지 깨짐 방지
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
+# ==========================================
+# 🕵️ 스마트 에러 추적기 (속도 지장 0%)
+# ==========================================
+class SmartErrorTracker:
+    def __init__(self):
+        self.errors = []
+        self.lock = threading.Lock()
+        self.original_stderr = sys.stderr
+
+    def write(self, text):
+        self.original_stderr.write(text) # 기존처럼 에러를 화면에도 출력
+        
+        # 시스템에 영향을 주는 의미 있는 에러만 은밀하게 수집
+        if text.strip() and ("Exception" in text or "Traceback" in text or "Error" in text):
+            with self.lock:
+                now = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%H:%M:%S')
+                # 너무 긴 에러는 핵심만 100글자로 자르기
+                short_err = text.strip().split('\n')[-1][:100]
+                self.errors.append(f"[{now}] {short_err}")
+
+    def flush(self):
+        self.original_stderr.flush()
+
+    def get_and_clear(self):
+        with self.lock:
+            errs = list(self.errors)
+            self.errors.clear()
+            return errs
+
+error_tracker = SmartErrorTracker()
+sys.stderr = error_tracker # 파이썬 기본 에러 시스템을 관제탑이 가로챔
 
 # ==========================================
 # 🇰🇷 한글 폰트 강제 설치
@@ -26,7 +56,9 @@ plt.rc('font', family='NanumGothic')
 plt.rcParams['axes.unicode_minus'] = False
 print("✅ 한글 폰트 준비 완료!\n")
 
+# ==========================================
 # 로직 파일 임포트
+# ==========================================
 import nasdaq_all_ema224_signal_screener as us_ema
 import nasdaq_dante_reverse_breakout_screener as us_rev
 import nulusa as us_nul
@@ -37,28 +69,58 @@ import kr as kr_bowl
 import nulrim as kr_nul
 import ohdole as kr_ohdole
 
-# 실행 함수
-def start_us_ema(): us_ema.run_scheduler()
-def start_us_rev(): us_rev.run_scheduler()
-def start_us_nul(): us_nul.run_scheduler()
-def start_us_bowl(): us_bowl.run_scheduler()
-def start_kr_rev(): kr_rev.run_scheduler()
-def start_kr_ema(): kr_ema.run_scheduler()
-def start_kr_bowl(): kr_bowl.run_scheduler()
-def start_kr_nul(): kr_nul.run_scheduler()
-def start_kr_ohdole(): kr_ohdole.run_scheduler()
-
-# 📊 실시간 생존 확인(Heartbeat) 모니터링
-def status_monitor():
+# ==========================================
+# 📊 실시간 생존 확인 및 종합 보고서 (관제탑 핵심)
+# ==========================================
+def status_monitor(threads_dict):
     seoul_tz = pytz.timezone('Asia/Seoul')
     ny_tz = pytz.timezone('America/New_York')
-    while True:
-        now_kr = datetime.now(seoul_tz).strftime('%Y-%m-%d %H:%M:%S')
-        now_ny = datetime.now(ny_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"\n[🟢 실시간 관제탑 정상 작동 중] 🇰🇷한국: {now_kr} | 🇺🇸미국: {now_ny}")
-        print("모든 검색기 스레드 생존 확인. 스케줄 대기 중...")
-        time.sleep(60) # 1분마다 상태 출력
 
+    print("\n📡 [스마트 관제탑] 실시간 모니터링 및 자동 에러 감지 시스템 가동!\n")
+
+    while True:
+        now_kr = datetime.now(seoul_tz)
+        now_ny = datetime.now(ny_tz)
+
+        # ⏰ 매시 59분 50초에 '1시간 종합 검진 리포트' 출력
+        if now_kr.minute == 59 and now_kr.second >= 50:
+            print("\n" + "━"*65)
+            print(f"📊 [관제탑 1시간 종합 보고서] 🇰🇷 {now_kr.strftime('%H:%M')} 기준 마감")
+            print("━"*65)
+
+            # 1. 봇 생존 확인 (진짜로 스레드가 살아있는지 심장박동 검사)
+            dead_bots = []
+            for name, t in threads_dict.items():
+                if not t.is_alive():
+                    dead_bots.append(name)
+
+            if not dead_bots:
+                print("🟢 [스레드 상태] 9개 검색기 모두 100% 정상 작동 중! (사망 없음)")
+            else:
+                print(f"🔴 [스레드 상태] 🚨 경고! 사망한 봇 발견: {', '.join(dead_bots)}")
+
+            # 2. 백그라운드 에러 확인 (지난 1시간 요약)
+            recent_errors = error_tracker.get_and_clear()
+            if not recent_errors:
+                print("🟢 [시스템 건강] 지난 1시간 동안 충돌이나 에러 없이 완벽하게 스캔했습니다.")
+            else:
+                print(f"🟡 [시스템 건강] 지난 1시간 동안 {len(recent_errors)}건의 경미한 에러/지연이 있었습니다:")
+                for err in recent_errors[-5:]: # 최대 5개까지만 요약해서 보여줌
+                    print(f"   ↳ {err}")
+
+            print("━"*65 + "\n")
+            time.sleep(15) # 중복 출력 방지 (1분으로 넘어갈 때까지 대기)
+
+        # ⏰ 10분마다 짧은 생존 핑 (화면 낭비 방지)
+        elif now_kr.minute % 10 == 0 and now_kr.second < 2:
+            print(f"📡 [관제탑 핑] 🇰🇷 {now_kr.strftime('%H:%M:%S')} | 🇺🇸 {now_ny.strftime('%H:%M:%S')} (모든 시스템 감시 중...)")
+            time.sleep(2)
+
+        time.sleep(1)
+
+# ==========================================
+# 🚀 메인 실행부
+# ==========================================
 if __name__ == "__main__":
     print("🚀 24시간 독립 멀티스레딩 컨트롤 타워 가동 시작...")
 
@@ -67,22 +129,32 @@ if __name__ == "__main__":
     except Exception as e: 
         print(f"TV 에러: {e}")
 
-    threads = [
-        threading.Thread(target=start_us_ema, daemon=True),
-        threading.Thread(target=start_us_rev, daemon=True),
-        threading.Thread(target=start_us_nul, daemon=True),
-        threading.Thread(target=start_us_bowl, daemon=True),
-        threading.Thread(target=start_kr_rev, daemon=True),
-        threading.Thread(target=start_kr_ema, daemon=True),
-        threading.Thread(target=start_kr_bowl, daemon=True),
-        threading.Thread(target=start_kr_nul, daemon=True),
-        threading.Thread(target=start_kr_ohdole, daemon=True),
-        threading.Thread(target=status_monitor, daemon=True) # 관제탑 스레드 추가
-    ]
+    # 스레드에 정확한 이름표를 달아서 관리
+    bot_targets = {
+        "🇺🇸 1. US EMA": us_ema.run_scheduler,
+        "🇺🇸 2. US 역매공파": us_rev.run_scheduler,
+        "🇺🇸 3. US 눌림목": us_nul.run_scheduler,
+        "🇺🇸 4. US 밥그릇": us_bowl.run_scheduler,
+        "🇰🇷 5. KR 역매공파": kr_rev.run_scheduler,
+        "🇰🇷 6. KR EMA": kr_ema.run_scheduler,
+        "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
+        "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
+        "🇰🇷 9. KR 오돌이": kr_ohdole.run_scheduler
+    }
 
-    for t in threads:
+    active_threads = {}
+
+    # 1. 봇 스레드 가동
+    for name, target_func in bot_targets.items():
+        t = threading.Thread(target=target_func, daemon=True, name=name)
         t.start()
-        time.sleep(2)
+        active_threads[name] = t
+        time.sleep(1)
 
-    for t in threads:
+    # 2. 관제탑 스레드 가동 (위에서 만든 active_threads 사전 전달)
+    monitor_thread = threading.Thread(target=status_monitor, args=(active_threads,), daemon=True, name="관제탑")
+    monitor_thread.start()
+
+    # 3. 메인 스레드 유지
+    for t in active_threads.values():
         t.join()
