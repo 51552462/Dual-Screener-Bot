@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import mplfinance as mpf
 import matplotlib
-matplotlib.use('Agg') # GUI 에러 원천 차단
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings
@@ -19,20 +19,15 @@ import yfinance as yf
 import FinanceDataReader as fdr
 import logging
 
-# ==========================================
-# [보안 & 에러 숨김]
-# ==========================================
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-# ================== Telegram ==================
 TELEGRAM_TOKEN    = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
-# ================== 폴더 설정 ==================
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Bowl_Dual')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
@@ -41,37 +36,25 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ================== 🇺🇸 스마트 기업 팩트 분석기 ==================
 def get_us_smart_report(ticker_str: str) -> tuple:
     sector = "정보 없음"
-    earnings_trend = "뚜렷한 실적 추세 없음"
-    news_summary = "최근 주요 뉴스 없음"
-    
+    earnings_trend = "정보 없음"
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        
         sector = info.get('sector', '정보 없음')
-        
         growth = info.get('earningsGrowth', 0)
-        if growth is None: growth = 0
         
+        if growth is None: growth = 0
         if growth > 0.1:
             earnings_trend = f"📈 실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
         elif growth < -0.1:
             earnings_trend = f"📉 실적 부진 (분기 EPS: {growth*100:.1f}%)"
         else:
             earnings_trend = "📊 보합 (특이사항 없음)"
-
-        news = tk.news
-        if news:
-            headlines = [f"- {n['title']}" for n in news[:2]]
-            news_summary = "\n".join(headlines)
-
     except: pass
-    return sector, earnings_trend, news_summary
+    return sector, earnings_trend
 
-# ================== 미국 증시 티커 리스트 고속 수집 ==================
 def get_us_ticker_list():
     print("🇺🇸 미국 증시(NASDAQ, NYSE, AMEX) 티커 리스트를 수집합니다...")
     try:
@@ -79,15 +62,12 @@ def get_us_ticker_list():
         df_nyse = fdr.StockListing('NYSE')
         df_amex = fdr.StockListing('AMEX')
         df = pd.concat([df_ndq, df_nyse, df_amex])
-        
         df = df[df['Symbol'].str.isalpha()]
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except Exception as e:
-        print(f"티커 수집 에러: {e}")
         return pd.DataFrame()
 
-# ================== 텔레그램 전송 데몬 ==================
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
@@ -117,7 +97,6 @@ def telegram_sender_daemon():
 sender_thread = threading.Thread(target=telegram_sender_daemon, daemon=True)
 sender_thread.start()
 
-# ================== 🇺🇸 밥그릇 핵심 로직 (트레이딩뷰 100% 동기화) ==================
 MIN_PRICE_USD = 1.0               
 MIN_MONEY_USD = 1_000_000         
 
@@ -158,12 +137,10 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
     mean60 = df['Close'].rolling(60).mean().shift(5)
     std60 = df['Close'].rolling(60).std(ddof=1).shift(5)
     
-    # ⭐️ Pandas 나누기 0 에러 (Infinity) 방어막
     with np.errstate(divide='ignore', invalid='ignore'):
         condBox6m = (std120 / mean120) < 0.20
         condBox3m = (std60 / mean60) < 0.20
 
-    # 🚀 NumPy C-엔진 전환
     close_arr = df['Close'].values
     open_arr = df['Open'].values
     vol_arr = df['Volume'].values
@@ -189,7 +166,6 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
     condVol = vol_arr > volavg20_arr * 2.0
     condNotOverheated = close_arr <= ema224 * 1.15
     
-    # ⭐️ NumPy 나누기 0 에러 방어막
     with np.errstate(invalid='ignore'):
         condVolSpike = vol_arr >= (np.nan_to_num(avgvol3_arr, nan=1.0) * 5)
     
@@ -211,67 +187,50 @@ def compute_bowl_signal(df_raw: pd.DataFrame):
     cat1_Normal = signalCat1 & (~isAligned)
     cat1_Strong = signalCat1 & isAligned
 
-    if cat2_Strong[-1]: sig_type = "💥 Cat2 (정배열 강조) - 6m"
-    elif cat1_Strong[-1]: sig_type = "💥 Cat1 (정배열 강조) - 3m"
-    elif cat2_Normal[-1]: sig_type = "🎯 Cat2 (일반 돌파) - 6m"
-    elif cat1_Normal[-1]: sig_type = "🎯 Cat1 (일반 돌파) - 3m"
-    else: sig_type = "밥그릇 돌파"
+    if cat2_Strong[-1]: sig_type = "💥 B (정배열 강조)"
+    elif cat1_Strong[-1]: sig_type = "💥 B (정배열 강조)"
+    elif cat2_Normal[-1]: sig_type = "🎯 B (일반)"
+    elif cat1_Normal[-1]: sig_type = "🎯 B (일반)"
+    else: sig_type = "🎯 B"
 
-    # ⭐️ 0으로 나누기 에러 차단
-    safe_avg_vol = avgvol3_arr[-1] if avgvol3_arr[-1] > 0 else 1
-    
     dbg = {
         "last_close": float(close_arr[-1]), 
-        "ema224": float(ema224[-1]), 
-        "vol_spike": float(vol_arr[-1] / safe_avg_vol), 
         "sig_type": sig_type
     }
     return True, sig_type, df, dbg
 
-# ================== 차트 저장 (US 글로벌 스타일) ==================
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, timeframe: str) -> str:
     with chart_lock:
         try:
             timestamp_ms = int(time.time() * 1000000)
-            # ⭐️ 파일명 누락 버그 수정 (name 추가)
             safe = sanitize_filename(f"{code}_{name}_{timeframe}")
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            senkou1, senkou2 = df_cut['Senkou1'].values, df_cut['Senkou2'].values
 
-            apds = [
-                mpf.make_addplot(df_cut["EMA112"], color='green', width=1),
-                mpf.make_addplot(df_cut["EMA224"], color='black', width=2),
-                mpf.make_addplot(df_cut["BB_Upper"], color='red', type='scatter', markersize=5),
-                mpf.make_addplot(df_cut["Senkou1"], color='aqua', alpha=0.3, width=1),
-                mpf.make_addplot(df_cut["Senkou2"], color='aqua', alpha=0.3, width=1),
-            ]
-
-            fill_between = dict(y1=senkou1, y2=senkou2, alpha=0.1, color='aqua')
             tf_str = "1H" if timeframe == '1h' else "1D"
-            title = f"[{dbg['sig_type']}] US Market: {code} ({tf_str})\nClose: ${dbg['last_close']:.2f}  EMA224: ${dbg['ema224']:.2f}  VolSpike: {dbg['vol_spike']:.1f}x"
+            title = f"[{dbg['sig_type']}] US Market: {code} ({tf_str})\nClose: ${dbg['last_close']:.2f}"
             
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
             plt.close('all')
-            mpf.plot(df_cut, type="candle", volume=True, addplot=apds, fill_between=fill_between, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
+            # ⭐️ 선, 구름대 전부 제거
+            mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             
             return path
         except Exception as e:
             return None
 
-# ================== 🚀 미국 주식 전용 야후 하이퍼 엔진 ==================
 def scan_market(timeframe: str):
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
     
     t0 = time.time()
     tf_label = "1시간봉" if timeframe == '1h' else "일봉"
-    print(f"\n🇺🇸 [월스트리트 밥그릇 스캔] 총 {len(stock_list)}개 종목 '{tf_label}' 초고속 스캔 시작!")
+    print(f"\n🇺🇸 [월스트리트 B 스캔] 총 {len(stock_list)}개 종목 '{tf_label}' 초고속 스캔 시작!")
 
     ticker_to_info = {}
     for _, row in stock_list.iterrows():
@@ -287,7 +246,7 @@ def scan_market(timeframe: str):
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
         tickers_str = " ".join(chunk)
-        
+       
         df_batch = yf.download(tickers_str, interval=timeframe, period=period, group_by="ticker", progress=False, threads=False)
         
         for ticker in chunk:
@@ -297,7 +256,6 @@ def scan_market(timeframe: str):
             name, code = info.get('name', ''), info.get('code', '')
 
             try:
-                # 데이터 분리 에러 방어막
                 if len(chunk) == 1: df_ticker = df_batch.copy()
                 else: 
                     if ticker not in df_batch.columns.get_level_values(0): continue
@@ -312,25 +270,24 @@ def scan_market(timeframe: str):
                 if len(df_ticker) >= 500 and df_ticker['Close'].iloc[-1] >= 1.0:
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_bowl_signal(df_ticker)
-                    
+                
                     if hit:
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg, timeframe)
-                        
+                  
                         if chart_path:
-                            sector, earnings_trend, news_summary = get_us_smart_report(code) 
+                            sector, earnings_trend = get_us_smart_report(code) 
                             emoji = "🇺🇸"
                             
+                            # ⭐️ 초깔끔 팩트 리포트
                             caption = (
                                 f"{emoji} [{dbg['sig_type']}] ({tf_label})\n\n"
-                                f"[{code}] {name}\n"
-                                f"- 현재가: ${dbg['last_close']:.2f}\n"
-                                f"- 거래량: 직전 3봉 평균 대비 {dbg['vol_spike']:.1f}배 폭발\n\n"
-                                f"💡 [US Fact Check 리포트]\n"
+                                f"🏢 [{code}] {name}\n"
+                                f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                f"💡 [기업 팩트 체크]\n"
                                 f"🔸 섹터: {sector}\n"
-                                f"🔸 실적: {earnings_trend}\n"
-                                f"🔸 현지 뉴스 헤드라인:\n{news_summary}\n\n"
-                                f"Time(NY): {datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"🔸 실적: {earnings_trend}\n\n"
+                                f"⏰ {datetime.now(pytz.timezone('America/New_York')).strftime('%m-%d %H:%M')}"
                             )
                             telegram_queue.put((chart_path, caption))
                             
@@ -341,31 +298,23 @@ def scan_market(timeframe: str):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [9번 봇: 밥그릇 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [9번 봇: B 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
-# ================== ⏰ 미국 서머타임(DST) 적용 스케줄러 ==================
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [9번 봇: US 밥그릇 자동 대기 모드 - 분산 완료]")
-    print("   - [1시간봉] 미국 현지시간(NY) 기준: 매시 55분 실행 (다른 모든 봇과 충돌 없음)")
-    print("   - [일봉] 미국 현지시간(NY) 장 마감 직후: 16:40 실행")
-    print("   (서머타임 여부를 시스템이 자동 계산하여 실행합니다.)\n")
+    print("🕒 [9번 봇: US B 대기 모드]")
     
     while True:
         now_ny = datetime.now(ny_tz)
         
-        # 💡 [시간 분산] 매시 55분에 작동 (마지막 배차 간격)
         if now_ny.minute == 43 and (9 <= now_ny.hour <= 15) and now_ny.hour != 14:
-            print(f"🚀 [US 밥그릇 1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🚀 [US B 1H 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
-            print("💤 1H 스캔 완료. 다음 타임까지 대기합니다...")
             time.sleep(60) 
             
-        # 💡 [시간 분산] 미장 마감 후 16:40 작동
         elif now_ny.hour == 14 and now_ny.minute == 30:
-            print(f"🚀 [US 밥그릇 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🚀 [US B 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1d')
-            print("💤 1D 스캔 완료. 내일 개장까지 대기합니다...")
             time.sleep(60)
             
         else:
@@ -373,10 +322,3 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
-
-
-
-
-
-
-
