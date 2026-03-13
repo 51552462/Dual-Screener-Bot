@@ -366,7 +366,7 @@ def run_scheduler():
             print(f"🚀 [US 역배열/1H 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market('1h')
             print("💤 1H 스캔 완료. 다음 타임까지 대기합니다...")
-            time.sleep(50 * 60) 
+            time.sleep(60) 
             
         # 💡 [시간 분산] 미장 마감 10분 뒤 (16:10) 일봉 검사
         elif now_ny.hour == 14 and now_ny.minute == 10:
@@ -380,6 +380,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     run_scheduler()
+
 
 
 
