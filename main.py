@@ -7,6 +7,7 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
+import functools  # 💡 주말 차단기를 위한 필수 모듈
 
 # 💡 터미널 한글 & 이모지 깨짐 방지
 if sys.stdout.encoding != 'utf-8':
@@ -22,13 +23,11 @@ class SmartErrorTracker:
         self.original_stderr = sys.stderr
 
     def write(self, text):
-        self.original_stderr.write(text) # 기존처럼 에러를 화면에도 출력
+        self.original_stderr.write(text) 
         
-        # 시스템에 영향을 주는 의미 있는 에러만 은밀하게 수집
         if text.strip() and ("Exception" in text or "Traceback" in text or "Error" in text):
             with self.lock:
                 now = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%H:%M:%S')
-                # 너무 긴 에러는 핵심만 100글자로 자르기
                 short_err = text.strip().split('\n')[-1][:100]
                 self.errors.append(f"[{now}] {short_err}")
 
@@ -42,7 +41,7 @@ class SmartErrorTracker:
             return errs
 
 error_tracker = SmartErrorTracker()
-sys.stderr = error_tracker # 파이썬 기본 에러 시스템을 관제탑이 가로챔
+sys.stderr = error_tracker 
 
 # ==========================================
 # 🇰🇷 한글 폰트 강제 설치
@@ -70,6 +69,44 @@ import nulrim as kr_nul
 import ohdole as kr_ohdole
 
 # ==========================================
+# 🛑 주말 자동 휴장(Monkey Patching) 차단기
+# ==========================================
+def skip_weekend_kr(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        kr_tz = pytz.timezone('Asia/Seoul')
+        # 5: 토요일, 6: 일요일
+        if datetime.now(kr_tz).weekday() in [5, 6]:
+            print(f"💤 [🇰🇷 한국장 주말 휴장] {func.__module__} 스캔을 건너뜁니다.")
+            return
+        return func(*args, **kwargs)
+    return wrapper
+
+def skip_weekend_us(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        ny_tz = pytz.timezone('America/New_York')
+        # 미국 뉴욕 현지 시간 기준 5: 토요일, 6: 일요일
+        if datetime.now(ny_tz).weekday() in [5, 6]:
+            print(f"💤 [🇺🇸 미국장 주말 휴장] {func.__module__} 스캔을 건너뜁니다.")
+            return
+        return func(*args, **kwargs)
+    return wrapper
+
+# 💡 9개 검색기의 핵심 스캔 함수에 주말 차단기를 강제로 씌움 (9개 파일 수정 불필요!)
+us_ema.scan_market = skip_weekend_us(us_ema.scan_market)
+us_rev.scan_market = skip_weekend_us(us_rev.scan_market)
+us_nul.scan_market_1d = skip_weekend_us(us_nul.scan_market_1d)
+us_bowl.scan_market = skip_weekend_us(us_bowl.scan_market)
+
+kr_rev.scan_market = skip_weekend_kr(kr_rev.scan_market)
+kr_ema.scan_market = skip_weekend_kr(kr_ema.scan_market)
+kr_bowl.scan_krx_1h = skip_weekend_kr(kr_bowl.scan_krx_1h)
+kr_bowl.scan_krx_1d = skip_weekend_kr(kr_bowl.scan_krx_1d)
+kr_nul.scan_market_1d = skip_weekend_kr(kr_nul.scan_market_1d)
+kr_ohdole.scan_market = skip_weekend_kr(kr_ohdole.scan_market)
+
+# ==========================================
 # 📊 실시간 생존 확인 및 종합 보고서 (관제탑 핵심)
 # ==========================================
 def status_monitor(threads_dict):
@@ -88,7 +125,7 @@ def status_monitor(threads_dict):
             print(f"📊 [관제탑 1시간 종합 보고서] 🇰🇷 {now_kr.strftime('%H:%M')} 기준 마감")
             print("━"*65)
 
-            # 1. 봇 생존 확인 (진짜로 스레드가 살아있는지 심장박동 검사)
+            # 1. 봇 생존 확인
             dead_bots = []
             for name, t in threads_dict.items():
                 if not t.is_alive():
@@ -99,19 +136,19 @@ def status_monitor(threads_dict):
             else:
                 print(f"🔴 [스레드 상태] 🚨 경고! 사망한 봇 발견: {', '.join(dead_bots)}")
 
-            # 2. 백그라운드 에러 확인 (지난 1시간 요약)
+            # 2. 백그라운드 에러 확인
             recent_errors = error_tracker.get_and_clear()
             if not recent_errors:
                 print("🟢 [시스템 건강] 지난 1시간 동안 충돌이나 에러 없이 완벽하게 스캔했습니다.")
             else:
                 print(f"🟡 [시스템 건강] 지난 1시간 동안 {len(recent_errors)}건의 경미한 에러/지연이 있었습니다:")
-                for err in recent_errors[-5:]: # 최대 5개까지만 요약해서 보여줌
+                for err in recent_errors[-5:]: 
                     print(f"   ↳ {err}")
 
             print("━"*65 + "\n")
-            time.sleep(15) # 중복 출력 방지 (1분으로 넘어갈 때까지 대기)
+            time.sleep(15) 
 
-        # ⏰ 10분마다 짧은 생존 핑 (화면 낭비 방지)
+        # ⏰ 10분마다 짧은 생존 핑
         elif now_kr.minute % 10 == 0 and now_kr.second < 2:
             print(f"📡 [관제탑 핑] 🇰🇷 {now_kr.strftime('%H:%M:%S')} | 🇺🇸 {now_ny.strftime('%H:%M:%S')} (모든 시스템 감시 중...)")
             time.sleep(2)
@@ -129,7 +166,6 @@ if __name__ == "__main__":
     except Exception as e: 
         print(f"TV 에러: {e}")
 
-    # 스레드에 정확한 이름표를 달아서 관리
     bot_targets = {
         "🇺🇸 1. US EMA": us_ema.run_scheduler,
         "🇺🇸 2. US 역매공파": us_rev.run_scheduler,
@@ -144,17 +180,14 @@ if __name__ == "__main__":
 
     active_threads = {}
 
-    # 1. 봇 스레드 가동
     for name, target_func in bot_targets.items():
         t = threading.Thread(target=target_func, daemon=True, name=name)
         t.start()
         active_threads[name] = t
         time.sleep(1)
 
-    # 2. 관제탑 스레드 가동 (위에서 만든 active_threads 사전 전달)
     monitor_thread = threading.Thread(target=status_monitor, args=(active_threads,), daemon=True, name="관제탑")
     monitor_thread.start()
 
-    # 3. 메인 스레드 유지
     for t in active_threads.values():
         t.join()
