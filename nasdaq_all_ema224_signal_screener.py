@@ -224,9 +224,9 @@ def run_scheduler():
     print("🕒 [미국장 Y/J 스케줄러 (1D 전용)] 미국시간 09:30 / 11:30 / 14:30 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if (now_ny.hour == 9 and now_ny.minute == 30) or \
-           (now_ny.hour == 11 and now_ny.minute == 30) or \
-           (now_ny.hour == 14 and now_ny.minute == 30):
+        if (now_ny.hour == 9 and now_ny.minute == 10) or \
+           (now_ny.hour == 11 and now_ny.minute == 10) or \
+           (now_ny.hour == 14 and now_ny.minute == 10):
             print(f"🚀 [Y/J 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
