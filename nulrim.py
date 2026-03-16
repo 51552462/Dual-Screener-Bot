@@ -1,4 +1,4 @@
-# Dante_Nulrim_1D_LS_Sniper_V2_NewLogic.py
+# Dante_Nulrim_1D_LS_Sniper_V4_Final.py
 import os
 import re
 import time
@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import mplfinance as mpf
 import matplotlib
-matplotlib.use('Agg') # GUI 메모리 누수 완벽 차단
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 from requests.adapters import HTTPAdapter
@@ -34,17 +34,13 @@ APP_KEY = "PSIY0DPy5PI0DMO2VN8T5bg9V37DRQSLwVu2"
 APP_SECRET = "4Hj8Exqp92VH3gZ2INjjOMhK7VHtBUDz"
 
 def get_ls_token():
-    print("🔑 LS증권 OpenAPI 인증 토큰 발급 중...")
     url = "https://openapi.ls-sec.co.kr:8080/oauth2/token"
     headers = {"content-type": "application/x-www-form-urlencoded"}
     data = {"grant_type": "client_credentials", "appkey": APP_KEY, "appsecretkey": APP_SECRET, "scope": "oob"}
     try:
         res = requests.post(url, headers=headers, data=data, timeout=10, verify=False)
-        if res.status_code == 200:
-            print("✅ LS API 통신망 연결 성공!")
-            return res.json().get("access_token")
-    except Exception as e:
-        pass
+        if res.status_code == 200: return res.json().get("access_token")
+    except: pass
     return None
 
 class LSApiRateLimiter:
@@ -74,6 +70,11 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 def sanitize_filename(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
+def shorten_text(text):
+    if not text or text == "정보 없음": return "특이사항 없음"
+    res = text.split('.')[0].strip()
+    return res[:40] + "..." if len(res) > 40 else res
+
 def get_company_fact_report(code: str) -> tuple:
     sector, outlook, growth = "정보 없음", "정보 없음", "정보 없음"
     try:
@@ -86,13 +87,12 @@ def get_company_fact_report(code: str) -> tuple:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
-            if len(tags) >= 1: outlook = tags[0].text.strip()
-            if len(tags) >= 2: growth = tags[1].text.strip()
+            if len(tags) >= 1: outlook = shorten_text(tags[0].text.strip())
+            if len(tags) >= 2: growth = shorten_text(tags[1].text.strip())
     except: pass
     return sector, outlook, growth
 
 def get_krx_list_kind():
-    print("KRX KIND 서버에서 종목 리스트를 가져옵니다...")
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
         df_ks['Market'] = 'KOSPI'
@@ -109,8 +109,6 @@ def telegram_sender_daemon():
         item = telegram_queue.get()
         if item is None: break
         img_path, caption = item
-        if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)"
-
         if SEND_TELEGRAM:
             for _ in range(3):
                 try:
@@ -127,6 +125,25 @@ threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 MIN_PRICE = 1000                 
 MIN_TRANS_MONEY = 100_000_000  
+
+# ⭐️ S1~S7 전체 시그널을 합산하여 15% 수익 & 60일선 이탈 검증 (10점 만점 스코어링)
+def calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7):
+    score = 5 
+    lookback = min(100, len(c))
+    for i in range(len(c) - lookback, len(c) - 1):
+        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s6[i] or s7[i]:
+            valid = True
+            entry_price = c[i]
+            for j in range(i + 1, len(c)):
+                if c[j] < e60[j]:
+                    valid = False
+                    break
+                if c[j] >= entry_price * 1.15:
+                    valid = False
+                    break
+            if valid:
+                score += 2 
+    return min(10, score)
 
 def compute_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500:
@@ -171,6 +188,7 @@ def compute_signal(df_raw: pd.DataFrame):
     prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
     prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
+    # S1, S2, S3
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
     s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
@@ -178,9 +196,22 @@ def compute_signal(df_raw: pd.DataFrame):
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     
+    # S4, S5
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
     dipped20 = lowest5 < e20
     raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
+
+    # S6 (바닥턴)
+    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
+    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
+    shortBull = (e10 > e20) & (e20 > e30)
+    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
+
+    # S7 (중기턴)
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     s4 = np.zeros_like(c, dtype=bool)
     s5 = np.zeros_like(c, dtype=bool)
@@ -197,22 +228,20 @@ def compute_signal(df_raw: pd.DataFrame):
     cond_base = moneyOk & priceOk & volSpike
     
     hit1 = s1[-1] and cond_base[-1]
-    hit2 = s2[-1] and cond_base[-1]
-    hit3 = s3[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
-    hit5 = s5[-1] and cond_base[-1]
+    hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit2 or hit3 or hit4 or hit5):
+    # ⭐️ 알림 필터링: 한국 눌림목은 S1, S4, S7 만 허용
+    if not (hit1 or hit4 or hit7):
         return False, "no_signal", df, {}
 
-    if hit5: sig_type = "🎯 V (지연 확정)"
-    elif hit4: sig_type = "🎯 V (정배열 눌림)"
-    elif hit1: sig_type = "🎯 V (448 재정렬)"
-    elif hit2: sig_type = "🎯 V (224 재정렬)"
-    elif hit3: sig_type = "🎯 V (112 재정렬)"
-    else: sig_type = "🎯 V (신규)"
+    if hit7: sig_type = "V (S7: 중기턴)"
+    elif hit4: sig_type = "V (S4: 돌파)"
+    else: sig_type = "V (S1: 448 재정렬)"
 
-    dbg = {"last_close": float(c[-1]), "sig_type": sig_type}
+    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
+
+    dbg = {"last_close": float(c[-1]), "sig_type": sig_type, "score": trust_score}
     return True, sig_type, df, dbg
 
 chart_lock = threading.Lock()
@@ -224,13 +253,13 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[{dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
+            title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
 
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
 
             plt.close('all')
-            # ⭐️ 선 완벽 제거 (캔들과 거래량만)
+            # ⭐️ 차트 선 전부 제거 (오직 캔들과 거래량)
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             
@@ -245,7 +274,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
 
-    print(f"\n⚡ [일봉 전용] LS증권 20차선 초고속 병렬 스캔 시작!")
+    print(f"\n⚡ [일봉 전용] LS증권 V 초고속 스캔 시작!")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -284,7 +313,7 @@ def scan_market_1d():
                         
                     items = data.get(outblock_key, [])
                     if items:
-                        records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S', errors='coerce'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
+                        records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
                         df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
                     break
             except: 
@@ -309,18 +338,20 @@ def scan_market_1d():
                 chart_path = save_chart(df, code, name, rank, dbg)
                 if chart_path:
                     sector, outlook, growth = get_company_fact_report(code)
-                    emoji = "🇰🇷"
                     
-                    # ⭐️ 팩트 기반 초깔끔 리포트
                     caption = (
-                        f"{emoji} [{dbg['sig_type']}] (일봉)\n\n"
-                        f"🏢 [{name}] ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                        f"💡 [기업 팩트 체크]\n"
+                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"💡 [기업 팩트체크]\n"
                         f"🔸 섹터: {sector}\n"
                         f"🔸 전망: {outlook}\n"
-                        f"🔸 실적: {growth}\n\n"
-                        f"⏰ {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%m-%d %H:%M')}"
+                        f"🔸 실적: {growth}\n"
                     )
                     telegram_queue.put((chart_path, caption))
 
@@ -328,16 +359,16 @@ def scan_market_1d():
         executor.map(worker, list(stock_list.iterrows()))
 
     dt = time.time() - t0
-    print(f"\n✅ [5번 봇: V 스캔 완료] 탐색: {tracker['scanned']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [5번 봇: KRX V 스캔 완료] 포착: {tracker['hits']}개\n")
 
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [5번 봇: 한국장 V 스케줄러 대기 모드]")
+    print("🕒 [5번 봇: 한국장 V 스케줄러] 09:40 / 11:40 / 14:40 대기 중...")
     
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour == 14 and now_kr.minute == 0:
-            print(f"🚀 [5번 봇 1D 정규 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+        if now_kr.hour in [9, 11, 14] and now_kr.minute == 40:
+            print(f"🚀 [KRX V 1D 스캔 시작] 현재 시간: {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: 
