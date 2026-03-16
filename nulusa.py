@@ -1,4 +1,4 @@
-# Dante_US_Nulrim_1D_Sniper_V2_NewLogic.py
+# Dante_US_Nulrim_1D_Sniper_V4_Final.py
 import os
 import re
 import time
@@ -47,16 +47,15 @@ def get_us_smart_report(ticker_str: str) -> tuple:
         
         if growth is None: growth = 0
         if growth > 0.1:
-            earnings_trend = f"📈 실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
+            earnings_trend = f"실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
         elif growth < -0.1:
-            earnings_trend = f"📉 실적 부진 (분기 EPS: {growth*100:.1f}%)"
+            earnings_trend = f"실적 부진 (분기 EPS: {growth*100:.1f}%)"
         else:
-            earnings_trend = "📊 보합 (특이사항 없음)"
+            earnings_trend = "보합세 (특이사항 없음)"
     except: pass
     return sector, earnings_trend
 
 def get_us_ticker_list():
-    print("🇺🇸 미국 증시(NASDAQ, NYSE, AMEX) 티커 리스트를 수집합니다...")
     try:
         df_ndq = fdr.StockListing('NASDAQ')
         df_nyse = fdr.StockListing('NYSE')
@@ -72,24 +71,15 @@ def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
         if item is None: break
-            
         img_path, caption = item
-        if len(caption) > 1000: caption = caption[:980] + "\n\n...(내용이 너무 길어 생략됨)"
-
         if SEND_TELEGRAM:
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(
-                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
-                            files={"photo": f}, timeout=20, verify=False
-                        )
-                    if res.status_code == 200: 
-                        break
+                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, files={"photo": f}, timeout=20, verify=False)
+                    if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
-                except Exception as e:
-                    time.sleep(2)
+                except Exception as e: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -98,12 +88,30 @@ threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 MIN_PRICE_USD = 1.0               
 MIN_MONEY_USD = 1_000_000         
 
+# ⭐️ S1~S7 전체 시그널을 합산하여 15% 수익 & 60일선 이탈 검증 (10점 만점 스코어링)
+def calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7):
+    score = 5 
+    lookback = min(100, len(c))
+    for i in range(len(c) - lookback, len(c) - 1):
+        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s6[i] or s7[i]:
+            valid = True
+            entry_price = c[i]
+            for j in range(i + 1, len(c)):
+                if c[j] < e60[j]:
+                    valid = False
+                    break
+                if c[j] >= entry_price * 1.15:
+                    valid = False
+                    break
+            if valid:
+                score += 2 
+    return min(10, score)
+
 def compute_nulrim_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500:
         return False, "no_signal", df_raw, {}
 
     df = df_raw.copy()
-    
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
@@ -152,6 +160,16 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     dipped20 = lowest5 < e20
     raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
 
+    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
+    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
+    shortBull = (e10 > e20) & (e20 > e30)
+    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
+
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
+
     s4 = np.zeros_like(c, dtype=bool)
     s5 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
@@ -168,24 +186,19 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     
     hit1 = s1[-1] and cond_base[-1]
     hit2 = s2[-1] and cond_base[-1]
-    hit3 = s3[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
-    hit5 = s5[-1] and cond_base[-1]
 
-    if not (hit1 or hit2 or hit3 or hit4 or hit5):
+    # ⭐️ 알림 필터링: 미국장 눌림목은 S1, S2, S4만 허용
+    if not (hit1 or hit2 or hit4):
         return False, "no_signal", df, {}
 
-    if hit5: sig_type = "🎯 V (지연 돌파 확정)"
-    elif hit4: sig_type = "🎯 V (정배열 눌림 돌파)"
-    elif hit1: sig_type = "🎯 V (448 재정렬)"
-    elif hit2: sig_type = "🎯 V (224 재정렬)"
-    elif hit3: sig_type = "🎯 V (112 재정렬)"
-    else: sig_type = "🎯 V (신규)"
+    if hit4: sig_type = "V (S4: 돌파)"
+    elif hit2: sig_type = "V (S2: 224 재정렬)"
+    else: sig_type = "V (S1: 448 재정렬)"
 
-    dbg = {
-        "last_close": float(c[-1]),
-        "sig_type": sig_type
-    }
+    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
+
+    dbg = {"last_close": float(c[-1]), "sig_type": sig_type, "score": trust_score}
     return True, sig_type, df, dbg
 
 chart_lock = threading.Lock()
@@ -197,13 +210,13 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
 
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[{dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
+            title = f"[🎯 {dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
 
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
 
             plt.close('all')
-            # 선 전부 제거 (오직 캔들과 거래량)
+            # ⭐️ 선 제거, 캔들만 표기
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             
@@ -216,7 +229,7 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [월스트리트 신규 V 스캔] 총 {len(stock_list)}개 종목 '일봉(1D)' 초고속 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 초고속 스캔 시작!")
 
     ticker_to_info = {}
     for _, row in stock_list.iterrows():
@@ -263,17 +276,20 @@ def scan_market_1d():
                         
                         if chart_path:
                             sector, earnings_trend = get_us_smart_report(code) 
-                            emoji = "🇺🇸"
                             
-                            # ⭐️ 초깔끔 팩트 리포트
                             caption = (
-                                f"{emoji} [{dbg['sig_type']}] (일봉)\n\n"
-                                f"🏢 [{code}] {name}\n"
-                                f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
-                                f"💡 [기업 팩트 체크]\n"
+                                f"🎯 [{dbg['sig_type']}]\n\n"
+                                f"🏢 {name} ({code})\n"
+                                f"💰 현재가: ${dbg['last_close']:.2f}\n"
+                                f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                                f"📉 [매수/손절 전략]\n"
+                                f"- 양봉 길이만큼 분할매수\n"
+                                f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                                f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                                f"💡 [기업 팩트체크]\n"
                                 f"🔸 섹터: {sector}\n"
-                                f"🔸 실적: {earnings_trend}\n\n"
-                                f"⏰ {datetime.now(pytz.timezone('America/New_York')).strftime('%m-%d %H:%M')}"
+                                f"🔸 전망: 전문가 분석 요망\n"
+                                f"🔸 실적: {earnings_trend}\n"
                             )
                             telegram_queue.put((chart_path, caption))
                             
@@ -284,16 +300,16 @@ def scan_market_1d():
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [8번 봇: US 신규 V 1D 스캔 완료] 탐색: {tracker['scanned']}개 | 정상 분석: {tracker['analyzed']}개 | 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [8번 봇: US V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [8번 봇: US 신규 V 스케줄러 대기 모드]")
+    print("🕒 [8번 봇: US V 스케줄러] 미국시간 09:20 / 11:20 / 14:20 대기 중...")
     
     while True:
         now_ny = datetime.now(ny_tz)
-        if now_ny.hour == 14 and now_ny.minute == 0:
-            print(f"🚀 [US 신규 V 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        if now_ny.hour in [9, 11, 14] and now_ny.minute == 20:
+            print(f"🚀 [US 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60)
         else:
