@@ -308,7 +308,7 @@ def run_scheduler():
     
     while True:
         now_ny = datetime.now(ny_tz)
-        if now_ny.hour in [9, 11, 14] and now_ny.minute == 20:
+        if now_ny.hour in [9, 11, 14] and now_ny.minute == 40:
             print(f"🚀 [US 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60)
