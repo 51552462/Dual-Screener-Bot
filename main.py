@@ -69,15 +69,14 @@ import nulrim as kr_nul
 import ohdole as kr_ohdole
 
 # ==========================================
-# 🛑 주말 자동 휴장(Monkey Patching) 차단기
+# 🛑 주말 자동 휴장 스마트 차단기
 # ==========================================
 def skip_weekend_kr(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         kr_tz = pytz.timezone('Asia/Seoul')
-        # 5: 토요일, 6: 일요일
         if datetime.now(kr_tz).weekday() in [5, 6]:
-            print(f"💤 [🇰🇷 한국장 주말 휴장] {func.__module__} 스캔을 건너뜁니다.")
+            print(f"💤 [🇰🇷 한국장 주말 휴장] 스캔을 건너뜁니다.")
             return
         return func(*args, **kwargs)
     return wrapper
@@ -86,24 +85,30 @@ def skip_weekend_us(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         ny_tz = pytz.timezone('America/New_York')
-        # 미국 뉴욕 현지 시간 기준 5: 토요일, 6: 일요일
         if datetime.now(ny_tz).weekday() in [5, 6]:
-            print(f"💤 [🇺🇸 미국장 주말 휴장] {func.__module__} 스캔을 건너뜁니다.")
+            print(f"💤 [🇺🇸 미국장 주말 휴장] 스캔을 건너뜁니다.")
             return
         return func(*args, **kwargs)
     return wrapper
 
-# 💡 9개 봇 모두 일봉(1D) 전용 함수명(scan_market_1d)으로 완벽 매칭
-us_ema.scan_market_1d = skip_weekend_us(us_ema.scan_market_1d)
-us_rev.scan_market_1d = skip_weekend_us(us_rev.scan_market_1d)
-us_nul.scan_market_1d = skip_weekend_us(us_nul.scan_market_1d)
-us_bowl.scan_market_1d = skip_weekend_us(us_bowl.scan_market_1d)
+# ⭐️ 어떤 함수 이름이든 알아서 찾아서 패치하는 무적 로직
+def apply_weekend_patch(module, is_us):
+    patcher = skip_weekend_us if is_us else skip_weekend_kr
+    if hasattr(module, 'scan_market_1d'):
+        module.scan_market_1d = patcher(module.scan_market_1d)
+    elif hasattr(module, 'scan_market'):
+        module.scan_market = patcher(module.scan_market)
 
-kr_rev.scan_market_1d = skip_weekend_kr(kr_rev.scan_market_1d)
-kr_ema.scan_market_1d = skip_weekend_kr(kr_ema.scan_market_1d)
-kr_bowl.scan_market_1d = skip_weekend_kr(kr_bowl.scan_market_1d)
-kr_nul.scan_market_1d = skip_weekend_kr(kr_nul.scan_market_1d)
-kr_ohdole.scan_market_1d = skip_weekend_kr(kr_ohdole.scan_market_1d)
+apply_weekend_patch(us_ema, True)
+apply_weekend_patch(us_rev, True)
+apply_weekend_patch(us_nul, True)
+apply_weekend_patch(us_bowl, True)
+
+apply_weekend_patch(kr_rev, False)
+apply_weekend_patch(kr_ema, False)
+apply_weekend_patch(kr_bowl, False)
+apply_weekend_patch(kr_nul, False)
+apply_weekend_patch(kr_ohdole, False)
 
 # ==========================================
 # 📊 실시간 생존 확인 및 종합 보고서
@@ -118,7 +123,6 @@ def status_monitor(threads_dict):
         now_kr = datetime.now(seoul_tz)
         now_ny = datetime.now(ny_tz)
 
-        # ⏰ 매시 59분 50초에 '1시간 종합 검진 리포트' 출력
         if now_kr.minute == 59 and now_kr.second >= 50:
             print("\n" + "━"*65)
             print(f"📊 [관제탑 1시간 종합 보고서] 🇰🇷 {now_kr.strftime('%H:%M')} 기준 마감")
@@ -145,7 +149,6 @@ def status_monitor(threads_dict):
             print("━"*65 + "\n")
             time.sleep(15) 
 
-        # ⏰ 10분마다 짧은 생존 핑
         elif now_kr.minute % 10 == 0 and now_kr.second < 2:
             print(f"📡 [관제탑 핑] 🇰🇷 {now_kr.strftime('%H:%M:%S')} | 🇺🇸 {now_ny.strftime('%H:%M:%S')} (모든 시스템 감시 중...)")
             time.sleep(2)
