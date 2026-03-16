@@ -7,7 +7,7 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
-import functools  # 💡 주말 차단기를 위한 필수 모듈
+import functools
 
 # 💡 터미널 한글 & 이모지 깨짐 방지
 if sys.stdout.encoding != 'utf-8':
@@ -93,21 +93,20 @@ def skip_weekend_us(func):
         return func(*args, **kwargs)
     return wrapper
 
-# 💡 9개 검색기의 핵심 스캔 함수에 주말 차단기를 강제로 씌움 (9개 파일 수정 불필요!)
-us_ema.scan_market = skip_weekend_us(us_ema.scan_market)
-us_rev.scan_market = skip_weekend_us(us_rev.scan_market)
+# 💡 9개 봇 모두 일봉(1D) 전용 함수명(scan_market_1d)으로 완벽 매칭
+us_ema.scan_market_1d = skip_weekend_us(us_ema.scan_market_1d)
+us_rev.scan_market_1d = skip_weekend_us(us_rev.scan_market_1d)
 us_nul.scan_market_1d = skip_weekend_us(us_nul.scan_market_1d)
-us_bowl.scan_market = skip_weekend_us(us_bowl.scan_market)
+us_bowl.scan_market_1d = skip_weekend_us(us_bowl.scan_market_1d)
 
-kr_rev.scan_market = skip_weekend_kr(kr_rev.scan_market)
-kr_ema.scan_market = skip_weekend_kr(kr_ema.scan_market)
-kr_bowl.scan_krx_1h = skip_weekend_kr(kr_bowl.scan_krx_1h)
-kr_bowl.scan_krx_1d = skip_weekend_kr(kr_bowl.scan_krx_1d)
+kr_rev.scan_market_1d = skip_weekend_kr(kr_rev.scan_market_1d)
+kr_ema.scan_market_1d = skip_weekend_kr(kr_ema.scan_market_1d)
+kr_bowl.scan_market_1d = skip_weekend_kr(kr_bowl.scan_market_1d)
 kr_nul.scan_market_1d = skip_weekend_kr(kr_nul.scan_market_1d)
-kr_ohdole.scan_market = skip_weekend_kr(kr_ohdole.scan_market)
+kr_ohdole.scan_market_1d = skip_weekend_kr(kr_ohdole.scan_market_1d)
 
 # ==========================================
-# 📊 실시간 생존 확인 및 종합 보고서 (관제탑 핵심)
+# 📊 실시간 생존 확인 및 종합 보고서
 # ==========================================
 def status_monitor(threads_dict):
     seoul_tz = pytz.timezone('Asia/Seoul')
@@ -125,7 +124,6 @@ def status_monitor(threads_dict):
             print(f"📊 [관제탑 1시간 종합 보고서] 🇰🇷 {now_kr.strftime('%H:%M')} 기준 마감")
             print("━"*65)
 
-            # 1. 봇 생존 확인
             dead_bots = []
             for name, t in threads_dict.items():
                 if not t.is_alive():
@@ -136,7 +134,6 @@ def status_monitor(threads_dict):
             else:
                 print(f"🔴 [스레드 상태] 🚨 경고! 사망한 봇 발견: {', '.join(dead_bots)}")
 
-            # 2. 백그라운드 에러 확인
             recent_errors = error_tracker.get_and_clear()
             if not recent_errors:
                 print("🟢 [시스템 건강] 지난 1시간 동안 충돌이나 에러 없이 완벽하게 스캔했습니다.")
@@ -160,11 +157,6 @@ def status_monitor(threads_dict):
 # ==========================================
 if __name__ == "__main__":
     print("🚀 24시간 독립 멀티스레딩 컨트롤 타워 가동 시작...")
-
-    try: 
-        kr_bowl.initialize_tv_pool()
-    except Exception as e: 
-        print(f"TV 에러: {e}")
 
     bot_targets = {
         "🇺🇸 1. US EMA": us_ema.run_scheduler,
