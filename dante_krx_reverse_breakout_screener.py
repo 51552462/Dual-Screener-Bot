@@ -12,8 +12,18 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 from google import genai
+from dotenv import load_dotenv
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+# ==========================================
+# 🔑 .env 안전 파일 방식 적용
+# ==========================================
+load_dotenv() 
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
