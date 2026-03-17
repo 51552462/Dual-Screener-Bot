@@ -35,13 +35,12 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ⭐️ 혁신: Gemini AI 실시간 팩트 요약기 ⭐️
+# ⭐️ Gemini AI 실시간 팩트 요약기 ⭐️
 def generate_ai_report(ticker_str: str, company_name: str) -> str:
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
         
-        # 1. 팩트 데이터 긁어오기
         sector = info.get('sector', '정보 없음')
         industry = info.get('industry', '정보 없음')
         market_cap = info.get('marketCap', '정보 없음')
@@ -49,11 +48,10 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
         
         eps = info.get('trailingEps', '정보 없음')
         revenue_growth = info.get('revenueGrowth', '정보 없음')
-        business_summary = info.get('longBusinessSummary', '정보 없음')[:500] # 너무 길면 잘라냄
+        business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
         
         financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
 
-        # 2. AI에게 팩트 기반 요약 강제 지시 (프롬프트 엔지니어링)
         prompt = f"""
         너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
         아래 종목의 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
@@ -74,7 +72,6 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
         5. 기업 전망: (짧고 굵은 전망)
         """
         
-        # 가장 빠르고 저렴한 flash 모델 사용 (속도 지장 없음)
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         return response.text.strip()
@@ -109,7 +106,7 @@ threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 MIN_PRICE_USD = 1.0               
 MIN_MONEY_USD = 1_000_000         
 
-def calculate_trust_score(c, e60, s1_arr, s2_arr, s4_arr):
+def calculate_trust_score(c, e60, s1_arr, s2_arr, s3_arr, s4_arr, s5_arr, s6_arr, s7_arr):
     score = 5 
     lowest_60 = np.min(c[-60:])
     runup_ratio = (c[-1] / lowest_60) - 1
@@ -118,7 +115,7 @@ def calculate_trust_score(c, e60, s1_arr, s2_arr, s4_arr):
 
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
-        if s1_arr[i] or s2_arr[i] or s4_arr[i]:
+        if s1_arr[i] or s2_arr[i] or s3_arr[i] or s4_arr[i] or s5_arr[i] or s6_arr[i] or s7_arr[i]:
             valid = True
             entry_price = c[i]
             for j in range(i + 1, len(c)):
@@ -134,9 +131,11 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
+    df['Lowest5'] = df['Low'].rolling(5).min()
     
     c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
     av3 = df['AvgVol3'].values
+    lowest5 = df['Lowest5'].values
     
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
@@ -164,16 +163,34 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
+    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
     
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
+    
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
+    dipped20 = lowest5 < e20
+    raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
+
+    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
+    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
+    shortBull = (e10 > e20) & (e20 > e30)
+    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
+
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
     
     s4 = np.zeros_like(c, dtype=bool)
+    s5 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
         if raw_s4[i] and (i - last_pullback_bar > 5):
             s4[i] = True
+            last_pullback_bar = i
+        if raw_s5[i] and not s4[i] and (i - last_pullback_bar > 5):
+            s5[i] = True
             last_pullback_bar = i
 
     cond_base = moneyOk & priceOk & volSpike
@@ -187,7 +204,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     elif hit2: sig_type = "V (S2: 224 재정렬)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s2, s4)
+    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
 
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
@@ -262,9 +279,8 @@ def scan_market_1d():
                     if hit:
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
-                        
                         if chart_path:
-                            # ⭐️ AI 기반 팩트 리포트 생성 (종목이 포착되었을 때만 딱 3초 씀)
+                            # ⭐️ 종목 포착 시 AI가 팩트 기반 요약 리포트 작성
                             ai_fact_check = generate_ai_report(code, name)
                             
                             caption = (
@@ -282,7 +298,6 @@ def scan_market_1d():
                                 f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다."
                             )
                             telegram_queue.put((chart_path, caption))
-                            
             except: pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
