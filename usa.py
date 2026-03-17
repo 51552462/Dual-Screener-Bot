@@ -295,11 +295,11 @@ def scan_market_1d():
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [9번 봇: US B 스케줄러] 미국시간 09:30 / 11:30 / 14:30 대기 중...")
+    print("🕒 [3번 미국장 검색기] 10:00 / 12:00 / 15:00 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if now_ny.hour in [9, 11, 14] and now_ny.minute == 30:
-            print(f"🚀 [B 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_ny.hour == 10 and now_ny.minute == 0) or (now_ny.hour == 12 and now_ny.minute == 0) or (now_ny.hour == 15 and now_ny.minute == 0):
+            print(f"🚀 [3번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
