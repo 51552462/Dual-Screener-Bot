@@ -1,4 +1,4 @@
-# Dante_US_P_1D_Pro_FastDefense.py
+# Dante_US_P_1D_AI_Pro.py
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,12 +11,19 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+import google.generativeai as genai
+
+# ==========================================
+# 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
+# ==========================================
+GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+genai.configure(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-TELEGRAM_TOKEN    = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
+TELEGRAM_TOKEN    = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
@@ -28,28 +35,48 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def get_us_smart_report(ticker_str: str) -> tuple:
-    sector, outlook, growth = "섹터 미제공", "월가 분석 요망", "실적 미제공"
+# ⭐️ Gemini AI 실시간 팩트 요약기 ⭐️
+def generate_ai_report(ticker_str: str, company_name: str) -> str:
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        sec = info.get('sector')
-        ind = info.get('industry')
-        if sec and ind: sector = f"{sec} ({ind})"
-        elif sec: sector = sec
+        
+        sector = info.get('sector', '정보 없음')
+        industry = info.get('industry', '정보 없음')
+        market_cap = info.get('marketCap', '정보 없음')
+        if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B (십억 달러)"
+        
+        eps = info.get('trailingEps', '정보 없음')
+        revenue_growth = info.get('revenueGrowth', '정보 없음')
+        business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
+        
+        financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
 
-        eg = info.get('earningsGrowth')
-        eps = info.get('trailingEps')
-        if eg is not None:
-            if eg > 0: growth = f"📈 실적 성장 (분기 EPS: +{eg*100:.1f}%)"
-            else: growth = f"📉 실적 악화 (분기 EPS: {eg*100:.1f}%)"
-        elif eps is not None:
-            growth = f"📊 최근 12개월 EPS: ${eps} ({'흑자' if eps > 0 else '적자'})"
+        prompt = f"""
+        너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
+        아래 종목의 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
 
-        rec = info.get('recommendationKey')
-        if rec: outlook = f"투자의견: {rec.upper()}"
-    except: pass
-    return sector, outlook, growth
+        [종목 정보]
+        - 종목명: {company_name} ({ticker_str})
+        - 섹터: {sector} / 산업군: {industry}
+        - 시가총액: {market_cap}
+        - 실적 및 재무: {financials}
+        - 비즈니스 요약: {business_summary}
+
+        [출력 양식] (반드시 아래 번호와 항목명에 맞춰서 작성할 것)
+        1. 섹터 종류: (간단한 설명)
+        2. 업계 점유율/규모: (시총 규모 및 지위)
+        3. 최근 실적: (흑자/적자 여부, 핵심 지표)
+        4. 미래 모멘텀: (파이프라인, 기대감 등)
+        5. 기업 전망: (짧고 굵은 전망)
+        """
+        
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
 
 def get_us_ticker_list():
     try:
@@ -153,6 +180,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
             plt.close('all')
+            # ⭐️ 캔들만 표기 (선 제거)
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
@@ -163,7 +191,7 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 P(역매공파) 초고속 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 P(역매공파) 초고속 스캔 (AI 장착 완료) 시작!")
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -214,8 +242,11 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         if chart_path:
-                            sector, outlook, growth = get_us_smart_report(code) 
+                            # ⭐️ AI 팩트 리포트 생성
+                            ai_fact_check = generate_ai_report(code, name)
+                            
                             caption = (
+                                f"🎯 [{dbg['sig_type']}]\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg['last_close']:.2f}\n"
                                 f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
@@ -224,9 +255,9 @@ def scan_market_1d():
                                 f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
                                 f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                                 f"💡 [기업 팩트체크]\n"
-                                f"🔸 섹터: {sector}\n"
-                                f"🔸 전망: {outlook}\n"
-                                f"🔸 실적: {growth}\n"
+                                f"{ai_fact_check}\n\n"
+                                f"⚠️ [전문가 코멘트]\n"
+                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다."
                             )
                             telegram_queue.put((chart_path, caption))
             except: pass
