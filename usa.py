@@ -1,4 +1,4 @@
-# Dante_US_Bowl_1D_Pro.py
+# Dante_US_Bowl_1D_Pro_Fixed.py
 import os, re, time, threading, queue
 from datetime import datetime
 import pytz
@@ -67,7 +67,6 @@ def telegram_sender_daemon():
         telegram_queue.task_done()
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
-# ⭐️ 신뢰도 스코어링 시스템
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
     lookback = min(100, len(c))
@@ -93,16 +92,16 @@ def compute_bobgeureut_1d(df_raw: pd.DataFrame):
     ema10, ema20, ema30, ema60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     ema112, ema224, ema448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    ma20 = df['Close'].rolling(20).mean().values
-    stddev = df['Close'].rolling(20).std(ddof=1).values
+    ma20 = pd.Series(c).rolling(20).mean().values
+    stddev = pd.Series(c).rolling(20).std(ddof=1).values
     bb_upper = ma20 + (stddev * 2)
 
     tenkan = (pd.Series(h).rolling(9).max() + pd.Series(l).rolling(9).min()) / 2
     kijun = (pd.Series(h).rolling(26).max() + pd.Series(l).rolling(26).min()) / 2
     spanA = (tenkan + kijun) / 2
     spanB = (pd.Series(h).rolling(52).max() + pd.Series(l).rolling(52).min()) / 2
-    senkou1 = np.roll(spanA.values, 25); senkou1[:25] = np.nan
-    senkou2 = np.roll(spanB.values, 25); senkou2[:25] = np.nan
+    senkou1 = np.roll(spanA, 25); senkou1[:25] = np.nan
+    senkou2 = np.roll(spanB, 25); senkou2[:25] = np.nan
     cloud_top = np.fmax(senkou1, senkou2)
 
     volavg20 = pd.Series(v).rolling(20).mean().values
@@ -152,13 +151,17 @@ chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
         try:
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
+            timestamp_ms = int(time.time() * 1000000)
+            safe = sanitize_filename(f"{code}_{name}")
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
+
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             title = f"[{dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
+
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
+
             plt.close('all')
-            # ⭐️ 모든 선, 구름대 완벽 제거 (캔들+거래량만)
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
@@ -169,16 +172,31 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 B(밥그릇) 초고속 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 B(밥그릇) 무적 스캔 시작!")
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
+    chunk_size = 100 
 
-    for i in range(0, len(tickers), 100):
-        chunk = tickers[i:i+100]
-        df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i+chunk_size]
+        tickers_str = " ".join(chunk)
         
+        df_batch = None
+        fallback_dict = {}
+
+        # ⭐️ 핵심 패치: 야후 파이낸스 내부 버그로 인한 스레드 사망 완벽 방어 ⭐️
+        try:
+            df_batch = yf.download(tickers_str, interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+        except Exception as e:
+            # 그룹 다운로드 중 에러(InvalidIndexError 등) 터지면 스레드 죽이지 않고 1개씩 안전 모드로 전환
+            for tk in chunk:
+                try:
+                    df_single = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
+                    if not df_single.empty: fallback_dict[tk] = df_single
+                except: pass
+
         for tk in chunk:
             tracker['scanned'] += 1
             info = ticker_to_info.get(tk)
@@ -186,21 +204,30 @@ def scan_market_1d():
             name, code = info['name'], info['code']
 
             try:
-                if len(chunk) == 1: df_ticker = df_batch.copy()
-                else: 
-                    if tk not in df_batch.columns.get_level_values(0): continue
-                    df_ticker = df_batch[tk].copy()
+                # 안전 모드 딕셔너리와 일반 그룹 다운로드 모드 분기 처리
+                if df_batch is not None:
+                    if len(chunk) == 1: df_ticker = df_batch.copy()
+                    else: 
+                        if tk not in df_batch.columns.get_level_values(0): continue
+                        df_ticker = df_batch[tk].copy()
+                else:
+                    df_ticker = fallback_dict.get(tk)
+                    if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
+                
+                if df_ticker.index.tzinfo is not None: 
+                    df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_bobgeureut_1d(df_ticker)
+                    
                     if hit:
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
+                        
                         if chart_path:
                             sector, earnings_trend = get_us_smart_report(code) 
                             caption = (
@@ -217,21 +244,21 @@ def scan_market_1d():
                                 f"🔸 실적: {earnings_trend}\n"
                             )
                             telegram_queue.put((chart_path, caption))
+                            
             except: pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
-    print(f"\n✅ [미국장 B 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    dt = time.time() - t0
+    print(f"\n✅ [9번 봇: US B 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [미국장 B 스케줄러 (1D 전용)] 미국시간 09:30 / 11:30 / 14:30 대기 중...")
+    print("🕒 [9번 봇: US B 스케줄러] 미국시간 09:30 / 11:30 / 14:30 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if (now_ny.hour == 9 and now_ny.minute == 30) or \
-           (now_ny.hour == 11 and now_ny.minute == 30) or \
-           (now_ny.hour == 14 and now_ny.minute == 30):
+        if now_ny.hour in [9, 11, 14] and now_ny.minute == 30:
             print(f"🚀 [B 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
