@@ -1,4 +1,4 @@
-# Dante_US_YJ_1D_AI_Interactive_Pro.py
+# Dante_US_YJ_1D_AI_Pro.py
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,12 +11,10 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
-
-# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
 from google import genai
 
 # ==========================================
-# 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
+# 🔑 Gemini API 키 세팅
 # ==========================================
 GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
 
@@ -36,21 +34,18 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ⭐️ 실시간 팩트 요약기 (최신 모델 적용) ⭐️
+# ⭐️ 실시간 팩트 요약기 (초안정적 1.5 모델 고정)
 def generate_ai_report(ticker_str: str, company_name: str) -> str:
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        
         sector = info.get('sector', '정보 없음')
         industry = info.get('industry', '정보 없음')
         market_cap = info.get('marketCap', '정보 없음')
         if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B (십억 달러)"
-        
         eps = info.get('trailingEps', '정보 없음')
         revenue_growth = info.get('revenueGrowth', '정보 없음')
         business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
-        
         financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
 
         prompt = f"""
@@ -72,45 +67,10 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
         4. 미래 모멘텀: (파이프라인, 기대감 등)
         5. 기업 전망: (짧고 굵은 전망)
         """
-        
         client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
+        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
         return response.text.strip()
-    except Exception as e:
-        return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
-
-# ⭐️ 양방향 Q&A 텔레그램 리스너 ⭐️
-last_update_id = 0
-def telegram_interactive_daemon():
-    global last_update_id
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            params = {"offset": last_update_id + 1, "timeout": 10}
-            res = requests.get(url, params=params, timeout=15).json()
-            
-            if res.get("ok"):
-                for item in res.get("result", []):
-                    last_update_id = item["update_id"]
-                    msg = item.get("message", {})
-                    chat_id = msg.get("chat", {}).get("id")
-                    text = msg.get("text", "")
-                    
-                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
-                        question = text.replace("/질문", "").strip()
-                        if question:
-                            prompt = f"너는 월스트리트의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
-                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                            
-                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
-        except Exception as e:
-            time.sleep(2)
-        time.sleep(2)
+    except Exception as e: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
 
 def get_us_ticker_list():
     try:
@@ -136,8 +96,8 @@ def telegram_sender_daemon():
             time.sleep(1.5)
         telegram_queue.task_done()
 
+# ⭐️ 꼬임 방지: 오직 발송 데몬만 가동
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-# threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
@@ -145,7 +105,6 @@ def calculate_trust_score(c, e60, *sig_arrays):
     runup_ratio = (c[-1] / lowest_60) - 1
     if runup_ratio > 0.50: score -= 4     
     elif runup_ratio > 0.30: score -= 2   
-
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
         is_sig = any(arr[i] for arr in sig_arrays)
@@ -212,8 +171,7 @@ def compute_yj_1d(df_raw: pd.DataFrame):
     elif is_y2: sig_type = "Y (유지)"
     else: sig_type = "Y (신규)"
 
-    trust_score = calculate_trust_score(c, e60, y_sig1, y_sig2, j_sig1, j_sig2, j_sig3)
-
+    trust_score = calculate_trust_score(c, ema60, y_sig1, y_sig2, j_sig1, j_sig2, j_sig3)
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
 chart_lock = threading.Lock()
@@ -235,10 +193,8 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
 def scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
-    
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 Y/J 통합 스캔 (AI 양방향 비서 가동중) 시작!")
-
+    print(f"\n🇺🇸 [일봉 전용] 미국장 Y/J 스캔 시작! (안정화 패치 완료)")
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -266,7 +222,6 @@ def scan_market_1d():
             info = ticker_to_info.get(tk)
             if not info: continue
             name, code = info['name'], info['code']
-
             try:
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
@@ -289,7 +244,6 @@ def scan_market_1d():
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         if chart_path:
                             ai_fact_check = generate_ai_report(code, name)
-                            
                             caption = (
                                 f"🎯 [{dbg['sig_type']}]\n\n"
                                 f"🏢 {name} ({code})\n"
@@ -303,14 +257,12 @@ def scan_market_1d():
                                 f"{ai_fact_check}\n\n"
                                 f"⚠️ [전문가 코멘트]\n"
                                 f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                                f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                                f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                             )
                             telegram_queue.put((chart_path, caption))
             except: pass
-        
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
-
     print(f"\n✅ [미국장 Y/J 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 def run_scheduler():
@@ -319,10 +271,11 @@ def run_scheduler():
     while True:
         now_ny = datetime.now(ny_tz)
         if now_ny.hour in [9, 11, 14] and now_ny.minute == 10:
-            print(f"🚀 [Y/J 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🚀 [Y/J 1D 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
+    scan_market_1d() # ⭐️ 대기 없이 즉시 1회 스캔 실행
     run_scheduler()
