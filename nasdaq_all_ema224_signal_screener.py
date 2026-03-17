@@ -16,7 +16,7 @@ from google import genai
 # ==========================================
 # 🔑 Gemini API 키 세팅
 # ==========================================
-GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+GEMINI_API_KEY = "AIzaSyDn624Gw7cWw4nIBE65jbvA8HLbmbYuVOY"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
@@ -267,11 +267,11 @@ def scan_market_1d():
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [미국장 Y/J 스케줄러] 09:00 / 11:00 / 14:00 대기 중...")
+    print("🕒 [1번 미국장 검색기] 09:00 / 11:00 / 14:00 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if now_ny.hour in [9, 11, 14] and now_ny.minute == 10:
-            print(f"🚀 [Y/J 1D 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_ny.hour == 9 and now_ny.minute == 0) or (now_ny.hour == 11 and now_ny.minute == 0) or (now_ny.hour == 14 and now_ny.minute == 0):
+            print(f"🚀 [1번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
