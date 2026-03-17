@@ -169,7 +169,7 @@ def telegram_sender_daemon():
 
 # 두 개의 일꾼을 백그라운드에 가동
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
+# threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 MIN_PRICE = 1000                 
 MIN_TRANS_MONEY = 100_000_000  
