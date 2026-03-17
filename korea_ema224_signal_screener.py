@@ -1,4 +1,4 @@
-# Dante_KRX_YJ_1D_AI_Pro.py
+# Dante_KRX_YJ_1D_AI_Interactive_Pro.py
 import os, re, time, json, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,13 +11,14 @@ from requests.adapters import HTTPAdapter
 import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
-import google.generativeai as genai
+
+# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
+from google import genai
 
 # ==========================================
 # 🔑 Gemini API 키 세팅
 # ==========================================
 GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
-genai.configure(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
@@ -65,7 +66,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ 한국장 Gemini AI 실시간 팩트 요약기 ⭐️
+# ⭐️ 실시간 팩트 요약기 (최신 모델 적용) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     try:
@@ -97,10 +98,43 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
         5. 기업 전망: (짧고 굵은 전망)
         """
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
         return response.text.strip()
     except: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
+
+# ⭐️ 양방향 Q&A 텔레그램 리스너 ⭐️
+last_update_id = 0
+def telegram_interactive_daemon():
+    global last_update_id
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            params = {"offset": last_update_id + 1, "timeout": 10}
+            res = requests.get(url, params=params, timeout=15).json()
+            
+            if res.get("ok"):
+                for item in res.get("result", []):
+                    last_update_id = item["update_id"]
+                    msg = item.get("message", {})
+                    chat_id = msg.get("chat", {}).get("id")
+                    text = msg.get("text", "")
+                    
+                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
+                        question = text.replace("/질문", "").strip()
+                        if question:
+                            prompt = f"너는 여의도의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
+                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                            
+                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
+        except:
+            time.sleep(2)
+        time.sleep(2)
 
 def get_krx_list_kind():
     try:
@@ -129,7 +163,9 @@ def telegram_sender_daemon():
                 except: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
+
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
+threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
@@ -203,7 +239,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
             plt.close('all')
-            # ⭐️ 선 제거, 캔들만 표기
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
@@ -215,7 +250,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 J(정배열) LS OpenAPI (AI 장착) 스캔 시작!")
+    print(f"\n⚡ [일봉 전용] 한국장 J(정배열) 스캔 (AI 양방향 비서 가동중) 시작!")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -257,7 +292,6 @@ def scan_market_1d():
                 tracker['hits'] += 1
                 chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                 if chart_path:
-                    # ⭐️ AI 팩트 리포트 생성
                     ai_fact_check = generate_kr_ai_report(code, name)
                     
                     caption = (
@@ -272,7 +306,8 @@ def scan_market_1d():
                         f"💡 [기업 팩트체크]\n"
                         f"{ai_fact_check}\n\n"
                         f"⚠️ [전문가 코멘트]\n"
-                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다."
+                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                        f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                     )
                     telegram_queue.put((chart_path, caption))
 
