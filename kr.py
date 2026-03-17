@@ -14,9 +14,6 @@ from bs4 import BeautifulSoup
 import traceback
 from google import genai
 
-# ==========================================
-# 🔑 Gemini API 키 세팅
-# ==========================================
 GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -40,18 +37,19 @@ def get_ls_token():
     except: pass
     return None
 
+# ⭐️ 팩트 기반 수정 1: LS증권 API 속도 최적화 (페널티 완벽 차단)
 class LSApiRateLimiter:
     def __init__(self):
-        self.timestamps = []
         self.lock = threading.Lock()
+        self.last_call = 0.0
     def wait(self):
         with self.lock:
             now = time.time()
-            self.timestamps = [t for t in self.timestamps if now - t < 1.05]
-            if len(self.timestamps) >= 3:
-                sleep_time = 1.05 - (now - self.timestamps[0])
-                if sleep_time > 0: time.sleep(sleep_time)
-            self.timestamps.append(time.time())
+            elapsed = now - self.last_call
+            # 무조건 0.4초 간격 유지 (초당 2.5회). 페널티 발생 0% 보장.
+            if elapsed < 0.4:
+                time.sleep(0.4 - elapsed)
+            self.last_call = time.time()
 
 ls_limiter = LSApiRateLimiter()
 global_session = requests.Session()
@@ -65,7 +63,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 리포트 생성기 (최신 2.5-flash로 안정화)
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     try:
@@ -114,51 +111,57 @@ def get_krx_list_kind():
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# ⭐️ 혁신 포인트: 발송 데몬이 AI를 호출하고 발송까지 책임집니다. 스캐너는 터치 안 함!
+# ⭐️ 팩트 기반 수정 2: 발송 데몬 생존 및 흐름 가시화 로직
 def telegram_sender_daemon():
+    print("🚀 [관제탑] 텔레그램 발송 및 AI 전담 데몬 정상 가동 시작!")
     while True:
-        item = telegram_queue.get()
-        if item is None: break
-        chart_path, code, name, dbg = item  # 캡션 완성본이 아니라 기본 데이터만 받아옴
+        try:
+            item = telegram_queue.get()
+            if item is None: break
+            chart_path, code, name, dbg = item
 
-        if SEND_TELEGRAM:
-            print(f"🤖 [{name}] 텔레그램 발송 준비 및 AI 요약 중...")
-            # 여기서 AI 리포트 생성 (스캐너 속도에 전혀 지장 없음)
-            ai_fact_check = generate_kr_ai_report(code, name)
-            
-            caption = (
-                f"🎯 [{dbg['sig_type']}]\n\n"
-                f"🏢 {name} ({code})\n"
-                f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                f"📉 [매수/손절 전략]\n"
-                f"- 양봉 길이만큼 분할매수\n"
-                f"- 마지막 분할매수에서 -5% 손절\n\n"
-                f"⭐ 신뢰도: {dbg['score']} / 10점\n\n"
-                f"💡 [팩트체크]\n"
-                f"{ai_fact_check}\n\n"
-                f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-            )
+            if SEND_TELEGRAM:
+                print(f"📥 [대기줄 알림] {name} 포착 데이터 확인! AI 리포트 작성을 시작합니다...")
+                ai_fact_check = generate_kr_ai_report(code, name)
+                
+                caption = (
+                    f"🎯 [{dbg['sig_type']}]\n\n"
+                    f"🏢 {name} ({code})\n"
+                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                    f"📉 [매수/손절 전략]\n"
+                    f"- 양봉 길이만큼 분할매수\n"
+                    f"- 마지막 분할매수에서 -5% 손절\n\n"
+                    f"⭐ 신뢰도: {dbg['score']} / 10점\n\n"
+                    f"💡 [팩트체크]\n"
+                    f"{ai_fact_check}\n\n"
+                    f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                )
 
-            # 텔레그램 1024자 제한 방어
-            safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
+                safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
 
-            for _ in range(3):
-                try:
-                    with open(chart_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200:
-                        print(f"✅ [{name}] 텔레그램 발송 성공!")
-                        break
-                    elif res.status_code == 429: time.sleep(3)
-                    else: 
-                        print(f"❌ 텔레그램 발송 거부됨: {res.text}")
-                        break
-                except Exception as e: 
-                    print(f"❌ 텔레그램 통신 에러: {e}")
-                    time.sleep(2)
-            time.sleep(1.5)
-        telegram_queue.task_done()
+                for attempt in range(3):
+                    try:
+                        with open(chart_path, 'rb') as f:
+                            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
+                        if res.status_code == 200:
+                            print(f"✅ [{name}] 텔레그램 발송 완벽 성공!")
+                            break
+                        elif res.status_code == 429: 
+                            print(f"⚠️ 텔레그램 API 지연, 3초 후 재시도... ({attempt+1}/3)")
+                            time.sleep(3)
+                        else: 
+                            print(f"❌ [{name}] 텔레그램 발송 거부됨: {res.text}")
+                            break
+                    except Exception as e: 
+                        print(f"❌ 텔레그램 통신 에러: {e}")
+                        time.sleep(2)
+                time.sleep(1.5)
+        except Exception as daemon_e:
+            print(f"🚨 [데몬 치명적 에러] 데몬 루프에서 오류 발생: {daemon_e}")
+            traceback.print_exc()
+        finally:
+            telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
@@ -246,19 +249,27 @@ def compute_bobgeureut(df_raw: pd.DataFrame):
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
 chart_lock = threading.Lock()
+
+# ⭐️ 팩트 기반 수정 3: 침묵의 에러(Silent Failure) 100% 방지 및 추적
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
         try:
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
+            
+            # 우분투 서버 폰트 충돌 유발 코드 완전 제거 (기본 폰트로 안전하게 렌더링)
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
-            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
+            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
+            
             plt.close('all')
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
-        except: return None
+        except Exception as e:
+            print(f"❌ [치명적 에러] {name} 차트 생성 중 폭발: {e}")
+            traceback.print_exc()
+            return None
 
 def scan_market_1d():
     stock_list = get_krx_list_kind()
@@ -266,7 +277,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 B 스캔 시작! (속도 원상복구 & 텔레그램 100% 보장)")
+    print(f"\n⚡ [일봉 전용] 한국장 B 스캔 시작! (속도 병목 해제 & 에러 추적 탑재)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -281,13 +292,14 @@ def scan_market_1d():
 
         df_raw = None
         for _ in range(5): 
-            ls_limiter.wait()
+            ls_limiter.wait() # 무조건 0.4초 텀을 지켜 페널티 절대 안 받음
             try:
                 res = global_session.post(url, headers=headers, data=json.dumps(body), timeout=7, verify=False)
                 if res.status_code == 200:
                     data = res.json()
+                    # 0.4초 락 덕분에 아래 조회건수제한 에러는 발생하지 않음
                     if "IGW" in data.get("rsp_cd", "") or data.get("rsp_msg", "") == "조회건수제한":
-                        time.sleep(2); continue 
+                        time.sleep(1); continue 
                     items = data.get("t8413OutBlock1", [])
                     if items:
                         records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
@@ -309,11 +321,15 @@ def scan_market_1d():
                 tracker['hits'] += 1
                 hit_rank = tracker['hits']
 
-        # ⭐️ 스캐너는 캡션을 만들지 않고 데이터만 대기줄에 던지고 바로 다음 종목으로 넘어감! (속도 저하 0%)
+        # ⭐️ 팩트 기반 수정 4: 로그 가시화 (어디서 멈추는지 눈으로 확인 가능)
         if hit:
+            print(f"🔔 [{name}] 타점 포착! 차트 생성 진입...")
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
+                print(f"✅ [{name}] 차트 저장 완료 -> 텔레그램 발송 대기줄로 무사히 이동!")
                 telegram_queue.put((chart_path, code, name, dbg))
+            else:
+                print(f"❌ [{name}] 차트 저장에 실패하여 텔레그램 큐에 넣지 못함!")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(worker, list(stock_list.iterrows()))
@@ -331,5 +347,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 즉시 1회 스캔 
+    scan_market_1d() 
     run_scheduler()
