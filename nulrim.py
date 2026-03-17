@@ -1,4 +1,4 @@
-# Dante_Nulrim_1D_LS_AI_Pro.py
+# Dante_Nulrim_1D_LS_AI_Interactive_Pro.py
 import os, re, time, json, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,13 +11,14 @@ import requests
 from requests.adapters import HTTPAdapter
 import warnings, urllib3
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+
+# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
+from google import genai
 
 # ==========================================
 # 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
 # ==========================================
 GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
-genai.configure(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
@@ -65,12 +66,11 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ 한국장 Gemini AI 실시간 팩트 요약기 (크롤링 데이터 주입) ⭐️
+# ⭐️ [기존] 한국장 실시간 팩트 요약기 (최신 모델 적용) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
     summary = "정보 없음"
     try:
-        # 1. 팩트 데이터 크롤링 (네이버, 에프앤가이드)
         headers = {'User-Agent': 'Mozilla/5.0'}
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
@@ -82,7 +82,6 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
             if tags: summary = " ".join([t.text.strip() for t in tags])
 
-        # 2. AI에게 팩트 주입 및 포맷팅 명령
         prompt = f"""
         너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
         아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
@@ -100,11 +99,44 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
         5. 기업 전망: (짧고 굵은 전망)
         """
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
+
+# ⭐️ [신규 추가] 양방향 Q&A 텔레그램 리스너 ⭐️
+last_update_id = 0
+def telegram_interactive_daemon():
+    global last_update_id
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            params = {"offset": last_update_id + 1, "timeout": 10}
+            res = requests.get(url, params=params, timeout=15).json()
+            
+            if res.get("ok"):
+                for item in res.get("result", []):
+                    last_update_id = item["update_id"]
+                    msg = item.get("message", {})
+                    chat_id = msg.get("chat", {}).get("id")
+                    text = msg.get("text", "")
+                    
+                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
+                        question = text.replace("/질문", "").strip()
+                        if question:
+                            prompt = f"너는 여의도의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
+                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                            
+                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
+        except Exception as e:
+            time.sleep(2)
+        time.sleep(2)
 
 def get_krx_list_kind():
     try:
@@ -130,10 +162,14 @@ def telegram_sender_daemon():
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, files={"photo": f}, timeout=20, verify=False)
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
+                    else: break 
+                except Exception as e: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
+
+# 두 개의 일꾼을 백그라운드에 가동
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
+threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 MIN_PRICE = 1000                 
 MIN_TRANS_MONEY = 100_000_000  
@@ -261,7 +297,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
 
-    print(f"\n⚡ [일봉 전용] LS증권 V 초고속 스캔 (AI 장착 완료) 시작!")
+    print(f"\n⚡ [일봉 전용] LS증권 V 스캔 (AI 양방향 비서 가동중) 시작!")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -305,7 +341,6 @@ def scan_market_1d():
                 tracker['hits'] += 1
                 chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                 if chart_path:
-                    # ⭐️ 한국장 종목 포착 시 AI가 스크래핑 데이터로 팩트 리포트 작성
                     ai_fact_check = generate_kr_ai_report(code, name)
                     
                     caption = (
@@ -320,7 +355,8 @@ def scan_market_1d():
                         f"💡 [기업 팩트체크]\n"
                         f"{ai_fact_check}\n\n"
                         f"⚠️ [전문가 코멘트]\n"
-                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다."
+                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                        f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                     )
                     telegram_queue.put((chart_path, caption))
 
