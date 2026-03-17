@@ -16,7 +16,7 @@ from google import genai
 # ==========================================
 # 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
 # ==========================================
-GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+GEMINI_API_KEY = "AIzaSyDn624Gw7cWw4nIBE65jbvA8HLbmbYuVOY"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
