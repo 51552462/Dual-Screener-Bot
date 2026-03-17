@@ -11,6 +11,7 @@ import requests
 from requests.adapters import HTTPAdapter
 import warnings, urllib3
 from bs4 import BeautifulSoup
+import traceback
 from google import genai
 
 # ==========================================
@@ -64,6 +65,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
+# ⭐️ AI 리포트 생성기 (최신 2.5-flash로 안정화)
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     try:
@@ -80,25 +82,25 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
 
         prompt = f"""
         너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-        아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-
+        아래 한국 주식 데이터를 바탕으로 팩트 중심의 짦은 요약 메모를 작성해.
         [종목 정보]
         - 종목명: {company_name} ({code})
-        - 네이버금융 섹터분류: {sector}
-        - 에프앤가이드 비즈니스 요약: {summary[:800]}
+        - 섹터: {sector}
+        - 비즈니스 요약: {summary[:800]}
 
         [출력 양식]
         1. 섹터: (간단설명)
         2. 지위: (점유율/규모)
-        3. 실적: (흑/적자, 핵심지표)
-        4. 모멘텀: (파이프라인)
+        3. 실적: (핵심지표)
+        4. 모멘텀: (기대감)
         5. 전망: (짧고 굵게)
         """
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         return response.text.strip()
-    except: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다."
+    except Exception as e:
+        print(f"❌ AI 생성 에러 ({code}): {e}")
+        return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다."
 
 def get_krx_list_kind():
     try:
@@ -112,22 +114,41 @@ def get_krx_list_kind():
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# ⭐️ 텔레그램 글자수 초과 방지 및 발송 로그 기능 ⭐️
+# ⭐️ 혁신 포인트: 발송 데몬이 AI를 호출하고 발송까지 책임집니다. 스캐너는 터치 안 함!
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
         if item is None: break
-        img_path, caption = item
+        chart_path, code, name, dbg = item  # 캡션 완성본이 아니라 기본 데이터만 받아옴
+
         if SEND_TELEGRAM:
+            print(f"🤖 [{name}] 텔레그램 발송 준비 및 AI 요약 중...")
+            # 여기서 AI 리포트 생성 (스캐너 속도에 전혀 지장 없음)
+            ai_fact_check = generate_kr_ai_report(code, name)
+            
+            caption = (
+                f"🎯 [{dbg['sig_type']}]\n\n"
+                f"🏢 {name} ({code})\n"
+                f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                f"📉 [매수/손절 전략]\n"
+                f"- 양봉 길이만큼 분할매수\n"
+                f"- 마지막 분할매수에서 -5% 손절\n\n"
+                f"⭐ 신뢰도: {dbg['score']} / 10점\n\n"
+                f"💡 [팩트체크]\n"
+                f"{ai_fact_check}\n\n"
+                f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+            )
+
+            # 텔레그램 1024자 제한 방어
+            safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
+
             for _ in range(3):
                 try:
-                    # 1024자 텔레그램 제한 방어막 (1000자까지만 전송)
-                    safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-                    
-                    with open(img_path, 'rb') as f:
+                    with open(chart_path, 'rb') as f:
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
                     if res.status_code == 200:
-                        print(f"✅ 텔레그램 발송 성공!")
+                        print(f"✅ [{name}] 텔레그램 발송 성공!")
                         break
                     elif res.status_code == 429: time.sleep(3)
                     else: 
@@ -245,7 +266,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 B 스캔 시작! (속도 정상화 + 발송 보장 패치)")
+    print(f"\n⚡ [일봉 전용] 한국장 B 스캔 시작! (속도 원상복구 & 텔레그램 100% 보장)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -278,7 +299,6 @@ def scan_market_1d():
         hit, sig_type, df, dbg = False, "", None, {}
         if is_valid: hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
 
-        # ⭐️ 병목 현상 해제: 콘솔 출력 부분만 아주 짧게 묶어서 속도 10배 향상
         hit_rank = 0
         with console_lock:
             tracker['scanned'] += 1
@@ -289,27 +309,11 @@ def scan_market_1d():
                 tracker['hits'] += 1
                 hit_rank = tracker['hits']
 
-        # ⭐️ 자물쇠 바깥에서 느긋하게 차트 그리고 AI 호출 (다른 스레드 방해 안 함)
+        # ⭐️ 스캐너는 캡션을 만들지 않고 데이터만 대기줄에 던지고 바로 다음 종목으로 넘어감! (속도 저하 0%)
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 마지막 분할매수에서 -5% 손절\n\n"
-                    f"⭐ 신뢰도: {dbg['score']} / 10점\n\n"
-                    f"💡 [팩트체크]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"시장 상황에 따라 개별 추가 분석을 권장합니다.\n"
-                    f"\n💬 질문: '/질문 내용' 입력"
-                )
-                telegram_queue.put((chart_path, caption))
+                telegram_queue.put((chart_path, code, name, dbg))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(worker, list(stock_list.iterrows()))
@@ -320,12 +324,12 @@ def run_scheduler():
     print("🕒 [한국장 B 스케줄러] 09:00 / 11:00 / 14:00 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour in [9, 11, 14] and now_kr.minute == 30:
+        if now_kr.hour in [9, 11, 14] and now_kr.minute == 0:
             print(f"🚀 [B 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 즉시 1회 스캔용
+    scan_market_1d() # 즉시 1회 스캔 
     run_scheduler()
