@@ -4,13 +4,20 @@ import requests
 import threading
 import traceback
 from google import genai
+import os
+from dotenv import load_dotenv
 
 # ==========================================
-# 🔑 대표님 세팅 (스크린샷의 키 적용 완료)
+# 🔑 대표님 세팅 (.env 안전 파일 방식 적용)
 # ==========================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+load_dotenv() # 숨겨진 .env 파일을 읽어오는 핵심 마법!
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
+
 client = genai.Client(api_key=GEMINI_API_KEY)
-
 KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
 US_TOKEN = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 
