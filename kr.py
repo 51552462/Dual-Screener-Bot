@@ -321,11 +321,11 @@ def scan_market_1d():
 
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [한국장 B 스케줄러] 09:00 / 11:00 / 14:00 대기 중...")
+    print("🕒 [4번 검색기] 10:30 / 13:00 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour in [9, 11, 14] and now_kr.minute == 30:
-            print(f"🚀 [B 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_kr.hour == 10 and now_kr.minute == 30) or (now_kr.hour == 13 and now_kr.minute == 0):
+            print(f"🚀 [4번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
