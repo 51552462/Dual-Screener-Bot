@@ -1,5 +1,5 @@
-# Dante_US_YJ_1D_Pro.py
-import os, re, time, threading, queue
+# Dante_US_YJ_1D_Pro_FastDefense.py
+import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
 import numpy as np, pandas as pd
@@ -29,18 +29,27 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
 def get_us_smart_report(ticker_str: str) -> tuple:
-    sector, earnings_trend = "정보 없음", "정보 없음"
+    sector, outlook, growth = "섹터 미제공", "월가 분석 요망", "실적 미제공"
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        sector = info.get('sector', '정보 없음')
-        growth = info.get('earningsGrowth', 0)
-        if growth is None: growth = 0
-        if growth > 0.1: earnings_trend = f"실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
-        elif growth < -0.1: earnings_trend = f"실적 부진 (분기 EPS: {growth*100:.1f}%)"
-        else: earnings_trend = "보합세 (특이사항 없음)"
+        sec = info.get('sector')
+        ind = info.get('industry')
+        if sec and ind: sector = f"{sec} ({ind})"
+        elif sec: sector = sec
+
+        eg = info.get('earningsGrowth')
+        eps = info.get('trailingEps')
+        if eg is not None:
+            if eg > 0: growth = f"📈 실적 성장 (분기 EPS: +{eg*100:.1f}%)"
+            else: growth = f"📉 실적 악화 (분기 EPS: {eg*100:.1f}%)"
+        elif eps is not None:
+            growth = f"📊 최근 12개월 EPS: ${eps} ({'흑자' if eps > 0 else '적자'})"
+
+        rec = info.get('recommendationKey')
+        if rec: outlook = f"투자의견: {rec.upper()}"
     except: pass
-    return sector, earnings_trend
+    return sector, outlook, growth
 
 def get_us_ticker_list():
     try:
@@ -67,9 +76,13 @@ def telegram_sender_daemon():
         telegram_queue.task_done()
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
-# ⭐️ 신뢰도 점수 (15% 및 60일선 리셋)
 def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
+    lowest_60 = np.min(c[-60:])
+    runup_ratio = (c[-1] / lowest_60) - 1
+    if runup_ratio > 0.50: score -= 4     
+    elif runup_ratio > 0.30: score -= 2   
+
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
         is_sig = any(arr[i] for arr in sig_arrays)
@@ -80,12 +93,11 @@ def calculate_trust_score(c, e60, *sig_arrays):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
                     valid = False; break
             if valid: score += 2 
-    return min(10, score)
+    return max(1, min(10, score))
 
 def compute_yj_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
-    
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
@@ -101,7 +113,6 @@ def compute_yj_1d(df_raw: pd.DataFrame):
     with np.errstate(invalid='ignore'): volSpike3 = v >= (np.nan_to_num(av3, nan=1.0) * 3)
     with np.errstate(invalid='ignore'): volSpike5 = v >= (np.nan_to_num(av3, nan=1.0) * 5)
 
-    # --- [Y (역배열) 로직] ---
     alignedNow = (ema10 > ema20) & (ema20 > ema30)
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e224 = np.roll(ema224, 1); prev_e224[0] = 0
@@ -118,7 +129,6 @@ def compute_yj_1d(df_raw: pd.DataFrame):
     allAligned = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224) & (ema224 > ema448)
     y_sig2 = bars_since_s1_is_3 & holdNow & holdNow_1 & holdNow_2 & allAligned
 
-    # --- [J (정배열) 로직] ---
     condBaseJ = isBullish & volSpike5 & moneyOk & priceOk
     align112 = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112)
     align224 = align112 & (ema112 > ema224)
@@ -133,11 +143,11 @@ def compute_yj_1d(df_raw: pd.DataFrame):
 
     if not (is_y1 or is_y2 or is_j1 or is_j2 or is_j3): return False, "", df, {}
 
-    if is_j3: sig_type = "🎯 J (448 완성)"
-    elif is_j2: sig_type = "🎯 J (224 상태)"
-    elif is_j1: sig_type = "🎯 J (112 상태)"
-    elif is_y2: sig_type = "💥 Y (유지)"
-    else: sig_type = "🎯 Y (신규)"
+    if is_j3: sig_type = "J (448 완성)"
+    elif is_j2: sig_type = "J (224 상태)"
+    elif is_j1: sig_type = "J (112 상태)"
+    elif is_y2: sig_type = "Y (유지)"
+    else: sig_type = "Y (신규)"
 
     trust_score = calculate_trust_score(c, ema60, y_sig1, y_sig2, j_sig1, j_sig2, j_sig3)
 
@@ -147,13 +157,14 @@ chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
         try:
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
+            timestamp_ms = int(time.time() * 1000000)
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}.png")
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[{dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
+            title = f"[🎯 {dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
             plt.close('all')
-            # ⭐️ 선 제거, 캔들만 표기
+            # ⭐️ 캔들만 표기 (선 제거)
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
@@ -169,11 +180,26 @@ def scan_market_1d():
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
+    chunk_size = 100 
 
-    for i in range(0, len(tickers), 100):
-        chunk = tickers[i:i+100]
-        df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
-        
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i+chunk_size]
+        tickers_str = " ".join(chunk)
+        df_batch = None
+        fallback_dict = {}
+
+        # ⭐️ 초고속 에러 방어망 (Multi-threading Fallback)
+        try:
+            df_batch = yf.download(tickers_str, interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+        except:
+            def fetch_single(tk):
+                try:
+                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
+                    if not df_s.empty: fallback_dict[tk] = df_s
+                except: pass
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                executor.map(fetch_single, chunk)
+
         for tk in chunk:
             tracker['scanned'] += 1
             info = ticker_to_info.get(tk)
@@ -181,10 +207,14 @@ def scan_market_1d():
             name, code = info['name'], info['code']
 
             try:
-                if len(chunk) == 1: df_ticker = df_batch.copy()
-                else: 
-                    if tk not in df_batch.columns.get_level_values(0): continue
-                    df_ticker = df_batch[tk].copy()
+                if df_batch is not None:
+                    if len(chunk) == 1: df_ticker = df_batch.copy()
+                    else: 
+                        if tk not in df_batch.columns.get_level_values(0): continue
+                        df_ticker = df_batch[tk].copy()
+                else:
+                    df_ticker = fallback_dict.get(tk)
+                    if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
@@ -197,7 +227,7 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         if chart_path:
-                            sector, earnings_trend = get_us_smart_report(code) 
+                            sector, outlook, growth = get_us_smart_report(code) 
                             caption = (
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg['last_close']:.2f}\n"
@@ -208,8 +238,8 @@ def scan_market_1d():
                                 f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                                 f"💡 [기업 팩트체크]\n"
                                 f"🔸 섹터: {sector}\n"
-                                f"🔸 전망: 전문가 분석 요망\n"
-                                f"🔸 실적: {earnings_trend}\n"
+                                f"🔸 전망: {outlook}\n"
+                                f"🔸 실적: {growth}\n"
                             )
                             telegram_queue.put((chart_path, caption))
             except: pass
@@ -221,12 +251,10 @@ def scan_market_1d():
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [미국장 Y/J 스케줄러 (1D 전용)] 미국시간 09:30 / 11:30 / 14:30 대기 중...")
+    print("🕒 [미국장 Y/J 스케줄러] 09:00 / 11:00 / 14:00 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if (now_ny.hour == 9 and now_ny.minute == 10) or \
-           (now_ny.hour == 11 and now_ny.minute == 10) or \
-           (now_ny.hour == 14 and now_ny.minute == 10):
+        if now_ny.hour in [9, 11, 14] and now_ny.minute == 10:
             print(f"🚀 [Y/J 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
