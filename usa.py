@@ -1,5 +1,5 @@
-# Dante_US_Bowl_1D_Pro_Fixed.py
-import os, re, time, threading, queue
+# Dante_US_Bowl_1D_AI_Pro.py
+import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
 import numpy as np, pandas as pd
@@ -11,12 +11,19 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+import google.generativeai as genai
+
+# ==========================================
+# 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
+# ==========================================
+GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+genai.configure(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-TELEGRAM_TOKEN    = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
+TELEGRAM_TOKEN    = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
@@ -28,19 +35,48 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def get_us_smart_report(ticker_str: str) -> tuple:
-    sector, earnings_trend = "정보 없음", "정보 없음"
+# ⭐️ Gemini AI 실시간 팩트 요약기 ⭐️
+def generate_ai_report(ticker_str: str, company_name: str) -> str:
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
+        
         sector = info.get('sector', '정보 없음')
-        growth = info.get('earningsGrowth', 0)
-        if growth is None: growth = 0
-        if growth > 0.1: earnings_trend = f"실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
-        elif growth < -0.1: earnings_trend = f"실적 부진 (분기 EPS: {growth*100:.1f}%)"
-        else: earnings_trend = "보합세 (특이사항 없음)"
-    except: pass
-    return sector, earnings_trend
+        industry = info.get('industry', '정보 없음')
+        market_cap = info.get('marketCap', '정보 없음')
+        if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B (십억 달러)"
+        
+        eps = info.get('trailingEps', '정보 없음')
+        revenue_growth = info.get('revenueGrowth', '정보 없음')
+        business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
+        
+        financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
+
+        prompt = f"""
+        너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
+        아래 종목의 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+
+        [종목 정보]
+        - 종목명: {company_name} ({ticker_str})
+        - 섹터: {sector} / 산업군: {industry}
+        - 시가총액: {market_cap}
+        - 실적 및 재무: {financials}
+        - 비즈니스 요약: {business_summary}
+
+        [출력 양식] (반드시 아래 번호와 항목명에 맞춰서 작성할 것)
+        1. 섹터 종류: (간단한 설명)
+        2. 업계 점유율/규모: (시총 규모 및 지위)
+        3. 최근 실적: (흑자/적자 여부, 핵심 지표)
+        4. 미래 모멘텀: (파이프라인, 기대감 등)
+        5. 기업 전망: (짧고 굵은 전망)
+        """
+        
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
 
 def get_us_ticker_list():
     try:
@@ -69,6 +105,11 @@ threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
+    lowest_60 = np.min(c[-60:])
+    runup_ratio = (c[-1] / lowest_60) - 1
+    if runup_ratio > 0.50: score -= 4     
+    elif runup_ratio > 0.30: score -= 2   
+
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
         if signal_arr[i]:
@@ -79,7 +120,7 @@ def calculate_trust_score(c, e60, signal_arr):
                     valid = False
                     break
             if valid: score += 2 
-    return min(10, score)
+    return max(1, min(10, score))
 
 def compute_bobgeureut_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
@@ -140,8 +181,8 @@ def compute_bobgeureut_1d(df_raw: pd.DataFrame):
     signalCat1 = signalBase & isCat1
     isAligned = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224)
 
-    if (signalCat2 & isAligned)[-1] or (signalCat1 & isAligned)[-1]: sig_type = "💥 B (J 강조)"
-    else: sig_type = "🎯 B (일반)"
+    if (signalCat2 & isAligned)[-1] or (signalCat1 & isAligned)[-1]: sig_type = "B (J 강조)"
+    else: sig_type = "B (일반)"
 
     trust_score = calculate_trust_score(c, ema60, signalBase)
 
@@ -152,16 +193,13 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
     with chart_lock:
         try:
             timestamp_ms = int(time.time() * 1000000)
-            safe = sanitize_filename(f"{code}_{name}")
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
-
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}.png")
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[{dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
-
+            title = f"[🎯 {dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
-
             plt.close('all')
+            # 선 제거, 캔들만 표기
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
@@ -172,7 +210,7 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 B(밥그릇) 무적 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 B(밥그릇) 초고속 스캔 (AI 장착 완료) 시작!")
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -181,21 +219,19 @@ def scan_market_1d():
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
-        tickers_str = " ".join(chunk)
-        
         df_batch = None
         fallback_dict = {}
 
-        # ⭐️ 핵심 패치: 야후 파이낸스 내부 버그로 인한 스레드 사망 완벽 방어 ⭐️
         try:
-            df_batch = yf.download(tickers_str, interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
-        except Exception as e:
-            # 그룹 다운로드 중 에러(InvalidIndexError 등) 터지면 스레드 죽이지 않고 1개씩 안전 모드로 전환
-            for tk in chunk:
+            df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+        except:
+            def fetch_single(tk):
                 try:
-                    df_single = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
-                    if not df_single.empty: fallback_dict[tk] = df_single
+                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
+                    if not df_s.empty: fallback_dict[tk] = df_s
                 except: pass
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                executor.map(fetch_single, chunk)
 
         for tk in chunk:
             tracker['scanned'] += 1
@@ -204,7 +240,6 @@ def scan_market_1d():
             name, code = info['name'], info['code']
 
             try:
-                # 안전 모드 딕셔너리와 일반 그룹 다운로드 모드 분기 처리
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
                     else: 
@@ -215,9 +250,7 @@ def scan_market_1d():
                     if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                
-                if df_ticker.index.tzinfo is not None: 
-                    df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
+                if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
                 if len(df_ticker) >= 500:
@@ -229,8 +262,11 @@ def scan_market_1d():
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         
                         if chart_path:
-                            sector, earnings_trend = get_us_smart_report(code) 
+                            # ⭐️ AI 팩트 리포트 생성
+                            ai_fact_check = generate_ai_report(code, name)
+                            
                             caption = (
+                                f"🎯 [{dbg['sig_type']}]\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg['last_close']:.2f}\n"
                                 f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
@@ -239,9 +275,9 @@ def scan_market_1d():
                                 f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
                                 f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                                 f"💡 [기업 팩트체크]\n"
-                                f"🔸 섹터: {sector}\n"
-                                f"🔸 전망: 전문가 분석 요망\n"
-                                f"🔸 실적: {earnings_trend}\n"
+                                f"{ai_fact_check}\n\n"
+                                f"⚠️ [전문가 코멘트]\n"
+                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다."
                             )
                             telegram_queue.put((chart_path, caption))
                             
