@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from io import StringIO
 from google import genai
 
-GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+GEMINI_API_KEY = "AIzaSyDn624Gw7cWw4nIBE65jbvA8HLbmbYuVOY"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
@@ -278,11 +278,11 @@ def scan_market_1d():
 
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [한국장 E 스케줄러] 09:30 / 11:30 / 14:30 대기 중...")
+    print("🕒 [2번 검색기] 09:30 / 12:00 / 14:30 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour in [9, 11, 14] and now_kr.minute == 10:
-            print(f"🚀 [E 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_kr.hour == 9 and now_kr.minute == 30) or (now_kr.hour == 12 and now_kr.minute == 0) or (now_kr.hour == 14 and now_kr.minute == 30):
+            print(f"🚀 [2번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
