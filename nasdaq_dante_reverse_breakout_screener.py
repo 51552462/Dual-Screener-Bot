@@ -155,7 +155,7 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
         if signalBase[i]: signalCount += 1
 
     sig_type = "P (연속)" if signalCount > 1 else "P (신규)"
-    trust_score = calculate_trust_score(c, ema60, signalBase)
+    
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
 chart_lock = threading.Lock()
@@ -248,11 +248,11 @@ def scan_market_1d():
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [미국장 P 스케줄러] 09:10 / 11:10 / 14:10 대기 중...")
+    print("🕒 [2번 미국장 검색기] 09:30 / 11:30 / 14:30 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if now_ny.hour in [9, 11, 14] and now_ny.minute == 20:
-            print(f"🚀 [P 1D 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_ny.hour == 9 and now_ny.minute == 30) or (now_ny.hour == 11 and now_ny.minute == 30) or (now_ny.hour == 14 and now_ny.minute == 30):
+            print(f"🚀 [2번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
