@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from io import StringIO
 from google import genai
 
-GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+GEMINI_API_KEY = "AIzaSyDn624Gw7cWw4nIBE65jbvA8HLbmbYuVOY"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
@@ -189,7 +189,7 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
 
     sig_type = "P (연속)" if signalCount > 1 else "P (신규)"
     trust_score = calculate_trust_score(c, ema60, signalBase)
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
+    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "sig_type": sig_type}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
@@ -276,11 +276,11 @@ def scan_market_1d():
 
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [한국장 P 스케줄러] 09:10 / 11:10 / 14:10 대기 중...")
+    print("🕒 [3번 검색기] 10:00 / 12:30 / 15:00 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour in [9, 11, 14] and now_kr.minute == 20:
-            print(f"🚀 [P 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_kr.hour == 10 and now_kr.minute == 0) or (now_kr.hour == 12 and now_kr.minute == 30) or (now_kr.hour == 15 and now_kr.minute == 0):
+            print(f"🚀 [3번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
