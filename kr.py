@@ -331,5 +331,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 즉시 1회 스캔 
+  # scan_market_1d() # 즉시 1회 스캔 
     run_scheduler()
