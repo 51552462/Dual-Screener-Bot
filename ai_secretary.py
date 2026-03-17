@@ -8,7 +8,7 @@ from google import genai
 # ==========================================
 # 🔑 대표님 세팅 (스크린샷의 키 적용 완료)
 # ==========================================
-GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
+GEMINI_API_KEY = "AIzaSyDn624Gw7cWw4nIBE65jbvA8HLbmbYuVOY"
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
