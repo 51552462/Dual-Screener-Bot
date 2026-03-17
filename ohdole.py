@@ -281,7 +281,7 @@ def run_scheduler():
     print("🕒 [한국장 E 스케줄러] 09:30 / 11:30 / 14:30 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour in [9, 11, 14] and now_kr.minute == 30:
+        if now_kr.hour in [9, 11, 14] and now_kr.minute == 10:
             print(f"🚀 [E 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
