@@ -17,7 +17,8 @@ from google import genai
 # ==========================================
 # 🔑 Gemini API 키 세팅
 # ==========================================
-GEMINI_API_KEY = "AIzaSyDn624Gw7cWw4nIBE65jbvA8HLbmbYuVOY"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
