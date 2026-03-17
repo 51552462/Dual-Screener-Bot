@@ -1,4 +1,4 @@
-# Dante_US_Nulrim_1D_AI_Pro.py
+# Dante_US_Nulrim_1D_AI_Interactive_Pro.py
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,13 +11,14 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
-import google.generativeai as genai
+
+# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
+from google import genai
 
 # ==========================================
 # 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
 # ==========================================
 GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
-genai.configure(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
@@ -35,7 +36,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ⭐️ Gemini AI 실시간 팩트 요약기 ⭐️
+# ⭐️ [기존] 실시간 팩트 요약기 (최신 모델 적용) ⭐️
 def generate_ai_report(ticker_str: str, company_name: str) -> str:
     try:
         tk = yf.Ticker(ticker_str)
@@ -72,11 +73,45 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
         5. 기업 전망: (짧고 굵은 전망)
         """
         
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
+
+# ⭐️ [신규 추가] 양방향 Q&A 텔레그램 리스너 (기존 로직과 엉키지 않게 독립 스레드 구성) ⭐️
+last_update_id = 0
+def telegram_interactive_daemon():
+    global last_update_id
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            params = {"offset": last_update_id + 1, "timeout": 10}
+            res = requests.get(url, params=params, timeout=15).json()
+            
+            if res.get("ok"):
+                for item in res.get("result", []):
+                    last_update_id = item["update_id"]
+                    msg = item.get("message", {})
+                    chat_id = msg.get("chat", {}).get("id")
+                    text = msg.get("text", "")
+                    
+                    # '/질문' 이라는 단어로 시작할 때만 반응하여 스팸 방지
+                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
+                        question = text.replace("/질문", "").strip()
+                        if question:
+                            prompt = f"너는 월스트리트의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
+                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                            
+                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
+        except Exception as e:
+            time.sleep(2)
+        time.sleep(2)
 
 def get_us_ticker_list():
     try:
@@ -101,12 +136,15 @@ def telegram_sender_daemon():
                 except: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
+
+# 두 개의 백그라운드 일꾼을 모두 실행 (메시지 쏘는 놈 + 질문 듣는 놈)
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
+threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 MIN_PRICE_USD = 1.0               
 MIN_MONEY_USD = 1_000_000         
 
-def calculate_trust_score(c, e60, s1_arr, s2_arr, s3_arr, s4_arr, s5_arr, s6_arr, s7_arr):
+def calculate_trust_score(c, e60, s1_arr, s2_arr, s4_arr):
     score = 5 
     lowest_60 = np.min(c[-60:])
     runup_ratio = (c[-1] / lowest_60) - 1
@@ -115,7 +153,7 @@ def calculate_trust_score(c, e60, s1_arr, s2_arr, s3_arr, s4_arr, s5_arr, s6_arr
 
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
-        if s1_arr[i] or s2_arr[i] or s3_arr[i] or s4_arr[i] or s5_arr[i] or s6_arr[i] or s7_arr[i]:
+        if s1_arr[i] or s2_arr[i] or s4_arr[i]:
             valid = True
             entry_price = c[i]
             for j in range(i + 1, len(c)):
@@ -131,11 +169,9 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
-    df['Lowest5'] = df['Low'].rolling(5).min()
     
     c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
     av3 = df['AvgVol3'].values
-    lowest5 = df['Lowest5'].values
     
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
@@ -163,34 +199,16 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
-    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
     
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
-    
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-    dipped20 = lowest5 < e20
-    raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
-
-    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
-    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
-    shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
-    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
-
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
     
     s4 = np.zeros_like(c, dtype=bool)
-    s5 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
         if raw_s4[i] and (i - last_pullback_bar > 5):
             s4[i] = True
-            last_pullback_bar = i
-        if raw_s5[i] and not s4[i] and (i - last_pullback_bar > 5):
-            s5[i] = True
             last_pullback_bar = i
 
     cond_base = moneyOk & priceOk & volSpike
@@ -204,7 +222,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     elif hit2: sig_type = "V (S2: 224 재정렬)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
+    trust_score = calculate_trust_score(c, e60, s1, s2, s4)
 
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
@@ -229,7 +247,7 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 초고속 스캔 (AI 장착 완료) 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 스캔 (AI 양방향 비서 가동중) 시작!")
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -280,7 +298,6 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         if chart_path:
-                            # ⭐️ 종목 포착 시 AI가 팩트 기반 요약 리포트 작성
                             ai_fact_check = generate_ai_report(code, name)
                             
                             caption = (
@@ -295,7 +312,8 @@ def scan_market_1d():
                                 f"💡 [기업 팩트체크]\n"
                                 f"{ai_fact_check}\n\n"
                                 f"⚠️ [전문가 코멘트]\n"
-                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다."
+                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                                f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                             )
                             telegram_queue.put((chart_path, caption))
             except: pass
