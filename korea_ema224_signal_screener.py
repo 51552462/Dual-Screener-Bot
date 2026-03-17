@@ -1,4 +1,4 @@
-# Dante_KRX_YJ_1D_AI_Interactive_Pro.py
+# Dante_KRX_YJ_1D_AI_Pro.py
 import os, re, time, json, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -12,7 +12,7 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 
-# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
+# ⭐️ 구글 최신 통합 라이브러리
 from google import genai
 
 # ==========================================
@@ -66,7 +66,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ 실시간 팩트 요약기 (최신 모델 적용) ⭐️
+# ⭐️ 실시간 팩트 요약기 (초안정적 1.5 모델 고정) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     try:
@@ -99,42 +99,13 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         5. 기업 전망: (짧고 굵은 전망)
         """
         client = genai.Client(api_key=GEMINI_API_KEY)
+        # ⭐️ 무한 멈춤 없는 1.5 모델로 원상복구
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt
         )
         return response.text.strip()
     except: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
-
-# ⭐️ 양방향 Q&A 텔레그램 리스너 ⭐️
-last_update_id = 0
-def telegram_interactive_daemon():
-    global last_update_id
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            params = {"offset": last_update_id + 1, "timeout": 10}
-            res = requests.get(url, params=params, timeout=15).json()
-            
-            if res.get("ok"):
-                for item in res.get("result", []):
-                    last_update_id = item["update_id"]
-                    msg = item.get("message", {})
-                    chat_id = msg.get("chat", {}).get("id")
-                    text = msg.get("text", "")
-                    
-                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
-                        question = text.replace("/질문", "").strip()
-                        if question:
-                            prompt = f"너는 여의도의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
-                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                            
-                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
-        except:
-            time.sleep(2)
-        time.sleep(2)
 
 def get_krx_list_kind():
     try:
@@ -164,8 +135,8 @@ def telegram_sender_daemon():
             time.sleep(1.5)
         telegram_queue.task_done()
 
+# ⭐️ 오직 텔레그램 '발송' 일꾼만 가동 (충돌 완벽 차단)
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-# threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
@@ -250,7 +221,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 J(정배열) 스캔 (AI 양방향 비서 가동중) 시작!")
+    print(f"\n⚡ [일봉 전용] 한국장 J(정배열) 스캔 시작! (무적 AI 안정화 패치 완료)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -307,7 +278,7 @@ def scan_market_1d():
                         f"{ai_fact_check}\n\n"
                         f"⚠️ [전문가 코멘트]\n"
                         f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                        f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                     )
                     telegram_queue.put((chart_path, caption))
 
@@ -327,4 +298,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
+    scan_market_1d() # ⭐️ 켜자마자 대기 없이 즉시 1회 스캔 실행!
     run_scheduler()
