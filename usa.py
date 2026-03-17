@@ -137,7 +137,7 @@ def telegram_sender_daemon():
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
+# threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
