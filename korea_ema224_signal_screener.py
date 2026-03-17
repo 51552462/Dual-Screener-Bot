@@ -298,5 +298,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # ⭐️ 켜자마자 대기 없이 즉시 1회 스캔 실행!
+  # scan_market_1d() # ⭐️ 켜자마자 대기 없이 즉시 1회 스캔 실행!
     run_scheduler()
