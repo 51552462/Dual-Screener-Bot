@@ -1,4 +1,4 @@
-# Dante_US_Nulrim_1D_AI_Interactive_Pro.py
+# Dante_US_Nulrim_1D_AI_Pro.py
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,8 +11,6 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
-
-# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
 from google import genai
 
 # ==========================================
@@ -36,7 +34,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ⭐️ [기존] 실시간 팩트 요약기 (최신 모델 적용) ⭐️
 def generate_ai_report(ticker_str: str, company_name: str) -> str:
     try:
         tk = yf.Ticker(ticker_str)
@@ -74,44 +71,14 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
         """
         
         client = genai.Client(api_key=GEMINI_API_KEY)
+        # ⭐️ 100% 멈추지 않는 초안정적 1.5 모델 복구 (무한대기 방지) ⭐️
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt
         )
         return response.text.strip()
     except Exception as e:
         return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
-
-# ⭐️ [신규 추가] 양방향 Q&A 텔레그램 리스너 (기존 로직과 엉키지 않게 독립 스레드 구성) ⭐️
-last_update_id = 0
-def telegram_interactive_daemon():
-    global last_update_id
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            params = {"offset": last_update_id + 1, "timeout": 10}
-            res = requests.get(url, params=params, timeout=15).json()
-            
-            if res.get("ok"):
-                for item in res.get("result", []):
-                    last_update_id = item["update_id"]
-                    msg = item.get("message", {})
-                    chat_id = msg.get("chat", {}).get("id")
-                    text = msg.get("text", "")
-                    
-                    # '/질문' 이라는 단어로 시작할 때만 반응하여 스팸 방지
-                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
-                        question = text.replace("/질문", "").strip()
-                        if question:
-                            prompt = f"너는 월스트리트의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
-                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                            
-                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
-        except Exception as e:
-            time.sleep(2)
-        time.sleep(2)
 
 def get_us_ticker_list():
     try:
@@ -137,9 +104,8 @@ def telegram_sender_daemon():
             time.sleep(1.5)
         telegram_queue.task_done()
 
-# 두 개의 백그라운드 일꾼을 모두 실행 (메시지 쏘는 놈 + 질문 듣는 놈)
+# 순수 발송 데몬만 남겨서 스레드 꼬임 완벽 차단
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-# threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 MIN_PRICE_USD = 1.0               
 MIN_MONEY_USD = 1_000_000         
@@ -247,7 +213,7 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 스캔 (AI 양방향 비서 가동중) 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 스캔 시작!")
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
