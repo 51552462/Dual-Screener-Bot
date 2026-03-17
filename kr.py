@@ -246,7 +246,7 @@ def compute_bobgeureut(df_raw: pd.DataFrame):
     else: sig_type = "B (일반)"
 
     trust_score = calculate_trust_score(c, ema60, signalBase)
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
+    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "sig_type": sig_type}
 
 chart_lock = threading.Lock()
 
