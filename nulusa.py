@@ -12,11 +12,18 @@ import yfinance as yf
 import FinanceDataReader as fdr
 import logging
 from google import genai
+from dotenv import load_dotenv
 
 # ==========================================
-# 🔑 Gemini API 키 세팅 (여기에 대표님 키 입력!)
+# 🔑 .env 안전 파일 방식 적용
 # ==========================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+load_dotenv() 
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
