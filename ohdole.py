@@ -1,4 +1,4 @@
-# Dante_Ohdole_1D_AI_Interactive_Pro.py
+# Dante_Ohdole_1D_AI_Pro.py
 import os, re, time, json, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
@@ -11,13 +11,8 @@ from requests.adapters import HTTPAdapter
 import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
-
-# ⭐️ 구글 최신 통합 라이브러리로 세대 교체 ⭐️
 from google import genai
 
-# ==========================================
-# 🔑 Gemini API 키 세팅
-# ==========================================
 GEMINI_API_KEY = "AIzaSyAagV9SDlZ72CUmYK8JDZaP937CeHrqV7Q"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -66,7 +61,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ 실시간 팩트 요약기 (최신 모델 적용) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     try:
@@ -91,7 +85,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         - 네이버금융 섹터분류: {sector}
         - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
 
-        [출력 양식] (반드시 아래 번호와 항목명에 맞춰서 작성할 것)
+        [출력 양식]
         1. 섹터 종류: (간단한 설명)
         2. 업계 점유율/규모: (비즈니스 개요 및 지위)
         3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
@@ -99,42 +93,9 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         5. 기업 전망: (짧고 굵은 전망)
         """
         client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
+        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
         return response.text.strip()
-    except: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
-
-# ⭐️ 양방향 Q&A 텔레그램 리스너 ⭐️
-last_update_id = 0
-def telegram_interactive_daemon():
-    global last_update_id
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            params = {"offset": last_update_id + 1, "timeout": 10}
-            res = requests.get(url, params=params, timeout=15).json()
-            
-            if res.get("ok"):
-                for item in res.get("result", []):
-                    last_update_id = item["update_id"]
-                    msg = item.get("message", {})
-                    chat_id = msg.get("chat", {}).get("id")
-                    text = msg.get("text", "")
-                    
-                    if str(chat_id) == str(TELEGRAM_CHAT_ID) and text.startswith("/질문"):
-                        question = text.replace("/질문", "").strip()
-                        if question:
-                            prompt = f"너는 여의도의 냉철한 탑 애널리스트야. 다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 하지 말고 분석만 제공해.\n질문: {question}"
-                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                            
-                            reply_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                            requests.post(reply_url, json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_res.text.strip()}", "reply_to_message_id": msg.get("message_id")})
-        except:
-            time.sleep(2)
-        time.sleep(2)
+    except Exception as e: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다."
 
 def get_krx_list_kind():
     try:
@@ -165,7 +126,6 @@ def telegram_sender_daemon():
         telegram_queue.task_done()
 
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-# threading.Thread(target=telegram_interactive_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
@@ -173,7 +133,6 @@ def calculate_trust_score(c, e60, *sig_arrays):
     runup_ratio = (c[-1] / lowest_60) - 1
     if runup_ratio > 0.50: score -= 4     
     elif runup_ratio > 0.30: score -= 2   
-
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
         is_sig = any(arr[i] for arr in sig_arrays)
@@ -232,7 +191,6 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
 
     sig_type = "E (장악형)" if sig1_hit else "E (안착형)"
     trust_score = calculate_trust_score(c, ma60, sig_1, sig_2)
-
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
 chart_lock = threading.Lock()
@@ -255,9 +213,8 @@ def scan_market_1d():
     if stock_list.empty: return
     token = get_ls_token()
     if not token: return
-
-    print(f"\n⚡ [일봉 전용] 한국장 E(오돌이) 스캔 (AI 양방향 비서 가동중) 시작!")
     t0 = time.time()
+    print(f"\n⚡ [일봉 전용] 한국장 E 스캔 시작! (안정화 패치 완료)")
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     url = "https://openapi.ls-sec.co.kr:8080/stock/chart"
@@ -268,7 +225,6 @@ def scan_market_1d():
         name, code = row["Name"], row["Code"]
         body = {f"{tr_cd}InBlock": {"shcode": code, "gubun": "2", "qrycnt": 600, "sdate": "", "edate": "99999999", "comp_yn": "N"}}
         headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": tr_cd, "tr_cont": "N"}
-
         df_raw = None
         for _ in range(5): 
             ls_limiter.wait()
@@ -299,7 +255,6 @@ def scan_market_1d():
                 chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                 if chart_path:
                     ai_fact_check = generate_kr_ai_report(code, name)
-                    
                     caption = (
                         f"🎯 [{dbg['sig_type']}]\n\n"
                         f"🏢 {name} ({code})\n"
@@ -313,7 +268,7 @@ def scan_market_1d():
                         f"{ai_fact_check}\n\n"
                         f"⚠️ [전문가 코멘트]\n"
                         f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                        f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                     )
                     telegram_queue.put((chart_path, caption))
 
@@ -326,11 +281,12 @@ def run_scheduler():
     print("🕒 [한국장 E 스케줄러] 09:30 / 11:30 / 14:30 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if now_kr.hour in [9, 11, 14] and now_kr.minute == 10:
+        if now_kr.hour in [9, 11, 14] and now_kr.minute == 30:
             print(f"🚀 [E 1D 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
+    scan_market_1d() # ⭐️ 대기 없이 즉시 1회 스캔
     run_scheduler()
