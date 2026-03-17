@@ -1,4 +1,4 @@
-# Dante_Nulrim_1D_LS_Sniper_V4_Final.py
+# Dante_Nulrim_1D_LS_Sniper_V5_Pro.py
 import os
 import re
 import time
@@ -76,7 +76,7 @@ def shorten_text(text):
     return res[:40] + "..." if len(res) > 40 else res
 
 def get_company_fact_report(code: str) -> tuple:
-    sector, outlook, growth = "정보 없음", "정보 없음", "정보 없음"
+    sector, outlook, growth = "정보 없음", "전문가 분석 요망", "실적 데이터 미제공"
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
@@ -126,24 +126,37 @@ threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 MIN_PRICE = 1000                 
 MIN_TRANS_MONEY = 100_000_000  
 
-# ⭐️ S1~S7 전체 시그널을 합산하여 15% 수익 & 60일선 이탈 검증 (10점 만점 스코어링)
-def calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7):
+# ⭐️ 이격도 페널티가 적용된 팩트 기반 스코어링 시스템 (S1~S7 전체 던짐)
+def calculate_trust_score(c, e60, s1_arr, s2_arr, s3_arr, s4_arr, s5_arr, s6_arr, s7_arr):
     score = 5 
+    
+    # 1. 매크로 상승률 체크 (최근 60일 최저점 대비 현재가 얼마나 올랐나?)
+    lowest_60 = np.min(c[-60:])
+    runup_ratio = (c[-1] / lowest_60) - 1
+    
+    # 이미 바닥 대비 너무 올랐으면 세력 이탈 가능성 가중치 적용 (감점)
+    if runup_ratio > 0.50: score -= 4     # 50% 이상 펌핑 시 대폭 감점
+    elif runup_ratio > 0.30: score -= 2   # 30% 이상 상승 시 감점
+
+    # 2. 유효 매집 시그널 추적
+    accumulated_signals = 0
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
-        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s6[i] or s7[i]:
+        if s1_arr[i] or s2_arr[i] or s3_arr[i] or s4_arr[i] or s5_arr[i] or s6_arr[i] or s7_arr[i]:
             valid = True
             entry_price = c[i]
             for j in range(i + 1, len(c)):
-                if c[j] < e60[j]:
+                if c[j] < e60[j]: # 60일선 이탈 시 매집 무효화
                     valid = False
                     break
-                if c[j] >= entry_price * 1.15:
+                if c[j] >= entry_price * 1.15: # 해당 타점에서 이미 15% 슈팅 나왔으면 무효화
                     valid = False
                     break
             if valid:
+                accumulated_signals += 1
                 score += 2 
-    return min(10, score)
+                
+    return max(1, min(10, score)) # 1점 ~ 10점 사이 유지
 
 def compute_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500:
@@ -172,6 +185,7 @@ def compute_signal(df_raw: pd.DataFrame):
         volSpike = v >= (np.nan_to_num(av3, nan=1.0) * 3)
     isBullish = c > o
 
+    # 배열 상태
     align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
     align224 = align112 & (e112 > e224)
     align448 = align224 & (e224 > e448)
@@ -235,10 +249,12 @@ def compute_signal(df_raw: pd.DataFrame):
     if not (hit1 or hit4 or hit7):
         return False, "no_signal", df, {}
 
-    if hit7: sig_type = "V (S7: 중기턴)"
-    elif hit4: sig_type = "V (S4: 돌파)"
-    else: sig_type = "V (S1: 448 재정렬)"
+    # 깔끔한 V 네이밍
+    if hit7: sig_type = "V"
+    elif hit4: sig_type = "V"
+    else: sig_type = "V"
 
+    # ⭐️ 백그라운드 점수 계산 (S1~S7 전체 던짐)
     trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
 
     dbg = {"last_close": float(c[-1]), "sig_type": sig_type, "score": trust_score}
@@ -259,7 +275,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
 
             plt.close('all')
-            # ⭐️ 차트 선 전부 제거 (오직 캔들과 거래량)
+            # ⭐️ 선 제거, 캔들/거래량만
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             
