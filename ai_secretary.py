@@ -1,4 +1,4 @@
-# ai_secretary.py (한/미 통합 AI Q&A 비서)
+# ai_secretary.py (한/미 통합 AI Q&A 비서 - 에러 추적 및 모델명 픽스 완료)
 import time
 import requests
 import threading
@@ -48,7 +48,9 @@ def listen_and_reply(token, market_name):
                             다음 주식 관련 질문에 팩트 기반으로 짧고 명확하게 답변해줘. 종목 추천은 절대 하지마.
                             질문: {question}
                             """
-                            ai_res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                            
+                            # ⭐️ 팩트 체크: 정확한 구글 최신 모델명으로 호출 (2.0-flash)
+                            ai_res = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
                             
                             reply_url = f"https://api.telegram.org/bot{token}/sendMessage"
                             requests.post(reply_url, json={
@@ -58,6 +60,8 @@ def listen_and_reply(token, market_name):
                             })
                             print(f"✅ [{market_name}] 답변 완료")
         except Exception as e:
+            # ⭐️ 에러 발생 시 로그를 숨기지 않고 터미널에 강력하게 출력
+            print(f"❌ [{market_name}] 답변 중 에러 발생: {e}")
             time.sleep(2)
         time.sleep(1)
 
