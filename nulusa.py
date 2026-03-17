@@ -1,20 +1,13 @@
-# Dante_US_Nulrim_1D_Sniper_V4_Final.py
-import os
-import re
-import time
-import threading
-import queue
+# Dante_US_Nulrim_1D_Sniper_V4_Pro_US.py
+import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime
 import pytz
-import numpy as np
-import pandas as pd
+import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib
-matplotlib.use('Agg') 
+import matplotlib; matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import requests
-import warnings
-import urllib3
+import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
@@ -33,39 +26,38 @@ CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
-def sanitize_filename(s: str) -> str:
-    return re.sub(r'[^A-Za-z0-9._-]', '_', s)
+def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
 def get_us_smart_report(ticker_str: str) -> tuple:
-    sector = "정보 없음"
-    earnings_trend = "정보 없음"
+    sector, outlook, growth = "섹터 미제공", "월가 분석 요망", "실적 미제공"
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        sector = info.get('sector', '정보 없음')
-        growth = info.get('earningsGrowth', 0)
-        
-        if growth is None: growth = 0
-        if growth > 0.1:
-            earnings_trend = f"실적 성장/턴어라운드 (분기 EPS: +{growth*100:.1f}%)"
-        elif growth < -0.1:
-            earnings_trend = f"실적 부진 (분기 EPS: {growth*100:.1f}%)"
-        else:
-            earnings_trend = "보합세 (특이사항 없음)"
+        sec = info.get('sector')
+        ind = info.get('industry')
+        if sec and ind: sector = f"{sec} ({ind})"
+        elif sec: sector = sec
+
+        eg = info.get('earningsGrowth')
+        eps = info.get('trailingEps')
+        if eg is not None:
+            if eg > 0: growth = f"📈 실적 성장 (분기 EPS: +{eg*100:.1f}%)"
+            else: growth = f"📉 실적 악화 (분기 EPS: {eg*100:.1f}%)"
+        elif eps is not None:
+            growth = f"📊 최근 12개월 EPS: ${eps} ({'흑자' if eps > 0 else '적자'})"
+
+        rec = info.get('recommendationKey')
+        if rec: outlook = f"투자의견: {rec.upper()}"
     except: pass
-    return sector, earnings_trend
+    return sector, outlook, growth
 
 def get_us_ticker_list():
     try:
-        df_ndq = fdr.StockListing('NASDAQ')
-        df_nyse = fdr.StockListing('NYSE')
-        df_amex = fdr.StockListing('AMEX')
-        df = pd.concat([df_ndq, df_nyse, df_amex])
+        df = pd.concat([fdr.StockListing('NASDAQ'), fdr.StockListing('NYSE'), fdr.StockListing('AMEX')])
         df = df[df['Symbol'].str.isalpha()]
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
-    except Exception as e:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def telegram_sender_daemon():
     while True:
@@ -79,58 +71,49 @@ def telegram_sender_daemon():
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, files={"photo": f}, timeout=20, verify=False)
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
-                except Exception as e: time.sleep(2)
+                except: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
-
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 MIN_PRICE_USD = 1.0               
 MIN_MONEY_USD = 1_000_000         
 
-# ⭐️ S1~S7 전체 시그널을 합산하여 15% 수익 & 60일선 이탈 검증 (10점 만점 스코어링)
-def calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7):
+def calculate_trust_score(c, e60, s1_arr, s2_arr, s4_arr):
     score = 5 
+    lowest_60 = np.min(c[-60:])
+    runup_ratio = (c[-1] / lowest_60) - 1
+    if runup_ratio > 0.50: score -= 4     
+    elif runup_ratio > 0.30: score -= 2   
+
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
-        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s6[i] or s7[i]:
+        if s1_arr[i] or s2_arr[i] or s4_arr[i]:
             valid = True
             entry_price = c[i]
             for j in range(i + 1, len(c)):
-                if c[j] < e60[j]:
-                    valid = False
-                    break
-                if c[j] >= entry_price * 1.15:
-                    valid = False
-                    break
-            if valid:
-                score += 2 
-    return min(10, score)
+                if c[j] < e60[j] or c[j] >= entry_price * 1.15:
+                    valid = False; break
+            if valid: score += 2 
+    return max(1, min(10, score))
 
 def compute_nulrim_1d(df_raw: pd.DataFrame):
-    if df_raw is None or len(df_raw) < 500:
-        return False, "no_signal", df_raw, {}
-
+    if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
-    df['Lowest5'] = df['Low'].rolling(5).min()
-
-    c = df['Close'].values
-    o = df['Open'].values
-    v = df['Volume'].values
+    
+    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
     av3 = df['AvgVol3'].values
-    lowest5 = df['Lowest5'].values
     
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
     moneyOk = (c * v) >= MIN_MONEY_USD
     priceOk = c >= MIN_PRICE_USD
-    with np.errstate(invalid='ignore'):
-        volSpike = v >= (np.nan_to_num(av3, nan=1.0) * 3)
+    with np.errstate(invalid='ignore'): volSpike = v >= (np.nan_to_num(av3, nan=1.0) * 3)
     isBullish = c > o
 
     align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
@@ -157,29 +140,12 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-    dipped20 = lowest5 < e20
-    raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
-
-    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
-    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
-    shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
-    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
-
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
-
+    
     s4 = np.zeros_like(c, dtype=bool)
-    s5 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
-
     for i in range(len(c)):
         if raw_s4[i] and (i - last_pullback_bar > 5):
             s4[i] = True
-            last_pullback_bar = i
-        if raw_s5[i] and not s4[i] and (i - last_pullback_bar > 5):
-            s5[i] = True
             last_pullback_bar = i
 
     cond_base = moneyOk & priceOk & volSpike
@@ -188,41 +154,31 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     hit2 = s2[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
 
-    # ⭐️ 알림 필터링: 미국장 눌림목은 S1, S2, S4만 허용
-    if not (hit1 or hit2 or hit4):
-        return False, "no_signal", df, {}
+    if not (hit1 or hit2 or hit4): return False, "", df, {}
 
     if hit4: sig_type = "V (S4: 돌파)"
     elif hit2: sig_type = "V (S2: 224 재정렬)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
+    trust_score = calculate_trust_score(c, e60, s1, s2, s4)
 
-    dbg = {"last_close": float(c[-1]), "sig_type": sig_type, "score": trust_score}
-    return True, sig_type, df, dbg
+    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
         try:
             timestamp_ms = int(time.time() * 1000000)
-            safe = sanitize_filename(f"{code}_{name}")
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{safe}_{timestamp_ms}.png")
-
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}.png")
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             title = f"[🎯 {dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
-
             mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
-
             plt.close('all')
-            # ⭐️ 선 제거, 캔들만 표기
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
-            
             return path
-        except Exception as e:
-            return None
+        except: return None
 
 def scan_market_1d():
     stock_list = get_us_ticker_list()
@@ -231,54 +187,57 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 초고속 스캔 시작!")
 
-    ticker_to_info = {}
-    for _, row in stock_list.iterrows():
-        ticker = row['Symbol']
-        ticker_to_info[ticker] = {'code': ticker, 'name': row['Name']}
-    
+    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     chunk_size = 100 
-    period = "3y"
-
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
-        tickers_str = " ".join(chunk)
+        df_batch = None
+        fallback_dict = {}
+
+        # ⭐️ 초고속 에러 방어망 (Multi-threading Fallback)
+        try:
+            df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+        except:
+            def fetch_single(tk):
+                try:
+                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
+                    if not df_s.empty: fallback_dict[tk] = df_s
+                except: pass
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                executor.map(fetch_single, chunk)
         
-        df_batch = yf.download(tickers_str, interval="1d", period=period, group_by="ticker", progress=False, threads=False)
-        
-        for ticker in chunk:
+        for tk in chunk:
             tracker['scanned'] += 1
-            info = ticker_to_info.get(ticker, {})
+            info = ticker_to_info.get(tk)
             if not info: continue
-            name, code = info.get('name', ''), info.get('code', '')
+            name, code = info['name'], info['code']
 
             try:
-                if len(chunk) == 1: df_ticker = df_batch.copy()
-                else: 
-                    if ticker not in df_batch.columns.get_level_values(0): continue
-                    df_ticker = df_batch[ticker].copy()
+                if df_batch is not None:
+                    if len(chunk) == 1: df_ticker = df_batch.copy()
+                    else: 
+                        if tk not in df_batch.columns.get_level_values(0): continue
+                        df_ticker = df_batch[tk].copy()
+                else:
+                    df_ticker = fallback_dict.get(tk)
+                    if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                
-                if df_ticker.index.tzinfo is not None: 
-                    df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
+                if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker)
-                    
                     if hit:
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
-                        
                         if chart_path:
-                            sector, earnings_trend = get_us_smart_report(code) 
-                            
+                            sector, outlook, growth = get_us_smart_report(code) 
                             caption = (
-                                f"🎯 [{dbg['sig_type']}]\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg['last_close']:.2f}\n"
                                 f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
@@ -288,32 +247,28 @@ def scan_market_1d():
                                 f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                                 f"💡 [기업 팩트체크]\n"
                                 f"🔸 섹터: {sector}\n"
-                                f"🔸 전망: 전문가 분석 요망\n"
-                                f"🔸 실적: {earnings_trend}\n"
+                                f"🔸 전망: {outlook}\n"
+                                f"🔸 실적: {growth}\n"
                             )
                             telegram_queue.put((chart_path, caption))
-                            
-            except Exception as e:
-                pass
+            except: pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [8번 봇: US V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [미국장 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [8번 봇: US V 스케줄러] 미국시간 09:20 / 11:20 / 14:20 대기 중...")
-    
+    print("🕒 [미국장 V 스케줄러] 09:20 / 11:20 / 14:20 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
         if now_ny.hour in [9, 11, 14] and now_ny.minute == 40:
-            print(f"🚀 [US 1D 정규 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🚀 [V 1D 스캔 시작] 미국 현지시간: {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60)
-        else:
-            time.sleep(10)
+        else: time.sleep(10)
 
 if __name__ == "__main__":
     run_scheduler()
