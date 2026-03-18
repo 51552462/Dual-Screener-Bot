@@ -180,7 +180,7 @@ def compute_aligned_1d(df_raw: pd.DataFrame):
     
     trust_score = calculate_trust_score(c, ema60, signal1, signal2, signal3)
 
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
