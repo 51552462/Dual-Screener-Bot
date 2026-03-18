@@ -101,14 +101,24 @@ def telegram_sender_daemon():
         item = telegram_queue.get()
         if item is None: break
         img_path, caption = item
+        
+        # ⭐️ 텔레그램 글자수 1024자 제한 완벽 방어
+        safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
+
         if SEND_TELEGRAM:
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
+                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
+                    if res.status_code == 200: 
+                        break
+                    elif res.status_code == 429: 
+                        time.sleep(3)
+                    else:
+                        print(f"❌ [미국장] 텔레그램 발송 실패 (글자수 초과 등): {res.text}")
+                        break
+                except Exception as e: 
+                    time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
