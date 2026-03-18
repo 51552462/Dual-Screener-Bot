@@ -95,13 +95,26 @@ def telegram_sender_daemon():
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
 
         if SEND_TELEGRAM:
+            is_success = False
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except Exception as e: time.sleep(2)
+                    if res.status_code == 200: 
+                        print(f"\n✅ 텔레그램 전송 성공: {img_path}")
+                        is_success = True
+                        break
+                    elif res.status_code == 429: 
+                        print("\n⚠️ 텔레그램 전송 지연 (429 에러). 3초 대기...")
+                        time.sleep(3)
+                    else:
+                        print(f"\n❌ 텔레그램 서버 거부 (HTTP {res.status_code}): {res.text}")
+                        time.sleep(2)
+                except Exception as e:
+                    print(f"\n❌ 텔레그램 전송 중 예외 발생: {e}")
+                    time.sleep(2)
+            if not is_success:
+                print(f"\n⚠️ 최종 텔레그램 전송 실패 - 대상 파일: {img_path}")
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -242,6 +255,7 @@ def scan_market_1d():
             if not info: continue
             name, code = info['name'], info['code']
 
+            # 💡 숨은 에러 추적 및 공감형 카피라이팅 적용
             try:
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
@@ -263,29 +277,47 @@ def scan_market_1d():
                     if hit:
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
-                        
                         if chart_path:
                             ai_fact_check = generate_ai_report(code, name)
-                            caption = (
-                                f"🎯 [{dbg['sig_type']}]\n\n"
-                                f"🏢 {name} ({code})\n"
-                                f"💰 현재가: ${dbg['last_close']:.2f}\n"
-                                f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                                f"📉 [매수/손절 전략]\n"
-                                f"- 양봉 길이만큼 분할매수\n"
-                                f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                                f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                                f"💡 [기업 팩트체크]\n"
-                                f"{ai_fact_check}\n\n"
-                                f"⚠️ [전문가 코멘트]\n"
-                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                                f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                            )
+                            
+                            # 💡 J강조(골든타점)와 일반 타점 분기
+                            if "J 강조" in dbg['sig_type']:
+                                caption = (
+                                    f"🏢 {name} ({code})\n"
+                                    f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                    f"✨ [본격적인 가치 회복의 서막]\n"
+                                    f"오랜 기다림 끝에 기업의 내재 가치가 빛을 발하기 시작하는 결정적 순간입니다. 시장의 흐름과 함께 안정적인 우상향을 기대하며 발걸음을 맞춰보세요.\n\n"
+                                    f"⚖️ [건강한 매매를 위한 가이드]\n"
+                                    f"• 여유로운 접근: 현재가부터 천천히 모아가며 마음의 여유를 가지세요.\n"
+                                    f"• 원칙 대응: 약속된 지지라인(-5%) 이탈 시에는 기계적으로 대응하여 소중한 자산을 보호합니다.\n\n"
+                                    f"💡 [AI 비즈니스 요약]\n"
+                                    f"{ai_fact_check}\n\n"
+                                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                                )
+                            else:
+                                caption = (
+                                    f"🏢 {name} ({code})\n"
+                                    f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                    f"🌱 [흙 속의 진주, 비상을 위한 준비]\n"
+                                    f"당장의 화려함보다는 묵묵히 내실을 다져온 기업입니다. 조급한 매매보다는 '관심종목'에 조용히 담아두고, 기업의 진정한 가치가 시장에서 인정받는 과정을 여유롭게 지켜보시길 권해드립니다.\n\n"
+                                    f"💡 [AI 비즈니스 요약]\n"
+                                    f"{ai_fact_check}\n\n"
+                                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                                )
                             telegram_queue.put((chart_path, caption))
-            except: pass
+                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
+                        else:
+                            print(f"\n⚠️ [{name}] 차트 생성 실패로 텔레그램 전송 취소.")
+            except Exception as e:
+                print(f"\n❌ [{name}] 처리 중 에러 발생: {e}")
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+
+    # 💡 텔레그램 전송 완료 보장 대기 (조기 퇴근 방지)
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
 
     dt = time.time() - t0
     print(f"\n✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
