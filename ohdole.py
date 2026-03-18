@@ -41,6 +41,7 @@ def get_ls_token():
     url = "https://openapi.ls-sec.co.kr:8080/oauth2/token"
     headers = {"content-type": "application/x-www-form-urlencoded"}
     data = {"grant_type": "client_credentials", "appkey": APP_KEY, "appsecretkey": APP_SECRET, "scope": "oob"}
+   
     try:
         res = requests.post(url, headers=headers, data=data, timeout=10, verify=False)
         if res.status_code == 200: return res.json().get("access_token")
@@ -54,6 +55,7 @@ class LSApiRateLimiter:
     def wait(self):
         with self.lock:
             now = time.time()
+        
             self.timestamps = [t for t in self.timestamps if now - t < 1.05]
             if len(self.timestamps) >= 3:
                 sleep_time = 1.05 - (now - self.timestamps[0])
@@ -112,6 +114,7 @@ def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
         df_ks['Market'] = 'KOSPI'
+ 
         df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
@@ -123,7 +126,8 @@ def get_krx_list_kind():
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
-        if item is None: break
+        if item is None: 
+            break
         img_path, caption = item
         if SEND_TELEGRAM:
             for _ in range(3):
@@ -139,6 +143,7 @@ def telegram_sender_daemon():
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 def calculate_trust_score(c, e60, *sig_arrays):
+  
     score = 5 
     lowest_60 = np.min(c[-60:])
     runup_ratio = (c[-1] / lowest_60) - 1
@@ -148,11 +153,13 @@ def calculate_trust_score(c, e60, *sig_arrays):
     for i in range(len(c) - lookback, len(c) - 1):
         is_sig = any(arr[i] for arr in sig_arrays)
         if is_sig:
+         
             valid = True
             entry_price = c[i]
             for j in range(i + 1, len(c)):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
+                    valid = False;
+                    break
             if valid: score += 2 
     return max(1, min(10, score)) 
 
@@ -175,18 +182,23 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     is_basement = c < ma112
     is_env_ok = is_downtrend & is_basement
 
-    prev_vol = np.roll(v, 1); prev_vol[0] = np.inf
+    prev_vol = np.roll(v, 1);
+    prev_vol[0] = np.inf
     is_vol_ok = v >= (prev_vol * 1.0)
     is_money_ok = money_curr >= 100_000_000
     is_price_ok = c >= 1000
     is_power_ok = is_vol_ok & is_money_ok & is_price_ok
 
-    prev_ma5 = np.roll(ma5, 1); prev_ma5[0] = np.inf
-    prev_c = np.roll(c, 1); prev_c[0] = 0
+    prev_ma5 = np.roll(ma5, 1);
+    prev_ma5[0] = np.inf
+    prev_c = np.roll(c, 1);
+    prev_c[0] = 0
     is_breakout = (c > ma5) & (prev_c <= prev_ma5)
     
-    prev_high1 = np.roll(h, 1); prev_high1[0] = np.inf
-    prev_high2 = np.roll(h, 2); prev_high2[:2] = np.inf
+    prev_high1 = np.roll(h, 1);
+    prev_high1[0] = np.inf
+    prev_high2 = np.roll(h, 2);
+    prev_high2[:2] = np.inf
     high_prev_2 = np.maximum(prev_high1, prev_high2)
     is_engulfing = (c > o) & (c > high_prev_2)
     
@@ -210,6 +222,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
         try:
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
+            
             title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
@@ -217,6 +230,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
+  
         except: return None
 
 def scan_market_1d():
@@ -225,7 +239,7 @@ def scan_market_1d():
     token = get_ls_token()
     if not token: return
     t0 = time.time()
-    print(f"\n⚡ [일봉 전용] 한국장 E 스캔 시작! (안정화 패치 완료)")
+    print(f"\n⚡ [일봉 전용] 한국장 E 스캔 시작! (안정화 및 속도 패치 완료)")
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     url = "https://openapi.ls-sec.co.kr:8080/stock/chart"
@@ -237,18 +251,25 @@ def scan_market_1d():
         body = {f"{tr_cd}InBlock": {"shcode": code, "gubun": "2", "qrycnt": 600, "sdate": "", "edate": "99999999", "comp_yn": "N"}}
         headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": tr_cd, "tr_cont": "N"}
         df_raw = None
+        
+        # ⭐️ 빈 데이터 즉시 스킵 패치
         for _ in range(5): 
             ls_limiter.wait()
             try:
                 res = global_session.post(url, headers=headers, data=json.dumps(body), timeout=7, verify=False)
                 if res.status_code == 200:
+      
                     data = res.json()
                     if "IGW" in data.get("rsp_cd", "") or data.get("rsp_msg", "") == "조회건수제한":
                         time.sleep(2); continue 
                     items = data.get("t8413OutBlock1", [])
-                    if items:
-                        records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
-                        df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
+                    
+                    if not items:
+                        break # 데이터 없으면 재시도 안 함
+      
+                    records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
+                    df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
+        
                     break
             except: time.sleep(1)
 
@@ -256,34 +277,45 @@ def scan_market_1d():
         hit, sig_type, df, dbg = False, "", None, {}
         if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
 
+        hit_rank = 0
+        
+        # ⭐️ AI 분석 작업 락(Lock) 외부 분리 패치
         with console_lock:
             tracker['scanned'] += 1
+ 
             if is_valid: tracker['analyzed'] += 1 
             if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
                 print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
             if hit:
                 tracker['hits'] += 1
-                chart_path = save_chart(df, code, name, tracker['hits'], dbg)
-                if chart_path:
-                    ai_fact_check = generate_kr_ai_report(code, name)
-                    caption = (
-                        f"🎯 [{dbg['sig_type']}]\n\n"
-                        f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                        f"📉 [매수/손절 전략]\n"
-                        f"- 양봉 길이만큼 분할매수\n"
-                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                        f"💡 [기업 팩트체크]\n"
-                        f"{ai_fact_check}\n\n"
-                        f"⚠️ [전문가 코멘트]\n"
-                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                    )
-                    telegram_queue.put((chart_path, caption))
+                hit_rank = tracker['hits']
+                
+        if hit:
+            chart_path = save_chart(df, code, name, hit_rank, dbg)
+            if chart_path:
+                ai_fact_check = generate_kr_ai_report(code, name)
+                caption = (
+                    
+                    f"🎯 [{dbg['sig_type']}]\n\n"
+                    f"🏢 {name} ({code})\n"
+                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+              
+                    f"📉 [매수/손절 전략]\n"
+                    f"- 양봉 길이만큼 분할매수\n"
+                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+
+                    f"💡 [기업 팩트체크]\n"
+                    f"{ai_fact_check}\n\n"
+                    f"⚠️ [전문가 코멘트]\n"
+                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                )
+                telegram_queue.put((chart_path, caption))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+ 
         executor.map(worker, list(stock_list.iterrows()))
     print(f"\n✅ [한국장 E 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
@@ -293,6 +325,7 @@ def run_scheduler():
     while True:
         now_kr = datetime.now(kr_tz)
         if (now_kr.hour == 9 and now_kr.minute == 30) or (now_kr.hour == 12 and now_kr.minute == 0) or (now_kr.hour == 14 and now_kr.minute == 30):
+           
             print(f"🚀 [2번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
