@@ -263,15 +263,29 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
         try:
             timestamp_ms = int(time.time() * 1000000)
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}.png")
+            
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
+            
+            # 💡 핵심 수정 1: 차트 에러의 주범인 '결측치(NaN)' 완벽 제거
+            df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
+            
+            if df_cut.empty or len(df_cut) < 5:
+                print(f"\n⚠️ [{name}] 데이터 부족(결측치)으로 차트 생성을 스킵합니다.")
+                return None
+
             title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
+            
             plt.close('all')
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
+            
             return path
-        except: return None
+        except Exception as e:
+            # 💡 핵심 수정 2: 묵음 처리되던 에러를 콘솔에 강력하게 출력!
+            print(f"\n❌ [{name}] 차트 이미지 저장 중 치명적 에러 발생: {e}")
+            return None
 
 def scan_market_1d():
     stock_list = get_krx_list_kind()
@@ -334,6 +348,10 @@ def scan_market_1d():
                         f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                     )
                     telegram_queue.put((chart_path, caption))
+                    # 💡 큐에 담겼다는 사실을 명확히 시각화
+                    print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
+                else:
+                    print(f"\n⚠️ [{name}] 차트 생성 실패로 인해 텔레그램 전송이 취소되었습니다.")
         except Exception as e:
             print(f"\n❌ [{row['Name']}] 워커 스레드 치명적 에러 발생: {e}")
 
