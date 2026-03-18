@@ -15,9 +15,6 @@ import FinanceDataReader as fdr
 from google import genai
 from dotenv import load_dotenv
 
-# ==========================================
-# 🔑 .env 안전 파일 방식 적용
-# ==========================================
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -39,6 +36,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
+# ⭐️ AI 에러 원인 추적기 및 3회 재시도 로직 ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
     summary = "정보 없음"
@@ -58,27 +56,33 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
 
-    try:
-        prompt = f"""
-        너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-        아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+    prompt = f"""
+    너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
+    아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+    추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
 
-        [종목 정보]
-        - 종목명: {company_name} ({code})
-        - 네이버금융 섹터분류: {sector}
-        - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
+    [종목 정보]
+    - 종목명: {company_name} ({code})
+    - 네이버금융 섹터분류: {sector}
+    - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
 
-        [출력 양식]
-        1. 섹터 종류: (간단한 설명)
-        2. 업계 점유율/규모: (비즈니스 개요 및 지위)
-        3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
-        4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
-        5. 기업 전망: (짧고 굵은 전망)
-        """
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        return response.text.strip()
-    except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다. ({e})"
+    [출력 양식]
+    1. 섹터 종류: (간단한 설명)
+    2. 업계 점유율/규모: (비즈니스 개요 및 지위)
+    3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
+    4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
+    5. 기업 전망: (짧고 굵은 전망)
+    """
+    
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            return response.text.strip()
+        except Exception as e: 
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
+            time.sleep(3) 
+            
+    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
 
 def get_krx_list_kind():
     try:
@@ -218,16 +222,18 @@ def compute_signal(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk & volSpike
     
-    # ⭐️ 한국장: 오직 S1, S4만 결과지에 올립니다.
+    # ⭐️ 한국장: 오직 S1, S4, S7만 결과지에 올립니다.
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
+    hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit4): return False, "", df, {}
+    if not (hit1 or hit4 or hit7): return False, "", df, {}
 
-    if hit4: sig_type = "V (S4: 돌파)"
+    if hit7: sig_type = "V (S7: 중기턴)"
+    elif hit4: sig_type = "V (S4: 돌파)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s4)
+    trust_score = calculate_trust_score(c, e60, s1, s4, s7)
 
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
@@ -251,7 +257,7 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (초고속 네이버 엔진🚀 / S1,S4 전용)")
+    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (S1, S4, S7 전용)")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -310,6 +316,7 @@ def scan_market_1d():
         executor.map(worker, list(stock_list.iterrows()))
     print(f"\n✅ [5번 봇: KRX V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
+# ⭐️ 5번 스케줄러 세팅 (11:00, 13:30) ⭐️
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [5번 검색기] 11:00 / 13:30 대기 중...")
