@@ -39,7 +39,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 리포트 3단 분리 방어 (에러 시에도 멈추지 않음)
+# ⭐️ AI 에러 원인 추적기 및 3회 재시도 로직 ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -58,27 +58,34 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
 
-    try:
-        prompt = f"""
-        너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-        아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+    prompt = f"""
+    너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
+    아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+    추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
 
-        [종목 정보]
-        - 종목명: {company_name} ({code})
-        - 네이버금융 섹터분류: {sector}
-        - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
+    [종목 정보]
+    - 종목명: {company_name} ({code})
+    - 네이버금융 섹터분류: {sector}
+    - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
 
-        [출력 양식]
-        1. 섹터 종류: (간단한 설명)
-        2. 업계 점유율/규모: (비즈니스 개요 및 지위)
-        3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
-        4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
-        5. 기업 전망: (짧고 굵은 전망)
-        """
-        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
-        return response.text.strip()
-    except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다. ({e})"
+    [출력 양식]
+    1. 섹터 종류: (간단한 설명)
+    2. 업계 점유율/규모: (비즈니스 개요 및 지위)
+    3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
+    4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
+    5. 기업 전망: (짧고 굵은 전망)
+    """
+    
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            return response.text.strip()
+        except Exception as e: 
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
+            time.sleep(3) # 3초 대기 후 재시도
+            
+    # ⭐️ 3번 실패 시 정확한 에러 메시지를 텔레그램에 출력
+    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
 
 def get_krx_list_kind():
     try:
@@ -98,7 +105,6 @@ def telegram_sender_daemon():
         if item is None: break
         img_path, caption = item
         
-        # ⭐️ 1024자 제한 완벽 방어
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
@@ -132,7 +138,6 @@ def calculate_trust_score(c, e60, *sig_arrays):
             if valid: score += 2 
     return max(1, min(10, score)) 
 
-# ⭐️ 대표님 오리지널 핵심 로직 (100% 보존) ⭐️
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
@@ -200,12 +205,11 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
     
-    print(f"\n⚡ [일봉 전용] 한국장 E 스캔 시작! (초고속 네이버 엔진🚀)")
+    print(f"\n⚡ [일봉 전용] 한국장 2번(오돌이) 스캔 시작! (초고속 엔진🚀)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     
-    # 448일선을 위해 약 3년 전 날짜부터 수집
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
@@ -214,7 +218,6 @@ def scan_market_1d():
         df_raw = None
         
         try:
-            # ⭐️ 네이버(FDR) 데이터 엔진으로 1초 컷 스크래핑
             df_raw = fdr.DataReader(code, start_date)
         except: pass
 
@@ -223,7 +226,6 @@ def scan_market_1d():
         if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
 
         hit_rank = 0
-        # ⭐️ 자물쇠 안에서는 순위 숫자만 올리고 0.001초만에 탈출!
         with console_lock:
             tracker['scanned'] += 1
             if is_valid: tracker['analyzed'] += 1 
@@ -233,7 +235,6 @@ def scan_market_1d():
                 tracker['hits'] += 1
                 hit_rank = tracker['hits']
                 
-        # ⭐️ 자물쇠 밖에서 각자 알아서 AI 분석 (병목 현상 완벽 해결)
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
@@ -255,11 +256,11 @@ def scan_market_1d():
                 )
                 telegram_queue.put((chart_path, caption))
 
-    # 네이버 엔진은 속도 제한이 없으므로 일꾼을 30명으로 늘립니다!
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
-    print(f"\n✅ [한국장 E 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [한국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
+# ⭐️ 2번 스케줄러 세팅 (09:30, 12:00, 14:30) ⭐️
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [2번 검색기] 09:30 / 12:00 / 14:30 대기 중...")
