@@ -179,7 +179,7 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
     sig_type = "P (연속)" if signalCount > 1 else "P (신규)"
     trust_score = calculate_trust_score(c, ema60, signalBase)
     
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
