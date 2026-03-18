@@ -38,7 +38,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ 일꾼 즉사 버그 완벽 해결 (last_err_msg) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
     summary = "정보 없음"
@@ -105,6 +104,7 @@ def get_krx_list_kind():
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
+# ⭐️ 텔레그램 에러 로그를 밖으로 꺼내서 보이게 수정 ⭐️
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
@@ -114,14 +114,33 @@ def telegram_sender_daemon():
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
+            is_success = False
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        # 💡 params 부분을 data로 변경했습니다.
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
+                        res = requests.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
+                            data={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
+                            files={"photo": f}, 
+                            timeout=20, 
+                            verify=False
+                        )
+                    if res.status_code == 200: 
+                        print(f"✅ 텔레그램 전송 성공: {img_path}")
+                        is_success = True
+                        break
+                    elif res.status_code == 429: 
+                        print(f"⚠️ 텔레그램 전송 지연 (429 Too Many Requests). 3초 대기...")
+                        time.sleep(3)
+                    else:
+                        print(f"❌ 텔레그램 서버 거부 에러 (HTTP {res.status_code}): {res.text}")
+                        time.sleep(2)
+                except Exception as e: 
+                    print(f"❌ 텔레그램 요청 중 네트워크 에러 발생: {e}")
+                    time.sleep(2)
+            
+            if not is_success:
+                print(f"⚠️ 최종 텔레그램 전송 실패 (3회 재시도 초과) - 파일: {img_path}")
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -239,7 +258,6 @@ def compute_signal(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk & volSpike
     
-    # ⭐️ 한국장: S1, S4, S7 포착!
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
@@ -255,6 +273,7 @@ def compute_signal(df_raw: pd.DataFrame):
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
 chart_lock = threading.Lock()
+# ⭐️ 차트 그리기 에러 로그 출력되도록 수정 ⭐️
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
         try:
@@ -268,7 +287,9 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
-        except: return None
+        except Exception as e: 
+            print(f"❌ [{name}] 차트 생성 중 에러 발생 (Matplotlib/폰트 문제 가능성): {e}")
+            return None
 
 def scan_market_1d():
     stock_list = get_krx_list_kind()
@@ -310,6 +331,7 @@ def scan_market_1d():
                 
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
+            # ⭐️ 차트 생성이 안되면 큐에 안 넣도록 방어 및 경고문 출력 ⭐️
             if chart_path:
                 ai_fact_check = generate_kr_ai_report(code, name)
                 
@@ -331,11 +353,12 @@ def scan_market_1d():
                     f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                 )
                 telegram_queue.put((chart_path, caption))
+            else:
+                print(f"⚠️ [{name}] 차트 이미지 생성이 실패하여 텔레그램 전송 대기열에서 제외되었습니다.")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
         
-    # ⭐️ 텔레그램 전송 완료 보장 방어막 ⭐️
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         telegram_queue.join()
@@ -355,4 +378,3 @@ def run_scheduler():
 
 if __name__ == "__main__":
     scan_market_1d() # 즉시 1회 테스트용
-    # run_scheduler()
