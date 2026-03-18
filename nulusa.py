@@ -1,6 +1,6 @@
 # Dante_US_Nulrim_1D_AI_Pro.py
 import os, re, time, threading, queue, concurrent.futures
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
@@ -12,20 +12,15 @@ import yfinance as yf
 import FinanceDataReader as fdr
 import logging
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
-# ==========================================
-# 🔑 .env 안전 파일 방식 적용
-# ==========================================
 load_dotenv() 
-
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
 if not GEMINI_API_KEY:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -42,51 +37,61 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def generate_ai_report(ticker_str: str, company_name: str) -> str:
-    try:
-        tk = yf.Ticker(ticker_str)
-        info = tk.info
-        
-        sector = info.get('sector', '정보 없음')
-        industry = info.get('industry', '정보 없음')
-        market_cap = info.get('marketCap', '정보 없음')
-        if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B (십억 달러)"
-        
-        eps = info.get('trailingEps', '정보 없음')
-        revenue_growth = info.get('revenueGrowth', '정보 없음')
-        business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
-        
-        financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
+# ⭐️ 기모으는중(미니폼) + 정식 폼 분기 생성기 및 3회 재시도 ⭐️
+def generate_ai_report(ticker_str: str, company_name: str, is_gathering: bool = False) -> str:
+    for attempt in range(3):
+        try:
+            tk = yf.Ticker(ticker_str)
+            info = tk.info
+            sector = info.get('sector', '정보 없음')
+            industry = info.get('industry', '정보 없음')
+            market_cap = info.get('marketCap', '정보 없음')
+            if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B"
+            eps = info.get('trailingEps', '정보 없음')
+            revenue_growth = info.get('revenueGrowth', '정보 없음')
+            business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
+            financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
+            today_date = datetime.now().strftime('%Y년 %m월 %d일')
 
-        prompt = f"""
-        너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
-        아래 종목의 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+            # S6, S7 (기모으는중) 숏 폼 지시
+            if is_gathering:
+                prompt = f"""
+                오늘 날짜는 {today_date}이야. 구글 검색을 활용해 다음 미국 주식의 정보를 아래 양식에 맞춰 딱 3줄로 한국어로 요약해.
+                [종목 정보] {company_name} ({ticker_str}) / 섹터: {sector}, {industry} / 실적: {financials}
+                
+                [출력 양식] (마크다운 기호 없이 텍스트로만)
+                기업 이름: {company_name} ({ticker_str})
+                주도섹터: (현재 시장에서 어떤 테마/섹터로 엮이는지 1문장)
+                실적: (최근 실적 요약 1문장)
+                """
+            # S1, S2, S3, S4 롱 폼 지시
+            else:
+                prompt = f"""
+                너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야. 오늘 날짜는 {today_date}이야. 
+                반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 투자 메모를 작성해.
+                
+                [종목 정보] {company_name} ({ticker_str}) / 섹터: {sector} / 시가총액: {market_cap} / 실적: {financials}
+                [비즈니스 요약] {business_summary}
 
-        [종목 정보]
-        - 종목명: {company_name} ({ticker_str})
-        - 섹터: {sector} / 산업군: {industry}
-        - 시가총액: {market_cap}
-        - 실적 및 재무: {financials}
-        - 비즈니스 요약: {business_summary}
-
-        [출력 양식] (반드시 아래 번호와 항목명에 맞춰서 작성할 것)
-        1. 섹터 종류: (간단한 설명)
-        2. 업계 점유율/규모: (시총 규모 및 지위)
-        3. 최근 실적: (흑자/적자 여부, 핵심 지표)
-        4. 미래 모멘텀: (파이프라인, 기대감 등)
-        5. 기업 전망: (짧고 굵은 전망)
-        """
-        
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        # ⭐️ 100% 멈추지 않는 초안정적 1.5 모델 복구 (무한대기 방지) ⭐️
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt
-        )
-        return response.text.strip()
-    except Exception as e:
-        return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다. (직접 분석 요망)"
+                [출력 양식]
+                1. 섹터 종류: (간단한 설명)
+                2. 업계 점유율/규모: (시총 규모 및 지위)
+                3. 최근 실적: (흑자/적자 여부, 핵심 지표)
+                4. 미래 모멘텀: (파이프라인, 최신 호재/악재 등)
+                5. 기업 전망: (짧고 굵은 전망)
+                """
+            
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+            )
+            return response.text.strip()
+        except Exception as e:
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
+            time.sleep(3)
+            
+    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
 
 def get_us_ticker_list():
     try:
@@ -102,7 +107,6 @@ def telegram_sender_daemon():
         if item is None: break
         img_path, caption = item
         
-        # ⭐️ 텔레그램 글자수 1024자 제한 완벽 방어
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
 
         if SEND_TELEGRAM:
@@ -110,25 +114,18 @@ def telegram_sender_daemon():
                 try:
                     with open(img_path, 'rb') as f:
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: 
-                        break
-                    elif res.status_code == 429: 
-                        time.sleep(3)
-                    else:
-                        print(f"❌ [미국장] 텔레그램 발송 실패 (글자수 초과 등): {res.text}")
-                        break
-                except Exception as e: 
-                    time.sleep(2)
+                    if res.status_code == 200: break
+                    elif res.status_code == 429: time.sleep(3)
+                except Exception as e: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
-# 순수 발송 데몬만 남겨서 스레드 꼬임 완벽 차단
 threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
-MIN_PRICE_USD = 1.0               
-MIN_MONEY_USD = 1_000_000         
+MIN_PRICE_USD = 3.0               
+MIN_MONEY_USD = 5_000_000         
 
-def calculate_trust_score(c, e60, s1_arr, s2_arr, s4_arr):
+def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
     lowest_60 = np.min(c[-60:])
     runup_ratio = (c[-1] / lowest_60) - 1
@@ -137,7 +134,8 @@ def calculate_trust_score(c, e60, s1_arr, s2_arr, s4_arr):
 
     lookback = min(100, len(c))
     for i in range(len(c) - lookback, len(c) - 1):
-        if s1_arr[i] or s2_arr[i] or s4_arr[i]:
+        is_sig = any(arr[i] for arr in sig_arrays)
+        if is_sig:
             valid = True
             entry_price = c[i]
             for j in range(i + 1, len(c)):
@@ -153,9 +151,11 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
+    df['Lowest5'] = df['Low'].rolling(5).min()
     
-    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
+    c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
     av3 = df['AvgVol3'].values
+    lowest5 = df['Lowest5'].values
     
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
@@ -183,11 +183,22 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
+    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
     
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-    
+
+    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
+    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
+    shortBull = (e10 > e20) & (e20 > e30)
+    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
+
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
+
     s4 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
@@ -195,20 +206,54 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
+    # ⭐️ 10% 상승 실패 시 별 누적기 & 리셋 로직 ⭐️
+    s67_counts = np.zeros(len(c), dtype=int)
+    current_s67_count = 0
+    wait_idx = -1
+
+    for i in range(len(c)):
+        if wait_idx != -1:
+            if i <= wait_idx + 3:
+                # 3봉 이내 10% 상승하면 성공! -> 리셋
+                if h[i] >= c[wait_idx] * 1.10:
+                    current_s67_count = 0
+                    wait_idx = -1
+            if i == wait_idx + 3 and wait_idx != -1:
+                # 3봉 이후에도 못 오르면 실패! -> 누적
+                wait_idx = -1
+
+        if s6[i] or s7[i]: current_s67_count += 1
+        if s1[i] or s2[i] or s3[i] or s4[i]:
+            s67_counts[i] = current_s67_count
+            wait_idx = i
+
     cond_base = moneyOk & priceOk & volSpike
+    
+    # ⭐️ 미국장은 S1~S4(본타점) + S6, S7(기모으기 타점) 발송
     hit1 = s1[-1] and cond_base[-1]
     hit2 = s2[-1] and cond_base[-1]
+    hit3 = s3[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
+    hit6 = s6[-1] and cond_base[-1]
+    hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit2 or hit4): return False, "", df, {}
+    if not (hit1 or hit2 or hit3 or hit4 or hit6 or hit7): return False, "", df, {}
 
-    if hit4: sig_type = "V (S4: 돌파)"
+    is_gathering = False
+    if hit7: 
+        sig_type = "V (S7: 중기턴)"
+        is_gathering = True
+    elif hit6: 
+        sig_type = "V (S6: 바닥턴)"
+        is_gathering = True
+    elif hit4: sig_type = "V (S4: 돌파)"
+    elif hit3: sig_type = "V (S3: 112 재정렬)"
     elif hit2: sig_type = "V (S2: 224 재정렬)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s2, s4)
+    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s6, s7)
 
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
+    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1]), "is_gathering": is_gathering}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
@@ -231,7 +276,7 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 V(눌림목) 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -282,23 +327,34 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         if chart_path:
-                            ai_fact_check = generate_ai_report(code, name)
+                            is_gathering = dbg.get("is_gathering", False)
+                            ai_text = generate_ai_report(code, name, is_gathering)
                             
-                            caption = (
-                                f"🎯 [{dbg['sig_type']}]\n\n"
-                                f"🏢 {name} ({code})\n"
-                                f"💰 현재가: ${dbg['last_close']:.2f}\n"
-                                f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                                f"📉 [매수/손절 전략]\n"
-                                f"- 양봉 길이만큼 분할매수\n"
-                                f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                                f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                                f"💡 [기업 팩트체크]\n"
-                                f"{ai_fact_check}\n\n"
-                                f"⚠️ [전문가 코멘트]\n"
-                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                                f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                            )
+                            # ⭐️ 기모으는중 폼과 본타점 폼 분리
+                            if is_gathering:
+                                caption = (
+                                    f"🔋 [기모으는중 - {dbg['sig_type']}]\n\n"
+                                    f"{ai_text}\n"
+                                    f"상태: 기모으는중 🧘‍♂️\n"
+                                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                                )
+                            else:
+                                caption = (
+                                    f"🎯 [{dbg['sig_type']}]\n\n"
+                                    f"🏢 {name} ({code})\n"
+                                    f"💰 현재가: ${dbg['last_close']:.2f}\n"
+                                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                                    f"📉 [매수/손절 전략]\n"
+                                    f"- 양봉 길이만큼 분할매수\n"
+                                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                                    f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
+                                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                                    f"💡 [기업 팩트체크]\n"
+                                    f"{ai_text}\n\n"
+                                    f"⚠️ [전문가 코멘트]\n"
+                                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                                    f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                                )
                             telegram_queue.put((chart_path, caption))
             except: pass
         
@@ -306,14 +362,15 @@ def scan_market_1d():
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     dt = time.time() - t0
-    print(f"\n✅ [8번 봇: US V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [미국장 4번 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
+# ⭐️ 4번 스케줄러 세팅 (11:00, 13:00, 15:00) ⭐️
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [4번 미국장 검색기] 10:30 / 12:30 / 15:30 대기 중...")
+    print("🕒 [4번 미국장 검색기] 11:00 / 13:00 / 15:00 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if (now_ny.hour == 10 and now_ny.minute == 30) or (now_ny.hour == 12 and now_ny.minute == 30) or (now_ny.hour == 15 and now_ny.minute == 30):
+        if (now_ny.hour == 11 and now_ny.minute == 0) or (now_ny.hour == 13 and now_ny.minute == 0) or (now_ny.hour == 15 and now_ny.minute == 0):
             print(f"🚀 [4번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
