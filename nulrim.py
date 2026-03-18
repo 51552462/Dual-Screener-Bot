@@ -16,9 +16,6 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-# ==========================================
-# 🔑 .env 안전 파일 방식 적용
-# ==========================================
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -40,7 +37,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 에러 원인 추적기 ⭐️
+# ⭐️ 일꾼 즉사 버그 완벽 해결 (last_err_msg) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
     summary = "정보 없음"
@@ -79,7 +76,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     5. 기업 전망: (짧고 굵은 전망)
     """
     
-    last_error = ""
+    last_err_msg = ""
     for attempt in range(3):
         try:
             response = client.models.generate_content(
@@ -87,13 +84,14 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
                 contents=prompt,
                 config=types.GenerateContentConfig(tools=[{"google_search": {}}])
             )
-            return response.text.strip()
+            if response and response.text:
+                return response.text.strip()
         except Exception as e: 
-            last_error = str(e)
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_error}")
+            last_err_msg = str(e)
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_err_msg}")
             time.sleep(3) 
             
-    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {last_error})"
+    return f"⚠️ AI 요약 3회 재시도 실패\n(진짜 에러 원인: {last_err_msg})"
 
 def get_krx_list_kind():
     try:
@@ -230,6 +228,7 @@ def compute_signal(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk & volSpike
     
+    # ⭐️ 한국장: S1, S4, S7 포착!
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
@@ -264,7 +263,7 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 5번(눌림목) 스캔 시작! (무적 방어막 탑재 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (S1, S4, S7 전용)")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -278,18 +277,14 @@ def scan_market_1d():
         is_valid = False
         hit, sig_type, df, dbg = False, "", None, {}
         
-        # ⭐️ 무적의 방어막! 
         try:
             df_raw = fdr.DataReader(code, start_date)
             if df_raw is not None and not df_raw.empty:
-                # 결측치(NaN) 완벽 제거
                 df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
             if is_valid: 
                 hit, sig_type, df, dbg = compute_signal(df_raw)
-        except Exception:
-            pass # 불량 주식 무시하고 무조건 전진
+        except Exception: pass
             
         hit_rank = 0
         with console_lock:
@@ -319,14 +314,16 @@ def scan_market_1d():
                     f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                     f"💡 [기업 팩트체크]\n"
                     f"{ai_fact_check}\n\n"
-                    f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    f"⚠️ [전문가 코멘트]\n"
+                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                 )
                 telegram_queue.put((chart_path, caption))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
         
-    # ⭐️ 텔레그램 전송 보장 대기 
+    # ⭐️ 텔레그램 전송 완료 보장 방어막 ⭐️
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         telegram_queue.join()
