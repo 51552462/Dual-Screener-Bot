@@ -13,6 +13,7 @@ from io import StringIO
 import FinanceDataReader as fdr
 
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # ==========================================
@@ -39,7 +40,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 에러 원인 추적기 및 3회 재시도 로직 ⭐️
+# ⭐️ AI 에러 원인 추적기 (last_error 버그 픽스) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -58,9 +59,10 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
 
+    today_date = datetime.now().strftime('%Y년 %m월 %d일')
     prompt = f"""
     너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-    아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+    오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
     추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
 
     [종목 정보]
@@ -76,16 +78,21 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     5. 기업 전망: (짧고 굵은 전망)
     """
     
+    last_error = ""
     for attempt in range(3):
         try:
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+            )
             return response.text.strip()
         except Exception as e: 
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
-            time.sleep(3) # 3초 대기 후 재시도
+            last_error = str(e)
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_error}")
+            time.sleep(3) 
             
-    # ⭐️ 3번 실패 시 정확한 에러 메시지를 텔레그램에 출력
-    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
+    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {last_error})"
 
 def get_krx_list_kind():
     try:
@@ -222,26 +229,32 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 4번(밥그릇) 스캔 시작! (초고속 엔진🚀)")
+    print(f"\n⚡ [일봉 전용] 한국장 4번(밥그릇) 스캔 시작! (초고속 방어막 탑재 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
-    
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
         _, row = row_tuple
         name, code = row["Name"], row["Code"]
         df_raw = None
+        is_valid = False
+        hit, sig_type, df, dbg = False, "", None, {}
         
+        # ⭐️ 일꾼 절대 사망 방지 방어막!
         try:
             df_raw = fdr.DataReader(code, start_date)
-        except: pass
-
-        is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-        hit, sig_type, df, dbg = False, "", None, {}
-        if is_valid: hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
-
+            if df_raw is not None and not df_raw.empty:
+                # 데이터의 구멍(NaN)을 사전에 싹 도려내서 에러 원천 차단
+                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                
+            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            if is_valid: 
+                hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
+        except Exception:
+            pass # 계산이 꼬이는 불량 주식은 조용히 스킵하고 무조건 살아서 다음으로 넘어감!
+            
         hit_rank = 0
         with console_lock:
             tracker['scanned'] += 1
@@ -267,17 +280,20 @@ def scan_market_1d():
                     f"⭐ 신뢰도: {dbg['score']} / 10점\n\n"
                     f"💡 [팩트체크]\n"
                     f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                 )
                 telegram_queue.put((chart_path, caption))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
+        
+    # ⭐️ 조기 퇴근 방지 (텔레그램 다 보낼 때까지 대기)
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
+
     print(f"\n✅ [한국장 4번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
-# ⭐️ 4번 스케줄러 세팅 (10:30, 13:00) ⭐️
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [4번 검색기] 10:30 / 13:00 대기 중...")
@@ -290,5 +306,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()     # ⬅️ 앞의 #을 지워서 즉시 실행되게 만듭니다. 
-    # run_scheduler()    # ⬅️ 앞에 #을 붙여서 대기 모드를 잠시 끕니다.
+    scan_market_1d() # 즉시 1회 테스트용으로 켜두었습니다!
+    # run_scheduler()
