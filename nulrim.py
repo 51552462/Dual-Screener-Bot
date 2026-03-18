@@ -13,8 +13,12 @@ from io import StringIO
 import FinanceDataReader as fdr
 
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
+# ==========================================
+# 🔑 .env 안전 파일 방식 적용
+# ==========================================
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -36,7 +40,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 에러 원인 추적기 및 3회 재시도 로직 ⭐️
+# ⭐️ AI 에러 원인 추적기 ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
     summary = "정보 없음"
@@ -56,9 +60,10 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
 
+    today_date = datetime.now().strftime('%Y년 %m월 %d일')
     prompt = f"""
     너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-    아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+    오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
     추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
 
     [종목 정보]
@@ -74,17 +79,20 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     5. 기업 전망: (짧고 굵은 전망)
     """
     
-    last_error = ""  # ⭐️ 추가: 에러를 기억해둘 빈 바구니 준비
+    last_error = ""
     for attempt in range(3):
         try:
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+            )
             return response.text.strip()
         except Exception as e: 
-            last_error = str(e) # ⭐️ 추가: 에러 발생 시 바구니에 담아둠
+            last_error = str(e)
             print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_error}")
-            time.sleep(3)
+            time.sleep(3) 
             
-    # ⭐️ 수정: 안전하게 바구니에 담긴 에러를 꺼내서 사용!
     return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {last_error})"
 
 def get_krx_list_kind():
@@ -200,7 +208,6 @@ def compute_signal(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
-    # ⭐️ 10% 상승 실패 추적 로직 (S6, S7 누적 및 리셋 계산) ⭐️
     s67_counts = np.zeros(len(c), dtype=int)
     current_s67_count = 0
     wait_idx = -1
@@ -208,12 +215,10 @@ def compute_signal(df_raw: pd.DataFrame):
     for i in range(len(c)):
         if wait_idx != -1:
             if i <= wait_idx + 3:
-                # 3봉 이내에 이전 타점 대비 10% 이상 상승했다면 성공! -> 별 리셋
                 if h[i] >= c[wait_idx] * 1.10:
                     current_s67_count = 0
                     wait_idx = -1
             if i == wait_idx + 3 and wait_idx != -1:
-                # 3봉이 지났는데 10% 못 올랐다면 실패! -> 리셋 안 하고 누적 계속
                 wait_idx = -1
 
         if s6[i] or s7[i]:
@@ -225,7 +230,6 @@ def compute_signal(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk & volSpike
     
-    # ⭐️ 한국장: 오직 S1, S4, S7만 결과지에 올립니다.
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
@@ -260,27 +264,33 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (S1, S4, S7 전용)")
+    print(f"\n⚡ [일봉 전용] 한국장 5번(눌림목) 스캔 시작! (무적 방어막 탑재 🛡️)")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
-    
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
         _, row = row_tuple
         name, code = row["Name"], row["Code"]
         df_raw = None
+        is_valid = False
+        hit, sig_type, df, dbg = False, "", None, {}
         
+        # ⭐️ 무적의 방어막! 
         try:
             df_raw = fdr.DataReader(code, start_date)
-        except: pass
-
-        is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-        hit, sig_type, df, dbg = False, "", None, {}
-        if is_valid: hit, sig_type, df, dbg = compute_signal(df_raw)
-
+            if df_raw is not None and not df_raw.empty:
+                # 결측치(NaN) 완벽 제거
+                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                
+            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            if is_valid: 
+                hit, sig_type, df, dbg = compute_signal(df_raw)
+        except Exception:
+            pass # 불량 주식 무시하고 무조건 전진
+            
         hit_rank = 0
         with console_lock:
             tracker['scanned'] += 1
@@ -309,23 +319,20 @@ def scan_market_1d():
                     f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                     f"💡 [기업 팩트체크]\n"
                     f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                 )
                 telegram_queue.put((chart_path, caption))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
         
-    # ⭐️ 핵심 패치: 텔레그램 발송 일꾼이 대기열을 다 비울 때까지 퇴근 못하게 막음!
+    # ⭐️ 텔레그램 전송 보장 대기 
     if tracker['hits'] > 0:
-        print("⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join() 
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
 
     print(f"\n✅ [5번 봇: KRX V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
-# ⭐️ 5번 스케줄러 세팅 (11:00, 13:30) ⭐️
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [5번 검색기] 11:00 / 13:30 대기 중...")
@@ -338,5 +345,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()     # ⬅️ 앞의 #을 지워서 즉시 실행되게 만듭니다. 
-    # run_scheduler()    # ⬅️ 앞에 #을 붙여서 대기 모드를 잠시 끕니다.
+    scan_market_1d() # 즉시 1회 테스트용
+    # run_scheduler()
