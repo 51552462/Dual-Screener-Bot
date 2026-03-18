@@ -255,7 +255,7 @@ def compute_signal(df_raw: pd.DataFrame):
 
     trust_score = calculate_trust_score(c, e60, s1, s4)
 
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
