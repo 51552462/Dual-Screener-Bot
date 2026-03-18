@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib; matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
@@ -49,7 +50,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             tag = BeautifulSoup(res_naver.text, 'html.parser').select_one('h4.h_sub.sub_tit7 a')
             if tag: sector = tag.text.strip()
     except: pass
-                
+               
     try:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
@@ -62,7 +63,6 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
     오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
     추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-
     [종목 정보]
     - 종목명: {company_name} ({code})
     - 네이버금융 섹터분류: {sector}
@@ -117,7 +117,8 @@ def telegram_sender_daemon():
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
+                        # 💡 params 부분을 data로 변경했습니다.
+                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except: time.sleep(2)
@@ -144,7 +145,8 @@ def calculate_trust_score(c, e60, *sig_arrays):
             entry_price = c[i]
             for j in range(i + 1, len(c)):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
+                    valid = False
+                    break
             if valid: score += 2 
     return max(1, min(10, score))
 
@@ -175,28 +177,37 @@ def compute_signal(df_raw: pd.DataFrame):
     longKeep224 = e112 > e224 
     longKeep112 = e60 > e112  
 
-    prev_align448 = np.roll(align448, 1); prev_align448[0] = False
+    prev_align448 = np.roll(align448, 1)
+    prev_align448[0] = False
     prev_align224 = np.roll(align224, 1); prev_align224[0] = False
-    prev_align112 = np.roll(align112, 1); prev_align112[0] = False
+    prev_align112 = np.roll(align112, 1)
+    prev_align112[0] = False
     
-    prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
+    prev_longKeep448 = np.roll(longKeep448, 1)
+    prev_longKeep448[0] = False
     prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
-    prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
+    prev_longKeep112 = np.roll(longKeep112, 1)
+    prev_longKeep112[0] = False
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     
-    prev_c = np.roll(c, 1); prev_c[0] = 0
-    prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
+    prev_c = np.roll(c, 1)
+    prev_c[0] = 0
+    prev_e20 = np.roll(e20, 1)
+    prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
 
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    prev_shortBull = np.roll(shortBull, 1)
+    prev_shortBull[0] = False
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    prev_e60 = np.roll(e60, 1)
+    prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1)
+    prev_e112[0] = 0
     s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     s4 = np.zeros_like(c, dtype=bool)
@@ -315,7 +326,8 @@ def scan_market_1d():
                     f"💡 [기업 팩트체크]\n"
                     f"{ai_fact_check}\n\n"
                     f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다.\n"
+                    f"시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
                     f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                 )
                 telegram_queue.put((chart_path, caption))
