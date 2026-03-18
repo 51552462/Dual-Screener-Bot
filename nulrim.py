@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib
-matplotlib.use('Agg')
+import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
@@ -14,9 +13,11 @@ from io import StringIO
 import FinanceDataReader as fdr
 
 from google import genai
-from google.genai import types
 from dotenv import load_dotenv
 
+# ==========================================
+# 🔑 .env 안전 파일 방식 적용
+# ==========================================
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -49,7 +50,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             tag = BeautifulSoup(res_naver.text, 'html.parser').select_one('h4.h_sub.sub_tit7 a')
             if tag: sector = tag.text.strip()
     except: pass
-               
+                
     try:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
@@ -57,40 +58,26 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
 
-    today_date = datetime.now().strftime('%Y년 %m월 %d일')
-    prompt = f"""
-    너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-    오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-    추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-    [종목 정보]
-    - 종목명: {company_name} ({code})
-    - 네이버금융 섹터분류: {sector}
-    - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
+    try:
+        prompt = f"""
+        너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
+        아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+        [종목 정보]
+        - 종목명: {company_name} ({code})
+        - 네이버금융 섹터분류: {sector}
+        - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
 
-    [출력 양식]
-    1. 섹터 종류: (간단한 설명)
-    2. 업계 점유율/규모: (비즈니스 개요 및 지위)
-    3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
-    4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
-    5. 기업 전망: (짧고 굵은 전망)
-    """
-    
-    last_err_msg = ""
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt,
-                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e: 
-            last_err_msg = str(e)
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_err_msg}")
-            time.sleep(3) 
-            
-    return f"⚠️ AI 요약 3회 재시도 실패\n(진짜 에러 원인: {last_err_msg})"
+        [출력 양식]
+        1. 섹터 종류: (간단한 설명)
+        2. 업계 점유율/규모: (비즈니스 개요 및 지위)
+        3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
+        4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
+        5. 기업 전망: (짧고 굵은 전망)
+        """
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        return response.text.strip()
+    except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다.\n({e})"
 
 def get_krx_list_kind():
     try:
@@ -104,7 +91,6 @@ def get_krx_list_kind():
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# ⭐️ 텔레그램 에러 로그를 밖으로 꺼내서 보이게 수정 ⭐️
 def telegram_sender_daemon():
     while True:
         item = telegram_queue.get()
@@ -126,21 +112,20 @@ def telegram_sender_daemon():
                             verify=False
                         )
                     if res.status_code == 200: 
-                        print(f"✅ 텔레그램 전송 성공: {img_path}")
+                        print(f"\n✅ 텔레그램 전송 성공: {img_path}")
                         is_success = True
                         break
                     elif res.status_code == 429: 
-                        print(f"⚠️ 텔레그램 전송 지연 (429 Too Many Requests). 3초 대기...")
+                        print("\n⚠️ 텔레그램 전송 지연 (429 에러). 3초 대기...")
                         time.sleep(3)
                     else:
-                        print(f"❌ 텔레그램 서버 거부 에러 (HTTP {res.status_code}): {res.text}")
+                        print(f"\n❌ 텔레그램 서버 거부 (HTTP {res.status_code}): {res.text}")
                         time.sleep(2)
-                except Exception as e: 
-                    print(f"❌ 텔레그램 요청 중 네트워크 에러 발생: {e}")
+                except Exception as e:
+                    print(f"\n❌ 텔레그램 전송 중 예외 발생: {e}")
                     time.sleep(2)
-            
             if not is_success:
-                print(f"⚠️ 최종 텔레그램 전송 실패 (3회 재시도 초과) - 파일: {img_path}")
+                print(f"\n⚠️ 최종 텔레그램 전송 실패 - 대상 파일: {img_path}")
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -257,23 +242,21 @@ def compute_signal(df_raw: pd.DataFrame):
             wait_idx = i
 
     cond_base = moneyOk & priceOk & volSpike
-    
+   
+    # ⭐️ 한국장: 오직 S1, S4만 결과지에 올립니다.
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
-    hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit4 or hit7): return False, "", df, {}
+    if not (hit1 or hit4): return False, "", df, {}
 
-    if hit7: sig_type = "V (S7: 중기턴)"
-    elif hit4: sig_type = "V (S4: 돌파)"
+    if hit4: sig_type = "V (S4: 돌파)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s4, s7)
+    trust_score = calculate_trust_score(c, e60, s1, s4)
 
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
 chart_lock = threading.Lock()
-# ⭐️ 차트 그리기 에러 로그 출력되도록 수정 ⭐️
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
         try:
@@ -287,78 +270,77 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
             return path
-        except Exception as e: 
-            print(f"❌ [{name}] 차트 생성 중 에러 발생 (Matplotlib/폰트 문제 가능성): {e}")
-            return None
+        except: return None
 
 def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (S1, S4, S7 전용)")
+    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (초고속 네이버 엔진🚀 / S1,S4 전용)")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
+    
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
-        _, row = row_tuple
-        name, code = row["Name"], row["Code"]
-        df_raw = None
-        is_valid = False
-        hit, sig_type, df, dbg = False, "", None, {}
-        
+        # ⭐️ 숨겨진 에러를 철저히 잡아내는 try-except 방어막 ⭐️
         try:
-            df_raw = fdr.DataReader(code, start_date)
-            if df_raw is not None and not df_raw.empty:
-                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-            if is_valid: 
-                hit, sig_type, df, dbg = compute_signal(df_raw)
-        except Exception: pass
+            _, row = row_tuple
+            name, code = row["Name"], row["Code"]
+            df_raw = None
             
-        hit_rank = 0
-        with console_lock:
-            tracker['scanned'] += 1
-            if is_valid: tracker['analyzed'] += 1 
-            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+            try:
+                df_raw = fdr.DataReader(code, start_date)
+            except: pass
 
+            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            hit, sig_type, df, dbg = False, "", None, {}
+            if is_valid: hit, sig_type, df, dbg = compute_signal(df_raw)
+
+            hit_rank = 0
+            with console_lock:
+                tracker['scanned'] += 1
+                if is_valid: tracker['analyzed'] += 1 
+                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+
+                if hit:
+                    tracker['hits'] += 1
+                    hit_rank = tracker['hits']
+                    
             if hit:
-                tracker['hits'] += 1
-                hit_rank = tracker['hits']
-                
-        if hit:
-            chart_path = save_chart(df, code, name, hit_rank, dbg)
-            # ⭐️ 차트 생성이 안되면 큐에 안 넣도록 방어 및 경고문 출력 ⭐️
-            if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                    f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
-                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                    f"💡 [기업 팩트체크]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다.\n"
-                    f"시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                )
-                telegram_queue.put((chart_path, caption))
-            else:
-                print(f"⚠️ [{name}] 차트 이미지 생성이 실패하여 텔레그램 전송 대기열에서 제외되었습니다.")
+                chart_path = save_chart(df, code, name, hit_rank, dbg)
+                if chart_path:
+                    ai_fact_check = generate_kr_ai_report(code, name)
+                    
+                    caption = (
+                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"💡 [기업 팩트체크]\n"
+                        f"{ai_fact_check}\n\n"
+                        f"⚠️ [전문가 코멘트]\n"
+                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다.\n"
+                        f"시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    )
+                    telegram_queue.put((chart_path, caption))
+        except Exception as e:
+            print(f"\n❌ [{row['Name']}] 워커 스레드 치명적 에러 발생: {e}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        executor.map(worker, list(stock_list.iterrows()))
+        # ⭐️ list()로 감싸서 제너레이터를 강제 실행! 에러가 숨는 것을 방지합니다.
+        list(executor.map(worker, list(stock_list.iterrows())))
         
+    # ⭐️ 메인 프로그램이 대기열 처리를 기다리지 않고 꺼지는 현상 방지
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         telegram_queue.join()
@@ -378,3 +360,4 @@ def run_scheduler():
 
 if __name__ == "__main__":
     scan_market_1d() # 즉시 1회 테스트용
+    # run_scheduler()
