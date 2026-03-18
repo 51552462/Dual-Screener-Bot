@@ -314,6 +314,12 @@ def scan_market_1d():
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
+        
+    # ⭐️ 핵심 패치: 텔레그램 발송 일꾼이 대기열을 다 비울 때까지 퇴근 못하게 막음!
+    if tracker['hits'] > 0:
+        print("⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join() 
+
     print(f"\n✅ [5번 봇: KRX V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 # ⭐️ 5번 스케줄러 세팅 (11:00, 13:30) ⭐️
