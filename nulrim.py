@@ -298,45 +298,58 @@ def scan_market_1d():
                     data = res.json()
                     if "IGW" in data.get("rsp_cd", "") or data.get("rsp_msg", "") == "조회건수제한":
                         time.sleep(2); continue 
+                    
                     items = data.get("t8413OutBlock1", [])
-                    if items:
-                        records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
-                        df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
+                    # ⭐️ 핵심 패치: 데이터가 아예 없는 유령 주식은 5번 헛발질하지 말고 즉시 탈출!
+                    if not items: 
+                        break 
+                        
+                    records = [{'Date': pd.to_datetime(r.get('date', '') + '000000', format='%Y%m%d%H%M%S'), 'Open': float(r.get('open', 0)), 'High': float(r.get('high', 0)), 'Low': float(r.get('low', 0)), 'Close': float(r.get('close', 0)), 'Volume': float(r.get('jdiff_vol', r.get('volume', 0)))} for r in items]
+                    df_raw = pd.DataFrame(records).dropna(subset=['Date']).sort_values('Date').reset_index(drop=True).set_index('Date')
                     break
             except: time.sleep(1)
 
+        # (앞부분 생략)
         is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
         hit, sig_type, df, dbg = False, "", None, {}
-        if is_valid: hit, sig_type, df, dbg = compute_signal(df_raw)
+        if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
 
+        hit_rank = 0  # ⭐️ 추가 1: 순위를 기억할 빈 바구니 준비
+
+        # 🔒 자물쇠 시작 (최소한의 작업만 하고 0.001초 만에 빠져나옴)
         with console_lock:
             tracker['scanned'] += 1
             if is_valid: tracker['analyzed'] += 1 
             if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
                 print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
-
             if hit:
                 tracker['hits'] += 1
-                chart_path = save_chart(df, code, name, tracker['hits'], dbg)
-                if chart_path:
-                    ai_fact_check = generate_kr_ai_report(code, name)
-                    
-                    caption = (
-                        f"🎯 [{dbg['sig_type']}]\n\n"
-                        f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                        f"📉 [매수/손절 전략]\n"
-                        f"- 양봉 길이만큼 분할매수\n"
-                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                        f"💡 [기업 팩트체크]\n"
-                        f"{ai_fact_check}\n\n"
-                        f"⚠️ [전문가 코멘트]\n"
-                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                    )
-                    telegram_queue.put((chart_path, caption))
+                hit_rank = tracker['hits']  # ⭐️ 추가 2: 몇 번째 포착인지 숫자만 바구니에 담음!
+
+        # 🔓 자물쇠 밖으로 완전 탈출! (들여쓰기가 with console_lock과 같은 라인으로 당겨짐)
+        # 이제 20명의 일꾼이 멈추지 않고 각자 차트 그리고 AI 요약을 동시다발적으로 진행합니다.
+        if hit:
+            chart_path = save_chart(df, code, name, hit_rank, dbg) # tracker['hits'] 대신 hit_rank 사용
+            if chart_path:
+                ai_fact_check = generate_kr_ai_report(code, name)
+                
+                # 아래 캡션(caption) 내용은 파일마다 다르니, 기존 파일에 있던 것을 그대로 쓰시면 됩니다!
+                caption = (
+                    f"🎯 [{dbg['sig_type']}]\n\n"
+                    f"🏢 {name} ({code})\n"
+                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                    f"📉 [매수/손절 전략]\n"
+                    f"- 양봉 길이만큼 분할매수\n"
+                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                    f"💡 [기업 팩트체크]\n"
+                    f"{ai_fact_check}\n\n"
+                    f"⚠️ [전문가 코멘트]\n"
+                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                )
+                telegram_queue.put((chart_path, caption))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(worker, list(stock_list.iterrows()))
