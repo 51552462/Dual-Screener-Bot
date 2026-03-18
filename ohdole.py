@@ -192,8 +192,8 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
 
     sig_type = "E (장악형)" if sig1_hit else "E (안착형)"
     trust_score = calculate_trust_score(c, ma60, sig_1, sig_2)
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
-
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+    
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
     with chart_lock:
