@@ -63,7 +63,6 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
         아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
         추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-
         [종목 정보]
         - 종목명: {company_name} ({code})
         - 네이버금융 섹터분류: {sector}
@@ -78,7 +77,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         """
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         return response.text.strip()
-    except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다. ({e})"
+    except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다.\n({e})"
 
 def get_krx_list_kind():
     try:
@@ -101,13 +100,33 @@ def telegram_sender_daemon():
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
+            is_success = False
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
+                        # 💡 핵심 수정: data={...} 를 params={...} 로 원상복구합니다.
+                        res = requests.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
+                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
+                            files={"photo": f}, 
+                            timeout=20, 
+                            verify=False
+                        )
+                    if res.status_code == 200: 
+                        print(f"\n✅ 텔레그램 전송 성공: {img_path}")
+                        is_success = True
+                        break
+                    elif res.status_code == 429: 
+                        print("\n⚠️ 텔레그램 전송 지연 (429 에러). 3초 대기...")
+                        time.sleep(3)
+                    else:
+                        print(f"\n❌ 텔레그램 서버 거부 (HTTP {res.status_code}): {res.text}")
+                        time.sleep(2)
+                except Exception as e:
+                    print(f"\n❌ 텔레그램 전송 중 예외 발생: {e}")
+                    time.sleep(2)
+            if not is_success:
+                print(f"\n⚠️ 최종 텔레그램 전송 실패 - 대상 파일: {img_path}")
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -131,7 +150,8 @@ def calculate_trust_score(c, e60, *sig_arrays):
             entry_price = c[i]
             for j in range(i + 1, len(c)):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
+                    valid = False
+                    break
             if valid: score += 2 
     return max(1, min(10, score))
 
@@ -162,28 +182,37 @@ def compute_signal(df_raw: pd.DataFrame):
     longKeep224 = e112 > e224 
     longKeep112 = e60 > e112  
 
-    prev_align448 = np.roll(align448, 1); prev_align448[0] = False
+    prev_align448 = np.roll(align448, 1)
+    prev_align448[0] = False
     prev_align224 = np.roll(align224, 1); prev_align224[0] = False
-    prev_align112 = np.roll(align112, 1); prev_align112[0] = False
+    prev_align112 = np.roll(align112, 1)
+    prev_align112[0] = False
     
-    prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
+    prev_longKeep448 = np.roll(longKeep448, 1)
+    prev_longKeep448[0] = False
     prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
-    prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
+    prev_longKeep112 = np.roll(longKeep112, 1)
+    prev_longKeep112[0] = False
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     
-    prev_c = np.roll(c, 1); prev_c[0] = 0
-    prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
+    prev_c = np.roll(c, 1)
+    prev_c[0] = 0
+    prev_e20 = np.roll(e20, 1)
+    prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
 
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    prev_shortBull = np.roll(shortBull, 1)
+    prev_shortBull[0] = False
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    prev_e60 = np.roll(e60, 1)
+    prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1)
+    prev_e112[0] = 0
     s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     s4 = np.zeros_like(c, dtype=bool)
@@ -193,7 +222,6 @@ def compute_signal(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
-    # ⭐️ 10% 상승 실패 추적 로직 (S6, S7 누적 및 리셋 계산) ⭐️
     s67_counts = np.zeros(len(c), dtype=int)
     current_s67_count = 0
     wait_idx = -1
@@ -201,12 +229,10 @@ def compute_signal(df_raw: pd.DataFrame):
     for i in range(len(c)):
         if wait_idx != -1:
             if i <= wait_idx + 3:
-                # 3봉 이내에 이전 타점 대비 10% 이상 상승했다면 성공! -> 별 리셋
                 if h[i] >= c[wait_idx] * 1.10:
                     current_s67_count = 0
                     wait_idx = -1
             if i == wait_idx + 3 and wait_idx != -1:
-                # 3봉이 지났는데 10% 못 올랐다면 실패! -> 리셋 안 하고 누적 계속
                 wait_idx = -1
 
         if s6[i] or s7[i]:
@@ -217,7 +243,7 @@ def compute_signal(df_raw: pd.DataFrame):
             wait_idx = i
 
     cond_base = moneyOk & priceOk & volSpike
-    
+   
     # ⭐️ 한국장: 오직 S1, S4만 결과지에 올립니다.
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
@@ -260,54 +286,66 @@ def scan_market_1d():
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
-        _, row = row_tuple
-        name, code = row["Name"], row["Code"]
-        df_raw = None
-        
+        # ⭐️ 숨겨진 에러를 철저히 잡아내는 try-except 방어막 ⭐️
         try:
-            df_raw = fdr.DataReader(code, start_date)
-        except: pass
+            _, row = row_tuple
+            name, code = row["Name"], row["Code"]
+            df_raw = None
+            
+            try:
+                df_raw = fdr.DataReader(code, start_date)
+            except: pass
 
-        is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-        hit, sig_type, df, dbg = False, "", None, {}
-        if is_valid: hit, sig_type, df, dbg = compute_signal(df_raw)
+            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            hit, sig_type, df, dbg = False, "", None, {}
+            if is_valid: hit, sig_type, df, dbg = compute_signal(df_raw)
 
-        hit_rank = 0
-        with console_lock:
-            tracker['scanned'] += 1
-            if is_valid: tracker['analyzed'] += 1 
-            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+            hit_rank = 0
+            with console_lock:
+                tracker['scanned'] += 1
+                if is_valid: tracker['analyzed'] += 1 
+                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
+                if hit:
+                    tracker['hits'] += 1
+                    hit_rank = tracker['hits']
+                    
             if hit:
-                tracker['hits'] += 1
-                hit_rank = tracker['hits']
-                
-        if hit:
-            chart_path = save_chart(df, code, name, hit_rank, dbg)
-            if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                    f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
-                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                    f"💡 [기업 팩트체크]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                )
-                telegram_queue.put((chart_path, caption))
+                chart_path = save_chart(df, code, name, hit_rank, dbg)
+                if chart_path:
+                    ai_fact_check = generate_kr_ai_report(code, name)
+                    
+                    caption = (
+                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"💡 [기업 팩트체크]\n"
+                        f"{ai_fact_check}\n\n"
+                        f"⚠️ [전문가 코멘트]\n"
+                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다.\n"
+                        f"시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
+                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    )
+                    telegram_queue.put((chart_path, caption))
+        except Exception as e:
+            print(f"\n❌ [{row['Name']}] 워커 스레드 치명적 에러 발생: {e}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        executor.map(worker, list(stock_list.iterrows()))
+        # ⭐️ list()로 감싸서 제너레이터를 강제 실행! 에러가 숨는 것을 방지합니다.
+        list(executor.map(worker, list(stock_list.iterrows())))
+        
+    # ⭐️ 메인 프로그램이 대기열 처리를 기다리지 않고 꺼지는 현상 방지
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
+
     print(f"\n✅ [5번 봇: KRX V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 def run_scheduler():
@@ -322,4 +360,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    scan_market_1d() # 즉시 1회 테스트용
+    # run_scheduler()
