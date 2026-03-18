@@ -110,13 +110,26 @@ def telegram_sender_daemon():
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
 
         if SEND_TELEGRAM:
+            is_success = False
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except Exception as e: time.sleep(2)
+                    if res.status_code == 200: 
+                        print(f"\n✅ 텔레그램 전송 성공: {img_path}")
+                        is_success = True
+                        break
+                    elif res.status_code == 429: 
+                        print("\n⚠️ 텔레그램 전송 지연 (429 에러). 3초 대기...")
+                        time.sleep(3)
+                    else:
+                        print(f"\n❌ 텔레그램 서버 거부 (HTTP {res.status_code}): {res.text}")
+                        time.sleep(2)
+                except Exception as e:
+                    print(f"\n❌ 텔레그램 전송 중 예외 발생: {e}")
+                    time.sleep(2)
+            if not is_success:
+                print(f"\n⚠️ 최종 텔레그램 전송 실패 - 대상 파일: {img_path}")
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -229,25 +242,16 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk & volSpike
     
-    # ⭐️ 미국장은 S1~S4(본타점) + S6, S7(기모으기 타점) 발송
+    # ⭐️ 미국장: 오직 S1, S2, S4, S7만 발송하도록 필터링
     hit1 = s1[-1] and cond_base[-1]
     hit2 = s2[-1] and cond_base[-1]
-    hit3 = s3[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
-    hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit2 or hit3 or hit4 or hit6 or hit7): return False, "", df, {}
+    if not (hit1 or hit2 or hit4 or hit7): return False, "", df, {}
 
-    is_gathering = False
-    if hit7: 
-        sig_type = "V (S7: 중기턴)"
-        is_gathering = True
-    elif hit6: 
-        sig_type = "V (S6: 바닥턴)"
-        is_gathering = True
-    elif hit4: sig_type = "V (S4: 돌파)"
-    elif hit3: sig_type = "V (S3: 112 재정렬)"
+    if hit4: sig_type = "V (S4: 돌파)"
+    elif hit7: sig_type = "V (S7: 눌림)"
     elif hit2: sig_type = "V (S2: 224 재정렬)"
     else: sig_type = "V (S1: 448 재정렬)"
 
@@ -305,6 +309,7 @@ def scan_market_1d():
             if not info: continue
             name, code = info['name'], info['code']
 
+            # 💡 기존의 except: pass를 없애고 에러 추적 및 프리미엄 카피라이팅 적용
             try:
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
@@ -327,39 +332,52 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         chart_path = save_chart(df, code, name, tracker['hits'], dbg)
                         if chart_path:
-                            is_gathering = dbg.get("is_gathering", False)
-                            ai_text = generate_ai_report(code, name, is_gathering)
+                            # ⭐️ 기모으는중 폼 삭제 및 S1/S2/S4/S7 프리미엄 감성 멘트 적용
+                            ai_text = generate_ai_report(code, name, False)
                             
-                            # ⭐️ 기모으는중 폼과 본타점 폼 분리
-                            if is_gathering:
-                                caption = (
-                                    f"🔋 [기모으는중 - {dbg['sig_type']}]\n\n"
-                                    f"{ai_text}\n"
-                                    f"상태: 기모으는중 🧘‍♂️\n"
-                                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                                )
+                            grade_val = (dbg['score'] // 2) + dbg['s67_count']
+                            if grade_val >= 5: premium_grade = "Class S (최상위 기대주)"
+                            elif grade_val >= 3: premium_grade = "Class A (우수 기대주)"
+                            else: premium_grade = "Class B (관심 기대주)"
+
+                            if "S4" in dbg['sig_type']:
+                                intro_title = "🚀 [한 단계 도약을 위한 에너지 발산]"
+                                intro_desc = "새로운 궤도로 진입하며 한 단계 레벨업을 시도하는 역동적이고 의미 있는 순간입니다."
+                            elif "S7" in dbg['sig_type']:
+                                intro_title = "☕ [안정적인 여정을 위한 숨고르기]"
+                                intro_desc = "바쁘게 달려온 뒤 건강하게 쉬어가는 자리입니다. 달리는 말에 무리하게 올라타기보다, 물을 마실 때 편안하게 함께하기 좋은 시점입니다."
                             else:
-                                caption = (
-                                    f"🎯 [{dbg['sig_type']}]\n\n"
-                                    f"🏢 {name} ({code})\n"
-                                    f"💰 현재가: ${dbg['last_close']:.2f}\n"
-                                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                                    f"📉 [매수/손절 전략]\n"
-                                    f"- 양봉 길이만큼 분할매수\n"
-                                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                                    f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
-                                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                                    f"💡 [기업 팩트체크]\n"
-                                    f"{ai_text}\n\n"
-                                    f"⚠️ [전문가 코멘트]\n"
-                                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                                    f"\n💬 궁금한 점이 있다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                                )
+                                intro_title = "🌅 [새로운 흐름의 자연스러운 시작]"
+                                intro_desc = "오랜 기간 시장의 테스트를 견뎌내고, 비로소 긍정적인 방향으로 방향타를 돌린 든든한 구간입니다."
+
+                            caption = (
+                                f"🏢 {name} ({code})\n"
+                                f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                f"{intro_title}\n"
+                                f"{intro_desc}\n\n"
+                                f"📊 [자체 평가 종합 등급]: {premium_grade}\n"
+                                f"(수많은 데이터 속에서 기업의 잠재력과 현재의 흐름을 종합한 고유 지표입니다)\n\n"
+                                f"⚖️ [건강한 매매를 위한 가이드]\n"
+                                f"• 여유로운 접근: 한 번에 조급하게 진입하기보다, 천천히 비중을 늘려가며 마음의 평정을 유지하세요.\n"
+                                f"• 원칙 대응: 미리 정해둔 기준 라인(-5%)을 벗어나면 미련 없이 리스크를 관리합니다.\n\n"
+                                f"💡 [AI 비즈니스 요약]\n"
+                                f"{ai_text}\n\n"
+                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                            )
                             telegram_queue.put((chart_path, caption))
-            except: pass
+                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
+                        else:
+                            print(f"\n⚠️ [{name}] 차트 생성 실패로 텔레그램 전송 취소.")
+            except Exception as e:
+                print(f"\n❌ [{name}] 처리 중 에러 발생: {e}")
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+
+    # 💡 텔레그램 큐가 텅 빌 때까지 강제로 기다려주는 핵심 로직!
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
 
     dt = time.time() - t0
     print(f"\n✅ [미국장 4번 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
@@ -377,4 +395,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    scan_market_1d() # 즉시 1회 테스트용
+    # run_scheduler()
