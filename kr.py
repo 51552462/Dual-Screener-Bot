@@ -306,5 +306,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # 즉시 1회 테스트용으로 켜두었습니다!
-    # run_scheduler()
+    run_scheduler()
