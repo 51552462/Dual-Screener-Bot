@@ -11,16 +11,13 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
-# ==========================================
-# 🔑 .env 안전 파일 방식 적용
-# ==========================================
 load_dotenv() 
-
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
 if not GEMINI_API_KEY:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
@@ -41,42 +38,52 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
+# ⭐️ AI 에러 원인 추적기 및 3회 재시도 로직 ⭐️
 def generate_ai_report(ticker_str: str, company_name: str) -> str:
-    try:
-        tk = yf.Ticker(ticker_str)
-        info = tk.info
-        sector = info.get('sector', '정보 없음')
-        industry = info.get('industry', '정보 없음')
-        market_cap = info.get('marketCap', '정보 없음')
-        if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B (십억 달러)"
-        eps = info.get('trailingEps', '정보 없음')
-        revenue_growth = info.get('revenueGrowth', '정보 없음')
-        business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
-        financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
+    for attempt in range(3):
+        try:
+            tk = yf.Ticker(ticker_str)
+            info = tk.info
+            sector = info.get('sector', '정보 없음')
+            industry = info.get('industry', '정보 없음')
+            market_cap = info.get('marketCap', '정보 없음')
+            if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B"
+            eps = info.get('trailingEps', '정보 없음')
+            revenue_growth = info.get('revenueGrowth', '정보 없음')
+            business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
+            financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
 
-        prompt = f"""
-        너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
-        아래 종목의 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+            today_date = datetime.now().strftime('%Y년 %m월 %d일')
+            prompt = f"""
+            너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
+            오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 투자 메모를 작성해.
+            추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
 
-        [종목 정보]
-        - 종목명: {company_name} ({ticker_str})
-        - 섹터: {sector} / 산업군: {industry}
-        - 시가총액: {market_cap}
-        - 실적 및 재무: {financials}
-        - 비즈니스 요약: {business_summary}
+            [종목 정보]
+            - 종목명: {company_name} ({ticker_str})
+            - 섹터: {sector} / 산업군: {industry}
+            - 시가총액: {market_cap}
+            - 실적 및 재무: {financials}
+            - 비즈니스 요약: {business_summary}
 
-        [출력 양식]
-        1. 섹터 종류: (간단한 설명)
-        2. 업계 점유율/규모: (시총 규모 및 지위)
-        3. 최근 실적: (흑자/적자 여부, 핵심 지표)
-        4. 미래 모멘텀: (파이프라인, 기대감 등)
-        5. 기업 전망: (짧고 굵은 전망)
-        """
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
-        return response.text.strip()
-    except Exception as e: return "⚠️ 기업 팩트 데이터를 불러오거나 AI 요약 중 오류가 발생했습니다."
+            [출력 양식]
+            1. 섹터 종류: (간단한 설명)
+            2. 업계 점유율/규모: (시총 규모 및 지위)
+            3. 최근 실적: (흑자/적자 여부, 핵심 지표)
+            4. 미래 모멘텀: (파이프라인, 최신 호재/악재 등)
+            5. 기업 전망: (짧고 굵은 전망)
+            """
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+            )
+            return response.text.strip()
+        except Exception as e: 
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
+            time.sleep(3)
+            
+    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
 
 def get_us_ticker_list():
     try:
@@ -92,7 +99,6 @@ def telegram_sender_daemon():
         if item is None: break
         img_path, caption = item
         
-        # ⭐️ 텔레그램 글자수 1024자 제한 완벽 방어
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
 
         if SEND_TELEGRAM:
@@ -100,15 +106,9 @@ def telegram_sender_daemon():
                 try:
                     with open(img_path, 'rb') as f:
                         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: 
-                        break
-                    elif res.status_code == 429: 
-                        time.sleep(3)
-                    else:
-                        print(f"❌ [미국장] 텔레그램 발송 실패 (글자수 초과 등): {res.text}")
-                        break
-                except Exception as e: 
-                    time.sleep(2)
+                    if res.status_code == 200: break
+                    elif res.status_code == 429: time.sleep(3)
+                except: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -142,8 +142,10 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
     av3 = df['AvgVol3'].values
     ema60, ema112, ema224, ema448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    moneyOk = (c * v) >= 1_000_000 
-    priceOk = c >= 1.0
+    # ⭐️ 트뷰 로직 완벽 반영 (3달러, 5백만 달러)
+    moneyOk = (c * v) >= 5_000_000 
+    priceOk = c >= 3.0
+    
     condBearAlign = (ema112 < ema224) & (ema224 < ema448)
     condHold112 = c > ema112
 
@@ -175,6 +177,7 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
         if signalBase[i]: signalCount += 1
 
     sig_type = "P (연속)" if signalCount > 1 else "P (신규)"
+    trust_score = calculate_trust_score(c, ema60, signalBase)
     
     return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
 
@@ -197,7 +200,7 @@ def scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 P 스캔 시작! (안정화 패치 완료)")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 2번(역매공파) 스캔 시작!")
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     chunk_size = 100 
@@ -231,7 +234,7 @@ def scan_market_1d():
                         df_ticker = df_batch[tk].copy()
                 else:
                     df_ticker = fallback_dict.get(tk)
-                    if df_ticker is None or df_ticker.empty: continue
+                if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
@@ -264,19 +267,19 @@ def scan_market_1d():
             except: pass
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
-    print(f"\n✅ [미국장 P 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [미국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
+# ⭐️ 미국 2번 스케줄러 (10:00, 12:00, 14:00) ⭐️
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [2번 미국장 검색기] 09:30 / 11:30 / 14:30 대기 중...")
+    print("🕒 [2번 미국장 검색기] 10:00 / 12:00 / 14:00 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if (now_ny.hour == 9 and now_ny.minute == 30) or (now_ny.hour == 11 and now_ny.minute == 30) or (now_ny.hour == 14 and now_ny.minute == 30):
+        if (now_ny.hour == 10 and now_ny.minute == 0) or (now_ny.hour == 12 and now_ny.minute == 0) or (now_ny.hour == 14 and now_ny.minute == 0):
             print(f"🚀 [2번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d() # ⭐️ 대기 없이 즉시 1회 스캔
     run_scheduler()
