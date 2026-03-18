@@ -39,7 +39,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 리포트 3단 분리 방어
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
     summary = "정보 없음"
@@ -70,14 +69,14 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         - 네이버금융 섹터분류: {sector}
         - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
 
-        [출력 양식] (반드시 아래 번호와 항목명에 맞춰서 작성할 것)
+        [출력 양식]
         1. 섹터 종류: (간단한 설명)
         2. 업계 점유율/규모: (비즈니스 개요 및 지위)
         3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
         4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
         5. 기업 전망: (짧고 굵은 전망)
         """
-        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         return response.text.strip()
     except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다. ({e})"
 
@@ -99,7 +98,6 @@ def telegram_sender_daemon():
         if item is None: break
         img_path, caption = item
         
-        # ⭐️ 1024자 제한 완벽 방어
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
@@ -137,7 +135,6 @@ def calculate_trust_score(c, e60, *sig_arrays):
             if valid: score += 2 
     return max(1, min(10, score))
 
-# ⭐️ 대표님 오리지널 핵심 로직 (100% 보존) ⭐️
 def compute_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
@@ -145,11 +142,9 @@ def compute_signal(df_raw: pd.DataFrame):
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
-    df['Lowest5'] = df['Low'].rolling(5).min()
-
-    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
+    
+    c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
     av3 = df['AvgVol3'].values
-    lowest5 = df['Lowest5'].values
     
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
@@ -176,14 +171,10 @@ def compute_signal(df_raw: pd.DataFrame):
     prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
-    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
-    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
-
+    
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-    dipped20 = lowest5 < e20
-    raw_s5 = align448 & (~prev_align448) & dipped20 & (c > e10) & isBullish & (~s1)
 
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
@@ -196,30 +187,49 @@ def compute_signal(df_raw: pd.DataFrame):
     s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     s4 = np.zeros_like(c, dtype=bool)
-    s5 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
         if raw_s4[i] and (i - last_pullback_bar > 5):
             s4[i] = True
             last_pullback_bar = i
-        if raw_s5[i] and not s4[i] and (i - last_pullback_bar > 5):
-            s5[i] = True
-            last_pullback_bar = i
+
+    # ⭐️ 10% 상승 실패 추적 로직 (S6, S7 누적 및 리셋 계산) ⭐️
+    s67_counts = np.zeros(len(c), dtype=int)
+    current_s67_count = 0
+    wait_idx = -1
+
+    for i in range(len(c)):
+        if wait_idx != -1:
+            if i <= wait_idx + 3:
+                # 3봉 이내에 이전 타점 대비 10% 이상 상승했다면 성공! -> 별 리셋
+                if h[i] >= c[wait_idx] * 1.10:
+                    current_s67_count = 0
+                    wait_idx = -1
+            if i == wait_idx + 3 and wait_idx != -1:
+                # 3봉이 지났는데 10% 못 올랐다면 실패! -> 리셋 안 하고 누적 계속
+                wait_idx = -1
+
+        if s6[i] or s7[i]:
+            current_s67_count += 1
+
+        if s1[i] or s4[i]:
+            s67_counts[i] = current_s67_count
+            wait_idx = i
 
     cond_base = moneyOk & priceOk & volSpike
+    
+    # ⭐️ 한국장: 오직 S1, S4만 결과지에 올립니다.
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
-    hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit4 or hit7): return False, "", df, {}
+    if not (hit1 or hit4): return False, "", df, {}
 
-    if hit7: sig_type = "V (S7: 중기턴)"
-    elif hit4: sig_type = "V (S4: 돌파)"
+    if hit4: sig_type = "V (S4: 돌파)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s2, s3, s4, s5, s6, s7)
+    trust_score = calculate_trust_score(c, e60, s1, s4)
 
-    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score}
+    return True, sig_type, df, {"last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
@@ -241,7 +251,7 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] LS증권 V 스캔 시작! (초고속 네이버 엔진🚀)")
+    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (초고속 네이버 엔진🚀 / S1,S4 전용)")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -255,7 +265,6 @@ def scan_market_1d():
         df_raw = None
         
         try:
-            # ⭐️ 네이버(FDR) 데이터 엔진
             df_raw = fdr.DataReader(code, start_date)
         except: pass
 
@@ -264,7 +273,6 @@ def scan_market_1d():
         if is_valid: hit, sig_type, df, dbg = compute_signal(df_raw)
 
         hit_rank = 0
-        # ⭐️ 자물쇠 안에서는 숫자만 기록하고 신속하게 빠져나옴!
         with console_lock:
             tracker['scanned'] += 1
             if is_valid: tracker['analyzed'] += 1 
@@ -275,11 +283,11 @@ def scan_market_1d():
                 tracker['hits'] += 1
                 hit_rank = tracker['hits']
                 
-        # ⭐️ 각자 알아서 AI 분석 (마법의 병목 탈출)
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
                 ai_fact_check = generate_kr_ai_report(code, name)
+                
                 caption = (
                     f"🎯 [{dbg['sig_type']}]\n\n"
                     f"🏢 {name} ({code})\n"
@@ -288,6 +296,7 @@ def scan_market_1d():
                     f"📉 [매수/손절 전략]\n"
                     f"- 양봉 길이만큼 분할매수\n"
                     f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                    f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
                     f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
                     f"💡 [기업 팩트체크]\n"
                     f"{ai_fact_check}\n\n"
