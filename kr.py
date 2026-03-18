@@ -290,4 +290,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    scan_market_1d()     # ⬅️ 앞의 #을 지워서 즉시 실행되게 만듭니다. 
+    # run_scheduler()    # ⬅️ 앞에 #을 붙여서 대기 모드를 잠시 끕니다.
