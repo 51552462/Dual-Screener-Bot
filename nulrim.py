@@ -74,15 +74,18 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     5. 기업 전망: (짧고 굵은 전망)
     """
     
+    last_error = ""  # ⭐️ 추가: 에러를 기억해둘 빈 바구니 준비
     for attempt in range(3):
         try:
             response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             return response.text.strip()
         except Exception as e: 
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
-            time.sleep(3) 
+            last_error = str(e) # ⭐️ 추가: 에러 발생 시 바구니에 담아둠
+            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_error}")
+            time.sleep(3)
             
-    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
+    # ⭐️ 수정: 안전하게 바구니에 담긴 에러를 꺼내서 사용!
+    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {last_error})"
 
 def get_krx_list_kind():
     try:
