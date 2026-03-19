@@ -29,7 +29,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
-TELEGRAM_TOKEN    = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
+TELEGRAM_TOKEN    = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
 TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
