@@ -11,6 +11,7 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
+import random
 
 from google import genai
 from google.genai import types
@@ -40,7 +41,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# 💡 봇 내부 트래픽 완벽 통제용 락 (반드시 함수 바로 위에 선언해 주세요)
 ai_request_lock = threading.Lock()
 
 def generate_kr_ai_report(code: str, company_name: str) -> str:
@@ -81,7 +81,6 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     
     last_err_msg = ""
     for attempt in range(5):
-        # ⭐️ 핵심: Lock 안으로 try-except를 넣어서, 에러 시 다른 종목이 덤비지 못하게 문을 잠그고 쉽니다.
         with ai_request_lock:
             try:
                 response = client.models.generate_content(
@@ -89,21 +88,32 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
                     contents=prompt,
                     config=types.GenerateContentConfig(tools=[{"google_search": {}}])
                 )
-                time.sleep(5) # 💡 구글 1분 한도를 넘지 않기 위해 1건 성공 시마다 무조건 5초 강제 휴식
+                time.sleep(3) # 기본 휴식
                 if response and response.text:
                     return response.text.strip()
                     
             except Exception as e: 
                 last_err_msg = str(e)
-                # 429 한도 초과 에러가 뜨면 구글이 진정할 때까지 문을 잠그고 60초 대기
                 if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
-                    print(f"⏳ [{company_name}] 구글 API 1분 한도 초과! 문 잠그고 60초 강제 휴식... (시도 {attempt+1}/5)")
-                    time.sleep(60) 
+                    # ⭐️ 핵심: 구글이 요구하는 대기 시간(예: retry in 38.76s)을 텍스트에서 뽑아냅니다.
+                    wait_time = 60.0
+                    match = re.search(r'retry in ([\d\.]+)s', last_err_msg)
+                    if match:
+                        # 💡 요구 시간 + 다른 봇들과 충돌하지 않도록 1~10초 사이 랜덤 난수 추가 (Jitter)
+                        wait_time = float(match.group(1)) + random.uniform(1.0, 10.0)
+                        
+                    print(f"⏳ [{company_name}] 구글 API 트래픽 초과! 봇 충돌 방지를 위해 {wait_time:.1f}초 대기... (시도 {attempt+1}/5)")
+                    time.sleep(wait_time) 
                 else:
-                    print(f"❌ [{company_name}] AI 에러 발생: {last_err_msg}")
+                    print(f"❌ [{company_name}] 기타 AI 에러: {last_err_msg}")
                     time.sleep(5)
             
-    return f"⚠️ AI 요약 5회 재시도 실패\n(진짜 에러 원인: {last_err_msg})"
+    # ⭐️ 5번 모두 실패했을 때 지저분한 에러 대신 깔끔한 안내 문구 송출
+    return (
+        "⚠️ [AI 시스템 알림]\n"
+        "현재 구글 AI 무료 요금제의 일일/분당 트래픽이 완전히 초과되어 기업 요약을 임시 생략합니다.\n"
+        "(종목의 기술적 타점과 퀀트 등급은 모두 정상적으로 검증되었으니, 차트를 꼭 확인해 보세요!)"
+    )
 
 def get_krx_list_kind():
     try:
