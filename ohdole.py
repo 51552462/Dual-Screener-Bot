@@ -47,6 +47,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
+    # 1. 팩트 데이터 크롤링 (네이버 & 에프앤가이드)
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
@@ -60,6 +61,15 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
+
+    # 💡 [플랜 B] AI 한도 초과 시 내보낼 깔끔한 팩트 원문 양식
+    clean_summary = summary[:400] + "..." if len(summary) > 400 else summary
+    fallback_report = (
+        f"1. 주요 섹터/테마: {sector}\n"
+        f"2. 비즈니스 및 실적 팩트 요약:\n"
+        f"  - {clean_summary}\n\n"
+        f"*(※ AI 일일 할당량 소진으로, 에프앤가이드 공식 원문 데이터를 대체 제공합니다.)*"
+    )
 
     today_date = datetime.now().strftime('%Y년 %m월 %d일')
     prompt = f"""
@@ -88,32 +98,30 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
                     contents=prompt,
                     config=types.GenerateContentConfig(tools=[{"google_search": {}}])
                 )
-                time.sleep(3) # 기본 휴식
+                time.sleep(3) 
                 if response and response.text:
                     return response.text.strip()
                     
             except Exception as e: 
                 last_err_msg = str(e)
                 if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
-                    # ⭐️ 핵심: 구글이 요구하는 대기 시간(예: retry in 38.76s)을 텍스트에서 뽑아냅니다.
+                    # ⭐️ 일일 이용치 완전 소진(Quota exceeded) 시 대기하지 않고 즉시 플랜 B(팩트 원문) 전송
+                    if 'Quota exceeded' in last_err_msg:
+                        print(f"⚠️ [{company_name}] AI 일일 한도 소진. 크롤링 원문으로 우회합니다.")
+                        return fallback_report
+                        
                     wait_time = 60.0
                     match = re.search(r'retry in ([\d\.]+)s', last_err_msg)
                     if match:
-                        # 💡 요구 시간 + 다른 봇들과 충돌하지 않도록 1~10초 사이 랜덤 난수 추가 (Jitter)
                         wait_time = float(match.group(1)) + random.uniform(1.0, 10.0)
                         
-                    print(f"⏳ [{company_name}] 구글 API 트래픽 초과! 봇 충돌 방지를 위해 {wait_time:.1f}초 대기... (시도 {attempt+1}/5)")
+                    print(f"⏳ [{company_name}] 구글 API 대기... {wait_time:.1f}초")
                     time.sleep(wait_time) 
                 else:
-                    print(f"❌ [{company_name}] 기타 AI 에러: {last_err_msg}")
                     time.sleep(5)
             
-    # ⭐️ 5번 모두 실패했을 때 지저분한 에러 대신 깔끔한 안내 문구 송출
-    return (
-        "⚠️ [AI 시스템 알림]\n"
-        "현재 구글 AI 무료 요금제의 일일/분당 트래픽이 완전히 초과되어 기업 요약을 임시 생략합니다.\n"
-        "(종목의 기술적 타점과 퀀트 등급은 모두 정상적으로 검증되었으니, 차트를 꼭 확인해 보세요!)"
-    )
+    # 5번 다 실패해도 지저분한 에러 대신 깔끔한 플랜 B 송출
+    return fallback_report
 
 def get_krx_list_kind():
     try:
