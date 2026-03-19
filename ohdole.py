@@ -40,7 +40,9 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# ⭐️ AI 에러 원인 추적기 (last_err_msg 버그 픽스) ⭐️
+# 💡 트래픽 병목 방지용 줄서기 통제기 (이 줄을 함수 바로 위에 꼭 추가해 주세요)
+ai_request_lock = threading.Lock()
+
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector, summary = "정보 없음", "정보 없음"
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -64,7 +66,6 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
     오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
     추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-
     [종목 정보]
     - 종목명: {company_name} ({code})
     - 네이버금융 섹터분류: {sector}
@@ -79,21 +80,33 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     """
     
     last_err_msg = ""
-    for attempt in range(3):
+    # 💡 시도 횟수를 5번으로 늘림
+    for attempt in range(5):
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt,
-                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
-            )
-            if response and response.text:
-                return response.text.strip()
+            # ⭐️ 핵심: 여러 종목이 포착되더라도 AI 요청은 무조건 한 줄서기!
+            with ai_request_lock:
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash', 
+                    contents=prompt,
+                    config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+                )
+                # 💡 구글 무료티어 보호를 위해 1건 처리 후 강제로 2초 휴식
+                time.sleep(2) 
+                
+                if response and response.text:
+                    return response.text.strip()
+                    
         except Exception as e: 
             last_err_msg = str(e)
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_err_msg}")
-            time.sleep(3) 
+            # 429 한도 초과 에러가 뜨면 구글이 진정할 때까지 20초 대기
+            if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
+                print(f"⏳ [{company_name}] 구글 AI 트래픽 초과! 20초 대기 후 재시도... (시도 {attempt+1}/5)")
+                time.sleep(20)
+            else:
+                print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/5): {last_err_msg}")
+                time.sleep(3)
             
-    return f"⚠️ AI 요약 3회 재시도 실패\n(진짜 에러 원인: {last_err_msg})"
+    return f"⚠️ AI 요약 5회 재시도 실패\n(진짜 에러 원인: {last_err_msg})"
 
 def get_krx_list_kind():
     try:
