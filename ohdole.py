@@ -299,5 +299,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()  # 💡 스케줄러를 잠시 끄고
-    scan_market_1d()   # 🚀 스캔 함수를 직접 호출하여 즉시 실행
+    run_scheduler()
