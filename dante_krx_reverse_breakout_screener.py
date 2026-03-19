@@ -276,7 +276,8 @@ def scan_market_1d():
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
-                            ai_fact_check = generate_ai_report(code, name)
+                            # 💡 원인 2 해결: 한국장 AI 함수 이름으로 수정
+                            ai_fact_check = generate_kr_ai_report(code, name)
                             
                             # 💡 계산된 누적 횟수를 가져옵니다.
                             p_count = dbg.get('p_count', 1)
@@ -292,7 +293,8 @@ def scan_market_1d():
 
                             caption = (
                                 f"🏢 {name} ({code})\n"
-                                f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                # 💡 원인 3 해결: 한국장 원화(원) 표기로 수정
+                                f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
                                 f"{intro_title}\n"
                                 f"{intro_desc}\n\n"
                                 f"⚖️ [건강한 투자를 위한 기준]\n"
@@ -304,6 +306,10 @@ def scan_market_1d():
                             )
                             telegram_queue.put((chart_path, caption))
                             print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료 (누적 타점: {p_count}회)")
+                            
+    # 💡 원인 1 해결: 누락되었던 핵심 엔진! 일꾼들을 실제로 일하게 만듭니다.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        list(executor.map(worker, list(stock_list.iterrows())))
         
     # ⭐️ 텔레그램 전송 완료 보장 대기 ⭐️
     if tracker['hits'] > 0:
