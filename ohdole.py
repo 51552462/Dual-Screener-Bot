@@ -34,6 +34,10 @@ TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
+# ⭐️ 당일 중복 발송 방지용 기억 장치 추가
+sent_today = set()
+last_run_date = ""
+
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Pro_System')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 150
@@ -199,10 +203,21 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
         except: return None
 
 def scan_market_1d():
+    # 💡 위에서 만든 기억 장치를 스캔 함수 안으로 불러옵니다.
+    global sent_today, last_run_date
+    
+    kr_tz = pytz.timezone('Asia/Seoul')
+    today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
+    
+    # ⭐️ 매일 자정이 지나 날짜가 바뀌면, 어제 보냈던 발송 기록을 깨끗하게 지웁니다.
+    if today_str != last_run_date:
+        sent_today.clear()
+        last_run_date = today_str
+
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 2번(오돌이) 스캔 시작! (무적 방어막 탑재 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 2번(오돌이) 스캔 시작! (당일 중복 발송 방지 가동 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -216,7 +231,6 @@ def scan_market_1d():
         is_valid = False
         hit, sig_type, df, dbg = False, "", None, {}
         
-        # ⭐️ 일꾼 절대 사망 방지 방어막 (NaN 제거 및 예외처리) ⭐️
         try:
             df_raw = fdr.DataReader(code, start_date)
             if df_raw is not None and not df_raw.empty:
@@ -226,38 +240,49 @@ def scan_market_1d():
             if is_valid: 
                 hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
         except Exception:
-            pass # 계산 꼬이는 불량주식 무시하고 무조건 전진
+            pass 
 
         hit_rank = 0
         with console_lock:
             tracker['scanned'] += 1
             if is_valid: tracker['analyzed'] += 1 
             if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
+            
+            # ⭐️ 핵심: 당일 중복 발송 차단 로직
             if hit:
-                tracker['hits'] += 1
-                hit_rank = tracker['hits']
+                if code in sent_today:
+                    hit = False # 오늘 오전이나 방금 전 턴에 이미 보냈던 종목이면 취소하고 조용히 넘어갑니다.
+                else:
+                    tracker['hits'] += 1
+                    hit_rank = tracker['hits']
+                    sent_today.add(code) # 신규 포착된 종목은 '오늘 보낸 명단'에 도장을 찍어둡니다.
                 
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
-                            # AI를 거치지 않고 바로 실적 팩트만 가져옵니다.
-                            ai_fact_check = generate_kr_ai_report(code, name)
-                            
-                            # 💡 불필요한 멘트, 신뢰도 점수를 모두 없애고 직관적으로 구성
-                            caption = (
-                                f"🎯 [{dbg['sig_type']}]\n\n"
-                                f"🏢 {name} ({code})\n"
-                                f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                                f"🎯 추천: 단타, 스윙\n\n"
-                                f"📉 [매수/손절 전략]\n"
-                                f"- 양봉 길이만큼 분할매수\n"
-                                f"- 양봉 시가 이탈 or 진입 후 2봉 연속 음봉 발생 시 손절\n\n"
-                                f"{ai_fact_check}\n\n"
-                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
-                            )
-                            telegram_queue.put((chart_path, caption))
-                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료")
+                ai_fact_check = generate_kr_ai_report(code, name)
+                caption = (
+                    f"🎯 [{dbg['sig_type']}]\n\n"
+                    f"🏢 {name} ({code})\n"
+                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                    f"🎯 추천: 단타, 스윙\n\n"
+                    f"📉 [매수/손절 전략]\n"
+                    f"- 양봉 길이만큼 분할매수\n"
+                    f"- 양봉 시가 이탈 or 진입 후 2봉 연속 음봉 발생 시 손절\n\n"
+                    f"{ai_fact_check}\n\n"
+                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                )
+                telegram_queue.put((chart_path, caption))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        list(executor.map(worker, list(stock_list.iterrows())))
+        
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
+        
+    print(f"\n✅ [한국장 2번 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
