@@ -44,10 +44,11 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 ai_request_lock = threading.Lock()
 
 def generate_kr_ai_report(code: str, company_name: str) -> str:
-    sector, summary = "정보 없음", "정보 없음"
+    sector = "정보 없음"
+    summary_parts = []
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # 1. 팩트 데이터 크롤링 (네이버 & 에프앤가이드)
+    # 1. 팩트 데이터 크롤링
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
@@ -59,22 +60,33 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
-            if tags: summary = " ".join([t.text.strip() for t in tags])
+            if tags: 
+                # 💡 리스트 형태로 3개의 단락을 온전히 분리해서 저장합니다.
+                summary_parts = [t.text.strip() for t in tags]
     except: pass
 
-    # 💡 [플랜 B] 잘림 방지 및 단어 치환 정제 로직
-    clean_summary = summary.replace("동사는", f"[{company_name}]은(는)")
-    # 마침표 기준으로 문장을 나누고, 온전한 문장만 최대 3개 추출
-    sentences = [s.strip() + "." for s in clean_summary.split(".") if len(s.strip()) > 5]
-    formatted_summary = "\n".join([f"✔️ {s}" for s in sentences[:3]])
+    # 💡 [플랜 B] 쓸데없는 개요(1번 단락)를 버리고, 실적(2번 단락)과 전망(3번 단락)만 팩트로 꽂아줍니다.
+    performance = "실적 팩트가 제공되지 않았습니다."
+    outlook = "현황 및 전망 정보가 제공되지 않았습니다."
+    
+    if len(summary_parts) >= 2:
+        performance = summary_parts[1].replace("동사는", f"[{company_name}]은(는)")
+    if len(summary_parts) >= 3:
+        outlook = summary_parts[2].replace("동사는", f"[{company_name}]은(는)")
+    elif len(summary_parts) == 1:
+        performance = summary_parts[0].replace("동사는", f"[{company_name}]은(는)")
 
     fallback_report = (
-        f"💡 [기업 핵심 팩트 (FnGuide 공식)]\n"
+        f"💡 [기업 핵심 팩트 (FnGuide 공식 데이터)]\n"
         f"📌 주요 섹터/테마: {sector}\n\n"
-        f"{formatted_summary}\n\n"
-        f"*(※ AI 트래픽 초과로 증권사 공식 HTS 기업개요를 정제하여 제공합니다.)*"
+        f"📈 [최근 실적 (우상향 여부)]\n"
+        f"✔️ {performance}\n\n"
+        f"🔭 [기업 현황 및 전망]\n"
+        f"✔️ {outlook}\n\n"
+        f"*(※ AI 일일 할당량 초과로, 증권사 공식 HTS 실적/전망 데이터를 정제하여 제공합니다.)*"
     )
 
+    summary_full = " ".join(summary_parts) if summary_parts else "정보 없음"
     today_date = datetime.now().strftime('%Y년 %m월 %d일')
     prompt = f"""
     너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
@@ -83,7 +95,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     [종목 정보]
     - 종목명: {company_name} ({code})
     - 네이버금융 섹터분류: {sector}
-    - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
+    - 에프앤가이드 비즈니스 요약(실적포함): {summary_full[:1000]}
 
     [출력 양식]
     1. 섹터 종류: (간단한 설명)
@@ -105,7 +117,6 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
                 time.sleep(3) 
                 if response and response.text:
                     return response.text.strip()
-                    
             except Exception as e: 
                 last_err_msg = str(e)
                 if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
