@@ -150,49 +150,54 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    df['MA5'] = df['Close'].rolling(window=5).mean()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['MA112'] = df['Close'].rolling(window=112).mean()
-    df['MA224'] = df['Close'].rolling(window=224).mean()
-    df['MA448'] = df['Close'].rolling(window=448).mean()
+    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅 (3, 10, 20일선 및 신뢰도 점수용 60일선)
+    df['EMA3'] = df['Close'].ewm(span=3, adjust=False, min_periods=0).mean()
+    df['EMA10'] = df['Close'].ewm(span=10, adjust=False, min_periods=0).mean()
+    df['EMA20'] = df['Close'].ewm(span=20, adjust=False, min_periods=0).mean()
+    df['EMA60'] = df['Close'].ewm(span=60, adjust=False, min_periods=0).mean()
 
-    c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
-    ma5, ma60, ma112, ma224, ma448 = df['MA5'].values, df['MA60'].values, df['MA112'].values, df['MA224'].values, df['MA448'].values
+    c = df['Close'].values
+    o = df['Open'].values
+    v = df['Volume'].values
+    ema3 = df['EMA3'].values
+    ema10 = df['EMA10'].values
+    ema20 = df['EMA20'].values
+    ema60 = df['EMA60'].values
 
+    # ⭐️ 잡주 필터링 (동전주 및 거래대금 미달 종목 제외)
     money_curr = c * v
-    is_downtrend = (ma448 > ma224) & (ma224 > ma112)
-    is_basement = c < ma112
-    is_env_ok = is_downtrend & is_basement
-
-    prev_vol = np.roll(v, 1); prev_vol[0] = np.inf
-    is_vol_ok = v >= (prev_vol * 1.0)
     is_money_ok = money_curr >= 100_000_000
     is_price_ok = c >= 1000
-    is_power_ok = is_vol_ok & is_money_ok & is_price_ok
 
-    prev_ma5 = np.roll(ma5, 1); prev_ma5[0] = np.inf
-    prev_c = np.roll(c, 1); prev_c[0] = 0
-    is_breakout = (c > ma5) & (prev_c <= prev_ma5)
+    # ==========================================
+    # 💡 신버전 시그널 조건 정의
+    # ==========================================
+    # 조건 1: 완벽한 단기 역배열 상태 (20일선 > 10일선 > 3일선)
+    isBearishAlign = (ema20 > ema10) & (ema10 > ema3)
+
+    # 조건 2: 현재 캔들이 양봉 (매수세)
+    isBullish = c > o
+
+    # 조건 3: 종가 기준으로 3일선을 상방 돌파 (크로스업)
+    prev_c = np.roll(c, 1)
+    prev_c[0] = 0
+    prev_ema3 = np.roll(ema3, 1)
+    prev_ema3[0] = np.inf
+    isCrossUp = (prev_c <= prev_ema3) & (c > ema3)
+
+    # ==========================================
+    # 💡 최종 시그널 산출
+    # ==========================================
+    signal = isBearishAlign & isBullish & isCrossUp & is_money_ok & is_price_ok
+
+    if not signal[-1]: 
+        return False, "", df, {}
+
+    sig_type = "E (3일선 돌파)"
+    trust_score = calculate_trust_score(c, ema60, signal)
     
-    prev_high1 = np.roll(h, 1); prev_high1[0] = np.inf
-    prev_high2 = np.roll(h, 2); prev_high2[:2] = np.inf
-    high_prev_2 = np.maximum(prev_high1, prev_high2)
-    is_engulfing = (c > o) & (c > high_prev_2)
-    
-    sig_1 = is_env_ok & is_power_ok & is_breakout & is_engulfing
-
-    is_yangbong = c > o
-    threshold = o + ((c - o) * 0.33)
-    is_riding = ma5 <= threshold
-    sig_2 = is_env_ok & is_power_ok & is_yangbong & is_riding & (~sig_1)
-
-    sig1_hit, sig2_hit = sig_1[-1], sig_2[-1]
-    if not (sig1_hit or sig2_hit): return False, "", df, {}
-
-    sig_type = "E (장악형)" if sig1_hit else "E (안착형)"
-    trust_score = calculate_trust_score(c, ma60, sig_1, sig_2)
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+    # 기존 코드에 남아있던 s67_counts 참조 에러 방지 (오돌이는 해당 로직이 없으므로 0 처리)
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": 0}
     
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
