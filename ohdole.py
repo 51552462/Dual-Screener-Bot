@@ -192,10 +192,9 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅 (3, 10, 20일선 및 신뢰도 점수용 60일선)
+    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅 (3, 10일선 및 신뢰도 점수용 60일선)
     df['EMA3'] = df['Close'].ewm(span=3, adjust=False, min_periods=0).mean()
     df['EMA10'] = df['Close'].ewm(span=10, adjust=False, min_periods=0).mean()
-    df['EMA20'] = df['Close'].ewm(span=20, adjust=False, min_periods=0).mean()
     df['EMA60'] = df['Close'].ewm(span=60, adjust=False, min_periods=0).mean()
 
     c = df['Close'].values
@@ -203,7 +202,6 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     v = df['Volume'].values
     ema3 = df['EMA3'].values
     ema10 = df['EMA10'].values
-    ema20 = df['EMA20'].values
     ema60 = df['EMA60'].values
 
     # ⭐️ 잡주 필터링 (동전주 및 거래대금 미달 종목 제외)
@@ -212,33 +210,31 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     is_price_ok = c >= 1000
 
     # ==========================================
-    # 💡 신버전 시그널 조건 정의
+    # 💡 신버전 시그널 조건 정의 (3/10 단기 정배열 턴 시그널)
     # ==========================================
-    # 조건 1: 완벽한 단기 역배열 상태 (20일선 > 10일선 > 3일선)
-    isBearishAlign = (ema20 > ema10) & (ema10 > ema3)
-
-    # 조건 2: 현재 캔들이 양봉 (매수세)
+    # 조건 1: 현재 캔들이 무조건 양봉일 때만 (매수세 유입)
     isBullish = c > o
 
-    # 조건 3: 종가 기준으로 3일선을 상방 돌파 (크로스업)
-    prev_c = np.roll(c, 1)
-    prev_c[0] = 0
+    # 조건 2: 3일선이 10일선을 상향 돌파 (골든크로스)하며 정배열 시작
     prev_ema3 = np.roll(ema3, 1)
-    prev_ema3[0] = np.inf
-    isCrossUp = (prev_c <= prev_ema3) & (c > ema3)
+    prev_ema3[0] = 0
+    prev_ema10 = np.roll(ema10, 1)
+    prev_ema10[0] = np.inf
+    
+    isCrossUp = (prev_ema3 <= prev_ema10) & (ema3 > ema10)
 
     # ==========================================
     # 💡 최종 시그널 산출
     # ==========================================
-    signal = isBearishAlign & isBullish & isCrossUp & is_money_ok & is_price_ok
+    # 양봉 + 3/10 골든크로스 + 거래대금 조건 동시 만족 시
+    signal = isBullish & isCrossUp & is_money_ok & is_price_ok
 
     if not signal[-1]: 
         return False, "", df, {}
 
-    sig_type = "E (3일선 돌파)"
+    sig_type = "E (3/10 정배열 턴)"
     trust_score = calculate_trust_score(c, ema60, signal)
     
-    # 기존 코드에 남아있던 s67_counts 참조 에러 방지 (오돌이는 해당 로직이 없으므로 0 처리)
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": 0}
     
 chart_lock = threading.Lock()
