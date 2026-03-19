@@ -48,7 +48,7 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     summary_parts = []
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # 1. 팩트 데이터 크롤링
+    # 1. 팩트 데이터 크롤링 (네이버 & 에프앤가이드)
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
@@ -61,81 +61,26 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
             if tags: 
-                # 💡 리스트 형태로 3개의 단락을 온전히 분리해서 저장합니다.
                 summary_parts = [t.text.strip() for t in tags]
     except: pass
 
-    # 💡 [플랜 B] 쓸데없는 개요(1번 단락)를 버리고, 실적(2번 단락)과 전망(3번 단락)만 팩트로 꽂아줍니다.
+    # 2. 팩트 데이터 정제 (전망은 버리고 실적만 추출)
     performance = "실적 팩트가 제공되지 않았습니다."
-    outlook = "현황 및 전망 정보가 제공되지 않았습니다."
     
     if len(summary_parts) >= 2:
         performance = summary_parts[1].replace("동사는", f"[{company_name}]은(는)")
-    if len(summary_parts) >= 3:
-        outlook = summary_parts[2].replace("동사는", f"[{company_name}]은(는)")
     elif len(summary_parts) == 1:
         performance = summary_parts[0].replace("동사는", f"[{company_name}]은(는)")
 
-    fallback_report = (
+    # 3. 전망을 없앤 초간단 팩트체크 구성
+    final_report = (
         f"💡 [기업 핵심 팩트 (FnGuide 공식 데이터)]\n"
         f"📌 주요 섹터/테마: {sector}\n\n"
         f"📈 [최근 실적 (우상향 여부)]\n"
-        f"✔️ {performance}\n\n"
-        f"🔭 [기업 현황 및 전망]\n"
-        f"✔️ {outlook}\n\n"
-        f"*(※ AI 일일 할당량 초과로, 증권사 공식 HTS 실적/전망 데이터를 정제하여 제공합니다.)*"
+        f"✔️ {performance}"
     )
 
-    summary_full = " ".join(summary_parts) if summary_parts else "정보 없음"
-    today_date = datetime.now().strftime('%Y년 %m월 %d일')
-    prompt = f"""
-    너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-    오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-    추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-    [종목 정보]
-    - 종목명: {company_name} ({code})
-    - 네이버금융 섹터분류: {sector}
-    - 에프앤가이드 비즈니스 요약(실적포함): {summary_full[:1000]}
-
-    [출력 양식]
-    1. 섹터 종류: (간단한 설명)
-    2. 업계 점유율/규모: (비즈니스 개요 및 지위)
-    3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
-    4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
-    5. 기업 전망: (짧고 굵은 전망)
-    """
-    
-    last_err_msg = ""
-    for attempt in range(5):
-        with ai_request_lock:
-            try:
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash', 
-                    contents=prompt,
-                    config=types.GenerateContentConfig(tools=[{"google_search": {}}])
-                )
-                time.sleep(3) 
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e: 
-                last_err_msg = str(e)
-                if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
-                    # 일일 한도 소진 시 바로 플랜 B 출력
-                    if 'Quota exceeded' in last_err_msg:
-                        print(f"⚠️ [{company_name}] AI 일일 한도 소진. 정제된 팩트 원문으로 우회합니다.")
-                        return fallback_report
-                        
-                    wait_time = 60.0
-                    match = re.search(r'retry in ([\d\.]+)s', last_err_msg)
-                    if match:
-                        wait_time = float(match.group(1)) + random.uniform(1.0, 10.0)
-                        
-                    print(f"⏳ [{company_name}] 구글 API 대기... {wait_time:.1f}초")
-                    time.sleep(wait_time) 
-                else:
-                    time.sleep(5)
-            
-    return fallback_report
+    return final_report
     
 def get_krx_list_kind():
     try:
@@ -229,10 +174,11 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     # 양봉 + 3/10 골든크로스 + 거래대금 조건 동시 만족 시
     signal = isBullish & isCrossUp & is_money_ok & is_price_ok
 
-    if not signal[-1]: 
+   if not signal[-1]: 
         return False, "", df, {}
 
-    sig_type = "E (3/10 정배열 턴)"
+    # 💡 괄호 내용 지우고 'E' 로만 출력되도록 수정
+    sig_type = "E"
     trust_score = calculate_trust_score(c, ema60, signal)
     
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": 0}
@@ -295,23 +241,23 @@ def scan_market_1d():
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                    f"💡 [기업 팩트체크]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                )
-                telegram_queue.put((chart_path, caption))
+                            # AI를 거치지 않고 바로 실적 팩트만 가져옵니다.
+                            ai_fact_check = generate_kr_ai_report(code, name)
+                            
+                            # 💡 불필요한 멘트, 신뢰도 점수를 모두 없애고 직관적으로 구성
+                            caption = (
+                                f"🎯 [{dbg['sig_type']}]\n\n"
+                                f"🏢 {name} ({code})\n"
+                                f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                                f"🎯 추천: 단타, 스윙\n\n"
+                                f"📉 [매수/손절 전략]\n"
+                                f"- 양봉 길이만큼 분할매수\n"
+                                f"- 양봉 시가 이탈 or 진입 후 2봉 연속 음봉 발생 시 손절\n\n"
+                                f"{ai_fact_check}\n\n"
+                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                            )
+                            telegram_queue.put((chart_path, caption))
+                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
