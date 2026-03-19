@@ -62,13 +62,17 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             if tags: summary = " ".join([t.text.strip() for t in tags])
     except: pass
 
-    # 💡 [플랜 B] AI 한도 초과 시 내보낼 깔끔한 팩트 원문 양식
-    clean_summary = summary[:400] + "..." if len(summary) > 400 else summary
+    # 💡 [플랜 B] 잘림 방지 및 단어 치환 정제 로직
+    clean_summary = summary.replace("동사는", f"[{company_name}]은(는)")
+    # 마침표 기준으로 문장을 나누고, 온전한 문장만 최대 3개 추출
+    sentences = [s.strip() + "." for s in clean_summary.split(".") if len(s.strip()) > 5]
+    formatted_summary = "\n".join([f"✔️ {s}" for s in sentences[:3]])
+
     fallback_report = (
-        f"1. 주요 섹터/테마: {sector}\n"
-        f"2. 비즈니스 및 실적 팩트 요약:\n"
-        f"  - {clean_summary}\n\n"
-        f"*(※ AI 일일 할당량 소진으로, 에프앤가이드 공식 원문 데이터를 대체 제공합니다.)*"
+        f"💡 [기업 핵심 팩트 (FnGuide 공식)]\n"
+        f"📌 주요 섹터/테마: {sector}\n\n"
+        f"{formatted_summary}\n\n"
+        f"*(※ AI 트래픽 초과로 증권사 공식 HTS 기업개요를 정제하여 제공합니다.)*"
     )
 
     today_date = datetime.now().strftime('%Y년 %m월 %d일')
@@ -105,9 +109,9 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
             except Exception as e: 
                 last_err_msg = str(e)
                 if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
-                    # ⭐️ 일일 이용치 완전 소진(Quota exceeded) 시 대기하지 않고 즉시 플랜 B(팩트 원문) 전송
+                    # 일일 한도 소진 시 바로 플랜 B 출력
                     if 'Quota exceeded' in last_err_msg:
-                        print(f"⚠️ [{company_name}] AI 일일 한도 소진. 크롤링 원문으로 우회합니다.")
+                        print(f"⚠️ [{company_name}] AI 일일 한도 소진. 정제된 팩트 원문으로 우회합니다.")
                         return fallback_report
                         
                     wait_time = 60.0
@@ -120,9 +124,8 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
                 else:
                     time.sleep(5)
             
-    # 5번 다 실패해도 지저분한 에러 대신 깔끔한 플랜 B 송출
     return fallback_report
-
+    
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
