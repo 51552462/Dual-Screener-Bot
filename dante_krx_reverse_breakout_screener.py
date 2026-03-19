@@ -276,26 +276,34 @@ def scan_market_1d():
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                    f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                    f"💡 [기업 팩트체크]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"⚠️ [전문가 코멘트]\n"
-                    f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                    f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                )
-                telegram_queue.put((chart_path, caption))
+                            ai_fact_check = generate_ai_report(code, name)
+                            
+                            # 💡 계산된 누적 횟수를 가져옵니다.
+                            p_count = dbg.get('p_count', 1)
+                            
+                            # ⭐️ 3회 이상 누적 시 : 강력한 시세 분출 임박 카피라이팅
+                            if p_count >= 3:
+                                intro_title = "🌟 [진입타점]"
+                                intro_desc = "기준을 잡고 거기에 맞춰서 대응하고 매매하기."
+                            # 1~2회 포착 시 : 기존 턴어라운드 초기 카피라이팅
+                            else:
+                                intro_title = "💎 [관심종목]"
+                                intro_desc = "무관심할때 조금씩 관심 가져주기."
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        executor.map(worker, list(stock_list.iterrows()))
+                            caption = (
+                                f"🏢 {name} ({code})\n"
+                                f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                f"{intro_title}\n"
+                                f"{intro_desc}\n\n"
+                                f"⚖️ [건강한 투자를 위한 기준]\n"
+                                f"• 관심종목 편입: 타이밍이 올때까지 천천히 기다리세요.\n"
+                                f"• 단기 진입 시: 실전 매매에 참여하신다면, 진입 시가 이탈 시 칼 같은 손절 필수.\n\n"
+                                f"💡 [AI 비즈니스 요약]\n"
+                                f"{ai_fact_check}\n\n"
+                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                            )
+                            telegram_queue.put((chart_path, caption))
+                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료 (누적 타점: {p_count}회)")
         
     # ⭐️ 텔레그램 전송 완료 보장 대기 ⭐️
     if tracker['hits'] > 0:
