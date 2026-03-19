@@ -207,8 +207,33 @@ def compute_bobgeureut(df_raw: pd.DataFrame):
     if (signalCat2 & isAligned)[-1] or (signalCat1 & isAligned)[-1]: sig_type = "B (J 강조)"
     else: sig_type = "B (일반)"
 
+    # ⭐️ 밥그릇 Cat2(바닥권) 타점 기준: 3봉 내 15% 상승 실패 시 누적, 성공 시 리셋 로직 ⭐️
+    cat2_counts = np.zeros(len(c), dtype=int)
+    current_cat2_count = 0
+    wait_idx = -1
+
+    for i in range(len(c)):
+        if wait_idx != -1:
+            # 타점 발생 후 3봉 이내에 고가가 15% 이상 상승했는지 체크
+            if i <= wait_idx + 3:
+                if h[i] >= c[wait_idx] * 1.15: # 15% 달성 시 리셋 (시세 분출 완료)
+                    current_cat2_count = 0
+                    wait_idx = -1
+            # 3봉이 지났는데도 15% 도달을 못했으면 누적 유지 (세력의 가격 통제 및 매집 지속)
+            if i == wait_idx + 3 and wait_idx != -1:
+                wait_idx = -1
+
+        # Cat2 타점 발생 시 카운트 올리고 대기열에 등록
+        if signalCat2[i]:
+            current_cat2_count += 1
+            wait_idx = i
+            
+        cat2_counts[i] = current_cat2_count
+
     trust_score = calculate_trust_score(c, ema60, signalBase)
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+
+    # 💡 cat2_count(누적 횟수)를 텔레그램으로 넘겨줌
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "cat2_count": int(cat2_counts[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
@@ -268,32 +293,38 @@ def scan_market_1d():
         if hit:
             chart_path = save_chart(df, code, name, hit_rank, dbg)
             if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 마지막 분할매수에서 -5% 손절\n\n"
-                    f"⭐ 신뢰도: {dbg['score']} / 10점\n\n"
-                    f"💡 [팩트체크]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                )
-                telegram_queue.put((chart_path, caption))
+                            ai_fact_check = generate_ai_report(code, name)
+                            
+                            # 💡 계산된 Cat2 누적 횟수를 가져옵니다.
+                            cat2_count = dbg.get('cat2_count', 0)
+                            
+                            # ⭐️ Cat2 3회 이상 누적 시 : 강력한 시세 분출 임박 카피라이팅
+                            if cat2_count >= 3:
+                                intro_title = "🌟 [응축된 에너지의 폭발 임계점 도달]"
+                                intro_desc = "바닥 구간에서 지속적인 자금 유입이 누적되며 에너지가 한계치까지 꽉 차오른 상태입니다. 조만간 방향성이 결정될 시 강한 시세 분출이 일어날 수 있는 폭발적 잠재력을 품고 있으므로, 지금부터는 아주 주의 깊게 흐름을 관찰해야 할 최적의 타이밍입니다."
+                            # J강조 (골든타점)
+                            elif "J 강조" in dbg['sig_type']:
+                                intro_title = "✨ [본격적인 가치 회복의 서막]"
+                                intro_desc = "오랜 기다림 끝에 기업의 내재 가치가 빛을 발하기 시작하는 결정적 순간입니다. 시장의 흐름과 함께 안정적인 우상향을 기대하며 발걸음을 맞춰보세요."
+                            # 일반 밥그릇 타점
+                            else:
+                                intro_title = "🌱 [흙 속의 진주, 비상을 위한 준비]"
+                                intro_desc = "당장의 화려함보다는 묵묵히 내실을 다져온 기업입니다. 조급한 매매보다는 '관심종목'에 조용히 담아두고, 기업의 진정한 가치가 시장에서 인정받는 과정을 여유롭게 지켜보시길 권해드립니다."
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        executor.map(worker, list(stock_list.iterrows()))
-        
-    # ⭐️ 조기 퇴근 방지 (텔레그램 다 보낼 때까지 대기)
-    if tracker['hits'] > 0:
-        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join()
-
-    print(f"\n✅ [한국장 4번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
-
+                            caption = (
+                                f"🏢 {name} ({code})\n"
+                                f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                f"{intro_title}\n"
+                                f"{intro_desc}\n\n"
+                                f"⚖️ [건강한 매매를 위한 가이드]\n"
+                                f"• 여유로운 접근: 현재가부터 천천히 모아가며 마음의 여유를 가지세요.\n"
+                                f"• 원칙 대응: 약속된 지지라인(-5%) 이탈 시에는 기계적으로 대응하여 소중한 자산을 보호합니다.\n\n"
+                                f"💡 [AI 비즈니스 요약]\n"
+                                f"{ai_fact_check}\n\n"
+                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                            )
+                            telegram_queue.put((chart_path, caption))
+                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료 (바닥 매집 누적: {cat2_count}회)")
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [4번 검색기] 10:30 / 13:00 대기 중...")
