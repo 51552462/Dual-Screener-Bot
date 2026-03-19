@@ -141,7 +141,7 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅 (3, 10일선 및 신뢰도 점수용 60일선)
+    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅
     df['EMA3'] = df['Close'].ewm(span=3, adjust=False, min_periods=0).mean()
     df['EMA10'] = df['Close'].ewm(span=10, adjust=False, min_periods=0).mean()
     df['EMA60'] = df['Close'].ewm(span=60, adjust=False, min_periods=0).mean()
@@ -158,13 +158,9 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     is_money_ok = money_curr >= 100_000_000
     is_price_ok = c >= 1000
 
-    # ==========================================
     # 💡 신버전 시그널 조건 정의 (3/10 단기 정배열 턴 시그널)
-    # ==========================================
-    # 조건 1: 현재 캔들이 무조건 양봉일 때만 (매수세 유입)
     isBullish = c > o
 
-    # 조건 2: 3일선이 10일선을 상향 돌파 (골든크로스)하며 정배열 시작
     prev_ema3 = np.roll(ema3, 1)
     prev_ema3[0] = 0
     prev_ema10 = np.roll(ema10, 1)
@@ -172,16 +168,12 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     
     isCrossUp = (prev_ema3 <= prev_ema10) & (ema3 > ema10)
 
-    # ==========================================
     # 💡 최종 시그널 산출
-    # ==========================================
-    # 양봉 + 3/10 골든크로스 + 거래대금 조건 동시 만족 시
     signal = isBullish & isCrossUp & is_money_ok & is_price_ok
 
-   if not signal[-1]: 
+    if not signal[-1]: 
         return False, "", df, {}
 
-    # 💡 괄호 내용 지우고 'E' 로만 출력되도록 수정
     sig_type = "E"
     trust_score = calculate_trust_score(c, ema60, signal)
     
