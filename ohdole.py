@@ -40,7 +40,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
-# 💡 트래픽 병목 방지용 줄서기 통제기 (이 줄을 함수 바로 위에 꼭 추가해 주세요)
+# 💡 봇 내부 트래픽 완벽 통제용 락 (반드시 함수 바로 위에 선언해 주세요)
 ai_request_lock = threading.Lock()
 
 def generate_kr_ai_report(code: str, company_name: str) -> str:
@@ -80,31 +80,28 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
     """
     
     last_err_msg = ""
-    # 💡 시도 횟수를 5번으로 늘림
     for attempt in range(5):
-        try:
-            # ⭐️ 핵심: 여러 종목이 포착되더라도 AI 요청은 무조건 한 줄서기!
-            with ai_request_lock:
+        # ⭐️ 핵심: Lock 안으로 try-except를 넣어서, 에러 시 다른 종목이 덤비지 못하게 문을 잠그고 쉽니다.
+        with ai_request_lock:
+            try:
                 response = client.models.generate_content(
                     model='gemini-2.5-flash', 
                     contents=prompt,
                     config=types.GenerateContentConfig(tools=[{"google_search": {}}])
                 )
-                # 💡 구글 무료티어 보호를 위해 1건 처리 후 강제로 2초 휴식
-                time.sleep(2) 
-                
+                time.sleep(5) # 💡 구글 1분 한도를 넘지 않기 위해 1건 성공 시마다 무조건 5초 강제 휴식
                 if response and response.text:
                     return response.text.strip()
                     
-        except Exception as e: 
-            last_err_msg = str(e)
-            # 429 한도 초과 에러가 뜨면 구글이 진정할 때까지 20초 대기
-            if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
-                print(f"⏳ [{company_name}] 구글 AI 트래픽 초과! 20초 대기 후 재시도... (시도 {attempt+1}/5)")
-                time.sleep(20)
-            else:
-                print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/5): {last_err_msg}")
-                time.sleep(3)
+            except Exception as e: 
+                last_err_msg = str(e)
+                # 429 한도 초과 에러가 뜨면 구글이 진정할 때까지 문을 잠그고 60초 대기
+                if '429' in last_err_msg or 'RESOURCE_EXHAUSTED' in last_err_msg:
+                    print(f"⏳ [{company_name}] 구글 API 1분 한도 초과! 문 잠그고 60초 강제 휴식... (시도 {attempt+1}/5)")
+                    time.sleep(60) 
+                else:
+                    print(f"❌ [{company_name}] AI 에러 발생: {last_err_msg}")
+                    time.sleep(5)
             
     return f"⚠️ AI 요약 5회 재시도 실패\n(진짜 에러 원인: {last_err_msg})"
 
