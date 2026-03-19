@@ -183,14 +183,40 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
     if not signalBase[-1]: return False, "", df, {}
 
     condBullAlign = (ema112 > ema224) & (ema224 > ema448)
-    signalCount = 0
-    for i in range(len(c)):
-        if condBullAlign[i]: signalCount = 0
-        if signalBase[i]: signalCount += 1
+    
+    # ⭐️ 3봉 내 15% 상승 실패 시 누적, 성공 시 리셋 로직 ⭐️
+    p_counts = np.zeros(len(c), dtype=int)
+    current_p_count = 0
+    wait_idx = -1
 
-    sig_type = "P (연속)" if signalCount > 1 else "P (신규)"
+    for i in range(len(c)):
+        # 추세가 완전히 우상향(정배열)으로 바뀌면 카운트 초기화
+        if condBullAlign[i]: 
+            current_p_count = 0
+            wait_idx = -1
+
+        if wait_idx != -1:
+            # 타점 발생 후 3봉 이내에 고가가 15% 이상 상승했는지 체크
+            if i <= wait_idx + 3:
+                if h[i] >= c[wait_idx] * 1.15: # 15% 달성 시 리셋 (시세 분출 완료)
+                    current_p_count = 0
+                    wait_idx = -1
+            # 3봉이 지났는데도 15% 도달을 못했으면 누적 유지 (에너지 응축 중)
+            if i == wait_idx + 3 and wait_idx != -1:
+                wait_idx = -1
+
+        # 타점 발생 시 카운트 올리고 대기열에 올림
+        if signalBase[i]:
+            current_p_count += 1
+            wait_idx = i
+            
+        p_counts[i] = current_p_count
+
+    sig_type = "P (연속)" if p_counts[-1] > 1 else "P (신규)"
     trust_score = calculate_trust_score(c, ema60, signalBase)
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+    
+    # 💡 p_count(누적 횟수)를 텔레그램으로 넘겨줌
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "p_count": int(p_counts[-1])}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
