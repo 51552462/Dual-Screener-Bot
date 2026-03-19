@@ -1,4 +1,4 @@
-# ai_secretary.py (한/미 통합 AI Q&A 비서 - 2.5-flash 최종 확정)
+# ai_secretary.py (한/미/신규 통합 AI Q&A 비서 - 2.5-flash 최종 확정)
 import os
 import time
 import requests
@@ -22,11 +22,14 @@ if not GEMINI_API_KEY:
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 🤖 2. 텔레그램 봇 토큰
+# 🤖 2. 텔레그램 봇 토큰 (3개로 완벽 분리)
 # ==========================================
 KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
 US_TOKEN = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
-KR_TOKEN = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
+NEW_TOKEN = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
+
+# 💡 봇 내부 트래픽 통제용 락
+ai_request_lock = threading.Lock()
 
 def listen_and_reply(token, market_name):
     last_update_id = 0
@@ -64,39 +67,49 @@ def listen_and_reply(token, market_name):
 질문: {question}"""
                                 
                                 # ==========================================
-                                # 🔎 4. 구글 검색 엔진(Grounding) 장착
+                                # 🔎 4. 구글 검색 엔진 장착 및 스마트 에러 핸들링
                                 # ==========================================
-                                ai_res = client.models.generate_content(
-                                    model='gemini-2.5-flash',
-                                    contents=prompt,
-                                    config=types.GenerateContentConfig(
-                                        tools=[{"google_search": {}}] # 구글 검색 기능 켜기
-                                    )
-                                )
-                                
-                                ai_text = ai_res.text.strip() if ai_res.text else "⚠️ 답변을 생성하지 못했습니다."
+                                ai_text = ""
+                                with ai_request_lock:
+                                    try:
+                                        ai_res = client.models.generate_content(
+                                            model='gemini-2.5-flash',
+                                            contents=prompt,
+                                            config=types.GenerateContentConfig(
+                                                tools=[{"google_search": {}}] # 구글 검색 기능 켜기
+                                            )
+                                        )
+                                        ai_text = ai_res.text.strip() if ai_res.text else "⚠️ 답변을 생성하지 못했습니다."
+                                        
+                                    except Exception as ai_e:
+                                        err_msg = str(ai_e)
+                                        # 💡 에러 발생 시 텔레그램 방에 깔끔한 안내 메시지 송출
+                                        if 'Quota exceeded' in err_msg:
+                                            ai_text = "⚠️ [AI 시스템 알림]\n오늘 구글 AI가 답변할 수 있는 일일 질문 한도가 모두 소진되었습니다. 내일 다시 질문해 주세요!"
+                                        elif '429' in err_msg or 'RESOURCE_EXHAUSTED' in err_msg:
+                                            ai_text = "⏳ [AI 시스템 알림]\n현재 질문이 너무 많이 몰려 AI가 답변을 지연하고 있습니다. 1~2분 정도 후에 다시 질문해 주세요."
+                                        else:
+                                            ai_text = "❌ AI 서버에서 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+                                            print(f"❌ [{market_name}] AI 에러: {err_msg}")
                                 
                                 # 답변 전송
-                                requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🤖 [AI 비서 팩트체크]\n\n{ai_text}", "reply_to_message_id": msg.get("message_id")}, timeout=10)
+                                requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🤖 [AI 비서 답변]\n\n{ai_text}", "reply_to_message_id": msg.get("message_id")}, timeout=10)
                                 print(f"✅ [{market_name}] 답변 전송 완료!")
                                 
                             except Exception as inner_e:
-                                print(f"❌ [{market_name}] AI 처리 중 에러 발생:")
-                                traceback.print_exc()
-                                requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"⚠️ AI 서버 처리 에러: {inner_e}", "reply_to_message_id": msg.get("message_id")}, timeout=5)
-        
+                                print(f"❌ [{market_name}] 텔레그램 전송 중 에러 발생: {inner_e}")
+                                
         except Exception as e:
-            # ==========================================
-            # 🚨 5. 미국장 봇 침묵 원인 추적용 에러 출력
-            # ==========================================
+            # 텔레그램 서버 통신 에러 시 침묵 방지용
             print(f"❌ [{market_name}] 텔레그램 통신/수신 에러: {e}")
             time.sleep(2)
         
         time.sleep(1.5)
 
-# 한국장과 미국장 봇을 각각의 독립된 스레드에서 동시 실행
+# 💡 3개의 텔레그램 방을 각각 독립된 스레드에서 동시 실행
 threading.Thread(target=listen_and_reply, args=(KR_TOKEN, "한국장"), daemon=True).start()
 threading.Thread(target=listen_and_reply, args=(US_TOKEN, "미국장"), daemon=True).start()
+threading.Thread(target=listen_and_reply, args=(NEW_TOKEN, "신규방"), daemon=True).start()
 
 while True:
     time.sleep(60)
