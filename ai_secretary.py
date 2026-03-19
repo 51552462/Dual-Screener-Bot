@@ -26,6 +26,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # ==========================================
 KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
 US_TOKEN = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
+KR_TOKEN = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
 
 def listen_and_reply(token, market_name):
     last_update_id = 0
