@@ -32,6 +32,10 @@ TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
+# ⭐️ 당일 중복 발송 방지용 기억 장치 (반드시 함수들 바깥, 파일 위쪽에 선언되어야 합니다!)
+sent_today = set()
+last_run_date = ""
+
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Nulrim_1D')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 150
