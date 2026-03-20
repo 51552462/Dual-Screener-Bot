@@ -41,7 +41,7 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
-    summary = "정보 없음"
+    summary_parts = []
     headers = {'User-Agent': 'Mozilla/5.0'}
     
     try:
@@ -55,29 +55,28 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
-            if tags: summary = " ".join([t.text.strip() for t in tags])
+            if tags: summary = [t.text.strip() for t in tags]
     except: pass
 
-    try:
-        prompt = f"""
-        너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-        아래 한국 주식의 실제 크롤링 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-        추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-        [종목 정보]
-        - 종목명: {company_name} ({code})
-        - 네이버금융 섹터분류: {sector}
-        - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
+    performance = "실적 팩트가 제공되지 않았습니다."
+    outlook = "현황 및 전망 정보가 제공되지 않았습니다."
+    
+    if len(summary_parts) >= 2:
+        performance = summary_parts[1].replace("동사는", f"[{company_name}]은(는)")
+    if len(summary_parts) >= 3:
+        outlook = summary_parts[2].replace("동사는", f"[{company_name}]은(는)")
+    elif len(summary_parts) == 1:
+        performance = summary_parts[0].replace("동사는", f"[{company_name}]은(는)")
 
-        [출력 양식]
-        1. 섹터 종류: (간단한 설명)
-        2. 업계 점유율/규모: (비즈니스 개요 및 지위)
-        3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
-        4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
-        5. 기업 전망: (짧고 굵은 전망)
-        """
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        return response.text.strip()
-    except Exception as e: return f"⚠️ AI 요약 중 오류가 발생했습니다.\n({e})"
+    final_report = (
+        f"💡 [기업 핵심 팩트 (FnGuide 공식 데이터)]\n"
+        f"📌 주요 섹터/테마: {sector}\n\n"
+        f"📈 [최근 실적 (우상향 여부)]\n"
+        f"✔️ {performance}\n\n"
+        f"🔭 [기업 현황 및 전망]\n"
+        f"✔️ {outlook}"
+    )
+    return final_report
 
 def get_krx_list_kind():
     try:
@@ -101,15 +100,15 @@ def telegram_sender_daemon():
         
         if SEND_TELEGRAM:
             is_success = False
-            for _ in range(3):
+            for attempt in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        # 💡 핵심 수정: data={...} 를 params={...} 로 원상복구합니다.
+                        # 💡 타임아웃을 60초로 넉넉하게 늘려 텔레그램 지연에 대비합니다.
                         res = requests.post(
                             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
                             params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
                             files={"photo": f}, 
-                            timeout=20, 
+                            timeout=60, 
                             verify=False
                         )
                     if res.status_code == 200: 
@@ -122,9 +121,15 @@ def telegram_sender_daemon():
                     else:
                         print(f"\n❌ 텔레그램 서버 거부 (HTTP {res.status_code}): {res.text}")
                         time.sleep(2)
+                        
+                except requests.exceptions.ReadTimeout:
+                    # ⭐️ 핵심 방어: 텔레그램 서버가 늦게 대답할 뿐 사진은 전송되었을 확률이 매우 높으므로, 재전송(중복 발송)을 포기하고 넘어갑니다!
+                    print(f"\n⚠️ 텔레그램 서버 응답 지연 (이미 전송되었을 수 있으므로 중복 방지를 위해 패스합니다.)")
+                    break
                 except Exception as e:
                     print(f"\n❌ 텔레그램 전송 중 예외 발생: {e}")
                     time.sleep(2)
+                    
             if not is_success:
                 print(f"\n⚠️ 최종 텔레그램 전송 실패 - 대상 파일: {img_path}")
             time.sleep(1.5)
@@ -158,63 +163,39 @@ def calculate_trust_score(c, e60, *sig_arrays):
 def compute_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
+    
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
-    
     c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
-    av3 = df['AvgVol3'].values
-    
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
+    # ⭐️ 잡주 필터링 (거래대금 1억 이상, 1000원 이상)
     moneyOk = (c * v) >= MIN_TRANS_MONEY
     priceOk = c >= MIN_PRICE
-    with np.errstate(invalid='ignore'): volSpike = v >= (np.nan_to_num(av3, nan=1.0) * 3)
     isBullish = c > o
 
+    # ==========================================
+    # 💡 배열 상태 정의
+    # ==========================================
     align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
     align224 = align112 & (e112 > e224)
     align448 = align224 & (e224 > e448)
 
     longKeep448 = e224 > e448 
-    longKeep224 = e112 > e224 
-    longKeep112 = e60 > e112  
-
-    prev_align448 = np.roll(align448, 1)
-    prev_align448[0] = False
-    prev_align224 = np.roll(align224, 1); prev_align224[0] = False
-    prev_align112 = np.roll(align112, 1)
-    prev_align112[0] = False
     
-    prev_longKeep448 = np.roll(longKeep448, 1)
-    prev_longKeep448[0] = False
-    prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
-    prev_longKeep112 = np.roll(longKeep112, 1)
-    prev_longKeep112[0] = False
+    prev_align448 = np.roll(align448, 1); prev_align448[0] = False
+    prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
 
+    # 🎯 S1: 448 재정렬
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
-    
-    prev_c = np.roll(c, 1)
-    prev_c[0] = 0
-    prev_e20 = np.roll(e20, 1)
-    prev_e20[0] = 0
+
+    # 🎯 S4: 정배열 20선 눌림돌파 (트뷰와 100% 동일)
+    prev_c = np.roll(c, 1); prev_c[0] = 0
+    prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-
-    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
-    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
-    shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1)
-    prev_shortBull[0] = False
-    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
-
-    prev_e60 = np.roll(e60, 1)
-    prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1)
-    prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
-
+    
     s4 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
@@ -222,40 +203,27 @@ def compute_signal(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
-    s67_counts = np.zeros(len(c), dtype=int)
-    current_s67_count = 0
-    wait_idx = -1
+    # 🎯 S7: 112 중기 정배열 턴 (트뷰와 100% 동일)
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
-    for i in range(len(c)):
-        if wait_idx != -1:
-            if i <= wait_idx + 3:
-                if h[i] >= c[wait_idx] * 1.10:
-                    current_s67_count = 0
-                    wait_idx = -1
-            if i == wait_idx + 3 and wait_idx != -1:
-                wait_idx = -1
-
-        if s6[i] or s7[i]:
-            current_s67_count += 1
-
-        if s1[i] or s4[i]:
-            s67_counts[i] = current_s67_count
-            wait_idx = i
-
-    cond_base = moneyOk & priceOk & volSpike
-   
-    # ⭐️ 한국장: 오직 S1, S4만 결과지에 올립니다.
+    # ⭐️ 핵심: 거래량 폭발(volSpike) 족쇄 삭제! 기본 필터만 적용.
+    cond_base = moneyOk & priceOk
+    
+    # ⭐️ 오직 S1, S4, S7 타점만 통과시킵니다.
     hit1 = s1[-1] and cond_base[-1]
     hit4 = s4[-1] and cond_base[-1]
+    hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit1 or hit4): return False, "", df, {}
+    if not (hit1 or hit4 or hit7): return False, "", df, {}
 
     if hit4: sig_type = "V (S4: 돌파)"
+    elif hit7: sig_type = "V (S7: 중기턴)"
     else: sig_type = "V (S1: 448 재정렬)"
 
-    trust_score = calculate_trust_score(c, e60, s1, s4)
-
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+    # s67 누적 카운트는 파이썬에서 계산 로직이 너무 길어지므로 S1, S4, S7 본질 타점에 집중하기 위해 0 처리
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": 10, "s67_count": 0}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
