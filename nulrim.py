@@ -267,10 +267,19 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
             return None
 
 def scan_market_1d():
+    global sent_today, last_run_date
+    kr_tz = pytz.timezone('Asia/Seoul')
+    today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
+    
+    # ⭐️ 날짜가 바뀌면 어제 보냈던 기록 리셋
+    if today_str != last_run_date:
+        sent_today.clear()
+        last_run_date = today_str
+
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 V 스캔 시작! (초고속 네이버 엔진🚀 / S1,S4 전용)")
+    print(f"\n⚡ [일봉 전용] 한국장 V(눌림목) 스캔 시작! (당일 중복 차단 🛡️)")
 
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -279,7 +288,6 @@ def scan_market_1d():
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
-        # ⭐️ 숨겨진 에러를 철저히 잡아내는 try-except 방어막 ⭐️
         try:
             _, row = row_tuple
             name, code = row["Name"], row["Code"]
@@ -298,47 +306,50 @@ def scan_market_1d():
                 tracker['scanned'] += 1
                 if is_valid: tracker['analyzed'] += 1 
                 if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
 
+                # ⭐️ 2차 차단: 오늘 이미 텔레그램으로 쏜 종목이면 패스!
                 if hit:
-                    tracker['hits'] += 1
-                    hit_rank = tracker['hits']
+                    if code in sent_today:
+                        hit = False 
+                    else:
+                        tracker['hits'] += 1
+                        hit_rank = tracker['hits']
+                        sent_today.add(code) 
                     
             if hit:
-               chart_path = save_chart(df, code, name, hit_rank, dbg)
-                    if chart_path:
-                        ai_fact_check = generate_kr_ai_report(code, name)
-                        
-                        caption = (
-                            f"🎯 [{dbg['sig_type']}]\n\n"
-                            f"🏢 {name} ({code})\n"
-                            f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                            f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                            f"📉 [매수/손절 전략]\n"
-                            f"- 양봉 길이만큼 분할매수\n"
-                            f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                            f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
-                            f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                            f"{ai_fact_check}\n\n"
-                            f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                        )
-                        telegram_queue.put((chart_path, caption))
-                        print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
+                chart_path = save_chart(df, code, name, hit_rank, dbg)
+                if chart_path:
+                    ai_fact_check = generate_kr_ai_report(code, name)
+                    
+                    caption = (
+                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"{ai_fact_check}\n\n"
+                        f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    )
+                    telegram_queue.put((chart_path, caption))
+                    print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
                 else:
                     print(f"\n⚠️ [{name}] 차트 생성 실패로 인해 텔레그램 전송이 취소되었습니다.")
         except Exception as e:
-            print(f"\n❌ [{row['Name']}] 워커 스레드 치명적 에러 발생: {e}")
+            pass
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        # ⭐️ list()로 감싸서 제너레이터를 강제 실행! 에러가 숨는 것을 방지합니다.
         list(executor.map(worker, list(stock_list.iterrows())))
         
-    # ⭐️ 메인 프로그램이 대기열 처리를 기다리지 않고 꺼지는 현상 방지
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         telegram_queue.join()
 
-    print(f"\n✅ [5번 봇: KRX V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [5번 봇: KRX V 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
