@@ -42,57 +42,47 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 
 # ⭐️ AI 에러 원인 추적기 (last_error 버그 픽스) ⭐️
 def generate_kr_ai_report(code: str, company_name: str) -> str:
-    sector, summary = "정보 없음", "정보 없음"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    sector = "정보 없음"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
+    fn_summary, naver_summary = [], []
+
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
-            tag = BeautifulSoup(res_naver.text, 'html.parser').select_one('h4.h_sub.sub_tit7 a')
+            soup = BeautifulSoup(res_naver.text, 'html.parser')
+            tag = soup.select_one('h4.h_sub.sub_tit7 a')
             if tag: sector = tag.text.strip()
+            summary_tags = soup.select('.summary_info p')
+            if summary_tags: naver_summary = [t.text.strip() for t in summary_tags if t.text.strip()]
     except: pass
-                
+
     try:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
-            if tags: summary = " ".join([t.text.strip() for t in tags])
+            if tags: fn_summary = [t.text.strip() for t in tags if t.text.strip()]
     except: pass
 
-    today_date = datetime.now().strftime('%Y년 %m월 %d일')
-    prompt = f"""
-    너는 여의도의 냉철하고 전문적인 탑 애널리스트야.
-    오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
-    추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
+    target_summary = fn_summary if fn_summary else naver_summary
+    performance = "실적 데이터 일시적 수집 지연"
+    outlook = "추가 전망 데이터가 요약본에 포함되지 않은 종목입니다."
 
-    [종목 정보]
-    - 종목명: {company_name} ({code})
-    - 네이버금융 섹터분류: {sector}
-    - 에프앤가이드 비즈니스 요약(실적포함): {summary[:1000]}
+    if len(target_summary) >= 2:
+        performance = target_summary[1].replace("동사는", f"[{company_name}]은(는)")
+    if len(target_summary) >= 3:
+        outlook = target_summary[2].replace("동사는", f"[{company_name}]은(는)")
+    elif len(target_summary) == 1:
+        performance = target_summary[0].replace("동사는", f"[{company_name}]은(는)")
 
-    [출력 양식]
-    1. 섹터 종류: (간단한 설명)
-    2. 업계 점유율/규모: (비즈니스 개요 및 지위)
-    3. 최근 실적: (요약본에 나타난 실적 증감 및 핵심 지표)
-    4. 미래 모멘텀: (주요 사업 파이프라인, 기대감 등)
-    5. 기업 전망: (짧고 굵은 전망)
-    """
-    
-    last_error = ""
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt,
-                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
-            )
-            return response.text.strip()
-        except Exception as e: 
-            last_error = str(e)
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {last_error}")
-            time.sleep(3) 
-            
-    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {last_error})"
+    return (
+        f"💡 [기업 핵심 팩트]\n"
+        f"📌 주요 섹터/테마: {sector}\n\n"
+        f"📈 [최근 실적 및 비즈니스 현황]\n"
+        f"✔️ {performance}\n\n"
+        f"🔭 [향후 모멘텀 및 전망]\n"
+        f"✔️ {outlook}"
+    )
 
 def get_krx_list_kind():
     try:
@@ -115,13 +105,28 @@ def telegram_sender_daemon():
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
-            for _ in range(3):
+            is_success = False
+            for attempt in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
+                        res = requests.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
+                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
+                            files={"photo": f}, 
+                            timeout=60, 
+                            verify=False
+                        )
+                    if res.status_code == 200: 
+                        print(f"\n✅ 텔레그램 전송 성공: {img_path}")
+                        is_success = True
+                        break
+                    elif res.status_code == 429: 
+                        time.sleep(3)
+                except requests.exceptions.ReadTimeout:
+                    print(f"\n⚠️ 텔레그램 서버 응답 지연 (중복 방지를 위해 패스합니다.)")
+                    break
+                except: 
+                    time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -251,13 +256,24 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
         except: return None
 
 def scan_market_1d():
+    # ⭐️ 1. 여기서부터 6줄이 새롭게 추가된 중복 방지 리셋 로직입니다.
+    global sent_today, last_run_date
+    kr_tz = pytz.timezone('Asia/Seoul')
+    today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
+    
+    if today_str != last_run_date:
+        sent_today.clear()
+        last_run_date = today_str
+
+    # ⭐️ 2. 여기서부터는 기존 코드와 동일하게 이어집니다.
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 4번(밥그릇) 스캔 시작! (초고속 방어막 탑재 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 3번(역매공파) 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
+
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
@@ -351,4 +367,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    # run_scheduler()  # 💡 스케줄러를 잠시 끄고
+    scan_market_1d()   # 🚀 스캔 함수를 직접 호출하여 즉시 실행
