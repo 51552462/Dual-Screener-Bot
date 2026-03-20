@@ -33,6 +33,10 @@ TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
+# ⭐️ 추가할 2줄: 당일 중복 발송 방지용 전역 기억 장치 ⭐️
+sent_today = set()
+last_run_date = ""
+
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Pro_System')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 150
