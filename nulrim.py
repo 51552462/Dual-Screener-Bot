@@ -41,39 +41,50 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 
 def generate_kr_ai_report(code: str, company_name: str) -> str:
     sector = "정보 없음"
-    summary_parts = []
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
+    # 1. 듀얼 엔진 데이터 수집 (에프앤가이드 + 네이버금융 백업)
+    fn_summary = []
+    naver_summary = []
+
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
-            tag = BeautifulSoup(res_naver.text, 'html.parser').select_one('h4.h_sub.sub_tit7 a')
+            soup = BeautifulSoup(res_naver.text, 'html.parser')
+            tag = soup.select_one('h4.h_sub.sub_tit7 a')
             if tag: sector = tag.text.strip()
+            # 네이버 기업개요 백업용 추출
+            summary_tags = soup.select('.summary_info p')
+            if summary_tags: naver_summary = [t.text.strip() for t in summary_tags if t.text.strip()]
     except: pass
-                
+
     try:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
-            if tags: summary = [t.text.strip() for t in tags]
+            if tags: fn_summary = [t.text.strip() for t in tags if t.text.strip()]
     except: pass
 
-    performance = "실적 팩트가 제공되지 않았습니다."
-    outlook = "현황 및 전망 정보가 제공되지 않았습니다."
-    
-    if len(summary_parts) >= 2:
-        performance = summary_parts[1].replace("동사는", f"[{company_name}]은(는)")
-    if len(summary_parts) >= 3:
-        outlook = summary_parts[2].replace("동사는", f"[{company_name}]은(는)")
-    elif len(summary_parts) == 1:
-        performance = summary_parts[0].replace("동사는", f"[{company_name}]은(는)")
+    # 2. 데이터 최적화 (에프앤가이드 실패 시 네이버 데이터로 완벽 방어)
+    target_summary = fn_summary if fn_summary else naver_summary
 
+    performance = "실적 데이터 일시적 수집 지연"
+    outlook = "추가 전망 데이터가 요약본에 포함되지 않은 종목입니다."
+
+    if len(target_summary) >= 2:
+        performance = target_summary[1].replace("동사는", f"[{company_name}]은(는)")
+    if len(target_summary) >= 3:
+        outlook = target_summary[2].replace("동사는", f"[{company_name}]은(는)")
+    elif len(target_summary) == 1:
+        performance = target_summary[0].replace("동사는", f"[{company_name}]은(는)")
+
+    # 3. 중복 타이틀 제거 및 전문가 스타일의 깔끔한 출력
     final_report = (
-        f"💡 [기업 핵심 팩트 (FnGuide 공식 데이터)]\n"
+        f"💡 [기업 핵심 팩트]\n"
         f"📌 주요 섹터/테마: {sector}\n\n"
-        f"📈 [최근 실적 (우상향 여부)]\n"
+        f"📈 [최근 실적 및 비즈니스 현황]\n"
         f"✔️ {performance}\n\n"
-        f"🔭 [기업 현황 및 전망]\n"
+        f"🔭 [향후 모멘텀 및 전망]\n"
         f"✔️ {outlook}"
     )
     return final_report
@@ -294,30 +305,25 @@ def scan_market_1d():
                     hit_rank = tracker['hits']
                     
             if hit:
-                chart_path = save_chart(df, code, name, hit_rank, dbg)
-                if chart_path:
-                    ai_fact_check = generate_kr_ai_report(code, name)
-                    
-                    caption = (
-                        f"🎯 [{dbg['sig_type']}]\n\n"
-                        f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                        f"📉 [매수/손절 전략]\n"
-                        f"- 양봉 길이만큼 분할매수\n"
-                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                        f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
-                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                        f"💡 [기업 팩트체크]\n"
-                        f"{ai_fact_check}\n\n"
-                        f"⚠️ [전문가 코멘트]\n"
-                        f"본 분석은 실시간 데이터 기반 팩트 요약본입니다.\n"
-                        f"시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                        f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                    )
-                    telegram_queue.put((chart_path, caption))
-                    # 💡 큐에 담겼다는 사실을 명확히 시각화
-                    print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
+               chart_path = save_chart(df, code, name, hit_rank, dbg)
+                    if chart_path:
+                        ai_fact_check = generate_kr_ai_report(code, name)
+                        
+                        caption = (
+                            f"🎯 [{dbg['sig_type']}]\n\n"
+                            f"🏢 {name} ({code})\n"
+                            f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                            f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                            f"📉 [매수/손절 전략]\n"
+                            f"- 양봉 길이만큼 분할매수\n"
+                            f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                            f"🌟 사전 매집/바닥턴 누적: 별x{dbg['s67_count']}\n"
+                            f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                            f"{ai_fact_check}\n\n"
+                            f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                        )
+                        telegram_queue.put((chart_path, caption))
+                        print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료!")
                 else:
                     print(f"\n⚠️ [{name}] 차트 생성 실패로 인해 텔레그램 전송이 취소되었습니다.")
         except Exception as e:
