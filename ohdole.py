@@ -141,39 +141,50 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅
-    df['EMA3'] = df['Close'].ewm(span=3, adjust=False, min_periods=0).mean()
-    df['EMA10'] = df['Close'].ewm(span=10, adjust=False, min_periods=0).mean()
-    df['EMA60'] = df['Close'].ewm(span=60, adjust=False, min_periods=0).mean()
+    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅 (5, 30일선 및 장기선 세팅)
+    df['EMA5'] = df['Close'].ewm(span=5, adjust=False, min_periods=0).mean()
+    df['EMA30'] = df['Close'].ewm(span=30, adjust=False, min_periods=0).mean()
+    df['EMA60'] = df['Close'].ewm(span=60, adjust=False, min_periods=0).mean() # 신뢰도 계산용
+    df['EMA112'] = df['Close'].ewm(span=112, adjust=False, min_periods=0).mean()
+    df['EMA224'] = df['Close'].ewm(span=224, adjust=False, min_periods=0).mean()
+    df['EMA448'] = df['Close'].ewm(span=448, adjust=False, min_periods=0).mean()
 
     c = df['Close'].values
     o = df['Open'].values
     v = df['Volume'].values
-    ema3 = df['EMA3'].values
-    ema10 = df['EMA10'].values
+    ema5 = df['EMA5'].values
+    ema30 = df['EMA30'].values
     ema60 = df['EMA60'].values
+    ema112 = df['EMA112'].values
+    ema224 = df['EMA224'].values
+    ema448 = df['EMA448'].values
 
     # ⭐️ 잡주 필터링 (동전주 및 거래대금 미달 종목 제외)
     money_curr = c * v
     is_money_ok = money_curr >= 100_000_000
     is_price_ok = c >= 1000
 
-    # 💡 신버전 시그널 조건 정의 (3/10 단기 정배열 턴 시그널)
+    # 💡 1. 공통 조건: 양봉 필수
     isBullish = c > o
 
-    prev_ema3 = np.roll(ema3, 1)
-    prev_ema3[0] = 0
-    prev_ema10 = np.roll(ema10, 1)
-    prev_ema10[0] = np.inf
-    
-    isCrossUp = (prev_ema3 <= prev_ema10) & (ema3 > ema10)
+    # 💡 2. 핵심 필터: 112, 224, 448일선 완벽 정배열 (대세 상승장)
+    macroBull = (ema112 > ema224) & (ema224 > ema448)
 
-    # 💡 최종 시그널 산출
-    signal = isBullish & isCrossUp & is_money_ok & is_price_ok
+    # 💡 3. 돌파 로직: 5일선이 30일선을 "확실하게 돌파"
+    prev_ema5 = np.roll(ema5, 1)
+    prev_ema5[0] = 0
+    prev_ema30 = np.roll(ema30, 1)
+    prev_ema30[0] = np.inf
+    
+    isStrictCrossUp30 = (prev_ema5 < prev_ema30) & (ema5 > ema30)
+
+    # 💡 4. 최종 시그널 산출
+    signal = isStrictCrossUp30 & isBullish & macroBull & is_money_ok & is_price_ok
 
     if not signal[-1]: 
         return False, "", df, {}
 
+    # 결과지에 찍힐 이름은 기존 요청대로 "E" 유지
     sig_type = "E"
     trust_score = calculate_trust_score(c, ema60, signal)
     
@@ -299,4 +310,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    # run_scheduler()  # 🕒 기존 스케줄러는 잠시 주석 처리하거나 지웁니다.
+    scan_market_1d()   # 🚀 스캔 함수를 직접 호출하여 파일을 실행하자마자 즉시 스캔을 시작합니다!
