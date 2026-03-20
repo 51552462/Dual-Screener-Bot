@@ -206,13 +206,10 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> 
         except: return None
 
 def scan_market_1d():
-    # 💡 위에서 만든 기억 장치를 스캔 함수 안으로 불러옵니다.
     global sent_today, last_run_date
-    
     kr_tz = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
     
-    # ⭐️ 매일 자정이 지나 날짜가 바뀌면, 어제 보냈던 발송 기록을 깨끗하게 지웁니다.
     if today_str != last_run_date:
         sent_today.clear()
         last_run_date = today_str
@@ -220,11 +217,14 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 2번(오돌이) 스캔 시작! (당일 중복 발송 방지 가동 🛡️)")
+    print(f"\n⚡ [일봉 전용] 오돌이 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
+    
+    # ⭐️ [핵심 방어막] 스캔을 시작할 때마다 카운터를 0으로 초기화! 
+    # (이 코드가 함수 바깥에 있거나 지워지면 숫자가 4000, 6000으로 무한 누적됩니다)
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
-    
+
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
@@ -310,5 +310,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()  # 🕒 기존 스케줄러는 잠시 주석 처리하거나 지웁니다.
-    scan_market_1d()   # 🚀 스캔 함수를 직접 호출하여 파일을 실행하자마자 즉시 스캔을 시작합니다!
+    # run_scheduler()
+    scan_market_1d()  # 💡 반드시 딱 1줄만 있어야 합니다!
