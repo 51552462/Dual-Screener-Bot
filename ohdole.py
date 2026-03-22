@@ -228,45 +228,56 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             if df_cut.empty or len(df_cut) < 5: return None
 
-            # 💡 1. 화살표 캔들 정중앙 하단에 정확히 꽂기 (인덱스 동기화)
-            signal_marker = pd.Series(np.nan, index=df_cut.index)
-            last_low = df_cut['Low'].iloc[-1]
-            # 캔들 전체 변동폭을 계산해서 적당한 간격으로 아래에 띄움
-            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.05 
-            signal_marker.iloc[-1] = last_low - y_offset
+            # 💡 1. 상단 대시보드용 실시간 데이터 계산
+            c = df_cut['Close'].iloc[-1]
+            o = df_cut['Open'].iloc[-1]
+            h = df_cut['High'].iloc[-1]
+            l = df_cut['Low'].iloc[-1]
+            v = int(df_cut['Volume'].iloc[-1])
             
-            # 화살표 디자인 (선명한 자홍색, 크기 대폭 확대)
-            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FF00FF')
+            prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
+            diff = c - prev_c
+            diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
+            sign = "+" if diff > 0 else ""
 
-            # 💡 2. 트레이딩뷰 스타일의 쨍한 색상과 얇은 그리드 설정
+            # 💡 2. 캔들 바로 밑에 꽂히는 시그널 화살표
+            signal_marker = pd.Series(np.nan, index=df_cut.index)
+            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.05 
+            signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=350, marker='^', color='#FF00FF')
+
+            # 💡 3. 트레이딩뷰 스타일 세팅
             mc = mpf.make_marketcolors(up='#FF3333', down='#0066FF', edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(
-                marketcolors=mc, 
-                base_mpf_style='yahoo', 
-                gridstyle='dotted', 
-                gridcolor='#E0E0E0',
-                rc={'font.family': plt.rcParams['font.family'], 'axes.labelsize': 12}
+                marketcolors=mc, base_mpf_style='yahoo', gridstyle='dotted', gridcolor='#E0E0E0',
+                rc={'font.family': plt.rcParams['font.family']}
             )
-            
-            # 💡 3. 헤더 텍스트 디자인
-            title_text = f"\n{name} ({code}) | Close: {dbg['last_close']:,.0f} KRW"
             
             plt.close('all')
             
-            # 💡 4. 고해상도 와이드 렌더링
-            mpf.plot(
-                df_cut, 
-                type="candle", 
-                volume=show_volume,  
-                addplot=ap,          
-                title=title_text, 
-                style=s, 
-                figsize=(12, 6),     # 가로로 시원한 와이드 뷰
-                fontscale=1.2,       # 전체 글씨 크기 20% 확대
-                tight_layout=True,
-                savefig=dict(fname=path, dpi=200, bbox_inches='tight') # 200 DPI 초고화질
+            # 💡 4. 차트 그리기 (returnfig=True를 써서 뼈대를 가져옵니다)
+            fig, axes = mpf.plot(
+                df_cut, type="candle", volume=show_volume, addplot=ap,
+                style=s, figsize=(12, 6.5), tight_layout=False, returnfig=True
             )
-            plt.close('all')
+
+            # 💡 5. 차트 윗부분 공간을 열어주고, 시안과 똑같은 텍스트 대시보드 강제 삽입
+            fig.subplots_adjust(top=0.82)
+            
+            # 좌측 상단: 종목코드 / 종목명
+            fig.text(0.06, 0.92, f"{code} / {name}", fontsize=24, fontweight='bold', ha='left')
+            fig.text(0.06, 0.86, "1D / KRX", fontsize=14, color='#555555', ha='left')
+
+            # 우측 상단: 현재가, 등락률, 거래량, 시가/고가/저가
+            right_text1 = f"Close: {c:,.0f}원 ({sign}{diff:,.0f}원, {sign}{diff_pct:.2f}%)   Volume: {v:,}"
+            fig.text(0.96, 0.92, right_text1, fontsize=16, fontweight='bold', ha='right')
+
+            right_text2 = f"Prev. Close: {prev_c:,.0f}   O: {o:,.0f} | H: {h:,.0f} | L: {l:,.0f}"
+            fig.text(0.96, 0.86, right_text2, fontsize=14, color='#555555', ha='right')
+
+            # 💡 6. 300 DPI 초고화질 저장 (글씨 깨짐 완벽 해결)
+            fig.savefig(path, dpi=300, bbox_inches='tight', facecolor='#F8F9FA')
+            plt.close(fig)
             
             return path
         except Exception as e:
