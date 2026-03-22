@@ -228,38 +228,43 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             if df_cut.empty or len(df_cut) < 5: return None
 
-            # 💡 1. 상단 대시보드 타이틀 (아주 깔끔하고 전문적으로)
-            title = f"[{name}] Daily Chart | Close: {dbg['last_close']:,.0f}"
+            # 💡 1. 화살표 캔들 정중앙 하단에 정확히 꽂기 (인덱스 동기화)
+            signal_marker = pd.Series(np.nan, index=df_cut.index)
+            last_low = df_cut['Low'].iloc[-1]
+            # 캔들 전체 변동폭을 계산해서 적당한 간격으로 아래에 띄움
+            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.05 
+            signal_marker.iloc[-1] = last_low - y_offset
             
-            # 💡 2. '시그널' 포착 화살표 생성 (마지막 봉 저가 바로 아래에 뚜렷한 화살표)
-            signal_marker = [np.nan] * len(df_cut)
-            signal_marker[-1] = df_cut['Low'].iloc[-1] * 0.97 # 캔들 살짝 아래 위치
-            
-            # 화살표 디자인 (크기 200, 위쪽 화살표, 자홍색)
-            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=200, marker='^', color='fuchsia')
+            # 화살표 디자인 (선명한 자홍색, 크기 대폭 확대)
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FF00FF')
 
-            # 💡 3. 차트 스타일 세팅 (배경 하얗게, 캔들 선명하게)
-            mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit', volume='inherit')
+            # 💡 2. 트레이딩뷰 스타일의 쨍한 색상과 얇은 그리드 설정
+            mc = mpf.make_marketcolors(up='#FF3333', down='#0066FF', edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(
                 marketcolors=mc, 
                 base_mpf_style='yahoo', 
-                gridstyle='--', # 얇은 점선 그리드
-                rc={'font.family': plt.rcParams['font.family']}
+                gridstyle='dotted', 
+                gridcolor='#E0E0E0',
+                rc={'font.family': plt.rcParams['font.family'], 'axes.labelsize': 12}
             )
+            
+            # 💡 3. 헤더 텍스트 디자인
+            title_text = f"\n{name} ({code}) | Close: {dbg['last_close']:,.0f} KRW"
             
             plt.close('all')
             
-            # 💡 4. 이평선 싹 제거, 거래량 무조건 제거(False), 시그널 화살표(addplot) 추가, 고화질 와이드 세팅
+            # 💡 4. 고해상도 와이드 렌더링
             mpf.plot(
                 df_cut, 
                 type="candle", 
-                volume=False,        # ⭐️ 거래량 완전히 제거
-                addplot=ap,          # ⭐️ 시그널 화살표 추가
-                title=title, 
+                volume=show_volume,  
+                addplot=ap,          
+                title=title_text, 
                 style=s, 
-                figsize=(10, 6),     # ⭐️ 가로로 넓고 시원하게 비율 조정
+                figsize=(12, 6),     # 가로로 시원한 와이드 뷰
+                fontscale=1.2,       # 전체 글씨 크기 20% 확대
                 tight_layout=True,
-                savefig=dict(fname=path, dpi=150) # ⭐️ 화질 대폭 상승
+                savefig=dict(fname=path, dpi=200, bbox_inches='tight') # 200 DPI 초고화질
             )
             plt.close('all')
             
@@ -267,6 +272,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
         except Exception as e:
             print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
+            
 def scan_market_1d():
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
