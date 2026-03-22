@@ -107,13 +107,37 @@ def telegram_sender_daemon():
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
-            for _ in range(3):
+            is_success = False
+            for attempt in range(3):
                 try:
-                    with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
+                    # 💡 이미지가 있으면 [차트+글] 전송
+                    if img_path: 
+                        with open(img_path, 'rb') as f:
+                            res = requests.post(
+                                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
+                                params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
+                                files={"photo": f}, 
+                                timeout=60, verify=False
+                            )
+                    # 💡 이미지가 없으면 [텍스트만] 깔끔하게 전송
+                    else:
+                        res = requests.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                            json={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption}, 
+                            timeout=60, verify=False
+                        )
+
+                    if res.status_code == 200: 
+                        if img_path: print(f"\n✅ 텔레그램 전송 성공: {img_path}")
+                        is_success = True
+                        break
+                    elif res.status_code == 429: 
+                        time.sleep(3)
+                except requests.exceptions.ReadTimeout:
+                    print(f"\n⚠️ 텔레그램 서버 응답 지연 (중복 방지를 위해 패스합니다.)")
+                    break
+                except: 
+                    time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -276,7 +300,25 @@ def scan_market_1d():
                     f"{ai_fact_check}\n\n"
                     f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
                 )
-                telegram_queue.put((chart_path, caption))
+                
+                # 1️⃣ 기존: 차트 사진 + 분석글을 텔레그램에 쏜다.
+                telegram_queue.put((chart_path, caption)) 
+
+                # ==========================================
+                # 2️⃣ 추가: 그 바로 밑에 '쓰레드용 텍스트'만 연달아 쏜다!
+                # ==========================================
+                threads_caption = (
+                    f"📱 [쓰레드 복붙용]\n\n"
+                    f"🏢 종목명: {name} ({code})\n"
+                    f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                    f"{ai_fact_check}\n\n"
+                    f"💡 시장의 주목을 받기 전, 기본기에 충실한 팩트 체크입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
+                    f"#주식 #투자 #주식공부 #{name} #주식스타그램"
+                )
+                telegram_queue.put((None, threads_caption)) # ⭐️ 사진을 안 넣을 거니까 None 이라고 적습니다.
+                # ==========================================
+                
+                print(f"\n✅ [{name}] 본캐용 + 쓰레드용 결과지 2개 모두 추가 완료!")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
