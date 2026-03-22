@@ -389,7 +389,7 @@ def scan_market_1d():
                         threads_caption = (
                             f"🏢 종목명: {name} ({code})\n"
                             f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                            f"💡 시장의 주목을 받기 전, 검색기에 발굴된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
+                            f"💡 시장의 주목을 받기 전, 검색기에 발굴된 종목입니다. 투자의 참고 자료로 활용해 보세요!"
                         )
                         telegram_queue.put((threads_chart_path, threads_caption))
 
@@ -438,5 +438,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()
-    scan_market_1d()  # 💡 반드시 딱 1줄만 있어야 합니다!
+    run_scheduler()
