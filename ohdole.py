@@ -215,43 +215,58 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": 0}
     
 chart_lock = threading.Lock()
-# 💡 show_volume=True 파라미터를 추가하여 거래량 표시 여부를 선택할 수 있게 합니다.
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=True) -> str:
+
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
         try:
-            timestamp_ms = int(time.time() * 1000000)
-            # 파일 이름 뒤에 거래량 유무를 표시합니다.
+            timestamp_ms = int(time.time() * 1000)
             vol_suffix = "wVol" if show_volume else "noVol"
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
             
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            
-            # 차트 에러의 주범인 '결측치(NaN)' 완벽 제거
             df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
             
-            if df_cut.empty or len(df_cut) < 5:
-                print(f"\n⚠️ [{name}] 데이터 부족(결측치)으로 차트 생성을 스킵합니다.")
-                return None
+            if df_cut.empty or len(df_cut) < 5: return None
 
-            # 💡 쓰레드 홍보용일 때는 제목을 단촐하게 가져갑니다.
-            if show_volume:
-                title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
-            else:
-                title = f"🏢 {name} ({code})\n💰 현재가: {dbg['last_close']:,.0f}원"
-         
-            mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
-            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
+            # 💡 1. 상단 대시보드 타이틀 (아주 깔끔하고 전문적으로)
+            title = f"[{name}] Daily Chart | Close: {dbg['last_close']:,.0f}"
+            
+            # 💡 2. '시그널' 포착 화살표 생성 (마지막 봉 저가 바로 아래에 뚜렷한 화살표)
+            signal_marker = [np.nan] * len(df_cut)
+            signal_marker[-1] = df_cut['Low'].iloc[-1] * 0.97 # 캔들 살짝 아래 위치
+            
+            # 화살표 디자인 (크기 200, 위쪽 화살표, 자홍색)
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=200, marker='^', color='fuchsia')
+
+            # 💡 3. 차트 스타일 세팅 (배경 하얗게, 캔들 선명하게)
+            mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit', volume='inherit')
+            s = mpf.make_mpf_style(
+                marketcolors=mc, 
+                base_mpf_style='yahoo', 
+                gridstyle='--', # 얇은 점선 그리드
+                rc={'font.family': plt.rcParams['font.family']}
+            )
             
             plt.close('all')
-            # 💡 show_volume 값에 따라 volume=True 또는 False를 결정합니다.
-            mpf.plot(df_cut, type="candle", volume=show_volume, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
+            
+            # 💡 4. 이평선 싹 제거, 거래량 무조건 제거(False), 시그널 화살표(addplot) 추가, 고화질 와이드 세팅
+            mpf.plot(
+                df_cut, 
+                type="candle", 
+                volume=False,        # ⭐️ 거래량 완전히 제거
+                addplot=ap,          # ⭐️ 시그널 화살표 추가
+                title=title, 
+                style=s, 
+                figsize=(10, 6),     # ⭐️ 가로로 넓고 시원하게 비율 조정
+                tight_layout=True,
+                savefig=dict(fname=path, dpi=150) # ⭐️ 화질 대폭 상승
+            )
             plt.close('all')
             
             return path
         except Exception as e:
-            print(f"\n❌ [{name}] 차트 이미지 저장 중 치명적 에러 발생: {e}")
+            print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
-
 def scan_market_1d():
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
