@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
 import random
+import matplotlib.font_manager as fm
 
 from google import genai
 from google.genai import types
@@ -219,6 +220,10 @@ chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
         try:
+            # 💡 한글 폰트 강제 적용 (네모 깨짐 방지)
+            plt.rcParams['font.family'] = 'NanumGothic'
+            plt.rcParams['axes.unicode_minus'] = False
+            
             timestamp_ms = int(time.time() * 1000)
             vol_suffix = "wVol" if show_volume else "noVol"
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
@@ -228,7 +233,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             if df_cut.empty or len(df_cut) < 5: return None
 
-            # 💡 1. 상단 대시보드용 실시간 데이터 계산
+            # 상단 대시보드 데이터 계산
             c = df_cut['Close'].iloc[-1]
             o = df_cut['Open'].iloc[-1]
             h = df_cut['High'].iloc[-1]
@@ -238,45 +243,51 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
             diff = c - prev_c
             diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
-            sign = "+" if diff > 0 else ""
+            
+            # 상승/하락에 따른 디테일한 색상 및 기호 변경
+            sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+            color_diff = '#EF5350' if diff > 0 else ('#42A5F5' if diff < 0 else '#424242')
 
-            # 💡 2. 캔들 바로 밑에 꽂히는 시그널 화살표
+            # 시그널 화살표 (세련된 핫핑크색, 투명도 조절)
             signal_marker = pd.Series(np.nan, index=df_cut.index)
-            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.05 
+            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
             signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
-            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=350, marker='^', color='#FF00FF')
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=250, marker='^', color='#FF007F', alpha=0.9)
 
-            # 💡 3. 트레이딩뷰 스타일 세팅
-            mc = mpf.make_marketcolors(up='#FF3333', down='#0066FF', edge='inherit', wick='inherit', volume='inherit')
+            # 프로 트레이더 스타일 캔들 & 그리드 세팅
+            mc = mpf.make_marketcolors(up='#EF5350', down='#42A5F5', edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(
-                marketcolors=mc, base_mpf_style='yahoo', gridstyle='dotted', gridcolor='#E0E0E0',
-                rc={'font.family': plt.rcParams['font.family']}
+                marketcolors=mc, base_mpf_style='yahoo', gridstyle='--', gridcolor='#ECEFF1',
+                y_on_right=True, rc={'font.family': plt.rcParams['font.family']}
             )
             
             plt.close('all')
             
-            # 💡 4. 차트 그리기 (returnfig=True를 써서 뼈대를 가져옵니다)
+            # 차트 그리기
             fig, axes = mpf.plot(
                 df_cut, type="candle", volume=show_volume, addplot=ap,
-                style=s, figsize=(12, 6.5), tight_layout=False, returnfig=True
+                style=s, figsize=(11, 6), tight_layout=False, returnfig=True
             )
 
-            # 💡 5. 차트 윗부분 공간을 열어주고, 시안과 똑같은 텍스트 대시보드 강제 삽입
-            fig.subplots_adjust(top=0.82)
+            # 💡 상단 여백 최적화 및 텍스트 대시보드 강제 삽입
+            fig.subplots_adjust(top=0.88, bottom=0.1, left=0.05, right=0.95)
+            fig.patch.set_facecolor('#FFFFFF') # 배경 완전 흰색
+            axes[0].set_facecolor('#FAFAFA')   # 차트 안쪽은 아주 살짝 회색
             
-            # 좌측 상단: 종목코드 / 종목명
-            fig.text(0.06, 0.92, f"{code} / {name}", fontsize=24, fontweight='bold', ha='left')
-            fig.text(0.06, 0.86, "1D / KRX", fontsize=14, color='#555555', ha='left')
+            # 종목명 & 마켓
+            fig.text(0.05, 0.94, f"{code} | {name}", fontsize=22, fontweight='bold', color='#212121', ha='left')
+            fig.text(0.05, 0.90, "1D / KRX", fontsize=12, color='#757575', ha='left')
 
-            # 우측 상단: 현재가, 등락률, 거래량, 시가/고가/저가
-            right_text1 = f"Close: {c:,.0f}원 ({sign}{diff:,.0f}원, {sign}{diff_pct:.2f}%)   Volume: {v:,}"
-            fig.text(0.96, 0.92, right_text1, fontsize=16, fontweight='bold', ha='right')
+            # 우측 가격 정보 (상승/하락 색상 자동 적용)
+            right_text1 = f"Close: {c:,.0f} ({sign} {abs(diff):,.0f}, {sign} {abs(diff_pct):.2f}%)"
+            fig.text(0.95, 0.94, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
 
-            right_text2 = f"Prev. Close: {prev_c:,.0f}   O: {o:,.0f} | H: {h:,.0f} | L: {l:,.0f}"
-            fig.text(0.96, 0.86, right_text2, fontsize=14, color='#555555', ha='right')
+            # 우측 디테일 정보
+            right_text2 = f"Vol: {v:,}  |  O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
+            fig.text(0.95, 0.90, right_text2, fontsize=12, color='#757575', ha='right')
 
-            # 💡 6. 300 DPI 초고화질 저장 (글씨 깨짐 완벽 해결)
-            fig.savefig(path, dpi=300, bbox_inches='tight', facecolor='#F8F9FA')
+            # 200 DPI 초고화질 렌더링
+            fig.savefig(path, dpi=200, bbox_inches='tight')
             plt.close(fig)
             
             return path
@@ -352,15 +363,17 @@ def scan_market_1d():
                     )
                     telegram_queue.put((main_chart_path, main_caption))
 
-                    # 2️⃣ 쓰레드용 (차트만 표시, 거래량 제외)
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
+                   # ==========================================
+                    # 2️⃣ 쓰레드(Threads) 복붙용 결과지 (진짜 텍스트만)
+                    # ==========================================
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False) 
+
                     if threads_chart_path:
+                        # 💡 요청하신 대로 해시태그, 홍보 문구, 제목 싹 다 지웠습니다.
                         threads_caption = (
-                            f"📱 [쓰레드 홍보용]\n\n"
                             f"🏢 종목명: {name} ({code})\n"
                             f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                            f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                            f"#주식 #투자 #주식공부 #{name} #주식스타그램"
+                            f"💡 시장의 주목을 받기 전, 검색기에 발굴된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
                         )
                         telegram_queue.put((threads_chart_path, threads_caption))
 
