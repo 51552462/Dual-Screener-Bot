@@ -266,52 +266,43 @@ def scan_market_1d():
 
     print(f"\n⚡ [일봉 전용] 오돌이 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
-    
-    # ⭐️ [핵심 방어막] 스캔을 시작할 때마다 카운터를 0으로 초기화! 
-    # (이 코드가 함수 바깥에 있거나 지워지면 숫자가 4000, 6000으로 무한 누적됩니다)
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
 
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
-        _, row = row_tuple
-        name, code = row["Name"], row["Code"]
-        df_raw = None
-        is_valid = False
-        hit, sig_type, df, dbg = False, "", None, {}
-        
         try:
-            df_raw = fdr.DataReader(code, start_date)
-            if df_raw is not None and not df_raw.empty:
-                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                
-            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-            if is_valid: 
-                hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
-        except Exception:
-            pass 
-
-        hit_rank = 0
-        with console_lock:
-            tracker['scanned'] += 1
-            if is_valid: tracker['analyzed'] += 1 
-            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
+            _, row = row_tuple
+            name, code = row["Name"], row["Code"]
+            df_raw = None
             
-            # ⭐️ 핵심: 당일 중복 발송 차단 로직
-            if hit:
-                if code in sent_today:
-                    hit = False # 오늘 오전이나 방금 전 턴에 이미 보냈던 종목이면 취소하고 조용히 넘어갑니다.
-                else:
-                    tracker['hits'] += 1
-                    hit_rank = tracker['hits']
-                    sent_today.add(code) # 신규 포착된 종목은 '오늘 보낸 명단'에 도장을 찍어둡니다.
-                
-       if hit:
-                # 1️⃣ 기존: 차트 사진(거래량 포함) + 상세 분석글을 텔레그램에 쏜다.
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True) # 💡 show_volume=True
+            try:
+                df_raw = fdr.DataReader(code, start_date)
+            except: pass
 
+            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            hit, sig_type, df, dbg = False, "", None, {}
+            if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
+
+            hit_rank = 0
+            with console_lock:
+                tracker['scanned'] += 1
+                if is_valid: tracker['analyzed'] += 1 
+                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
+
+                if hit:
+                    if code in sent_today:
+                        hit = False 
+                    else:
+                        tracker['hits'] += 1
+                        hit_rank = tracker['hits']
+                        sent_today.add(code) 
+                    
+            if hit:
+                # 1️⃣ 본캐용 (차트+거래량 표시)
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
                 if main_chart_path:
                     ai_fact_check = generate_kr_ai_report(code, name)
                     
@@ -327,14 +318,10 @@ def scan_market_1d():
                         f"{ai_fact_check}\n\n"
                         f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                     )
-                    telegram_queue.put((main_chart_path, main_caption)) # 본캐용 전송
+                    telegram_queue.put((main_chart_path, main_caption))
 
-                    # ==========================================
-                    # 2️⃣ 추가: 쓰레드(Threads) 홍보용 차트 (거래량 싹 빼고!)
-                    # ==========================================
-                    # 💡 show_volume=False 로 설정하여 거래량 없는 차트를 따로 그립니다.
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False) 
-
+                    # 2️⃣ 쓰레드용 (차트만 표시, 거래량 제외)
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
                     if threads_chart_path:
                         threads_caption = (
                             f"📱 [쓰레드 홍보용]\n\n"
@@ -343,11 +330,20 @@ def scan_market_1d():
                             f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
                             f"#주식 #투자 #주식공부 #{name} #주식스타그램"
                         )
-                        telegram_queue.put((threads_chart_path, threads_caption)) # ⭐️ 사진과 함께 큐에 담기
+                        telegram_queue.put((threads_chart_path, threads_caption))
 
                     print(f"\n✅ [{name}] 본캐용 + 쓰레드용 결과지 2개 모두 추가 완료!")
-                else:
-                    print(f"\n⚠️ [{name}] 차트 생성 실패로 인해 텔레그램 전송이 취소되었습니다.")
+        except Exception as e:
+            pass
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        list(executor.map(worker, list(stock_list.iterrows())))
+        
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
+
+    print(f"\n✅ [오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
