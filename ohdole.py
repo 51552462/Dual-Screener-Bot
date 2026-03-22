@@ -220,7 +220,6 @@ chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
         try:
-            # 💡 한글 폰트 강제 적용 (네모 깨짐 방지)
             plt.rcParams['font.family'] = 'NanumGothic'
             plt.rcParams['axes.unicode_minus'] = False
             
@@ -233,7 +232,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             if df_cut.empty or len(df_cut) < 5: return None
 
-            # 상단 대시보드 데이터 계산
+            # 1. 데이터 계산
             c = df_cut['Close'].iloc[-1]
             o = df_cut['Open'].iloc[-1]
             h = df_cut['High'].iloc[-1]
@@ -244,50 +243,67 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             diff = c - prev_c
             diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
             
-            # 상승/하락에 따른 디테일한 색상 및 기호 변경
             sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
-            color_diff = '#EF5350' if diff > 0 else ('#42A5F5' if diff < 0 else '#424242')
+            
+            # 💡 다크테마용 네온 색상 세팅
+            bg_color = '#131722'      # 고급스러운 다크 네이비/블랙
+            grid_color = '#2A2E39'    # 은은한 그리드
+            text_main = '#FFFFFF'     # 메인 텍스트 (흰색)
+            text_sub = '#8A91A5'      # 서브 텍스트 (회색)
+            color_up = '#FF3B69'      # 네온 레드 (상승)
+            color_down = '#00B4D8'    # 네온 블루 (하락)
+            
+            color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
 
-            # 시그널 화살표 (세련된 핫핑크색, 투명도 조절)
+            # 💡 황금색(Gold) 시그널 화살표
             signal_marker = pd.Series(np.nan, index=df_cut.index)
             y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
             signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
-            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=250, marker='^', color='#FF007F', alpha=0.9)
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
 
-            # 프로 트레이더 스타일 캔들 & 그리드 세팅
-            mc = mpf.make_marketcolors(up='#EF5350', down='#42A5F5', edge='inherit', wick='inherit', volume='inherit')
+            # 💡 프리미엄 다크 스타일 캔들 & 그리드 세팅
+            mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(
-                marketcolors=mc, base_mpf_style='yahoo', gridstyle='--', gridcolor='#ECEFF1',
-                y_on_right=True, rc={'font.family': plt.rcParams['font.family']}
+                marketcolors=mc, 
+                facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, 
+                gridcolor=grid_color, gridstyle='--', y_on_right=True,
+                rc={
+                    'font.family': plt.rcParams['font.family'], 
+                    'text.color': text_main, 
+                    'axes.labelcolor': text_sub, 
+                    'xtick.color': text_sub, 
+                    'ytick.color': text_sub
+                }
             )
             
             plt.close('all')
             
-            # 차트 그리기
+            # 차트 뼈대 생성
             fig, axes = mpf.plot(
                 df_cut, type="candle", volume=show_volume, addplot=ap,
-                style=s, figsize=(11, 6), tight_layout=False, returnfig=True
+                style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True
             )
 
-            # 💡 상단 여백 최적화 및 텍스트 대시보드 강제 삽입
-            fig.subplots_adjust(top=0.88, bottom=0.1, left=0.05, right=0.95)
-            fig.patch.set_facecolor('#FFFFFF') # 배경 완전 흰색
-            axes[0].set_facecolor('#FAFAFA')   # 차트 안쪽은 아주 살짝 회색
+            # 상단 여백 조절 및 대시보드 텍스트 삽입
+            fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
             
-            # 종목명 & 마켓
-            fig.text(0.05, 0.94, f"{code} | {name}", fontsize=22, fontweight='bold', color='#212121', ha='left')
-            fig.text(0.05, 0.90, "1D / KRX", fontsize=12, color='#757575', ha='left')
+            # 좌측 상단 (종목명)
+            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
+            fig.text(0.05, 0.88, "1D / KRX", fontsize=12, color=text_sub, ha='left')
 
-            # 우측 가격 정보 (상승/하락 색상 자동 적용)
+            # 우측 상단 (현재가 및 등락)
             right_text1 = f"Close: {c:,.0f} ({sign} {abs(diff):,.0f}, {sign} {abs(diff_pct):.2f}%)"
-            fig.text(0.95, 0.94, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
+            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
 
-            # 우측 디테일 정보
+            # 우측 하단 디테일
             right_text2 = f"Vol: {v:,}  |  O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
-            fig.text(0.95, 0.90, right_text2, fontsize=12, color='#757575', ha='right')
+            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
+
+            # 💡 좌측 하단 전문성 강조용 워터마크
+            fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
             # 200 DPI 초고화질 렌더링
-            fig.savefig(path, dpi=200, bbox_inches='tight')
+            fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
             plt.close(fig)
             
             return path
