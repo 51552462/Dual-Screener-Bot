@@ -215,19 +215,42 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": 0}
     
 chart_lock = threading.Lock()
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
+# 💡 show_volume=True 파라미터를 추가하여 거래량 표시 여부를 선택할 수 있게 합니다.
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=True) -> str:
     with chart_lock:
         try:
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
+            timestamp_ms = int(time.time() * 1000000)
+            # 파일 이름 뒤에 거래량 유무를 표시합니다.
+            vol_suffix = "wVol" if show_volume else "noVol"
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
+            
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
+            
+            # 차트 에러의 주범인 '결측치(NaN)' 완벽 제거
+            df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
+            
+            if df_cut.empty or len(df_cut) < 5:
+                print(f"\n⚠️ [{name}] 데이터 부족(결측치)으로 차트 생성을 스킵합니다.")
+                return None
+
+            # 💡 쓰레드 홍보용일 때는 제목을 단촐하게 가져갑니다.
+            if show_volume:
+                title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
+            else:
+                title = f"🏢 {name} ({code})\n💰 현재가: {dbg['last_close']:,.0f}원"
+         
             mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
             s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
+            
             plt.close('all')
-            mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
+            # 💡 show_volume 값에 따라 volume=True 또는 False를 결정합니다.
+            mpf.plot(df_cut, type="candle", volume=show_volume, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
             plt.close('all')
+            
             return path
-        except: return None
+        except Exception as e:
+            print(f"\n❌ [{name}] 차트 이미지 저장 중 치명적 에러 발생: {e}")
+            return None
 
 def scan_market_1d():
     global sent_today, last_run_date
@@ -285,40 +308,46 @@ def scan_market_1d():
                     hit_rank = tracker['hits']
                     sent_today.add(code) # 신규 포착된 종목은 '오늘 보낸 명단'에 도장을 찍어둡니다.
                 
-        if hit:
-            chart_path = save_chart(df, code, name, hit_rank, dbg)
-            if chart_path:
-                ai_fact_check = generate_kr_ai_report(code, name)
-                caption = (
-                    f"🎯 [{dbg['sig_type']}]\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                    f"🎯 추천: 단타, 스윙\n\n"
-                    f"📉 [매수/손절 전략]\n"
-                    f"- 양봉 길이만큼 분할매수\n"
-                    f"- 양봉 시가 이탈 or 진입 후 2봉 연속 음봉 발생 시 손절\n\n"
-                    f"{ai_fact_check}\n\n"
-                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
-                )
-                
-                # 1️⃣ 기존: 차트 사진 + 분석글을 텔레그램에 쏜다.
-                telegram_queue.put((chart_path, caption)) 
+       if hit:
+                # 1️⃣ 기존: 차트 사진(거래량 포함) + 상세 분석글을 텔레그램에 쏜다.
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True) # 💡 show_volume=True
 
-                # ==========================================
-                # 2️⃣ 추가: 그 바로 밑에 '쓰레드용 텍스트'만 연달아 쏜다!
-                # ==========================================
-                threads_caption = (
-                    f"📱 [쓰레드 복붙용]\n\n"
-                    f"🏢 종목명: {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                    f"{ai_fact_check}\n\n"
-                    f"💡 시장의 주목을 받기 전, 기본기에 충실한 팩트 체크입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                    f"#주식 #투자 #주식공부 #{name} #주식스타그램"
-                )
-                telegram_queue.put((None, threads_caption)) # ⭐️ 사진을 안 넣을 거니까 None 이라고 적습니다.
-                # ==========================================
-                
-                print(f"\n✅ [{name}] 본캐용 + 쓰레드용 결과지 2개 모두 추가 완료!")
+                if main_chart_path:
+                    ai_fact_check = generate_kr_ai_report(code, name)
+                    
+                    main_caption = (
+                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"{ai_fact_check}\n\n"
+                        f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    )
+                    telegram_queue.put((main_chart_path, main_caption)) # 본캐용 전송
+
+                    # ==========================================
+                    # 2️⃣ 추가: 쓰레드(Threads) 홍보용 차트 (거래량 싹 빼고!)
+                    # ==========================================
+                    # 💡 show_volume=False 로 설정하여 거래량 없는 차트를 따로 그립니다.
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False) 
+
+                    if threads_chart_path:
+                        threads_caption = (
+                            f"📱 [쓰레드 홍보용]\n\n"
+                            f"🏢 종목명: {name} ({code})\n"
+                            f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                            f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
+                            f"#주식 #투자 #주식공부 #{name} #주식스타그램"
+                        )
+                        telegram_queue.put((threads_chart_path, threads_caption)) # ⭐️ 사진과 함께 큐에 담기
+
+                    print(f"\n✅ [{name}] 본캐용 + 쓰레드용 결과지 2개 모두 추가 완료!")
+                else:
+                    print(f"\n⚠️ [{name}] 차트 생성 실패로 인해 텔레그램 전송이 취소되었습니다.")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
