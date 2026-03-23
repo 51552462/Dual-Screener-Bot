@@ -301,7 +301,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
 def scan_market_1d():
-    # ⭐️ 1. 여기서부터 6줄이 새롭게 추가된 중복 방지 리셋 로직입니다.
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
@@ -310,11 +309,10 @@ def scan_market_1d():
         sent_today.clear()
         last_run_date = today_str
 
-    # ⭐️ 2. 여기서부터는 기존 코드와 동일하게 이어집니다.
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 3번(역매공파) 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 4번(밥그릇) 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -328,19 +326,17 @@ def scan_market_1d():
         is_valid = False
         hit, sig_type, df, dbg = False, "", None, {}
         
-        # ⭐️ 일꾼 절대 사망 방지 방어막!
         try:
             df_raw = fdr.DataReader(code, start_date)
             if df_raw is not None and not df_raw.empty:
-                # 데이터의 구멍(NaN)을 사전에 싹 도려내서 에러 원천 차단
                 df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
             if is_valid: 
                 hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
         except Exception:
-            pass # 계산이 꼬이는 불량 주식은 조용히 스킵하고 무조건 살아서 다음으로 넘어감!
-            
+            pass
+
         hit_rank = 0
         with console_lock:
             tracker['scanned'] += 1
@@ -352,28 +348,24 @@ def scan_market_1d():
                 hit_rank = tracker['hits']
                 
         if hit:
-            # 1️⃣ 본캐용 다크 차트 생성 (거래량 O)
             main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
             if main_chart_path:
                 ai_fact_check = generate_kr_ai_report(code, name)
-                
-                # ⭐️ 기존 cat2_count 누적 및 J 강조 로직 완벽 복구 ⭐️
                 cat2_count = dbg.get('cat2_count', 0)
                 
                 if cat2_count >= 3:
                     intro_title = "🌟 [응축된 에너지의 폭발 임계점 도달]"
                     intro_desc = "바닥 구간에서 지속적인 자금 유입이 누적되며 에너지가 한계치까지 꽉 차오른 상태입니다. 조만간 방향성이 결정될 시 강한 시세 분출이 일어날 수 있는 폭발적 잠재력을 품고 있으므로, 지금부터는 아주 주의 깊게 흐름을 관찰해야 할 최적의 타이밍입니다."
-                elif "J 강조" in dbg['sig_type']:
+                elif "J 강조" in dbg.get('sig_type', ""):
                     intro_title = "✨ [본격적인 가치 회복의 서막]"
                     intro_desc = "오랜 기다림 끝에 기업의 내재 가치가 빛을 발하기 시작하는 결정적 순간입니다. 시장의 흐름과 함께 안정적인 우상향을 기대하며 발걸음을 맞춰보세요."
                 else:
                     intro_title = "🌱 [흙 속의 진주, 비상을 위한 준비]"
                     intro_desc = "당장의 화려함보다는 묵묵히 내실을 다져온 기업입니다. 조급한 매매보다는 '관심종목'에 조용히 담아두고, 기업의 진정한 가치가 시장에서 인정받는 과정을 여유롭게 지켜보시길 권해드립니다."
 
-                # 본캐용 상세 결과지 발송
                 main_caption = (
                     f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                     f"{intro_title}\n"
                     f"{intro_desc}\n\n"
                     f"⚖️ [건강한 매매를 위한 가이드]\n"
@@ -385,23 +377,20 @@ def scan_market_1d():
                 )
                 telegram_queue.put((main_chart_path, main_caption))
 
-                # 2️⃣ 쓰레드 홍보용 다크 차트 생성 (거래량 X)
                 threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
                 if threads_chart_path:
                     threads_caption = (
                         f"🏢 종목명: {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                        f"💡 시장의 주목을 받기 전, 검색기에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                        f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
                     )
                     telegram_queue.put((threads_chart_path, threads_caption))
                 
                 print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료 (바닥 매집 누적: {cat2_count}회)")
-                            
-    # 💡 원인 1 해결: 누락되었던 핵심 엔진! 일꾼들을 실제로 일하게 만듭니다.
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
         
-    # ⭐️ 텔레그램 전송 완료 보장 대기 ⭐️
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         telegram_queue.join()
