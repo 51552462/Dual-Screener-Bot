@@ -116,7 +116,6 @@ threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 MIN_PRICE_USD = 3.0               
 MIN_MONEY_USD = 5_000_000         
 
-# 한국장과 동일하게 신뢰도 로직 단순화
 def calculate_trust_score(c, e60):
     score = 5 
     lowest_60 = np.min(c[-60:])
@@ -132,7 +131,6 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
     c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
-    
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
@@ -169,7 +167,6 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     shortBull = (e10 > e20) & (e20 > e30)
     prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
     
-    # 미국장 실질 S6 타점
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
     prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
@@ -183,16 +180,14 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
-    s5 = np.zeros_like(c, dtype=bool) # 형태 맞춤용 더미 변수
+    s5 = np.zeros_like(c, dtype=bool)
 
-    # ⭐️ 한국장과 동일하게 S6 타점 누적 및 중간 이빨 빠지면 리셋 로직 적용 ⭐️
     s6_counts = np.zeros(len(c), dtype=int)
     current_s6_count = 0
     
     for i in range(len(c)):
         if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s7[i]:
             current_s6_count = 0
-        
         if s6[i]:
             current_s6_count += 1
             
@@ -200,7 +195,6 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk
     
-    # ⭐️ S2, S6, S7 타점만 발송하도록 필터링 추가
     hit2 = s2[-1] and cond_base[-1]
     hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
@@ -257,18 +251,26 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
             
+            # 💡 [버그 2 수정] 거래량 유무에 따른 차트 비율 (가로형 / 정방형) 완벽 이식
+            if show_volume:
+                custom_figsize = (11, 6.5) 
+                title_y, sub_y = 0.93, 0.88
+            else:
+                custom_figsize = (9, 9)    
+                title_y, sub_y = 0.94, 0.90
+
             plt.close('all')
-            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True)
+            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=custom_figsize, tight_layout=False, returnfig=True)
 
             fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
-            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
-            fig.text(0.05, 0.88, "1D / US", fontsize=12, color=text_sub, ha='left')
+            fig.text(0.05, title_y, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
+            fig.text(0.05, sub_y, "1D / US", fontsize=12, color=text_sub, ha='left')
 
             right_text1 = f"Close: ${c:,.2f} ({sign} ${abs(diff):,.2f}, {sign} {abs(diff_pct):.2f}%)"
-            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
+            fig.text(0.95, title_y, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
 
             right_text2 = f"Vol: {v:,}  |  O: ${o:,.2f}  H: ${h:,.2f}  L: ${l:,.2f}"
-            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
+            fig.text(0.95, sub_y, right_text2, fontsize=12, color=text_sub, ha='right')
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
             fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
@@ -335,7 +337,8 @@ def scan_market_1d():
                         # 1️⃣ 본캐용 다크 차트 생성
                         main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
                         if main_chart_path:
-                            ai_text = generate_ai_report(code, name)
+                            # 💡 [버그 1 수정] 밑에서 부르는 변수 이름과 완벽하게 일치 (NameError 해결)
+                            ai_fact_check = generate_ai_report(code, name)
                             
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n\n"
@@ -359,11 +362,11 @@ def scan_market_1d():
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
                                 threads_caption = (
-                                f"🏢 종목명: {name} ({code})\n"
-                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                                f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                            )
+                                    f"🏢 종목명: {name} ({code})\n"
+                                    f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
+                                    f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
+                                    f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                )
                                 telegram_queue.put((threads_chart_path, threads_caption))
                                 
                             print(f"\n✅ [{name}] 미국장 눌림목 본캐 1개 + 홍보용 1개 (총 2개) 전송 완료! (바닥 매집 누적: {dbg.get('s6_count', 0)}회)")
