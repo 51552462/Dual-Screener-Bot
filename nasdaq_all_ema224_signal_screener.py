@@ -1,17 +1,21 @@
-# Dante_US_YJ_1D_AI_Pro.py
+# Dante_US_Ohdole_1D_AI_Pro.py
 import os, re, time, threading, queue, concurrent.futures
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib; matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import requests
 import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv() 
@@ -20,24 +24,22 @@ if not GEMINI_API_KEY:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-TELEGRAM_TOKEN    = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
+TELEGRAM_TOKEN    = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 TELEGRAM_CHAT_ID  = "6838834566"
 SEND_TELEGRAM     = True
 telegram_queue = queue.Queue()
 
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_YJ_1D')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Ohdole_1D')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# ⭐️ AI 에러 원인 추적기 및 3회 재시도 로직 ⭐️
 def generate_ai_report(ticker_str: str, company_name: str) -> str:
     for attempt in range(3):
         try:
@@ -52,11 +54,12 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
             business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
             financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
 
+            today_date = datetime.now().strftime('%Y년 %m월 %d일')
             prompt = f"""
             너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
-            아래 종목의 데이터를 바탕으로 팩트 중심의 핵심 투자 메모를 작성해.
+            오늘 날짜는 {today_date}이야. 반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 투자 메모를 작성해.
             추상적이거나 감정적인 표현은 철저히 배제하고, 기관 보고서처럼 간결하고 명확하게 써.
-
+            
             [종목 정보]
             - 종목명: {company_name} ({ticker_str})
             - 섹터: {sector} / 산업군: {industry}
@@ -68,13 +71,16 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
             1. 섹터 종류: (간단한 설명)
             2. 업계 점유율/규모: (시총 규모 및 지위)
             3. 최근 실적: (흑자/적자 여부, 핵심 지표)
-            4. 미래 모멘텀: (파이프라인, 기대감 등)
+            4. 미래 모멘텀: (파이프라인, 최신 호재/악재 등)
             5. 기업 전망: (짧고 굵은 전망)
             """
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+            )
             return response.text.strip()
         except Exception as e: 
-            print(f"❌ [{company_name}] AI 에러 (시도 {attempt+1}/3): {e}")
             time.sleep(3)
             
     return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
@@ -82,7 +88,7 @@ def generate_ai_report(ticker_str: str, company_name: str) -> str:
 def get_us_ticker_list():
     try:
         df = pd.concat([fdr.StockListing('NASDAQ'), fdr.StockListing('NYSE'), fdr.StockListing('AMEX')])
-        df = df[df['Symbol'].str.isalpha()]
+        df = df[df['Symbol'].str.isalpha()] 
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
@@ -92,17 +98,19 @@ def telegram_sender_daemon():
         item = telegram_queue.get()
         if item is None: break
         img_path, caption = item
-        
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
 
         if SEND_TELEGRAM:
+            is_success = False
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=20, verify=False)
-                    if res.status_code == 200: break
+                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
+                    if res.status_code == 200: 
+                        is_success = True
+                        break
                     elif res.status_code == 429: time.sleep(3)
-                except Exception as e: time.sleep(2)
+                except: time.sleep(2)
             time.sleep(1.5)
         telegram_queue.task_done()
 
@@ -114,110 +122,132 @@ def calculate_trust_score(c, e60, *sig_arrays):
     runup_ratio = (c[-1] / lowest_60) - 1
     if runup_ratio > 0.50: score -= 4     
     elif runup_ratio > 0.30: score -= 2   
-    lookback = min(100, len(c))
-    for i in range(len(c) - lookback, len(c) - 1):
-        is_sig = any(arr[i] for arr in sig_arrays)
-        if is_sig:
-            valid = True
-            entry_price = c[i]
-            for j in range(i + 1, len(c)):
-                if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
-            if valid: score += 2 
     return max(1, min(10, score))
 
-def compute_yj_1d(df_raw: pd.DataFrame):
+def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
-    for n in [10, 20, 30, 60, 112, 224, 448]:
-        df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
-    df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
     
-    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
-    av3 = df['AvgVol3'].values
-    ema10, ema20, ema30, ema60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
-    ema112, ema224, ema448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
+    df['MA5'] = df['Close'].rolling(window=5).mean()
+    df['MA20'] = df['Close'].rolling(window=20).mean()
+    df['MA60'] = df['Close'].rolling(window=60).mean()
+    df['MA112'] = df['Close'].rolling(window=112).mean()
+    df['MA224'] = df['Close'].rolling(window=224).mean()
+    df['MA448'] = df['Close'].rolling(window=448).mean()
 
-    moneyOk = (c * v) >= 1_000_000
-    priceOk = c >= 1.0
-    isBullish = c > o
-    with np.errstate(invalid='ignore'): volSpike3 = v >= (np.nan_to_num(av3, nan=1.0) * 3)
-    with np.errstate(invalid='ignore'): volSpike5 = v >= (np.nan_to_num(av3, nan=1.0) * 5)
+    c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
+    ma5, ma60, ma112, ma224, ma448 = df['MA5'].values, df['MA60'].values, df['MA112'].values, df['MA224'].values, df['MA448'].values
 
-    alignedNow = (ema10 > ema20) & (ema20 > ema30)
+    money_curr = c * v
+    is_downtrend = (ma448 > ma224) & (ma224 > ma112)
+    is_basement = c < ma112
+    is_env_ok = is_downtrend & is_basement
+
+    prev_vol = np.roll(v, 1); prev_vol[0] = np.inf
+    is_vol_ok = v >= (prev_vol * 1.0)
+    
+    # 💡 미국장 전용 허들 (3달러 이상, 5백만 달러 이상)
+    is_money_ok = money_curr >= 5_000_000
+    is_price_ok = c >= 3.0
+    is_power_ok = is_vol_ok & is_money_ok & is_price_ok
+
+    prev_ma5 = np.roll(ma5, 1); prev_ma5[0] = np.inf
     prev_c = np.roll(c, 1); prev_c[0] = 0
-    prev_e224 = np.roll(ema224, 1); prev_e224[0] = 0
-    cross224 = (c > ema224) & (prev_c <= prev_e224)
-    y_sig1 = cross224 & isBullish & alignedNow & volSpike3
+    is_breakout = (c > ma5) & (prev_c <= prev_ma5)
     
-    s1_T_3 = np.roll(y_sig1, 3); s1_T_3[:3] = False
-    s1_T_2 = np.roll(y_sig1, 2); s1_T_2[:2] = False
-    s1_T_1 = np.roll(y_sig1, 1); s1_T_1[0] = False
-    bars_since_s1_is_3 = s1_T_3 & (~s1_T_2) & (~s1_T_1) & (~y_sig1)
-    holdNow = (c > ema224) & (ema10 > ema20) & (ema20 > ema30)
-    holdNow_1 = np.roll(holdNow, 1); holdNow_1[0] = False
-    holdNow_2 = np.roll(holdNow, 2); holdNow_2[:2] = False
-    allAligned = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224) & (ema224 > ema448)
-    y_sig2 = bars_since_s1_is_3 & holdNow & holdNow_1 & holdNow_2 & allAligned
+    prev_high1 = np.roll(h, 1); prev_high1[0] = np.inf
+    prev_high2 = np.roll(h, 2); prev_high2[:2] = np.inf
+    high_prev_2 = np.maximum(prev_high1, prev_high2)
+    is_engulfing = (c > o) & (c > high_prev_2)
+    
+    sig_1 = is_env_ok & is_power_ok & is_breakout & is_engulfing
 
-    condBaseJ = isBullish & volSpike5 & moneyOk & priceOk
-    align112 = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112)
-    align224 = align112 & (ema112 > ema224)
-    align448 = align224 & (ema224 > ema448) 
-   
-    prev_a448 = np.roll(align448, 1); prev_a448[0] = False 
-    j_sig3 = condBaseJ & align448 & (~prev_a448)
-    j_sig2 = condBaseJ & align224 & (~j_sig3)
-    j_sig1 = condBaseJ & align112 & (~align224)
+    is_yangbong = c > o
+    threshold = o + ((c - o) * 0.33)
+    is_riding = ma5 <= threshold
+    sig_2 = is_env_ok & is_power_ok & is_yangbong & is_riding & (~sig_1)
 
-    is_y1, is_y2 = y_sig1[-1], y_sig2[-1]
-    is_j1, is_j2, is_j3 = j_sig1[-1], j_sig2[-1], j_sig3[-1]
+    sig1_hit, sig2_hit = sig_1[-1], sig_2[-1]
+    if not (sig1_hit or sig2_hit): return False, "", df, {}
 
-    if not (is_y1 or is_y2 or is_j1 or is_j2 or is_j3): return False, "", df, {}
-
-    if is_j3: sig_type = "J (448 완성)"
-    elif is_j2: sig_type = "J (224 상태)"
-    elif is_j1: sig_type = "J (112 상태)"
-    elif is_y2: sig_type = "Y (유지)"
-    else: sig_type = "Y (신규)"
-
-    trust_score = calculate_trust_score(c, ema60, y_sig1, y_sig2, j_sig1, j_sig2, j_sig3)
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": int(s67_counts[-1])}
+    sig_type = "E (장악형)" if sig1_hit else "E (안착형)"
+    trust_score = calculate_trust_score(c, ma60, sig_1, sig_2)
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score}
 
 chart_lock = threading.Lock()
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
         try:
-            timestamp_ms = int(time.time() * 1000000)
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}.png")
+            plt.rcParams['font.family'] = 'NanumGothic'
+            plt.rcParams['axes.unicode_minus'] = False
+            
+            timestamp_ms = int(time.time() * 1000)
+            vol_suffix = "wVol" if show_volume else "noVol"
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
+            
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[🎯 {dbg['sig_type']}] US Market: {code} (1D)\nClose: ${dbg['last_close']:.2f}"
-            mc = mpf.make_marketcolors(up='green', down='red', volume='inherit')
-            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':')
+            df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
+            if df_cut.empty or len(df_cut) < 5: return None
+
+            c, o, h, l = df_cut['Close'].iloc[-1], df_cut['Open'].iloc[-1], df_cut['High'].iloc[-1], df_cut['Low'].iloc[-1]
+            v = int(df_cut['Volume'].iloc[-1])
+            prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
+            diff = c - prev_c
+            diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
+            
+            sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+            
+            bg_color, grid_color, text_main, text_sub = '#131722', '#2A2E39', '#FFFFFF', '#8A91A5'
+            color_up, color_down = '#FF3B69', '#00B4D8'
+            color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
+
+            signal_marker = pd.Series(np.nan, index=df_cut.index)
+            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
+            signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
+
+            mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
+            s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
+            
             plt.close('all')
-            mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
-            plt.close('all')
+            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True)
+
+            fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
+            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
+            fig.text(0.05, 0.88, "1D / US", fontsize=12, color=text_sub, ha='left')
+
+            right_text1 = f"Close: ${c:,.2f} ({sign} ${abs(diff):,.2f}, {sign} {abs(diff_pct):.2f}%)"
+            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
+
+            right_text2 = f"Vol: {v:,}  |  O: ${o:,.2f}  H: ${h:,.2f}  L: ${l:,.2f}"
+            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
+            fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
+
+            fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
+            plt.close(fig)
             return path
-        except: return None
+        except Exception as e:
+            return None
 
 def scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
+    
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 1번 Y/J 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 1번(오돌이) 스캔 시작!")
+
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
-    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     chunk_size = 100 
+    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
-        tickers_str = " ".join(chunk)
         df_batch = None
         fallback_dict = {}
 
         try:
-            df_batch = yf.download(tickers_str, interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+            df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         except:
             def fetch_single(tk):
                 try:
@@ -226,12 +256,13 @@ def scan_market_1d():
                 except: pass
             with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
                 executor.map(fetch_single, chunk)
-
+        
         for tk in chunk:
             tracker['scanned'] += 1
             info = ticker_to_info.get(tk)
             if not info: continue
             name, code = info['name'], info['code']
+
             try:
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
@@ -248,13 +279,17 @@ def scan_market_1d():
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
-                    hit, sig_type, df, dbg = compute_yj_1d(df_ticker)
+                    hit, sig_type, df, dbg = compute_ohdole_1d(df_ticker)
+                    
                     if hit:
                         tracker['hits'] += 1
-                        chart_path = save_chart(df, code, name, tracker['hits'], dbg)
-                        if chart_path:
+                        
+                        # 1️⃣ 본캐용 다크 차트 (거래량 포함)
+                        main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
+                        if main_chart_path:
                             ai_fact_check = generate_ai_report(code, name)
-                            caption = (
+                            
+                            main_caption = (
                                 f"🎯 [{dbg['sig_type']}]\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg['last_close']:.2f}\n"
@@ -263,29 +298,45 @@ def scan_market_1d():
                                 f"- 양봉 길이만큼 분할매수\n"
                                 f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
                                 f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                                f"💡 [기업 팩트체크]\n"
+                                f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_fact_check}\n\n"
-                                f"⚠️ [전문가 코멘트]\n"
-                                f"본 분석은 실시간 데이터 기반 팩트 요약본입니다. 시장 상황과 개인의 관점에 따라 해석이 다를 수 있으므로, 반드시 개별적인 추가 분석을 권장합니다.\n"
-                                f"\n💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                                f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
                             )
-                            telegram_queue.put((chart_path, caption))
-            except: pass
+                            telegram_queue.put((main_chart_path, main_caption))
+
+                            # 2️⃣ 쓰레드 홍보용 다크 차트 (거래량 제거, 텍스트 깔끔하게)
+                            threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
+                            if threads_chart_path:
+                                threads_caption = (
+                                    f"🏢 종목명: {name} ({code})\n"
+                                    f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                    f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
+                                )
+                                telegram_queue.put((threads_chart_path, threads_caption))
+                                
+                            print(f"\n✅ [{name}] 미국장 오돌이 본캐 1개 + 홍보용 1개 (총 2개) 전송 완료!")
+            except Exception as e:
+                pass
+                
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
-    print(f"\n✅ [미국장 1번 Y/J 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
-# ⭐️ 미국 1번 스케줄러 (09:30, 11:30, 13:30) ⭐️
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
+
+    print(f"\n✅ [미국장 1번 E 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [1번 미국장 검색기] 09:30 / 11:30 / 13:30 대기 중...")
+    print("🕒 [1번 미국장 오돌이 검색기] 09:30 / 12:00 / 14:30 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
-        if (now_ny.hour == 9 and now_ny.minute == 30) or (now_ny.hour == 11 and now_ny.minute == 30) or (now_ny.hour == 13 and now_ny.minute == 30):
+        if (now_ny.hour == 9 and now_ny.minute == 30) or (now_ny.hour == 12 and now_ny.minute == 0) or (now_ny.hour == 14 and now_ny.minute == 30):
             print(f"🚀 [1번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    scan_market_1d()
