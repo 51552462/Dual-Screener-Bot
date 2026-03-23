@@ -342,19 +342,22 @@ def scan_market_1d():
                     f"⚖️ [건강한 투자를 위한 기준]\n"
                     f"• 관심종목 편입: 타이밍이 올때까지 천천히 기다리세요.\n"
                     f"• 단기 진입 시: 실전 매매에 참여하신다면, 진입 시가 이탈 시 칼 같은 손절 필수.\n\n"
-                    f"💡 [AI 비즈니스 요약]\n"
-                    f"{ai_fact_check}\n\n"
-                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
-                )
+                   f"💡 [AI 비즈니스 요약]\n"
+                                f"{ai_fact_check}\n\n"
+                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                                f"⚠️ [면책 조항]\n"
+                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                            )
                 telegram_queue.put((main_chart_path, main_caption))
 
                 threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
                 if threads_chart_path:
                     threads_caption = (
-                        f"🏢 종목명: {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
-                    )
+                                f"🏢 종목명: {name} ({code})\n"
+                                f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                                f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
+                                f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                            )
                     telegram_queue.put((threads_chart_path, threads_caption))
                 
                 print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료 (누적 타점: {p_count}회)")
