@@ -174,7 +174,6 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
 
     condBullAlign = (ema112 > ema224) & (ema224 > ema448)
     
-    # ⭐️ 한국장과 동일한 3봉 내 15% 상승 실패 시 누적, 성공 시 리셋 로직 ⭐️
     p_counts = np.zeros(len(c), dtype=int)
     current_p_count = 0
     wait_idx = -1
@@ -238,24 +237,33 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
             
+            # 💡 [핵심] 비율 스위칭 (본캐 넓게 / 쓰레드 정방형)
+            if show_volume:
+                custom_figsize = (11, 6.5) 
+                title_y, sub_y = 0.93, 0.88
+            else:
+                custom_figsize = (9, 9)    
+                title_y, sub_y = 0.94, 0.90
+
             plt.close('all')
-            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True)
+            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=custom_figsize, tight_layout=False, returnfig=True)
 
             fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
-            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
-            fig.text(0.05, 0.88, "1D / US", fontsize=12, color=text_sub, ha='left')
+            fig.text(0.05, title_y, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
+            fig.text(0.05, sub_y, "1D / US", fontsize=12, color=text_sub, ha='left')
 
             right_text1 = f"Close: ${c:,.2f} ({sign} ${abs(diff):,.2f}, {sign} {abs(diff_pct):.2f}%)"
-            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
+            fig.text(0.95, title_y, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
 
             right_text2 = f"Vol: {v:,}  |  O: ${o:,.2f}  H: ${h:,.2f}  L: ${l:,.2f}"
-            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
+            fig.text(0.95, sub_y, right_text2, fontsize=12, color=text_sub, ha='right')
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
             fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
             plt.close(fig)
             return path
         except Exception as e:
+            print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
 
 def scan_market_1d():
@@ -315,7 +323,6 @@ def scan_market_1d():
                         if main_chart_path:
                             ai_fact_check = generate_ai_report(code, name)
                             
-                            # ⭐️ 누적 횟수에 따른 강조 카피라이팅
                             p_count = dbg.get('p_count', 1)
                             if p_count >= 3:
                                 intro_title = "🌟 [진입타점]"
@@ -324,6 +331,7 @@ def scan_market_1d():
                                 intro_title = "💎 [관심종목]"
                                 intro_desc = "무관심할때 조금씩 관심 가져주기."
                             
+                            # 💡 본캐 캡션 + 면책 조항
                             main_caption = (
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
@@ -332,7 +340,7 @@ def scan_market_1d():
                                 f"⚖️ [건강한 투자를 위한 기준]\n"
                                 f"• 관심종목 편입: 타이밍이 올때까지 천천히 기다리세요.\n"
                                 f"• 단기 진입 시: 실전 매매에 참여하신다면, 진입 시가 이탈 시 칼 같은 손절 필수.\n\n"
-                               f"💡 [AI 비즈니스 요약]\n"
+                                f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_fact_check}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
@@ -343,12 +351,13 @@ def scan_market_1d():
                             # 2️⃣ 쓰레드 홍보용 다크 차트 생성
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
-                               threads_caption = (
-                                f"🏢 종목명: {name} ({code})\n"
-                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                                f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                            )
+                                # 💡 홍보용 캡션 + 면책 조항
+                                threads_caption = (
+                                    f"🏢 종목명: {name} ({code})\n"
+                                    f"💰 현재가: ${dbg['last_close']:.2f}\n\n"
+                                    f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
+                                    f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                )
                                 telegram_queue.put((threads_chart_path, threads_caption))
                                 
                             print(f"\n✅ [{name}] 미국장 역매공파 본캐 1개 + 홍보용 1개 (총 2개) 전송 완료! (누적: {p_count}회)")
