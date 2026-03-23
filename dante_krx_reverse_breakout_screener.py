@@ -283,24 +283,14 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             return None
 
 def scan_market_1d():
-    # ⭐️ 1. 여기서부터 6줄이 새롭게 추가된 중복 방지 리셋 로직입니다.
-    global sent_today, last_run_date
-    kr_tz = pytz.timezone('Asia/Seoul')
-    today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
-    
-    if today_str != last_run_date:
-        sent_today.clear()
-        last_run_date = today_str
-
-    # ⭐️ 2. 여기서부터는 기존 코드와 동일하게 이어집니다.
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 3번(역매공파) 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 3번(역매공파) 스캔 시작! (무적 방어막 탑재 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
-
+    
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
@@ -310,7 +300,6 @@ def scan_market_1d():
         is_valid = False
         hit, sig_type, df, dbg = False, "", None, {}
         
-        # ⭐️ 일꾼 절대 사망 방지 방어막 (NaN 제거 및 예외처리) ⭐️
         try:
             df_raw = fdr.DataReader(code, start_date)
             if df_raw is not None and not df_raw.empty:
@@ -320,7 +309,7 @@ def scan_market_1d():
             if is_valid: 
                 hit, sig_type, df, dbg = compute_inverse_1d(df_raw)
         except Exception:
-            pass # 계산 꼬이는 불량주식 무시하고 무조건 전진
+            pass 
             
         hit_rank = 0
         with console_lock:
@@ -333,12 +322,10 @@ def scan_market_1d():
                 hit_rank = tracker['hits']
                 
         if hit:
-            # 1️⃣ 본캐용 다크 차트 생성 (거래량 O)
             main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
             if main_chart_path:
                 ai_fact_check = generate_kr_ai_report(code, name)
                 
-                # ⭐️ 기존 p_count 누적 로직 완벽 복구 ⭐️
                 p_count = dbg.get('p_count', 1)
                 if p_count >= 3:
                     intro_title = "🌟 [진입타점]"
@@ -347,10 +334,9 @@ def scan_market_1d():
                     intro_title = "💎 [관심종목]"
                     intro_desc = "무관심할때 조금씩 관심 가져주기."
 
-                # 본캐용 상세 결과지 발송
                 main_caption = (
                     f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                     f"{intro_title}\n"
                     f"{intro_desc}\n\n"
                     f"⚖️ [건강한 투자를 위한 기준]\n"
@@ -362,17 +348,25 @@ def scan_market_1d():
                 )
                 telegram_queue.put((main_chart_path, main_caption))
 
-                # 2️⃣ 쓰레드 홍보용 다크 차트 생성 (거래량 X)
                 threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
                 if threads_chart_path:
                     threads_caption = (
                         f"🏢 종목명: {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                         f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
                     )
                     telegram_queue.put((threads_chart_path, threads_caption))
                 
                 print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료 (누적 타점: {p_count}회)")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        list(executor.map(worker, list(stock_list.iterrows())))
+        
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        telegram_queue.join()
+        
+    print(f"\n✅ [한국장 3번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
                             
     # 💡 원인 1 해결: 누락되었던 핵심 엔진! 일꾼들을 실제로 일하게 만듭니다.
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
