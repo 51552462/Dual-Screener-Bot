@@ -11,11 +11,11 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
+import matplotlib.font_manager as fm
 
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-import matplotlib.font_manager as fm
 
 # ==========================================
 # 🔑 .env 안전 파일 방식 적용
@@ -239,28 +239,18 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
-            
             if df_cut.empty or len(df_cut) < 5: return None
 
-            c = df_cut['Close'].iloc[-1]
-            o = df_cut['Open'].iloc[-1]
-            h = df_cut['High'].iloc[-1]
-            l = df_cut['Low'].iloc[-1]
+            c, o, h, l = df_cut['Close'].iloc[-1], df_cut['Open'].iloc[-1], df_cut['High'].iloc[-1], df_cut['Low'].iloc[-1]
             v = int(df_cut['Volume'].iloc[-1])
-            
             prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
             diff = c - prev_c
             diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
             
             sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
             
-            bg_color = '#131722'      
-            grid_color = '#2A2E39'    
-            text_main = '#FFFFFF'     
-            text_sub = '#8A91A5'      
-            color_up = '#FF3B69'      
-            color_down = '#00B4D8'    
-            
+            bg_color, grid_color, text_main, text_sub = '#131722', '#2A2E39', '#FFFFFF', '#8A91A5'
+            color_up, color_down = '#FF3B69', '#00B4D8'
             color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
 
             signal_marker = pd.Series(np.nan, index=df_cut.index)
@@ -269,17 +259,10 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
 
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
-            s = mpf.make_mpf_style(
-                marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, 
-                gridcolor=grid_color, gridstyle='--', y_on_right=True,
-                rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub}
-            )
+            s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
             
             plt.close('all')
-            fig, axes = mpf.plot(
-                df_cut, type="candle", volume=show_volume, addplot=ap,
-                style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True
-            )
+            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True)
 
             fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
             fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
@@ -290,12 +273,10 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
 
             right_text2 = f"Vol: {v:,}  |  O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
             fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
-
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
             fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
             plt.close(fig)
-            
             return path
         except Exception as e:
             print(f"\n❌ [{name}] 차트 에러: {e}")
@@ -352,42 +333,46 @@ def scan_market_1d():
                 hit_rank = tracker['hits']
                 
         if hit:
-                # 1️⃣ 본캐용 (거래량 포함된 다크 차트 1장 생성)
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
+            # 1️⃣ 본캐용 다크 차트 생성 (거래량 O)
+            main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
+            if main_chart_path:
+                ai_fact_check = generate_kr_ai_report(code, name)
                 
-                if main_chart_path:
-                    ai_fact_check = generate_kr_ai_report(code, name)
-                    
-                    # 본캐용 상세 캡션
-                    main_caption = (
-                        f"🎯 [{dbg['sig_type']}]\n\n"
-                        f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
-                        f"📉 [매수/손절 전략]\n"
-                        f"- 양봉 길이만큼 분할매수\n"
-                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
-                        f"{ai_fact_check}\n\n"
-                        f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
-                    )
-                    telegram_queue.put((main_chart_path, main_caption)) # 텔레그램에 1번 담음
-
-                    # 2️⃣ 쓰레드 홍보용 (거래량 뺀 다크 차트 1장 추가 생성)
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
-                    
-                    if threads_chart_path:
-                        # 홍보용 깔끔한 캡션
-                        threads_caption = (
-                            f"🏢 종목명: {name} ({code})\n"
-                            f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                            f"💡 시장의 주목을 받기 전, 검색기에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
-                        )
-                        telegram_queue.put((threads_chart_path, threads_caption)) # 텔레그램에 2번 담음
-                        
-                    print(f"\n✅ [{name}] 본캐용 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                # ⭐️ 기존 p_count 누적 로직 완벽 복구 ⭐️
+                p_count = dbg.get('p_count', 1)
+                if p_count >= 3:
+                    intro_title = "🌟 [진입타점]"
+                    intro_desc = "기준을 잡고 거기에 맞춰서 대응하고 매매하기."
                 else:
-                    print(f"\n⚠️ [{name}] 차트 생성 실패로 전송이 취소되었습니다.")
+                    intro_title = "💎 [관심종목]"
+                    intro_desc = "무관심할때 조금씩 관심 가져주기."
+
+                # 본캐용 상세 결과지 발송
+                main_caption = (
+                    f"🏢 {name} ({code})\n"
+                    f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                    f"{intro_title}\n"
+                    f"{intro_desc}\n\n"
+                    f"⚖️ [건강한 투자를 위한 기준]\n"
+                    f"• 관심종목 편입: 타이밍이 올때까지 천천히 기다리세요.\n"
+                    f"• 단기 진입 시: 실전 매매에 참여하신다면, 진입 시가 이탈 시 칼 같은 손절 필수.\n\n"
+                    f"💡 [AI 비즈니스 요약]\n"
+                    f"{ai_fact_check}\n\n"
+                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
+                )
+                telegram_queue.put((main_chart_path, main_caption))
+
+                # 2️⃣ 쓰레드 홍보용 다크 차트 생성 (거래량 X)
+                threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
+                if threads_chart_path:
+                    threads_caption = (
+                        f"🏢 종목명: {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                        f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
+                    )
+                    telegram_queue.put((threads_chart_path, threads_caption))
+                
+                print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료 (누적 타점: {p_count}회)")
                             
     # 💡 원인 1 해결: 누락되었던 핵심 엔진! 일꾼들을 실제로 일하게 만듭니다.
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
