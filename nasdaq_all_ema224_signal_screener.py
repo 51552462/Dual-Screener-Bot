@@ -128,52 +128,39 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    df['MA5'] = df['Close'].rolling(window=5).mean()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['MA112'] = df['Close'].rolling(window=112).mean()
-    df['MA224'] = df['Close'].rolling(window=224).mean()
-    df['MA448'] = df['Close'].rolling(window=448).mean()
+    # 💡 트뷰 로직대로 5, 10, 20, 30, 60, 112, 224, 448 EMA 세팅
+    for n in [5, 10, 20, 30, 60, 112, 224, 448]:
+        df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
-    ma5, ma60, ma112, ma224, ma448 = df['MA5'].values, df['MA60'].values, df['MA112'].values, df['MA224'].values, df['MA448'].values
+    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
+    e5, e30 = df['EMA5'].values, df['EMA30'].values
+    e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    money_curr = c * v
-    is_downtrend = (ma448 > ma224) & (ma224 > ma112)
-    is_basement = c < ma112
-    is_env_ok = is_downtrend & is_basement
-
-    prev_vol = np.roll(v, 1); prev_vol[0] = np.inf
-    is_vol_ok = v >= (prev_vol * 1.0)
-    
-    # 💡 미국장 전용 허들 (3달러 이상, 5백만 달러 이상)
-    is_money_ok = money_curr >= 5_000_000
+    # 미국장 기본 필터 (3달러, 5백만 달러)
+    is_money_ok = (c * v) >= 5_000_000
     is_price_ok = c >= 3.0
-    is_power_ok = is_vol_ok & is_money_ok & is_price_ok
+    cond_base = is_money_ok & is_price_ok
 
-    prev_ma5 = np.roll(ma5, 1); prev_ma5[0] = np.inf
-    prev_c = np.roll(c, 1); prev_c[0] = 0
-    is_breakout = (c > ma5) & (prev_c <= prev_ma5)
-    
-    prev_high1 = np.roll(h, 1); prev_high1[0] = np.inf
-    prev_high2 = np.roll(h, 2); prev_high2[:2] = np.inf
-    high_prev_2 = np.maximum(prev_high1, prev_high2)
-    is_engulfing = (c > o) & (c > high_prev_2)
-    
-    sig_1 = is_env_ok & is_power_ok & is_breakout & is_engulfing
+    # 1. 공통 양봉 조건
+    isBullish = c > o
 
-    is_yangbong = c > o
-    threshold = o + ((c - o) * 0.33)
-    is_riding = ma5 <= threshold
-    sig_2 = is_env_ok & is_power_ok & is_yangbong & is_riding & (~sig_1)
+    # 2. 핵심 필터: 112, 224, 448일선 완벽 정배열 (macroBull)
+    macroBull = (e112 > e224) & (e224 > e448)
 
-    sig1_hit, sig2_hit = sig_1[-1], sig_2[-1]
-    if not (sig1_hit or sig2_hit): return False, "", df, {}
+    # 3. 돌파 로직: 5일선이 30일선을 확실하게 돌파 (isStrictCrossUp30)
+    prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
+    prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
+    isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
 
-    sig_type = "E (장악형)" if sig1_hit else "E (안착형)"
-    trust_score = calculate_trust_score(c, ma60, sig_1, sig_2)
+    # 최종 시그널 산출
+    signal1 = isStrictCrossUp30 & isBullish & macroBull & cond_base
+
+    if not signal1[-1]: return False, "", df, {}
+
+    sig_type = "S1 (안전돌파)"
+    trust_score = calculate_trust_score(c, e60) # 신뢰도
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score}
-
+    
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
