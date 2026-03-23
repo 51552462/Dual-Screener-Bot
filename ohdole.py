@@ -375,7 +375,7 @@ def scan_market_1d():
                         threads_caption = (
                             f"🏢 종목명: {name} ({code})\n"
                             f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                            f"💡 시장의 주목을 받기 전, 검색기에 포착된 종목입니다. 투자의 참고 자료로 활용해 보세요!"
+                            f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
                         )
                         telegram_queue.put((threads_chart_path, threads_caption))
 
