@@ -200,11 +200,12 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk
     
-    # ⭐️ 오직 S6, S7 타점만 발송하도록 필터링 (한국장과 동일)
+    # ⭐️ S2, S6, S7 타점만 발송하도록 필터링 추가
+    hit2 = s2[-1] and cond_base[-1]
     hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit6 or hit7): 
+    if not (hit2 or hit6 or hit7): 
         return False, "", df, {}
 
     if hit6:
@@ -212,8 +213,10 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
             sig_type = f"💥 S6 (바닥 다지기 누적 {s6_counts[-1]}회 포착!)"
         else:
             sig_type = "🌱 S6 (바닥 다지기 첫 진입)"
-    else:
+    elif hit7:
         sig_type = "🚀 S7 (추세 전환 돌파)"
+    else:
+        sig_type = "✨ S2 (224 재정렬)"
 
     trust_score = calculate_trust_score(c, e60)
 
