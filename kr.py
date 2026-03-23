@@ -11,6 +11,7 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
+import matplotlib.font_manager as fm
 
 from google import genai
 from google.genai import types
