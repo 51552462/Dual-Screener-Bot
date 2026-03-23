@@ -15,6 +15,7 @@ import FinanceDataReader as fdr
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+import matplotlib.font_manager as fm
 
 # ==========================================
 # 🔑 .env 안전 파일 방식 적용
@@ -225,19 +226,80 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "p_count": int(p_counts[-1])}
 
 chart_lock = threading.Lock()
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict) -> str:
+
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
         try:
-            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{int(time.time()*1000)}.png")
+            plt.rcParams['font.family'] = 'NanumGothic'
+            plt.rcParams['axes.unicode_minus'] = False
+            
+            timestamp_ms = int(time.time() * 1000)
+            vol_suffix = "wVol" if show_volume else "noVol"
+            path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
+            
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
-            title = f"[🎯 {dbg['sig_type']}] {code} {name} (1D)\nClose: {dbg['last_close']:,.0f}원"
-            mc = mpf.make_marketcolors(up='red', down='blue', volume='inherit')
-            s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='yahoo', gridstyle=':', rc={'font.family': plt.rcParams['font.family']})
+            df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
+            
+            if df_cut.empty or len(df_cut) < 5: return None
+
+            c = df_cut['Close'].iloc[-1]
+            o = df_cut['Open'].iloc[-1]
+            h = df_cut['High'].iloc[-1]
+            l = df_cut['Low'].iloc[-1]
+            v = int(df_cut['Volume'].iloc[-1])
+            
+            prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
+            diff = c - prev_c
+            diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
+            
+            sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+            
+            bg_color = '#131722'      
+            grid_color = '#2A2E39'    
+            text_main = '#FFFFFF'     
+            text_sub = '#8A91A5'      
+            color_up = '#FF3B69'      
+            color_down = '#00B4D8'    
+            
+            color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
+
+            signal_marker = pd.Series(np.nan, index=df_cut.index)
+            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
+            signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
+
+            mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
+            s = mpf.make_mpf_style(
+                marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, 
+                gridcolor=grid_color, gridstyle='--', y_on_right=True,
+                rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub}
+            )
+            
             plt.close('all')
-            mpf.plot(df_cut, type="candle", volume=True, title=title, style=s, savefig=dict(fname=path, dpi=110, bbox_inches="tight"))
-            plt.close('all')
+            fig, axes = mpf.plot(
+                df_cut, type="candle", volume=show_volume, addplot=ap,
+                style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True
+            )
+
+            fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
+            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
+            fig.text(0.05, 0.88, "1D / KRX", fontsize=12, color=text_sub, ha='left')
+
+            right_text1 = f"Close: {c:,.0f} ({sign} {abs(diff):,.0f}, {sign} {abs(diff_pct):.2f}%)"
+            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
+
+            right_text2 = f"Vol: {v:,}  |  O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
+            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
+
+            fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
+
+            fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
+            plt.close(fig)
+            
             return path
-        except: return None
+        except Exception as e:
+            print(f"\n❌ [{name}] 차트 에러: {e}")
+            return None
 
 def scan_market_1d():
     # ⭐️ 1. 여기서부터 6줄이 새롭게 추가된 중복 방지 리셋 로직입니다.
@@ -290,38 +352,42 @@ def scan_market_1d():
                 hit_rank = tracker['hits']
                 
         if hit:
-            chart_path = save_chart(df, code, name, hit_rank, dbg)
-            if chart_path:
-                            # 💡 원인 2 해결: 한국장 AI 함수 이름으로 수정
-                            ai_fact_check = generate_kr_ai_report(code, name)
-                            
-                            # 💡 계산된 누적 횟수를 가져옵니다.
-                            p_count = dbg.get('p_count', 1)
-                            
-                            # ⭐️ 3회 이상 누적 시 : 강력한 시세 분출 임박 카피라이팅
-                            if p_count >= 3:
-                                intro_title = "🌟 [진입타점]"
-                                intro_desc = "기준을 잡고 거기에 맞춰서 대응하고 매매하기."
-                            # 1~2회 포착 시 : 기존 턴어라운드 초기 카피라이팅
-                            else:
-                                intro_title = "💎 [관심종목]"
-                                intro_desc = "무관심할때 조금씩 관심 가져주기."
+                # 1️⃣ 본캐용 (거래량 포함된 다크 차트 1장 생성)
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
+                
+                if main_chart_path:
+                    ai_fact_check = generate_kr_ai_report(code, name)
+                    
+                    # 본캐용 상세 캡션
+                    main_caption = (
+                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
+                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"{ai_fact_check}\n\n"
+                        f"💬 이 종목이 궁금하다면 채팅창에 '/질문 내용' 을 입력해 보세요!"
+                    )
+                    telegram_queue.put((main_chart_path, main_caption)) # 텔레그램에 1번 담음
 
-                            caption = (
-                                f"🏢 {name} ({code})\n"
-                                # 💡 원인 3 해결: 한국장 원화(원) 표기로 수정
-                                f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                                f"{intro_title}\n"
-                                f"{intro_desc}\n\n"
-                                f"⚖️ [건강한 투자를 위한 기준]\n"
-                                f"• 관심종목 편입: 타이밍이 올때까지 천천히 기다리세요.\n"
-                                f"• 단기 진입 시: 실전 매매에 참여하신다면, 진입 시가 이탈 시 칼 같은 손절 필수.\n\n"
-                                f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_fact_check}\n\n"
-                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요."
-                            )
-                            telegram_queue.put((chart_path, caption))
-                            print(f"\n✅ [{name}] 텔레그램 전송 대기열에 추가 완료 (누적 타점: {p_count}회)")
+                    # 2️⃣ 쓰레드 홍보용 (거래량 뺀 다크 차트 1장 추가 생성)
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
+                    
+                    if threads_chart_path:
+                        # 홍보용 깔끔한 캡션
+                        threads_caption = (
+                            f"🏢 종목명: {name} ({code})\n"
+                            f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
+                            f"💡 시장의 주목을 받기 전, 검색기에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
+                        )
+                        telegram_queue.put((threads_chart_path, threads_caption)) # 텔레그램에 2번 담음
+                        
+                    print(f"\n✅ [{name}] 본캐용 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                else:
+                    print(f"\n⚠️ [{name}] 차트 생성 실패로 전송이 취소되었습니다.")
                             
     # 💡 원인 1 해결: 누락되었던 핵심 엔진! 일꾼들을 실제로 일하게 만듭니다.
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
@@ -347,5 +413,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()  # 💡 스케줄러를 잠시 끄고
-    scan_market_1d()   # 🚀 스캔 함수를 직접 호출하여 즉시 실행
+    run_scheduler()  # 💡 스케줄러를 잠시 끄고
