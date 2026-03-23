@@ -139,23 +139,47 @@ def compute_signal(df_raw: pd.DataFrame):
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    moneyOk = (c * v) >= MIN_TRANS_MONEY
-    priceOk = c >= MIN_PRICE
+    moneyOk = (c * v) >= 100_000_000  # 한국장 기준 1억
+    priceOk = c >= 1000               # 한국장 기준 1000원
     isBullish = c > o
 
     align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
-    align448 = align112 & (e112 > e224) & (e224 > e448)
+    align224 = align112 & (e112 > e224)
+    align448 = align224 & (e224 > e448)
+
     longKeep448 = e224 > e448 
-    
+    longKeep224 = e112 > e224 
+    longKeep112 = e60 > e112  
+
     prev_align448 = np.roll(align448, 1); prev_align448[0] = False
+    prev_align224 = np.roll(align224, 1); prev_align224[0] = False
+    prev_align112 = np.roll(align112, 1); prev_align112[0] = False
+    
     prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
+    prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
+    prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
-
+    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
+    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
+    
     prev_c = np.roll(c, 1); prev_c[0] = 0
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
+
+    # ⭐️ 트뷰 S6 로직 (완전 바닥 탈출) 100% 적용
+    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
+    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
+    shortBull = (e10 > e20) & (e20 > e30)
+    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
     
+    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
+
+    # ⭐️ 트뷰 S7 로직 (중기 정배열 턴) 100% 적용
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
+
     s4 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
@@ -163,16 +187,9 @@ def compute_signal(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
+    s5 = np.zeros_like(c, dtype=bool) 
 
-    # S2, S3, S5, S6 (빈 껍데기, 나중에 여기에 로직 넣으시면 됩니다)
-    s2 = np.zeros_like(c, dtype=bool)
-    s3 = np.zeros_like(c, dtype=bool)
-    s5 = np.zeros_like(c, dtype=bool)
-    s6 = np.zeros_like(c, dtype=bool) 
-
+    # ⭐️ S6 타점 누적 및 중간 이빨 빠지면 리셋 로직
     s6_counts = np.zeros(len(c), dtype=int)
     current_s6_count = 0
     
@@ -187,6 +204,7 @@ def compute_signal(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk
     
+    # ⭐️ 오직 S6, S7 타점만 발송하도록 필터링
     hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
 
@@ -339,7 +357,7 @@ def scan_market_1d():
                     threads_caption = (
                         f"🏢 종목명: {name} ({code})\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"💡 시장의 주목을 받기 전, 기본기에 충실한 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
+                        f"💡 시장의 주목을 받기 전, 검색기에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!"
                     )
                     telegram_queue.put((threads_chart_path, threads_caption))
                 
