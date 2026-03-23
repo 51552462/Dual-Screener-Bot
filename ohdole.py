@@ -166,54 +166,40 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    # 1. 트레이딩뷰 지수이동평균(EMA) 세팅 (5, 30일선 및 장기선 세팅)
-    df['EMA5'] = df['Close'].ewm(span=5, adjust=False, min_periods=0).mean()
-    df['EMA30'] = df['Close'].ewm(span=30, adjust=False, min_periods=0).mean()
-    df['EMA60'] = df['Close'].ewm(span=60, adjust=False, min_periods=0).mean() # 신뢰도 계산용
-    df['EMA112'] = df['Close'].ewm(span=112, adjust=False, min_periods=0).mean()
-    df['EMA224'] = df['Close'].ewm(span=224, adjust=False, min_periods=0).mean()
-    df['EMA448'] = df['Close'].ewm(span=448, adjust=False, min_periods=0).mean()
+    # 💡 트뷰 로직과 동일하게 5, 10, 20, 30, 60, 112, 224, 448 EMA 세팅
+    for n in [5, 10, 20, 30, 60, 112, 224, 448]:
+        df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c = df['Close'].values
-    o = df['Open'].values
-    v = df['Volume'].values
-    ema5 = df['EMA5'].values
-    ema30 = df['EMA30'].values
-    ema60 = df['EMA60'].values
-    ema112 = df['EMA112'].values
-    ema224 = df['EMA224'].values
-    ema448 = df['EMA448'].values
+    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
+    e5, e30 = df['EMA5'].values, df['EMA30'].values
+    e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # ⭐️ 잡주 필터링 (동전주 및 거래대금 미달 종목 제외)
-    money_curr = c * v
-    is_money_ok = money_curr >= 100_000_000
+    # 한국장 기본 필터 (1000원, 1억)
+    is_money_ok = (c * v) >= 100_000_000
     is_price_ok = c >= 1000
+    cond_base = is_money_ok & is_price_ok
 
-    # 💡 1. 공통 조건: 양봉 필수
+    # 1. 공통 양봉 조건
     isBullish = c > o
 
-    # 💡 2. 핵심 필터: 112, 224, 448일선 완벽 정배열 (대세 상승장)
-    macroBull = (ema112 > ema224) & (ema224 > ema448)
+    # 2. ⭐️ 트뷰 핵심 필터: 112, 224, 448 완벽 정배열 (macroBull)
+    macroBull = (e112 > e224) & (e224 > e448)
 
-    # 💡 3. 돌파 로직: 5일선이 30일선을 "확실하게 돌파"
-    prev_ema5 = np.roll(ema5, 1)
-    prev_ema5[0] = 0
-    prev_ema30 = np.roll(ema30, 1)
-    prev_ema30[0] = np.inf
+    # 3. ⭐️ 트뷰 돌파 로직: 5일선이 30일선을 확실하게 상향 돌파 (isStrictCrossUp30)
+    prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
+    prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
+    isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
+
+    # 4. 최종 시그널 산출
+    signal1 = isStrictCrossUp30 & isBullish & macroBull & cond_base
+
+    # 타점이 아니면 컷
+    if not signal1[-1]: return False, "", df, {}
+
+    sig_type = "S1 (안전돌파)"
+    trust_score = calculate_trust_score(c, e60) 
     
-    isStrictCrossUp30 = (prev_ema5 < prev_ema30) & (ema5 > ema30)
-
-    # 💡 4. 최종 시그널 산출
-    signal = isStrictCrossUp30 & isBullish & macroBull & is_money_ok & is_price_ok
-
-    if not signal[-1]: 
-        return False, "", df, {}
-
-    # 결과지에 찍힐 이름은 기존 요청대로 "E" 유지
-    sig_type = "E"
-    trust_score = calculate_trust_score(c, ema60, signal)
-    
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s67_count": 0}
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score}
     
 chart_lock = threading.Lock()
 
@@ -389,7 +375,7 @@ def scan_market_1d():
                         threads_caption = (
                             f"🏢 종목명: {name} ({code})\n"
                             f"💰 현재가: {dbg['last_close']:,.0f}원\n\n"
-                            f"💡 시장의 주목을 받기 전, 검색기에 발굴된 종목입니다. 투자의 참고 자료로 활용해 보세요!"
+                            f"💡 시장의 주목을 받기 전, 검색기에 포착된 종목입니다. 투자의 참고 자료로 활용해 보세요!"
                         )
                         telegram_queue.put((threads_chart_path, threads_caption))
 
