@@ -204,20 +204,27 @@ def compute_signal(df_raw: pd.DataFrame):
 
     cond_base = moneyOk & priceOk
     
-    # ⭐️ 오직 S6, S7 타점만 발송하도록 필터링
+    # ⭐️ S2, S4, S6, S7 타점 발송 스위치 ON
+    hit2 = s2[-1] and cond_base[-1]
+    hit4 = s4[-1] and cond_base[-1]  # 💡 S4 타점 활성화
     hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit6 or hit7): 
+    if not (hit2 or hit4 or hit6 or hit7): 
         return False, "", df, {}
 
+    # 타점에 따른 텔레그램 카피라이팅
     if hit6:
         if s6_counts[-1] >= 2:
             sig_type = f"💥 S6 (바닥 다지기 누적 {s6_counts[-1]}회 포착!)"
         else:
             sig_type = "🌱 S6 (바닥 다지기 첫 진입)"
-    else:
+    elif hit7:
         sig_type = "🚀 S7 (추세 전환 돌파)"
+    elif hit4:
+        sig_type = "🎯 S4 (정배열 눌림 돌파)"  # 💡 S4 멘트 추가
+    else:
+        sig_type = "✨ S2 (224 재정렬)"
 
     trust_score = calculate_trust_score(c, e60, True)
     
