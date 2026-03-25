@@ -66,6 +66,7 @@ threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PR
 
 # 💡 2. 플랫폼별 4종 세트 생성 및 에러 방어막(Fallback) 구축
 def generate_ai_report(ticker_str: str, company_name: str):
+    import re # 정규식 모듈
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
@@ -73,41 +74,46 @@ def generate_ai_report(ticker_str: str, company_name: str):
         industry = info.get('industry', '해당 섹터')
         summary = str(info.get('longBusinessSummary', ''))[:100] + "..."
     except:
-        sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델을 구축 중입니다.'
+        sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델'
 
+    # 비상용 멘트도 종목마다 조금씩 다르게 팩트 기반으로 섞이도록 수정
     fb_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 최근 재무 데이터 갱신 중\n3. 모멘텀: {summary}"
-    fb_threads = f"👀 {company_name} 폼 미쳤네요. {sector} 쪽 수급 들어오는 거 보이시나요? 차트 자리 예술입니다. 킵해두세요!"
-    fb_blog = f"📌 오늘 알아볼 종목은 {company_name} ({ticker_str})입니다. 최근 {sector} 산업군에서 유의미한 흐름을 보여주고 있습니다. 바닥권 에너지가 응축되고 있네요."
-    fb_x = f"🔥 {ticker_str} 지금 자리 심상치 않음. {sector} 관련주 중 차트 제일 이쁨. 팩트체크 필수! #미국주식 #{ticker_str}"
-    fb_blind = f"형들 {company_name} 이거 봄? {sector} 쪽인데 지금 차트 바닥 다지고 머리 드는 중. 재무나 비즈니스 나쁘지 않은 듯. 워치리스트에 넣어놔라."
+    fb_threads = f"👀 {company_name} 자리 체크 필수! {sector} 쪽에 최근 자금이 쏠리면서 차트 밸런스가 잡히고 있습니다. 비즈니스도 나쁘지 않네요."
+    fb_blog = f"📌 오늘 분석할 종목은 {company_name} ({ticker_str})입니다. {industry} 분야에서 눈에 띄는 펀더멘탈을 유지 중이며, 바닥권 에너지가 응축되고 있습니다."
+    fb_x = f"🔥 {ticker_str} 지금 무조건 봐야 함. {sector} 대장주급 차트 흐름 나오는 중. 기업 팩트체크 완료! #미국주식 #{ticker_str}"
+    fb_blind = f"형들 {company_name} 차트 봄? {sector} 쪽인데 지금 완전 바닥 다지고 거래량 터지기 직전임. 워치리스트 ㄱㄱ"
 
     for attempt in range(3):
         try:
             prompt = f"""
-            너는 미국 주식 전문 탑 애널리스트이자 100만 팔로워 마케터야. 아래 [팩트 데이터]만 활용해서 5가지 버전의 글을 작성해. 인사말은 생략하고 대괄호 [ ] 로만 구분해서 출력해.
+            너는 미국 주식 전문 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 찾아 5가지 버전의 글을 작성해.
+            
+            ⚠️ [매우 중요 규칙]
+            1. 대괄호 [ ] 로만 정확히 섹션을 구분할 것. 기호나 굵은 글씨 절대 금지.
+            2. 무조건 '팩트(매출/이익 수치 %, 구체적인 비즈니스/파이프라인 이름)'를 포함할 것. 추상적이고 뻔한 헛소리 절대 금지.
+            3. 매번 똑같은 패턴 템플릿 쓰지 말고 생성할 때마다 문장 구조와 이모지를 완전히 다르게 쓸 것.
 
             [팩트 데이터]
-            종목: {company_name} ({ticker_str})
             섹터/산업: {sector} / {industry}
             비즈니스 요약: {summary}
 
             [출력 양식]
             [본캐]
-            1. 섹터: (어떤 사업인지 1줄 요약)
-            2. 실적: (매출 등 실적 1줄 요약)
-            3. 모멘텀: (향후 기대감 1줄 요약)
+            1. 섹터: (테마 1줄)
+            2. 실적: (팩트 수치 1줄)
+            3. 모멘텀: (앞으로의 호재 1줄)
             
             [쓰레드]
-            (트렌디하고 친근한 말투, 이모지 활용, 짧고 강렬하게 2~3문장. '데이터 분석 중' 금지)
+            (트렌디한 말투, 이모지, 구체적 팩트 포함 2~3문장)
             
             [블로그]
-            (정보 전달 위주의 깔끔한 전문가 말투, 신뢰감 있게 3~4문장)
+            (전문가 말투, 구체적 팩트 기반 3~4문장)
             
             [X]
-            (짧고 다급한 느낌, 팩트 위주, 관련 해시태그 2~3개 필수)
+            (다급한 느낌, 팩트 위주, 해시태그 2~3개)
             
             [블라인드]
-            (직장인 커뮤니티 특유의 시니컬한 반말/형들체, "ㅇㅇ형들 이거 봄?" 스타일 2~3문장)
+            (블라인드 주식게시판 반말/형들체, 팩트 포함 2~3문장)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -118,24 +124,19 @@ def generate_ai_report(ticker_str: str, company_name: str):
             if not response or not response.text:
                 time.sleep(2); continue
                 
-            report = response.text.strip()
+            # 💡 어떤 마크다운 기호가 붙어도 다 무시하고 찰떡같이 텍스트만 빼내는 무적의 정규식 파싱
+            report = response.text.replace('*', '').strip() 
             
-            def ext(text, s_tag, e_tag=None):
-                try:
-                    res = text.split(s_tag)[1]
-                    if e_tag: res = res.split(e_tag)[0]
-                    return res.strip()
-                except: return None
+            m_part = re.search(r'\[본캐\](.*?)(?=\[쓰레드\])', report, re.DOTALL)
+            th_part = re.search(r'\[쓰레드\](.*?)(?=\[블로그\])', report, re.DOTALL)
+            bg_part = re.search(r'\[블로그\](.*?)(?=\[X\])', report, re.DOTALL)
+            x_part = re.search(r'\[X\](.*?)(?=\[블라인드\])', report, re.DOTALL)
+            bl_part = re.search(r'\[블라인드\](.*)', report, re.DOTALL)
 
-            m_part = ext(report, "[본캐]", "[쓰레드]")
-            th_part = ext(report, "[쓰레드]", "[블로그]")
-            bg_part = ext(report, "[블로그]", "[X]")
-            x_part = ext(report, "[X]", "[블라인드]")
-            bl_part = ext(report, "[블라인드]")
+            if not (m_part and th_part and bg_part and x_part and bl_part): 
+                raise ValueError("파싱오류")
 
-            if not m_part or not th_part or not bl_part: raise ValueError("파싱오류")
-
-            return m_part, th_part, bg_part, x_part, bl_part
+            return m_part.group(1).strip(), th_part.group(1).strip(), bg_part.group(1).strip(), x_part.group(1).strip(), bl_part.group(1).strip()
         except:
             time.sleep(3)
             
@@ -160,89 +161,76 @@ def calculate_trust_score(c, e60):
     elif runup_ratio > 0.30: score -= 2   
     return max(1, min(10, score))
 
-def compute_nulrim_1d(df_raw: pd.DataFrame):
+# 💡 누락되었던 별점 채점기 추가
+def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
+    score = 0
+    change_pct = ((c - prev_c) / prev_c) * 100 if prev_c > 0 else 0
+    if 5.0 <= change_pct <= 8.5: score += 30
+    elif 8.5 < change_pct <= 10.0: score += 25
+    elif 10.0 < change_pct <= 15.0: score += 10
+    elif change_pct > 15.0: score += 0           
+    else: score += 20 
+        
+    embraced_count = 0
+    if l <= e10 <= c: embraced_count += 1
+    if l <= e20 <= c: embraced_count += 1
+    if l <= e30 <= c: embraced_count += 1
+    
+    if embraced_count == 3: score += 40
+    elif embraced_count == 2: score += 30
+    elif embraced_count == 1: score += 20
+    else:
+        if l > e10 and l > e20 and l > e30: score += 5  
+        else: score += 10
+            
+    if e10 > e20: score += 10
+    if e20 > e30: score += 10
+    if e30 > e60: score += 10
+    
+    if score >= 90: stars = "★★★★★"
+    elif score >= 80: stars = "★★★★☆"
+    elif score >= 65: stars = "★★★☆☆"
+    elif score >= 50: stars = "★★☆☆☆"
+    else: stars = "★☆☆☆☆"
+    return stars, score
+
+def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
-    for n in [10, 20, 30, 60, 112, 224, 448]:
+    
+    for n in [5, 10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c, o, h, v = df['Close'].values, df['Open'].values, df['High'].values, df['Volume'].values
-    e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
-    e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
+    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
+    e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    moneyOk = (c * v) >= MIN_MONEY_USD
-    priceOk = c >= MIN_PRICE_USD
+    is_money_ok = (c * v) >= 5_000_000
+    is_price_ok = c >= 3.0
+    cond_base = is_money_ok & is_price_ok
     isBullish = c > o
 
-    align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
-    align224 = align112 & (e112 > e224)
-    align448 = align224 & (e224 > e448)
-
-    longKeep448 = e224 > e448 
-    longKeep224 = e112 > e224 
-    longKeep112 = e60 > e112  
-
-    prev_align448 = np.roll(align448, 1); prev_align448[0] = False
-    prev_align224 = np.roll(align224, 1); prev_align224[0] = False
-    prev_align112 = np.roll(align112, 1); prev_align112[0] = False
+    macroBull = (e112 > e224) & (e224 > e448)
     
-    prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
-    prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
-    prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
+    # 💡 150일 장기 정배열 판독 (실제/참고) 추가
+    is_150_align = pd.Series(macroBull).rolling(150).sum().values == 150
 
-    s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
-    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
-    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
+    prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
+    prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
+    isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
+
+    signal1 = isStrictCrossUp30 & isBullish & macroBull & cond_base
+    if not signal1[-1]: return False, "", df, {}
+
+    prev_c = np.roll(c, 1); prev_c[0] = c[0]
+    stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
     
-    prev_c = np.roll(c, 1); prev_c[0] = 0
-    prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
-    raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-
-    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
-    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
-    shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
-    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
-
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
-
-    s4 = np.zeros_like(c, dtype=bool)
-    last_pullback_bar = -100
-    for i in range(len(c)):
-        if raw_s4[i] and (i - last_pullback_bar > 5):
-            s4[i] = True
-            last_pullback_bar = i
-
-    s5 = np.zeros_like(c, dtype=bool)
-
-    s6_counts = np.zeros(len(c), dtype=int)
-    current_s6_count = 0
-    for i in range(len(c)):
-        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s7[i]: current_s6_count = 0
-        if s6[i]: current_s6_count += 1
-        s6_counts[i] = current_s6_count
-
-    cond_base = moneyOk & priceOk
-    
-    hit2 = s2[-1] and cond_base[-1]
-    hit4 = s4[-1] and cond_base[-1] 
-    hit6 = s6[-1] and cond_base[-1]
-    hit7 = s7[-1] and cond_base[-1]
-
-    if not (hit2 or hit4 or hit6 or hit7): 
-        return False, "", df, {}
-
-    if hit6:
-        if s6_counts[-1] >= 2: sig_type = f"💥 S6 (바닥 다지기 누적 {s6_counts[-1]}회 포착!)"
-        else: sig_type = "🌱 S6 (바닥 다지기 첫 진입)"
-    elif hit7: sig_type = "🚀 S7 (추세 전환 돌파)"
-    elif hit4: sig_type = "🎯 S4 (정배열 눌림 돌파)" 
-    else: sig_type = "✨ S2 (224 재정렬)"
+    usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
+    sig_type = f"S1 | {stars} ({pt}점) {usage_tag}"
+    recommend = "단타, 스윙 / 종가배팅"
 
     trust_score = calculate_trust_score(c, e60)
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s6_count": int(s6_counts[-1])}
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "recommend": recommend}
 
 chart_lock = threading.Lock()
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
