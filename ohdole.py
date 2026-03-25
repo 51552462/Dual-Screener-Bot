@@ -30,12 +30,15 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
-TELEGRAM_TOKEN    = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
-TELEGRAM_CHAT_ID  = "6838834566"
-SEND_TELEGRAM     = True
-telegram_queue = queue.Queue()
+# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
+TELEGRAM_TOKEN_MAIN  = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
+TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg"
+TELEGRAM_CHAT_ID     = "6838834566"
+SEND_TELEGRAM        = True
 
-# ⭐️ 당일 중복 발송 방지용 기억 장치 추가
+q_main = queue.Queue()
+q_promo = queue.Queue()
+
 sent_today = set()
 last_run_date = ""
 
@@ -48,12 +51,12 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 
 ai_request_lock = threading.Lock()
 
-def generate_kr_ai_report(code: str, company_name: str) -> str:
+# 💡 2. 한국장 맞춤 팩트 수집 및 4가지 플랫폼 다중인격 생성
+def generate_kr_ai_report(code: str, company_name: str):
     sector = "정보 없음"
-    summary_parts = []
     headers = {'User-Agent': 'Mozilla/5.0'}
-    
-    # 1. 팩트 데이터 크롤링 (네이버 & 에프앤가이드)
+    fn_summary, naver_summary = [], []
+
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
@@ -65,28 +68,77 @@ def generate_kr_ai_report(code: str, company_name: str) -> str:
         res_fn = requests.get(f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}", headers=headers, timeout=5, verify=False)
         if res_fn.status_code == 200:
             tags = BeautifulSoup(res_fn.text, 'html.parser').select('ul#bizSummaryContent > li')
-            if tags: 
-                summary_parts = [t.text.strip() for t in tags]
-    except: pass
+            if tags: summary_parts = [t.text.strip() for t in tags]
+            else: summary_parts = []
+    except: summary_parts = []
 
-    # 2. 팩트 데이터 정제 (전망은 버리고 실적만 추출)
-    performance = "실적 팩트가 제공되지 않았습니다."
-    
-    if len(summary_parts) >= 2:
-        performance = summary_parts[1].replace("동사는", f"[{company_name}]은(는)")
-    elif len(summary_parts) == 1:
-        performance = summary_parts[0].replace("동사는", f"[{company_name}]은(는)")
+    performance = "실적 데이터 분석 중"
+    if len(summary_parts) >= 2: performance = summary_parts[1].replace("동사는", f"{company_name}은(는)")
+    elif len(summary_parts) == 1: performance = summary_parts[0].replace("동사는", f"{company_name}은(는)")
 
-    # 3. 전망을 없앤 초간단 팩트체크 구성
-    final_report = (
-        f"💡 [기업 핵심 팩트 (FnGuide 공식 데이터)]\n"
-        f"📌 주요 섹터/테마: {sector}\n\n"
-        f"📈 [최근 실적 (우상향 여부)]\n"
-        f"✔️ {performance}"
-    )
+    fb_main = f"1. 섹터: {sector}\n2. 실적: {performance[:50]}...\n3. 모멘텀: 기업 펀더멘탈 분석 중"
+    fb_threads = f"👀 {company_name} 폼 미쳤네요. {sector} 쪽 수급 들어오는 거 보이시나요? 차트 자리 예술입니다. 킵해두세요!"
+    fb_blog = f"📌 오늘 알아볼 종목은 {company_name} ({code})입니다. 최근 {sector} 테마에서 유의미한 흐름을 보여주고 있습니다. 바닥권 에너지가 응축되고 있네요."
+    fb_x = f"🔥 {company_name} 지금 자리 심상치 않음. {sector} 관련주 중 차트 제일 이쁨. 팩트체크 필수! #한국주식 #{company_name}"
+    fb_blind = f"형들 {company_name} 이거 봄? {sector} 쪽인데 지금 차트 바닥 다지고 머리 드는 중. 재무 나쁘지 않은 듯. 워치리스트에 넣어놔라."
 
-    return final_report
-    
+    for attempt in range(3):
+        try:
+            prompt = f"""
+            너는 한국 주식 전문 탑 애널리스트이자 100만 팔로워 마케터야. 아래 [팩트 데이터]만 활용해서 5가지 버전의 글을 작성해. 대괄호 [ ] 로만 구분해서 출력해.
+
+            [팩트 데이터]
+            종목: {company_name} ({code})
+            섹터/테마: {sector}
+            실적: {performance}
+
+            [출력 양식]
+            [본캐]
+            1. 섹터: (테마 1줄 요약)
+            2. 실적: (매출/이익 팩트 1줄 요약)
+            3. 모멘텀: (앞으로의 기대감 1줄 요약)
+            
+            [쓰레드]
+            (트렌디하고 친근한 말투, 이모지 활용, 짧고 강렬하게 2~3문장)
+            
+            [블로그]
+            (정보 전달 위주의 깔끔한 전문가 말투, 신뢰감 있게 3~4문장)
+            
+            [X]
+            (짧고 다급한 느낌, 팩트 위주, 관련 해시태그 필수)
+            
+            [블라인드]
+            (직장인 커뮤니티 특유의 시니컬한 반말/형들체, 2~3문장)
+            """
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+            )
+            if not response or not response.text:
+                time.sleep(2); continue
+                
+            report = response.text.strip()
+            
+            def ext(text, s_tag, e_tag=None):
+                try:
+                    res = text.split(s_tag)[1]
+                    if e_tag: res = res.split(e_tag)[0]
+                    return res.strip()
+                except: return None
+
+            m_part = ext(report, "[본캐]", "[쓰레드]")
+            th_part = ext(report, "[쓰레드]", "[블로그]")
+            bg_part = ext(report, "[블로그]", "[X]")
+            x_part = ext(report, "[X]", "[블라인드]")
+            bl_part = ext(report, "[블라인드]")
+
+            if not m_part or not th_part or not bl_part: raise ValueError("파싱오류")
+            return m_part, th_part, bg_part, x_part, bl_part
+        except:
+            time.sleep(3)
+    return fb_main, fb_threads, fb_blog, fb_x, fb_blind
+
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -99,50 +151,31 @@ def get_krx_list_kind():
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-def telegram_sender_daemon():
+def telegram_sender_daemon(target_queue, token):
     while True:
-        item = telegram_queue.get()
+        item = target_queue.get()
         if item is None: break
         img_path, caption = item
-        
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
         
         if SEND_TELEGRAM:
-            is_success = False
             for attempt in range(3):
                 try:
-                    # 💡 이미지가 있으면 [차트+글] 전송
                     if img_path: 
                         with open(img_path, 'rb') as f:
-                            res = requests.post(
-                                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
-                                params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
-                                files={"photo": f}, 
-                                timeout=60, verify=False
-                            )
-                    # 💡 이미지가 없으면 [텍스트만] 깔끔하게 전송
+                            res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
                     else:
-                        res = requests.post(
-                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                            json={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption}, 
-                            timeout=60, verify=False
-                        )
+                        res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption}, timeout=60, verify=False)
 
-                    if res.status_code == 200: 
-                        if img_path: print(f"\n✅ 텔레그램 전송 성공: {img_path}")
-                        is_success = True
-                        break
-                    elif res.status_code == 429: 
-                        time.sleep(3)
-                except requests.exceptions.ReadTimeout:
-                    print(f"\n⚠️ 텔레그램 서버 응답 지연 (중복 방지를 위해 패스합니다.)")
-                    break
-                except: 
-                    time.sleep(2)
+                    if res.status_code == 200: break
+                    elif res.status_code == 429: time.sleep(3)
+                except requests.exceptions.ReadTimeout: break
+                except: time.sleep(2)
             time.sleep(1.5)
-        telegram_queue.task_done()
+        target_queue.task_done()
 
-threading.Thread(target=telegram_sender_daemon, daemon=True).start()
+threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
+threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
 def calculate_trust_score(c, e60, *sig_arrays):
     score = 5 
@@ -162,47 +195,78 @@ def calculate_trust_score(c, e60, *sig_arrays):
             if valid: score += 2 
     return max(1, min(10, score)) 
 
+# 💡 3. S1 별점 채점 알고리즘
+def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
+    score = 0
+    change_pct = ((c - prev_c) / prev_c) * 100 if prev_c > 0 else 0
+    if 5.0 <= change_pct <= 8.5: score += 30
+    elif 8.5 < change_pct <= 10.0: score += 25
+    elif 10.0 < change_pct <= 15.0: score += 10
+    elif change_pct > 15.0: score += 0           
+    else: score += 20 
+        
+    embraced_count = 0
+    if l <= e10 <= c: embraced_count += 1
+    if l <= e20 <= c: embraced_count += 1
+    if l <= e30 <= c: embraced_count += 1
+    
+    if embraced_count == 3: score += 40
+    elif embraced_count == 2: score += 30
+    elif embraced_count == 1: score += 20
+    else:
+        if l > e10 and l > e20 and l > e30: score += 5  
+        else: score += 10
+            
+    if e10 > e20: score += 10
+    if e20 > e30: score += 10
+    if e30 > e60: score += 10
+    
+    if score >= 90: stars = "★★★★★"
+    elif score >= 80: stars = "★★★★☆"
+    elif score >= 65: stars = "★★★☆☆"
+    elif score >= 50: stars = "★★☆☆☆"
+    else: stars = "★☆☆☆☆"
+    return stars, score
+
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
-    
-    # 💡 트뷰 로직과 동일하게 5, 10, 20, 30, 60, 112, 224, 448 EMA 세팅
     for n in [5, 10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c, o, v = df['Close'].values, df['Open'].values, df['Volume'].values
-    e5, e30 = df['EMA5'].values, df['EMA30'].values
+    # 💡 저가(Low) 포함 추출
+    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
     e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # 한국장 기본 필터 (1000원, 1억)
     is_money_ok = (c * v) >= 100_000_000
     is_price_ok = c >= 1000
     cond_base = is_money_ok & is_price_ok
-
-    # 1. 공통 양봉 조건
     isBullish = c > o
 
-    # 2. ⭐️ 트뷰 핵심 필터: 112, 224, 448 완벽 정배열 (macroBull)
     macroBull = (e112 > e224) & (e224 > e448)
+    
+    # 💡 150일 장기 정배열 체크 (실제/참고용 구분)
+    is_150_align = pd.Series(macroBull).rolling(150).sum().values == 150
 
-    # 3. ⭐️ 트뷰 돌파 로직: 5일선이 30일선을 확실하게 상향 돌파 (isStrictCrossUp30)
     prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
     prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
     isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
 
-    # 4. 최종 시그널 산출
     signal1 = isStrictCrossUp30 & isBullish & macroBull & cond_base
-
-    # 타점이 아니면 컷
     if not signal1[-1]: return False, "", df, {}
 
-    sig_type = "S1 (안전돌파)"
-    trust_score = calculate_trust_score(c, e60) 
+    # 💡 별점 및 추천 멘트 할당
+    prev_c = np.roll(c, 1); prev_c[0] = c[0]
+    stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
     
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score}
-    
-chart_lock = threading.Lock()
+    usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
+    sig_type = f"S1 | {stars} ({pt}점) {usage_tag}"
+    recommend = "단타, 스윙 / 종가배팅"
 
+    trust_score = calculate_trust_score(c, e60) 
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "recommend": recommend}
+    
 def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
     with chart_lock:
         try:
