@@ -67,6 +67,7 @@ threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PR
 
 # 💡 2. 플랫폼별 4종 세트 생성 및 에러 방어막(Fallback) 구축
 def generate_ai_report(ticker_str: str, company_name: str):
+    import re # 정규식 모듈
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
@@ -74,41 +75,46 @@ def generate_ai_report(ticker_str: str, company_name: str):
         industry = info.get('industry', '해당 섹터')
         summary = str(info.get('longBusinessSummary', ''))[:100] + "..."
     except:
-        sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델을 구축 중입니다.'
+        sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델'
 
+    # 비상용 멘트도 종목마다 조금씩 다르게 팩트 기반으로 섞이도록 수정
     fb_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 최근 재무 데이터 갱신 중\n3. 모멘텀: {summary}"
-    fb_threads = f"👀 {company_name} 폼 미쳤네요. {sector} 쪽 수급 들어오는 거 보이시나요? 차트 자리 예술입니다. 킵해두세요!"
-    fb_blog = f"📌 오늘 알아볼 종목은 {company_name} ({ticker_str})입니다. 최근 {sector} 산업군에서 유의미한 흐름을 보여주고 있습니다. 바닥권 에너지가 응축되고 있네요."
-    fb_x = f"🔥 {ticker_str} 지금 자리 심상치 않음. {sector} 관련주 중 차트 제일 이쁨. 팩트체크 필수! #미국주식 #{ticker_str}"
-    fb_blind = f"형들 {company_name} 이거 봄? {sector} 쪽인데 지금 차트 바닥 다지고 머리 드는 중. 재무나 비즈니스 나쁘지 않은 듯. 워치리스트에 넣어놔라."
+    fb_threads = f"👀 {company_name} 자리 체크 필수! {sector} 쪽에 최근 자금이 쏠리면서 차트 밸런스가 잡히고 있습니다. 비즈니스도 나쁘지 않네요."
+    fb_blog = f"📌 오늘 분석할 종목은 {company_name} ({ticker_str})입니다. {industry} 분야에서 눈에 띄는 펀더멘탈을 유지 중이며, 바닥권 에너지가 응축되고 있습니다."
+    fb_x = f"🔥 {ticker_str} 지금 무조건 봐야 함. {sector} 대장주급 차트 흐름 나오는 중. 기업 팩트체크 완료! #미국주식 #{ticker_str}"
+    fb_blind = f"형들 {company_name} 차트 봄? {sector} 쪽인데 지금 완전 바닥 다지고 거래량 터지기 직전임. 워치리스트 ㄱㄱ"
 
     for attempt in range(3):
         try:
             prompt = f"""
-            너는 미국 주식 전문 탑 애널리스트이자 100만 팔로워 마케터야. 아래 [팩트 데이터]만 활용해서 5가지 버전의 글을 작성해. 인사말은 생략하고 대괄호 [ ] 로만 구분해서 출력해.
+            너는 미국 주식 전문 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 찾아 5가지 버전의 글을 작성해.
+            
+            ⚠️ [매우 중요 규칙]
+            1. 대괄호 [ ] 로만 정확히 섹션을 구분할 것. 기호나 굵은 글씨 절대 금지.
+            2. 무조건 '팩트(매출/이익 수치 %, 구체적인 비즈니스/파이프라인 이름)'를 포함할 것. 추상적이고 뻔한 헛소리 절대 금지.
+            3. 매번 똑같은 패턴 템플릿 쓰지 말고 생성할 때마다 문장 구조와 이모지를 완전히 다르게 쓸 것.
 
             [팩트 데이터]
-            종목: {company_name} ({ticker_str})
             섹터/산업: {sector} / {industry}
             비즈니스 요약: {summary}
 
             [출력 양식]
             [본캐]
-            1. 섹터: (어떤 사업인지 1줄 요약)
-            2. 실적: (매출 등 실적 1줄 요약)
-            3. 모멘텀: (향후 기대감 1줄 요약)
+            1. 섹터: (테마 1줄)
+            2. 실적: (팩트 수치 1줄)
+            3. 모멘텀: (앞으로의 호재 1줄)
             
             [쓰레드]
-            (트렌디하고 친근한 말투, 이모지 활용, 짧고 강렬하게 2~3문장. '데이터 분석 중' 금지)
+            (트렌디한 말투, 이모지, 구체적 팩트 포함 2~3문장)
             
             [블로그]
-            (정보 전달 위주의 깔끔한 전문가 말투, 신뢰감 있게 3~4문장)
+            (전문가 말투, 구체적 팩트 기반 3~4문장)
             
             [X]
-            (짧고 다급한 느낌, 팩트 위주, 관련 해시태그 2~3개 필수)
+            (다급한 느낌, 팩트 위주, 해시태그 2~3개)
             
             [블라인드]
-            (직장인 커뮤니티 특유의 시니컬한 반말/형들체, "ㅇㅇ형들 이거 봄?" 스타일 2~3문장)
+            (블라인드 주식게시판 반말/형들체, 팩트 포함 2~3문장)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -119,24 +125,19 @@ def generate_ai_report(ticker_str: str, company_name: str):
             if not response or not response.text:
                 time.sleep(2); continue
                 
-            report = response.text.strip()
+            # 💡 어떤 마크다운 기호가 붙어도 다 무시하고 찰떡같이 텍스트만 빼내는 무적의 정규식 파싱
+            report = response.text.replace('*', '').strip() 
             
-            def ext(text, s_tag, e_tag=None):
-                try:
-                    res = text.split(s_tag)[1]
-                    if e_tag: res = res.split(e_tag)[0]
-                    return res.strip()
-                except: return None
+            m_part = re.search(r'\[본캐\](.*?)(?=\[쓰레드\])', report, re.DOTALL)
+            th_part = re.search(r'\[쓰레드\](.*?)(?=\[블로그\])', report, re.DOTALL)
+            bg_part = re.search(r'\[블로그\](.*?)(?=\[X\])', report, re.DOTALL)
+            x_part = re.search(r'\[X\](.*?)(?=\[블라인드\])', report, re.DOTALL)
+            bl_part = re.search(r'\[블라인드\](.*)', report, re.DOTALL)
 
-            m_part = ext(report, "[본캐]", "[쓰레드]")
-            th_part = ext(report, "[쓰레드]", "[블로그]")
-            bg_part = ext(report, "[블로그]", "[X]")
-            x_part = ext(report, "[X]", "[블라인드]")
-            bl_part = ext(report, "[블라인드]")
+            if not (m_part and th_part and bg_part and x_part and bl_part): 
+                raise ValueError("파싱오류")
 
-            if not m_part or not th_part or not bl_part: raise ValueError("파싱오류")
-
-            return m_part, th_part, bg_part, x_part, bl_part
+            return m_part.group(1).strip(), th_part.group(1).strip(), bg_part.group(1).strip(), x_part.group(1).strip(), bl_part.group(1).strip()
         except:
             time.sleep(3)
             
