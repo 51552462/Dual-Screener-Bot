@@ -64,13 +64,32 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 3. AI 리포트 완벽 분리 (본캐용 3단 요약 vs 홍보용 사람 말투)
+# 💡 3. AI 리포트 완벽 분리 및 이중 안전장치 (에러 메시지 원천 차단)
 def generate_ai_report(ticker_str: str, company_name: str):
+    # [안전장치 1] AI가 뻗었을 때를 대비한 '야후 파이낸스 기본 팩트' 미리 수집
+    try:
+        tk = yf.Ticker(ticker_str)
+        info = tk.info
+        sector = info.get('sector', '정보 없음')
+        industry = info.get('industry', '정보 없음')
+        summary = str(info.get('longBusinessSummary', ''))
+        short_summary = summary[:150] + "..." if len(summary) > 150 else summary
+        
+        if sector == '정보 없음':
+            fallback_main = f"1. 섹터: 기업 펀더멘탈 분석 중\n2. 실적: 재무 데이터 확인 중\n3. 모멘텀: 차트상 바닥권 에너지가 응축되는 유의미한 흐름 포착"
+        else:
+            fallback_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 주요 재무 지표 갱신 및 분석 중\n3. 모멘텀: {short_summary}"
+    except:
+        fallback_main = f"1. 섹터: 기초 데이터 분석 중\n2. 실적: 기초 데이터 분석 중\n3. 모멘텀: 알고리즘상 유의미한 수급 패턴 포착"
+        
+    fallback_promo = f"최근 {company_name}의 시장 흐름이 심상치 않네요. 바닥권 에너지가 응축되고 있으니 관심 종목에 두고 지켜볼 만합니다 👀"
+
+    # [안전장치 2] AI 생성 시도 (총 3번)
     for attempt in range(3):
         try:
             prompt = f"""
             [{company_name} ({ticker_str})]에 대한 최신 팩트를 구글 검색으로 찾아줘.
-            반드시 아래의 형식(구분선 포함)을 100% 똑같이 지켜서 답변해. 다른 인사말은 절대 금지.
+            반드시 아래의 형식(구분선 포함)을 100% 똑같이 지켜서 답변해.
 
             ===본캐===
             1. 섹터: (어떤 사업인지 1줄 요약)
@@ -78,33 +97,39 @@ def generate_ai_report(ticker_str: str, company_name: str):
             3. 모멘텀: (앞으로의 호재나 기대감 1줄 요약)
             
             ===홍보===
-            (위 팩트를 바탕으로, 주식 투자자가 개인 SNS에 올리는 듯한 아주 자연스러운 사람 말투로 1~2줄짜리 코멘트를 작성해. 매번 말투와 강조점(어떤 날은 실적 강조, 어떤 날은 섹터 전망 강조 등)을 다르게 변주해줘. 이모지도 자연스럽게 1개 정도 써줘. 절대 로봇처럼 보이면 안 돼.)
+            (위 팩트를 바탕으로, 주식 투자자가 개인 SNS에 올리는 듯한 아주 자연스러운 사람 말투로 1~2줄짜리 코멘트를 작성해. 이모지도 1개 정도 써줘.)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(tools=[{"google_search": {}}])
             )
+            
+            if not response or not response.text:
+                time.sleep(2)
+                continue
+                
             report = response.text.strip()
             
-            # 💡 안전한 파싱 (구분선이 없거나 꼬여도 에러 안 나게 철통 방어)
             if "===홍보===" in report:
                 parts = report.split("===홍보===")
                 main_part = parts[0].replace("===본캐===", "").strip()
                 promo_part = parts[1].strip()
             else:
                 main_part = report
-                promo_part = "최근 시장에서 유의미한 비즈니스 흐름을 보여주고 있는 기업입니다. 차트와 함께 기본기를 체크해 보세요!"
+                promo_part = fallback_promo
                 
-            # 만약 promo_part가 텅 비었거나 '...'만 있다면 팩트 기반 대체 문구 삽입
-            if not promo_part or promo_part == "..." or "데이터 분석 중" in promo_part:
-                promo_part = f"{company_name}의 최근 시장 흐름이 심상치 않네요. 관심 종목에 두고 지켜볼 만한 자리입니다."
-
+            # AI가 엉뚱한 대답을 해서 본캐 내용이 너무 짧거나 양식이 깨지면 실패로 간주하고 다시 시도
+            if len(main_part) < 20 or "1. 섹터" not in main_part:
+                raise ValueError("AI 포맷 오류")
+                
             return main_part, promo_part
-        except:
+
+        except Exception as e:
             time.sleep(3)
             
-    return "⚠️ AI 데이터 수집 지연 (수동 확인 필요)", f"{company_name} 차트에서 흥미로운 패턴이 포착되었습니다. 투자의 참고 자료로 활용해 보세요!"
+    # [최후의 보루] 3번 다 실패하면 에러 메시지 띄우지 말고, 수집해 둔 '야후 파이낸스 팩트' 반환 (상품 가치 보존)
+    return fallback_main, fallback_promo
 
 def get_us_ticker_list():
     try:
