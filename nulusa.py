@@ -64,40 +64,52 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 3. AI 리포트 완벽 분리 및 이중 안전장치 (에러 메시지 원천 차단)
+# 💡 3. 플랫폼별 4종 세트 생성 및 에러 방어막(Fallback) 구축
 def generate_ai_report(ticker_str: str, company_name: str):
-    # [안전장치 1] AI가 뻗었을 때를 대비한 '야후 파이낸스 기본 팩트' 미리 수집
+    # [안전장치 1] AI가 뻗었을 때를 대비해 야후 파이낸스 팩트 미리 수집
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        sector = info.get('sector', '정보 없음')
-        industry = info.get('industry', '정보 없음')
-        summary = str(info.get('longBusinessSummary', ''))
-        short_summary = summary[:150] + "..." if len(summary) > 150 else summary
-        
-        if sector == '정보 없음':
-            fallback_main = f"1. 섹터: 기업 펀더멘탈 분석 중\n2. 실적: 재무 데이터 확인 중\n3. 모멘텀: 차트상 바닥권 에너지가 응축되는 유의미한 흐름 포착"
-        else:
-            fallback_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 주요 재무 지표 갱신 및 분석 중\n3. 모멘텀: {short_summary}"
+        sector = info.get('sector', '관련 산업')
+        industry = info.get('industry', '해당 섹터')
+        summary = str(info.get('longBusinessSummary', ''))[:100] + "..."
     except:
-        fallback_main = f"1. 섹터: 기초 데이터 분석 중\n2. 실적: 기초 데이터 분석 중\n3. 모멘텀: 알고리즘상 유의미한 수급 패턴 포착"
-        
-    fallback_promo = f"최근 {company_name}의 시장 흐름이 심상치 않네요. 바닥권 에너지가 응축되고 있으니 관심 종목에 두고 지켜볼 만합니다 👀"
+        sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델을 구축 중입니다.'
 
-    # [안전장치 2] AI 생성 시도 (총 3번)
+    # [안전장치 2] AI 실패 시 출력될 종목 맞춤형 동적 멘트 (스팸 봇 방지)
+    fb_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 최근 재무 데이터 갱신 중\n3. 모멘텀: {summary}"
+    fb_threads = f"👀 {company_name} 폼 미쳤네요. {sector} 쪽 수급 들어오는 거 보이시나요? 차트 자리 예술입니다. 킵해두세요!"
+    fb_blog = f"📌 오늘 알아볼 종목은 {company_name} ({ticker_str})입니다. 최근 {sector} 산업군에서 유의미한 흐름을 보여주고 있습니다. 바닥권 에너지가 응축되고 있네요."
+    fb_x = f"🔥 {ticker_str} 지금 자리 심상치 않음. {sector} 관련주 중 차트 제일 이쁨. 팩트체크 필수! #미국주식 #{ticker_str}"
+    fb_blind = f"형들 {company_name} 이거 봄? {sector} 쪽인데 지금 차트 바닥 다지고 머리 드는 중. 재무나 비즈니스 나쁘지 않은 듯. 워치리스트에 넣어놔라."
+
     for attempt in range(3):
         try:
             prompt = f"""
-            [{company_name} ({ticker_str})]에 대한 최신 팩트를 구글 검색으로 찾아줘.
-            반드시 아래의 형식(구분선 포함)을 100% 똑같이 지켜서 답변해.
+            너는 미국 주식 전문 탑 애널리스트이자 100만 팔로워 마케터야. 아래 [팩트 데이터]만 활용해서 5가지 버전의 글을 작성해. 인사말은 생략하고 대괄호 [ ] 로만 구분해서 출력해.
 
-            ===본캐===
+            [팩트 데이터]
+            종목: {company_name} ({ticker_str})
+            섹터/산업: {sector} / {industry}
+            비즈니스 요약: {summary}
+
+            [출력 양식]
+            [본캐]
             1. 섹터: (어떤 사업인지 1줄 요약)
-            2. 실적: (매출/이익 등 최근 실적 1줄 요약)
-            3. 모멘텀: (앞으로의 호재나 기대감 1줄 요약)
+            2. 실적: (매출 등 실적 1줄 요약)
+            3. 모멘텀: (향후 기대감 1줄 요약)
             
-            ===홍보===
-            (위 팩트를 바탕으로, 주식 투자자가 개인 SNS에 올리는 듯한 아주 자연스러운 사람 말투로 1~2줄짜리 코멘트를 작성해. 이모지도 1개 정도 써줘.)
+            [쓰레드]
+            (트렌디하고 친근한 말투, 이모지 활용, 짧고 강렬하게 2문장. '데이터 분석 중' 금지)
+            
+            [블로그]
+            (정보 전달 위주의 깔끔한 전문가 말투, 신뢰감 있게 3~4문장)
+            
+            [X]
+            (짧고 다급한 느낌, 팩트 위주, 관련 해시태그 2~3개 필수)
+            
+            [블라인드]
+            (직장인 커뮤니티 특유의 시니컬한 반말/형들체, "ㅇㅇ형들 이거 봄?" 스타일 2~3문장)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -106,30 +118,33 @@ def generate_ai_report(ticker_str: str, company_name: str):
             )
             
             if not response or not response.text:
-                time.sleep(2)
-                continue
+                time.sleep(2); continue
                 
             report = response.text.strip()
             
-            if "===홍보===" in report:
-                parts = report.split("===홍보===")
-                main_part = parts[0].replace("===본캐===", "").strip()
-                promo_part = parts[1].strip()
-            else:
-                main_part = report
-                promo_part = fallback_promo
-                
-            # AI가 엉뚱한 대답을 해서 본캐 내용이 너무 짧거나 양식이 깨지면 실패로 간주하고 다시 시도
-            if len(main_part) < 20 or "1. 섹터" not in main_part:
-                raise ValueError("AI 포맷 오류")
-                
-            return main_part, promo_part
+            # 파이썬 억지 자르기가 아닌 스마트 파싱
+            def ext(text, s_tag, e_tag=None):
+                try:
+                    res = text.split(s_tag)[1]
+                    if e_tag: res = res.split(e_tag)[0]
+                    return res.strip()
+                except: return None
 
-        except Exception as e:
+            m_part = ext(report, "[본캐]", "[쓰레드]")
+            th_part = ext(report, "[쓰레드]", "[블로그]")
+            bg_part = ext(report, "[블로그]", "[X]")
+            x_part = ext(report, "[X]", "[블라인드]")
+            bl_part = ext(report, "[블라인드]")
+
+            # 하나라도 파싱에 실패하면 다시 시도
+            if not m_part or not th_part or not bl_part: raise ValueError("파싱오류")
+
+            return m_part, th_part, bg_part, x_part, bl_part
+        except:
             time.sleep(3)
             
-    # [최후의 보루] 3번 다 실패하면 에러 메시지 띄우지 말고, 수집해 둔 '야후 파이낸스 팩트' 반환 (상품 가치 보존)
-    return fallback_main, fallback_promo
+    # 3번 다 실패하면 에러 메시지 대신 준비된 '안전장치 팩트 멘트' 반환 (절대 뻗지 않음)
+    return fb_main, fb_threads, fb_blog, fb_x, fb_blind
 
 def get_us_ticker_list():
     try:
@@ -373,12 +388,12 @@ def scan_market_1d():
 
                         tracker['hits'] += 1
                         
-                        main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
+                       main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
                         if main_chart_path:
-                            # 💡 본캐용 3단 요약, 홍보용 팩트 티저 각각 받아오기
-                            ai_main_report, ai_promo_teaser = generate_ai_report(code, name)
+                            # 💡 5가지 버전 텍스트 받아오기
+                            ai_main, ai_threads, ai_blog, ai_x, ai_blind = generate_ai_report(code, name)
                             
-                            # 기존 본캐용 캡션 (유료방용 디테일)
+                            # 기존 본캐용 캡션 (변경 없음)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n\n"
                                 f"🏢 {name} ({code})\n"
@@ -390,24 +405,25 @@ def scan_market_1d():
                                 f"🌟 사전 매집/바닥턴 누적: 별x{dbg.get('s6_count', 0)}\n"
                                 f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_main_report}\n\n"
+                                f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 홍보용 캡션 (스팸 방지용 동적 텍스트 적용 & 새 홍보 봇으로 발송)
+                            # 2️⃣ 홍보 봇으로 보내는 다크 차트 (4가지 플랫폼 멘트 한방에 전송)
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
-                                threads_caption = (
-                                    f"🏢 종목명: {name} ({code})\n"
-                                    f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                    f"💬 {ai_promo_teaser}\n\n"
-                                    f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                                    f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                promo_caption = (
+                                    f"🏢 {name} ({code}) | 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
+                                    f"📱 [Threads 용]\n{ai_threads}\n\n"
+                                    f"📝 [네이버 블로그 용]\n{ai_blog}\n\n"
+                                    f"🐦 [X (트위터) 용]\n{ai_x}\n\n"
+                                    f"🏢 [블라인드 용]\n{ai_blind}\n\n"
+                                    f"⚠️ [면책 조항] 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다. 책임은 투자자 본인에게 있습니다."
                                 )
-                                q_promo.put((threads_chart_path, threads_caption))
+                                q_promo.put((threads_chart_path, promo_caption))
                                 
                             print(f"\n✅ [{name}] 미국장 눌림목 듀얼 발송 대기열 추가 (바닥 누적: {dbg.get('s6_count', 0)}회)")
             except Exception as e:
