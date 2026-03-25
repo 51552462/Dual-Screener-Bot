@@ -366,14 +366,24 @@ def scan_market_1d():
     kr_tz = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
     
+    # 💡 당일 중복 발송용 영구 파일 로드
+    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_ohdole.txt")
+    
     if today_str != last_run_date:
         sent_today.clear()
         last_run_date = today_str
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, "r") as f:
+                    lines = f.read().splitlines()
+                    if lines and lines[0] == today_str:
+                        sent_today = set(lines[1:])
+            except: pass
 
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 오돌이 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 1번(오돌이) 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -408,66 +418,63 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']
                         sent_today.add(code) 
+                        # 💡 파일에 기록 (영구 차단)
+                        try:
+                            with open(log_file, "w") as f:
+                                f.write(today_str + "\n")
+                                for s_code in sent_today: f.write(s_code + "\n")
+                        except: pass
                     
             if hit:
-                # 1️⃣ 본캐용 (차트+거래량 표시)
                 main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
                 if main_chart_path:
-                    ai_fact_check = generate_kr_ai_report(code, name)
+                    ai_main, ai_threads, ai_blog, ai_x, ai_blind = generate_kr_ai_report(code, name)
                     
+                    # 1️⃣ 본캐용 캡션
                     main_caption = (
-                        f"🎯 [{dbg['sig_type']}]\n\n"
+                        f"🎯 [{dbg.get('sig_type', '')}]\n"
+                        f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg['last_close']:,.0f}원\n"
-                        f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [매수/손절 전략]\n"
                         f"- 양봉 길이만큼 분할매수\n"
                         f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                        f"⭐ 알고리즘 신뢰도: {dbg['score']} / 10점\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_fact_check}\n\n"
-                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
-                                f"⚠️ [면책 조항]\n"
-                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                            )
-                    telegram_queue.put((main_chart_path, main_caption))
+                        f"{ai_main}\n\n"
+                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                        f"⚠️ [면책 조항]\n"
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                    )
+                    q_main.put((main_chart_path, main_caption))
 
-                   # ==========================================
-                    # 2️⃣ 쓰레드(Threads) 복붙용 결과지 (진짜 텍스트만)
-                    # ==========================================
+                    # 2️⃣ 홍보용 캡션 (4개 플랫폼)
                     threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False) 
-
                     if threads_chart_path:
-                        # 💡 요청하신 대로 해시태그, 홍보 문구, 제목 싹 다 지웠습니다.
-                        threads_caption = (
-                                f"🏢 종목명: {name} ({code})\n"
-                                f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                                f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                                f"⚠️ 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                            )
-                        telegram_queue.put((threads_chart_path, threads_caption))
+                        promo_caption = (
+                            f"🏢 {name} ({code}) | 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                            f"📱 [Threads 용]\n{ai_threads}\n\n"
+                            f"📝 [네이버 블로그 용]\n{ai_blog}\n\n"
+                            f"🐦 [X (트위터) 용]\n{ai_x}\n\n"
+                            f"🏢 [블라인드 용]\n{ai_blind}\n\n"
+                            f"⚠️ [면책 조항] 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다. 책임은 투자자 본인에게 있습니다."
+                        )
+                        q_promo.put((threads_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 본캐용 + 쓰레드용 결과지 2개 모두 추가 완료!")
+                    print(f"\n✅ [{name}] 한국장 오돌이 듀얼 발송 대기열 추가 완료!")
         except Exception as e:
             pass
 
+    # 💡 5. 일꾼(스레드) 가동 및 대기
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
         
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join()
+        q_main.join()
+        q_promo.join()
 
-    print(f"\n✅ [오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        list(executor.map(worker, list(stock_list.iterrows())))
-        
-    if tracker['hits'] > 0:
-        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join()
-        
-    print(f"\n✅ [한국장 2번 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [한국장 1번 오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
