@@ -179,42 +179,6 @@ def get_krx_list_kind():
         return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-def telegram_sender_daemon():
-    while True:
-        item = telegram_queue.get()
-        if item is None: break
-        img_path, caption = item
-        
-        safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-        
-        if SEND_TELEGRAM:
-            is_success = False
-            for attempt in range(3):
-                try:
-                    with open(img_path, 'rb') as f:
-                        res = requests.post(
-                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", 
-                            params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, 
-                            files={"photo": f}, 
-                            timeout=60, 
-                            verify=False
-                        )
-                    if res.status_code == 200: 
-                        print(f"\n✅ 텔레그램 전송 성공: {img_path}")
-                        is_success = True
-                        break
-                    elif res.status_code == 429: 
-                        time.sleep(3)
-                except requests.exceptions.ReadTimeout:
-                    print(f"\n⚠️ 텔레그램 서버 응답 지연 (중복 방지를 위해 패스합니다.)")
-                    break
-                except: 
-                    time.sleep(2)
-            time.sleep(1.5)
-        telegram_queue.task_done()
-
-threading.Thread(target=telegram_sender_daemon, daemon=True).start()
-
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
     lowest_60 = np.min(c[-60:])
