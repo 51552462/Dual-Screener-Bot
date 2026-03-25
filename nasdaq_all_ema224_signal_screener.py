@@ -151,28 +151,26 @@ def get_us_ticker_list():
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
-def telegram_sender_daemon():
+def telegram_sender_daemon(target_queue, token):
     while True:
-        item = telegram_queue.get()
+        item = target_queue.get()
         if item is None: break
         img_path, caption = item
-        safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
+        safe_caption = caption[:1000] + "\n...(요약됨)" if len(caption) > 1000 else caption
 
         if SEND_TELEGRAM:
-            is_success = False
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
-                    if res.status_code == 200: 
-                        is_success = True
-                        break
+                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
+                    if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except: time.sleep(2)
             time.sleep(1.5)
-        telegram_queue.task_done()
+        target_queue.task_done()
 
-threading.Thread(target=telegram_sender_daemon, daemon=True).start()
+threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
+threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
 def calculate_trust_score(c, e60):
     score = 5 
