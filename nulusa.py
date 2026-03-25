@@ -1,4 +1,4 @@
-# Dante_US_Nulrim_1D_AI_Pro.py
+# Dante_US_Nulrim_1D_AI_Pro_DualBot.py
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -27,10 +27,14 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-TELEGRAM_TOKEN    = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
-TELEGRAM_CHAT_ID  = "6838834566"
-SEND_TELEGRAM     = True
-telegram_queue = queue.Queue()
+# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
+TELEGRAM_TOKEN_MAIN  = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
+TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg"
+TELEGRAM_CHAT_ID     = "6838834566"
+SEND_TELEGRAM        = True
+
+q_main = queue.Queue()
+q_promo = queue.Queue()
 
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Nulrim_1D')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
@@ -39,47 +43,57 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def generate_ai_report(ticker_str: str, company_name: str) -> str:
+# 💡 2. 텔레그램 전송 데몬 (봇 2개가 동시에 일하도록 분리)
+def telegram_sender_daemon(target_queue, token):
+    while True:
+        item = target_queue.get()
+        if item is None: break
+        img_path, caption = item
+        safe_caption = caption[:1000] + "\n...(요약됨)" if len(caption) > 1000 else caption
+
+        if SEND_TELEGRAM:
+            for _ in range(3):
+                try:
+                    with open(img_path, 'rb') as f:
+                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
+                    if res.status_code == 200: break
+                    elif res.status_code == 429: time.sleep(3)
+                except: time.sleep(2)
+            time.sleep(1.5)
+        target_queue.task_done()
+
+threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
+threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
+
+# 💡 3. AI 리포트 (짧고 굵게 3단 요약 & 정보 없음 원천 차단)
+def generate_ai_report(ticker_str: str, company_name: str):
     for attempt in range(3):
         try:
-            tk = yf.Ticker(ticker_str)
-            info = tk.info
-            sector = info.get('sector', '정보 없음')
-            industry = info.get('industry', '정보 없음')
-            market_cap = info.get('marketCap', '정보 없음')
-        
-            if isinstance(market_cap, int): market_cap = f"${market_cap / 1_000_000_000:.2f}B"
-            eps = info.get('trailingEps', '정보 없음')
-            revenue_growth = info.get('revenueGrowth', '정보 없음')
-            business_summary = info.get('longBusinessSummary', '정보 없음')[:800] 
-            financials = f"EPS: {eps}, 매출성장률: {revenue_growth}"
-            today_date = datetime.now().strftime('%Y년 %m월 %d일')
-
             prompt = f"""
-            너는 월스트리트의 냉철하고 전문적인 탑 애널리스트야.
-            오늘 날짜는 {today_date}이야. 
-            반드시 최신 구글 검색 결과를 바탕으로 팩트 중심의 투자 메모를 작성해.
-            [종목 정보] {company_name} ({ticker_str}) / 섹터: {sector} / 시가총액: {market_cap} / 실적: {financials}
-            [비즈니스 요약] {business_summary}
+            너는 월스트리트 탑 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 찾아 아래 양식으로만 대답해.
+            (주의: 인사말, 날짜, 투자메모 등 군더더기 절대 금지. '정보 없음' 등 무책임한 답변 금지. 화면에 짤리지 않게 항목당 딱 1~2문장으로 아주 짧고 굵게 요약해.)
 
-            [출력 양식]
-            1. 섹터 종류: (간단한 설명)
-            2. 업계 점유율/규모: (시총 규모 및 지위)
-            3. 최근 실적: (흑자/적자 여부, 핵심 지표)
-            4. 미래 모멘텀: (파이프라인, 최신 호재/악재 등)
-            5. 기업 전망: (짧고 굵은 전망)
+            1. 섹터 종류: (어떤 사업을 하는지 핵심만)
+            2. 최근 실적: (흑자/적자, 매출 증감 등 핵심 팩트)
+            3. 향후 모멘텀 및 전망: (파이프라인, 신사업 등)
             """
-            
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(tools=[{"google_search": {}}])
             )
-            return response.text.strip()
-        except Exception as e:
-            time.sleep(3)
+            report = response.text.strip()
             
-    return f"⚠️ AI 요약 실패\n(진짜 에러 원인: {e})"
+            # 스팸 방지용으로 섹터와 실적 1줄씩만 추출 (홍보용 캡션에 쓸 용도)
+            sector_promo, perf_promo = "데이터 분석 중", "데이터 분석 중"
+            for line in report.split('\n'):
+                if "1. 섹터" in line: sector_promo = line.replace("1. 섹터 종류:", "").strip()[:50] + "..."
+                if "2. 최근" in line: perf_promo = line.replace("2. 최근 실적:", "").strip()[:50] + "..."
+                
+            return report, sector_promo, perf_promo
+        except:
+            time.sleep(3)
+    return "⚠️ AI 데이터 수집 지연", "데이터 분석 중", "데이터 분석 중"
 
 def get_us_ticker_list():
     try:
@@ -88,30 +102,6 @@ def get_us_ticker_list():
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
-
-def telegram_sender_daemon():
-    while True:
-        item = telegram_queue.get()
-        if item is None: break
-        img_path, caption = item
-        
-        safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-
-        if SEND_TELEGRAM:
-            is_success = False
-            for _ in range(3):
-                try:
-                    with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
-                    if res.status_code == 200: 
-                        is_success = True
-                        break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
-            time.sleep(1.5)
-        telegram_queue.task_done()
-
-threading.Thread(target=telegram_sender_daemon, daemon=True).start()
 
 MIN_PRICE_USD = 3.0               
 MIN_MONEY_USD = 5_000_000         
@@ -166,7 +156,6 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
     prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
-    
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
     prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
@@ -184,41 +173,29 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
 
     s6_counts = np.zeros(len(c), dtype=int)
     current_s6_count = 0
-    
     for i in range(len(c)):
-        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s7[i]:
-            current_s6_count = 0
-        if s6[i]:
-            current_s6_count += 1
-            
+        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s7[i]: current_s6_count = 0
+        if s6[i]: current_s6_count += 1
         s6_counts[i] = current_s6_count
 
     cond_base = moneyOk & priceOk
     
-    # ⭐️ S2, S4, S6, S7 타점 발송 스위치 ON
     hit2 = s2[-1] and cond_base[-1]
-    hit4 = s4[-1] and cond_base[-1]  # 💡 S4 타점 활성화
+    hit4 = s4[-1] and cond_base[-1] 
     hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
 
     if not (hit2 or hit4 or hit6 or hit7): 
         return False, "", df, {}
 
-    # 타점에 따른 텔레그램 카피라이팅
     if hit6:
-        if s6_counts[-1] >= 2:
-            sig_type = f"💥 S6 (바닥 다지기 누적 {s6_counts[-1]}회 포착!)"
-        else:
-            sig_type = "🌱 S6 (바닥 다지기 첫 진입)"
-    elif hit7:
-        sig_type = "🚀 S7 (추세 전환 돌파)"
-    elif hit4:
-        sig_type = "🎯 S4 (정배열 눌림 돌파)"  # 💡 S4 멘트 추가
-    else:
-        sig_type = "✨ S2 (224 재정렬)"
+        if s6_counts[-1] >= 2: sig_type = f"💥 S6 (바닥 다지기 누적 {s6_counts[-1]}회 포착!)"
+        else: sig_type = "🌱 S6 (바닥 다지기 첫 진입)"
+    elif hit7: sig_type = "🚀 S7 (추세 전환 돌파)"
+    elif hit4: sig_type = "🎯 S4 (정배열 눌림 돌파)" 
+    else: sig_type = "✨ S2 (224 재정렬)"
 
     trust_score = calculate_trust_score(c, e60)
-
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s6_count": int(s6_counts[-1])}
 
 chart_lock = threading.Lock()
@@ -249,14 +226,12 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
 
             signal_marker = pd.Series(np.nan, index=df_cut.index)
-            y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
-            signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
+            signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - ((df_cut['High'].max() - df_cut['Low'].min()) * 0.04)
             ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
 
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
             
-            # 💡 [버그 2 수정] 거래량 유무에 따른 차트 비율 (가로형 / 정방형) 완벽 이식
             if show_volume:
                 custom_figsize = (11, 6.5) 
                 title_y, sub_y = 0.93, 0.88
@@ -281,8 +256,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
             plt.close(fig)
             return path
-        except Exception as e:
-            return None
+        except: return None
 
 def scan_market_1d():
     stock_list = get_us_ticker_list()
@@ -290,6 +264,20 @@ def scan_market_1d():
     
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
+
+    # 💡 4. 당일 중복 발송 원천 차단 (영구 기억장치 로직)
+    ny_tz = pytz.timezone('America/New_York')
+    today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
+    log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
+    
+    sent_today = set()
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r") as f:
+                lines = f.read().splitlines()
+                if lines and lines[0] == today_str:
+                    sent_today = set(lines[1:])
+        except: pass
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -326,7 +314,7 @@ def scan_market_1d():
                         df_ticker = df_batch[tk].copy()
                 else:
                     df_ticker = fallback_dict.get(tk)
-                    if df_ticker is None or df_ticker.empty: continue
+                if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
@@ -337,14 +325,23 @@ def scan_market_1d():
                     hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker)
                     
                     if hit:
+                        # 💡 당일 이미 보낸 종목이면 컷! 아니면 기록 후 통과
+                        if code in sent_today: continue
+                        
+                        sent_today.add(code)
+                        try:
+                            with open(log_file, "w") as f:
+                                f.write(today_str + "\n")
+                                for s_code in sent_today: f.write(s_code + "\n")
+                        except: pass
+
                         tracker['hits'] += 1
                         
-                        # 1️⃣ 본캐용 다크 차트 생성
                         main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
                         if main_chart_path:
-                            # 💡 [버그 1 수정] 밑에서 부르는 변수 이름과 완벽하게 일치 (NameError 해결)
-                            ai_fact_check = generate_ai_report(code, name)
+                            ai_full_text, sector_promo, perf_promo = generate_ai_report(code, name)
                             
+                            # 기존 본캐용 캡션
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n\n"
                                 f"🏢 {name} ({code})\n"
@@ -356,25 +353,27 @@ def scan_market_1d():
                                 f"🌟 사전 매집/바닥턴 누적: 별x{dbg.get('s6_count', 0)}\n"
                                 f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_fact_check}\n\n"
+                                f"{ai_full_text}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                             )
-                            telegram_queue.put((main_chart_path, main_caption))
+                            q_main.put((main_chart_path, main_caption))
 
-                            # 2️⃣ 쓰레드 홍보용 다크 차트 생성
+                            # 홍보용 캡션 (스팸 방지용 동적 텍스트 적용 & 새 봇으로 발송)
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
                                 threads_caption = (
                                     f"🏢 종목명: {name} ({code})\n"
                                     f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
+                                    f"🔹 섹터: {sector_promo}\n"
+                                    f"🔹 실적: {perf_promo}\n\n"
                                     f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
-                                    f"⚠️ 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                    f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                                 )
-                                telegram_queue.put((threads_chart_path, threads_caption))
+                                q_promo.put((threads_chart_path, threads_caption))
                                 
-                            print(f"\n✅ [{name}] 미국장 눌림목 본캐 1개 + 홍보용 1개 (총 2개) 전송 완료! (바닥 매집 누적: {dbg.get('s6_count', 0)}회)")
+                            print(f"\n✅ [{name}] 미국장 눌림목 듀얼 발송 대기열 추가 (바닥 누적: {dbg.get('s6_count', 0)}회)")
             except Exception as e:
                 pass
         
@@ -382,8 +381,9 @@ def scan_market_1d():
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     if tracker['hits'] > 0:
-        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join()
+        print("\n⏳ 텔레그램 듀얼 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        q_main.join()
+        q_promo.join()
 
     dt = time.time() - t0
     print(f"\n✅ [미국장 4번 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
@@ -400,4 +400,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()
+    scan_market_1d()  # ⭐️ 이 줄이 있으면 실행 즉시 1회 스캔을 시작합니다.
+    # run_scheduler() # 스케줄러를 같이 돌리려면 이 줄의 주석을 해제하세요.
