@@ -64,20 +64,21 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. AI 리포트 완벽 분리 (본캐용 3단 요약 vs 홍보용 스팸방지 사람말투)
+# 💡 3. AI 리포트 완벽 분리 (본캐용 3단 요약 vs 홍보용 사람 말투)
 def generate_ai_report(ticker_str: str, company_name: str):
     for attempt in range(3):
         try:
             prompt = f"""
-            너는 월스트리트 탑 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 파악하고, 반드시 아래 '===본캐===' 와 '===홍보===' 구분선을 사용해서 두 가지 버전으로 작성해. (인사말, 투자메모 등 군더더기 절대 금지)
+            [{company_name} ({ticker_str})]에 대한 최신 팩트를 구글 검색으로 찾아줘.
+            반드시 아래의 형식(구분선 포함)을 100% 똑같이 지켜서 답변해. 다른 인사말은 절대 금지.
 
             ===본캐===
-            1. 섹터: (어떤 사업을 하는지 핵심만 1줄)
-            2. 실적: (흑자/적자, 매출 증감 등 핵심 팩트 1줄)
-            3. 모멘텀: (향후 기대감, 파이프라인 등 1줄)
-
+            1. 섹터: (어떤 사업인지 1줄 요약)
+            2. 실적: (매출/이익 등 최근 실적 1줄 요약)
+            3. 모멘텀: (앞으로의 호재나 기대감 1줄 요약)
+            
             ===홍보===
-            (위 팩트를 바탕으로, 쓰레드(SNS)에 올릴 법한 진짜 사람 말투로 1~2줄의 짧고 임팩트 있는 코멘트를 작성해. 매번 똑같은 로봇 패턴이 되지 않게, 어떨 때는 섹터를 칭찬하고 어떨 때는 실적을 칭찬하는 식으로 문맥을 계속 바꿔줘. '데이터 분석 중' 같은 말 절대 금지.)
+            (위 팩트를 바탕으로, 주식 투자자가 개인 SNS에 올리는 듯한 아주 자연스러운 사람 말투로 1~2줄짜리 코멘트를 작성해. 매번 말투와 강조점(어떤 날은 실적 강조, 어떤 날은 섹터 전망 강조 등)을 다르게 변주해줘. 이모지도 자연스럽게 1개 정도 써줘. 절대 로봇처럼 보이면 안 돼.)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -86,18 +87,24 @@ def generate_ai_report(ticker_str: str, company_name: str):
             )
             report = response.text.strip()
             
-            # 파이썬 억지 자르기가 아니라, AI가 구분한 영역을 통째로 가져옴
-            try:
-                main_part = report.split("===본캐===")[1].split("===홍보===")[0].strip()
-                promo_part = report.split("===홍보===")[1].strip()
-            except:
+            # 💡 안전한 파싱 (구분선이 없거나 꼬여도 에러 안 나게 철통 방어)
+            if "===홍보===" in report:
+                parts = report.split("===홍보===")
+                main_part = parts[0].replace("===본캐===", "").strip()
+                promo_part = parts[1].strip()
+            else:
                 main_part = report
-                promo_part = "시장의 흐름 속에서 유의미한 비즈니스 움직임이 포착된 기업입니다. 주목해볼 만한 가치가 있습니다."
+                promo_part = "최근 시장에서 유의미한 비즈니스 흐름을 보여주고 있는 기업입니다. 차트와 함께 기본기를 체크해 보세요!"
                 
+            # 만약 promo_part가 텅 비었거나 '...'만 있다면 팩트 기반 대체 문구 삽입
+            if not promo_part or promo_part == "..." or "데이터 분석 중" in promo_part:
+                promo_part = f"{company_name}의 최근 시장 흐름이 심상치 않네요. 관심 종목에 두고 지켜볼 만한 자리입니다."
+
             return main_part, promo_part
         except:
             time.sleep(3)
-    return "⚠️ AI 데이터 수집 지연", "시장의 흐름 속에서 유의미한 패턴이 포착되었습니다. 차트를 통해 흐름을 확인해 보세요."
+            
+    return "⚠️ AI 데이터 수집 지연 (수동 확인 필요)", f"{company_name} 차트에서 흥미로운 패턴이 포착되었습니다. 투자의 참고 자료로 활용해 보세요!"
 
 def get_us_ticker_list():
     try:
