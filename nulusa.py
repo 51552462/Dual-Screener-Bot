@@ -64,9 +64,8 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 3. 플랫폼별 4종 세트 생성 및 에러 방어막(Fallback) 구축
+# 💡 2. 플랫폼별 4종 세트 생성 및 에러 방어막(Fallback) 구축
 def generate_ai_report(ticker_str: str, company_name: str):
-    # [안전장치 1] AI가 뻗었을 때를 대비해 야후 파이낸스 팩트 미리 수집
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
@@ -76,7 +75,6 @@ def generate_ai_report(ticker_str: str, company_name: str):
     except:
         sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델을 구축 중입니다.'
 
-    # [안전장치 2] AI 실패 시 출력될 종목 맞춤형 동적 멘트 (스팸 봇 방지)
     fb_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 최근 재무 데이터 갱신 중\n3. 모멘텀: {summary}"
     fb_threads = f"👀 {company_name} 폼 미쳤네요. {sector} 쪽 수급 들어오는 거 보이시나요? 차트 자리 예술입니다. 킵해두세요!"
     fb_blog = f"📌 오늘 알아볼 종목은 {company_name} ({ticker_str})입니다. 최근 {sector} 산업군에서 유의미한 흐름을 보여주고 있습니다. 바닥권 에너지가 응축되고 있네요."
@@ -100,7 +98,7 @@ def generate_ai_report(ticker_str: str, company_name: str):
             3. 모멘텀: (향후 기대감 1줄 요약)
             
             [쓰레드]
-            (트렌디하고 친근한 말투, 이모지 활용, 짧고 강렬하게 2문장. '데이터 분석 중' 금지)
+            (트렌디하고 친근한 말투, 이모지 활용, 짧고 강렬하게 2~3문장. '데이터 분석 중' 금지)
             
             [블로그]
             (정보 전달 위주의 깔끔한 전문가 말투, 신뢰감 있게 3~4문장)
@@ -122,7 +120,6 @@ def generate_ai_report(ticker_str: str, company_name: str):
                 
             report = response.text.strip()
             
-            # 파이썬 억지 자르기가 아닌 스마트 파싱
             def ext(text, s_tag, e_tag=None):
                 try:
                     res = text.split(s_tag)[1]
@@ -136,14 +133,12 @@ def generate_ai_report(ticker_str: str, company_name: str):
             x_part = ext(report, "[X]", "[블라인드]")
             bl_part = ext(report, "[블라인드]")
 
-            # 하나라도 파싱에 실패하면 다시 시도
             if not m_part or not th_part or not bl_part: raise ValueError("파싱오류")
 
             return m_part, th_part, bg_part, x_part, bl_part
         except:
             time.sleep(3)
             
-    # 3번 다 실패하면 에러 메시지 대신 준비된 '안전장치 팩트 멘트' 반환 (절대 뻗지 않음)
     return fb_main, fb_threads, fb_blog, fb_x, fb_blind
 
 def get_us_ticker_list():
@@ -316,7 +311,7 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
-    # 💡 3. 당일 중복 발송 원천 차단 (하루 몇 번을 돌려도 중복 방지)
+    # 💡 당일 중복 발송 차단 로직
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
     log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
@@ -376,7 +371,6 @@ def scan_market_1d():
                     hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker)
                     
                     if hit:
-                        # 💡 이미 당일에 발송된 종목이면 깔끔하게 패스 (중복 컷)
                         if code in sent_today: continue
                         
                         sent_today.add(code)
@@ -388,12 +382,12 @@ def scan_market_1d():
 
                         tracker['hits'] += 1
                         
-                       main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
+                        main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
                         if main_chart_path:
-                            # 💡 5가지 버전 텍스트 받아오기
+                            # 💡 5가지 멘트 버전 생성
                             ai_main, ai_threads, ai_blog, ai_x, ai_blind = generate_ai_report(code, name)
                             
-                            # 기존 본캐용 캡션 (변경 없음)
+                            # 1️⃣ 본캐용 캡션 (유료방)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n\n"
                                 f"🏢 {name} ({code})\n"
@@ -412,7 +406,7 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 2️⃣ 홍보 봇으로 보내는 다크 차트 (4가지 플랫폼 멘트 한방에 전송)
+                            # 2️⃣ 쓰레드 등 홍보 봇으로 보내는 다크 차트 (4가지 멘트 한방에 전송)
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
                                 promo_caption = (
@@ -452,4 +446,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()  # ⭐️ 이 줄이 있으면 실행 즉시 1회 스캔을 시작합니다.
+    scan_market_1d()
