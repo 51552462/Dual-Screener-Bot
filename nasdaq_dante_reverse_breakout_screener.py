@@ -329,11 +329,7 @@ def scan_market_1d():
     if stock_list.empty: return
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 2번(역매공파) 스캔 시작! (안정화 패치 완료)")
-    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
-    tickers = list(ticker_to_info.keys())
-    chunk_size = 100 
-    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
-
+    
     # 💡 당일 중복 발송 차단 로직
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
@@ -347,6 +343,12 @@ def scan_market_1d():
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
         except: pass
+
+    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
+    tickers = list(ticker_to_info.keys())
+    chunk_size = 100 
+    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
+
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
         df_batch = None
@@ -386,7 +388,7 @@ def scan_market_1d():
                     tracker['analyzed'] += 1
                     hit, sig_type, df, dbg = compute_inverse_1d(df_ticker)
                     
-                   if hit:
+                    if hit:
                         # 💡 1. 당일 중복 차단
                         if code in sent_today: continue
                         sent_today.add(code)
@@ -408,7 +410,7 @@ def scan_market_1d():
                             sig_type = f"P (누적 {p_count}회)" if p_count >= 2 else "P (신규)"
                             recommend = "단기반등, 스윙 / 종가배팅" if p_count >= 3 else "관심종목 / 관망"
                             
-                            # ⭐️ 3. 유료방(본캐) 결과지: 추천 맨 위로, 불필요한 수식어 제거 완료!
+                            # ⭐️ 3. 유료방(본캐) 결과지
                             main_caption = (
                                 f"🎯 [{sig_type}]\n"
                                 f"🎯 추천: {recommend}\n\n"
@@ -425,7 +427,7 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # ⭐️ 4. 홍보방 결과지: 4가지 플랫폼 맞춤형!
+                            # ⭐️ 4. 홍보방 결과지
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
                                 promo_caption = (
@@ -438,7 +440,7 @@ def scan_market_1d():
                                 )
                                 q_promo.put((threads_chart_path, promo_caption))
                                 
-                            print(f"\n✅ [{name}] 미국장 역매공파 듀얼 발송 대기열 추가 (누적: {p_count}회)")
+                            print(f"\n✅ [{name}] 미국장 역매공파 듀얼 발송 대기열 추가 완료 (누적: {p_count}회)")
             except Exception as e:
                 pass
                 
@@ -447,8 +449,8 @@ def scan_market_1d():
 
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()    # 변경
-        q_promo.join()   # 추가
+        q_main.join()
+        q_promo.join()
 
     print(f"\n✅ [미국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
