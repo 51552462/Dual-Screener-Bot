@@ -43,7 +43,6 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-# 💡 2. 텔레그램 전송 데몬 (봇 2개가 동시에 일하도록 분리)
 def telegram_sender_daemon(target_queue, token):
     while True:
         item = target_queue.get()
@@ -65,17 +64,20 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 3. AI 리포트 (짧고 굵게 3단 요약 & 정보 없음 원천 차단)
+# 💡 2. AI 리포트 완벽 분리 (본캐용 3단 요약 vs 홍보용 스팸방지 사람말투)
 def generate_ai_report(ticker_str: str, company_name: str):
     for attempt in range(3):
         try:
             prompt = f"""
-            너는 월스트리트 탑 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 찾아 아래 양식으로만 대답해.
-            (주의: 인사말, 날짜, 투자메모 등 군더더기 절대 금지. '정보 없음' 등 무책임한 답변 금지. 화면에 짤리지 않게 항목당 딱 1~2문장으로 아주 짧고 굵게 요약해.)
+            너는 월스트리트 탑 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 파악하고, 반드시 아래 '===본캐===' 와 '===홍보===' 구분선을 사용해서 두 가지 버전으로 작성해. (인사말, 투자메모 등 군더더기 절대 금지)
 
-            1. 섹터 종류: (어떤 사업을 하는지 핵심만)
-            2. 최근 실적: (흑자/적자, 매출 증감 등 핵심 팩트)
-            3. 향후 모멘텀 및 전망: (파이프라인, 신사업 등)
+            ===본캐===
+            1. 섹터: (어떤 사업을 하는지 핵심만 1줄)
+            2. 실적: (흑자/적자, 매출 증감 등 핵심 팩트 1줄)
+            3. 모멘텀: (향후 기대감, 파이프라인 등 1줄)
+
+            ===홍보===
+            (위 팩트를 바탕으로, 쓰레드(SNS)에 올릴 법한 진짜 사람 말투로 1~2줄의 짧고 임팩트 있는 코멘트를 작성해. 매번 똑같은 로봇 패턴이 되지 않게, 어떨 때는 섹터를 칭찬하고 어떨 때는 실적을 칭찬하는 식으로 문맥을 계속 바꿔줘. '데이터 분석 중' 같은 말 절대 금지.)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -84,16 +86,18 @@ def generate_ai_report(ticker_str: str, company_name: str):
             )
             report = response.text.strip()
             
-            # 스팸 방지용으로 섹터와 실적 1줄씩만 추출 (홍보용 캡션에 쓸 용도)
-            sector_promo, perf_promo = "데이터 분석 중", "데이터 분석 중"
-            for line in report.split('\n'):
-                if "1. 섹터" in line: sector_promo = line.replace("1. 섹터 종류:", "").strip()[:50] + "..."
-                if "2. 최근" in line: perf_promo = line.replace("2. 최근 실적:", "").strip()[:50] + "..."
+            # 파이썬 억지 자르기가 아니라, AI가 구분한 영역을 통째로 가져옴
+            try:
+                main_part = report.split("===본캐===")[1].split("===홍보===")[0].strip()
+                promo_part = report.split("===홍보===")[1].strip()
+            except:
+                main_part = report
+                promo_part = "시장의 흐름 속에서 유의미한 비즈니스 움직임이 포착된 기업입니다. 주목해볼 만한 가치가 있습니다."
                 
-            return report, sector_promo, perf_promo
+            return main_part, promo_part
         except:
             time.sleep(3)
-    return "⚠️ AI 데이터 수집 지연", "데이터 분석 중", "데이터 분석 중"
+    return "⚠️ AI 데이터 수집 지연", "시장의 흐름 속에서 유의미한 패턴이 포착되었습니다. 차트를 통해 흐름을 확인해 보세요."
 
 def get_us_ticker_list():
     try:
@@ -265,7 +269,7 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
-    # 💡 4. 당일 중복 발송 원천 차단 (영구 기억장치 로직)
+    # 💡 3. 당일 중복 발송 원천 차단 (하루 몇 번을 돌려도 중복 방지)
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
     log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
@@ -325,7 +329,7 @@ def scan_market_1d():
                     hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker)
                     
                     if hit:
-                        # 💡 당일 이미 보낸 종목이면 컷! 아니면 기록 후 통과
+                        # 💡 이미 당일에 발송된 종목이면 깔끔하게 패스 (중복 컷)
                         if code in sent_today: continue
                         
                         sent_today.add(code)
@@ -339,9 +343,10 @@ def scan_market_1d():
                         
                         main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
                         if main_chart_path:
-                            ai_full_text, sector_promo, perf_promo = generate_ai_report(code, name)
+                            # 💡 본캐용 3단 요약, 홍보용 팩트 티저 각각 받아오기
+                            ai_main_report, ai_promo_teaser = generate_ai_report(code, name)
                             
-                            # 기존 본캐용 캡션
+                            # 기존 본캐용 캡션 (유료방용 디테일)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n\n"
                                 f"🏢 {name} ({code})\n"
@@ -353,21 +358,20 @@ def scan_market_1d():
                                 f"🌟 사전 매집/바닥턴 누적: 별x{dbg.get('s6_count', 0)}\n"
                                 f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_full_text}\n\n"
+                                f"{ai_main_report}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 홍보용 캡션 (스팸 방지용 동적 텍스트 적용 & 새 봇으로 발송)
+                            # 홍보용 캡션 (스팸 방지용 동적 텍스트 적용 & 새 홍보 봇으로 발송)
                             threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
                             if threads_chart_path:
                                 threads_caption = (
                                     f"🏢 종목명: {name} ({code})\n"
                                     f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                    f"🔹 섹터: {sector_promo}\n"
-                                    f"🔹 실적: {perf_promo}\n\n"
+                                    f"💬 {ai_promo_teaser}\n\n"
                                     f"💡 시장의 주목을 받기 전, 알고리즘에 포착된 차트 분석입니다. 투자의 참고 자료로 활용해 보세요!\n\n"
                                     f"⚠️ [면책 조항] 본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                                 )
