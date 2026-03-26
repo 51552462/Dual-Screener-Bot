@@ -471,7 +471,8 @@ def scan_market_1d():
 
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join()
+        q_main.join()
+        q_promo.join()
 
     dt = time.time() - t0
     print(f"\n✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
