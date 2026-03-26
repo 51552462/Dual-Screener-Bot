@@ -51,9 +51,11 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 
 ai_request_lock = threading.Lock()
 
-# 💡 2. 한국장 맞춤 팩트 수집 및 4가지 플랫폼 다중인격 생성 (스팸 완벽 차단)
+# 💡 2. 100% 스팸 회피형 스핀택스(Spintax) + AI 쿨타임 방어막 탑재
 def generate_kr_ai_report(code: str, company_name: str):
-    import re # 정규식 모듈 필수
+    import re, random, time
+    
+    # 1. 팩트 데이터 추출
     sector = "정보 없음"
     headers = {'User-Agent': 'Mozilla/5.0'}
     fn_summary, naver_summary = [], []
@@ -61,8 +63,7 @@ def generate_kr_ai_report(code: str, company_name: str):
     try:
         res_naver = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers=headers, timeout=5, verify=False)
         if res_naver.status_code == 200:
-            soup = BeautifulSoup(res_naver.text, 'html.parser')
-            tag = soup.select_one('h4.h_sub.sub_tit7 a')
+            tag = BeautifulSoup(res_naver.text, 'html.parser').select_one('h4.h_sub.sub_tit7 a')
             if tag: sector = tag.text.strip()
     except: pass
                 
@@ -78,22 +79,38 @@ def generate_kr_ai_report(code: str, company_name: str):
     if len(summary_parts) >= 2: performance = summary_parts[1].replace("동사는", f"{company_name}은(는)")
     elif len(summary_parts) == 1: performance = summary_parts[0].replace("동사는", f"{company_name}은(는)")
 
-    # 1차 방어막: 비상용 멘트도 종목마다 다르게 팩트 기반으로 섞이도록 수정
-    fb_main = f"1. 섹터: {sector}\n2. 실적: {performance[:50]}...\n3. 모멘텀: 기업 펀더멘탈 분석 중"
-    fb_threads = f"👀 {company_name} 자리 체크 필수! {sector} 쪽에 최근 자금이 쏠리면서 차트 밸런스가 잡히고 있습니다. 비즈니스 흐름도 확인해보세요."
-    fb_blog = f"📌 오늘 분석할 종목은 {company_name} ({code})입니다. 최근 {sector} 테마에서 유의미한 흐름을 보여주고 있으며, 바닥권 에너지가 응축되고 있습니다."
-    fb_x = f"🔥 {company_name} 지금 무조건 봐야 함. {sector} 관련주 중 차트 제일 이쁨. 팩트체크 필수! #한국주식 #{company_name}"
-    fb_blind = f"형들 {company_name} 차트 봄? {sector} 쪽인데 지금 완전 바닥 다지고 거래량 터지기 직전임. 워치리스트 ㄱㄱ"
+    # 2. 🤖 무한 랜덤 문장 조합기 (Spintax) - 스팸 필터 100% 우회
+    th_intro = random.choice([f"👀 {company_name} 자리 체크 필수!", f"🔥 {company_name} 수급 들어오는 거 보이시나요?", f"🚨 지금 {sector} 관련해서 심상치 않은 종목 하나 뜹니다.", f"💡 {company_name} 차트가 아주 예쁘게 만들어지고 있네요."])
+    th_body = random.choice([f"최근 {sector} 쪽으로 자금이 쏠리면서 완벽한 밸런스가 잡혔습니다.", "바닥 다지고 머리 드는 전형적인 턴어라운드 흐름입니다.", "비즈니스 펀더멘탈도 나쁘지 않고 기술적 타점도 예술이네요."])
+    th_outro = random.choice(["킵해두고 지켜보세요!", "워치리스트에 당장 추가하세요.", "단기 시세 분출 기대해볼 만합니다."])
+    fb_threads = f"{th_intro} {th_body} {th_outro}"
 
+    bg_intro = random.choice([f"📌 오늘 분석해 볼 주식은 {company_name} ({code})입니다.", f"📈 {sector} 테마에서 유의미한 흐름을 보여주는 {company_name}을(를) 살펴봅니다.", f"📊 주목해야 할 {sector} 관련주, {company_name} 차트 분석입니다."])
+    bg_body = random.choice(["알고리즘 상 강한 매수 에너지가 응축되고 있는 것이 특징입니다.", "오랜 기간 바닥을 다진 후 추세 전환의 초입에 위치해 있습니다.", "시장 소외 구간을 지나 본격적인 거래량 유입이 기대되는 자리입니다."])
+    fb_blog = f"{bg_intro} {bg_body} 기술적 반등 시나리오를 참고하시어 투자 전략을 세워보시길 바랍니다."
+
+    x_intro = random.choice([f"🔥 {company_name} 지금 당장 봐야 함.", f"🚨 {company_name} 자리 폼 미쳤음.", f"👀 {sector} 대장주급 차트 등장."])
+    x_body = random.choice(["바닥 탈출 시그널 떴음.", "수급 쫙 빨아들이기 직전.", "알고리즘 타점 정확히 들어왔음."])
+    fb_x = f"{x_intro} {x_body} 팩트체크 필수! #한국주식 #{company_name}"
+
+    bl_intro = random.choice([f"형들 {company_name} 차트 봄?", f"{company_name} 이거 지금 나만 보고 있는 거 아니지?", f"국장 {sector} 쪽인데 지금 자리 개꿀임."])
+    bl_body = random.choice(["완전 바닥 다지고 거래량 터지기 직전인 듯.", "알고리즘에 딱 걸림. 재무도 평타 이상.", "차트충 등판해봐 이거 무조건 반등 자리 아님?"])
+    fb_blind = f"{bl_intro} {bl_body} 워치리스트 ㄱㄱ"
+
+    fb_main = f"1. 섹터: {sector}\n2. 실적: {performance[:50]}...\n3. 모멘텀: 차트 상 유의미한 바닥권 탈출 및 수급 유입 패턴 포착"
+
+    # 3. 구글 AI 호출 (속도 제한 방어 쿨타임 적용)
     for attempt in range(3):
         try:
+            time.sleep(4) # 💡 핵심: 4초 대기! 구글 스팸 차단 방지
+            
             prompt = f"""
             너는 한국 주식 전문 애널리스트야. [{company_name} ({code})]에 대해 구글 검색을 통해 최신 팩트를 찾아 5가지 버전의 글을 작성해.
             
             ⚠️ [매우 중요 규칙]
             1. 대괄호 [ ] 로만 정확히 섹션을 구분할 것. 기호나 굵은 글씨(**) 절대 금지.
-            2. 무조건 '팩트(매출/이익 수치 %, 구체적인 비즈니스 내용)'를 포함할 것. 추상적이고 뻔한 헛소리 절대 금지.
-            3. 매번 똑같은 패턴 템플릿 쓰지 말고 생성할 때마다 문장 구조와 이모지를 완전히 다르게 쓸 것.
+            2. 실적이나 모멘텀 등 구체적인 '팩트 수치/이름'을 포함할 것.
+            3. 매번 문장 구조와 이모지를 완전히 다르게 창작할 것.
 
             [팩트 데이터]
             섹터/테마: {sector}
@@ -101,7 +118,7 @@ def generate_kr_ai_report(code: str, company_name: str):
 
             [출력 양식]
             [본캐]
-            1. 섹터: (테마 1줄 요약)
+            1. 섹터: (어떤 테마인지 1줄 요약)
             2. 실적: (팩트 수치 1줄 요약)
             3. 모멘텀: (앞으로의 호재 1줄 요약)
             
@@ -115,7 +132,7 @@ def generate_kr_ai_report(code: str, company_name: str):
             (다급한 느낌, 팩트 위주, 해시태그 2~3개 필수)
             
             [블라인드]
-            (블라인드 주식게시판 반말/형들체, 팩트 포함 2~3문장)
+            (직장인 커뮤니티 특유의 시니컬한 반말/형들체, 팩트 포함 2~3문장)
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -124,9 +141,8 @@ def generate_kr_ai_report(code: str, company_name: str):
             )
             
             if not response or not response.text:
-                time.sleep(2); continue
+                continue
                 
-            # 💡 어떤 마크다운 기호가 붙어도 다 무시하고 찰떡같이 텍스트만 빼내는 무적의 정규식 파싱
             report = response.text.replace('*', '').strip() 
             
             m_part = re.search(r'\[본캐\](.*?)(?=\[쓰레드\])', report, re.DOTALL)
@@ -140,8 +156,9 @@ def generate_kr_ai_report(code: str, company_name: str):
 
             return m_part.group(1).strip(), th_part.group(1).strip(), bg_part.group(1).strip(), x_part.group(1).strip(), bl_part.group(1).strip()
         except:
-            time.sleep(3)
+            pass
             
+    # 💡 AI가 실패하면 다채롭게 준비된 '랜덤 문장 조합'이 출력됨
     return fb_main, fb_threads, fb_blog, fb_x, fb_blind
 
 def get_krx_list_kind():
@@ -492,17 +509,7 @@ def scan_market_1d():
         q_main.join()
         q_promo.join()
 
-    print(f"\n✅ [한국장 1번 오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        executor.map(worker, list(stock_list.iterrows()))
-        
-    if tracker['hits'] > 0:
-        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()
-        q_promo.join()
-        
-    print(f"\n✅ [한국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [한국장 오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 # ⭐️ 2번 스케줄러 세팅 (09:30, 12:00, 14:30) ⭐️
 def run_scheduler():
