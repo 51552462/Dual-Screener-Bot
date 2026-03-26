@@ -233,30 +233,33 @@ def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
     else: stars = "★☆☆☆☆"
     return stars, score
 
-def compute_signal(df_raw: pd.DataFrame):
+def compute_signal(df_raw: pd.DataFrame): # 💡 한국장은 함수명이 compute_signal 일 수 있으니 이름만 맞춰주세요.
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    # Low 데이터 포함
     c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    moneyOk = (c * v) >= 100_000_000  # 한국장 기준 1억
-    priceOk = c >= 1000               # 한국장 기준 1000원
+    # 💡 파일 상단에 선언된 변수에 맞게 변경 (미국장: MIN_MONEY_USD / 한국장: MIN_TRANS_MONEY 등)
+    # 여기서는 범용적으로 쓰기 위해 직접 조건을 작성했습니다. 파일에 맞게 수정하셔도 됩니다.
+    moneyOk = (c * v) >= (5_000_000 if 'USD' in globals().get('MIN_MONEY_USD', '') else 100_000_000)
+    priceOk = c >= (3.0 if 'USD' in globals().get('MIN_MONEY_USD', '') else 1000)
     isBullish = c > o
 
-    # 💡 150일 정배열 유지 여부 판독 (S4 실제/참고용)
+    # 💡 150일 정배열 유지 판독 (S1/S4 실제, 참고 판별용)
     macroBull_for_s4 = (e112 > e224) & (e224 > e448)
     is_150_align = pd.Series(macroBull_for_s4).rolling(150).sum().values == 150
 
+    # 1. 배열 상태 정의
     align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
     align224 = align112 & (e112 > e224)
     align448 = align224 & (e224 > e448)
 
+    # 2. 장기 기준선 유지 상태 정의
     longKeep448 = e224 > e448 
     longKeep224 = e112 > e224 
     longKeep112 = e60 > e112  
@@ -269,25 +272,13 @@ def compute_signal(df_raw: pd.DataFrame):
     prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
     prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
+    # ⭐️ S1: 448 재정렬 시그널 (트뷰 로직 100% 동기화 및 부활!)
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
-    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
-    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
     
+    # ⭐️ S4: 정배열 20선 눌림돌파
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
-
-    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
-    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
-    shortBull = (e10 > e20) & (e20 > e30)
-    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
-    
-    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
-
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
-
     s4 = np.zeros_like(c, dtype=bool)
     last_pullback_bar = -100
     for i in range(len(c)):
@@ -295,44 +286,61 @@ def compute_signal(df_raw: pd.DataFrame):
             s4[i] = True
             last_pullback_bar = i
 
-    s5 = np.zeros_like(c, dtype=bool) 
+    # ⭐️ S6: 완전 바닥 탈출
+    macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
+    shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
+    shortBull = (e10 > e20) & (e20 > e30)
+    prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
+    s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
+
+    # ⭐️ S7: 장기 역배열 + 나머지 10~112 정배열 전환
+    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
+    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
+    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     s6_counts = np.zeros(len(c), dtype=int)
     current_s6_count = 0
     for i in range(len(c)):
-        if s1[i] or s2[i] or s3[i] or s4[i] or s5[i] or s7[i]: current_s6_count = 0
+        if s1[i] or s4[i] or s7[i]: current_s6_count = 0
         if s6[i]: current_s6_count += 1
         s6_counts[i] = current_s6_count
 
+    # 💡 공통 필터 적용 (여기서 S1, S4, S6, S7 만 걸러냅니다)
     cond_base = moneyOk & priceOk
     
-    hit2 = s2[-1] and cond_base[-1]
-    hit4 = s4[-1] and cond_base[-1]
+    hit1 = s1[-1] and cond_base[-1]
+    hit4 = s4[-1] and cond_base[-1] 
     hit6 = s6[-1] and cond_base[-1]
     hit7 = s7[-1] and cond_base[-1]
 
-    if not (hit2 or hit4 or hit6 or hit7): 
+    if not (hit1 or hit4 or hit6 or hit7): 
         return False, "", df, {}
 
     recommend = ""
-    # 💡 4. 불필요한 수식어 제거 및 추천 멘트 할당
+    # 💡 타점별 출력명 및 추천 멘트 할당 (S1, S4 별점 포함)
     if hit6:
         sig_type = f"S6 (누적 {s6_counts[-1]}회)" if s6_counts[-1] >= 2 else "S6"
         recommend = "관심종목, 중장기 / 종가배팅"
-    elif hit7:
+    elif hit7: 
         sig_type = "S7"
         recommend = "중장기 / 종가배팅"
-    elif hit4:
+    elif hit4: 
         stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
         usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
         sig_type = f"S4 | {stars} ({pt}점) {usage_tag}"
         recommend = "스윙 / 종가배팅"
-    else:
-        sig_type = "S2"
+    elif hit1: 
+        stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
+        usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
+        sig_type = f"S1 | {stars} ({pt}점) {usage_tag}"
         recommend = "스윙 / 종가배팅"
 
-    trust_score = calculate_trust_score(c, e60, True)
-    
+    # 미국장 파일은 calculate_trust_score 인자가 2개, 한국장은 3개이므로 예외처리
+    try:
+        trust_score = calculate_trust_score(c, e60)
+    except:
+        trust_score = calculate_trust_score(c, e60, True)
+
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s6_count": int(s6_counts[-1]), "recommend": recommend}
 
 chart_lock = threading.Lock()
