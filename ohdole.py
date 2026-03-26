@@ -236,32 +236,45 @@ def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
+    
     for n in [5, 10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    # 💡 저가(Low) 포함 추출
     c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
     e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
     e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    is_money_ok = (c * v) >= 100_000_000
+    # 💡 주의: 한국장은 100_000_000 / 1000, 미국장은 5_000_000 / 3.0 으로 유지해 주세요!
+    is_money_ok = (c * v) >= 100_000_000 
     is_price_ok = c >= 1000
     cond_base = is_money_ok & is_price_ok
+
+    # 1. 양봉 조건
     isBullish = c > o
 
+    # 2. 112, 224, 448 완벽 정배열
     macroBull = (e112 > e224) & (e224 > e448)
     
-    # 💡 150일 장기 정배열 체크 (실제/참고용 구분)
+    # 💡 [신규 추가] 3. 현재 캔들이 224일선 및 448일선 위에 위치
+    isAboveLongMA = (c > e224) & (c > e448)
+    
+    # 💡 [신규 추가] 4. 10일선 > 20일선 정배열 필수 (역배열 차단)
+    isShortBull = (e10 > e20)
+    
+    # 150일 이상 장기 정배열 유지 여부 판독
     is_150_align = pd.Series(macroBull).rolling(150).sum().values == 150
 
+    # 5/30 확실한 상향 돌파
     prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
     prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
     isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
 
-    signal1 = isStrictCrossUp30 & isBullish & macroBull & cond_base
+    # ⭐️ 최종 시그널 산출 (신규 필터 2개 추가 결합)
+    signal1 = isStrictCrossUp30 & isBullish & macroBull & isAboveLongMA & isShortBull & cond_base
+
     if not signal1[-1]: return False, "", df, {}
 
-    # 💡 별점 및 추천 멘트 할당
+    # 별점 및 추천 멘트 할당
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
     
