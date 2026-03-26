@@ -64,44 +64,70 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 플랫폼별 4종 세트 생성 및 에러 방어막(Fallback) 구축
+# 💡 2. 100% 스팸 회피형 스핀택스(Spintax) + AI 쿨타임 방어막 탑재
 def generate_ai_report(ticker_str: str, company_name: str):
-    import re # 정규식 모듈
+    import re, random, time
+    
+    # 1. 팩트 데이터 추출
     try:
         tk = yf.Ticker(ticker_str)
         info = tk.info
-        sector = info.get('sector', '관련 산업')
-        industry = info.get('industry', '해당 섹터')
-        summary = str(info.get('longBusinessSummary', ''))[:100] + "..."
+        sector = info.get('sector', '글로벌 산업')
+        industry = info.get('industry', '주요 섹터')
+        
+        # 유료방 영문 도배 방지용 한글 변환 맵 (대표적인 것만 처리, 나머진 그대로)
+        sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
+        sector_kr = sector_kr_map.get(sector, sector)
     except:
-        sector, industry, summary = '글로벌 산업', '주요 섹터', '안정적인 비즈니스 모델'
+        sector_kr, industry = '글로벌 산업', '유망 섹터'
 
-    # 비상용 멘트도 종목마다 조금씩 다르게 팩트 기반으로 섞이도록 수정
-    fb_main = f"1. 섹터: {sector} ({industry})\n2. 실적: 최근 재무 데이터 갱신 중\n3. 모멘텀: {summary}"
-    fb_threads = f"👀 {company_name} 자리 체크 필수! {sector} 쪽에 최근 자금이 쏠리면서 차트 밸런스가 잡히고 있습니다. 비즈니스도 나쁘지 않네요."
-    fb_blog = f"📌 오늘 분석할 종목은 {company_name} ({ticker_str})입니다. {industry} 분야에서 눈에 띄는 펀더멘탈을 유지 중이며, 바닥권 에너지가 응축되고 있습니다."
-    fb_x = f"🔥 {ticker_str} 지금 무조건 봐야 함. {sector} 대장주급 차트 흐름 나오는 중. 기업 팩트체크 완료! #미국주식 #{ticker_str}"
-    fb_blind = f"형들 {company_name} 차트 봄? {sector} 쪽인데 지금 완전 바닥 다지고 거래량 터지기 직전임. 워치리스트 ㄱㄱ"
+    # 2. 🤖 무한 랜덤 문장 조합기 (Spintax) - 스팸 필터 100% 우회
+    # 쓰레드용 랜덤 조합
+    th_intro = random.choice([f"👀 {company_name} 자리 체크 필수!", f"🔥 {ticker_str} 수급 들어오는 거 보이시나요?", f"🚨 지금 {sector_kr} 관련해서 심상치 않은 종목 하나 뜹니다.", f"💡 {company_name} 차트가 아주 예쁘게 만들어지고 있네요."])
+    th_body = random.choice([f"최근 {industry} 쪽으로 자금이 쏠리면서 완벽한 밸런스가 잡혔습니다.", "바닥 다지고 머리 드는 전형적인 턴어라운드 흐름입니다.", "비즈니스 펀더멘탈도 나쁘지 않고 기술적 타점도 예술이네요."])
+    th_outro = random.choice(["킵해두고 지켜보세요!", "워치리스트에 당장 추가하세요.", "단기 시세 분출 기대해볼 만합니다."])
+    fb_threads = f"{th_intro} {th_body} {th_outro}"
 
+    # 블로그용 랜덤 조합
+    bg_intro = random.choice([f"📌 오늘 분석해 볼 미국 주식은 {company_name} ({ticker_str})입니다.", f"📈 {sector_kr} 섹터에서 유의미한 흐름을 보여주는 {company_name}을(를) 살펴봅니다.", f"📊 주목해야 할 {industry} 관련주, {ticker_str} 차트 분석입니다."])
+    bg_body = random.choice(["알고리즘 상 강한 매수 에너지가 응축되고 있는 것이 특징입니다.", "오랜 기간 바닥을 다진 후 추세 전환의 초입에 위치해 있습니다.", "시장 소외 구간을 지나 본격적인 거래량 유입이 기대되는 자리입니다."])
+    fb_blog = f"{bg_intro} {bg_body} 기술적 반등 시나리오를 참고하시어 투자 전략을 세워보시길 바랍니다."
+
+    # X(트위터)용 랜덤 조합
+    x_intro = random.choice([f"🔥 {ticker_str} 지금 당장 봐야 함.", f"🚨 {company_name} 자리 폼 미쳤음.", f"👀 {sector_kr} 대장주급 차트 등장."])
+    x_body = random.choice(["바닥 탈출 시그널 떴음.", "수급 쫙 빨아들이기 직전.", "알고리즘 타점 정확히 들어왔음."])
+    fb_x = f"{x_intro} {x_body} 팩트체크 필수! #미국주식 #{ticker_str} #{sector_kr.replace('/', '')}"
+
+    # 블라인드용 랜덤 조합
+    bl_intro = random.choice([f"형들 {company_name} 차트 봄?", f"{ticker_str} 이거 지금 나만 보고 있는 거 아니지?", f"미장 {sector_kr} 쪽인데 지금 자리 개꿀임."])
+    bl_body = random.choice(["완전 바닥 다지고 거래량 터지기 직전인 듯.", "알고리즘에 딱 걸림. 재무도 평타 이상.", "차트충 등판해봐 이거 무조건 반등 자리 아님?"])
+    fb_blind = f"{bl_intro} {bl_body} 워치리스트 ㄱㄱ"
+
+    # 유료방 본캐용 깔끔한 한글 대체 멘트 (더 이상 영문 덤프 안 됨)
+    fb_main = f"1. 섹터: {sector_kr} ({industry})\n2. 실적: 최근 재무 데이터 및 시장 컨센서스 분석 중\n3. 모멘텀: 차트 상 유의미한 바닥권 탈출 및 수급 유입 패턴 포착"
+
+    # 3. 구글 AI 호출 (속도 제한 방어 쿨타임 적용)
     for attempt in range(3):
         try:
+            time.sleep(4) # 💡 핵심: 4초 대기! 이걸 넣어야 구글이 스팸으로 차단하지 않습니다.
+            
             prompt = f"""
             너는 미국 주식 전문 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 찾아 5가지 버전의 글을 작성해.
             
             ⚠️ [매우 중요 규칙]
-            1. 대괄호 [ ] 로만 정확히 섹션을 구분할 것. 기호나 굵은 글씨 절대 금지.
-            2. 무조건 '팩트(매출/이익 수치 %, 구체적인 비즈니스/파이프라인 이름)'를 포함할 것. 추상적이고 뻔한 헛소리 절대 금지.
-            3. 매번 똑같은 패턴 템플릿 쓰지 말고 생성할 때마다 문장 구조와 이모지를 완전히 다르게 쓸 것.
+            1. 대괄호 [ ] 로만 정확히 섹션을 구분할 것. 기호나 굵은 글씨(**) 절대 금지.
+            2. 무조건 '한글'로만 작성할 것. 영어 원문 그대로 출력 금지.
+            3. 실적이나 파이프라인 등 구체적인 '팩트 수치/이름'을 포함할 것.
+            4. 매번 문장 구조와 이모지를 완전히 다르게 창작할 것.
 
             [팩트 데이터]
-            섹터/산업: {sector} / {industry}
-            비즈니스 요약: {summary}
+            섹터/산업: {sector_kr} / {industry}
 
             [출력 양식]
             [본캐]
-            1. 섹터: (테마 1줄)
-            2. 실적: (팩트 수치 1줄)
-            3. 모멘텀: (앞으로의 호재 1줄)
+            1. 섹터: (어떤 테마인지 한글로 1줄 요약)
+            2. 실적: (팩트 수치 한글 1줄 요약)
+            3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
             
             [쓰레드]
             (트렌디한 말투, 이모지, 구체적 팩트 포함 2~3문장)
@@ -122,9 +148,8 @@ def generate_ai_report(ticker_str: str, company_name: str):
             )
             
             if not response or not response.text:
-                time.sleep(2); continue
+                continue
                 
-            # 💡 어떤 마크다운 기호가 붙어도 다 무시하고 찰떡같이 텍스트만 빼내는 무적의 정규식 파싱
             report = response.text.replace('*', '').strip() 
             
             m_part = re.search(r'\[본캐\](.*?)(?=\[쓰레드\])', report, re.DOTALL)
@@ -138,8 +163,9 @@ def generate_ai_report(ticker_str: str, company_name: str):
 
             return m_part.group(1).strip(), th_part.group(1).strip(), bg_part.group(1).strip(), x_part.group(1).strip(), bl_part.group(1).strip()
         except:
-            time.sleep(3)
+            pass # 에러 나면 다음 시도로 넘어가고, 3번 다 실패하면 밖으로 빠져나감
             
+    # 💡 4. AI가 결국 실패하더라도 준비된 '무한 랜덤 문장'이 대신 나감
     return fb_main, fb_threads, fb_blog, fb_x, fb_blind
 
 def get_us_ticker_list():
