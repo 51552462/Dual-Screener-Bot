@@ -497,10 +497,10 @@ def scan_market_1d():
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         executor.map(worker, list(stock_list.iterrows()))
         
-    # ⭐️ 텔레그램 전송 완료 보장 대기 ⭐️
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        telegram_queue.join()
+        q_main.join()
+        q_promo.join()
         
     print(f"\n✅ [한국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
