@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib; matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
@@ -74,18 +75,19 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 본캐 팩트 + 실시간 트렌드 해시태그 생성기 (스팸 차단 및 구글 검색 연동)
+# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 및 스팸 방지를 위해 안전하게 교체)
 def generate_kr_ai_report(code: str, company_name: str):
     import re, time
     
     # 1. 팩트 데이터 추출 시도
     try:
-        if ticker_str.isdigit(): # 한국장
-            res = requests.get(f"https://finance.naver.com/item/main.naver?code={ticker_str}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
+        if code.isdigit(): # 한국장
+            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
             soup = BeautifulSoup(res.text, 'html.parser')
             sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
         else: # 미국장
-            tk = yf.Ticker(ticker_str)
+            import yfinance as yf
+            tk = yf.Ticker(code)
             sector = tk.info.get('sector', '글로벌 산업')
             sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
             sector_kr = sector_kr_map.get(sector, sector)
@@ -94,7 +96,6 @@ def generate_kr_ai_report(code: str, company_name: str):
 
     # 비상용 기본 멘트 (AI 뻗었을 때)
     fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
-    fb_tags = f"X: #{company_name.replace(' ','')} #주식투자\nThreads: #{sector_kr.replace('/','')} #주식스타그램"
 
     # 3. 구글 AI 호출 (속도 제한 방어 4초 쿨타임)
     for attempt in range(3):
@@ -102,20 +103,14 @@ def generate_kr_ai_report(code: str, company_name: str):
             time.sleep(4) 
             
             prompt = f"""
-            너는 주식 전문 마케터야. [{company_name} ({ticker_str})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
-            
+            너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
             ⚠️ [매우 중요 규칙]
             1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
-            2. [해시태그]는 뜬금없는 단어 금지! 오늘 이 종목/섹터와 가장 연관성 높고 트래픽 터지는 실시간 인기 태그 1, 2위를 X와 Threads 특성에 맞게 2개씩만 작성해. (예: #엔비디아 #AI대장주)
 
             [본캐]
             1. 섹터: (어떤 테마인지 한글로 1줄 요약)
             2. 실적: (팩트 수치 한글 1줄 요약)
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
-            
-            [해시태그]
-            X: #태그1 #태그2
-            Threads: #태그1 #태그2
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -128,19 +123,18 @@ def generate_kr_ai_report(code: str, company_name: str):
                 
             report = response.text.replace('*', '').strip() 
             
-            # 본캐 부분과 해시태그 부분만 딱 잘라내기
-            m_part = re.search(r'\[본캐\](.*?)(?=\[해시태그\])', report, re.DOTALL)
-            tag_part = re.search(r'\[해시태그\](.*)', report, re.DOTALL)
+            # 본캐 부분만 딱 잘라내기
+            m_part = re.search(r'\[본캐\](.*)', report, re.DOTALL)
 
-            if not (m_part and tag_part): 
+            if not m_part: 
                 raise ValueError("파싱오류")
 
-            return m_part.group(1).strip(), tag_part.group(1).strip()
+            return m_part.group(1).strip(), "" # 해시태그는 빈문자열 리턴
         except:
             pass 
             
     # AI 3번 다 실패 시 기본값 리턴
-    return final_report, sector
+    return fb_main, ""
 
 def get_krx_list_kind():
     try:
@@ -167,7 +161,8 @@ def calculate_trust_score(c, e60, signal_arr):
             entry_price = c[i]
             for j in range(i + 1, len(c)):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
+                    valid = False
+                    break
             if valid: score += 2 
     return max(1, min(10, score)) 
 
@@ -189,7 +184,8 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
 
     condCrossEvent = np.zeros(len(c), dtype=bool)
     for i in range(1, 9):
-        shifted_c = np.roll(c, i); shifted_c[:i] = np.inf
+        shifted_c = np.roll(c, i)
+        shifted_c[:i] = np.inf
         shifted_ema112 = np.roll(ema112, i)
         condCrossEvent |= (shifted_c < shifted_ema112)
 
@@ -227,6 +223,7 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
                 if h[i] >= c[wait_idx] * 1.15: # 15% 달성 시 리셋 (시세 분출 완료)
                     current_p_count = 0
                     wait_idx = -1
+            
             # 3봉이 지났는데도 15% 도달을 못했으면 누적 유지 (에너지 응축 중)
             if i == wait_idx + 3 and wait_idx != -1:
                 wait_idx = -1
@@ -244,17 +241,15 @@ def compute_inverse_1d(df_raw: pd.DataFrame):
     # 💡 p_count(누적 횟수)를 텔레그램으로 넘겨줌
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "p_count": int(p_counts[-1])}
 
-chart_lock = threading.Lock()
-
+# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
-    # 💡 오늘 날짜 기준으로 5가지 테마 매일 자동 로테이션
     theme_idx = datetime.now().day % 5
     themes = [
-        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#FFFFFF', 'up': '#FF3B69', 'down': '#00B4D8'}, # 0: 프리미엄 다크
-        {'bg': '#FFFFFF', 'grid': '#EAEAEA', 'text': '#111111', 'up': '#E63946', 'down': '#1D3557'}, # 1: 스노우 화이트 (가독성 극대화)
-        {'bg': '#0B1021', 'grid': '#1B2236', 'text': '#E2E8F0', 'up': '#00FFA3', 'down': '#FF3366'}, # 2: 사이버펑크
-        {'bg': '#1E1E1E', 'grid': '#333333', 'text': '#D4D4D4', 'up': '#4CAF50', 'down': '#F44336'}, # 3: 터미널 딥
-        {'bg': '#F8F9FA', 'grid': '#DEE2E6', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  # 4: 모던 라이트
+        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Dark
+        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, # 1: Institutional White
+        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, # 2: TradingView Premium
+        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, # 3: Cyberpunk
+        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  # 4: Modern Light
     ]
     return themes[theme_idx]
 
@@ -311,7 +306,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             fig.text(0.05, title_y, f"{code} | {name}", fontsize=24 if is_promo else 22, fontweight='bold', color=text_main, ha='left')
             
-            right_text1 = f"{sign} {abs(diff_pct):.2f}%" if is_promo else f"Close: {c:,.2f} ({sign} {abs(diff_pct):.2f}%)"
+            right_text1 = f"{sign} {abs(diff_pct):.2f}%" if is_promo else f"Close: {c:,.0f} ({sign} {abs(diff_pct):.2f}%)"
             fig.text(0.95, title_y, right_text1, fontsize=22 if is_promo else 18, fontweight='bold', color=color_diff, ha='right')
 
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
@@ -322,6 +317,7 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
         except Exception as e:
             print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
+
 def scan_market_1d():
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
@@ -376,7 +372,7 @@ def scan_market_1d():
                 if is_valid: tracker['analyzed'] += 1 
                 if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
                     print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
-                
+
                 if hit:
                     if code in sent_today:
                         hit = False 
@@ -390,19 +386,20 @@ def scan_market_1d():
                                 for s_code in sent_today: f.write(s_code + "\n")
                         except: pass
                     
-         if hit:
-               if hit:
-    # 1️⃣ 본캐용 (차트 + 거래량 + 유료방용 상세 브리핑)
-    main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True, is_promo=False)
-    if main_chart_path:
-        ai_fact_check, sector_name = generate_ai_report(code, name) # (또는 generate_kr_ai_report)
+            if hit:
+                # 1️⃣ 본캐용 / 홍보용 차트 생성
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                
+                if main_chart_path and promo_chart_path:
+                    ai_main, _ = generate_kr_ai_report(code, name) 
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.2f}\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [매수/손절 전략]\n"
                         f"- 양봉 길이만큼 분할매수\n"
                         f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
@@ -413,18 +410,36 @@ def scan_market_1d():
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
-                    telegram_queue.put((main_chart_path, main_caption)) # (듀얼봇 파일의 경우 q_main.put)
+                    q_main.put((main_chart_path, main_caption)) 
 
-                    # 2️⃣ 홍보용 (거래량 제거 + 매일 바뀌는 5가지 테마 + 초심플 캡션)
-        promo_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False, is_promo=True)
-        if promo_chart_path:
-            promo_caption = (
-                f"🏢 종목명: {name}\n"
-                f"📌 섹터: {sector_name}"
-            )
-            telegram_queue.put((promo_chart_path, promo_caption)) # (듀얼봇 파일의 경우 q_promo.put)
-            
-        print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 완료!")
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
+                    try:
+                        sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                    except:
+                        sector_info = "유망 섹터 포착"
+
+                    promo_caption = (
+                        f"📈 [알고리즘 차트 포착]\n\n"
+                        f"🏢 종목: {name} ({code})\n"
+                        f"🏷️ 섹터: {sector_info}\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                    )
+                    q_promo.put((promo_chart_path, promo_caption))
+           
+            print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+        except Exception as e:
+            pass
+
+    # 💡 일꾼(스레드) 가동 및 대기
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        list(executor.map(worker, list(stock_list.iterrows())))
+        
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        q_main.join()
+        q_promo.join()
+
+    print(f"\n✅ [한국장 3번 역매공파 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 # ⭐️ 3번 스케줄러 세팅 (10:00, 12:30, 15:00) ⭐️
 def run_scheduler():
@@ -439,4 +454,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()  # ⭐️ 이 줄이 있으면 실행 즉시 1회 스캔을 시작합니다.
+    scan_market_1d()
