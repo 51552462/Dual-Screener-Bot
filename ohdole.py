@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib; matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
@@ -51,9 +52,10 @@ def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '
 
 ai_request_lock = threading.Lock()
 
-# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 생성기
+# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
 def generate_ai_report(code: str, company_name: str):
     import re, time
+    import yfinance as yf
     
     # 1. 팩트 데이터 추출
     try:
@@ -69,30 +71,22 @@ def generate_ai_report(code: str, company_name: str):
     except:
         sector_kr = '유망 섹터'
 
-    # 비상용 기본 멘트
     fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
-    fb_tags = f"X: #{company_name.replace(' ','')} #주식투자\nThreads: #{sector_kr.replace('/','')} #주식스타그램"
 
-    # 2. 구글 AI 호출 (속도 제한 방어 4초 쿨타임)
+    # 2. 구글 AI 호출
     for attempt in range(3):
         try:
             time.sleep(4) 
             
             prompt = f"""
             너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
-            
             ⚠️ [매우 중요 규칙]
             1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
-            2. [해시태그]는 뜬금없는 단어 금지! 오늘 이 종목/섹터와 가장 연관성 높고 트래픽 터지는 실시간 인기 태그 1, 2위를 X와 Threads 특성에 맞게 2개씩만 작성해.
 
             [본캐]
             1. 섹터: (어떤 테마인지 한글로 1줄 요약)
             2. 실적: (팩트 수치 한글 1줄 요약)
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
-            
-            [해시태그]
-            X: #태그1 #태그2
-            Threads: #태그1 #태그2
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -104,18 +98,16 @@ def generate_ai_report(code: str, company_name: str):
                 continue
                 
             report = response.text.replace('*', '').strip() 
-            
-            m_part = re.search(r'\[본캐\](.*?)(?=\[해시태그\])', report, re.DOTALL)
-            tag_part = re.search(r'\[해시태그\](.*)', report, re.DOTALL)
+            m_part = re.search(r'\[본캐\](.*)', report, re.DOTALL)
 
-            if not (m_part and tag_part): 
-                raise ValueError("파싱오류")
+            if not m_part: raise ValueError("파싱오류")
 
-            return m_part.group(1).strip(), tag_part.group(1).strip()
+            return m_part.group(1).strip(), ""
         except:
             pass 
             
-    return fb_main, fb_tags
+    return fb_main, ""
+
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -168,11 +160,12 @@ def calculate_trust_score(c, e60, *sig_arrays):
             entry_price = c[i]
             for j in range(i + 1, len(c)):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
+                    valid = False
+                    break
             if valid: score += 2 
     return max(1, min(10, score)) 
 
-# 💡 3. S1 별점 채점 알고리즘
+# 💡 3. S1 별점 채점 알고리즘 (원본 100% 유지)
 def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
     score = 0
     change_pct = ((c - prev_c) / prev_c) * 100 if prev_c > 0 else 0
@@ -216,37 +209,25 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
     e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
     e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # 💡 주의: 한국장은 100_000_000 / 1000, 미국장은 5_000_000 / 3.0 으로 유지해 주세요!
     is_money_ok = (c * v) >= 100_000_000 
     is_price_ok = c >= 1000
     cond_base = is_money_ok & is_price_ok
 
-    # 1. 양봉 조건
     isBullish = c > o
-
-    # 2. 112, 224, 448 완벽 정배열
     macroBull = (e112 > e224) & (e224 > e448)
-    
-    # 💡 [신규 추가] 3. 현재 캔들이 224일선 및 448일선 위에 위치
     isAboveLongMA = (c > e224) & (c > e448)
-    
-    # 💡 [신규 추가] 4. 10일선 > 20일선 정배열 필수 (역배열 차단)
     isShortBull = (e10 > e20)
     
-    # 150일 이상 장기 정배열 유지 여부 판독
     is_150_align = pd.Series(macroBull).rolling(150).sum().values == 150
 
-    # 5/30 확실한 상향 돌파
     prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
     prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
     isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
 
-    # ⭐️ 최종 시그널 산출 (신규 필터 2개 추가 결합)
     signal1 = isStrictCrossUp30 & isBullish & macroBull & isAboveLongMA & isShortBull & cond_base
 
     if not signal1[-1]: return False, "", df, {}
 
-    # 별점 및 추천 멘트 할당
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
     
@@ -256,101 +237,88 @@ def compute_ohdole_1d(df_raw: pd.DataFrame):
 
     trust_score = calculate_trust_score(c, e60) 
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "recommend": recommend}
-    
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
+
+# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
+def get_daily_theme():
+    theme_idx = datetime.now().day % 5
+    themes = [
+        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Premium
+        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, # 1: Institutional White
+        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, # 2: TradingView Classic
+        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, # 3: Cyberpunk Terminal
+        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  # 4: Modern Light
+    ]
+    return themes[theme_idx]
+
+chart_lock = threading.Lock()
+
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False, is_promo=False) -> str:
     with chart_lock:
         try:
             plt.rcParams['font.family'] = 'NanumGothic'
             plt.rcParams['axes.unicode_minus'] = False
             
             timestamp_ms = int(time.time() * 1000)
-            vol_suffix = "wVol" if show_volume else "noVol"
+            vol_suffix = "promo" if is_promo else ("wVol" if show_volume else "noVol")
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
             
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
             df_cut.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
-            
             if df_cut.empty or len(df_cut) < 5: return None
 
-            # 1. 데이터 계산
-            c = df_cut['Close'].iloc[-1]
-            o = df_cut['Open'].iloc[-1]
-            h = df_cut['High'].iloc[-1]
-            l = df_cut['Low'].iloc[-1]
+            c, o, h, l = df_cut['Close'].iloc[-1], df_cut['Open'].iloc[-1], df_cut['High'].iloc[-1], df_cut['Low'].iloc[-1]
             v = int(df_cut['Volume'].iloc[-1])
-            
             prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
             diff = c - prev_c
             diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
-            
             sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
             
-            # 💡 다크테마용 네온 색상 세팅
-            bg_color = '#131722'      # 고급스러운 다크 네이비/블랙
-            grid_color = '#2A2E39'    # 은은한 그리드
-            text_main = '#FFFFFF'     # 메인 텍스트 (흰색)
-            text_sub = '#8A91A5'      # 서브 텍스트 (회색)
-            color_up = '#FF3B69'      # 네온 레드 (상승)
-            color_down = '#00B4D8'    # 네온 블루 (하락)
+            # 💡 홍보용 vs 본캐용 분기
+            if is_promo:
+                theme = get_daily_theme()
+                bg_color, grid_color, text_main = theme['bg'], theme['grid'], theme['text']
+                color_up, color_down = theme['up'], theme['down']
+                text_sub = text_main
+                custom_figsize = (9, 9) 
+            else:
+                bg_color, grid_color, text_main, text_sub = '#131722', '#2A2E39', '#FFFFFF', '#8A91A5'
+                color_up, color_down = '#FF3B69', '#00B4D8'
+                custom_figsize = (11, 6.5) if show_volume else (9, 9)
             
             color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
 
-            # 💡 황금색(Gold) 시그널 화살표
             signal_marker = pd.Series(np.nan, index=df_cut.index)
             y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
             signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
-            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=400 if is_promo else 300, marker='^', color='#FFD700', alpha=1.0)
 
-            # 💡 프리미엄 다크 스타일 캔들 & 그리드 세팅
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
-            s = mpf.make_mpf_style(
-                marketcolors=mc, 
-                facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, 
-                gridcolor=grid_color, gridstyle='--', y_on_right=True,
-                rc={
-                    'font.family': plt.rcParams['font.family'], 
-                    'text.color': text_main, 
-                    'axes.labelcolor': text_sub, 
-                    'xtick.color': text_sub, 
-                    'ytick.color': text_sub
-                }
-            )
+            s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
             
             plt.close('all')
-            
-            # 차트 뼈대 생성
-            fig, axes = mpf.plot(
-                df_cut, type="candle", volume=show_volume, addplot=ap,
-                style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True
-            )
+            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=custom_figsize, tight_layout=False, returnfig=True)
 
-            # 상단 여백 조절 및 대시보드 텍스트 삽입
+            title_y, sub_y = (0.94, 0.90) if not show_volume or is_promo else (0.93, 0.88)
             fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
             
-            # 좌측 상단 (종목명)
-            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
-            fig.text(0.05, 0.88, "1D / KRX", fontsize=12, color=text_sub, ha='left')
+            fig.text(0.05, title_y, f"{code} | {name}", fontsize=24 if is_promo else 22, fontweight='bold', color=text_main, ha='left')
+            
+            right_text1 = f"{sign} {abs(diff_pct):.2f}%" if is_promo else f"Close: {c:,.0f} ({sign} {abs(diff_pct):.2f}%)"
+            fig.text(0.95, title_y, right_text1, fontsize=22 if is_promo else 18, fontweight='bold', color=color_diff, ha='right')
 
-            # 우측 상단 (현재가 및 등락)
-            right_text1 = f"Close: {c:,.0f} ({sign} {abs(diff):,.0f}, {sign} {abs(diff_pct):.2f}%)"
-            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
-
-            # 우측 하단 디테일
-            right_text2 = f"Vol: {v:,}  |  O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
-            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
-
-            # 💡 좌측 하단 전문성 강조용 워터마크
+            if not is_promo:
+                right_text2 = f"Vol: {v:,}  | O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
+                fig.text(0.95, sub_y, right_text2, fontsize=12, color=text_sub, ha='right')
+                
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
-            # 200 DPI 초고화질 렌더링
-            fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
+            fig.savefig(path, dpi=250 if is_promo else 200, bbox_inches='tight', facecolor=bg_color)
             plt.close(fig)
-            
             return path
         except Exception as e:
             print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
-            
+
 def scan_market_1d():
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
@@ -392,6 +360,7 @@ def scan_market_1d():
 
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
             hit, sig_type, df, dbg = False, "", None, {}
+            
             if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
 
             hit_rank = 0
@@ -408,7 +377,6 @@ def scan_market_1d():
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']
                         sent_today.add(code) 
-                        # 💡 파일에 기록 (영구 차단)
                         try:
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
@@ -416,19 +384,19 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                # 💡 본캐용 차트 생성 (is_promo=False)
+                # 💡 본캐용 및 홍보용 차트 생성
                 main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                 
-                if main_chart_path:
-                    # 💡 변경점: 이제 함수가 5개가 아니라 딱 2개(본캐 팩트, 해시태그)만 뱉어냅니다!
-                    ai_main, ai_tags = generate_ai_report(code, name)
+                if main_chart_path and promo_chart_path:
+                    ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지, 변경점 없음)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.2f}\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [매수/손절 전략]\n"
                         f"- 양봉 길이만큼 분할매수\n"
                         f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
@@ -441,42 +409,22 @@ def scan_market_1d():
                     )
                     q_main.put((main_chart_path, main_caption))
 
-                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 압축!)
-                    # 💡 is_promo=True 로 차트 테마 자동 로테이션 적용
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-                    
-                    if threads_chart_path:
-                        # 본캐 AI 결과에서 '섹터' 부분만 딱 뽑아오기
-                        try:
-                            sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                        except:
-                            sector_info = "유망 섹터 포착"
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
+                    try:
+                        sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                    except:
+                        sector_info = "유망 섹터 포착"
                             
-                        # AI가 뽑아준 해시태그 분리
-                        try:
-                            x_tags = re.search(r'X:\s*(.*)', ai_tags).group(1).strip()
-                            th_tags = re.search(r'Threads:\s*(.*)', ai_tags).group(1).strip()
-                        except:
-                            x_tags = f"#{code} #주식"
-                            th_tags = "#주식투자 #재테크"
-                        
-                        # 화폐 기호 자동 감지 (한국장 6자리 숫자는 원화 없음, 미국장은 $)
-                        currency = "" if code.isdigit() and len(code) == 6 else "$"
-                        price_fmt = f"{currency}{dbg.get('last_close', 0):,.0f}" if not currency else f"{currency}{dbg.get('last_close', 0):,.2f}"
+                    # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만!
+                    promo_caption = (
+                        f"📈 [알고리즘 차트 포착]\n\n"
+                        f"🏢 종목: {name} ({code})\n"
+                        f"🏷️ 섹터: {sector_info}\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
+                    )
+                    q_promo.put((promo_chart_path, promo_caption))
 
-                        # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가+해시태그]만!
-                        promo_caption = (
-                            f"📈 [알고리즘 차트 포착]\n\n"
-                            f"🏢 종목: {name} ({code})\n"
-                            f"🏷️ 섹터: {sector_info}\n"
-                            f"💰 현재가: {price_fmt}\n\n"
-                            f"🐦 X(트위터) 추천 태그:\n{x_tags}\n\n"
-                            f"📱 Threads 추천 태그:\n{th_tags}\n\n"
-                            f"⚠️ 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
-                        )
-                        q_promo.put((threads_chart_path, promo_caption))
-
-                    print(f"\n✅ [{name}] 듀얼 발송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             pass
 
@@ -489,7 +437,7 @@ def scan_market_1d():
         q_main.join()
         q_promo.join()
 
-    print(f"\n✅ [한국장 오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [한국장 1번 오돌이 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 # ⭐️ 2번 스케줄러 세팅 (09:30, 12:00, 14:30) ⭐️
 def run_scheduler():
