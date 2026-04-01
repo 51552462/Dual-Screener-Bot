@@ -65,82 +65,48 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 100% 스팸 회피형 스핀택스(Spintax) + AI 쿨타임 방어막 탑재
-def generate_ai_report(ticker_str: str, company_name: str):
-    import re, random, time
+# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 생성기
+def generate_ai_report(code: str, company_name: str):
+    import re, time
     
     # 1. 팩트 데이터 추출
     try:
-        tk = yf.Ticker(ticker_str)
-        info = tk.info
-        sector = info.get('sector', '글로벌 산업')
-        industry = info.get('industry', '주요 섹터')
-        
-        # 유료방 영문 도배 방지용 한글 변환 맵 (대표적인 것만 처리, 나머진 그대로)
-        sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
-        sector_kr = sector_kr_map.get(sector, sector)
+        if code.isdigit(): # 한국장
+            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
+        else: # 미국장
+            tk = yf.Ticker(code)
+            sector = tk.info.get('sector', '글로벌 산업')
+            sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
+            sector_kr = sector_kr_map.get(sector, sector)
     except:
-        sector_kr, industry = '글로벌 산업', '유망 섹터'
+        sector_kr = '유망 섹터'
 
-    # 2. 🤖 무한 랜덤 문장 조합기 (Spintax) - 스팸 필터 100% 우회
-    # 쓰레드용 랜덤 조합
-    th_intro = random.choice([f"👀 {company_name} 자리 체크 필수!", f"🔥 {ticker_str} 수급 들어오는 거 보이시나요?", f"🚨 지금 {sector_kr} 관련해서 심상치 않은 종목 하나 뜹니다.", f"💡 {company_name} 차트가 아주 예쁘게 만들어지고 있네요."])
-    th_body = random.choice([f"최근 {industry} 쪽으로 자금이 쏠리면서 완벽한 밸런스가 잡혔습니다.", "바닥 다지고 머리 드는 전형적인 턴어라운드 흐름입니다.", "비즈니스 펀더멘탈도 나쁘지 않고 기술적 타점도 예술이네요."])
-    th_outro = random.choice(["킵해두고 지켜보세요!", "워치리스트에 당장 추가하세요.", "단기 시세 분출 기대해볼 만합니다."])
-    fb_threads = f"{th_intro} {th_body} {th_outro}"
+    # 비상용 기본 멘트
+    fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
+    fb_tags = f"X: #{company_name.replace(' ','')} #주식투자\nThreads: #{sector_kr.replace('/','')} #주식스타그램"
 
-    # 블로그용 랜덤 조합
-    bg_intro = random.choice([f"📌 오늘 분석해 볼 미국 주식은 {company_name} ({ticker_str})입니다.", f"📈 {sector_kr} 섹터에서 유의미한 흐름을 보여주는 {company_name}을(를) 살펴봅니다.", f"📊 주목해야 할 {industry} 관련주, {ticker_str} 차트 분석입니다."])
-    bg_body = random.choice(["알고리즘 상 강한 매수 에너지가 응축되고 있는 것이 특징입니다.", "오랜 기간 바닥을 다진 후 추세 전환의 초입에 위치해 있습니다.", "시장 소외 구간을 지나 본격적인 거래량 유입이 기대되는 자리입니다."])
-    fb_blog = f"{bg_intro} {bg_body} 기술적 반등 시나리오를 참고하시어 투자 전략을 세워보시길 바랍니다."
-
-    # X(트위터)용 랜덤 조합
-    x_intro = random.choice([f"🔥 {ticker_str} 지금 당장 봐야 함.", f"🚨 {company_name} 자리 폼 미쳤음.", f"👀 {sector_kr} 대장주급 차트 등장."])
-    x_body = random.choice(["바닥 탈출 시그널 떴음.", "수급 쫙 빨아들이기 직전.", "알고리즘 타점 정확히 들어왔음."])
-    fb_x = f"{x_intro} {x_body} 팩트체크 필수! #미국주식 #{ticker_str} #{sector_kr.replace('/', '')}"
-
-    # 블라인드용 랜덤 조합
-    bl_intro = random.choice([f"형들 {company_name} 차트 봄?", f"{ticker_str} 이거 지금 나만 보고 있는 거 아니지?", f"미장 {sector_kr} 쪽인데 지금 자리 개꿀임."])
-    bl_body = random.choice(["완전 바닥 다지고 거래량 터지기 직전인 듯.", "알고리즘에 딱 걸림. 재무도 평타 이상.", "차트충 등판해봐 이거 무조건 반등 자리 아님?"])
-    fb_blind = f"{bl_intro} {bl_body} 워치리스트 ㄱㄱ"
-
-    # 유료방 본캐용 깔끔한 한글 대체 멘트 (더 이상 영문 덤프 안 됨)
-    fb_main = f"1. 섹터: {sector_kr} ({industry})\n2. 실적: 최근 재무 데이터 및 시장 컨센서스 분석 중\n3. 모멘텀: 차트 상 유의미한 바닥권 탈출 및 수급 유입 패턴 포착"
-
-    # 3. 구글 AI 호출 (속도 제한 방어 쿨타임 적용)
+    # 2. 구글 AI 호출 (속도 제한 방어 4초 쿨타임)
     for attempt in range(3):
         try:
-            time.sleep(4) # 💡 핵심: 4초 대기! 이걸 넣어야 구글이 스팸으로 차단하지 않습니다.
+            time.sleep(4) 
             
             prompt = f"""
-            너는 미국 주식 전문 애널리스트야. [{company_name} ({ticker_str})]에 대해 구글 검색을 통해 최신 팩트를 찾아 5가지 버전의 글을 작성해.
+            너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
             
             ⚠️ [매우 중요 규칙]
-            1. 대괄호 [ ] 로만 정확히 섹션을 구분할 것. 기호나 굵은 글씨(**) 절대 금지.
-            2. 무조건 '한글'로만 작성할 것. 영어 원문 그대로 출력 금지.
-            3. 실적이나 파이프라인 등 구체적인 '팩트 수치/이름'을 포함할 것.
-            4. 매번 문장 구조와 이모지를 완전히 다르게 창작할 것.
+            1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
+            2. [해시태그]는 뜬금없는 단어 금지! 오늘 이 종목/섹터와 가장 연관성 높고 트래픽 터지는 실시간 인기 태그 1, 2위를 X와 Threads 특성에 맞게 2개씩만 작성해.
 
-            [팩트 데이터]
-            섹터/산업: {sector_kr} / {industry}
-
-            [출력 양식]
             [본캐]
             1. 섹터: (어떤 테마인지 한글로 1줄 요약)
             2. 실적: (팩트 수치 한글 1줄 요약)
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
             
-            [쓰레드]
-            (트렌디한 말투, 이모지, 구체적 팩트 포함 2~3문장)
-            
-            [블로그]
-            (전문가 말투, 구체적 팩트 기반 3~4문장)
-            
-            [X]
-            (다급한 느낌, 팩트 위주, 해시태그 2~3개)
-            
-            [블라인드]
-            (블라인드 주식게시판 반말/형들체, 팩트 포함 2~3문장)
+            [해시태그]
+            X: #태그1 #태그2
+            Threads: #태그1 #태그2
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -153,21 +119,17 @@ def generate_ai_report(ticker_str: str, company_name: str):
                 
             report = response.text.replace('*', '').strip() 
             
-            m_part = re.search(r'\[본캐\](.*?)(?=\[쓰레드\])', report, re.DOTALL)
-            th_part = re.search(r'\[쓰레드\](.*?)(?=\[블로그\])', report, re.DOTALL)
-            bg_part = re.search(r'\[블로그\](.*?)(?=\[X\])', report, re.DOTALL)
-            x_part = re.search(r'\[X\](.*?)(?=\[블라인드\])', report, re.DOTALL)
-            bl_part = re.search(r'\[블라인드\](.*)', report, re.DOTALL)
+            m_part = re.search(r'\[본캐\](.*?)(?=\[해시태그\])', report, re.DOTALL)
+            tag_part = re.search(r'\[해시태그\](.*)', report, re.DOTALL)
 
-            if not (m_part and th_part and bg_part and x_part and bl_part): 
+            if not (m_part and tag_part): 
                 raise ValueError("파싱오류")
 
-            return m_part.group(1).strip(), th_part.group(1).strip(), bg_part.group(1).strip(), x_part.group(1).strip(), bl_part.group(1).strip()
+            return m_part.group(1).strip(), tag_part.group(1).strip()
         except:
-            pass # 에러 나면 다음 시도로 넘어가고, 3번 다 실패하면 밖으로 빠져나감
+            pass 
             
-    # 💡 4. AI가 결국 실패하더라도 준비된 '무한 랜덤 문장'이 대신 나감
-    return fb_main, fb_threads, fb_blog, fb_x, fb_blind
+    return fb_main, fb_tags
 
 def get_us_ticker_list():
     try:
@@ -392,58 +354,67 @@ def scan_market_1d():
                     hit, sig_type, df, dbg = compute_inverse_1d(df_ticker)
                     
                     if hit:
-                        # 💡 1. 당일 중복 차단
-                        if code in sent_today: continue
-                        sent_today.add(code)
+                # 💡 본캐용 차트 생성 (is_promo=False)
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                
+                if main_chart_path:
+                    # 💡 변경점: 이제 함수가 5개가 아니라 딱 2개(본캐 팩트, 해시태그)만 뱉어냅니다!
+                    ai_main, ai_tags = generate_ai_report(code, name)
+                    
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
+                    main_caption = (
+                        f"🎯 [{dbg.get('sig_type', '')}]\n"
+                        f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.2f}\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
+                        f"💡 [AI 비즈니스 요약]\n"
+                        f"{ai_main}\n\n"
+                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                        f"⚠️ [면책 조항]\n"
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                    )
+                    q_main.put((main_chart_path, main_caption))
+
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 압축!)
+                    # 💡 is_promo=True 로 차트 테마 자동 로테이션 적용
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                    
+                    if threads_chart_path:
+                        # 본캐 AI 결과에서 '섹터' 부분만 딱 뽑아오기
                         try:
-                            with open(log_file, "w") as f:
-                                f.write(today_str + "\n")
-                                for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
-
-                        tracker['hits'] += 1
+                            sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                        except:
+                            sector_info = "유망 섹터 포착"
+                            
+                        # AI가 뽑아준 해시태그 분리
+                        try:
+                            x_tags = re.search(r'X:\s*(.*)', ai_tags).group(1).strip()
+                            th_tags = re.search(r'Threads:\s*(.*)', ai_tags).group(1).strip()
+                        except:
+                            x_tags = f"#{code} #주식"
+                            th_tags = "#주식투자 #재테크"
                         
-                        main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True)
-                        if main_chart_path:
-                            # 💡 2. 5가지 버전 멘트 가져오기
-                            ai_main, ai_threads, ai_blog, ai_x, ai_blind = generate_ai_report(code, name)
-                            
-                            # 타점 누적 횟수에 따른 심플한 타이틀 및 추천 멘트
-                            p_count = dbg.get('p_count', 1)
-                            sig_type = f"P (누적 {p_count}회)" if p_count >= 2 else "P (신규)"
-                            recommend = "단기반등, 스윙 / 종가배팅" if p_count >= 3 else "관심종목 / 관망"
-                            
-                            # ⭐️ 3. 유료방(본캐) 결과지
-                            main_caption = (
-                                f"🎯 [{sig_type}]\n"
-                                f"🎯 추천: {recommend}\n\n"
-                                f"🏢 {name} ({code})\n"
-                                f"💰 현재가: ${dbg['last_close']:,.2f}\n\n"
-                                f"⚖️ [건강한 투자를 위한 기준]\n"
-                                f"• 관심종목 편입: 타이밍이 올때까지 천천히 기다리세요.\n"
-                                f"• 단기 진입 시: 실전 매매에 참여하신다면, 진입 시가 이탈 시 칼 같은 손절 필수.\n\n"
-                                f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_main}\n\n"
-                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
-                                f"⚠️ [면책 조항]\n"
-                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                            )
-                            q_main.put((main_chart_path, main_caption))
+                        # 화폐 기호 자동 감지 (한국장 6자리 숫자는 원화 없음, 미국장은 $)
+                        currency = "" if code.isdigit() and len(code) == 6 else "$"
+                        price_fmt = f"{currency}{dbg.get('last_close', 0):,.0f}" if not currency else f"{currency}{dbg.get('last_close', 0):,.2f}"
 
-                            # ⭐️ 4. 홍보방 결과지
-                            threads_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False)
-                            if threads_chart_path:
-                                promo_caption = (
-                                    f"🏢 {name} ({code}) | 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                    f"📱 [Threads 용]\n{ai_threads}\n\n"
-                                    f"📝 [네이버 블로그 용]\n{ai_blog}\n\n"
-                                    f"🐦 [X (트위터) 용]\n{ai_x}\n\n"
-                                    f"🏢 [블라인드 용]\n{ai_blind}\n\n"
-                                    f"⚠️ [면책 조항] 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다. 책임은 투자자 본인에게 있습니다."
-                                )
-                                q_promo.put((threads_chart_path, promo_caption))
-                                
-                            print(f"\n✅ [{name}] 미국장 역매공파 듀얼 발송 대기열 추가 완료 (누적: {p_count}회)")
+                        # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가+해시태그]만!
+                        promo_caption = (
+                            f"📈 [알고리즘 차트 포착]\n\n"
+                            f"🏢 종목: {name} ({code})\n"
+                            f"🏷️ 섹터: {sector_info}\n"
+                            f"💰 현재가: {price_fmt}\n\n"
+                            f"🐦 X(트위터) 추천 태그:\n{x_tags}\n\n"
+                            f"📱 Threads 추천 태그:\n{th_tags}\n\n"
+                            f"⚠️ 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
+                        )
+                        q_promo.put((threads_chart_path, promo_caption))
+
+                    print(f"\n✅ [{name}] 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
                 pass
                 
