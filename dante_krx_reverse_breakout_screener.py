@@ -403,23 +403,38 @@ def scan_market_1d():
                                 for s_code in sent_today: f.write(s_code + "\n")
                         except: pass
                     
-           if hit:
-                # 💡 본캐용 차트 생성
+         if hit:
+                # 💡 본캐용 차트 생성 (is_promo=False)
                 main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
                 
                 if main_chart_path:
-                    # AI 멘트 생성 (본캐용 멘트와 해시태그 뭉치 2개만 리턴받음)
-                    ai_main, ai_tags = generate_ai_report(code, name) 
+                    # 💡 변경점: 이제 함수가 5개가 아니라 딱 2개(본캐 팩트, 해시태그)만 뱉어냅니다!
+                    ai_main, ai_tags = generate_ai_report(code, name)
                     
-                    # ----------------------------------------------------
-                    # (본캐용 main_caption 로직은 기존 유지!)
-                    # ----------------------------------------------------
-                    
-                    # 💡 홍보용 썸네일 차트 생성 (테마 로테이션)
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True) 
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
+                    main_caption = (
+                        f"🎯 [{dbg.get('sig_type', '')}]\n"
+                        f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.2f}\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
+                        f"💡 [AI 비즈니스 요약]\n"
+                        f"{ai_main}\n\n"
+                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                        f"⚠️ [면책 조항]\n"
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                    )
+                    q_main.put((main_chart_path, main_caption))
+
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 압축!)
+                    # 💡 is_promo=True 로 차트 테마 자동 로테이션 적용
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                     
                     if threads_chart_path:
-                        # 본캐 AI 결과에서 섹터 정보만 추출
+                        # 본캐 AI 결과에서 '섹터' 부분만 딱 뽑아오기
                         try:
                             sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                         except:
@@ -433,11 +448,11 @@ def scan_market_1d():
                             x_tags = f"#{code} #주식"
                             th_tags = "#주식투자 #재테크"
                         
-                        # 화폐 기호 자동 감지
+                        # 화폐 기호 자동 감지 (한국장 6자리 숫자는 원화 없음, 미국장은 $)
                         currency = "" if code.isdigit() and len(code) == 6 else "$"
                         price_fmt = f"{currency}{dbg.get('last_close', 0):,.0f}" if not currency else f"{currency}{dbg.get('last_close', 0):,.2f}"
 
-                        # ⭐️ 깔끔한 팩트 + 맞춤형 트렌드 해시태그 삽입!
+                        # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가+해시태그]만!
                         promo_caption = (
                             f"📈 [알고리즘 차트 포착]\n\n"
                             f"🏢 종목: {name} ({code})\n"
@@ -450,19 +465,6 @@ def scan_market_1d():
                         q_promo.put((threads_chart_path, promo_caption))
 
                     print(f"\n✅ [{name}] 듀얼 발송 대기열 추가 완료!")
-        except Exception as e:
-            pass
-
-    # 💡 5. 일꾼(스레드) 가동 및 대기
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-        list(executor.map(worker, list(stock_list.iterrows())))
-        
-    if tracker['hits'] > 0:
-        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()
-        q_promo.join()
-        
-    print(f"\n✅ [한국장 3번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 # ⭐️ 3번 스케줄러 세팅 (10:00, 12:30, 15:00) ⭐️
 def run_scheduler():
