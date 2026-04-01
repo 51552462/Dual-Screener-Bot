@@ -429,30 +429,23 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True)
+                # 💡 본캐용 차트 생성 (is_promo=False)
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                
                 if main_chart_path:
-                    ai_main, ai_threads, ai_blog, ai_x, ai_blind = generate_kr_ai_report(code, name)
+                    # 💡 변경점: 이제 함수가 5개가 아니라 딱 2개(본캐 팩트, 해시태그)만 뱉어냅니다!
+                    ai_main, ai_tags = generate_ai_report(code, name)
                     
-                    cat2_count = dbg.get('cat2_count', 0)
-                    if cat2_count >= 3:
-                        sig_type_formatted = f"B (누적 {cat2_count}회)"
-                        recommend = "관심종목, 중장기 / 종가배팅"
-                    elif "J 강조" in dbg.get('sig_type', ""):
-                        sig_type_formatted = "B (J 강조)"
-                        recommend = "스윙, 중장기 / 종가배팅"
-                    else:
-                        sig_type_formatted = "B"
-                        recommend = "관심종목 / 관망"
-
-                    # 1️⃣ 본캐용 캡션 (유료방)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
                     main_caption = (
-                        f"🎯 [{sig_type_formatted}]\n"
-                        f"🎯 추천: {recommend}\n\n"
+                        f"🎯 [{dbg.get('sig_type', '')}]\n"
+                        f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"⚖️ [건강한 매매를 위한 가이드]\n"
-                        f"• 여유로운 접근: 현재가부터 천천히 모아가며 마음의 여유를 가지세요.\n"
-                        f"• 원칙 대응: 약속된 지지라인(-5%) 이탈 시에는 기계적으로 대응하여 소중한 자산을 보호합니다.\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.2f}\n\n"
+                        f"📉 [매수/손절 전략]\n"
+                        f"- 양봉 길이만큼 분할매수\n"
+                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                        f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
@@ -461,20 +454,42 @@ def scan_market_1d():
                     )
                     q_main.put((main_chart_path, main_caption))
 
-                    # 2️⃣ 홍보용 캡션 (4개 플랫폼)
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False)
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 압축!)
+                    # 💡 is_promo=True 로 차트 테마 자동 로테이션 적용
+                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                    
                     if threads_chart_path:
+                        # 본캐 AI 결과에서 '섹터' 부분만 딱 뽑아오기
+                        try:
+                            sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                        except:
+                            sector_info = "유망 섹터 포착"
+                            
+                        # AI가 뽑아준 해시태그 분리
+                        try:
+                            x_tags = re.search(r'X:\s*(.*)', ai_tags).group(1).strip()
+                            th_tags = re.search(r'Threads:\s*(.*)', ai_tags).group(1).strip()
+                        except:
+                            x_tags = f"#{code} #주식"
+                            th_tags = "#주식투자 #재테크"
+                        
+                        # 화폐 기호 자동 감지 (한국장 6자리 숫자는 원화 없음, 미국장은 $)
+                        currency = "" if code.isdigit() and len(code) == 6 else "$"
+                        price_fmt = f"{currency}{dbg.get('last_close', 0):,.0f}" if not currency else f"{currency}{dbg.get('last_close', 0):,.2f}"
+
+                        # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가+해시태그]만!
                         promo_caption = (
-                            f"🏢 {name} ({code}) | 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                            f"📱 [Threads 용]\n{ai_threads}\n\n"
-                            f"📝 [네이버 블로그 용]\n{ai_blog}\n\n"
-                            f"🐦 [X (트위터) 용]\n{ai_x}\n\n"
-                            f"🏢 [블라인드 용]\n{ai_blind}\n\n"
-                            f"⚠️ [면책 조항] 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다. 책임은 투자자 본인에게 있습니다."
+                            f"📈 [알고리즘 차트 포착]\n\n"
+                            f"🏢 종목: {name} ({code})\n"
+                            f"🏷️ 섹터: {sector_info}\n"
+                            f"💰 현재가: {price_fmt}\n\n"
+                            f"🐦 X(트위터) 추천 태그:\n{x_tags}\n\n"
+                            f"📱 Threads 추천 태그:\n{th_tags}\n\n"
+                            f"⚠️ 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                         )
                         q_promo.put((threads_chart_path, promo_caption))
-                    
-                    print(f"\n✅ [{name}] 한국장 밥그릇 듀얼 발송 대기열 추가 완료 (누적: {cat2_count}회)")
+
+                    print(f"\n✅ [{name}] 듀얼 발송 대기열 추가 완료!")
         except Exception as e:
             pass
 
