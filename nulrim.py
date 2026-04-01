@@ -460,8 +460,8 @@ def scan_market_1d():
         if main_chart_path:
             ai_fact_check, sector_name = generate_ai_report(code, name) # (또는 generate_kr_ai_report)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
-                    main_caption = (
+            # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
+            main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
@@ -476,7 +476,7 @@ def scan_market_1d():
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
-                    telegram_queue.put((main_chart_path, main_caption)) # (듀얼봇 파일의 경우 q_main.put)
+            telegram_queue.put((main_chart_path, main_caption)) # (듀얼봇 파일의 경우 q_main.put)
 
                     # 2️⃣ 홍보용 (거래량 제거 + 매일 바뀌는 5가지 테마 + 초심플 캡션)
         promo_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=False, is_promo=True)
