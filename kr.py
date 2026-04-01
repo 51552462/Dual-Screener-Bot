@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
-import matplotlib; matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
@@ -74,9 +75,10 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 생성기
+# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 파싱 제거
 def generate_ai_report(code: str, company_name: str):
     import re, time
+    import yfinance as yf
     
     # 1. 팩트 데이터 추출
     try:
@@ -94,28 +96,21 @@ def generate_ai_report(code: str, company_name: str):
 
     # 비상용 기본 멘트
     fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
-    fb_tags = f"X: #{company_name.replace(' ','')} #주식투자\nThreads: #{sector_kr.replace('/','')} #주식스타그램"
 
-    # 2. 구글 AI 호출 (속도 제한 방어 4초 쿨타임)
+    # 2. 구글 AI 호출
     for attempt in range(3):
         try:
             time.sleep(4) 
             
             prompt = f"""
             너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
-            
             ⚠️ [매우 중요 규칙]
             1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
-            2. [해시태그]는 뜬금없는 단어 금지! 오늘 이 종목/섹터와 가장 연관성 높고 트래픽 터지는 실시간 인기 태그 1, 2위를 X와 Threads 특성에 맞게 2개씩만 작성해.
 
             [본캐]
             1. 섹터: (어떤 테마인지 한글로 1줄 요약)
             2. 실적: (팩트 수치 한글 1줄 요약)
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
-            
-            [해시태그]
-            X: #태그1 #태그2
-            Threads: #태그1 #태그2
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -128,17 +123,16 @@ def generate_ai_report(code: str, company_name: str):
                 
             report = response.text.replace('*', '').strip() 
             
-            m_part = re.search(r'\[본캐\](.*?)(?=\[해시태그\])', report, re.DOTALL)
-            tag_part = re.search(r'\[해시태그\](.*)', report, re.DOTALL)
+            m_part = re.search(r'\[본캐\](.*)', report, re.DOTALL)
 
-            if not (m_part and tag_part): 
+            if not m_part: 
                 raise ValueError("파싱오류")
 
-            return m_part.group(1).strip(), tag_part.group(1).strip()
+            return m_part.group(1).strip(), ""
         except:
             pass 
             
-    return fb_main, fb_tags
+    return fb_main, ""
 
 def get_krx_list_kind():
     try:
@@ -165,7 +159,8 @@ def calculate_trust_score(c, e60, signal_arr):
             entry_price = c[i]
             for j in range(i + 1, len(c)):
                 if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False; break
+                    valid = False
+                    break
             if valid: score += 2 
     return max(1, min(10, score)) 
 
@@ -244,6 +239,7 @@ def compute_bobgeureut(df_raw: pd.DataFrame):
                 if h[i] >= c[wait_idx] * 1.15: # 15% 달성 시 리셋 (시세 분출 완료)
                     current_cat2_count = 0
                     wait_idx = -1
+         
             # 3봉이 지났는데도 15% 도달을 못했으면 누적 유지 (세력의 가격 통제 및 매집 지속)
             if i == wait_idx + 3 and wait_idx != -1:
                 wait_idx = -1
@@ -260,16 +256,28 @@ def compute_bobgeureut(df_raw: pd.DataFrame):
     # 💡 cat2_count(누적 횟수)를 텔레그램으로 넘겨줌
     return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "cat2_count": int(cat2_counts[-1])}
 
+# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
+def get_daily_theme():
+    theme_idx = datetime.now().day % 5
+    themes = [
+        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Dark
+        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, # 1: Institutional White
+        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, # 2: TradingView Premium
+        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, # 3: Cyberpunk
+        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  # 4: Modern Light
+    ]
+    return themes[theme_idx]
+
 chart_lock = threading.Lock()
 
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False) -> str:
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False, is_promo=False) -> str:
     with chart_lock:
         try:
             plt.rcParams['font.family'] = 'NanumGothic'
             plt.rcParams['axes.unicode_minus'] = False
             
             timestamp_ms = int(time.time() * 1000)
-            vol_suffix = "wVol" if show_volume else "noVol"
+            vol_suffix = "promo" if is_promo else ("wVol" if show_volume else "noVol")
             path = os.path.join(CHART_FOLDER, f"{rank:03d}_{sanitize_filename(code)}_{timestamp_ms}_{vol_suffix}.png")
             
             df_cut = df.iloc[-DISPLAY_BARS:].copy()
@@ -281,41 +289,54 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             prev_c = df_cut['Close'].iloc[-2] if len(df_cut) > 1 else c
             diff = c - prev_c
             diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
-            
             sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
             
-            bg_color, grid_color, text_main, text_sub = '#131722', '#2A2E39', '#FFFFFF', '#8A91A5'
-            color_up, color_down = '#FF3B69', '#00B4D8'
+            # 💡 홍보용 vs 본캐용 분기
+            if is_promo:
+                theme = get_daily_theme()
+                bg_color, grid_color, text_main = theme['bg'], theme['grid'], theme['text']
+                color_up, color_down = theme['up'], theme['down']
+                text_sub = text_main
+                custom_figsize = (9, 9) 
+            else:
+                bg_color, grid_color, text_main, text_sub = '#131722', '#2A2E39', '#FFFFFF', '#8A91A5'
+                color_up, color_down = '#FF3B69', '#00B4D8'
+                custom_figsize = (11, 6.5) if show_volume else (9, 9)
+            
             color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
 
             signal_marker = pd.Series(np.nan, index=df_cut.index)
             y_offset = (df_cut['High'].max() - df_cut['Low'].min()) * 0.04 
             signal_marker.iloc[-1] = df_cut['Low'].iloc[-1] - y_offset
-            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=300, marker='^', color='#FFD700', alpha=1.0)
+            ap = mpf.make_addplot(signal_marker, type='scatter', markersize=400 if is_promo else 300, marker='^', color='#FFD700', alpha=1.0)
 
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge='inherit', wick='inherit', volume='inherit')
             s = mpf.make_mpf_style(marketcolors=mc, facecolor=bg_color, edgecolor=bg_color, figcolor=bg_color, gridcolor=grid_color, gridstyle='--', y_on_right=True, rc={'font.family': plt.rcParams['font.family'], 'text.color': text_main, 'axes.labelcolor': text_sub, 'xtick.color': text_sub, 'ytick.color': text_sub})
             
             plt.close('all')
-            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=(11, 6.5), tight_layout=False, returnfig=True)
+            fig, axes = mpf.plot(df_cut, type="candle", volume=show_volume, addplot=ap, style=s, figsize=custom_figsize, tight_layout=False, returnfig=True)
 
+            title_y, sub_y = (0.94, 0.90) if not show_volume or is_promo else (0.93, 0.88)
             fig.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.92)
-            fig.text(0.05, 0.93, f"{code} | {name}", fontsize=22, fontweight='bold', color=text_main, ha='left')
-            fig.text(0.05, 0.88, "1D / KRX", fontsize=12, color=text_sub, ha='left')
+            
+            fig.text(0.05, title_y, f"{code} | {name}", fontsize=24 if is_promo else 22, fontweight='bold', color=text_main, ha='left')
+            
+            right_text1 = f"{sign} {abs(diff_pct):.2f}%" if is_promo else f"Close: {c:,.0f} ({sign} {abs(diff_pct):.2f}%)"
+            fig.text(0.95, title_y, right_text1, fontsize=22 if is_promo else 18, fontweight='bold', color=color_diff, ha='right')
 
-            right_text1 = f"Close: {c:,.0f} ({sign} {abs(diff):,.0f}, {sign} {abs(diff_pct):.2f}%)"
-            fig.text(0.95, 0.93, right_text1, fontsize=18, fontweight='bold', color=color_diff, ha='right')
-
-            right_text2 = f"Vol: {v:,}  |  O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
-            fig.text(0.95, 0.88, right_text2, fontsize=12, color=text_sub, ha='right')
+            if not is_promo:
+                right_text2 = f"Vol: {v:,}  | O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
+                fig.text(0.95, sub_y, right_text2, fontsize=12, color=text_sub, ha='right')
+                
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
-            fig.savefig(path, dpi=200, bbox_inches='tight', facecolor=bg_color)
+            fig.savefig(path, dpi=250 if is_promo else 200, bbox_inches='tight', facecolor=bg_color)
             plt.close(fig)
             return path
         except Exception as e:
             print(f"\n❌ [{name}] 차트 에러: {e}")
             return None
+
 def scan_market_1d():
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
@@ -385,19 +406,20 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                # 💡 본캐용 차트 생성 (is_promo=False)
+                # 💡 본캐용 차트 및 홍보용 차트 각각 생성
                 main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                 
-                if main_chart_path:
-                    # 💡 변경점: 이제 함수가 5개가 아니라 딱 2개(본캐 팩트, 해시태그)만 뱉어냅니다!
-                    ai_main, ai_tags = generate_ai_report(code, name)
+                if main_chart_path and threads_chart_path:
+                    # 💡 안전해진 AI 로직으로 팩트 호출
+                    ai_main, _ = generate_ai_report(code, name)
                     
                     # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.2f}\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [매수/손절 전략]\n"
                         f"- 양봉 길이만큼 분할매수\n"
                         f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
@@ -411,41 +433,21 @@ def scan_market_1d():
                     q_main.put((main_chart_path, main_caption))
 
                     # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 압축!)
-                    # 💡 is_promo=True 로 차트 테마 자동 로테이션 적용
-                    threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-                    
-                    if threads_chart_path:
-                        # 본캐 AI 결과에서 '섹터' 부분만 딱 뽑아오기
-                        try:
-                            sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                        except:
-                            sector_info = "유망 섹터 포착"
-                            
-                        # AI가 뽑아준 해시태그 분리
-                        try:
-                            x_tags = re.search(r'X:\s*(.*)', ai_tags).group(1).strip()
-                            th_tags = re.search(r'Threads:\s*(.*)', ai_tags).group(1).strip()
-                        except:
-                            x_tags = f"#{code} #주식"
-                            th_tags = "#주식투자 #재테크"
+                    try:
+                        sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                    except:
+                        sector_info = "유망 섹터 포착"
                         
-                        # 화폐 기호 자동 감지 (한국장 6자리 숫자는 원화 없음, 미국장은 $)
-                        currency = "" if code.isdigit() and len(code) == 6 else "$"
-                        price_fmt = f"{currency}{dbg.get('last_close', 0):,.0f}" if not currency else f"{currency}{dbg.get('last_close', 0):,.2f}"
+                    # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만!
+                    promo_caption = (
+                        f"📈 [알고리즘 차트 포착]\n\n"
+                        f"🏢 종목: {name} ({code})\n"
+                        f"🏷️ 섹터: {sector_info}\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
+                    )
+                    q_promo.put((threads_chart_path, promo_caption))
 
-                        # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가+해시태그]만!
-                        promo_caption = (
-                            f"📈 [알고리즘 차트 포착]\n\n"
-                            f"🏢 종목: {name} ({code})\n"
-                            f"🏷️ 섹터: {sector_info}\n"
-                            f"💰 현재가: {price_fmt}\n\n"
-                            f"🐦 X(트위터) 추천 태그:\n{x_tags}\n\n"
-                            f"📱 Threads 추천 태그:\n{th_tags}\n\n"
-                            f"⚠️ 본 정보는 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
-                        )
-                        q_promo.put((threads_chart_path, promo_caption))
-
-                    print(f"\n✅ [{name}] 듀얼 발송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             pass
 
@@ -472,4 +474,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()  # 💡 스케줄러를 잠시 끄고
+    run_scheduler()
