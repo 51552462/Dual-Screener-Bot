@@ -482,7 +482,7 @@ def scan_market_1d():
         if promo_chart_path:
             promo_caption = (
                 f"🏢 종목명: {name}\n"
-                f"📌 섹터: {sector_name}
+                f"📌 섹터: {sector_name}"
             )
             telegram_queue.put((promo_chart_path, promo_caption)) # (듀얼봇 파일의 경우 q_promo.put)
             
