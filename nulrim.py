@@ -454,10 +454,11 @@ def scan_market_1d():
                     except: pass
                 
         if hit:
-    # 1️⃣ 본캐용 (차트 + 거래량 + 유료방용 상세 브리핑)
-    main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True, is_promo=False)
-    if main_chart_path:
-        ai_fact_check, sector_name = generate_ai_report(code, name) # (또는 generate_kr_ai_report)
+    
+            # 1️⃣ 본캐용 (차트 + 거래량 + 유료방용 상세 브리핑)
+            main_chart_path = save_chart(df, code, name, tracker['hits'], dbg, show_volume=True, is_promo=False)
+        if main_chart_path:
+            ai_fact_check, sector_name = generate_ai_report(code, name) # (또는 generate_kr_ai_report)
                     
                     # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
                     main_caption = (
