@@ -418,6 +418,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    if __name__ == "__main__":
     scan_market_1d()  # ⭐️ 이 줄이 있으면 실행 즉시 1회 스캔을 시작합니다.
     # run_scheduler() # 스케줄러를 같이 돌리려면 이 줄의 주석을 해제하세요.
