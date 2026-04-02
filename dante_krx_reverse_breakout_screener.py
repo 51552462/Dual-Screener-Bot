@@ -444,14 +444,14 @@ def scan_market_1d():
 # ⭐️ 3번 스케줄러 세팅 (10:00, 12:30, 15:00) ⭐️
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [3번 검색기] 10:00 / 12:30 / 15:00 대기 중...")
+    print("🕒 [3번 검색기] 10:10 / 12:30 / 14:30 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if (now_kr.hour == 10 and now_kr.minute == 0) or (now_kr.hour == 12 and now_kr.minute == 30) or (now_kr.hour == 15 and now_kr.minute == 0):
+        if (now_kr.hour == 10 and now_kr.minute == 10) or (now_kr.hour == 12 and now_kr.minute == 30) or (now_kr.hour == 14 and now_kr.minute == 30):
             print(f"🚀 [3번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()
+    run_scheduler()
