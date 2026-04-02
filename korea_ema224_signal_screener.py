@@ -19,9 +19,6 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-# ==========================================
-# 🔑 .env 안전 파일 방식 적용
-# ==========================================
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -31,9 +28,8 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
-# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
-TELEGRAM_TOKEN_MAIN  = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw" # 본캐 토큰 (기존과 동일하게 변경 가능)
-TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg" # 홍보용 토큰
+TELEGRAM_TOKEN_MAIN  = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw" 
+TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg" 
 TELEGRAM_CHAT_ID     = "6838834566"
 SEND_TELEGRAM        = True
 
@@ -68,7 +64,6 @@ def telegram_sender_daemon(target_queue, token):
 
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
-                except requests.exceptions.ReadTimeout: break
                 except: time.sleep(2)
             time.sleep(1.5)
         target_queue.task_done()
@@ -76,7 +71,6 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거된 안전 버전)
 def generate_ai_report(code: str, company_name: str):
     try:
         if code.isdigit(): 
@@ -122,6 +116,7 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
+# 💡 잡주 필터 (스팩, ETN, ETF, 우선주, 리츠 등 차단)
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -131,70 +126,72 @@ def get_krx_list_kind():
         df = pd.concat([df_ks, df_kq])
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
-        return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
+        
+        junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
+        clean_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
+        return clean_df[['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# 💡 3. 단타 핵심 타점 계산기 (누적, 별점 등 제거 및 순수 타점만 산출)
+# 💡 단타 타점 시그널만 남긴 계산기
 def compute_danta_signal(df_raw: pd.DataFrame):
-    if df_raw is None or len(df_raw) < 65: return False, "", df_raw, {}
+    if df_raw is None or len(df_raw) < 450: return False, "", df_raw, {}
     df = df_raw.copy()
     
     c = df['Close'].values
     o = df['Open'].values
     v = df['Volume'].values
     
-    # 이평선 및 볼린저밴드 계산
     sma5 = df['Close'].rolling(5).mean().values
     sma20 = df['Close'].rolling(20).mean().values
     sma60 = df['Close'].rolling(60).mean().values
+    ema224 = df['Close'].ewm(span=224, adjust=False).mean().values
+    ema448 = df['Close'].ewm(span=448, adjust=False).mean().values
     
     sma40 = df['Close'].rolling(40).mean().values
     std40 = df['Close'].rolling(40).std(ddof=1).values
     bbUpper = sma40 + (std40 * 2)
     
-    # 수급 필터 계산 (직전 5봉 평균)
     prev_v = df['Volume'].shift(1).values
     avgVol5_prev = pd.Series(prev_v).rolling(5).mean().values
-    
     val = c * v
-    avgVal5 = pd.Series(val).rolling(5).mean().values
+    avgVal5_prev = pd.Series(val).shift(1).rolling(5).mean().values
     
     with np.errstate(invalid='ignore'):
-        condVolSurge = v >= prev_v
-        condValMin = avgVal5 >= 500_000_000 # 최소 평균 거래대금 5억
-        condVolMin = avgVol5_prev >= 70_000 # 최소 평균 거래량 7만주
+        condValMin = avgVal5_prev >= 500_000_000 # 5일 평균 거래대금 5억
+        condVolMin = avgVol5_prev >= 70_000      # 5일 평균 거래량 7만 주
+        condVolSurge = v >= prev_v               
         
         prev_c = df['Close'].shift(1).values
-        condGap = (o >= prev_c * 1.02) & (o <= prev_c * 1.15) # 시가 갭 2%~15%
-        condPriceUp = c >= prev_c * 1.025 # 종가 기준 2.5% 이상 상승
+        condGap = (o >= prev_c * 1.02) & (o <= prev_c * 1.15) 
+        condPriceUp = c >= prev_c * 1.025
         
-        condBBUpper = c >= bbUpper * 0.96 # 볼린저 상단 근접/돌파
-        condTrend = (c > sma5) & (c > sma20) & (c > sma60) # 정배열/상승추세
+        condBBUpper = c >= bbUpper * 0.96 
+        condTrend = (c > sma5) & (c > sma20) & (c > sma60) 
+        
+        condNotOverheated = (c <= ema224 * 1.30) & (c <= ema448 * 1.30)
+        
         isBullish = c > o
         
-        # 최종 매수 시그널
-        signal = condVolSurge & condValMin & condVolMin & condGap & (condPriceUp | condBBUpper) & condTrend & isBullish
+        signal = condVolSurge & condValMin & condVolMin & condGap & (condPriceUp | condBBUpper) & condTrend & condNotOverheated & isBullish
     
-    # 마지막 봉(현재) 기준 시그널이 떴는지 확인
     if not signal[-1]:
         return False, "", df, {}
         
-    sig_type = "🔥일봉+30분봉 동시 포착"
+    sig_type = "🔥일봉+30m 완벽 교집합"
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": "오전장 단타 / 데이트레이딩"
     }
 
-# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
     theme_idx = datetime.now().day % 5
     themes = [
-        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Premium
-        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, # 1: Institutional White
-        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, # 2: TradingView Classic
-        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, # 3: Cyberpunk Terminal
-        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  # 4: Modern Light
+        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, 
+        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, 
+        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, 
+        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, 
+        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  
     ]
     return themes[theme_idx]
 
@@ -270,7 +267,6 @@ def scan_market_danta():
     kr_tz = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
     
-    # 당일 중복 차단 파일
     log_file = os.path.join(TOP_FOLDER, "sent_log_kr_danta.txt")
     
     if today_str != last_run_date:
@@ -287,8 +283,7 @@ def scan_market_danta():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [단타 전용] 한국장 오전장 1D+30m 교집합 스캔 시작! (당일 중복 차단 🛡️)")
-    t0 = time.time()
+    print(f"\n⚡ [단타 전용] 한국장 오전 무한루프 스캔 진행 중... (1D + 30m 완벽 교집합 검증)")
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     
@@ -311,15 +306,13 @@ def scan_market_danta():
             
             final_hit = False
             
-            # 2단계: 30분봉 (30m) 교집합 검증
+            # 2단계: 30분봉(30m) 교집합 검증
             if hit_1d:
-                # yfinance에서 30분봉을 가져오기 위해 티커 변환 (.KS / .KQ)
                 yf_suffix = ".KS" if row["Market"] == "KOSPI" else ".KQ"
                 yf_ticker = f"{code}{yf_suffix}"
                 
                 try:
                     df_30m = yf.download(yf_ticker, interval="30m", period="60d", progress=False, threads=False)
-                    # MultiIndex 평탄화 (yfinance 버전 이슈 대응)
                     if isinstance(df_30m.columns, pd.MultiIndex):
                         df_30m.columns = df_30m.columns.get_level_values(0)
                     
@@ -328,7 +321,7 @@ def scan_market_danta():
                     if len(df_30m) >= 65:
                         hit_30m, _, _, _ = compute_danta_signal(df_30m)
                         if hit_30m:
-                            final_hit = True # 두 타임프레임 모두 일치!
+                            final_hit = True # 일봉과 30분봉 시그널이 정확히 겹침!
                 except:
                     pass
 
@@ -336,8 +329,6 @@ def scan_market_danta():
             with console_lock:
                 tracker['scanned'] += 1
                 if df_1d is not None and len(df_1d) >= 65: tracker['analyzed'] += 1 
-                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 교집합 포착: {tracker['hits']}개)")
 
                 if final_hit:
                     if code in sent_today:
@@ -353,31 +344,28 @@ def scan_market_danta():
                         except: pass
                     
             if final_hit:
-                # 차트는 가독성을 위해 일봉(1D) 기준으로 생성
                 main_chart_path = save_chart(df_to_plot, code, name, hit_rank, dbg_info, show_volume=True, is_promo=False)
                 promo_chart_path = save_chart(df_to_plot, code, name, hit_rank, dbg_info, show_volume=False, is_promo=True)
                 
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용)
                     main_caption = (
                         f"🎯 [{dbg_info.get('sig_type', '')}]\n"
                         f"🎯 추천: {dbg_info.get('recommend', '오전장 단타 / 데이트레이딩')}\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [스마트 매수/손절 전략]\n"
-                        f"- 볼린저 상단 및 전일비 2.5% 이상 강한 수급 유입\n"
+                        f"- 1D, 30m 강한 수급 유입 동시 포착\n"
                         f"- 매수 후 20일선을 이탈할 경우 즉시 칼손절 대응\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                         f"⚠️ [면책 조항]\n"
-                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 책임은 투자자 본인에게 있습니다."
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                     )
                     q_main.put((main_chart_path, main_caption))
 
-                    # 2️⃣ 홍보용 캡션 (초심플)
                     try:
                         sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                     except:
@@ -391,31 +379,28 @@ def scan_market_danta():
                     )
                     q_promo.put((promo_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 단타 포착! 듀얼 발송 대기열 추가 완료!")
         except Exception as e:
             pass
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
-        
-    if tracker['hits'] > 0:
-        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()
-        q_promo.join()
 
-    print(f"\n✅ [한국장 오전 단타 1D+30m 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
-
+# 💡 핵심: 9시부터 9시 30분까지 "무한 반복" 로직
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [단타 검색기] 09:30 / 10:30 대기 중...")
+    print("🕒 [단타 검색기] 09:00 ~ 09:30 무한 연속 스캔 대기 중...")
+    
     while True:
         now_kr = datetime.now(kr_tz)
-        # 오전장 특화이므로 9시 30분, 10시 30분에 스캔하도록 세팅
-        if (now_kr.hour == 9 and now_kr.minute == 30) or (now_kr.hour == 10 and now_kr.minute == 30):
-            print(f"🚀 [단타 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # 9시 0분부터 9시 30분 사이일 경우 쉬지 않고 연속 스캔 실행
+        if now_kr.hour == 9 and 0 <= now_kr.minute <= 30:
+            print(f"🚀 [단타 무한 스캔 사이클 시작] {now_kr.strftime('%H:%M:%S')}")
             scan_market_danta()
-            time.sleep(60) 
-        else: time.sleep(10)
+            time.sleep(2) # 1사이클 끝나면 2초 대기 후 즉시 재시작
+        else:
+            time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_danta()  # ⭐️ scan_market_1d()를 scan_market_danta()로 글자만 바꿔주세요!
+    run_scheduler()
