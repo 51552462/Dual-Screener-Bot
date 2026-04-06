@@ -1,4 +1,4 @@
-# Dante_KRX_Danta_1D30m_AI_Pro.py
+# korea_ema224_signal_screener.py (오전장 일봉 단타 전용)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import requests
 import warnings, urllib3
-import yfinance as yf
 from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
@@ -28,6 +27,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
+# 💡 1. 듀얼 텔레그램 봇 세팅
 TELEGRAM_TOKEN_MAIN  = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw" 
 TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg" 
 TELEGRAM_CHAT_ID     = "6838834566"
@@ -71,6 +71,7 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
+# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
 def generate_ai_report(code: str, company_name: str):
     try:
         if code.isdigit(): 
@@ -78,10 +79,7 @@ def generate_ai_report(code: str, company_name: str):
             soup = BeautifulSoup(res.text, 'html.parser')
             sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
         else: 
-            tk = yf.Ticker(code)
-            sector = tk.info.get('sector', '글로벌 산업')
-            sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
-            sector_kr = sector_kr_map.get(sector, sector)
+            sector_kr = '유망 섹터'
     except:
         sector_kr = '유망 섹터'
 
@@ -116,7 +114,7 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 잡주 필터 (스팩, ETN, ETF, 우선주, 리츠 등 차단)
+# 💡 3. 잡주 필터 (스팩, ETN, ETF, 우선주, 리츠 등 차단)
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -132,7 +130,7 @@ def get_krx_list_kind():
         return clean_df[['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# 💡 단타 타점 시그널만 남긴 계산기
+# 💡 4. 단타 타점 시그널 (일봉 조건만 검사)
 def compute_danta_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 450: return False, "", df_raw, {}
     df = df_raw.copy()
@@ -177,13 +175,14 @@ def compute_danta_signal(df_raw: pd.DataFrame):
     if not signal[-1]:
         return False, "", df, {}
         
-    sig_type = "🔥일봉+30m 완벽 교집합"
+    sig_type = "🔥일봉 수급 폭발 단타"
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": "오전장 단타 / 데이트레이딩"
     }
 
+# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
     theme_idx = datetime.now().day % 5
     themes = [
@@ -283,7 +282,7 @@ def scan_market_danta():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [단타 전용] 한국장 오전 무한루프 스캔 진행 중... (1D + 30m 완벽 교집합 검증)")
+    print(f"\n⚡ [단타 전용] 한국장 오전 무한루프 스캔 진행 중... (1D 일봉 전용 초고속 검증)")
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     
@@ -294,36 +293,15 @@ def scan_market_danta():
             _, row = row_tuple
             name, code = row["Name"], row["Code"]
             
-            # 1단계: 일봉 (1D) 데이터 검증
+            # 1단계: 일봉 (1D) 데이터 검증 (30분봉 로직 완벽히 제거됨)
             df_1d = fdr.DataReader(code, start_date)
-            hit_1d = False
+            final_hit = False
             df_to_plot = None
             dbg_info = {}
 
             if df_1d is not None and not df_1d.empty and len(df_1d) >= 65:
                 df_1d = df_1d[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                hit_1d, sig_type, df_to_plot, dbg_info = compute_danta_signal(df_1d)
-            
-            final_hit = False
-            
-            # 2단계: 30분봉(30m) 교집합 검증
-            if hit_1d:
-                yf_suffix = ".KS" if row["Market"] == "KOSPI" else ".KQ"
-                yf_ticker = f"{code}{yf_suffix}"
-                
-                try:
-                    df_30m = yf.download(yf_ticker, interval="30m", period="60d", progress=False, threads=False)
-                    if isinstance(df_30m.columns, pd.MultiIndex):
-                        df_30m.columns = df_30m.columns.get_level_values(0)
-                    
-                    df_30m = df_30m[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                    
-                    if len(df_30m) >= 65:
-                        hit_30m, _, _, _ = compute_danta_signal(df_30m)
-                        if hit_30m:
-                            final_hit = True # 일봉과 30분봉 시그널이 정확히 겹침!
-                except:
-                    pass
+                final_hit, sig_type, df_to_plot, dbg_info = compute_danta_signal(df_1d)
 
             hit_rank = 0
             with console_lock:
@@ -356,7 +334,7 @@ def scan_market_danta():
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [스마트 매수/손절 전략]\n"
-                        f"- 1D, 30m 강한 수급 유입 동시 포착\n"
+                        f"- 일봉 기준 강한 수급 유입 동시 포착\n"
                         f"- 매수 후 20일선을 이탈할 경우 즉시 칼손절 대응\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
@@ -383,22 +361,22 @@ def scan_market_danta():
         except Exception as e:
             pass
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
 
-# 💡 핵심: 9시부터 9시 30분까지 "무한 반복" 로직
+# 💡 핵심: 9시부터 딱 9시 59분까지만 무한 루프 도는 로직
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [단타 검색기] 09:00 ~ 09:30 무한 연속 스캔 대기 중...")
+    print("🕒 [단타 검색기] 09:00 ~ 09:59 초고속 무한 연속 스캔 대기 중...")
     
     while True:
         now_kr = datetime.now(kr_tz)
         
-        # 9시 0분부터 9시 30분 사이일 경우 쉬지 않고 연속 스캔 실행
-        if now_kr.hour == 9 and 0 <= now_kr.minute <= 30:
-            print(f"🚀 [단타 무한 스캔 사이클 시작] {now_kr.strftime('%H:%M:%S')}")
+        # 9시 (09:00 ~ 09:59) 사이일 경우에만 쉬지 않고 돌기
+        if now_kr.hour == 9:
+            print(f"🚀 [단타 초고속 무한 스캔 사이클 시작] {now_kr.strftime('%H:%M:%S')}")
             scan_market_danta()
-            time.sleep(2) # 1사이클 끝나면 2초 대기 후 즉시 재시작
+            time.sleep(2) # 1사이클 끝나면 2초 대기 후 즉시 초고속 재시작
         else:
             time.sleep(10)
 
