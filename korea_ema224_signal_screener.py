@@ -1,4 +1,4 @@
-# korea_ema224_signal_screener.py (오전장 일봉 단타 전용)
+# korea_ema224_signal_screener.py (전체 정배열 5선 관통 전용)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -64,6 +64,7 @@ def telegram_sender_daemon(target_queue, token):
 
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
+                except requests.exceptions.ReadTimeout: break
                 except: time.sleep(2)
             time.sleep(1.5)
         target_queue.task_done()
@@ -79,7 +80,11 @@ def generate_ai_report(code: str, company_name: str):
             soup = BeautifulSoup(res.text, 'html.parser')
             sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
         else: 
-            sector_kr = '유망 섹터'
+            import yfinance as yf
+            tk = yf.Ticker(code)
+            sector = tk.info.get('sector', '글로벌 산업')
+            sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
+            sector_kr = sector_kr_map.get(sector, sector)
     except:
         sector_kr = '유망 섹터'
 
@@ -114,7 +119,7 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 3. 잡주 필터 (스팩, ETN, ETF, 우선주, 리츠 등 차단)
+# 💡 3. 잡주 필터
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -130,56 +135,54 @@ def get_krx_list_kind():
         return clean_df[['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# 💡 4. 단타 타점 시그널 (일봉 조건만 검사)
-def compute_danta_signal(df_raw: pd.DataFrame):
-    if df_raw is None or len(df_raw) < 450: return False, "", df_raw, {}
+# 💡 4. 전체 정배열 5선 관통 로직 (한국장 전용)
+def compute_5ema_cross_1d(df_raw: pd.DataFrame):
+    if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
     c = df['Close'].values
     o = df['Open'].values
     v = df['Volume'].values
     
-    sma5 = df['Close'].rolling(5).mean().values
-    sma20 = df['Close'].rolling(20).mean().values
-    sma60 = df['Close'].rolling(60).mean().values
+    # 지수이동평균(EMA) 계산
+    ema5 = df['Close'].ewm(span=5, adjust=False).mean().values
+    ema10 = df['Close'].ewm(span=10, adjust=False).mean().values
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().values
+    ema30 = df['Close'].ewm(span=30, adjust=False).mean().values
+    ema60 = df['Close'].ewm(span=60, adjust=False).mean().values
+    ema112 = df['Close'].ewm(span=112, adjust=False).mean().values
     ema224 = df['Close'].ewm(span=224, adjust=False).mean().values
     ema448 = df['Close'].ewm(span=448, adjust=False).mean().values
     
-    sma40 = df['Close'].rolling(40).mean().values
-    std40 = df['Close'].rolling(40).std(ddof=1).values
-    bbUpper = sma40 + (std40 * 2)
-    
-    prev_v = df['Volume'].shift(1).values
-    avgVol5_prev = pd.Series(prev_v).rolling(5).mean().values
-    val = c * v
-    avgVal5_prev = pd.Series(val).shift(1).rolling(5).mean().values
-    
     with np.errstate(invalid='ignore'):
-        condValMin = avgVal5_prev >= 500_000_000 # 5일 평균 거래대금 5억
-        condVolMin = avgVol5_prev >= 70_000      # 5일 평균 거래량 7만 주
-        condVolSurge = v >= prev_v               
+        # 조건 1: 전체 이동평균선 완전 정배열
+        alignFullBull = (ema5 > ema10) & (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224) & (ema224 > ema448)
         
-        prev_c = df['Close'].shift(1).values
-        condGap = (o >= prev_c * 1.02) & (o <= prev_c * 1.15) 
-        condPriceUp = c >= prev_c * 1.025
-        
-        condBBUpper = c >= bbUpper * 0.96 
-        condTrend = (c > sma5) & (c > sma20) & (c > sma60) 
-        
-        condNotOverheated = (c <= ema224 * 1.30) & (c <= ema448 * 1.30)
-        
+        # 조건 2: 양봉
         isBullish = c > o
         
-        signal = condVolSurge & condValMin & condVolMin & condGap & (condPriceUp | condBBUpper) & condTrend & condNotOverheated & isBullish
-    
+        # 조건 3: 한국장 거래량 특화 (전봉 대비 3배 이상 폭발)
+        prev_v = pd.Series(v).shift(1).values
+        condVol = v >= (prev_v * 3)
+        
+        # 조건 4: 5일선을 몸통으로 관통 (시가는 5선 아래, 종가는 5선 위)
+        isBodyCross5 = (o < ema5) & (c > ema5)
+        
+        # 기본 필터 (동전주 및 거래대금 미달 잡주 원천 차단)
+        moneyOk = (c * v) >= 100_000_000
+        priceOk = c >= 1000
+        
+        # 최종 시그널
+        signal = alignFullBull & isBullish & condVol & isBodyCross5 & moneyOk & priceOk
+
     if not signal[-1]:
         return False, "", df, {}
         
-    sig_type = "🔥일봉 수급 폭발 단타"
+    sig_type = "💎 5선 관통 (완전 정배열)"
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": "오전장 단타 / 데이트레이딩"
+        "recommend": "스윙 / 종가배팅"
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -261,12 +264,12 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
         except Exception as e:
             return None
 
-def scan_market_danta():
+def scan_market_1d():
     global sent_today, last_run_date
     kr_tz = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
     
-    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_danta.txt")
+    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_5ema.txt")
     
     if today_str != last_run_date:
         sent_today.clear()
@@ -282,35 +285,37 @@ def scan_market_danta():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [단타 전용] 한국장 오전 무한루프 스캔 진행 중... (1D 일봉 전용 초고속 검증)")
+    print(f"\n⚡ [일봉 전용] 한국장 5선 관통 스캔 시작! (당일 중복 차단 🛡️)")
+    t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
     
-    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     def worker(row_tuple):
         try:
             _, row = row_tuple
             name, code = row["Name"], row["Code"]
             
-            # 1단계: 일봉 (1D) 데이터 검증 (30분봉 로직 완벽히 제거됨)
-            df_1d = fdr.DataReader(code, start_date)
-            final_hit = False
+            df_raw = fdr.DataReader(code, start_date)
+            hit = False
             df_to_plot = None
             dbg_info = {}
 
-            if df_1d is not None and not df_1d.empty and len(df_1d) >= 65:
-                df_1d = df_1d[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                final_hit, sig_type, df_to_plot, dbg_info = compute_danta_signal(df_1d)
+            if df_raw is not None and not df_raw.empty and len(df_raw) >= 500:
+                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                hit, sig_type, df_to_plot, dbg_info = compute_5ema_cross_1d(df_raw)
 
             hit_rank = 0
             with console_lock:
                 tracker['scanned'] += 1
-                if df_1d is not None and len(df_1d) >= 65: tracker['analyzed'] += 1 
+                if df_raw is not None and len(df_raw) >= 500: tracker['analyzed'] += 1 
+                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
-                if final_hit:
+                if hit:
                     if code in sent_today:
-                        final_hit = False 
+                        hit = False 
                     else:
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']
@@ -321,7 +326,7 @@ def scan_market_danta():
                                 for s_code in sent_today: f.write(s_code + "\n")
                         except: pass
                     
-            if final_hit:
+            if hit:
                 main_chart_path = save_chart(df_to_plot, code, name, hit_rank, dbg_info, show_volume=True, is_promo=False)
                 promo_chart_path = save_chart(df_to_plot, code, name, hit_rank, dbg_info, show_volume=False, is_promo=True)
                 
@@ -330,12 +335,12 @@ def scan_market_danta():
                     
                     main_caption = (
                         f"🎯 [{dbg_info.get('sig_type', '')}]\n"
-                        f"🎯 추천: {dbg_info.get('recommend', '오전장 단타 / 데이트레이딩')}\n\n"
+                        f"🎯 추천: {dbg_info.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [스마트 매수/손절 전략]\n"
-                        f"- 일봉 기준 강한 수급 유입 동시 포착\n"
-                        f"- 매수 후 20일선을 이탈할 경우 즉시 칼손절 대응\n\n"
+                        f"- 전체 이평선 완벽 정배열 상태에서 5일선 강한 관통 포착\n"
+                        f"- 5일선을 강하게 이탈할 시 비중 축소 및 손절 대응\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
@@ -350,33 +355,41 @@ def scan_market_danta():
                         sector_info = "유망 섹터 포착"
                             
                     promo_caption = (
-                        f"📈 [오전장 단타 알고리즘 포착]\n\n"
+                        f"📈 [5선 관통 알고리즘 포착]\n\n"
                         f"🏢 종목: {name} ({code})\n"
                         f"🏷️ 섹터: {sector_info}\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원"
                     )
                     q_promo.put((promo_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 단타 포착! 듀얼 발송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 5선 관통 포착! 듀얼 발송 대기열 추가 완료!")
         except Exception as e:
             pass
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
 
-# 💡 핵심: 9시부터 딱 9시 59분까지만 무한 루프 도는 로직
+    if tracker['hits'] > 0:
+        print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
+        q_main.join()
+        q_promo.join()
+
+    print(f"\n✅ [한국장 5선 관통 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+
+# 💡 스케줄러: 다른 봇들과 충돌하지 않도록 10:40 / 12:40 / 14:40 세 번 스캔
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [단타 검색기] 09:00 ~ 09:59 초고속 무한 연속 스캔 대기 중...")
+    print("🕒 [5선 관통 검색기] 10:40 / 12:40 / 14:40 대기 중...")
     
     while True:
         now_kr = datetime.now(kr_tz)
         
-        # 9시 (09:00 ~ 09:59) 사이일 경우에만 쉬지 않고 돌기
-        if now_kr.hour == 9:
-            print(f"🚀 [단타 초고속 무한 스캔 사이클 시작] {now_kr.strftime('%H:%M:%S')}")
-            scan_market_danta()
-            time.sleep(2) # 1사이클 끝나면 2초 대기 후 즉시 초고속 재시작
+        if (now_kr.hour == 10 and now_kr.minute == 40) or \
+           (now_kr.hour == 12 and now_kr.minute == 40) or \
+           (now_kr.hour == 14 and now_kr.minute == 40):
+            print(f"🚀 [5선 관통 스캔 시작] {now_kr.strftime('%H:%M:%S')}")
+            scan_market_1d()
+            time.sleep(60) 
         else:
             time.sleep(10)
 
