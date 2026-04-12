@@ -454,5 +454,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()  <-- 이 줄을 주석 처리하거나 지우고
-    scan_market_1d()   # ⭐️ 이 문구를 추가하면 즉시 1회 스캔이 시작됩니다.
+    run_scheduler()
