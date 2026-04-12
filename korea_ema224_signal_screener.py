@@ -1,4 +1,4 @@
-# korea_ema224_signal_screener.py (Top 1% 마스터 SIG 1,2,3 전용)
+# korea_ema224_signal_screener.py (Top 1% 마스터 SIG 1,2,3 전용 + 직전 3봉 중복 필터)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -153,7 +153,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # 변동성(ATR 20) 계산 (TradingView ta.atr 유사 구현)
+    # 변동성(ATR 20) 계산
     prev_c = np.roll(c, 1)
     prev_c[0] = c[0]
     tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
@@ -174,7 +174,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
         spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
         spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
 
-        # 상관계수(ta.correlation) 및 ROC
+        # 상관계수 및 ROC
         idx = np.arange(len(c))
         r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx)).fillna(0).values
         r_squared = r_val * r_val
@@ -217,6 +217,10 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     final_hit = hit_1 | hit_2 | hit_3
 
     if not final_hit[-1]:
+        return False, "", df, {}
+        
+    # ⭐️ 신규 추가: 직전 3봉 이내에 이미 타점이 떴었다면 결과지 발송 생략 (신규 진입 타점만 필터링) ⭐️
+    if final_hit[-4:-1].any():
         return False, "", df, {}
         
     if hit_3[-1]:
@@ -332,7 +336,7 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 Top 1% 마스터 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 Top 1% 마스터 스캔 시작! (당일 중복 차단 및 연속 타점 필터링 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -386,7 +390,7 @@ def scan_market_1d():
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [스마트 매수/손절 전략]\n"
-                        f"- 1~3단계 정배열 이격도 및 강력 모멘텀 결합 타점\n"
+                        f"- 1~3단계 정배열 이격도 및 강력 모멘텀 결합 타점 (신규 진입)\n"
                         f"- 단기선 이탈 및 데드크로스 발생 시 기계적 손절 대응\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
@@ -423,7 +427,6 @@ def scan_market_1d():
 
     print(f"\n✅ [한국장 Top 1% 마스터 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
-# 💡 스케줄러: 다른 봇들과 충돌하지 않도록 10:40 / 12:40 / 14:40 세 번 스캔
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [Top 1% 마스터 검색기] 10:40 / 12:40 / 14:40 대기 중...")
@@ -441,5 +444,5 @@ def run_scheduler():
             time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()  <-- 이 줄을 주석 처리하거나 지우고
-    scan_market_1d()   # ⭐️ 이 문구를 추가하면 즉시 1회 스캔이 시작됩니다.
+    # run_scheduler()
+    scan_market_1d() # 즉시 1회 스캔 실행
