@@ -1,4 +1,4 @@
-# korea_ema224_signal_screener.py (전체 정배열 5선 관통 전용)
+# korea_ema224_signal_screener.py (Top 1% 마스터 SIG 1,2,3 전용)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -72,7 +72,7 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
+# 💡 2. 본캐 팩트 리포트
 def generate_ai_report(code: str, company_name: str):
     try:
         if code.isdigit(): 
@@ -135,54 +135,101 @@ def get_krx_list_kind():
         return clean_df[['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# 💡 4. 전체 정배열 5선 관통 로직 (한국장 전용)
-def compute_5ema_cross_1d(df_raw: pd.DataFrame):
+# 💡 4. Top 1% 마스터 (초깔끔 실전용) 타점 로직
+def compute_top1_master_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
     c = df['Close'].values
     o = df['Open'].values
+    h = df['High'].values
+    l = df['Low'].values
     v = df['Volume'].values
     
-    # 지수이동평균(EMA) 계산
-    ema5 = df['Close'].ewm(span=5, adjust=False).mean().values
-    ema10 = df['Close'].ewm(span=10, adjust=False).mean().values
-    ema20 = df['Close'].ewm(span=20, adjust=False).mean().values
-    ema30 = df['Close'].ewm(span=30, adjust=False).mean().values
-    ema60 = df['Close'].ewm(span=60, adjust=False).mean().values
-    ema112 = df['Close'].ewm(span=112, adjust=False).mean().values
-    ema224 = df['Close'].ewm(span=224, adjust=False).mean().values
-    ema448 = df['Close'].ewm(span=448, adjust=False).mean().values
-    
-    with np.errstate(invalid='ignore'):
-        # 조건 1: 전체 이동평균선 완전 정배열
-        alignFullBull = (ema5 > ema10) & (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224) & (ema224 > ema448)
+    # 7중 EMA 계산
+    for n in [10, 20, 30, 60, 112, 224, 448]:
+        df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
         
-        # 조건 2: 양봉
-        isBullish = c > o
-        
-        # 조건 3: 한국장 거래량 특화 (전봉 대비 3배 이상 폭발)
-        prev_v = pd.Series(v).shift(1).values
-        condVol = v >= (prev_v * 3)
-        
-        # 조건 4: 5일선을 몸통으로 관통 (시가는 5선 아래, 종가는 5선 위)
-        isBodyCross5 = (o < ema5) & (c > ema5)
-        
-        # 기본 필터 (동전주 및 거래대금 미달 잡주 원천 차단)
-        moneyOk = (c * v) >= 100_000_000
-        priceOk = c >= 1000
-        
-        # 최종 시그널
-        signal = alignFullBull & isBullish & condVol & isBodyCross5 & moneyOk & priceOk
+    e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
+    e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    if not signal[-1]:
+    # 변동성(ATR 20) 계산 (TradingView ta.atr 유사 구현)
+    prev_c = np.roll(c, 1)
+    prev_c[0] = c[0]
+    tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
+    atr = pd.Series(tr).ewm(alpha=1/20, adjust=False, min_periods=0).mean().values
+
+    # 배열 상태
+    is_aligned_30 = (e10 > e20) & (e20 > e30)
+    is_aligned_112 = is_aligned_30 & (e30 > e60) & (e60 > e112)
+    is_aligned_224 = is_aligned_112 & (e112 > e224)
+    is_aligned_448 = is_aligned_224 & (e224 > e448)
+    
+    is_bullish = c > o
+    show_values = is_aligned_112 & is_bullish
+
+    # 이격도 및 모멘텀 계산
+    with np.errstate(divide='ignore', invalid='ignore'):
+        spread_10_20 = np.where(show_values, ((e10 - e20) / atr) * 100, 0)
+        spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
+        spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
+
+        # 상관계수(ta.correlation) 및 ROC
+        idx = np.arange(len(c))
+        r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx)).fillna(0).values
+        r_squared = r_val * r_val
+        
+        e10_3 = np.roll(e10, 3)
+        e10_3[:3] = e10[:3]
+        ema_roc = np.where(e10_3 != 0, ((e10 - e10_3) / e10_3) * 5000, 0)
+
+    true_momentum_line = np.where(is_aligned_30, ema_roc * (r_squared ** 2), 0)
+    prev_tml = np.roll(true_momentum_line, 1)
+    prev_tml[0] = 0
+
+    # 조건 판별
+    cond_rising = true_momentum_line > prev_tml
+    cond_blue_30 = spread_112_224 >= 30
+    
+    val_angle = true_momentum_line
+    cond_highest_angle = (val_angle > spread_10_20) & (val_angle > spread_10_30) & (val_angle > spread_112_224)
+
+    cond_val_sig1 = (spread_10_30 >= 100) & (spread_10_20 >= 50) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+    cond_val_sig2_3 = (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+
+    raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
+    raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
+    raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+
+    # 중복 방지 (우선순위: sig3 > sig2 > sig1)
+    signal_3 = raw_sig3
+    signal_2 = raw_sig2 & ~signal_3
+    signal_1 = raw_sig1 & ~signal_2 & ~signal_3
+
+    # 잡주 차단 (최소 거래대금 1억 및 1,000원 이상)
+    moneyOk = (c * v) >= 100_000_000
+    priceOk = c >= 1000
+
+    hit_1 = signal_1 & moneyOk & priceOk
+    hit_2 = signal_2 & moneyOk & priceOk
+    hit_3 = signal_3 & moneyOk & priceOk
+    
+    final_hit = hit_1 | hit_2 | hit_3
+
+    if not final_hit[-1]:
         return False, "", df, {}
         
-    sig_type = "💎 5선 관통 (완전 정배열)"
+    if hit_3[-1]:
+        sig_type = "🔥 SIG 3 (Top 1% 초강력)"
+    elif hit_2[-1]:
+        sig_type = "🔥 SIG 2 (Top 1% 강력)"
+    else:
+        sig_type = "🔥 SIG 1 (Top 1% 돌파)"
+
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": "스윙 / 종가배팅"
+        "recommend": "스윙 / 중장기"
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -269,7 +316,7 @@ def scan_market_1d():
     kr_tz = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
     
-    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_5ema.txt")
+    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_top1.txt")
     
     if today_str != last_run_date:
         sent_today.clear()
@@ -285,7 +332,7 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 5선 관통 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 Top 1% 마스터 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -304,7 +351,7 @@ def scan_market_1d():
 
             if df_raw is not None and not df_raw.empty and len(df_raw) >= 500:
                 df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                hit, sig_type, df_to_plot, dbg_info = compute_5ema_cross_1d(df_raw)
+                hit, sig_type, df_to_plot, dbg_info = compute_top1_master_signal(df_raw)
 
             hit_rank = 0
             with console_lock:
@@ -339,8 +386,8 @@ def scan_market_1d():
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
                         f"📉 [스마트 매수/손절 전략]\n"
-                        f"- 전체 이평선 완벽 정배열 상태에서 5일선 강한 관통 포착\n"
-                        f"- 5일선을 강하게 이탈할 시 비중 축소 및 손절 대응\n\n"
+                        f"- 1~3단계 정배열 이격도 및 강력 모멘텀 결합 타점\n"
+                        f"- 단기선 이탈 및 데드크로스 발생 시 기계적 손절 대응\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
@@ -355,14 +402,14 @@ def scan_market_1d():
                         sector_info = "유망 섹터 포착"
                             
                     promo_caption = (
-                        f"📈 [5선 관통 알고리즘 포착]\n\n"
+                        f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
                         f"🏢 종목: {name} ({code})\n"
                         f"🏷️ 섹터: {sector_info}\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원"
                     )
                     q_promo.put((promo_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 5선 관통 포착! 듀얼 발송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] Top 1% 시그널 포착! 듀얼 발송 대기열 추가 완료!")
         except Exception as e:
             pass
 
@@ -374,12 +421,12 @@ def scan_market_1d():
         q_main.join()
         q_promo.join()
 
-    print(f"\n✅ [한국장 5선 관통 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [한국장 Top 1% 마스터 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 # 💡 스케줄러: 다른 봇들과 충돌하지 않도록 10:40 / 12:40 / 14:40 세 번 스캔
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [5선 관통 검색기] 10:40 / 12:40 / 14:40 대기 중...")
+    print("🕒 [Top 1% 마스터 검색기] 10:40 / 12:40 / 14:40 대기 중...")
     
     while True:
         now_kr = datetime.now(kr_tz)
@@ -387,7 +434,7 @@ def run_scheduler():
         if (now_kr.hour == 10 and now_kr.minute == 40) or \
            (now_kr.hour == 12 and now_kr.minute == 40) or \
            (now_kr.hour == 14 and now_kr.minute == 40):
-            print(f"🚀 [5선 관통 스캔 시작] {now_kr.strftime('%H:%M:%S')}")
+            print(f"🚀 [Top 1% 마스터 스캔 시작] {now_kr.strftime('%H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else:
