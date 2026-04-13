@@ -1,4 +1,4 @@
-# Dante_US_Ohdole_1D_AI_Pro.py
+# Dante_US_Top1_Master_1D_AI_Pro.py (미국장 Top 1% 마스터 SIG 1,2,3 전용)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -28,7 +28,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
+# 💡 1. 듀얼 텔레그램 봇 세팅
 TELEGRAM_TOKEN_MAIN  = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
 TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg"
 TELEGRAM_CHAT_ID     = "6838834566"
@@ -37,7 +37,7 @@ SEND_TELEGRAM        = True
 q_main = queue.Queue()
 q_promo = queue.Queue()
 
-TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Ohdole_1D')
+TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Top1_Master')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
@@ -68,15 +68,13 @@ threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PR
 # 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
 def generate_ai_report(code: str, company_name: str):
     import re, time
-    
-    # 1. 팩트 데이터 추출
     try:
-        if code.isdigit(): # 한국장
+        if code.isdigit(): 
             res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(res.text, 'html.parser')
             sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
-        else: # 미국장
+        else: 
             tk = yf.Ticker(code)
             sector = tk.info.get('sector', '글로벌 산업')
             sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
@@ -86,11 +84,9 @@ def generate_ai_report(code: str, company_name: str):
 
     fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
 
-    # 2. 구글 AI 호출
     for attempt in range(3):
         try:
             time.sleep(4) 
-            
             prompt = f"""
             너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
             ⚠️ [매우 중요 규칙]
@@ -129,97 +125,116 @@ def get_us_ticker_list():
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
-def calculate_trust_score(c, e60):
-    score = 5 
-    lowest_60 = np.min(c[-60:])
-    runup_ratio = (c[-1] / lowest_60) - 1
-    if runup_ratio > 0.50: score -= 4     
-    elif runup_ratio > 0.30: score -= 2   
-    return max(1, min(10, score))
-
-# 💡 누락되었던 별점 채점기 보존
-def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
-    score = 0
-    change_pct = ((c - prev_c) / prev_c) * 100 if prev_c > 0 else 0
-    if 5.0 <= change_pct <= 8.5: score += 30
-    elif 8.5 < change_pct <= 10.0: score += 25
-    elif 10.0 < change_pct <= 15.0: score += 10
-    elif change_pct > 15.0: score += 0           
-    else: score += 20 
-        
-    embraced_count = 0
-    if l <= e10 <= c: embraced_count += 1
-    if l <= e20 <= c: embraced_count += 1
-    if l <= e30 <= c: embraced_count += 1
-    
-    if embraced_count == 3: score += 40
-    elif embraced_count == 2: score += 30
-    elif embraced_count == 1: score += 20
-    else:
-        if l > e10 and l > e20 and l > e30: score += 5  
-        else: score += 10
-            
-    if e10 > e20: score += 10
-    if e20 > e30: score += 10
-    if e30 > e60: score += 10
-    
-    if score >= 90: stars = "★★★★★"
-    elif score >= 80: stars = "★★★★☆"
-    elif score >= 65: stars = "★★★☆☆"
-    elif score >= 50: stars = "★★☆☆☆"
-    else: stars = "★☆☆☆☆"
-    return stars, score
-
-def compute_ohdole_1d(df_raw: pd.DataFrame):
+# 💡 3. Top 1% 마스터 (미국장 호환) 타점 로직
+def compute_top1_master_signal(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    for n in [5, 10, 20, 30, 60, 112, 224, 448]:
+    c = df['Close'].values
+    o = df['Open'].values
+    h = df['High'].values
+    l = df['Low'].values
+    v = df['Volume'].values
+    
+    # 7중 EMA 계산
+    for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
+        
+    e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
+    e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
-    e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
-    e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
+    # 변동성(ATR 20) 계산
+    prev_c = np.roll(c, 1)
+    prev_c[0] = c[0]
+    tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
+    atr = pd.Series(tr).ewm(alpha=1/20, adjust=False, min_periods=0).mean().values
 
-    # 💡 미국장은 5_000_000 / 3.0 으로 완벽 유지
-    is_money_ok = (c * v) >= 5_000_000
-    is_price_ok = c >= 3.0
-    cond_base = is_money_ok & is_price_ok
-
-    isBullish = c > o
-    macroBull = (e112 > e224) & (e224 > e448)
-    isAboveLongMA = (c > e224) & (c > e448)
-    isShortBull = (e10 > e20)
+    # 배열 상태
+    is_aligned_30 = (e10 > e20) & (e20 > e30)
+    is_aligned_112 = is_aligned_30 & (e30 > e60) & (e60 > e112)
+    is_aligned_224 = is_aligned_112 & (e112 > e224)
+    is_aligned_448 = is_aligned_224 & (e224 > e448)
     
-    is_150_align = pd.Series(macroBull).rolling(150).sum().values == 150
+    is_bullish = c > o
+    show_values = is_aligned_112 & is_bullish
 
-    prev_e5 = np.roll(e5, 1); prev_e5[0] = np.inf
-    prev_e30 = np.roll(e30, 1); prev_e30[0] = 0
-    isStrictCrossUp30 = (prev_e5 < prev_e30) & (e5 > e30)
+    # 이격도 및 모멘텀 계산
+    with np.errstate(divide='ignore', invalid='ignore'):
+        spread_10_20 = np.where(show_values, ((e10 - e20) / atr) * 100, 0)
+        spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
+        spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
 
-    signal1 = isStrictCrossUp30 & isBullish & macroBull & isAboveLongMA & isShortBull & cond_base
+        # 상관계수 및 ROC
+        idx = np.arange(len(c))
+        r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx)).fillna(0).values
+        r_squared = r_val * r_val
+        
+        e10_3 = np.roll(e10, 3)
+        e10_3[:3] = e10[:3]
+        ema_roc = np.where(e10_3 != 0, ((e10 - e10_3) / e10_3) * 5000, 0)
 
-    if not signal1[-1]: return False, "", df, {}
+    true_momentum_line = np.where(is_aligned_30, ema_roc * (r_squared ** 2), 0)
+    prev_tml = np.roll(true_momentum_line, 1)
+    prev_tml[0] = 0
 
-    prev_c = np.roll(c, 1); prev_c[0] = c[0]
-    stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
+    # 조건 판별
+    cond_rising = true_momentum_line > prev_tml
+    cond_blue_30 = spread_112_224 >= 30
     
-    usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
-    sig_type = f"S1 | {stars} ({pt}점) {usage_tag}"
-    recommend = "단타, 스윙 / 종가배팅"
+    val_angle = true_momentum_line
+    cond_highest_angle = (val_angle > spread_10_20) & (val_angle > spread_10_30) & (val_angle > spread_112_224)
 
-    trust_score = calculate_trust_score(c, e60) 
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "recommend": recommend}
+    cond_val_sig1 = (spread_10_30 >= 100) & (spread_10_20 >= 50) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+    cond_val_sig2_3 = (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+
+    raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
+    raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
+    raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+
+    # 중복 방지 (우선순위: sig3 > sig2 > sig1)
+    signal_3 = raw_sig3
+    signal_2 = raw_sig2 & ~signal_3
+    signal_1 = raw_sig1 & ~signal_2 & ~signal_3
+
+    # 💡 미국장 특화 잡주 차단 (500만 달러 & 3달러 이상)
+    moneyOk = (c * v) >= 5_000_000
+    priceOk = c >= 3.0
+
+    hit_1 = signal_1 & moneyOk & priceOk
+    hit_2 = signal_2 & moneyOk & priceOk
+    hit_3 = signal_3 & moneyOk & priceOk
+    
+    final_hit = hit_1 | hit_2 | hit_3
+
+    if not final_hit[-1]:
+        return False, "", df, {}
+        
+    # ⭐️ 3봉 이내 중복 필터 (한국장과 동일하게 적용) ⭐️
+    if final_hit[-4:-1].any():
+        return False, "", df, {}
+        
+    if hit_3[-1]:
+        sig_type = "🔥 SIG 3 (Top 1% 초강력)"
+    elif hit_2[-1]:
+        sig_type = "🔥 SIG 2 (Top 1% 강력)"
+    else:
+        sig_type = "🔥 SIG 1 (Top 1% 돌파)"
+
+    return True, sig_type, df, {
+        "sig_type": sig_type,
+        "last_close": float(c[-1]),
+        "recommend": "스윙 / 중장기"
+    }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
     theme_idx = datetime.now().day % 5
     themes = [
-        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Premium
-        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, # 1: Institutional White
-        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, # 2: TradingView Classic
-        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, # 3: Cyberpunk Terminal
-        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  # 4: Modern Light
+        {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, 
+        {'bg': '#FFFFFF', 'grid': '#F0F0F0', 'text': '#131722', 'up': '#E0294A', 'down': '#2EBD85'}, 
+        {'bg': '#131722', 'grid': '#2A2E39', 'text': '#D1D4DC', 'up': '#26A69A', 'down': '#EF5350'}, 
+        {'bg': '#000000', 'grid': '#111111', 'text': '#00FFA3', 'up': '#00FFA3', 'down': '#FF3366'}, 
+        {'bg': '#F8F9FA', 'grid': '#E9ECEF', 'text': '#212529', 'up': '#FF4757', 'down': '#2ED573'}  
     ]
     return themes[theme_idx]
     
@@ -246,7 +261,6 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             
             sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
             
-            # 💡 홍보용 vs 본캐용 분기
             if is_promo:
                 theme = get_daily_theme()
                 bg_color, grid_color, text_main = theme['bg'], theme['grid'], theme['text']
@@ -296,12 +310,12 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 1번(오돌이) 스캔 시작!")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 Top 1% 마스터 스캔 시작! (연속 타점 필터링 🛡️)")
 
     # 💡 당일 중복 발송 차단 로직
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
-    log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
+    log_file = os.path.join(TOP_FOLDER, "sent_log_us_top1.txt")
     
     sent_today = set()
     if os.path.exists(log_file):
@@ -355,7 +369,7 @@ def scan_market_1d():
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
-                    hit, sig_type, df, dbg = compute_ohdole_1d(df_ticker)
+                    hit, sig_type, df, dbg = compute_top1_master_signal(df_ticker)
                     
                     if hit:
                         if code in sent_today:
@@ -371,28 +385,26 @@ def scan_market_1d():
                             except: pass
                             
                     if hit:
-                        # 💡 본캐용 및 홍보용 차트 생성
                         main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
                         threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                         
                         if main_chart_path and threads_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
-                            # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
+                            # 1️⃣ 본캐용 캡션 (유료방용)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
-                                f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
+                                f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                f"📉 [매수/손절 전략]\n"
-                                f"- 양봉 길이만큼 분할매수\n"
-                                f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                                f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
+                                f"📉 [스마트 매수/손절 전략]\n"
+                                f"- 1~3단계 정배열 이격도 및 강력 모멘텀 결합 타점 (신규 진입)\n"
+                                f"- 단기선 이탈 및 데드크로스 발생 시 기계적 손절 대응\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
-                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                             )
                             q_main.put((main_chart_path, main_caption))
 
@@ -404,14 +416,14 @@ def scan_market_1d():
                                 
                             # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만! (미국장이므로 $ 유지)
                             promo_caption = (
-                                f"📈 [알고리즘 차트 포착]\n\n"
+                                f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
                             q_promo.put((threads_chart_path, promo_caption))
 
-                            print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                            print(f"\n✅ [{name}] 미국장 Top 1% 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
                 pass
                 
@@ -423,18 +435,19 @@ def scan_market_1d():
         q_main.join()
         q_promo.join()
 
-    print(f"\n✅ [미국장 1번 E 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    print(f"\n✅ [미국장 Top 1% 마스터 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [1번 미국장 오돌이 검색기] 09:30 / 12:00 / 14:30 대기 중...")
+    print("🕒 [미국장 Top 1% 마스터 검색기] 09:30 / 12:00 / 14:30 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
         if (now_ny.hour == 9 and now_ny.minute == 30) or (now_ny.hour == 12 and now_ny.minute == 0) or (now_ny.hour == 14 and now_ny.minute == 30):
-            print(f"🚀 [1번 미국장 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🚀 [미국장 Top 1% 마스터 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    scan_market_1d()
+    # run_scheduler()
+    scan_market_1d() # 즉시 1회 스캔 실행
