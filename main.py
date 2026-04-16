@@ -105,7 +105,7 @@ apply_weekend_patch(us_nul, True)
 apply_weekend_patch(us_bowl, True)
 
 apply_weekend_patch(kr_rev, False)
-apply_weekend_patch(kr_ema, False)
+apply_weekend_patch(kr_master, False)
 apply_weekend_patch(kr_bowl, False)
 apply_weekend_patch(kr_nul, False)
 apply_weekend_patch(kr_ohdole, False)
@@ -167,7 +167,7 @@ if __name__ == "__main__":
         "🇺🇸 3. US 눌림목": us_nul.run_scheduler,
         "🇺🇸 4. US 밥그릇": us_bowl.run_scheduler,
         "🇰🇷 5. KR 역매공파": kr_rev.run_scheduler,
-        "🇰🇷 6. KR EMA": kr_ema.run_scheduler,
+        "🇰🇷 6. KR 마스터": kr_master.run_scheduler,
         "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
         "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
         "🇰🇷 9. KR 오돌이": kr_ohdole.run_scheduler
