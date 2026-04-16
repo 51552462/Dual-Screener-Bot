@@ -502,12 +502,13 @@ def scan_market_1d():
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
     # 💡 벤치마크 지수 (KOSPI/KOSDAQ) 일괄 로드 (상대강도 RS 계산용)
-    print("📊 벤치마크 지수(KOSPI/KOSDAQ) 데이터 로드 중...")
+    print("📊 벤치마크 지수(KODEX ETF 대용) 데이터 안전하게 로드 중...")
     try:
-        kospi_idx = fdr.DataReader('KS11', start_date)['Close']
-        kosdaq_idx = fdr.DataReader('KQ11', start_date)['Close']
-    except:
-        print("⚠️ 벤치마크 지수 로드 실패. 빈 데이터로 우회합니다.")
+        # LOGOUT 에러 및 차단 방지를 위해 지수 추종 ETF를 대용으로 사용
+        kospi_idx = fdr.DataReader('069500', start_date)['Close']  # KODEX 200
+        kosdaq_idx = fdr.DataReader('229200', start_date)['Close'] # KODEX 코스닥150
+    except Exception as e:
+        print(f"⚠️ 벤치마크 지수 로드 실패 ({e}). 빈 데이터로 우회합니다.")
         kospi_idx = pd.Series(dtype=float)
         kosdaq_idx = pd.Series(dtype=float)
         
