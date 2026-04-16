@@ -1,4 +1,4 @@
-# korea_ema224_signal_screener.py (Top 1% 마스터 SIG 1,2,3 전용 + 직전 3봉 중복 필터)
+# korea_ema224_signal_screener.py (Top 1% 마스터 SIG 1,2,3,4 통합본 + System B V7.0 마스터 로직)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -27,7 +27,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
-# 💡 1. 듀얼 텔레그램 봇 세팅
+# 💡 1. 듀얼 텔레그램 봇 세팅 (원본 유지)
 TELEGRAM_TOKEN_MAIN  = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw" 
 TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg" 
 TELEGRAM_CHAT_ID     = "6838834566"
@@ -52,7 +52,7 @@ def telegram_sender_daemon(target_queue, token):
         if item is None: break
         img_path, caption = item
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-        
+   
         if SEND_TELEGRAM:
             for attempt in range(3):
                 try:
@@ -72,7 +72,7 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 본캐 팩트 리포트
+# 💡 2. 본캐 팩트 리포트 (원본 유지)
 def generate_ai_report(code: str, company_name: str):
     try:
         if code.isdigit(): 
@@ -94,9 +94,11 @@ def generate_ai_report(code: str, company_name: str):
         try:
             time.sleep(4) 
             prompt = f"""
-            너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
+            너는 주식 전문 마케터야.
+            [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
             ⚠️ [매우 중요 규칙]
-            1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
+            1. 대괄호 [ ] 로만 정확히 섹션을 구분해.
+            굵은 글씨(**) 금지.
 
             [본캐]
             1. 섹터: (어떤 테마인지 한글로 1줄 요약)
@@ -119,7 +121,7 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 3. 잡주 필터
+# 💡 3. 잡주 필터 (원본 유지)
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -135,8 +137,19 @@ def get_krx_list_kind():
         return clean_df[['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
 
-# 💡 4. Top 1% 마스터 (초깔끔 실전용) 타점 로직
-def compute_top1_master_signal(df_raw: pd.DataFrame):
+# 💡 보조 함수: 1~10점 스케일링 함수
+def scale_score(val, pt1, pt10):
+    if pt1 < pt10: # 높을수록 좋은 지표 (RS, 진짜양봉, 응축에너지)
+        if val <= pt1: return 1.0
+        if val >= pt10: return 10.0
+        return 1.0 + 9.0 * (val - pt1) / (pt10 - pt1)
+    else: # 낮을수록 좋은 지표 (CPV)
+        if val >= pt1: return 1.0
+        if val <= pt10: return 10.0
+        return 1.0 + 9.0 * (pt1 - val) / (pt1 - pt10)
+
+# 💡 4. Top 1% 마스터 (S1~S4 통합 및 System B 점수화 엔진 탑재)
+def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
@@ -146,6 +159,10 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     l = df['Low'].values
     v = df['Volume'].values
     
+    # 지수 데이터 병합 (상대강도 RS 계산용)
+    df['Idx_Close'] = idx_close
+    df['Idx_Close'] = df['Idx_Close'].ffill()
+
     # 7중 EMA 계산
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
@@ -174,7 +191,6 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
         spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
         spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
 
-        # 상관계수 및 ROC
         idx = np.arange(len(c))
         r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx)).fillna(0).values
         r_squared = r_val * r_val
@@ -187,7 +203,6 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     prev_tml = np.roll(true_momentum_line, 1)
     prev_tml[0] = 0
 
-    # 조건 판별
     cond_rising = true_momentum_line > prev_tml
     cond_blue_30 = spread_112_224 >= 30
     
@@ -197,46 +212,128 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     cond_val_sig1 = (spread_10_30 >= 100) & (spread_10_20 >= 50) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
     cond_val_sig2_3 = (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
 
+    # =========================================================================
+    # 👑 System B V7.0 마스터 엔진: 4대 핵심 변수 수치화 
+    # =========================================================================
+    
+    # 1. 캔들지배력 (CPV): 1.0에 가까우면 꽉찬 양봉, 낮으면 매물소화 꼬리
+    cpv = np.where(h != l, (c - o) / (h - l), 0.5)
+
+    # 2. 진짜 양봉 지수: 거래량 대비 캔들의 응집력
+    v_ma20 = pd.Series(v).rolling(20).mean().values
+    vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
+    tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
+
+    # 3. 응축 돌파 에너지 (BB Squeeze Energy)
+    bb_mid = pd.Series(c).rolling(20).mean().values
+    bb_std = pd.Series(c).rolling(20).std().values
+    bb_width = np.where(bb_mid > 0, (4 * bb_std) / bb_mid, 0.01)
+    # 볼린저밴드가 좁을수록 큰 값을 가지도록 역수 취합하여 거래량과 곱함
+    bb_energy = np.where(bb_width > 0, (1.0 / bb_width) * vol_mult, 0)
+
+    # 4. 시장 상대강도 (RS)
+    c_20 = pd.Series(c).shift(20).values
+    idx_20 = df['Idx_Close'].shift(20).values
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rs = ((c / np.where(c_20==0, np.nan, c_20)) / (df['Idx_Close'].values / np.where(idx_20==0, np.nan, idx_20)) - 1) * 100
+    rs = np.nan_to_num(rs, nan=0.0)
+
+    # =========================================================================
+
     raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
     raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
     raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+    # [V7.0 추가] S4 바닥 탈출 (이평선 역배열/단기배열 상태에서 강한 수급)
+    raw_sig4 = (~is_aligned_112) & (tb_index >= 15.0) & (vol_mult >= 2.0) & is_bullish
 
-    # 중복 방지 (우선순위: sig3 > sig2 > sig1)
+    # 중복 방지 (우선순위: sig3 > sig2 > sig1 > sig4)
     signal_3 = raw_sig3
     signal_2 = raw_sig2 & ~signal_3
     signal_1 = raw_sig1 & ~signal_2 & ~signal_3
+    signal_4 = raw_sig4 & ~signal_1 & ~signal_2 & ~signal_3
 
-    # 잡주 차단 (최소 거래대금 1억 및 1,000원 이상)
+    # 기본 잡주 차단 (최소 거래대금 1억 및 1,000원 이상)
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
 
     hit_1 = signal_1 & moneyOk & priceOk
     hit_2 = signal_2 & moneyOk & priceOk
     hit_3 = signal_3 & moneyOk & priceOk
+    hit_4 = signal_4 & moneyOk & priceOk
     
-    final_hit = hit_1 | hit_2 | hit_3
+    final_hit = hit_1 | hit_2 | hit_3 | hit_4
 
+    # 타점이 없으면 리턴
     if not final_hit[-1]:
         return False, "", df, {}
         
-    # ⭐️ 신규 추가: 직전 3봉 이내에 이미 타점이 떴었다면 결과지 발송 생략 (신규 진입 타점만 필터링) ⭐️
+    # ⭐️ 직전 3봉 이내 중복 필터 (신규 진입 타점만 필터링)
     if final_hit[-4:-1].any():
         return False, "", df, {}
-        
-    if hit_3[-1]:
-        sig_type = "🔥 SIG 3 (Top 1% 초강력)"
-    elif hit_2[-1]:
-        sig_type = "🔥 SIG 2 (Top 1% 강력)"
-    else:
-        sig_type = "🔥 SIG 1 (Top 1% 돌파)"
+
+    # =========================================================================
+    # 👑 System B V7.0 점수 및 결과지 구성 (시그널 차단 절대 없음)
+    # =========================================================================
+    cur_cpv = cpv[-1]
+    cur_tb = tb_index[-1]
+    cur_bbe = bb_energy[-1]
+    cur_rs = rs[-1]
+    
+    # 1~10점 스케일링 변환
+    score_cpv = scale_score(cur_cpv, 0.8, 0.25)
+    score_tb  = scale_score(cur_tb, 10.0, 35.0)
+    score_bbe = scale_score(cur_bbe, 10.0, 40.0)
+    score_rs  = scale_score(cur_rs, 0.0, 50.0)
+
+    # 시그널별 총점 산출 (가중치 적용)
+    if hit_4[-1]: # S4: 응축(10), 찐양봉(9), CPV(8), RS(6)
+        total_score = (score_bbe*10 + score_tb*9 + score_cpv*8 + score_rs*6) / 330 * 100
+        sig_type = "🔥 S4 (바닥 탈출/역배열 돌파)"
+    elif hit_2[-1] or hit_1[-1]: # S2/S3: CPV(10), RS(10), 찐양봉(8), 응축(4)
+        total_score = (score_cpv*10 + score_rs*10 + score_tb*8 + score_bbe*4) / 320 * 100
+        sig_type = "🔥 S3/S2 (단기 급등/과열권 모멘텀)"
+    else: # S1: 정배열 추세, RS(9), CPV(6), 찐양봉(5) - 응축에너지 제외
+        total_score = (score_rs*9 + score_cpv*6 + score_tb*5) / 200 * 100
+        sig_type = "🔥 S1 (대세 추세 추종 - 448 정배열)"
+
+    # 요일 가점/감점 적용
+    weekday = df.index[-1].weekday()
+    if weekday == 4: total_score *= 1.05 # 금요일 프리미엄
+    elif weekday == 0: total_score *= 0.95 # 월요일 페널티
+
+    # 데스 콤보 (점수 차감만 하고 시그널은 보냄)
+    is_death_combo = (score_cpv <= 2.0) and (score_rs <= 3.0)
+    if is_death_combo: 
+        total_score *= 0.70
+
+    # 초격차 텐배거 조건 확인
+    is_tenbagger = False
+    if hit_4[-1] and score_bbe >= 8 and score_tb >= 8: is_tenbagger = True
+    if (hit_2[-1] or hit_1[-1]) and score_rs >= 9 and score_cpv >= 8 and is_aligned_448[-1]: is_tenbagger = True
+    if hit_3[-1] and score_rs >= 8 and is_aligned_448[-1]: is_tenbagger = True
+
+    # 텔레그램 결과지 브리핑 문구 작성
+    v7_comment = (
+        f"📊 [System B V7.0 종합 진단 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+        f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점) -> 낮을수록 매물소화 우수\n"
+        f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점) -> 높을수록 매집 밀도 우수\n"
+        f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점) -> 탄성력\n"
+        f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점) -> 지수 대비 강세\n"
+    )
+    if is_death_combo: v7_comment += f"\n⚠️ [데스콤보 경고] 꽉찬양봉+시장소외주 결합! (단기 설거지 폭락 주의)\n"
+    if is_tenbagger: v7_comment += f"\n🚀 [텐배거 포착] 초격차 대세 상승 핵심 조건 충족!\n"
+    if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 (+5%) 반영됨\n"
+    elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 차익매물 리스크 (-5%) 반영됨\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": "스윙 / 중장기"
+        "recommend": "스윙 / 중장기",
+        "v7_comment": v7_comment
     }
 
-# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
+# 💡 매일 로테이션되는 5가지 프리미엄 차트 테마 (원본 유지)
 def get_daily_theme():
     theme_idx = datetime.now().day % 5
     themes = [
@@ -336,17 +433,28 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 Top 1% 마스터 스캔 시작! (당일 중복 차단 및 연속 타점 필터링 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 Top 1% 마스터 스캔 시작! (S1~S4 전체 포착 및 V7.0 점수 엔진 가동 🛡️)")
     t0 = time.time()
-    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
-    console_lock = threading.Lock()
     
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+    
+    # 💡 벤치마크 지수 (KOSPI/KOSDAQ) 일괄 로드 (상대강도 RS 계산용)
+    print("📊 벤치마크 지수(KOSPI/KOSDAQ) 데이터 로드 중...")
+    try:
+        kospi_idx = fdr.DataReader('KS11', start_date)['Close']
+        kosdaq_idx = fdr.DataReader('KQ11', start_date)['Close']
+    except:
+        print("⚠️ 벤치마크 지수 로드 실패. 빈 데이터로 우회합니다.")
+        kospi_idx = pd.Series(dtype=float)
+        kosdaq_idx = pd.Series(dtype=float)
+        
+    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
+    console_lock = threading.Lock()
     
     def worker(row_tuple):
         try:
             _, row = row_tuple
-            name, code = row["Name"], row["Code"]
+            name, code, market_type = row["Name"], row["Code"], row["Market"]
             
             df_raw = fdr.DataReader(code, start_date)
             hit = False
@@ -355,12 +463,16 @@ def scan_market_1d():
 
             if df_raw is not None and not df_raw.empty and len(df_raw) >= 500:
                 df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                hit, sig_type, df_to_plot, dbg_info = compute_top1_master_signal(df_raw)
+                idx_close = kospi_idx if market_type == 'KOSPI' else kosdaq_idx
+                
+                # 시그널 판별 엔진 호출 (모든 시그널 통과 및 점수화)
+                hit, sig_type, df_to_plot, dbg_info = compute_top1_master_signal(df_raw, idx_close)
 
             hit_rank = 0
             with console_lock:
                 tracker['scanned'] += 1
                 if df_raw is not None and len(df_raw) >= 500: tracker['analyzed'] += 1 
+  
                 if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
                     print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
@@ -389,12 +501,12 @@ def scan_market_1d():
                         f"🎯 추천: {dbg_info.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
+                        f"{dbg_info.get('v7_comment', '')}\n" # 💡 V7.0 점수 브리핑 텍스트 표출
                         f"📉 [스마트 매수/손절 전략]\n"
-                        f"- 1~3단계 정배열 이격도 및 강력 모멘텀 결합 타점 (신규 진입)\n"
-                        f"- 단기선 이탈 및 데드크로스 발생 시 기계적 손절 대응\n\n"
+                        f"- 단기선 이탈 및 데드크로스 발생 시 기계적 손절 대응\n"
+                        f"- 1일 차 시가 갭하락 후 반등 실패 시 즉각 칼손절 (MAE 지옥 회피)\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
-                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                     )
