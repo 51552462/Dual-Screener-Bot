@@ -63,7 +63,7 @@ import nasdaq_dante_reverse_breakout_screener as us_rev
 import nulusa as us_nul
 import usa as us_bowl
 import dante_krx_reverse_breakout_screener as kr_rev
-import korea_ema224_signal_screener as kr_ema
+import master as kr_master
 import kr as kr_bowl
 import nulrim as kr_nul
 import ohdole as kr_ohdole
