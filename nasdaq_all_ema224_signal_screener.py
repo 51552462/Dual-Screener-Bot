@@ -1,4 +1,4 @@
-# Dante_US_Top1_Master_1D_AI_Pro.py (미국장 Top 1% 마스터 SIG 1,2,3 전용)
+# Dante_US_Top1_Master_1D_AI_Pro.py (미국장 Top 1% 마스터 SIG 1,2,3,4 + System B US V7.0 완전판)
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -65,7 +65,7 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
+# 💡 2. 본캐 팩트 리포트
 def generate_ai_report(code: str, company_name: str):
     import re, time
     try:
@@ -88,9 +88,11 @@ def generate_ai_report(code: str, company_name: str):
         try:
             time.sleep(4) 
             prompt = f"""
-            너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
+            너는 주식 전문 마케터야.
+            [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
             ⚠️ [매우 중요 규칙]
-            1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
+            1. 대괄호 [ ] 로만 정확히 섹션을 구분해.
+            굵은 글씨(**) 금지.
 
             [본캐]
             1. 섹터: (어떤 테마인지 한글로 1줄 요약)
@@ -102,18 +104,13 @@ def generate_ai_report(code: str, company_name: str):
                 contents=prompt,
                 config=types.GenerateContentConfig(tools=[{"google_search": {}}])
             )
+            if not response or not response.text: continue
             
-            if not response or not response.text:
-                continue
-                
             report = response.text.replace('*', '').strip() 
             m_part = re.search(r'\[본캐\](.*)', report, re.DOTALL)
-
             if not m_part: raise ValueError("파싱오류")
-
             return m_part.group(1).strip(), ""
-        except:
-            pass 
+        except: pass 
             
     return fb_main, ""
 
@@ -125,17 +122,27 @@ def get_us_ticker_list():
         return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
-# 💡 3. Top 1% 마스터 (미국장 호환) 타점 로직
-def compute_top1_master_signal(df_raw: pd.DataFrame):
+# 💡 보조 함수: 1~10점 스케일링 (10점 기준값과 1점 기준값을 정확히 매핑)
+def scale_score(val, pt10_val, pt1_val):
+    if pt10_val > pt1_val: # 높을수록 좋은 지표 (RS, 찐양봉, 응축에너지)
+        if val >= pt10_val: return 10.0
+        if val <= pt1_val: return 1.0
+        return 1.0 + 9.0 * (val - pt1_val) / (pt10_val - pt1_val)
+    else: # 낮을수록 좋은 지표 (CPV 등)
+        if val <= pt10_val: return 10.0
+        if val >= pt1_val: return 1.0
+        return 1.0 + 9.0 * (pt1_val - val) / (pt1_val - pt10_val)
+
+# 💡 3. Top 1% 마스터 (미국장 US V7.0 완전판 로직)
+def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
-    c = df['Close'].values
-    o = df['Open'].values
-    h = df['High'].values
-    l = df['Low'].values
-    v = df['Volume'].values
+    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
     
+    df['Idx_Close'] = idx_close
+    df['Idx_Close'] = df['Idx_Close'].ffill()
+
     # 7중 EMA 계산
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
@@ -158,13 +165,11 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     is_bullish = c > o
     show_values = is_aligned_112 & is_bullish
 
-    # 이격도 및 모멘텀 계산
     with np.errstate(divide='ignore', invalid='ignore'):
         spread_10_20 = np.where(show_values, ((e10 - e20) / atr) * 100, 0)
         spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
         spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
 
-        # 상관계수 및 ROC
         idx = np.arange(len(c))
         r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx)).fillna(0).values
         r_squared = r_val * r_val
@@ -177,7 +182,6 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     prev_tml = np.roll(true_momentum_line, 1)
     prev_tml[0] = 0
 
-    # 조건 판별
     cond_rising = true_momentum_line > prev_tml
     cond_blue_30 = spread_112_224 >= 30
     
@@ -187,43 +191,206 @@ def compute_top1_master_signal(df_raw: pd.DataFrame):
     cond_val_sig1 = (spread_10_30 >= 100) & (spread_10_20 >= 50) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
     cond_val_sig2_3 = (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
 
+    # =========================================================================
+    # 👑 [1단계] 4대 핵심 파생 변수 수학적 정의 적용
+    # =========================================================================
+    cpv = np.where(h != l, (c - o) / (h - l), 0.5)
+    cpv_scaled = cpv * 10.0 # 파일의 2.0, 6.0 컷오프 기준에 맞추기 위한 스케일 변환
+
+    v_ma20 = pd.Series(v).rolling(20).mean().values
+    vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
+    tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
+
+    bb_mid = pd.Series(c).rolling(20).mean().values
+    bb_std = pd.Series(c).rolling(20).std().values
+    bb_width = np.where(bb_mid > 0, (4 * bb_std) / bb_mid, 0.01)
+    bb_energy = np.where(bb_width > 0, (1.0 / bb_width) * vol_mult, 0)
+
+    # 💡 시장 상대강도(RS): (종목 수익률 / 지수 수익률) * 100 나눗셈 비율 수식 적용
+    c_20 = pd.Series(c).shift(20).values
+    idx_20 = df['Idx_Close'].shift(20).values
+    with np.errstate(divide='ignore', invalid='ignore'):
+        stock_ret = np.where(c_20 > 0, (c - c_20) / c_20, 0.0)
+        idx_ret = np.where(idx_20 > 0, (df['Idx_Close'].values - idx_20) / idx_20, 0.0001)
+        # 지수 수익률이 0이 되는 것을 방지하기 위해 0.0001 보정
+        idx_ret = np.where(idx_ret == 0, 0.0001, idx_ret)
+        rs = (stock_ret / idx_ret) * 100
+    rs = np.nan_to_num(rs, nan=0.0)
+
+    # 시그널 판별
     raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
     raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
     raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+    raw_sig4 = (~is_aligned_112) & (tb_index >= 15.0) & (vol_mult >= 2.0) & is_bullish
 
-    # 중복 방지 (우선순위: sig3 > sig2 > sig1)
     signal_3 = raw_sig3
     signal_2 = raw_sig2 & ~signal_3
     signal_1 = raw_sig1 & ~signal_2 & ~signal_3
+    signal_4 = raw_sig4 & ~signal_1 & ~signal_2 & ~signal_3
 
-    # 💡 미국장 특화 잡주 차단 (500만 달러 & 3달러 이상)
     moneyOk = (c * v) >= 5_000_000
     priceOk = c >= 3.0
 
-    hit_1 = signal_1 & moneyOk & priceOk
-    hit_2 = signal_2 & moneyOk & priceOk
-    hit_3 = signal_3 & moneyOk & priceOk
+    hit_1 = signal_1 & moneyOk & priceOk # S3 과열권
+    hit_2 = signal_2 & moneyOk & priceOk # S2 단기급등
+    hit_3 = signal_3 & moneyOk & priceOk # S1 추세
+    hit_4 = signal_4 & moneyOk & priceOk # S4 바닥
     
-    final_hit = hit_1 | hit_2 | hit_3
+    final_hit = hit_1 | hit_2 | hit_3 | hit_4
 
-    if not final_hit[-1]:
-        return False, "", df, {}
-        
-    # ⭐️ 3봉 이내 중복 필터 (한국장과 동일하게 적용) ⭐️
-    if final_hit[-4:-1].any():
-        return False, "", df, {}
-        
-    if hit_3[-1]:
-        sig_type = "🔥 SIG 3 (Top 1% 초강력)"
-    elif hit_2[-1]:
-        sig_type = "🔥 SIG 2 (Top 1% 강력)"
-    else:
-        sig_type = "🔥 SIG 1 (Top 1% 돌파)"
+    if not final_hit[-1]: return False, "", df, {}
+    if final_hit[-4:-1].any(): return False, "", df, {}
 
+    # =========================================================================
+    # 👑 [2단계] 매매 빈도 측정 및 이평선 데이터
+    # =========================================================================
+    recent_hits = final_hit[-252:-1].sum() if len(final_hit) > 252 else final_hit[:-1].sum()
+    freq_count = int(recent_hits)
+
+    if is_aligned_448[-1]: ema_stat_str = "승률 31.2% / 손익비 2.50 (수익폭은 크나 고점 설거지 주의)"
+    elif is_aligned_224[-1]: ema_stat_str = "승률 31.0% / 손익비 2.52 (장기 매물 소화 완료)"
+    elif is_aligned_30[-1]: ema_stat_str = "승률 28.6% / 손익비 2.35 (저항대 돌파 시도)"
+    else: ema_stat_str = "승률 28.4% / 손익비 1.94 (찐바닥 탈출 구간으로 승률 1위)"
+
+    # =========================================================================
+    # 👑 [3단계] S1~S4 1~10점 컷오프 파일 100% 개별 대입
+    # =========================================================================
+    cur_cpv, cur_tb, cur_bbe, cur_rs = cpv_scaled[-1], tb_index[-1], bb_energy[-1], rs[-1]
+    
+    score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
+    total_score = 0
+    trap_warning = ""
+    exit_strategy = ""
+
+    if hit_4[-1]: # S4 바닥 탈출
+        sig_type = "🔥 S4 (바닥 탈출/역배열 돌파)"
+        score_rs   = scale_score(cur_rs, 10.0, 2.0)   # 1위
+        score_cpv  = scale_score(cur_cpv, 2.0, 6.0)   # 2위
+        score_bbe  = scale_score(cur_bbe, 10.0, 2.0)  # 3위
+        score_ema  = 10.0 if not is_aligned_30[-1] else 5.0 # 4위 (역배열/혼조 우대)
+        score_tb   = scale_score(cur_tb, 10.0, 2.0)   # 5위
+        if 6 <= freq_count <= 15: score_freq = 10.0
+        elif freq_count >= 16: score_freq = 2.0
+        else: score_freq = 6.0                        # 6위
+        
+        total_score = (score_rs*10 + score_cpv*9 + score_bbe*8 + score_ema*7 + score_tb*6 + score_freq*5) / 450 * 100
+        
+        # S4 함정 검증
+        if score_tb <= 3.0 and score_bbe <= 3.0: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지 부재!\n"
+        if score_cpv <= 3.0 and freq_count >= 16: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 주의!\n"
+        exit_strategy = "MFE 정점은 평균 16.5일 차. 진입 다음날부터 4.08일 내 시가 갭하락 등 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
+
+    elif hit_1[-1]: # S3 과열권 모멘텀
+        sig_type = "🔥 S3 (과열권 모멘텀 - 112 정배열)"
+        score_cpv  = scale_score(cur_cpv, 2.0, 6.0)   # 1위
+        if 1 <= freq_count <= 5: score_freq = 10.0
+        elif freq_count >= 16: score_freq = 2.0
+        else: score_freq = 6.0                        # 2위
+        score_ema  = 10.0 if is_aligned_448[-1] else 5.0 # 3위
+        score_tb   = scale_score(cur_tb, 10.0, 2.0)   # 4위
+        score_rs   = scale_score(cur_rs, 6.0, 2.0)    # 5위
+        score_bbe  = scale_score(cur_bbe, 10.0, 2.0)  # 6위
+
+        total_score = (score_cpv*10 + score_freq*9 + score_ema*8 + score_tb*7 + score_rs*6 + score_bbe*5) / 450 * 100
+
+        # S3 함정 검증
+        if 4.0 <= score_cpv <= 6.0 and score_rs <= 3.0: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 횡보 주의!\n"
+        if score_cpv <= 3.0: trap_warning += "💀 [참사의 늪] 고점 거래량 터진 꽉 찬 양봉은 100% 설거지 폭락!\n"
+        exit_strategy = "MFE 정점은 평균 16.5일 차. 단기데드 로직(트레일링 스탑)으로 전환하여 끝까지 추세 홀딩."
+
+    elif hit_2[-1]: # S2 단기 급등 돌파
+        sig_type = "🔥 S2 (단기 급등 돌파 - 224 정배열)"
+        score_rs   = scale_score(cur_rs, 10.0, 2.0)   # 1위
+        score_cpv  = scale_score(cur_cpv, 2.0, 6.0)   # 2위
+        score_ema  = 10.0 if is_aligned_224[-1] else 5.0 # 3위
+        score_tb   = scale_score(cur_tb, 10.0, 2.0)   # 4위
+        score_freq = 10.0                             # 5위 무관 (가중치 6)
+        score_bbe  = scale_score(cur_bbe, 10.0, 2.0)  # 6위
+
+        total_score = (score_rs*10 + score_cpv*9 + score_ema*8 + score_tb*7 + score_freq*6 + score_bbe*5) / 450 * 100
+
+        # S2 함정 검증
+        if 4.0 <= score_cpv <= 6.0 and score_rs <= 3.0: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 자본 묶임 주의\n"
+        if score_rs <= 3.0: trap_warning += "💀 [참사의 늪] 지수 이기지 못하는 소외 잡주 단독 급등! 갭하락 참사 주의!\n"
+        exit_strategy = "MFE 정점은 평균 16.5일 차. 4.08일 내 하락 반전 시 즉각 칼손절. 단기데드 로직으로 끝까지 홀딩."
+
+    else: # hit_3[-1] S1 대세 추세 추종
+        sig_type = "🔥 S1 (대세 추세 추종 - 단기정배열 이상)"
+        score_rs   = scale_score(cur_rs, 10.0, 2.0)      # 1위
+        score_cpv  = scale_score(cur_cpv, 2.0, 6.0)      # 2위
+        score_ema  = 10.0 if is_aligned_30[-1] else 1.0  # 3위 (단기정배열 10점, 역배열 1점)
+        if 1 <= freq_count <= 5: score_freq = 10.0
+        else: score_freq = 5.0                           # 4위
+        score_tb   = scale_score(cur_tb, 10.0, 2.0)      # 5위
+        score_bbe  = 5.0                                 # 6위 미반영 (가중치 0 처리)
+
+        total_score = (score_rs*10 + score_cpv*9 + score_ema*8 + score_freq*7 + score_tb*6) / 400 * 100
+
+        # S1 함정 검증
+        if score_rs <= 3.0: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 못 이겨 박스권 갇힘!\n"
+        if not is_aligned_30[-1]: trap_warning += "💀 [참사의 늪] 단기 추세조차 없는 역배열/혼조 구간 진입!\n"
+        exit_strategy = "MFE 정점은 평균 16.5일 차. ZLEMA 이탈 로직으로 추세가 깨질 때까지 장기 홀딩."
+
+    # =========================================================================
+    # 👑 [4단계] 데스콤보, 고빈도 필터, 텐배거, DNA(Top/Worst) 검증
+    # =========================================================================
+    weekday = df.index[-1].weekday()
+    if weekday == 4: total_score *= 1.05 # 금요일 가산
+    elif weekday == 0: total_score *= 0.95 # 월요일 차감
+
+    # 1. 미국장 공통 데스콤보
+    is_death_combo = (score_cpv <= 2.0) and (score_rs <= 3.0)
+    if is_death_combo: 
+        total_score *= 0.70
+        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 억지로 만든 꽉 찬 양봉+소외주 (점수 30% 삭감)\n"
+        
+    # 2. 고빈도 잡주 강제 필터링
+    if freq_count >= 16 and (score_rs < 8.0 or score_cpv < 8.0):
+        total_score *= 0.50
+        trap_warning += "🚫 [고빈도 알고리즘 놀이터] RS/CPV 기준 미달! 강제 패스 권장 (-50% 삭감)\n"
+
+    # 3. 늪/참사 함정 발생 시 점수 삭감 페널티 (중복 삭감 방지)
+    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
+        total_score *= 0.70 
+
+    # 4. 미국장 초격차 텐배거 조건 (MFE > 50%)
+    is_tenbagger = False
+    if hit_4[-1] and score_rs >= 8.0 and score_cpv >= 8.0 and not is_aligned_30[-1]: is_tenbagger = True
+    if hit_1[-1] and score_cpv >= 8.0 and is_aligned_448[-1]: is_tenbagger = True
+    if hit_2[-1] and score_rs >= 8.0 and is_aligned_224[-1]: is_tenbagger = True
+    if hit_3[-1] and score_rs >= 8.0 and is_aligned_30[-1]: is_tenbagger = True
+
+    # 5. 미국장 DNA 팩트 검증
+    is_top_dna = (score_cpv >= 4.27) and (score_tb >= 2.67) and (score_rs >= 7.87) and (score_bbe >= 2.93)
+    is_worst_dna = (score_cpv <= 2.00)
+
+    total_score = min(max(total_score, 0), 100) # 0~100점 보정
+
+    v7_comment = (
+        f"📊 [System B US V7.0 종합 진단 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+        f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점) -> 위꼬리 매물 소화\n"
+        f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점) -> 돈의 매집 밀도\n"
+        f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점) -> 볼린저 바닥 탄성\n"
+        f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점) -> 지수 대비 주도력\n"
+        f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
+        f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
+        f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+    )
+    
+    if trap_warning != "": v7_comment += f"\n{trap_warning}"
+    if is_top_dna: v7_comment += f"\n💎 [미국장 승리 DNA 검증] 승률 100% 종목 평균 돌파!\n"
+    elif is_worst_dna: v7_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 극단적 꽉찬양봉! 잦은 손절 패턴입니다.\n"
+    if is_tenbagger: v7_comment += f"\n🚀 [초격차 텐배거 포착] 계좌 퀀텀점프 대박주 필수 조합 충족!\n"
+    if weekday == 4: v7_comment += f"✨ 금요일 주말 리스크를 이겨낸 주도주 프리미엄\n"
+    elif weekday == 0: v7_comment += f"⚠️ 월요일 호재를 이용한 고점 털기 리스크\n"
+
+    # 타점이 맞으면 100% 무조건 반환
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": "스윙 / 중장기"
+        "recommend": f"{exit_strategy}",
+        "v7_comment": v7_comment
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -310,9 +477,22 @@ def scan_market_1d():
     if stock_list.empty: return
     
     t0 = time.time()
-    print(f"\n🇺🇸 [일봉 전용] 미국장 Top 1% 마스터 스캔 시작! (연속 타점 필터링 🛡️)")
+    print(f"\n🇺🇸 [일봉 전용] 미국장 Top 1% 마스터 스캔 시작! (US V7.0 무타협 엔진 🛡️)")
 
-    # 💡 당일 중복 발송 차단 로직
+    print("📊 벤치마크 지수(QQQ ETF 대용) 데이터 안전하게 로드 중...")
+    try:
+        idx_df = yf.download("QQQ", interval="1d", period="3y", progress=False, threads=False)
+        if not idx_df.empty:
+            kospi_idx = idx_df['Close']['QQQ'] if isinstance(idx_df.columns, pd.MultiIndex) else idx_df['Close']
+            if kospi_idx.index.tzinfo is not None: 
+                kospi_idx.index = kospi_idx.index.tz_convert('America/New_York').tz_localize(None)
+            kospi_idx = kospi_idx[~kospi_idx.index.duplicated(keep='last')]
+        else:
+            kospi_idx = pd.Series(dtype=float)
+    except:
+        print("⚠️ 벤치마크 지수 로드 실패. 빈 데이터로 우회합니다.")
+        kospi_idx = pd.Series(dtype=float)
+
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
     log_file = os.path.join(TOP_FOLDER, "sent_log_us_top1.txt")
@@ -369,7 +549,8 @@ def scan_market_1d():
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
-                    hit, sig_type, df, dbg = compute_top1_master_signal(df_ticker)
+                    # 시그널 판별 (100% 무조건 반환)
+                    hit, sig_type, df, dbg = compute_top1_master_signal(df_ticker, kospi_idx)
                     
                     if hit:
                         if code in sent_today:
@@ -391,15 +572,14 @@ def scan_market_1d():
                         if main_chart_path and threads_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
-                            # 1️⃣ 본캐용 캡션 (유료방용)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
-                                f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
+                                f"🎯 추천: 스윙, 중장기 / 종가배팅\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
+                                f"{dbg.get('v7_comment', '')}\n"
                                 f"📉 [스마트 매수/손절 전략]\n"
-                                f"- 1~3단계 정배열 이격도 및 강력 모멘텀 결합 타점 (신규 진입)\n"
-                                f"- 단기선 이탈 및 데드크로스 발생 시 기계적 손절 대응\n\n"
+                                f"- {dbg.get('recommend', '')}\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
@@ -408,13 +588,11 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                             try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                             except:
                                 sector_info = "유망 섹터 포착"
                                 
-                            # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만! (미국장이므로 $ 유지)
                             promo_caption = (
                                 f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
