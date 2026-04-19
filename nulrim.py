@@ -489,6 +489,7 @@ def scan_market_1d():
     print(f"\n⚡ [일봉 전용] 한국장 V(눌림목) 스캔 시작!\n(당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
+    console_lock = threading.Lock()  # 💡 <--- 이 줄이 빠져있을 겁니다. 여기에 꼭 추가해 주세요!
     
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
