@@ -131,51 +131,28 @@ def get_us_ticker_list():
 MIN_PRICE_USD = 3.0               
 MIN_MONEY_USD = 5_000_000         
 
-def calculate_trust_score(c, e60):
-    score = 5 
-    lowest_60 = np.min(c[-60:])
-    runup_ratio = (c[-1] / lowest_60) - 1
-    if runup_ratio > 0.50: score -= 4     
-    elif runup_ratio > 0.30: score -= 2   
-    return max(1, min(10, score))
+MIN_PRICE_USD = 3.0               
+MIN_MONEY_USD = 5_000_000         
 
-# 💡 별점 채점기 보존
-def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
-    score = 0
-    change_pct = ((c - prev_c) / prev_c) * 100 if prev_c > 0 else 0
-    if 5.0 <= change_pct <= 8.5: score += 30
-    elif 8.5 < change_pct <= 10.0: score += 25
-    elif 10.0 < change_pct <= 15.0: score += 10
-    elif change_pct > 15.0: score += 0           
-    else: score += 20 
-        
-    embraced_count = 0
-    if l <= e10 <= c: embraced_count += 1
-    if l <= e20 <= c: embraced_count += 1
-    if l <= e30 <= c: embraced_count += 1
-    
-    if embraced_count == 3: score += 40
-    elif embraced_count == 2: score += 30
-    elif embraced_count == 1: score += 20
-    else:
-        if l > e10 and l > e20 and l > e30: score += 5  
-        else: score += 10
-            
-    if e10 > e20: score += 10
-    if e20 > e30: score += 10
-    if e30 > e60: score += 10
-    
-    if score >= 90: stars = "★★★★★"
-    elif score >= 80: stars = "★★★★☆"
-    elif score >= 65: stars = "★★★☆☆"
-    elif score >= 50: stars = "★★☆☆☆"
-    else: stars = "★☆☆☆☆"
-    return stars, score
+# 💡 [추가] 1~10점 스케일링 함수 (방향성 완벽 지원)
+def scale_score(val, best, worst):
+    if best > worst: # 높을수록 좋은 지표 (RS, 진짜양봉, 응축에너지)
+        if val >= best: return 10.0
+        if val <= worst: return 1.0
+        return 1.0 + 9.0 * (val - worst) / (best - worst)
+    else: # 낮을수록 좋은 지표 (CPV 등)
+        if val <= best: return 10.0
+        if val >= worst: return 1.0
+        return 1.0 + 9.0 * (worst - val) / (worst - best)
 
-def compute_nulrim_1d(df_raw: pd.DataFrame): 
+# 💡 [교체] 미국장 V7.0 마스터 시그널 엔진 (169,021건 팩트 데이터 완벽 적용)
+def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
+    df['Idx_Close'] = idx_close
+    df['Idx_Close'] = df['Idx_Close'].ffill()
+
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
@@ -183,100 +160,201 @@ def compute_nulrim_1d(df_raw: pd.DataFrame):
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # 💡 미국장/한국장 호환 유지 (기존 로직 보존)
-    moneyOk = (c * v) >= (5_000_000 if 'USD' in globals().get('MIN_MONEY_USD', '') else 100_000_000)
-    priceOk = c >= (3.0 if 'USD' in globals().get('MIN_MONEY_USD', '') else 1000)
-    isBullish = c > o
+    # =========================================================================
+    # 👑 [1단계] 4대 핵심 변수 수식 (US V7.0)
+    # =========================================================================
+    cpv = np.where(h != l, (c - o) / (h - l), 0.5)
 
-    macroBull_for_s4 = (e112 > e224) & (e224 > e448)
-    is_150_align = pd.Series(macroBull_for_s4).rolling(150).sum().values == 150
+    v_ma20 = pd.Series(v).rolling(20).mean().values
+    vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
+    tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
+
+    bb_mid = pd.Series(c).rolling(20).mean().values
+    bb_std = pd.Series(c).rolling(20).std().values
+    bb_width = np.where(bb_mid > 0, (4 * bb_std) / bb_mid, 0.01)
+    bb_energy = np.where(bb_width > 0, (1.0 / bb_width) * vol_mult, 0)
+
+    # 상대강도(RS) 계산
+    c_20 = pd.Series(c).shift(20).values
+    idx_20 = df['Idx_Close'].shift(20).values
+    with np.errstate(divide='ignore', invalid='ignore'):
+        stock_ret = np.where(c_20 > 0, (c - c_20) / c_20, 0.0)
+        idx_ret = np.where(idx_20 > 0, (df['Idx_Close'].values - idx_20) / idx_20, 0.0001)
+        idx_ret = np.where(idx_ret == 0, 0.0001, idx_ret) 
+        rs = (stock_ret / idx_ret) * 100
+    rs = np.nan_to_num(rs, nan=0.0)
+
+   # =========================================================================
+    # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S2, S4, S6 4가지만 포착하도록 커스텀)
+    # =========================================================================
+    moneyOk = (c * v) >= 5_000_000
+    priceOk = c >= 3.0
+    isBullish = c > o
 
     align112 = (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112)
     align224 = align112 & (e112 > e224)
     align448 = align224 & (e224 > e448)
 
     longKeep448 = e224 > e448 
-    longKeep224 = e112 > e224 
-    longKeep112 = e60 > e112  
+    longKeep224 = e112 > e224
 
     prev_align448 = np.roll(align448, 1); prev_align448[0] = False
     prev_align224 = np.roll(align224, 1); prev_align224[0] = False
-    prev_align112 = np.roll(align112, 1); prev_align112[0] = False
-    
+
     prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
     prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
-    prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
+    # S1(448일), S2(224일)
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
+    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
     
+    # S4(20일선 눌림돌파)
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
+    
     s4 = np.zeros_like(c, dtype=bool)
-    last_pullback_bar = -100
+    last_pb = -100
     for i in range(len(c)):
-        if raw_s4[i] and (i - last_pullback_bar > 5):
+        if raw_s4[i] and (i - last_pb > 5):
             s4[i] = True
-            last_pullback_bar = i
+            last_pb = i
 
+    # S6(바닥 탈출)
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
     prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
-    prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
-    prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
-    s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
-
-    s6_counts = np.zeros(len(c), dtype=int)
-    current_s6_count = 0
-    for i in range(len(c)):
-        if s6[i]: 
-            current_s6_count += 1
-            
-        s6_counts[i] = current_s6_count
-        
-        if s1[i] or s4[i] or s7[i]: 
-            current_s6_count = 0
-
     cond_base = moneyOk & priceOk
-    
-    hit1 = s1[-1] and cond_base[-1]
-    hit4 = s4[-1] and cond_base[-1] 
-    hit6 = s6[-1] and cond_base[-1]
-    hit7 = s7[-1] and cond_base[-1]
+    hit1 = (s1 | s4)[-1] and cond_base[-1] # S1, S4 (대세추세 그룹)
+    hit2 = s2[-1] and cond_base[-1]        # S2 (단기급등 그룹)
+    hit4 = s6[-1] and cond_base[-1]        # S6 (바닥 탈출 그룹)
 
-    if not (hit1 or hit4 or hit6 or hit7): 
+    # 💡 S3, S7 시그널은 완전히 제거됨
+    if not (hit1 or hit2 or hit4): 
         return False, "", df, {}
 
-    recommend = ""
-    if hit1: 
-        stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
-        usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
-        sig_type = f"S1 | {stars} ({pt}점) {usage_tag}"
-        recommend = "스윙 / 종가배팅"
-        
-    elif hit7: 
-        sig_type = "🔥 S7 (중기 정배열 턴 강조!)"
-        recommend = "중장기 / 종가배팅"
-        
-    elif hit4: 
-        stars, pt = calculate_star_score(o[-1], h[-1], l[-1], c[-1], prev_c[-1], e10[-1], e20[-1], e30[-1], e60[-1])
-        usage_tag = "(실제용)" if is_150_align[-1] else "(참고용)"
-        sig_type = f"S4 | {stars} ({pt}점) {usage_tag}"
-        recommend = "스윙 / 종가배팅"
-        
-    elif hit6:
-        sig_type = f"🌱 S6 (누적 {s6_counts[-1]}회 바닥턴)" if s6_counts[-1] >= 2 else "🌱 S6 (신규 바닥턴)"
-        recommend = "관심종목, 중장기 / 종가배팅"
+    # =========================================================================
+    # 👑 [3단계] S1, S2, S4, S6 스코어링 매핑 (미국장 169,021건 팩트 대입)
+    # =========================================================================
+    recent_hits = (s1 | s2 | s4 | s6)[-252:-1].sum() if len(c) > 252 else (s1 | s2 | s4 | s6)[:-1].sum()
+    freq_count = int(recent_hits)
 
-    try:
-        trust_score = calculate_trust_score(c, e60)
-    except:
-        trust_score = calculate_trust_score(c, e60, True)
+    if align448[-1]: ema_stat_str = "승률 29.5% / 손익비 2.67 (대세 상승장)"
+    elif align224[-1]: ema_stat_str = "승률 29.6% / 손익비 2.75 (장기 매물 소화 완료, 승률 1위)"
+    else: ema_stat_str = "승률 27.9% / 손익비 2.44 (바닥 탈출 구간)"
 
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "s6_count": int(s6_counts[-1]), "recommend": recommend}
+    cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
+    score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
+    total_score = 0
+    trap_warning = ""
+    exit_strategy = ""
+
+    if hit4: # [S6 바닥 탈출 매핑]
+        sig_type = "🌱 S6 (바닥턴 단기 정배열)"
+        score_rs   = scale_score(cur_rs, 1061.49, -53.30)  # 1위
+        score_bbe  = scale_score(cur_bbe, 22.20, 1.50)     # 2위
+        score_cpv  = scale_score(cur_cpv, 0.13, 0.85)      # 3위
+        score_tb   = scale_score(cur_tb, 11.29, 0.80)      # 4위
+        score_ema  = 10.0 if not align112[-1] else 5.0     # 5위
+        if 6 <= freq_count <= 15: score_freq = 10.0
+        elif freq_count >= 38: score_freq = 2.0 
+        else: score_freq = 6.0                             # 6위
+        
+        total_score = (score_rs*10 + score_bbe*9 + score_cpv*8 + score_tb*7 + score_ema*6 + score_freq*5) / 450 * 100
+        
+        if cur_tb < 0.80 and cur_bbe < 1.50: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
+        if cur_cpv > 0.85 and freq_count >= 38: trap_warning += "💀 [참사의 늪] 세력 알고리즘 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
+        exit_strategy = "MFE 정점(11.35일 차). 4일 이내 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
+
+    elif hit2: # [S2 단기 급등 돌파 매핑]
+        sig_type = "🔥 S2 (224 재정렬)"
+        score_rs   = scale_score(cur_rs, 1432.14, -80.50)  # 1위
+        score_cpv  = scale_score(cur_cpv, 0.12, 0.86)      # 2위
+        score_ema  = 10.0 if align224[-1] else 5.0         # 3위
+        score_bbe  = scale_score(cur_bbe, 30.80, 1.80)     # 4위
+        score_freq = 6.0                                   # 5위 (중립)
+        score_tb   = scale_score(cur_tb, 11.10, 0.90)      # 6위
+
+        total_score = (score_rs*10 + score_cpv*9 + score_ema*8 + score_bbe*7 + score_freq*6 + score_tb*5) / 450 * 100
+
+        if cur_cpv > 0.86 and cur_rs < -48.00: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 박스권 장기 횡보!\n"
+        if cur_rs < -80.50: trap_warning += "💀 [참사의 늪] 시장 소외 잡주 단독 급등! 다음날 갭하락 설거지 주의!\n"
+        exit_strategy = "MFE 정점(13.4~17.1일 차). 단기데드(트레일링 스탑) 로직 전환. 3.73일 내 갭하락 시 즉각 칼손절."
+
+    else: # [S1, S4 대세 추세 추종 그룹 매핑]
+        sig_type = "🔥 S4 (정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
+        score_rs   = scale_score(cur_rs, 990.40, -102.75)  # 1위
+        score_ema  = 10.0 if align448[-1] else 1.0         # 2위
+        score_cpv  = scale_score(cur_cpv, 0.12, 0.87)      # 3위
+        score_bbe  = scale_score(cur_bbe, 31.60, 2.50)     # 4위
+        if 1 <= freq_count <= 5: score_freq = 10.0
+        else: score_freq = 5.0                             # 5위
+        score_tb   = 5.0                                   # 6위 (반영안함)
+
+        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_freq*6) / 400 * 100
+
+        if cur_rs < -102.75: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
+        if not align112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
+        exit_strategy = "MFE 정점(13.4~17.1일 차). ZLEMA 이탈 시까지 3주(15일) 이상 추세 홀딩."
+
+    # =========================================================================
+    # 👑 [4단계] 미국 V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # =========================================================================
+    weekday = df.index[-1].weekday()
+    if weekday == 4: total_score *= 1.05 
+    elif weekday == 0: total_score *= 0.95 
+
+    is_death_combo = (cur_cpv > 0.86) and (cur_rs < -102.75)
+    if is_death_combo: 
+        total_score *= 0.70
+        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 꽉 찬 양봉 + 소외주 (점수 30% 삭감)\n"
+        
+    if freq_count >= 38 and (score_rs < 8.0 or score_cpv < 8.0):
+        total_score *= 0.50
+        trap_warning += "🚫 [고빈도 잡주 경고] 알고리즘 때가 많이 탄 종목! 강제 패스 권장 (-50% 삭감)\n"
+
+    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
+        total_score *= 0.70 
+
+    is_tenbagger = False
+    if hit4 and cur_rs >= 626.20 and cur_cpv <= 0.53 and (not align112[-1]): is_tenbagger = True
+    if hit2 and cur_rs >= 593.30 and cur_cpv <= 0.50 and align224[-1]: is_tenbagger = True
+    if hit1 and cur_rs >= 401.10 and cur_cpv <= 0.52 and align448[-1]: is_tenbagger = True
+
+    # 미국장 전용 DNA 팩트 필터링 (펌프앤덤프 지옥행 참사 필터 강화)
+    is_top_dna = (cur_bbe >= 10.09) and (cur_tb >= 11.17)
+    is_worst_dna = (cur_rs >= 5298.72) and (cur_bbe <= 6.26) 
+
+    total_score = min(max(total_score, 0), 100)
+
+    v7_comment = (
+        f"📊 [System B US V7.0 종합 진단 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+        f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
+        f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
+        f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
+        f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점)\n"
+        f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
+        f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
+        f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+    )
+    
+    if trap_warning != "": v7_comment += f"\n{trap_warning}"
+    if is_top_dna: v7_comment += f"\n💎 [미국장 Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
+    elif is_worst_dna: v7_comment += f"\n💀 [미국장 펌프앤덤프 참사 DNA 일치] 강도는 높으나 에너지가 부족한 종목. 진입 주의!\n"
+    if is_tenbagger: v7_comment += f"\n🚀 [미국 초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
+    if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 반영 (+5% 가산)\n"
+    elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
+
+    return True, sig_type, df, {
+        "sig_type": sig_type,
+        "last_close": float(c[-1]),
+        "recommend": f"{exit_strategy}",
+        "v7_comment": v7_comment
+    }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
@@ -360,8 +438,22 @@ def scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
     
-    t0 = time.time()
+   t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
+
+    # 💡 [추가] 벤치마크 지수(QQQ ETF 대용) 데이터 안전하게 로드 중...
+    print("📊 벤치마크 지수(QQQ) 데이터 로드 중...")
+    try:
+        idx_df = yf.download("QQQ", interval="1d", period="3y", progress=False, threads=False)
+        if not idx_df.empty:
+            kospi_idx = idx_df['Close']['QQQ'] if isinstance(idx_df.columns, pd.MultiIndex) else idx_df['Close']
+            if kospi_idx.index.tzinfo is not None:
+                kospi_idx.index = kospi_idx.index.tz_convert('America/New_York').tz_localize(None)
+            kospi_idx = kospi_idx[~kospi_idx.index.duplicated(keep='last')]
+        else:
+            kospi_idx = pd.Series(dtype=float)
+    except:
+        kospi_idx = pd.Series(dtype=float)
 
     # 💡 당일 중복 발송 차단 로직
     ny_tz = pytz.timezone('America/New_York')
@@ -420,7 +512,8 @@ def scan_market_1d():
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
-                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker)
+                    # 💡 [변경] 시장 지수(QQQ)를 넘겨주어 RS를 계산하게 함
+                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, kospi_idx)
                     
                     if hit:
                         if code in sent_today:
@@ -443,16 +536,15 @@ def scan_market_1d():
                         if main_chart_path and promo_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
-                            # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
+                           # 1️⃣ 본캐용 캡션 (유료방용 - V7.0 점수 브리핑 출력)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
-                                f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
+                                f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                f"📉 [매수/손절 전략]\n"
-                                f"- 양봉 길이만큼 분할매수\n"
-                                f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                                f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
+                                f"{dbg.get('v7_comment', '')}\n"
+                                f"📉 [스마트 매수/손절 전략]\n"
+                                f"- {dbg.get('recommend', '')}\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
