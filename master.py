@@ -271,18 +271,17 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     if final_hit[-4:-1].any(): return False, "", df, {} 
 
     # =========================================================================
-    # 👑 [2단계] 매매 빈도 측정 및 이평선 데이터 통계 (V6.0/7.0 백테스트 기반 최신화)
+    # 👑 [2단계] 매매 빈도 측정 및 이평선 데이터 통계 (V6.0 팩트 100% 매핑)
     # =========================================================================
     recent_hits = final_hit[-252:-1].sum() if len(final_hit) > 252 else final_hit[:-1].sum()
     freq_count = int(recent_hits)
 
-    if is_aligned_448[-1]: ema_stat_str = "승률 27.3% / 손익비 3.31 (수익폭은 크나 고점 설거지 주의)"
-    elif is_aligned_224[-1]: ema_stat_str = "승률 24.7% / 손익비 3.03 (장기 매물 소화 완료)"
-    elif is_aligned_112[-1]: ema_stat_str = "승률 23.0% / 손익비 3.43 (저항대 돌파 시도)"
-    else: ema_stat_str = "승률 22.2% / 손익비 2.65 (찐바닥 탈출 구간으로 가성비 최상)"
+    if is_aligned_448[-1]: ema_stat_str = "승률 27.4% / 손익비 3.14 (수익폭은 크나 고점 설거지 주의)"
+    elif is_aligned_224[-1]: ema_stat_str = "승률 25.5% / 손익비 2.58 (장기 매물 소화 완료)"
+    else: ema_stat_str = "승률 21.9% / 손익비 2.65 (찐바닥 탈출 구간으로 승률 1위)"
 
     # =========================================================================
-    # 👑 [3단계] S1~S4 V7.0 기준 1~6순위 컷오프 전면 재배치 및 오차 교정
+    # 👑 [3단계] S1~S4 V7.0 기준 1~6순위 컷오프 (임의 스케일 배제, 팩트 수치 대입)
     # =========================================================================
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     
@@ -291,116 +290,110 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     trap_warning = ""
     exit_strategy = ""
 
-    # 💡 모든 1~10점 스케일링을 기획서의 수학적 기준과 100% 동기화
-    # CPV: 0.5 이하 10점, 0.8 이상 1점
-    # TB: 23.0 이상 10점, 14.0 이하 1점
-    # BBE: 20.0 이상 10점, 10.0 이하 1점
-    # RS: 30.0 이상 10점, 15.0 이하 1점
-
     if hit_4[-1]: # [S4 바닥 탈출]
         sig_type = "🔥 S4 (바닥 탈출/역배열 돌파)"
-        score_bbe  = scale_score(cur_bbe, 20.0, 10.0) # 1위 (가중치 10)
-        score_tb   = scale_score(cur_tb, 23.0, 14.0)  # 2위 (가중치 9)
-        score_ema  = 10.0 if not is_aligned_112[-1] else 5.0 # 3위 (가중치 8 - 역배열/혼조세 우대 교정 완료)
-        score_cpv  = scale_score(cur_cpv, 0.5, 0.8)   # 4위 (가중치 7)
+        score_bbe  = scale_score(cur_bbe, 90.70, 11.60) # 1위 (가중치 10)
+        score_tb   = scale_score(cur_tb, 61.80, 16.20)  # 2위 (가중치 9)
+        score_ema  = 10.0 if not is_aligned_112[-1] else 5.0 # 3위 (역배열 우대, 가중치 8)
+        score_cpv  = scale_score(cur_cpv, 0.10, 0.89)   # 4위 (가중치 7)
         if 6 <= freq_count <= 15: score_freq = 10.0
         elif freq_count >= 16: score_freq = 2.0 
-        else: score_freq = 6.0                        # 5위 (가중치 6)
-        score_rs   = scale_score(cur_rs, 30.0, 15.0)  # 6위 (가중치 5)
+        else: score_freq = 6.0                          # 5위 (가중치 6)
+        score_rs   = scale_score(cur_rs, 1510.50, 0.0)  # 6위 (가중치 5)
         
         total_score = (score_bbe*10 + score_tb*9 + score_ema*8 + score_cpv*7 + score_freq*6 + score_rs*5) / 450 * 100
         
-        # S4 전용 함정 
-        if score_tb <= 3.0 and score_bbe <= 3.0: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없는 가짜 반등!\n"
-        if score_cpv <= 3.0 and freq_count >= 16: trap_warning += "💀 [참사의 늪] 세력의 단타 놀이터! 다음 날 갭하락 지옥행 주의!\n"
+        # S4 함정 (V7.0 원시 데이터 판별)
+        if cur_tb < 16.20 and cur_bbe < 11.60: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
+        if cur_cpv > 0.89 and freq_count >= 16: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
         
-        exit_strategy = "MFE 정점(5.21일 차). 1일 차 반등 실패 시 즉각 칼손절. 횡보 시 10일 타임컷."
+        exit_strategy = "MFE 정점(4.53일 차). 1일 차 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
 
     elif hit_1[-1]: # [S3 과열권 모멘텀]
         sig_type = "🔥 S3 (과열권 모멘텀 - 112 정배열)"
-        score_cpv  = scale_score(cur_cpv, 0.5, 0.8)   # 1위 (가중치 10)
+        score_cpv  = scale_score(cur_cpv, 0.15, 0.87)   # 1위 (가중치 10)
         if 1 <= freq_count <= 5: score_freq = 10.0
         elif freq_count >= 16: score_freq = 2.0
-        else: score_freq = 6.0                        # 2위 (가중치 9)
-        score_bbe  = scale_score(cur_bbe, 20.0, 10.0) # 3위 (가중치 8)
-        score_tb   = scale_score(cur_tb, 23.0, 14.0)  # 4위 (가중치 7)
-        score_rs   = scale_score(cur_rs, 30.0, 15.0)  # 5위 (가중치 6)
+        else: score_freq = 6.0                          # 2위 (가중치 9)
+        score_bbe  = scale_score(cur_bbe, 21.30, 2.00)  # 3위 (가중치 8)
+        score_tb   = scale_score(cur_tb, 19.60, 1.60)   # 4위 (가중치 7)
+        score_rs   = scale_score(cur_rs, 2420.58, 0.0)  # 5위 (가중치 6)
         score_ema  = 10.0 if is_aligned_448[-1] else 5.0 # 6위 (가중치 5)
 
         total_score = (score_cpv*10 + score_freq*9 + score_bbe*8 + score_tb*7 + score_rs*6 + score_ema*5) / 450 * 100
 
-        # S3 전용 함정
-        if 4.0 <= score_cpv <= 6.0 and score_rs <= 3.0: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주. 자본 묶임 주의!\n"
-        if score_cpv <= 3.0: trap_warning += "💀 [참사의 늪] 고점에서 거래량 터진 꽉 찬 양봉은 100% 설거지 폭락!\n"
+        # S3 함정 (V7.0 원시 데이터 판별)
+        if cur_cpv > 0.87 and cur_rs < -937.78: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주. 자본 묶임 주의!\n"
+        if cur_cpv > 0.87: trap_warning += "💀 [참사의 늪] 고점에서 거래량 터진 꽉 찬 양봉은 100% 설거지 폭락!\n"
         
-        exit_strategy = "MFE 정점(7.53일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩. 1일 차 갭하락 시 즉각 칼손절."
+        exit_strategy = "MFE 정점(7.4~7.7일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩."
 
     elif hit_2[-1]: # [S2 단기 급등 돌파]
         sig_type = "🔥 S2 (단기 급등 돌파 - 224 정배열)"
-        score_rs   = scale_score(cur_rs, 30.0, 15.0)  # 1위 (가중치 10)
-        score_cpv  = scale_score(cur_cpv, 0.5, 0.8)   # 2위 (가중치 9)
-        score_ema  = 10.0 if is_aligned_224[-1] else 5.0 # 3위 (가중치 8)
-        score_tb   = scale_score(cur_tb, 23.0, 14.0)  # 4위 (가중치 7)
-        score_freq = 6.0                              # 5위 상관없음 중간값 (가중치 6)
-        score_bbe  = scale_score(cur_bbe, 20.0, 10.0) # 6위 (가중치 5)
+        score_rs   = scale_score(cur_rs, 3534.20, -787.34) # 1위 (가중치 10)
+        score_cpv  = scale_score(cur_cpv, 0.14, 0.88)      # 2위 (가중치 9)
+        score_ema  = 10.0 if is_aligned_224[-1] else 5.0   # 3위 (가중치 8)
+        score_tb   = scale_score(cur_tb, 17.80, 0.0)       # 4위 (가중치 7)
+        score_freq = 6.0                                   # 5위 상관없음 중간값 (가중치 6)
+        score_bbe  = scale_score(cur_bbe, 12.78, 0.0)      # 6위 (가중치 5)
 
         total_score = (score_rs*10 + score_cpv*9 + score_ema*8 + score_tb*7 + score_freq*6 + score_bbe*5) / 450 * 100
 
-        # S2 전용 함정
-        if 4.0 <= score_cpv <= 6.0 and score_rs <= 3.0: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 박스권 장기 횡보!\n"
-        if score_rs <= 3.0: trap_warning += "💀 [참사의 늪] 시장 소외 잡주 단독 급등! 다음날 갭하락 설거지 주의!\n"
+        # S2 함정 (V7.0 원시 데이터 판별)
+        if cur_cpv > 0.87 and cur_rs < -937.78: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 박스권 장기 횡보!\n"
+        if cur_rs < -787.34: trap_warning += "💀 [참사의 늪] 시장 소외 잡주 단독 급등! 다음날 갭하락 설거지 주의!\n"
         
-        exit_strategy = "MFE 정점(7.53일 차). 단기데드(트레일링 스탑) 로직 전환. 1일 차 갭하락 시 즉각 칼손절."
+        exit_strategy = "MFE 정점(7.4~7.7일 차). 단기데드(트레일링 스탑) 로직 전환. 3.36일 내 갭하락 시 즉각 칼손절."
 
     else: # hit_3[-1] [S1 대세 추세 추종]
         sig_type = "🔥 S1 (대세 추세 추종 - 448 완전정배열)"
         score_ema  = 10.0 if is_aligned_448[-1] else 1.0 # 1위 (가중치 10)
-        score_rs   = scale_score(cur_rs, 30.0, 15.0)     # 2위 (가중치 9)
+        score_rs   = scale_score(cur_rs, 4037.80, 0.0)   # 2위 (가중치 9)
         if 1 <= freq_count <= 5: score_freq = 10.0
         else: score_freq = 5.0                           # 3위 (가중치 8)
-        score_cpv  = scale_score(cur_cpv, 0.5, 0.8)      # 4위 (가중치 7)
-        score_tb   = scale_score(cur_tb, 23.0, 14.0)     # 5위 (가중치 6)
+        score_cpv  = scale_score(cur_cpv, 0.15, 0.89)    # 4위 (가중치 7)
+        score_tb   = scale_score(cur_tb, 15.00, 0.0)     # 5위 (가중치 6)
         score_bbe  = 5.0                                 # 6위 점수 미반영 권장 (가중치 0 처리)
 
         total_score = (score_ema*10 + score_rs*9 + score_freq*8 + score_cpv*7 + score_tb*6) / 400 * 100
 
-        # S1 전용 함정
-        if score_rs <= 3.0: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
-        # 💡 [S1 참사 늪 오차 교정] 역배열/단기정배열 페이크를 완벽히 필터링하도록 수정
-        if not is_aligned_224[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/단기정배열 구간 페이크 상승!\n"
+        # S1 함정 (V7.0 원시 데이터 판별)
+        if cur_rs < -1934.70: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
+        if not is_aligned_112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
         
-        exit_strategy = "MFE 정점(6.28일 차). ZLEMA 이탈 시까지 추세 홀딩. 1일 차 갭하락 시 즉각 칼손절."
+        exit_strategy = "MFE 정점(7.4~7.7일 차). ZLEMA 이탈 시까지 추세 끝까지 홀딩."
 
     # =========================================================================
-    # 👑 [4단계] V6.0/V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # 👑 [4단계] 데스콤보, 고빈도 필터, 텐배거, DNA(Top/Worst) 검증
     # =========================================================================
     weekday = df.index[-1].weekday()
     if weekday == 4: total_score *= 1.05 # 금요일 가산
     elif weekday == 0: total_score *= 0.95 # 월요일 차감
 
-    # 1. 공통 데스콤보 (CPV 1~2점 꽉찬양봉 + RS 1~3점 소외주)
-    is_death_combo = (score_cpv <= 2.0) and (score_rs <= 3.0)
+    # 1. 공통 데스콤보 (V7.0 원시 데이터 판별)
+    is_death_combo = (cur_cpv > 0.87) and (cur_rs < -937.78)
     if is_death_combo: 
         total_score *= 0.70
         trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 꽉 찬 양봉 + 소외주 (점수 30% 삭감)\n"
         
-    # 2. 고빈도 잡주 강제 필터링 (16회 이상 매매시 CPV/RS 8점 필수)
+    # 2. 고빈도 잡주 강제 필터링
     if freq_count >= 16 and (score_rs < 8.0 or score_cpv < 8.0):
         total_score *= 0.50
-        trap_warning += "🚫 [고빈도 잡주 경고] 때가 많이 탄 종목! RS/CPV 8점 미달로 강제 패스 권장 (-50% 삭감)\n"
+        trap_warning += "🚫 [고빈도 잡주 경고] 때가 많이 탄 종목! RS/CPV 기준 미달로 강제 패스 권장 (-50% 삭감)\n"
 
+    # 3. 늪/참사 함정 발생 시 점수 삭감 페널티 (중복 삭감 방지)
     if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
         total_score *= 0.70 
 
-    # 3. 💡 초격차 텐배거 확인 
+    # 4. 💡 초격차 텐배거 확인 (V7.0 시그널별 분리 적용)
     is_tenbagger = False
-    if hit_4[-1] and score_bbe >= 8.0 and score_tb >= 8.0 and (not is_aligned_112[-1]): is_tenbagger = True
-    if (hit_2[-1] or hit_1[-1]) and score_rs >= 8.0 and score_cpv >= 8.0 and is_aligned_448[-1]: is_tenbagger = True
-    if hit_3[-1] and score_rs >= 8.0 and is_aligned_448[-1]: is_tenbagger = True
+    if hit_4[-1] and cur_rs >= 370.50 and cur_cpv <= 0.44 and (not is_aligned_112[-1]): is_tenbagger = True
+    if (hit_2[-1] or hit_1[-1]) and cur_rs >= 468.10 and cur_cpv <= 0.58 and is_aligned_448[-1]: is_tenbagger = True
+    if hit_3[-1] and cur_rs >= 850.70 and is_aligned_448[-1]: is_tenbagger = True
 
-    # 4. 💡 DNA 팩트 검증 (Top 30 우량 DNA 및 Worst 30 지옥행 DNA)
-    is_top_dna = (score_cpv >= 7.47) and (score_tb >= 6.53) and (score_rs >= 7.60)
-    is_worst_dna = (score_cpv <= 5.87) and (score_tb <= 3.73) and (score_rs >= 8.93)
+    # 5. 💡 DNA 팩트 검증 (V6.0 원시 데이터 기준)
+    is_top_dna = (cur_cpv <= 0.46) and (cur_tb >= 16.87)
+    is_worst_dna = (cur_cpv >= 0.64) and (cur_tb <= 7.28)
 
     total_score = min(max(total_score, 0), 100) # 0~100점 보정
 
@@ -418,12 +411,12 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     
     if trap_warning != "": v7_comment += f"\n{trap_warning}"
     if is_top_dna: v7_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 승률 100% 종목 평균 돌파!\n"
-    elif is_worst_dna: v7_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 잦은 손절 패턴입니다. 진입 주의!\n"
+    elif is_worst_dna: v7_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 잦은 갭하락 손절 패턴입니다. 진입 주의!\n"
     if is_tenbagger: v7_comment += f"\n🚀 [초격차 텐배거 포착] 대세 상승 8~10점 필수 조합 충족!\n"
     if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 반영 (+5% 가산)\n"
     elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
 
-    # 시그널 무조건 반환 (결과지에 모든 경고와 점수를 출력)
+    # 시그널 무조건 반환
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
