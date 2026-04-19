@@ -438,7 +438,7 @@ def scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
     
-   t0 = time.time()
+    t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
     # 💡 [추가] 벤치마크 지수(QQQ ETF 대용) 데이터 안전하게 로드 중...
