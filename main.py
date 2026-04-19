@@ -58,7 +58,7 @@ print("✅ 한글 폰트 준비 완료!\n")
 # ==========================================
 # 로직 파일 임포트
 # ==========================================
-import nasdaq_all_ema224_signal_screener as us_ema
+import us_master as us_master
 import nasdaq_dante_reverse_breakout_screener as us_rev
 import nulusa as us_nul
 import usa as us_bowl
@@ -99,7 +99,7 @@ def apply_weekend_patch(module, is_us):
     elif hasattr(module, 'scan_market'):
         module.scan_market = patcher(module.scan_market)
 
-apply_weekend_patch(us_ema, True)
+apply_weekend_patch(us_master, True)
 apply_weekend_patch(us_rev, True)
 apply_weekend_patch(us_nul, True)
 apply_weekend_patch(us_bowl, True)
@@ -162,7 +162,7 @@ if __name__ == "__main__":
     print("🚀 24시간 독립 멀티스레딩 컨트롤 타워 가동 시작...")
 
     bot_targets = {
-        "🇺🇸 1. US EMA": us_ema.run_scheduler,
+        "🇺🇸 1. US 마스터": us_master.run_scheduler,
         "🇺🇸 2. US 역매공파": us_rev.run_scheduler,
         "🇺🇸 3. US 눌림목": us_nul.run_scheduler,
         "🇺🇸 4. US 밥그릇": us_bowl.run_scheduler,
