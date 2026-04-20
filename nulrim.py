@@ -295,7 +295,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(8.08~8.18일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩."
 
     else: # [S1, S4 대세 추세 추종 매핑]
-        sig_type = "🔥 S4 (정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
+        sig_type = "🔥 S4 (눌림 정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
         score_rs   = scale_score(cur_rs, 1430.72, -745.10) # 1위
         score_ema  = 10.0 if align448[-1] else 1.0         # 2위
         score_cpv  = scale_score(cur_cpv, 0.13, 0.86)      # 3위
