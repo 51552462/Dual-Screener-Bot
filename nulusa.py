@@ -525,9 +525,6 @@ chart_lock = threading.Lock()
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                try:
-                # ...(중략: df_ticker 생성 부분 그대로 둠)...
-
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
                     
