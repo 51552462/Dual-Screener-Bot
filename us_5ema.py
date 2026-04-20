@@ -508,20 +508,20 @@ def scan_market_1d():
                     except Exception as e:
                         print(f"   ↳ [포워드 장부 에러]: {e}")
                             # 2️⃣ 홍보용 캡션 (초심플 압축)
-                            try:
+                    try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                            except:
+                    except:
                                 sector_info = "유망 섹터 포착"
                                 
-                            promo_caption = (
+                    promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
-                            q_promo.put((promo_chart_path, promo_caption))
+                    q_promo.put((promo_chart_path, promo_caption))
 
-                            print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 전송 대기열 추가 완료!")
             except Exception as e:
                 pass
         
