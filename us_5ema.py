@@ -483,7 +483,30 @@ def scan_market_1d():
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                             )
                             q_main.put((main_chart_path, main_caption))
-
+# 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
+                    try:
+                        import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
+                        
+                        market_type = 'US' # 미국장 검색기에는 'US'로 변경!!
+                        entry_facts = {
+                            'v_cpv': dbg.get('v_cpv', cur_cpv),
+                            'v_yang': dbg.get('v_yang', cur_tb),
+                            'v_energy': dbg.get('v_energy', cur_bbe),
+                            'v_rs': dbg.get('v_rs', cur_rs)
+                        }
+                        
+                        success, fwd_msg = aft.try_add_virtual_position(
+                            market=market_type,
+                            code=code,
+                            name=name,
+                            sig_type=dbg.get('sig_type', sig_type),
+                            score=dbg.get('score', total_score), # 총점 매핑 확인
+                            ep=dbg.get('last_close', c[-1]),
+                            facts=entry_facts
+                        )
+                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                    except Exception as e:
+                        print(f"   ↳ [포워드 장부 에러]: {e}")
                             # 2️⃣ 홍보용 캡션 (초심플 압축)
                             try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
