@@ -640,7 +640,7 @@ def scan_market_1d():
                     except:
                                 sector_info = "유망 섹터 포착"
                                 
-                            promo_caption = (
+                    promo_caption = (
                                 f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
