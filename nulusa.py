@@ -65,7 +65,7 @@ threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAI
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
 # 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
- generate_ai_report(code: str, company_name: str):
+def generate_ai_report(code: str, company_name: str):
     import re, time
     
     # 1. 팩트 데이터 추출
@@ -139,7 +139,7 @@ MIN_PRICE_USD = 3.0
 MIN_MONEY_USD = 5_000_000         
 
 # 💡 [추가] 1~10점 스케일링 함수 (방향성 완벽 지원)
- scale_score(val, best, worst):
+def scale_score(val, best, worst):
     if best > worst: # 높을수록 좋은 지표 (RS, 진짜양봉, 응축에너지)
         if val >= best: return 10.0
         if val <= worst: return 1.0
@@ -150,7 +150,7 @@ MIN_MONEY_USD = 5_000_000
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] 미국장 V7.0 마스터 시그널 엔진 (169,021건 팩트 데이터 완벽 적용)
- compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series): 
+def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
@@ -366,7 +366,7 @@ MIN_MONEY_USD = 5_000_000
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
- get_daily_theme():
+def get_daily_theme():
     theme_idx = datetime.now().day % 5
     themes = [
         {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Premium
@@ -443,7 +443,7 @@ chart_lock = threading.Lock()
             return path
         except: return None
 
- scan_market_1d():
+def scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
     
@@ -601,7 +601,7 @@ chart_lock = threading.Lock()
     dt = time.time() - t0
     print(f"\n✅ [미국장 4번 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
- run_scheduler():
+def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
     print("🕒 [4번 미국장 검색기] 11:00 / 13:00 / 15:00 대기 중...")
     while True:
