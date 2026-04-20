@@ -637,7 +637,7 @@ def scan_market_1d():
                         print(f"   ↳ [포워드 장부 에러]: {e}")
                     try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                            except:
+                    except:
                                 sector_info = "유망 섹터 포착"
                                 
                             promo_caption = (
