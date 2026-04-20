@@ -219,62 +219,77 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         return False, "", df, {}
 
     # =========================================================================
-    # 👑 [3단계] S1 스코어링 매핑 (8,485건 팩트 대입)
+    # 👑 [3단계] S1 스코어링 매핑 (V8.1 최신 팩트 데이터 100% 대입)
     # =========================================================================
     recent_hits = finalSignal[-252:-1].sum() if len(c) > 252 else finalSignal[:-1].sum()
     freq_count = int(recent_hits)
 
-    ema_stat_str = "승률 27.7% / 손익비 3.47 (대세 상승장, 전체 데이터 100% 점유)"
+    ema_stat_str = "승률 26.8% / 손익비 3.40 (대세 상승장, 본 스나이퍼 타점 100% 점유)"
 
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     
     sig_type = "🔥 S1 (5선 관통 / 448 완전정배열)"
     
-    score_rs   = scale_score(cur_rs, 1711.04, -737.10) # 1위 (가중치 10)
-    score_ema  = 10.0                                  # 2위 (가중치 9 - 완정배열 필수이므로 만점)
-    score_cpv  = scale_score(cur_cpv, 0.39, 0.94)      # 3위 (가중치 8)
-    score_bbe  = scale_score(cur_bbe, 56.20, 3.90)     # 4위 (가중치 7)
-    score_tb   = scale_score(cur_tb, 17.60, 2.00)      # 5위 (가중치 6)
-    score_freq = 10.0 if 1 <= freq_count <= 5 else (2.0 if freq_count >= 10 else 6.0) # 6위 (가중치 5)
+    # 💡 [V8.1 스코어링 매트릭스 엄격 적용]
+    score_rs   = scale_score(cur_rs, 2025.28, -821.13) 
+    score_ema  = 10.0                                  
+    score_cpv  = scale_score(cur_cpv, 0.39, 0.95)      
+    score_bbe  = scale_score(cur_bbe, 56.80, 3.80)     
+    score_tb   = scale_score(cur_tb, 20.13, 2.47)      
+    score_freq = 10.0 if 1 <= freq_count <= 5 else (2.0 if freq_count >= 10 else 6.0) 
 
     total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
     
+    # 💡 [V8.1 청산 전략 가이드 (미래 시계열 데이터 대응)]
     trap_warning = ""
-    exit_strategy = "MFE 정점(7.20일 차). 단기데드 로직으로 추세 홀딩. 2.5일 이내 반등 실패 시 즉각 칼손절."
+    exit_strategy = "MFE 정점(평균 5.92일). 단기데드로 끝까지 홀딩. 진입 후 꽉찬 양봉(CPV 0.59 이상) 출현 시 설거지 패턴이므로 즉각 ZLEMA 칼손절."
 
-    if cur_rs < -737.10: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
-    if cur_cpv > 0.80 and cur_rs < -515.33: trap_warning += "💀 [참사의 늪] 시장 소외주의 가짜 상승! 즉각 지옥행 주의!\n"
+    # 💡 [V8.1 기회비용 및 참사 함정 분석]
+    if cur_rs < -821.13: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘 우려!\n"
+    if cur_cpv > 0.95 and total_score <= 30.0: trap_warning += "💀 [참사의 늪] 시장 소외주의 꽉 찬 가짜 상승! 즉각 지옥행 주의!\n"
 
     # =========================================================================
-    # 👑 [4단계] 5일선 V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # 👑 [4단계] 5일선 V8.1 디테일: 요일마법, 데스콤보, 고빈도, 텐배거 시스템
     # =========================================================================
     weekday = df.index[-1].weekday()
-    if weekday == 4: total_score *= 1.05 
-    elif weekday == 0: total_score *= 0.95 
+    if weekday == 4: total_score *= 1.05 # 금요일 가산
+    elif weekday == 0: total_score *= 0.95 # 월요일 삭감
 
-    is_death_combo = (cur_cpv > 0.94) and (cur_rs < -737.10)
+    # 데스콤보 방어
+    is_death_combo = (cur_cpv > 0.95) and (total_score < 40.0)
     if is_death_combo: 
         total_score *= 0.70
-        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 완벽한 꽉 찬 양봉 + 소외주 (점수 30% 삭감)\n"
+        trap_warning += "⚠️ [데스 콤보 발동] 세력 단기 차익 실현 후 폭락 패턴 (점수 30% 삭감)\n"
         
+    # 알고리즘 단타 고빈도 컷오프
     if freq_count >= 10 and (score_rs < 8.0 or score_cpv < 8.0):
         total_score *= 0.50
-        trap_warning += "🚫 [고빈도 잡주 경고] 때가 많이 탄 종목! RS/CPV 기준 미달로 강제 패스 권장 (-50% 삭감)\n"
+        trap_warning += "🚫 [고빈도 잡주 경고] 알고리즘 단타로 때가 묻은 종목! (-50% 삭감)\n"
 
     if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
         total_score *= 0.70 
 
-    is_tenbagger = (cur_rs >= 356.70) and (cur_cpv <= 0.72)
-
-    # 5일선 전용 DNA 팩트 필터링 
-    is_top_dna = (cur_cpv <= 0.71) and (cur_tb >= 6.65) and (cur_rs >= -6.79) and (cur_bbe >= 18.45)
-    is_worst_dna = (cur_cpv >= 0.80) and (cur_tb <= 6.03) and (cur_rs <= -515.33) and (cur_bbe <= 16.15)
-
     total_score = min(max(total_score, 0), 100)
 
-    v7_comment = (
-        f"📊 [System B 5선 관통 V7.0 리포트]\n"
-        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+    # 💡 [V8.1 초격차 텐배거 검증]
+    is_tenbagger = (total_score >= 90.0) and (cur_cpv <= 0.37) and (cur_bbe >= 59.8)
+
+    # 💡 [V8.1 뱃지 시스템 & 하위권 예외 텐배거 로직 정밀화]
+    badge_str = ""
+    if total_score >= 80.0:
+        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (승률 38.3% / 참사 0% 최우선 매매)"
+        sig_type = "👑 [1티어] " + sig_type
+    elif total_score <= 50.0 and cur_rs <= -2000:
+        # 기획서 3번 항목 완벽 반영: 극단적 소외주 돌발 로또 패턴
+        badge_str = "💎 [특급 로또 예외] 총점은 낮으나 RS 극단적 소외(시장 잊혀짐) 돌발 텐배거 패턴!"
+        sig_type = "💎 [로또] " + sig_type
+    else:
+        badge_str = "⚠️ [비중 축소] 80점 미만은 시스템 강제 진입 금지 또는 비중 극단적 축소 요망"
+
+    v8_comment = (
+        f"📊 [System B 5선 관통 V8.1 마스터 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
+        f"🎖️ {badge_str}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
@@ -284,18 +299,16 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
     )
     
-    if trap_warning != "": v7_comment += f"\n{trap_warning}"
-    if is_top_dna: v7_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
-    elif is_worst_dna: v7_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 꽉 찬 양봉에 지수 이탈 소외주. 진입 주의!\n"
-    if is_tenbagger: v7_comment += f"\n🚀 [초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
-    if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 반영 (+5% 가산)\n"
-    elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
+    if trap_warning != "": v8_comment += f"\n{trap_warning}"
+    if is_tenbagger: v8_comment += f"\n🚀 [초격차 텐배거 포착] 상위 10% 점수 + 완벽한 꼬리 매물소화 + 응축 폭발!\n"
+    if weekday == 4: v8_comment += f"✨ 금요일 주말 리스크를 이겨낸 주도주 프리미엄 (+5% 가산)\n"
+    elif weekday == 0: v8_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": f"{exit_strategy}",
-        "v7_comment": v7_comment
+        "v8_comment": v8_comment
     }
 
 def compute_ohdole_1d(df_raw: pd.DataFrame):
