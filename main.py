@@ -189,3 +189,34 @@ if __name__ == "__main__":
 
     for t in active_threads.values():
         t.join()
+# main.py의 메인 실행부 근처
+import auto_forward_tester
+
+def run_forward_validation():
+    kr_tz = pytz.timezone('Asia/Seoul')
+    ny_tz = pytz.timezone('America/New_York')
+    
+    while True:
+        now_kr = datetime.now(kr_tz)
+        now_ny = datetime.now(ny_tz)
+        
+        # 1. 매일 15:40 (한국장 마감 10분 후) -> DB 조용히 업데이트 및 채점
+        if now_kr.hour == 15 and now_kr.minute == 40:
+            print("⏳ [백그라운드 작업] 한국장 포워드 테스팅 추적 및 DB 갱신 중...")
+            auto_forward_tester.track_daily_positions('KR')
+            time.sleep(60)
+
+        # 2. 매일 16:00 정각 -> 질문자님 텔레그램으로 최종 요약본 1장 발송!
+        if now_kr.hour == 16 and now_kr.minute == 0:
+            auto_forward_tester.send_daily_summary_report()
+            time.sleep(60)
+            
+        # (미국장 추적은 동부시간 장 마감 후인 16:15에 조용히 진행)
+        if now_ny.hour == 16 and now_ny.minute == 15:
+            print("⏳ [백그라운드 작업] 미국장 포워드 테스팅 추적 및 DB 갱신 중...")
+            auto_forward_tester.track_daily_positions('US')
+            time.sleep(60)
+            
+        time.sleep(20)
+
+# (기존 bot_targets 에 등록하는 부분은 동일)
