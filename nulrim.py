@@ -508,7 +508,7 @@ def scan_market_1d():
                 )
                 q_main.put((main_chart_path, main_caption))
 # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
-                   try:
+                try:
                         import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
                         
                         market_type = 'KR' # 미국장 검색기에는 'US'로 변경!!
@@ -529,24 +529,24 @@ def scan_market_1d():
                             facts=entry_facts
                         )
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                    except Exception as e:
+                except Exception as e:
                         print(f"   ↳ [포워드 장부 에러]: {e}")
                 # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                   try:
+                try:
                     sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                   except:
+                except:
                     sector_info = "유망 섹터 포착"
 
                 # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만!
-                   promo_caption = (
+                promo_caption = (
                     f"📈 [알고리즘 차트 포착]\n\n"
                     f"🏢 종목: {name} ({code})\n"
                     f"🏷️ 섹터: {sector_info}\n"
                     f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                 )
-                   q_promo.put((promo_chart_path, promo_caption))
+                q_promo.put((promo_chart_path, promo_caption))
                 
-                   print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
 
     # 💡 5. 일꾼들(스레드) 가동
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
