@@ -150,7 +150,7 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] 미국장 V7.0 마스터 시그널 엔진 (169,021건 팩트 데이터 완벽 적용)
-def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series): 
+def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.Series): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
@@ -235,113 +235,96 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
 
     cond_base = moneyOk & priceOk
 
-    # 💡 S3, S7 배제! 오직 S1, S2, S4, S6만 명시적 분리 포착
+    # 💡 [V9.0 업데이트] S3, S6, S7 배제! 오직 S1(대세추세), S2(급등눌림), S4(바닥탈출)만 타점으로 잡음
+    df['VIX_Close'] = vix_close.reindex(df.index).ffill() # VIX 지수 매핑
+    
     hit_s1 = s1[-1] and cond_base[-1]
     hit_s2 = s2[-1] and cond_base[-1]
     hit_s4 = s4[-1] and cond_base[-1]
-    hit_s6 = s6[-1] and cond_base[-1]
 
-    if not (hit_s1 or hit_s2 or hit_s4 or hit_s6): 
+    if not (hit_s1 or hit_s2 or hit_s4): 
         return False, "", df, {}
 
     # =========================================================================
-    # 👑 [3단계] S1, S2, S4, S6 스코어링 매핑 (미국장 169,021건 팩트 대입)
+    # 👑 [3단계] S1, S2, S4 스코어링 매핑 (미국장 V9.0 팩트 대입)
     # =========================================================================
-    recent_hits = (s1 | s2 | s4 | s6)[-252:-1].sum() if len(c) > 252 else (s1 | s2 | s4 | s6)[:-1].sum()
+    recent_hits = (s1 | s2 | s4)[-252:-1].sum() if len(c) > 252 else (s1 | s2 | s4)[:-1].sum()
     freq_count = int(recent_hits)
 
-    if align448[-1]: ema_stat_str = "승률 29.5% / 손익비 2.67 (대세 상승장)"
-    elif align224[-1]: ema_stat_str = "승률 29.6% / 손익비 2.75 (장기 매물 소화 완료, 승률 1위)"
-    else: ema_stat_str = "승률 27.9% / 손익비 2.44 (바닥 탈출 구간)"
+    if align448[-1]: ema_stat_str = "승률 29.3% / 손익비 2.67 (가장 튼튼한 대세 상승 주도주)"
+    elif align224[-1]: ema_stat_str = "승률 29.5% (불장 트렌드 서퍼, 단기 급등)"
+    else: ema_stat_str = "완전 역배열 바닥 탈출 (밈 주식 로또성 타점)"
 
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
+    cur_vix = df['VIX_Close'].iloc[-1] if not pd.isna(df['VIX_Close'].iloc[-1]) else 15.0
+
     score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
     total_score = 0
     trap_warning = ""
-    exit_strategy = ""
+    
+    # 💡 [V9.0 청산 전략 가이드 (월가 알고리즘 의도 파악)]
+    exit_strategy = "MFE 정점(평균 16.58일). 지저분한 꼬리(CPV 0.22)로 올리면 단기데드로 끝까지 홀딩. 진입 후 꽉찬 예쁜 양봉(CPV 0.30 이상)만 나오면 월가 알고리즘의 설거지 패턴이므로 4일 내 ZLEMA 즉각 칼손절."
 
-    if hit_s6: # [S6 바닥 탈출 매핑]
-        sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
-        score_rs   = scale_score(cur_rs, 1061.49, -53.30)  # 1위
-        score_bbe  = scale_score(cur_bbe, 22.20, 1.50)     # 2위
-        score_cpv  = scale_score(cur_cpv, 0.13, 0.85)      # 3위
-        score_tb   = scale_score(cur_tb, 11.29, 0.80)      # 4위
-        score_ema  = 10.0 if not align112[-1] else 5.0     # 5위
-        if 6 <= freq_count <= 15: score_freq = 10.0
-        elif freq_count >= 38: score_freq = 2.0 
-        else: score_freq = 6.0                             # 6위
-        
-        total_score = (score_rs*10 + score_bbe*9 + score_cpv*8 + score_tb*7 + score_ema*6 + score_freq*5) / 450 * 100
-        
-        if cur_tb < 0.80 and cur_bbe < 1.50: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
-        if cur_cpv > 0.85 and freq_count >= 38: trap_warning += "💀 [참사의 늪] 세력 알고리즘 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
-        exit_strategy = "MFE 정점(11.35일 차). 4일 이내 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
-
-    elif hit_s2: # [S2 단기 급등 돌파 매핑]
+    if hit_s2: # [S2 단기 급등 돌파 매핑]
         sig_type = "🔥 [눌림] S2 (224 재정렬)"
-        score_rs   = scale_score(cur_rs, 1432.14, -80.50)  # 1위
-        score_cpv  = scale_score(cur_cpv, 0.12, 0.86)      # 2위
-        score_ema  = 10.0 if align224[-1] else 5.0         # 3위
-        score_bbe  = scale_score(cur_bbe, 30.80, 1.80)     # 4위
-        score_freq = 6.0                                   # 5위 (중립)
-        score_tb   = scale_score(cur_tb, 11.10, 0.90)      # 6위
+        score_rs   = scale_score(cur_rs, 1432.14, -80.50)  
+        score_ema  = 10.0 if align224[-1] else 5.0         
+        score_cpv  = scale_score(cur_cpv, 0.12, 0.86)      
+        score_bbe  = scale_score(cur_bbe, 30.80, 1.80)     
+        score_tb   = scale_score(cur_tb, 11.10, 0.90)      
+        score_freq = 6.0
+        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
 
-        total_score = (score_rs*10 + score_cpv*9 + score_ema*8 + score_bbe*7 + score_freq*6 + score_tb*5) / 450 * 100
-
-        if cur_cpv > 0.86 and cur_rs < -48.00: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 박스권 장기 횡보!\n"
-        if cur_rs < -80.50: trap_warning += "💀 [참사의 늪] 시장 소외 잡주 단독 급등! 다음날 갭하락 설거지 주의!\n"
-        exit_strategy = "MFE 정점(13.4~17.1일 차). 단기데드(트레일링 스탑) 로직 전환. 3.73일 내 갭하락 시 즉각 칼손절."
-
-    elif hit_s1 or hit_s4: # [S1, S4 대세 추세 추종 매핑]
-        # 💡 S1과 S4를 명확하게 분리하여 태그를 달아줍니다.
-        sig_type = "🔥 [눌림] S4 (정배열 20선 눌림돌파)" if hit_s4 else "🔥 [눌림] S1 (448 재정렬)"
-        score_rs   = scale_score(cur_rs, 990.40, -102.75)  # 1위
-        score_ema  = 10.0 if align448[-1] else 1.0         # 2위
-        score_cpv  = scale_score(cur_cpv, 0.12, 0.87)      # 3위
-        score_bbe  = scale_score(cur_bbe, 31.60, 2.50)     # 4위
-        if 1 <= freq_count <= 5: score_freq = 10.0
-        else: score_freq = 5.0                             # 5위
-        score_tb   = 5.0                                   # 6위 (반영안함)
-
-        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_freq*6) / 400 * 100
-
-        if cur_rs < -102.75: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
-        if not align112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
-        exit_strategy = "MFE 정점(13.4~17.1일 차). ZLEMA 이탈 시까지 3주(15일) 이상 추세 홀딩."
+    elif hit_s1 or hit_s4: # [S1, S4 대세 추세 및 바닥]
+        sig_type = "🔥 [눌림] S4 (바닥 탈출 밈 주식 로또 타점)" if hit_s4 else "🔥 [눌림] S1 (448 대세 추세)"
+        score_rs   = scale_score(cur_rs, 990.40, -102.75)  
+        score_ema  = 10.0 if align448[-1] else 1.0         
+        score_cpv  = scale_score(cur_cpv, 0.12, 0.87)      
+        score_bbe  = scale_score(cur_bbe, 31.60, 2.50)     
+        score_tb   = scale_score(cur_tb, 11.10, 0.90)      
+        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0                             
+        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
 
     # =========================================================================
-    # 👑 [4단계] 미국 V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # 👑 [4단계] 미국장 V9.0 디테일: VIX 매핑, 요일 효과, 데스콤보, 뱃지 시스템
     # =========================================================================
     weekday = df.index[-1].weekday()
     if weekday == 4: total_score *= 1.05 
     elif weekday == 0: total_score *= 0.95 
 
-    is_death_combo = (cur_cpv > 0.86) and (cur_rs < -102.75)
+    # V9.0 데스콤보
+    is_death_combo = (cur_cpv > 0.95) and (total_score < 40.0)
     if is_death_combo: 
         total_score *= 0.70
-        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 꽉 찬 양봉 + 소외주 (점수 30% 삭감)\n"
+        trap_warning += "⚠️ [데스 콤보 발동] 세력 단기 차익 실현 후 폭락 패턴 (점수 30% 삭감)\n"
         
-    if freq_count >= 38 and (score_rs < 8.0 or score_cpv < 8.0):
-        total_score *= 0.50
-        trap_warning += "🚫 [고빈도 잡주 경고] 알고리즘 때가 많이 탄 종목! 강제 패스 권장 (-50% 삭감)\n"
-
-    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
-        total_score *= 0.70 
-
-    is_tenbagger = False
-    if hit_s6 and cur_rs >= 626.20 and cur_cpv <= 0.53 and (not align112[-1]): is_tenbagger = True
-    if hit_s2 and cur_rs >= 593.30 and cur_cpv <= 0.50 and align224[-1]: is_tenbagger = True
-    if hit_s1 and cur_rs >= 401.10 and cur_cpv <= 0.52 and align448[-1]: is_tenbagger = True
-
-    # 미국장 전용 DNA 팩트 필터링 (펌프앤덤프 지옥행 참사 필터 강화)
-    is_top_dna = (cur_bbe >= 10.09) and (cur_tb >= 11.17)
-    is_worst_dna = (cur_rs >= 5298.72) and (cur_bbe <= 6.26) 
-
     total_score = min(max(total_score, 0), 100)
 
-    v7_comment = (
-        f"📊 [눌림목 US V7.0 종합 진단 리포트]\n"
-        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+    # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
+    vix_strategy = ""
+    if cur_vix >= 30:
+        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 43%, 평균수익 2~3배 폭발 구간! 진입 비중 1.5배 상향 및 적극 매수."
+    elif cur_vix >= 20:
+        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 승률/손익비 점프 구간! 진입 비중 1.2배 상향."
+    else:
+        vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 매매."
+
+    # 💡 [V9.0 뱃지 시스템 및 밈 주식 예외 로직]
+    badge_str = ""
+    if total_score >= 80.0:
+        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (승률 30.1% 수학적 입증. UI 상단 노출 및 비중 1.5배 확대)"
+        sig_type = "👑 [1티어] " + sig_type
+    elif total_score < 80.0 and cur_rs > 500 and cur_cpv <= 0.3:
+        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (밈 주식 돌발 펌핑 가능성. 비중 10% 미만 소액 진입 허용)"
+        sig_type = "💎 [로또] " + sig_type
+    else:
+        badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 뱃지 위주로 매매 요망"
+
+    v9_comment = (
+        f"📊 [System B 미국 눌림목 V9.0 마스터 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
+        f"🎖️ {badge_str}\n"
+        f"{vix_strategy}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
@@ -351,18 +334,16 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
     )
     
-    if trap_warning != "": v7_comment += f"\n{trap_warning}"
-    if is_top_dna: v7_comment += f"\n💎 [미국장 Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
-    elif is_worst_dna: v7_comment += f"\n💀 [미국장 펌프앤덤프 참사 DNA 일치] 강도는 높으나 에너지가 부족한 종목. 진입 주의!\n"
-    if is_tenbagger: v7_comment += f"\n🚀 [미국 초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
-    if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 반영 (+5% 가산)\n"
-    elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
+    if trap_warning != "": v9_comment += f"\n{trap_warning}"
+    if weekday == 4: v9_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
+    elif weekday == 0: v9_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": f"{exit_strategy}",
-        "v7_comment": v7_comment
+        "v9_comment": v9_comment,
+        "score": total_score
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -450,23 +431,26 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
-    # 💡 [추가] 벤치마크 지수(SPY, QQQ) 데이터 동시 로드
-    print("📊 벤치마크 지수(SPY, QQQ) 데이터 로드 중...")
+    # 💡 [V9.0 핵심] 벤치마크 지수(SPY, QQQ) 및 VIX(공포지수) 데이터 동시 로드
+    print("📊 벤치마크 지수 및 VIX(공포지수) 데이터 로드 중...")
     try:
-        idx_df = yf.download("SPY QQQ", interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+        idx_df = yf.download("SPY QQQ ^VIX", interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         if not idx_df.empty:
             spy_idx = idx_df['SPY']['Close'] if 'SPY' in idx_df.columns.levels[0] else pd.Series(dtype=float)
             qqq_idx = idx_df['QQQ']['Close'] if 'QQQ' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            vix_idx = idx_df['^VIX']['Close'] if '^VIX' in idx_df.columns.levels[0] else pd.Series(dtype=float)
             
             if spy_idx.index.tzinfo is not None: spy_idx.index = spy_idx.index.tz_convert('America/New_York').tz_localize(None)
             if qqq_idx.index.tzinfo is not None: qqq_idx.index = qqq_idx.index.tz_convert('America/New_York').tz_localize(None)
+            if vix_idx.index.tzinfo is not None: vix_idx.index = vix_idx.index.tz_convert('America/New_York').tz_localize(None)
             
             spy_idx = spy_idx[~spy_idx.index.duplicated(keep='last')]
             qqq_idx = qqq_idx[~qqq_idx.index.duplicated(keep='last')]
+            vix_idx = vix_idx[~vix_idx.index.duplicated(keep='last')]
         else:
-            spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
+            spy_idx, qqq_idx, vix_idx = pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float)
     except:
-        spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
+        spy_idx, qqq_idx, vix_idx = pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float)
 
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
@@ -528,10 +512,10 @@ def scan_market_1d():
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
                     
-                    # 💡 [핵심] 나스닥 종목이면 QQQ, 그 외(NYSE, AMEX)는 SPY를 벤치마크로 적용
+                    # 💡 [핵심] 나스닥 종목이면 QQQ, 그 외는 SPY 적용 및 VIX(공포지수) 전달
                     market_type = info['market']
                     target_idx = qqq_idx if market_type == 'NASDAQ' else spy_idx
-                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, target_idx)
+                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, target_idx, vix_idx)
                     
                     if hit:
                         if code in sent_today:
@@ -554,20 +538,20 @@ def scan_market_1d():
                         if main_chart_path and promo_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
-                           # 1️⃣ 본캐용 캡션 (유료방용 - V7.0 점수 브리핑 출력)
+                           # 1️⃣ 본캐용 캡션 (유료방용 - V9.0 뱃지, VIX 및 점수 브리핑 출력)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
                                 f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
                                 f"🏢 {name} ({code})\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                f"{dbg.get('v7_comment', '')}\n"
-                                f"📉 [스마트 매수/손절 전략]\n"
+                                f"{dbg.get('v9_comment', '')}\n"
+                                f"📉 [스마트 매수/청산 전략]\n"
                                 f"- {dbg.get('recommend', '')}\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
-                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                             )
                             q_main.put((main_chart_path, main_caption))
 # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
