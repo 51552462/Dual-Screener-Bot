@@ -62,6 +62,7 @@ import us_master as us_master
 import nasdaq_dante_reverse_breakout_screener as us_rev
 import nulusa as us_nul
 import usa as us_bowl
+import us_5ema as us_5ema  # 👈 [추가] 미국장 5일선 관통 로직
 import dante_krx_reverse_breakout_screener as kr_rev
 import master as kr_master
 import kr as kr_bowl
@@ -103,6 +104,7 @@ apply_weekend_patch(us_master, True)
 apply_weekend_patch(us_rev, True)
 apply_weekend_patch(us_nul, True)
 apply_weekend_patch(us_bowl, True)
+apply_weekend_patch(us_5ema, True)  # 👈 [추가] 미국 5일선 주말 휴장 적용
 
 apply_weekend_patch(kr_rev, False)
 apply_weekend_patch(kr_master, False)
@@ -166,6 +168,7 @@ if __name__ == "__main__":
         "🇺🇸 2. US 역매공파": us_rev.run_scheduler,
         "🇺🇸 3. US 눌림목": us_nul.run_scheduler,
         "🇺🇸 4. US 밥그릇": us_bowl.run_scheduler,
+        "🇺🇸 10. US 5일선": us_5ema.run_scheduler,  # 👈 [추가] 10번째 봇으로 등록
         "🇰🇷 5. KR 역매공파": kr_rev.run_scheduler,
         "🇰🇷 6. KR 마스터": kr_master.run_scheduler,
         "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
