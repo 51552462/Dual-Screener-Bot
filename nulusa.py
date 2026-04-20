@@ -41,7 +41,7 @@ CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
- def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
+def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
  telegram_sender_daemon(target_queue, token):
     while True:
