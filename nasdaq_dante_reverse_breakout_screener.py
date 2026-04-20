@@ -433,7 +433,7 @@ def scan_market_1d():
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
-    print("🕒 [2번 미국장 검색기] 10:00 / 12:00 / 14:00 대기 중...")
+    print("🕒 [2번 미국장 검색기] 10:00 / 12:00 / 16:00 대기 중...")
     while True:
         now_ny = datetime.now(ny_tz)
         if (now_ny.hour == 10 and now_ny.minute == 0) or (now_ny.hour == 12 and now_ny.minute == 0) or (now_ny.hour == 14 and now_ny.minute == 0):
