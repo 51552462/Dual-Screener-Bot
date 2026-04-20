@@ -41,9 +41,9 @@ CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
 DISPLAY_BARS = 120
 os.makedirs(CHART_FOLDER, exist_ok=True)
 
-def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
+ sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def telegram_sender_daemon(target_queue, token):
+ telegram_sender_daemon(target_queue, token):
     while True:
         item = target_queue.get()
         if item is None: break
@@ -65,7 +65,7 @@ threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAI
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
 # 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거)
-def generate_ai_report(code: str, company_name: str):
+ generate_ai_report(code: str, company_name: str):
     import re, time
     
     # 1. 팩트 데이터 추출
@@ -120,12 +120,16 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-def get_us_ticker_list():
+ def get_us_ticker_list():
     try:
-        df = pd.concat([fdr.StockListing('NASDAQ'), fdr.StockListing('NYSE'), fdr.StockListing('AMEX')])
+        # 💡 각 종목이 어느 시장 소속인지 'Market' 컬럼을 생성하여 합칩니다.
+        df_nasdaq = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
+        df_nyse = fdr.StockListing('NYSE').assign(Market='NYSE')
+        df_amex = fdr.StockListing('AMEX').assign(Market='AMEX')
+        df = pd.concat([df_nasdaq, df_nyse, df_amex])
         df = df[df['Symbol'].str.isalpha()]
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
-        return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
+        return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
 MIN_PRICE_USD = 3.0               
@@ -135,7 +139,7 @@ MIN_PRICE_USD = 3.0
 MIN_MONEY_USD = 5_000_000         
 
 # 💡 [추가] 1~10점 스케일링 함수 (방향성 완벽 지원)
-def scale_score(val, best, worst):
+ scale_score(val, best, worst):
     if best > worst: # 높을수록 좋은 지표 (RS, 진짜양봉, 응축에너지)
         if val >= best: return 10.0
         if val <= worst: return 1.0
@@ -146,7 +150,7 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] 미국장 V7.0 마스터 시그널 엔진 (169,021건 팩트 데이터 완벽 적용)
-def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series): 
+ compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
@@ -184,8 +188,8 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         rs = (stock_ret / idx_ret) * 100
     rs = np.nan_to_num(rs, nan=0.0)
 
-   # =========================================================================
-    # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S2, S4, S6 4가지만 포착하도록 커스텀)
+  # =========================================================================
+    # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S2, S4, S6 4가지만 명확히 분리 포착)
     # =========================================================================
     moneyOk = (c * v) >= 5_000_000
     priceOk = c >= 3.0
@@ -204,11 +208,13 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
     prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
     prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
 
-    # S1(448일), S2(224일)
+    # 1. S1 (448일 완전정배열 재정렬)
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
+    
+    # 2. S2 (224일 정배열 재정렬)
     s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
     
-    # S4(20일선 눌림돌파)
+    # 3. S4 (20일선 눌림돌파)
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
@@ -220,7 +226,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
             s4[i] = True
             last_pb = i
 
-    # S6(바닥 탈출)
+    # 4. S6 (바닥 탈출 단기 정배열)
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
@@ -228,12 +234,14 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
     cond_base = moneyOk & priceOk
-    hit1 = (s1 | s4)[-1] and cond_base[-1] # S1, S4 (대세추세 그룹)
-    hit2 = s2[-1] and cond_base[-1]        # S2 (단기급등 그룹)
-    hit4 = s6[-1] and cond_base[-1]        # S6 (바닥 탈출 그룹)
 
-    # 💡 S3, S7 시그널은 완전히 제거됨
-    if not (hit1 or hit2 or hit4): 
+    # 💡 S3, S7 배제! 오직 S1, S2, S4, S6만 명시적 분리 포착
+    hit_s1 = s1[-1] and cond_base[-1]
+    hit_s2 = s2[-1] and cond_base[-1]
+    hit_s4 = s4[-1] and cond_base[-1]
+    hit_s6 = s6[-1] and cond_base[-1]
+
+    if not (hit_s1 or hit_s2 or hit_s4 or hit_s6): 
         return False, "", df, {}
 
     # =========================================================================
@@ -252,8 +260,8 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
     trap_warning = ""
     exit_strategy = ""
 
-    if hit4: # [S6 바닥 탈출 매핑]
-        sig_type = "🌱 S6 (바닥턴 단기 정배열)"
+    if hit_s6: # [S6 바닥 탈출 매핑]
+        sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
         score_rs   = scale_score(cur_rs, 1061.49, -53.30)  # 1위
         score_bbe  = scale_score(cur_bbe, 22.20, 1.50)     # 2위
         score_cpv  = scale_score(cur_cpv, 0.13, 0.85)      # 3위
@@ -269,8 +277,8 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         if cur_cpv > 0.85 and freq_count >= 38: trap_warning += "💀 [참사의 늪] 세력 알고리즘 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
         exit_strategy = "MFE 정점(11.35일 차). 4일 이내 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
 
-    elif hit2: # [S2 단기 급등 돌파 매핑]
-        sig_type = "🔥 S2 (눌림 224 재정렬)"
+    elif hit_s2: # [S2 단기 급등 돌파 매핑]
+        sig_type = "🔥 [눌림] S2 (224 재정렬)"
         score_rs   = scale_score(cur_rs, 1432.14, -80.50)  # 1위
         score_cpv  = scale_score(cur_cpv, 0.12, 0.86)      # 2위
         score_ema  = 10.0 if align224[-1] else 5.0         # 3위
@@ -284,8 +292,9 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         if cur_rs < -80.50: trap_warning += "💀 [참사의 늪] 시장 소외 잡주 단독 급등! 다음날 갭하락 설거지 주의!\n"
         exit_strategy = "MFE 정점(13.4~17.1일 차). 단기데드(트레일링 스탑) 로직 전환. 3.73일 내 갭하락 시 즉각 칼손절."
 
-    else: # [S1, S4 대세 추세 추종 그룹 매핑]
-        sig_type = "🔥 S4 (눌림 정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
+    elif hit_s1 or hit_s4: # [S1, S4 대세 추세 추종 매핑]
+        # 💡 S1과 S4를 명확하게 분리하여 태그를 달아줍니다.
+        sig_type = "🔥 [눌림] S4 (정배열 20선 눌림돌파)" if hit_s4 else "🔥 [눌림] S1 (448 재정렬)"
         score_rs   = scale_score(cur_rs, 990.40, -102.75)  # 1위
         score_ema  = 10.0 if align448[-1] else 1.0         # 2위
         score_cpv  = scale_score(cur_cpv, 0.12, 0.87)      # 3위
@@ -320,9 +329,9 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         total_score *= 0.70 
 
     is_tenbagger = False
-    if hit4 and cur_rs >= 626.20 and cur_cpv <= 0.53 and (not align112[-1]): is_tenbagger = True
-    if hit2 and cur_rs >= 593.30 and cur_cpv <= 0.50 and align224[-1]: is_tenbagger = True
-    if hit1 and cur_rs >= 401.10 and cur_cpv <= 0.52 and align448[-1]: is_tenbagger = True
+    if hit_s6 and cur_rs >= 626.20 and cur_cpv <= 0.53 and (not align112[-1]): is_tenbagger = True
+    if hit_s2 and cur_rs >= 593.30 and cur_cpv <= 0.50 and align224[-1]: is_tenbagger = True
+    if hit_s1 and cur_rs >= 401.10 and cur_cpv <= 0.52 and align448[-1]: is_tenbagger = True
 
     # 미국장 전용 DNA 팩트 필터링 (펌프앤덤프 지옥행 참사 필터 강화)
     is_top_dna = (cur_bbe >= 10.09) and (cur_tb >= 11.17)
@@ -331,7 +340,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
     total_score = min(max(total_score, 0), 100)
 
     v7_comment = (
-        f"📊 [System B US V7.0 종합 진단 리포트]\n"
+        f"📊 [눌림목 US V7.0 종합 진단 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
@@ -357,7 +366,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
-def get_daily_theme():
+ get_daily_theme():
     theme_idx = datetime.now().day % 5
     themes = [
         {'bg': '#0B0E14', 'grid': '#1A202C', 'text': '#FFFFFF', 'up': '#F6465D', 'down': '#0ECB81'}, # 0: Binance Premium
@@ -369,7 +378,7 @@ def get_daily_theme():
     return themes[theme_idx]
 
 chart_lock = threading.Lock()
-def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False, is_promo=False) -> str:
+ save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False, is_promo=False) -> str:
     with chart_lock:
         try:
             plt.rcParams['font.family'] = 'NanumGothic'
@@ -434,28 +443,31 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             return path
         except: return None
 
-def scan_market_1d():
+ scan_market_1d():
     stock_list = get_us_ticker_list()
     if stock_list.empty: return
     
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
-    # 💡 [추가] 벤치마크 지수(QQQ ETF 대용) 데이터 안전하게 로드 중...
-    print("📊 벤치마크 지수(QQQ) 데이터 로드 중...")
+    # 💡 [추가] 벤치마크 지수(SPY, QQQ) 데이터 동시 로드
+    print("📊 벤치마크 지수(SPY, QQQ) 데이터 로드 중...")
     try:
-        idx_df = yf.download("QQQ", interval="1d", period="3y", progress=False, threads=False)
+        idx_df = yf.download("SPY QQQ", interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         if not idx_df.empty:
-            kospi_idx = idx_df['Close']['QQQ'] if isinstance(idx_df.columns, pd.MultiIndex) else idx_df['Close']
-            if kospi_idx.index.tzinfo is not None:
-                kospi_idx.index = kospi_idx.index.tz_convert('America/New_York').tz_localize(None)
-            kospi_idx = kospi_idx[~kospi_idx.index.duplicated(keep='last')]
+            spy_idx = idx_df['SPY']['Close'] if 'SPY' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            qqq_idx = idx_df['QQQ']['Close'] if 'QQQ' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            
+            if spy_idx.index.tzinfo is not None: spy_idx.index = spy_idx.index.tz_convert('America/New_York').tz_localize(None)
+            if qqq_idx.index.tzinfo is not None: qqq_idx.index = qqq_idx.index.tz_convert('America/New_York').tz_localize(None)
+            
+            spy_idx = spy_idx[~spy_idx.index.duplicated(keep='last')]
+            qqq_idx = qqq_idx[~qqq_idx.index.duplicated(keep='last')]
         else:
-            kospi_idx = pd.Series(dtype=float)
+            spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
     except:
-        kospi_idx = pd.Series(dtype=float)
+        spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
 
-    # 💡 당일 중복 발송 차단 로직
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
     log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
@@ -468,6 +480,9 @@ def scan_market_1d():
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
         except: pass
+
+    # 💡 'Market' 정보를 딕셔너리에 함께 저장합니다.
+    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name'], 'market': row['Market']} for _, row in stock_list.iterrows()}
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -482,7 +497,7 @@ def scan_market_1d():
         try:
             df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         except:
-            def fetch_single(tk):
+             fetch_single(tk):
                 try:
                     df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
                     if not df_s.empty: fallback_dict[tk] = df_s
@@ -510,10 +525,16 @@ def scan_market_1d():
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
+                try:
+                # ...(중략: df_ticker 생성 부분 그대로 둠)...
+
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
-                    # 💡 [변경] 시장 지수(QQQ)를 넘겨주어 RS를 계산하게 함
-                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, kospi_idx)
+                    
+                    # 💡 [핵심] 나스닥 종목이면 QQQ, 그 외(NYSE, AMEX)는 SPY를 벤치마크로 적용
+                    market_type = info['market']
+                    target_idx = qqq_idx if market_type == 'NASDAQ' else spy_idx
+                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, target_idx)
                     
                     if hit:
                         if code in sent_today:
@@ -583,7 +604,7 @@ def scan_market_1d():
     dt = time.time() - t0
     print(f"\n✅ [미국장 4번 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
 
-def run_scheduler():
+ run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
     print("🕒 [4번 미국장 검색기] 11:00 / 13:00 / 15:00 대기 중...")
     while True:
