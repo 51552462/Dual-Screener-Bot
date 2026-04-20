@@ -120,7 +120,7 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
- def get_us_ticker_list():
+def get_us_ticker_list():
     try:
         # 💡 각 종목이 어느 시장 소속인지 'Market' 컬럼을 생성하여 합칩니다.
         df_nasdaq = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
