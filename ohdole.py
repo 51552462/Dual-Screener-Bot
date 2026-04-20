@@ -146,57 +146,157 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-def calculate_trust_score(c, e60, *sig_arrays):
-    score = 5 
-    lowest_60 = np.min(c[-60:])
-    runup_ratio = (c[-1] / lowest_60) - 1
-    if runup_ratio > 0.50: score -= 4     
-    elif runup_ratio > 0.30: score -= 2   
-    lookback = min(100, len(c))
-    for i in range(len(c) - lookback, len(c) - 1):
-        is_sig = any(arr[i] for arr in sig_arrays)
-        if is_sig:
-            valid = True
-            entry_price = c[i]
-            for j in range(i + 1, len(c)):
-                if c[j] < e60[j] or c[j] >= entry_price * 1.15:
-                    valid = False
-                    break
-            if valid: score += 2 
-    return max(1, min(10, score)) 
-
-# 💡 3. S1 별점 채점 알고리즘 (원본 100% 유지)
-def calculate_star_score(o, h, l, c, prev_c, e10, e20, e30, e60):
-    score = 0
-    change_pct = ((c - prev_c) / prev_c) * 100 if prev_c > 0 else 0
-    if 5.0 <= change_pct <= 8.5: score += 30
-    elif 8.5 < change_pct <= 10.0: score += 25
-    elif 10.0 < change_pct <= 15.0: score += 10
-    elif change_pct > 15.0: score += 0           
-    else: score += 20 
-        
-    embraced_count = 0
-    if l <= e10 <= c: embraced_count += 1
-    if l <= e20 <= c: embraced_count += 1
-    if l <= e30 <= c: embraced_count += 1
-    
-    if embraced_count == 3: score += 40
-    elif embraced_count == 2: score += 30
-    elif embraced_count == 1: score += 20
+# 💡 [추가] 1~10점 스케일링 함수
+def scale_score(val, best, worst):
+    if best > worst:
+        if val >= best: return 10.0
+        if val <= worst: return 1.0
+        return 1.0 + 9.0 * (val - worst) / (best - worst)
     else:
-        if l > e10 and l > e20 and l > e30: score += 5  
-        else: score += 10
-            
-    if e10 > e20: score += 10
-    if e20 > e30: score += 10
-    if e30 > e60: score += 10
+        if val <= best: return 10.0
+        if val >= worst: return 1.0
+        return 1.0 + 9.0 * (worst - val) / (worst - best)
+
+# 💡 [교체] 5일선 관통 전용 마스터 시그널 엔진 (8,485건 팩트 대입)
+def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
+    if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
+    df = df_raw.copy()
     
-    if score >= 90: stars = "★★★★★"
-    elif score >= 80: stars = "★★★★☆"
-    elif score >= 65: stars = "★★★☆☆"
-    elif score >= 50: stars = "★★☆☆☆"
-    else: stars = "★☆☆☆☆"
-    return stars, score
+    df['Idx_Close'] = idx_close
+    df['Idx_Close'] = df['Idx_Close'].ffill()
+
+    # 5선부터 448선까지 전수 계산
+    for n in [5, 10, 20, 30, 60, 112, 224, 448]:
+        df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
+
+    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
+    e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
+
+    # =========================================================================
+    # 👑 [1단계] 4대 핵심 변수 수식 (V7.0)
+    # =========================================================================
+    cpv = np.where(h != l, (c - o) / (h - l), 0.5)
+    v_ma20 = pd.Series(v).rolling(20).mean().values
+    vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
+    tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
+
+    bb_mid = pd.Series(c).rolling(20).mean().values
+    bb_std = pd.Series(c).rolling(20).std().values
+    bb_width = np.where(bb_mid > 0, (4 * bb_std) / bb_mid, 0.01)
+    bb_energy = np.where(bb_width > 0, (1.0 / bb_width) * vol_mult, 0)
+
+    c_20 = pd.Series(c).shift(20).values
+    idx_20 = df['Idx_Close'].shift(20).values
+    with np.errstate(divide='ignore', invalid='ignore'):
+        stock_ret = np.where(c_20 > 0, (c - c_20) / c_20, 0.0)
+        idx_ret = np.where(idx_20 > 0, (df['Idx_Close'].values - idx_20) / idx_20, 0.0001)
+        idx_ret = np.where(idx_ret == 0, 0.0001, idx_ret) 
+        rs = (stock_ret / idx_ret) * 100
+    rs = np.nan_to_num(rs, nan=0.0)
+
+    # =========================================================================
+    # 👑 [2단계] 5일선 관통(S1 대세 추세) 단독 포착 로직
+    # =========================================================================
+    moneyOk = (c * v) >= 100_000_000
+    priceOk = c >= 1000
+    
+    # 1. 완전 정배열 조건 (5선 ~ 448선)
+    alignFullBull = (e5 > e10) & (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112) & (e112 > e224) & (e224 > e448)
+    
+    # 2. 5선 몸통 관통 양봉
+    isBullish = c > o
+    isBodyCross5 = (o < e5) & (c > e5)
+    
+    # 3. 거래량 폭발 (전일 대비 3배)
+    v_prev = np.roll(v, 1); v_prev[0] = v[0]
+    condVol = v >= (v_prev * 3)
+
+    # ⚠️ S2, S3, S4 배제 (오직 S1 스나이퍼 타점만 포착)
+    finalSignal = alignFullBull & isBullish & isBodyCross5 & condVol & moneyOk & priceOk
+
+    if not finalSignal[-1]: 
+        return False, "", df, {}
+
+    # =========================================================================
+    # 👑 [3단계] S1 스코어링 매핑 (8,485건 팩트 대입)
+    # =========================================================================
+    recent_hits = finalSignal[-252:-1].sum() if len(c) > 252 else finalSignal[:-1].sum()
+    freq_count = int(recent_hits)
+
+    ema_stat_str = "승률 27.7% / 손익비 3.47 (대세 상승장, 전체 데이터 100% 점유)"
+
+    cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
+    
+    sig_type = "🔥 S1 (5선 관통 / 448 완전정배열)"
+    
+    score_rs   = scale_score(cur_rs, 1711.04, -737.10) # 1위 (가중치 10)
+    score_ema  = 10.0                                  # 2위 (가중치 9 - 완정배열 필수이므로 만점)
+    score_cpv  = scale_score(cur_cpv, 0.39, 0.94)      # 3위 (가중치 8)
+    score_bbe  = scale_score(cur_bbe, 56.20, 3.90)     # 4위 (가중치 7)
+    score_tb   = scale_score(cur_tb, 17.60, 2.00)      # 5위 (가중치 6)
+    score_freq = 10.0 if 1 <= freq_count <= 5 else (2.0 if freq_count >= 10 else 6.0) # 6위 (가중치 5)
+
+    total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
+    
+    trap_warning = ""
+    exit_strategy = "MFE 정점(7.20일 차). 단기데드 로직으로 추세 홀딩. 2.5일 이내 반등 실패 시 즉각 칼손절."
+
+    if cur_rs < -737.10: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
+    if cur_cpv > 0.80 and cur_rs < -515.33: trap_warning += "💀 [참사의 늪] 시장 소외주의 가짜 상승! 즉각 지옥행 주의!\n"
+
+    # =========================================================================
+    # 👑 [4단계] 5일선 V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # =========================================================================
+    weekday = df.index[-1].weekday()
+    if weekday == 4: total_score *= 1.05 
+    elif weekday == 0: total_score *= 0.95 
+
+    is_death_combo = (cur_cpv > 0.94) and (cur_rs < -737.10)
+    if is_death_combo: 
+        total_score *= 0.70
+        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 완벽한 꽉 찬 양봉 + 소외주 (점수 30% 삭감)\n"
+        
+    if freq_count >= 10 and (score_rs < 8.0 or score_cpv < 8.0):
+        total_score *= 0.50
+        trap_warning += "🚫 [고빈도 잡주 경고] 때가 많이 탄 종목! RS/CPV 기준 미달로 강제 패스 권장 (-50% 삭감)\n"
+
+    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
+        total_score *= 0.70 
+
+    is_tenbagger = (cur_rs >= 356.70) and (cur_cpv <= 0.72)
+
+    # 5일선 전용 DNA 팩트 필터링 
+    is_top_dna = (cur_cpv <= 0.71) and (cur_tb >= 6.65) and (cur_rs >= -6.79) and (cur_bbe >= 18.45)
+    is_worst_dna = (cur_cpv >= 0.80) and (cur_tb <= 6.03) and (cur_rs <= -515.33) and (cur_bbe <= 16.15)
+
+    total_score = min(max(total_score, 0), 100)
+
+    v7_comment = (
+        f"📊 [System B 5선 관통 V7.0 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+        f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
+        f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
+        f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
+        f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점)\n"
+        f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
+        f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
+        f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+    )
+    
+    if trap_warning != "": v7_comment += f"\n{trap_warning}"
+    if is_top_dna: v7_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
+    elif is_worst_dna: v7_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 꽉 찬 양봉에 지수 이탈 소외주. 진입 주의!\n"
+    if is_tenbagger: v7_comment += f"\n🚀 [초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
+    if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 반영 (+5% 가산)\n"
+    elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
+
+    return True, sig_type, df, {
+        "sig_type": sig_type,
+        "last_close": float(c[-1]),
+        "recommend": f"{exit_strategy}",
+        "v7_comment": v7_comment
+    }
 
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
@@ -341,12 +441,20 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 1번(오돌이) 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 5선 관통 스나이퍼 스캔 시작!\n(당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
 
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+
+    # 💡 [추가] 벤치마크 지수 데이터 로드 (상대강도 계산용)
+    print("📊 벤치마크 지수(KODEX ETF 대용) 데이터 안전하게 로드 중...")
+    try:
+        kospi_idx = fdr.DataReader('069500', start_date)['Close']
+        kosdaq_idx = fdr.DataReader('229200', start_date)['Close']
+    except:
+        kospi_idx, kosdaq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
     
     def worker(row_tuple):
         try:
@@ -360,6 +468,11 @@ def scan_market_1d():
 
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
             hit, sig_type, df, dbg = False, "", None, {}
+            
+            if is_valid: 
+                # 💡 시장에 맞는 지수를 넘겨줌
+                idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
+                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close)
             
             if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
 
@@ -391,16 +504,15 @@ def scan_market_1d():
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지, 변경점 없음)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - V7.0 점수 브리핑 출력)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
-                        f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
+                        f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"📉 [매수/손절 전략]\n"
-                        f"- 양봉 길이만큼 분할매수\n"
-                        f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                        f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
+                        f"{dbg.get('v7_comment', '')}\n"
+                        f"📉 [스마트 매수/손절 전략]\n"
+                        f"- {dbg.get('recommend', '')}\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
