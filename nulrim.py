@@ -508,7 +508,7 @@ def scan_market_1d():
                 )
                 q_main.put((main_chart_path, main_caption))
 # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
-                    try:
+                 try:
                         import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
                         
                         market_type = 'KR' # 미국장 검색기에는 'US'로 변경!!
