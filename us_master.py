@@ -116,10 +116,14 @@ def generate_ai_report(code: str, company_name: str):
 
 def get_us_ticker_list():
     try:
-        df = pd.concat([fdr.StockListing('NASDAQ'), fdr.StockListing('NYSE'), fdr.StockListing('AMEX')])
-        df = df[df['Symbol'].str.isalpha()] 
+        # 💡 각 종목이 어느 시장 소속인지 'Market' 컬럼을 생성하여 합칩니다.
+        df_nasdaq = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
+        df_nyse = fdr.StockListing('NYSE').assign(Market='NYSE')
+        df_amex = fdr.StockListing('AMEX').assign(Market='AMEX')
+        df = pd.concat([df_nasdaq, df_nyse, df_amex])
+        df = df[df['Symbol'].str.isalpha()]
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
-        return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
+        return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
 # 💡 보조 함수: 1~10점 스케일링 (10점 기준값과 1점 기준값을 정확히 매핑)
@@ -506,23 +510,27 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 Top 1% 마스터 스캔 시작! (US V7.0 무타협 엔진 🛡️)")
 
-    print("📊 벤치마크 지수(QQQ ETF 대용) 데이터 안전하게 로드 중...")
+    # 💡 [추가] 벤치마크 지수(SPY, QQQ) 데이터 동시 로드
+    print("📊 벤치마크 지수(SPY, QQQ) 데이터 로드 중...")
     try:
-        idx_df = yf.download("QQQ", interval="1d", period="3y", progress=False, threads=False)
+        idx_df = yf.download("SPY QQQ", interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         if not idx_df.empty:
-            kospi_idx = idx_df['Close']['QQQ'] if isinstance(idx_df.columns, pd.MultiIndex) else idx_df['Close']
-            if kospi_idx.index.tzinfo is not None: 
-                kospi_idx.index = kospi_idx.index.tz_convert('America/New_York').tz_localize(None)
-            kospi_idx = kospi_idx[~kospi_idx.index.duplicated(keep='last')]
+            spy_idx = idx_df['SPY']['Close'] if 'SPY' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            qqq_idx = idx_df['QQQ']['Close'] if 'QQQ' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            
+            if spy_idx.index.tzinfo is not None: spy_idx.index = spy_idx.index.tz_convert('America/New_York').tz_localize(None)
+            if qqq_idx.index.tzinfo is not None: qqq_idx.index = qqq_idx.index.tz_convert('America/New_York').tz_localize(None)
+            
+            spy_idx = spy_idx[~spy_idx.index.duplicated(keep='last')]
+            qqq_idx = qqq_idx[~qqq_idx.index.duplicated(keep='last')]
         else:
-            kospi_idx = pd.Series(dtype=float)
+            spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
     except:
-        print("⚠️ 벤치마크 지수 로드 실패. 빈 데이터로 우회합니다.")
-        kospi_idx = pd.Series(dtype=float)
+        spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
 
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
-    log_file = os.path.join(TOP_FOLDER, "sent_log_us_top1.txt")
+    log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
     
     sent_today = set()
     if os.path.exists(log_file):
@@ -532,6 +540,9 @@ def scan_market_1d():
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
         except: pass
+
+    # 💡 'Market' 정보를 딕셔너리에 함께 저장합니다.
+    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name'], 'market': row['Market']} for _, row in stock_list.iterrows()}
     
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -576,8 +587,11 @@ def scan_market_1d():
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
-                    # 시그널 판별 (100% 무조건 반환)
-                    hit, sig_type, df, dbg = compute_top1_master_signal(df_ticker, kospi_idx)
+                    
+                    # 💡 [핵심] 나스닥 종목이면 QQQ, 그 외(NYSE, AMEX)는 SPY를 벤치마크로 적용
+                    market_type = info['market']
+                    target_idx = qqq_idx if market_type == 'NASDAQ' else spy_idx
+                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, target_idx)
                     
                     if hit:
                         if code in sent_today:
