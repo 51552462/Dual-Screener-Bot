@@ -474,7 +474,8 @@ def scan_market_1d():
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
                 hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close)
             
-            if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
+            # 🚨 아래 구형 오돌이 로직은 트뷰와 다르므로 주석 처리(비활성화) 합니다.
+            # if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
 
             hit_rank = 0
             with console_lock:
