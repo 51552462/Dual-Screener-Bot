@@ -110,10 +110,14 @@ def generate_ai_report(code: str, company_name: str):
 
 def get_us_ticker_list():
     try:
-        df = pd.concat([fdr.StockListing('NASDAQ'), fdr.StockListing('NYSE'), fdr.StockListing('AMEX')])
+        # 💡 각 종목이 어느 시장 소속인지 'Market' 컬럼을 생성하여 합칩니다.
+        df_nasdaq = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
+        df_nyse = fdr.StockListing('NYSE').assign(Market='NYSE')
+        df_amex = fdr.StockListing('AMEX').assign(Market='AMEX')
+        df = pd.concat([df_nasdaq, df_nyse, df_amex])
         df = df[df['Symbol'].str.isalpha()]
         df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
-        return df[['Symbol', 'Name']].drop_duplicates(subset=['Symbol']).dropna()
+        return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
 MIN_PRICE_USD = 3.0               
@@ -356,22 +360,27 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 5일선 관통(S1 스나이퍼) 스캔 시작!")
 
-    # 💡 나스닥 지수 데이터 로드 (상대강도 벤치마크용)
-    print("📊 상대강도 측정을 위한 나스닥(NASDAQ) 지수 로드 중...")
+    # 💡 [추가] 벤치마크 지수(SPY, QQQ) 데이터 동시 로드
+    print("📊 벤치마크 지수(SPY, QQQ) 데이터 로드 중...")
     try:
-        df_nasdaq = yf.download("^IXIC", interval="1d", period="3y", progress=False)
-        nasdaq_idx = df_nasdaq['Close']
-        if isinstance(nasdaq_idx, pd.DataFrame): nasdaq_idx = nasdaq_idx.iloc[:, 0]
-        if nasdaq_idx.index.tzinfo is not None:
-            nasdaq_idx.index = nasdaq_idx.index.tz_convert('America/New_York').tz_localize(None)
-    except Exception as e:
-        print(f"⚠️ 지수 로드 실패: {e}")
-        nasdaq_idx = pd.Series(dtype=float)
+        idx_df = yf.download("SPY QQQ", interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
+        if not idx_df.empty:
+            spy_idx = idx_df['SPY']['Close'] if 'SPY' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            qqq_idx = idx_df['QQQ']['Close'] if 'QQQ' in idx_df.columns.levels[0] else pd.Series(dtype=float)
+            
+            if spy_idx.index.tzinfo is not None: spy_idx.index = spy_idx.index.tz_convert('America/New_York').tz_localize(None)
+            if qqq_idx.index.tzinfo is not None: qqq_idx.index = qqq_idx.index.tz_convert('America/New_York').tz_localize(None)
+            
+            spy_idx = spy_idx[~spy_idx.index.duplicated(keep='last')]
+            qqq_idx = qqq_idx[~qqq_idx.index.duplicated(keep='last')]
+        else:
+            spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
+    except:
+        spy_idx, qqq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
 
-    # 💡 당일 중복 발송 차단 로직
     ny_tz = pytz.timezone('America/New_York')
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
-    log_file = os.path.join(TOP_FOLDER, "sent_log_us_5ema.txt")
+    log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
     
     sent_today = set()
     if os.path.exists(log_file):
@@ -381,6 +390,9 @@ def scan_market_1d():
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
         except: pass
+
+    # 💡 'Market' 정보를 딕셔너리에 함께 저장합니다.
+    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name'], 'market': row['Market']} for _, row in stock_list.iterrows()}
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -424,8 +436,13 @@ def scan_market_1d():
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                if len(df_ticker) >= 250:
+                if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
+                    
+                    # 💡 [핵심] 나스닥 종목이면 QQQ, 그 외(NYSE, AMEX)는 SPY를 벤치마크로 적용
+                    market_type = info['market']
+                    target_idx = qqq_idx if market_type == 'NASDAQ' else spy_idx
+                    hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, target_idx)
                     
                     # 💡 미국장 전용 5일선 관통 시그널 엔진 호출
                     hit, sig_type, df, dbg = compute_us_5ema_signal(df_ticker, nasdaq_idx)
