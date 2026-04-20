@@ -497,7 +497,7 @@ def scan_market_1d():
         try:
             df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
         except:
-             fetch_single(tk):
+             def fetch_single(tk):
                 try:
                     df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
                     if not df_s.empty: fallback_dict[tk] = df_s
