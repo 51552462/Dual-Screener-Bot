@@ -43,7 +43,7 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
- telegram_sender_daemon(target_queue, token):
+def telegram_sender_daemon(target_queue, token):
     while True:
         item = target_queue.get()
         if item is None: break
