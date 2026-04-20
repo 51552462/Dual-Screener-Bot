@@ -635,7 +635,7 @@ def scan_market_1d():
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                     except Exception as e:
                         print(f"   ↳ [포워드 장부 에러]: {e}")
-                            try:
+                    try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                             except:
                                 sector_info = "유망 섹터 포착"
