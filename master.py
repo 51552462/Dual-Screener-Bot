@@ -291,7 +291,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     exit_strategy = ""
 
     if hit_4[-1]: # [S4 바닥 탈출]
-        sig_type = "🔥 S4 (바닥 탈출/역배열 돌파)"
+        sig_type = "🔥 S4 (이평 바닥 탈출/역배열 돌파)"
         score_bbe  = scale_score(cur_bbe, 90.70, 11.60) # 1위 (가중치 10)
         score_tb   = scale_score(cur_tb, 61.80, 16.20)  # 2위 (가중치 9)
         score_ema  = 10.0 if not is_aligned_112[-1] else 5.0 # 3위 (역배열 우대, 가중치 8)
@@ -310,7 +310,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(4.53일 차). 1일 차 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
 
     elif hit_1[-1]: # [S3 과열권 모멘텀]
-        sig_type = "🔥 S3 (과열권 모멘텀 - 112 정배열)"
+        sig_type = "🔥 S3 (이평 과열권 모멘텀 - 112 정배열)"
         score_cpv  = scale_score(cur_cpv, 0.15, 0.87)   # 1위 (가중치 10)
         if 1 <= freq_count <= 5: score_freq = 10.0
         elif freq_count >= 16: score_freq = 2.0
@@ -329,7 +329,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(7.4~7.7일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩."
 
     elif hit_2[-1]: # [S2 단기 급등 돌파]
-        sig_type = "🔥 S2 (단기 급등 돌파 - 224 정배열)"
+        sig_type = "🔥 S2 (이평 단기 급등 돌파 - 224 정배열)"
         score_rs   = scale_score(cur_rs, 3534.20, -787.34) # 1위 (가중치 10)
         score_cpv  = scale_score(cur_cpv, 0.14, 0.88)      # 2위 (가중치 9)
         score_ema  = 10.0 if is_aligned_224[-1] else 5.0   # 3위 (가중치 8)
@@ -346,7 +346,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(7.4~7.7일 차). 단기데드(트레일링 스탑) 로직 전환. 3.36일 내 갭하락 시 즉각 칼손절."
 
     else: # hit_3[-1] [S1 대세 추세 추종]
-        sig_type = "🔥 S1 (대세 추세 추종 - 448 완전정배열)"
+        sig_type = "🔥 S1 (이평 대세 추세 추종 - 448 완전정배열)"
         score_ema  = 10.0 if is_aligned_448[-1] else 1.0 # 1위 (가중치 10)
         score_rs   = scale_score(cur_rs, 4037.80, 0.0)   # 2위 (가중치 9)
         if 1 <= freq_count <= 5: score_freq = 10.0
