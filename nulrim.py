@@ -189,7 +189,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     rs = np.nan_to_num(rs, nan=0.0)
 
    # =========================================================================
-    # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S4, S6, S7 4가지만 포착하도록 커스텀)
+    # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S4, S6, S7 4가지만 명확히 분리 포착)
     # =========================================================================
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
@@ -208,10 +208,10 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
     prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
-    # S1 (448일 완전정배열 재정렬)
+    # 1. S1 (448일 완전정배열 재정렬)
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
     
-    # S4 (20일선 눌림돌파)
+    # 2. S4 (20일선 눌림돌파)
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
@@ -223,25 +223,27 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
             s4[i] = True
             last_pb = i
 
-    # S6 (바닥 탈출 단기 정배열)
+    # 3. S6 (바닥 탈출 단기 정배열)
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
     prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
-    # S7 (112 중기 정배열 턴)
+    # 4. S7 (112 중기 정배열 턴)
     prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
     prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
     s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     cond_base = moneyOk & priceOk
-    hit1 = (s1 | s4)[-1] and cond_base[-1] # S1, S4 (대세추세 그룹)
-    hit3 = s7[-1] and cond_base[-1]        # S7 (중기 모멘텀 그룹)
-    hit4 = s6[-1] and cond_base[-1]        # S6 (바닥 탈출 그룹)
 
-    # 💡 S2, S3 시그널은 완전히 제거되었습니다!
-    if not (hit1 or hit3 or hit4): 
+    # 💡 S2, S3 배제! 오직 S1, S4, S6, S7만 명시적 분리 포착
+    hit_s1 = s1[-1] and cond_base[-1]
+    hit_s4 = s4[-1] and cond_base[-1]
+    hit_s6 = s6[-1] and cond_base[-1]
+    hit_s7 = s7[-1] and cond_base[-1]
+
+    if not (hit_s1 or hit_s4 or hit_s6 or hit_s7): 
         return False, "", df, {}
 
     # =========================================================================
@@ -260,8 +262,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     trap_warning = ""
     exit_strategy = ""
 
-    if hit4: # [S6 바닥 탈출 매핑]
-        sig_type = "🌱 S6 (바닥턴 단기 정배열)"
+    if hit_s6: # [S6 바닥 탈출 매핑]
+        sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
         score_rs   = scale_score(cur_rs, 770.60, -65.50)   # 1위
         score_tb   = scale_score(cur_tb, 24.60, 0.90)      # 2위
         score_cpv  = scale_score(cur_cpv, 0.14, 0.83)      # 3위
@@ -277,8 +279,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         if cur_cpv > 0.83 and freq_count >= 30: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
         exit_strategy = "MFE 정점(8.45일 차). 1일 차 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
 
-    elif hit3: # [S7 중기 정배열 턴 매핑]
-        sig_type = "🔥 S7 (112 중기 정배열 턴)"
+    elif hit_s7: # [S7 중기 정배열 턴 매핑]
+        sig_type = "🔥 [눌림] S7 (112 중기 정배열 턴)"
         score_cpv  = scale_score(cur_cpv, 0.14, 0.86)      # 1위
         if 1 <= freq_count <= 5: score_freq = 10.0
         elif freq_count >= 30: score_freq = 2.0
@@ -294,17 +296,18 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         if cur_cpv > 0.86: trap_warning += "💀 [참사의 늪] 고점에서 거래량 터진 꽉 찬 양봉은 100% 설거지 폭락!\n"
         exit_strategy = "MFE 정점(8.08~8.18일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩."
 
-    else: # [S1, S4 대세 추세 추종 매핑]
-        sig_type = "🔥 S4 (눌림 정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
+    elif hit_s1 or hit_s4: # [S1, S4 대세 추세 추종 매핑]
+        # 💡 S1과 S4를 명확하게 분리하여 태그를 달아줍니다.
+        sig_type = "🔥 [눌림] S4 (정배열 20선 눌림돌파)" if hit_s4 else "🔥 [눌림] S1 (448 재정렬)"
+        
         score_rs   = scale_score(cur_rs, 1430.72, -745.10) # 1위
         score_ema  = 10.0 if align448[-1] else 1.0         # 2위
-        score_cpv  = scale_score(cur_cpv, 0.13, 0.86)      # 3위
-        score_tb   = scale_score(cur_tb, 16.20, 0.90)      # 4위
-        if 1 <= freq_count <= 5: score_freq = 10.0
-        else: score_freq = 5.0                             # 5위
+        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 # 3위
+        score_cpv  = scale_score(cur_cpv, 0.13, 0.86)      # 4위
+        score_tb   = scale_score(cur_tb, 16.20, 0.90)      # 5위
         score_bbe  = 5.0                                   # 6위 (반영안함)
 
-        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_tb*7 + score_freq*6) / 400 * 100
+        total_score = (score_rs*10 + score_ema*9 + score_freq*8 + score_cpv*7 + score_tb*6) / 400 * 100
 
         if cur_rs < -745.10: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
         if not align112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
@@ -330,9 +333,9 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         total_score *= 0.70 
 
     is_tenbagger = False
-    if hit4 and cur_rs >= 207.60 and cur_cpv <= 0.46 and (not align112[-1]): is_tenbagger = True
-    if hit3 and cur_rs >= 293.80 and cur_cpv <= 0.56 and align112[-1]: is_tenbagger = True
-    if hit1 and cur_rs >= 239.30 and cur_cpv <= 0.55 and align448[-1]: is_tenbagger = True
+    if hit_s6 and cur_rs >= 207.60 and cur_cpv <= 0.46 and (not align112[-1]): is_tenbagger = True
+    if hit_s7 and cur_rs >= 293.80 and cur_cpv <= 0.56 and align112[-1]: is_tenbagger = True
+    if hit_s1 and cur_rs >= 239.30 and cur_cpv <= 0.55 and align448[-1]: is_tenbagger = True
 
     # DNA 팩트 필터링 (Top vs Worst 30 통계 대입)
     is_top_dna = (cur_cpv <= 0.56) and (cur_tb >= 10.83) and (cur_bbe >= 16.12)
@@ -340,9 +343,9 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
 
     total_score = min(max(total_score, 0), 100)
 
-    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 완성
+    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 완성 (태그 추가 완료)
     v7_comment = (
-        f"📊 [System B V7.0 종합 진단 리포트]\n"
+        f"📊 [눌림목 V7.0 종합 진단 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
