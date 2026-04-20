@@ -247,106 +247,65 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         return False, "", df, {}
 
     # =========================================================================
-    # 👑 [3단계] S1, S4, S6, S7 스코어링 매핑 (한국장 55,571건 팩트 대입)
+    # 👑 [3단계] S1, S4 스코어링 매핑 (V8.0 최신 팩트 데이터 완벽 대입)
     # =========================================================================
-    recent_hits = (s1 | s4 | s6 | s7)[-252:-1].sum() if len(c) > 252 else (s1 | s4 | s6 | s7)[:-1].sum()
+    recent_hits = (s1 | s4)[-252:-1].sum() if len(c) > 252 else (s1 | s4)[:-1].sum()
     freq_count = int(recent_hits)
-
-    if align448[-1]: ema_stat_str = "승률 28.3% / 손익비 3.27 (대세 상승장, 승률 1위)"
-    elif align112[-1]: ema_stat_str = "승률 25.1% / 손익비 3.20 (저항대 돌파 시도)"
-    else: ema_stat_str = "승률 25.1% / 손익비 3.02 (바닥 탈출 구간)"
 
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
     total_score = 0
     trap_warning = ""
-    exit_strategy = ""
+    
+    # 💡 [V8.0 청산 전략 가이드 (진입 이후 시계열 캔들 흐름 완벽 대응)]
+    exit_strategy = "MFE 정점(평균 8.00일). 예쁜 꽉찬 양봉(CPV 0.34 이상) 연속 출현 시 세력 설거지이므로 3일 내 ZLEMA 즉각 칼손절. 지저분한 꼬리(CPV 0.23 부근) 달며 상승 시 단기데드로 1~2주간 끝까지 추세 홀딩."
 
-    if hit_s6: # [S6 바닥 탈출 매핑]
-        sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
-        score_rs   = scale_score(cur_rs, 770.60, -65.50)   # 1위
-        score_tb   = scale_score(cur_tb, 24.60, 0.90)      # 2위
-        score_cpv  = scale_score(cur_cpv, 0.14, 0.83)      # 3위
-        score_bbe  = scale_score(cur_bbe, 53.40, 1.80)     # 4위
-        score_ema  = 10.0 if not align112[-1] else 5.0     # 5위
-        if 6 <= freq_count <= 15: score_freq = 10.0
-        elif freq_count >= 30: score_freq = 2.0 
-        else: score_freq = 6.0                             # 6위
+    if hit_s1 or hit_s4: 
+        sig_type = "🔥 [눌림] S4 (바닥 탈출 텐배거 로또 타점)" if hit_s4 else "🔥 [눌림] S1 (448 대세 추세)"
+        ema_stat_str = "승률 28.08% / 손익비 3.27 (대세 상승장 가장 강력한 주도주 눌림목)" if hit_s1 else "완전 역배열 찐바닥 다지기 완료 (비중 축소 필수)"
         
-        total_score = (score_rs*10 + score_tb*9 + score_cpv*8 + score_bbe*7 + score_ema*6 + score_freq*5) / 450 * 100
-        
-        if cur_tb < 0.90 and cur_bbe < 1.80: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
-        if cur_cpv > 0.83 and freq_count >= 30: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
-        exit_strategy = "MFE 정점(8.45일 차). 1일 차 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
+        # 💡 [V8.0 가중치 스케일링 적용] (1위 RS ~ 6위 빈도)
+        score_rs   = scale_score(cur_rs, 1563.0, -745.10) 
+        score_ema  = 10.0 if align448[-1] else 5.0    
+        score_cpv  = scale_score(cur_cpv, 0.23, 0.85)      
+        score_bbe  = scale_score(cur_bbe, 5400.0, 10.0)    
+        score_tb   = scale_score(cur_tb, 20.0, 5.0)      
+        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 
 
-    elif hit_s7: # [S7 중기 정배열 턴 매핑]
-        sig_type = "🔥 [눌림] S7 (112 중기 정배열 턴)"
-        score_cpv  = scale_score(cur_cpv, 0.14, 0.86)      # 1위
-        if 1 <= freq_count <= 5: score_freq = 10.0
-        elif freq_count >= 30: score_freq = 2.0
-        else: score_freq = 6.0                             # 2위
-        score_bbe  = scale_score(cur_bbe, 44.70, 1.30)     # 3위
-        score_tb   = scale_score(cur_tb, 19.00, 0.90)      # 4위
-        score_rs   = scale_score(cur_rs, 1189.53, -358.20) # 5위
-        score_ema  = 10.0 if align112[-1] else 5.0         # 6위
+        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
 
-        total_score = (score_cpv*10 + score_freq*9 + score_bbe*8 + score_tb*7 + score_rs*6 + score_ema*5) / 450 * 100
-
-        if cur_cpv > 0.85 and cur_rs < -358.20: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주. 자본 묶임 주의!\n"
-        if cur_cpv > 0.86: trap_warning += "💀 [참사의 늪] 고점에서 거래량 터진 꽉 찬 양봉은 100% 설거지 폭락!\n"
-        exit_strategy = "MFE 정점(8.08~8.18일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩."
-
-    elif hit_s1 or hit_s4: # [S1, S4 대세 추세 추종 매핑]
-        # 💡 S1과 S4를 명확하게 분리하여 태그를 달아줍니다.
-        sig_type = "🔥 [눌림] S4 (정배열 20선 눌림돌파)" if hit_s4 else "🔥 [눌림] S1 (448 재정렬)"
-        
-        score_rs   = scale_score(cur_rs, 1430.72, -745.10) # 1위
-        score_ema  = 10.0 if align448[-1] else 1.0         # 2위
-        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 # 3위
-        score_cpv  = scale_score(cur_cpv, 0.13, 0.86)      # 4위
-        score_tb   = scale_score(cur_tb, 16.20, 0.90)      # 5위
-        score_bbe  = 5.0                                   # 6위 (반영안함)
-
-        total_score = (score_rs*10 + score_ema*9 + score_freq*8 + score_cpv*7 + score_tb*6) / 400 * 100
-
-        if cur_rs < -745.10: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
-        if not align112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
-        exit_strategy = "MFE 정점(8.08~8.18일 차). ZLEMA 이탈 시까지 추세 홀딩."
+        if hit_s4:
+            trap_warning += "⚠️ [S4 바닥 탈출] 승률 방어를 위해 반드시 서브 비중으로만 접근 요망!\n"
 
     # =========================================================================
-    # 👑 [4단계] 한국장 V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # 👑 [4단계] 한국장 V8.0 디테일: 요일 효과, 데스콤보, 뱃지 시스템
     # =========================================================================
     weekday = df.index[-1].weekday()
-    if weekday == 4: total_score *= 1.05 
-    elif weekday == 0: total_score *= 0.95 
+    if weekday == 4: total_score *= 1.05 # 금요일 가산
+    elif weekday == 0: total_score *= 0.95 # 월요일 삭감
 
-    is_death_combo = (cur_cpv > 0.86) and (cur_rs < -358.20)
+    # 💡 [V8.0 데스 콤보 방어]
+    is_death_combo = (cur_cpv > 0.85) and (cur_rs < 0)
     if is_death_combo: 
         total_score *= 0.70
-        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 꽉 찬 양봉 + 소외주 (점수 30% 삭감)\n"
-        
-    if freq_count >= 30 and (score_rs < 8.0 or score_cpv < 8.0):
-        total_score *= 0.50
-        trap_warning += "🚫 [고빈도 잡주 경고] 때가 많이 탄 종목! 강제 패스 권장 (-50% 삭감)\n"
-
-    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
-        total_score *= 0.70 
-
-    is_tenbagger = False
-    if hit_s6 and cur_rs >= 207.60 and cur_cpv <= 0.46 and (not align112[-1]): is_tenbagger = True
-    if hit_s7 and cur_rs >= 293.80 and cur_cpv <= 0.56 and align112[-1]: is_tenbagger = True
-    if hit_s1 and cur_rs >= 239.30 and cur_cpv <= 0.55 and align448[-1]: is_tenbagger = True
-
-    # DNA 팩트 필터링 (Top vs Worst 30 통계 대입)
-    is_top_dna = (cur_cpv <= 0.56) and (cur_tb >= 10.83) and (cur_bbe >= 16.12)
-    is_worst_dna = (cur_cpv >= 0.56) and (cur_tb <= 10.36) and (cur_bbe <= 5.20) 
+        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 가짜 양봉 + 시장 소외주 (점수 30% 삭감)\n"
 
     total_score = min(max(total_score, 0), 100)
 
-    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 완성 (태그 추가 완료)
-    v7_comment = (
-        f"📊 [눌림목 V7.0 종합 진단 리포트]\n"
-        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
+    # 💡 [V8.0 뱃지 시스템 로직] 
+    # (한국장 눌림목은 특급 예외 발생 건수(2건)가 드물어 배제하라는 기획서 100% 반영)
+    badge_str = ""
+    if total_score >= 80.0:
+        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (방어력 우수 입증, 메인 70% 비중 할당)"
+        sig_type = "👑 [1티어] " + sig_type
+    else:
+        badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 위주로 매매 요망"
+
+    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립
+    v8_comment = (
+        f"📊 [System B 한국 눌림목 V8.0 마스터 리포트]\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
+        f"🎖️ {badge_str}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
@@ -356,18 +315,15 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
     )
     
-    if trap_warning != "": v7_comment += f"\n{trap_warning}"
-    if is_top_dna: v7_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
-    elif is_worst_dna: v7_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 꼬리는 달렸으나 에너지가 죽은 종목. 진입 주의!\n"
-    if is_tenbagger: v7_comment += f"\n🚀 [초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
-    if weekday == 4: v7_comment += f"✨ 금요일 주도주 프리미엄 반영 (+5% 가산)\n"
-    elif weekday == 0: v7_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
+    if trap_warning != "": v8_comment += f"\n{trap_warning}"
+    if weekday == 4: v8_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
+    elif weekday == 0: v8_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": f"{exit_strategy}",
-        "v7_comment": v7_comment
+        "v8_comment": v8_comment
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -535,20 +491,20 @@ def scan_market_1d():
             if main_chart_path and promo_chart_path:
                 ai_main, _ = generate_ai_report(code, name) 
                         
-                # 1️⃣ 본캐용 캡션 (유료방용 - V7.0 점수 브리핑 출력)
+                # 1️⃣ 본캐용 캡션 (유료방용 - V8.0 뱃지 및 점수 브리핑 출력)
                 main_caption = (
                     f"🎯 [{dbg.get('sig_type', '')}]\n"
                     f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
                     f"🏢 {name} ({code})\n"
                     f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                    f"{dbg.get('v7_comment', '')}\n"
-                    f"📉 [스마트 매수/손절 전략]\n"
+                    f"{dbg.get('v8_comment', '')}\n"
+                    f"📉 [스마트 매수/청산 전략]\n"
                     f"- {dbg.get('recommend', '')}\n\n"
                     f"💡 [AI 비즈니스 요약]\n"
                     f"{ai_main}\n\n"
                     f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                     f"⚠️ [면책 조항]\n"
-                    f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                    f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                 )
                 q_main.put((main_chart_path, main_caption))
 # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
