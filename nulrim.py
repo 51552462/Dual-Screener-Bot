@@ -188,8 +188,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         rs = (stock_ret / idx_ret) * 100
     rs = np.nan_to_num(rs, nan=0.0)
 
-    # =========================================================================
-    # 👑 [2단계] 기존 눌림목 타점 발생 로직 (S1~S7)
+   # =========================================================================
+    # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S4, S6, S7 4가지만 포착하도록 커스텀)
     # =========================================================================
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
@@ -200,21 +200,18 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     align448 = align224 & (e224 > e448)
 
     longKeep448 = e224 > e448 
-    longKeep224 = e112 > e224
     longKeep112 = e60 > e112
 
     prev_align448 = np.roll(align448, 1); prev_align448[0] = False
-    prev_align224 = np.roll(align224, 1); prev_align224[0] = False
     prev_align112 = np.roll(align112, 1); prev_align112[0] = False
 
     prev_longKeep448 = np.roll(longKeep448, 1); prev_longKeep448[0] = False
-    prev_longKeep224 = np.roll(longKeep224, 1); prev_longKeep224[0] = False
     prev_longKeep112 = np.roll(longKeep112, 1); prev_longKeep112[0] = False
 
+    # S1 (448일 완전정배열 재정렬)
     s1 = align448 & (~prev_align448) & prev_longKeep448 & isBullish
-    s2 = align224 & (~prev_align224) & prev_longKeep224 & (e224 < e448) & isBullish
-    s3 = align112 & (~prev_align112) & prev_longKeep112 & (e112 < e224) & isBullish
     
+    # S4 (20일선 눌림돌파)
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     prev_e20 = np.roll(e20, 1); prev_e20[0] = 0
     raw_s4 = align448 & (prev_c < prev_e20) & (c > e10) & isBullish
@@ -226,33 +223,34 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
             s4[i] = True
             last_pb = i
 
+    # S6 (바닥 탈출 단기 정배열)
     macroBear = (e60 < e112) & (e112 < e224) & (e224 < e448)
     shortBelow = (e10 < e60) & (e20 < e60) & (e30 < e60)
     shortBull = (e10 > e20) & (e20 > e30)
     prev_shortBull = np.roll(shortBull, 1); prev_shortBull[0] = False
     s6 = macroBear & shortBelow & shortBull & (~prev_shortBull) & isBullish
 
+    # S7 (112 중기 정배열 턴)
     prev_e60 = np.roll(e60, 1); prev_e60[0] = np.inf
     prev_e112 = np.roll(e112, 1); prev_e112[0] = 0
     s7 = (e224 < e448) & (e112 < e224) & (prev_e60 <= prev_e112) & align112 & isBullish
 
     cond_base = moneyOk & priceOk
-    hit1 = (s1 | s4)[-1] and cond_base[-1] # S1 대세추세 그룹
-    hit2 = s2[-1] and cond_base[-1]        # S2 단기급등 그룹 (복구됨)
-    hit3 = (s3 | s7)[-1] and cond_base[-1] # S3 과열권 모멘텀 그룹
-    hit4 = s6[-1] and cond_base[-1]        # S4 바닥 탈출 그룹
+    hit1 = (s1 | s4)[-1] and cond_base[-1] # S1, S4 (대세추세 그룹)
+    hit3 = s7[-1] and cond_base[-1]        # S7 (중기 모멘텀 그룹)
+    hit4 = s6[-1] and cond_base[-1]        # S6 (바닥 탈출 그룹)
 
-    if not (hit1 or hit2 or hit3 or hit4): 
+    # 💡 S2, S3 시그널은 완전히 제거되었습니다!
+    if not (hit1 or hit3 or hit4): 
         return False, "", df, {}
 
     # =========================================================================
-    # 👑 [3단계] S1~S4 가중치 및 스코어링 완벽 매핑 (정리파일 55,571건 팩트 대입)
+    # 👑 [3단계] S1, S4, S6, S7 스코어링 매핑 (한국장 55,571건 팩트 대입)
     # =========================================================================
-    recent_hits = (s1 | s2 | s3 | s4 | s6 | s7)[-252:-1].sum() if len(c) > 252 else (s1 | s2 | s3 | s4 | s6 | s7)[:-1].sum()
+    recent_hits = (s1 | s4 | s6 | s7)[-252:-1].sum() if len(c) > 252 else (s1 | s4 | s6 | s7)[:-1].sum()
     freq_count = int(recent_hits)
 
     if align448[-1]: ema_stat_str = "승률 28.3% / 손익비 3.27 (대세 상승장, 승률 1위)"
-    elif align224[-1]: ema_stat_str = "승률 26.9% / 손익비 3.29 (장기 매물 소화 완료)"
     elif align112[-1]: ema_stat_str = "승률 25.1% / 손익비 3.20 (저항대 돌파 시도)"
     else: ema_stat_str = "승률 25.1% / 손익비 3.02 (바닥 탈출 구간)"
 
@@ -262,7 +260,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     trap_warning = ""
     exit_strategy = ""
 
-    if hit4: # [S4 바닥 탈출 그룹 매핑 - S6]
+    if hit4: # [S6 바닥 탈출 매핑]
         sig_type = "🌱 S6 (바닥턴 단기 정배열)"
         score_rs   = scale_score(cur_rs, 770.60, -65.50)   # 1위
         score_tb   = scale_score(cur_tb, 24.60, 0.90)      # 2위
@@ -279,8 +277,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         if cur_cpv > 0.83 and freq_count >= 30: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
         exit_strategy = "MFE 정점(8.45일 차). 1일 차 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
 
-    elif hit3: # [S3 과열권 모멘텀 그룹 매핑 - S3/S7]
-        sig_type = "🔥 S7 (112 중기 정배열 턴)" if s7[-1] else "🔥 S3 (112 재정렬)"
+    elif hit3: # [S7 중기 정배열 턴 매핑]
+        sig_type = "🔥 S7 (112 중기 정배열 턴)"
         score_cpv  = scale_score(cur_cpv, 0.14, 0.86)      # 1위
         if 1 <= freq_count <= 5: score_freq = 10.0
         elif freq_count >= 30: score_freq = 2.0
@@ -296,22 +294,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         if cur_cpv > 0.86: trap_warning += "💀 [참사의 늪] 고점에서 거래량 터진 꽉 찬 양봉은 100% 설거지 폭락!\n"
         exit_strategy = "MFE 정점(8.08~8.18일 차). 단기데드 로직으로 전환하여 추세 끝까지 홀딩."
 
-    elif hit2: # [S2 단기 급등 돌파 매핑 - S2]
-        sig_type = "🔥 S2 (224 재정렬)"
-        score_rs   = scale_score(cur_rs, 1364.70, -542.40) # 1위
-        score_cpv  = scale_score(cur_cpv, 0.13, 0.85)      # 2위
-        score_ema  = 10.0 if align224[-1] else 5.0         # 3위
-        score_tb   = scale_score(cur_tb, 17.80, 0.90)      # 4위
-        score_freq = 6.0                                   # 5위 (중립)
-        score_bbe  = scale_score(cur_bbe, 38.10, 1.20)     # 6위
-
-        total_score = (score_rs*10 + score_cpv*9 + score_ema*8 + score_tb*7 + score_freq*6 + score_bbe*5) / 450 * 100
-
-        if cur_cpv > 0.85 and cur_rs < -358.20: trap_warning += "🚨 [기회비용 늪] 애매한 캔들에 시장 소외주 조합. 박스권 장기 횡보!\n"
-        if cur_rs < -542.40: trap_warning += "💀 [참사의 늪] 시장 소외 잡주 단독 급등! 다음날 갭하락 설거지 주의!\n"
-        exit_strategy = "MFE 정점(8.08~8.18일 차). 단기데드(트레일링 스탑) 로직 전환. 1일 차 갭하락 시 즉각 칼손절."
-
-    else: # [S1 대세 추세 추종 그룹 매핑 - S1/S4]
+    else: # [S1, S4 대세 추세 추종 매핑]
         sig_type = "🔥 S4 (정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
         score_rs   = scale_score(cur_rs, 1430.72, -745.10) # 1위
         score_ema  = 10.0 if align448[-1] else 1.0         # 2위
@@ -328,7 +311,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(8.08~8.18일 차). ZLEMA 이탈 시까지 추세 홀딩."
 
     # =========================================================================
-    # 👑 [4단계] V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
+    # 👑 [4단계] 한국장 V7.0 디테일: 요일 효과, 데스콤보, 고빈도 필터, DNA 검증
     # =========================================================================
     weekday = df.index[-1].weekday()
     if weekday == 4: total_score *= 1.05 
@@ -349,7 +332,6 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     is_tenbagger = False
     if hit4 and cur_rs >= 207.60 and cur_cpv <= 0.46 and (not align112[-1]): is_tenbagger = True
     if hit3 and cur_rs >= 293.80 and cur_cpv <= 0.56 and align112[-1]: is_tenbagger = True
-    if hit2 and cur_rs >= 260.90 and cur_cpv <= 0.54 and align224[-1]: is_tenbagger = True
     if hit1 and cur_rs >= 239.30 and cur_cpv <= 0.55 and align448[-1]: is_tenbagger = True
 
     # DNA 팩트 필터링 (Top vs Worst 30 통계 대입)
@@ -358,6 +340,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
 
     total_score = min(max(total_score, 0), 100)
 
+    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 완성
     v7_comment = (
         f"📊 [System B V7.0 종합 진단 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
