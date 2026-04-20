@@ -646,7 +646,7 @@ def scan_market_1d():
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
-                            q_promo.put((threads_chart_path, promo_caption))
+                    q_promo.put((threads_chart_path, promo_caption))
 
                             print(f"\n✅ [{name}] 미국장 Top 1% 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
