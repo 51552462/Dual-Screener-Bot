@@ -270,7 +270,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(11.35일 차). 4일 이내 반등 실패 시 즉각 칼손절. 횡보는 10일 후 타임컷."
 
     elif hit2: # [S2 단기 급등 돌파 매핑]
-        sig_type = "🔥 S2 (224 재정렬)"
+        sig_type = "🔥 S2 (눌림 224 재정렬)"
         score_rs   = scale_score(cur_rs, 1432.14, -80.50)  # 1위
         score_cpv  = scale_score(cur_cpv, 0.12, 0.86)      # 2위
         score_ema  = 10.0 if align224[-1] else 5.0         # 3위
@@ -285,7 +285,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series):
         exit_strategy = "MFE 정점(13.4~17.1일 차). 단기데드(트레일링 스탑) 로직 전환. 3.73일 내 갭하락 시 즉각 칼손절."
 
     else: # [S1, S4 대세 추세 추종 그룹 매핑]
-        sig_type = "🔥 S4 (정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
+        sig_type = "🔥 S4 (눌림 정배열 20선 눌림돌파)" if s4[-1] else "🔥 S1 (448 재정렬)"
         score_rs   = scale_score(cur_rs, 990.40, -102.75)  # 1위
         score_ema  = 10.0 if align448[-1] else 1.0         # 2위
         score_cpv  = scale_score(cur_cpv, 0.12, 0.87)      # 3위
