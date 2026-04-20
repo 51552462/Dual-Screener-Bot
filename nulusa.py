@@ -378,7 +378,7 @@ def get_daily_theme():
     return themes[theme_idx]
 
 chart_lock = threading.Lock()
- save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False, is_promo=False) -> str:
+def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, show_volume=False, is_promo=False) -> str:
     with chart_lock:
         try:
             plt.rcParams['font.family'] = 'NanumGothic'
