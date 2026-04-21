@@ -124,27 +124,28 @@ def generate_ai_report(code: str, company_name: str):
 # 💡 3. 잡주 필터 (시가총액 데이터 추가)
 def get_krx_list_kind():
     try:
-        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
-        df_ks['Market'] = 'KOSPI'
-        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
-        df_kq['Market'] = 'KOSDAQ'
-        df = pd.concat([df_ks, df_kq])
-        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
-        df = df.rename(columns={'회사명': 'Name'})
-        
+        df = fdr.StockListing('KRX')
+        df['Code'] = df['Code'].astype(str).str.zfill(6)
         junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
-        clean_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
-
-        # 💡 [V11.0] 시가총액(Marcap) 데이터 추출 및 병합
+        filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
+        
+        # 💡 [V11.0] 시가총액(Marcap) 데이터 추출
+        if 'Marcap' not in filtered_df.columns: filtered_df['Marcap'] = 0
+        return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
+    except Exception as e:
+        # 안전망: FDR 오류 시 기존 KIND 방식으로 우회
         try:
-            fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
-            clean_df = clean_df.merge(fdr_df, on='Code', how='left')
-            clean_df['Marcap'] = clean_df['Marcap'].fillna(0)
-        except:
-            clean_df['Marcap'] = 0
-
-        return clean_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
-    except: return pd.DataFrame()
+            df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
+            df_ks['Market'] = 'KOSPI'
+            df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
+            df_kq['Market'] = 'KOSDAQ'
+            df = pd.concat([df_ks, df_kq])
+            df['Code'] = df['종목코드'].astype(str).str.zfill(6)
+            df = df.rename(columns={'회사명': 'Name'})
+            filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
+            filtered_df['Marcap'] = 0
+            return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
+        except: return pd.DataFrame()
 
 # 💡 보조 함수 1: 1~10점 스케일링 함수 (방향성 완벽 지원)
 def scale_score(val, best, worst):
@@ -158,62 +159,26 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 4. Top 1% 마스터 (System B V11.0 한국장 무타협 완전판 엔진 - 시총 팩트 탑재)
-def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
-    if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
+# 💡 [교체] 5일선 관통 전용 마스터 시그널 엔진 (V11.0 완전체 적용)
+def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
+    if df_raw is None or len(df_raw) < 500: 
+        return False, "", df_raw, {}
     df = df_raw.copy()
-    
-    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
     
     df['Idx_Close'] = idx_close
     df['Idx_Close'] = df['Idx_Close'].ffill()
 
-    for n in [10, 20, 30, 60, 112, 224, 448]:
+    for n in [5, 10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
-        
-    e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
-    e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    prev_c = np.roll(c, 1); prev_c[0] = c[0]
-    tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
-    atr = pd.Series(tr).ewm(alpha=1/20, adjust=False, min_periods=0).mean().values
-
-    is_aligned_30 = (e10 > e20) & (e20 > e30)
-    is_aligned_112 = is_aligned_30 & (e30 > e60) & (e60 > e112)
-    is_aligned_224 = is_aligned_112 & (e112 > e224)
-    is_aligned_448 = is_aligned_224 & (e224 > e448)
-    
-    is_bullish = c > o
-    show_values = is_aligned_112 & is_bullish
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        spread_10_20 = np.where(show_values, ((e10 - e20) / atr) * 100, 0)
-        spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
-        spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
-
-        idx = np.arange(len(c))
-        r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx)).fillna(0).values
-        r_squared = r_val * r_val
-        
-        e10_3 = np.roll(e10, 3); e10_3[:3] = e10[:3]
-        ema_roc = np.where(e10_3 != 0, ((e10 - e10_3) / e10_3) * 5000, 0)
-
-    true_momentum_line = np.where(is_aligned_30, ema_roc * (r_squared ** 2), 0)
-    prev_tml = np.roll(true_momentum_line, 1); prev_tml[0] = 0
-
-    cond_rising = true_momentum_line > prev_tml
-    cond_blue_30 = spread_112_224 >= 30
-    
-    val_angle = true_momentum_line
-    cond_highest_angle = (val_angle > spread_10_20) & (val_angle > spread_10_30) & (val_angle > spread_112_224)
-
-    cond_val_sig1 = (spread_10_30 >= 100) & (spread_10_20 >= 50) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
-    cond_val_sig2_3 = (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
+    e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
     # =========================================================================
     # 👑 [1단계] 4대 핵심 변수 수식
     # =========================================================================
     cpv = np.where(h != l, (c - o) / (h - l), 0.5)
-
     v_ma20 = pd.Series(v).rolling(20).mean().values
     vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
     tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
@@ -232,170 +197,131 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marca
         rs = (stock_ret / idx_ret) * 100
     rs = np.nan_to_num(rs, nan=0.0)
 
-    # ---------------------------------------------------------
-    # 💡 [S4 하이브리드 엔진] 트레이딩뷰 V반등각도 100% 동기화
-    # ---------------------------------------------------------
-    c_3 = np.roll(c, 3); c_3[:3] = c[:3]
-    candle_roc = np.where(c_3 != 0, ((c - c_3) / c_3) * 1000, 0)
-    
-    weights = np.array([1, 2, 3])
-    candle_angle = np.zeros(len(c))
-    for i in range(2, len(c)):
-        candle_angle[i] = (candle_roc[i-2]*weights[0] + candle_roc[i-1]*weights[1] + candle_roc[i]*weights[2]) / 6.0
-    candle_angle = np.where(is_aligned_30, candle_angle, 0)
-    
-    raw_sig4_arr = np.zeros(len(c), dtype=bool)
-    is_candle_bottom = False
-    for i in range(len(c)):
-        if candle_angle[i] <= 0:
-            is_candle_bottom = True
-        if is_candle_bottom and candle_angle[i] >= 50 and is_aligned_30[i] and is_bullish[i]:
-            raw_sig4_arr[i] = True
-            is_candle_bottom = False
-
     # =========================================================================
-    # 👑 [2단계] 트뷰 원본 시그널 확정 및 상호 배제 로직 (100% 동일 매핑)
+    # 👑 [2단계] 5일선 관통(S1 대세 추세) 단독 포착 로직
     # =========================================================================
-    tv_raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
-    tv_raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
-    tv_raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
-    tv_raw_sig4 = raw_sig4_arr 
-
-    tv_signal_3 = tv_raw_sig3
-    tv_signal_2 = tv_raw_sig2 & ~tv_signal_3
-    tv_signal_1 = tv_raw_sig1 & ~tv_signal_2 & ~tv_signal_3
-    tv_signal_4 = tv_raw_sig4 & ~tv_signal_1 & ~tv_signal_2 & ~tv_signal_3
-
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
+    
+    alignFullBull = (e5 > e10) & (e10 > e20) & (e20 > e30) & (e30 > e60) & (e60 > e112) & (e112 > e224) & (e224 > e448)
+    isBullish = c > o
+    isBodyCross5 = (o < e5) & (c > e5)
+    
+    v_prev = np.roll(v, 1); v_prev[0] = v[0]
+    condVol = v >= (v_prev * 3)
 
-    hit_1 = np.zeros(len(c), dtype=bool) # S3 참사 휩소 차단
-    hit_2 = np.zeros(len(c), dtype=bool) # S2 참사 휩소 차단
-    hit_3 = tv_signal_3 & moneyOk & priceOk  # S1 대세추세 돌파
-    hit_4 = tv_signal_4 & moneyOk & priceOk  # S4 바닥탈출 돌파
+    finalSignal = alignFullBull & isBullish & isBodyCross5 & condVol & moneyOk & priceOk
+    finalSignal_arr = finalSignal.values if isinstance(finalSignal, pd.Series) else finalSignal
 
-    final_hit = hit_1 | hit_2 | hit_3 | hit_4
-
-    if not final_hit[-1]: return False, "", df, {}
-    if np.any(final_hit[-4:-1]): return False, "", df, {}
+    if not finalSignal_arr[-1]: 
+        return False, "", df, {}
 
     # =========================================================================
-    # 👑 [3단계] S1, S4 스코어링 매핑 (V11.0 시가총액 가중치 완벽 대입)
+    # 👑 [3단계] S1 스코어링 매핑 (V11.0 시가총액 가중치 완벽 대입)
     # =========================================================================
-    recent_hits = (tv_signal_1 | tv_signal_2 | tv_signal_3 | tv_signal_4)[-252:-1].sum() if len(c) > 252 else (tv_signal_1 | tv_signal_2 | tv_signal_3 | tv_signal_4)[:-1].sum()
+    recent_hits = finalSignal[-252:-1].sum() if len(c) > 252 else finalSignal[:-1].sum()
     freq_count = int(recent_hits)
 
-    # 💡 [V11.0] 시가총액 체급 판별 및 팩트 통계 매핑
+    # 💡 [V11.0] 시가총액 체급 판별 및 통계 매핑
     if marcap >= 1_000_000_000_000:
         cap_str = "① 1조 이상 (대형주)"
         score_marcap = 10.0
-        ema_stat_str = "승률 33.0% / 손익비 4.51 (수익성과 방어력 최강 1위)"
-        weight_rec = "기본 비중의 1.5배 (최우선 적극 진입, MFE +15% 이상 기계적 익절)"
+        ema_stat_str = "승률 34.0% / 손익비 4.71 (전 체급 압도적 1위)"
+        weight_rec = "기본 비중의 1.5배 (최우선 적극 진입)"
     elif marcap >= 600_000_000_000:
         cap_str = "② 6천억~1조 (중견주)"
         score_marcap = 8.0
-        ema_stat_str = "승률 28.5% / 손익비 4.19"
-        weight_rec = "기본 비중 1.0배 적용 (MFE +15% 이상 기계적 익절)"
+        ema_stat_str = "승률 31.9% / 손익비 4.31"
+        weight_rec = "기본 비중 1.0배 적용"
     elif marcap >= 300_000_000_000:
         cap_str = "③ 3천억~6천억 (중소형주)"
         score_marcap = 6.0
-        ema_stat_str = "승률 28.2% / 손익비 3.40"
+        ema_stat_str = "승률 28.9% / 손익비 3.42"
         weight_rec = "기본 비중 1.0배 적용"
     elif marcap >= 100_000_000_000:
         cap_str = "④ 1천억~3천억 (소형주)"
         score_marcap = 4.0
-        ema_stat_str = "승률 24.0% / 손익비 2.77"
+        ema_stat_str = "승률 25.1% / 손익비 2.96"
         weight_rec = "기본 비중의 0.5배 (비중 축소)"
     else:
-        cap_str = "⑤ 1천억 미만 (잡주/초소형주)"
+        cap_str = "⑤ 1천억 미만 (초소형주)"
         score_marcap = 2.0
-        ema_stat_str = "승률 21.4% / 손익비 2.64 (가짜 돌파 휩소 최다 발생 구간)"
-        weight_rec = "기본 비중의 0.5배 (철저한 소액 로또용, MFE +40% 이상 타겟)"
+        ema_stat_str = "승률 24.3% / 손익비 3.00 (하락 구간)"
+        weight_rec = "기본 비중의 0.5배 (철저히 소액)"
 
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
-    score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
-    total_score = 0
+    sig_type = "🔥 S1 (5선 관통 / 448 완전정배열)"
+    
+    # 💡 [V11.0 가중치 스케일링]
+    score_rs   = scale_score(cur_rs, 2025.28, -821.13) 
+    score_ema  = 10.0                                  
+    score_cpv  = scale_score(cur_cpv, 0.39, 0.95)      
+    score_bbe  = scale_score(cur_bbe, 56.80, 3.80)     
+    score_tb   = scale_score(cur_tb, 20.13, 2.47)      
+    score_freq = 10.0 if 1 <= freq_count <= 5 else (2.0 if freq_count >= 10 else 6.0) 
+
+    # 총점 100점 만점 변환 (7대 변수 가중치 합 49)
+    total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
+    
     trap_warning = ""
+    if cur_rs < -821.13: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘 우려!\n"
+    if cur_cpv > 0.95 and total_score <= 30.0: trap_warning += "💀 [참사의 늪] 시장 소외주의 꽉 찬 가짜 상승! 즉각 지옥행 주의!\n"
 
-    if hit_4[-1]: # [S4 바닥 탈출 특화]
-        sig_type = "🔥 [돌파] S4 (역배열 바닥 탈출 로또 타점)"
-        score_bbe  = scale_score(cur_bbe, 90.70, 11.60) 
-        score_cpv  = scale_score(cur_cpv, 0.10, 0.89)   
-        score_tb   = scale_score(cur_tb, 61.80, 16.20)  
-        score_rs   = scale_score(cur_rs, 1510.50, 0.0)  
-        score_ema  = 10.0 if not is_aligned_112[-1] else 5.0 
-        score_freq = 10.0 if 6 <= freq_count <= 15 else (2.0 if freq_count >= 16 else 6.0)                          
-        
-        # S4 팩트 가중치: 응축(10), CPV(9), 진짜양봉(8), 시총(7), RS(6), 이평(5), 빈도(4)
-        total_score = (score_bbe*10 + score_cpv*9 + score_tb*8 + score_marcap*7 + score_rs*6 + score_ema*5 + score_freq*4) / 490 * 100
-        
-        if cur_tb < 16.20 and cur_bbe < 11.60: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
-        if cur_cpv > 0.89 and freq_count >= 16: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
-
-    elif hit_3[-1]: # [S1 대세 추세 추종]
-        sig_type = "🔥 [돌파] S1 (448 완전정배열 대세 추세)"
-        score_rs   = scale_score(cur_rs, 4037.80, 0.0)   
-        score_ema  = 10.0 if is_aligned_448[-1] else 1.0 
-        score_cpv  = scale_score(cur_cpv, 0.15, 0.89)    
-        score_tb   = scale_score(cur_tb, 15.00, 0.0)     
-        score_bbe  = scale_score(cur_bbe, 90.70, 11.60) 
-        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0                           
-        
-        # S1 팩트 가중치: RS(10), 이평(9), 시총(8), CPV(7), 진짜양봉(6), 응축(5), 빈도(4)
-        total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_tb*6 + score_bbe*5 + score_freq*4) / 490 * 100
-
-        if cur_rs < -1934.70: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
-        if not is_aligned_112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
-
-    # =========================================================================
-    # 👑 [4단계] V11.0 디테일: 요일 효과, 데스콤보, 뱃지 시스템
-    # =========================================================================
     weekday = df.index[-1].weekday()
     if weekday == 4: total_score *= 1.05 
     elif weekday == 0: total_score *= 0.95 
 
-    is_death_combo = (cur_cpv > 0.85) and (cur_rs < 0)
+    is_death_combo = (cur_cpv > 0.95) and (total_score < 40.0)
     if is_death_combo: 
         total_score *= 0.70
-        trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 가짜 양봉 + 소외주 (점수 30% 삭감)\n"
+        trap_warning += "⚠️ [데스 콤보 발동] 세력 단기 차익 실현 후 폭락 패턴 (점수 30% 삭감)\n"
+        
+    if freq_count >= 10 and (score_rs < 8.0 or score_cpv < 8.0):
+        total_score *= 0.50
+        trap_warning += "🚫 [고빈도 잡주 경고] 알고리즘 단타로 때가 묻은 종목! (-50% 삭감)\n"
 
-    total_score = min(max(total_score, 0), 100)
+    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
+        total_score *= 0.70 
+
+    total_score = min(max(total_score, 0), 100) 
 
     # =========================================================================
-    # 👑 [종목 맞춤형 동적 청산 전략 (V11.0 스마트 팩트 매수/손절)]
+    # 👑 [종목 맞춤형 동적 청산 전략 (V11.0 팩트 데이터)]
     # =========================================================================
-    if cur_cpv >= 0.50:
+    exit_strategy = "MFE 정점(평균 10.32일). 5일선 지지 후 슈팅 시 '단기데드'로 수익 극대화. 반면 진입 후 약 2일 내 슈팅 없이 5일선을 깨면 즉각 'ZLEMA' 칼손절."
+
+    if cur_cpv >= 0.61:
         cpv_stat = f"현재 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
-        action = "💡 [한국형 설거지 주의] 이평선 돌파 직후 꽉 찬 양봉만 연속으로 그리면 100% 설거지 참사입니다. 시가총액이 작은 소형주일수록 2.85일 내에 지하실로 가므로, 즉각 'ZLEMA 이탈' 시 칼손절하여 계좌를 방어하십시오."
-    elif cur_cpv <= 0.23:
+        action = "💡 [한국형 설거지 주의] 진입 직후 꽉 찬 양봉만 그리며 양봉 비율이 88%를 넘어가면 100% 설거지 참사입니다. 2일 내에 강한 슈팅이 없으면 즉각 칼손절하여 방어하십시오."
+    elif cur_cpv <= 0.40:
         cpv_stat = f"위아래 꼬리가 달린 매물 소화 캔들 (CPV {cur_cpv:.2f})"
-        action = f"세력이 단타 개미를 흔들면서 올라가는 진짜 대장주 패턴입니다. 가짜 휩소에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 약 10일 이상 추세를 홀딩하여 텐배거를 발라먹으십시오."
+        action = f"세력이 개미를 흔들면서 올리는 진짜 텐배거 주도주 패턴입니다. 잔파도에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 약 10일 이상 추세를 끝까지 발라먹으십시오."
     else:
-        cpv_stat = f"표준적인 돌파 캔들 (CPV {cur_cpv:.2f})"
-        action = f"상승 시 '단기데드'로 수익 극대화, 하락 시 평균 2.85일 내에 'ZLEMA 이탈'로 짧게 끊어내는 기계적 대응을 권장합니다."
+        cpv_stat = f"표준적인 양봉 (CPV {cur_cpv:.2f})"
+        action = f"강한 슈팅이 나오면 '단기데드'로 홀딩하고, 지지부진하게 꺾이면 'ZLEMA' 라인에서 짧게 익절/본절 하십시오."
 
-    if hit_4[-1] and cur_rs <= -1000:
-        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주 역배열 바닥권입니다. 승률이 20%대로 깡통 위험이 크므로 진입 비중을 대형주의 1/3로 강제 축소하십시오. 단 한 번 터질 때 MFE +40% 이상 크게 먹어야 하므로 단기데드로 끝까지 버티십시오."
-    elif total_score >= 80:
-        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 평균 손실을 -6.6%로 철통 방어함이 수학적으로 입증되었습니다. 👉 [비중 조언: {weight_rec}]"
+    if total_score >= 80:
+        tier_stat = f"총점 {total_score:.1f}점(1티어). 평균 손실을 -5.3%로 철통 방어함이 수학적으로 검증되었습니다. 👉 [비중 조언: {weight_rec}]"
+    elif total_score <= 50 and cur_rs > 500 and cur_cpv <= 0.40:
+        tier_stat = f"총점은 {total_score:.1f}점이지만 진입 전 꽉찬 양봉(0.76) 후 돌발적인 거래량 폭발이 포착된 특급 모멘텀 텐배거 예외 타점입니다. 👉 [비중 조언: 비중 대폭 축소 (로또용)]"
     else:
-        tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 가짜 돌파 휩소 리스크가 크므로 반드시 비중을 축소하십시오. 👉 [비중 조언: {weight_rec}]"
+        tier_stat = f"총점 {total_score:.1f}점의 하위권 타점이므로 가짜 돌파 휩소 리스크가 큽니다. 👉 [비중 조언: {weight_rec}]"
 
-    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n💡 {tier_stat}"
 
-    # 💡 [V11.0 뱃지 및 특급 예외 시스템 로직]
+    # 💡 [V11.0 뱃지 시스템]
     badge_str = ""
     if total_score >= 80.0:
-        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (평균수익 52.5% / 손익비 7.48 경이적 대박 검증. 최우선 매수)"
+        badge_str = "🔥 [1티어 뱃지] 가산점 대상 (손익비 5.80 경이적 대박 검증. 최우선 매수)"
         sig_type = "👑 [1티어] " + sig_type
-    elif total_score <= 50.0 and cur_rs <= -1000 and cur_cpv <= 0.3:
-        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (매물 소화 완료 돌발 펌핑. 소액 로또 접근)"
+    elif total_score <= 50.0 and cur_rs > 500 and cur_cpv <= 0.40:
+        badge_str = "💎 [특급 모멘텀 예외] 세력의 갑작스러운 펌핑 타점 (로또용 소액 접근)"
         sig_type = "💎 [로또] " + sig_type
     else:
-        badge_str = "⚠️ [비중 축소] 80점 미만은 가짜 휩소 확률이 높으므로 철저히 비중 축소 요망"
+        badge_str = "⚠️ [비중 축소] 하위권 점수는 철저히 비중 축소 요망"
 
     v11_comment = (
-        f"📊 [System B 한국 이평선 돌파 V11.0 마스터 리포트]\n"
+        f"📊 [System B 5일선 스나이퍼 V11.0 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
         f"🔹 시가총액: {cap_str}\n"
         f"🎖️ {badge_str}\n\n"
@@ -403,19 +329,19 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marca
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
         f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점)\n"
-        f"▪️ 시총 체급점수: {score_marcap:.1f}점\n"
-        f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
+        f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
+        f"▪️ 시총 체급점수: {score_marcap:.1f}점\n\n"
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
     )
     
     if trap_warning != "": v11_comment += f"\n{trap_warning}"
-    if weekday == 4: v11_comment += f"✨ 금요일 주말 리스크를 이겨낸 주도주 프리미엄 (+5% 가산)\n"
+    if weekday == 4: v11_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
     elif weekday == 0: v11_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}",
+        "recommend": f"{exit_strategy}", 
         "v11_comment": v11_comment,
         "score": total_score,
         "v_cpv": cur_cpv,
@@ -546,28 +472,28 @@ def scan_market_1d():
     def worker(row_tuple):
         try:
             _, row = row_tuple
-            name, code, market_type = row["Name"], row["Code"], row["Market"]
+            name, code = row["Name"], row["Code"]
             marcap = row.get("Marcap", 0) # 💡 [V11.0] 시가총액 데이터 추출
+            df_raw = None
             
-            df_raw = fdr.DataReader(code, start_date)
-            hit = False
-            df_to_plot = None
-            dbg_info = {}
+            try:
+                df_raw = fdr.DataReader(code, start_date)
+            except: pass
 
-            if df_raw is not None and not df_raw.empty and len(df_raw) >= 500:
-                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                idx_close = kospi_idx if market_type == 'KOSPI' else kosdaq_idx
-                
-                # 💡 [V11.0] 시그널 엔진 호출 시 marcap 파라미터 함께 전달
-                hit, sig_type, df_to_plot, dbg_info = compute_top1_master_signal(df_raw, idx_close, marcap)
-
+            is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            hit, sig_type, df, dbg = False, "", None, {}
+            
+            if is_valid: 
+                idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
+                # 💡 [V11.0] 엔진에 marcap 전달
+                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close, marcap)
+            
             hit_rank = 0
             with console_lock:
                 tracker['scanned'] += 1
-                if df_raw is not None and len(df_raw) >= 500: tracker['analyzed'] += 1 
-
+                if is_valid: tracker['analyzed'] += 1 
                 if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
 
                 if hit:
                     if code in sent_today:
@@ -583,25 +509,27 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                main_chart_path = save_chart(df_to_plot, code, name, hit_rank, dbg_info, show_volume=True, is_promo=False)
-                promo_chart_path = save_chart(df_to_plot, code, name, hit_rank, dbg_info, show_volume=False, is_promo=True)
+                # 💡 본캐용 및 홍보용 차트 생성
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                 
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V11.0 브리핑 출력)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - V11.0 뱃지 및 점수 브리핑 출력)
                     main_caption = (
-                        f"🎯 [{dbg_info.get('sig_type', '')}]\n"
-                        f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
+                        f"🎯 [{dbg.get('sig_type', '')}]\n"
+                        f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
-                        f"{dbg_info.get('v11_comment', '')}\n" # 💡 [V11.0 팩트 로드]
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                        f"{dbg.get('v11_comment', '')}\n"  # 💡 [V11.0 적용]
                         f"📉 [스마트 매수/청산 전략]\n"
-                        f"{dbg_info.get('recommend', '')}\n\n"  # 💡 [맞춤형 전략 로드]
+                        f"{dbg.get('recommend', '')}\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
+                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                         f"⚠️ [면책 조항]\n"
-                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
                     q_main.put((main_chart_path, main_caption))
 
@@ -611,39 +539,40 @@ def scan_market_1d():
                         
                         market_type = 'KR' 
                         entry_facts = {
-                            'v_cpv': dbg_info.get('v_cpv', 0),
-                            'v_yang': dbg_info.get('v_yang', 0),
-                            'v_energy': dbg_info.get('v_energy', 0),
-                            'v_rs': dbg_info.get('v_rs', 0)
+                            'v_cpv': dbg.get('v_cpv', 0),
+                            'v_yang': dbg.get('v_yang', 0),
+                            'v_energy': dbg.get('v_energy', 0),
+                            'v_rs': dbg.get('v_rs', 0)
                         }
                         
                         success, fwd_msg = aft.try_add_virtual_position(
                             market=market_type,
                             code=code,
                             name=name,
-                            sig_type=dbg_info.get('sig_type', ''),
-                            score=dbg_info.get('score', 0), 
-                            ep=dbg_info.get('last_close', c[-1]),
+                            sig_type=dbg.get('sig_type', ''),
+                            score=dbg.get('score', 0), 
+                            ep=dbg.get('last_close', c[-1]),
                             facts=entry_facts
                         )
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                     except Exception as e:
                         print(f"   ↳ [포워드 장부 에러]: {e}")
-                        
+
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                     try:
                         sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                     except:
                         sector_info = "유망 섹터 포착"
                             
                     promo_caption = (
-                        f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
+                        f"📈 [알고리즘 차트 포착]\n\n"
                         f"🏢 종목: {name} ({code})\n"
                         f"🏷️ 섹터: {sector_info}\n"
-                        f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
                     )
                     q_promo.put((promo_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] Top 1% 시그널 포착! 듀얼 발송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             pass
 
