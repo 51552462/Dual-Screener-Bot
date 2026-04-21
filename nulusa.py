@@ -300,26 +300,41 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         
     total_score = min(max(total_score, 0), 100)
 
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
+    # 추가된 기획서 내용(미국장 RS 델타 특징, S2/S4 극단적 소외주 로또 타점) 완벽 반영
+    # =========================================================================
+    # 1. 캔들(CPV) 및 미국장 특유의 정직한 흐름 가이드
+    if cur_cpv >= 0.30:
+        cpv_stat = f"예쁜 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
+        action = "💡 [월가 휩소 경고] 진입 직후 꽉 찬 양봉을 며칠간 그리면 개인을 꼬시는 전형적인 100% 설거지 패턴입니다. 반등을 기다리지 말고 'ZLEMA 이탈' 시 3~4일 내에 즉각 칼손절하여 계좌를 방어하십시오."
+    elif cur_cpv <= 0.24:
+        cpv_stat = f"지저분한 꼬리 캔들 (CPV {cur_cpv:.2f})"
+        action = "💡 [찐 대장주 패턴] 꼬리를 지저분하게 달며 숏 스퀴즈를 유발하는 진짜 트렌드입니다. 미국장은 '갈 놈은 처음부터 끝까지 시장을 이기면서(RS 상승) 가는' 정직한 흐름을 보입니다. '단기데드' 이탈 전까지 2.5주 이상 끝까지 홀딩하십시오."
+    else:
+        cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
+        action = "상승 시 '단기데드'로 수익 극대화, 하락 시 'ZLEMA 이탈'로 4일 내 짧게 끊어내는 기계적 대응을 권장합니다."
+
+    # 2. 점수 티어 및 S2/S4 극단적 소외주(로또) 밈 주식 펌핑 판별
+    if (hit_s4[-1] or hit_s2[-1]) and cur_rs <= -1000:
+        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f})입니다. 평소엔 승률이 낮아 패스해야 하지만, 시장이 극단적 공포(VIX 30 부근)에 빠졌을 때 거래량이 폭발하면 손익비 4.0~5.0 이상 터지는 밈(Meme) 주식 텐배거 자리입니다. 비중을 대폭 줄여 로또용으로만 줍습니다."
+    elif total_score >= 80:
+        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 방어력과 평균수익(29.4%)이 수학적으로 완벽히 입증되었습니다. 메인 1.5배 비중 진입을 권장합니다."
+    else:
+        tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 가짜 휩소 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
+
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+
     # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
     vix_strategy = ""
     if cur_vix >= 30:
-        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 43%, 평균수익 2~3배 폭발 구간! 진입 비중 1.5배 상향 및 적극 매수."
+        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 43%, 평균수익 40.6% 터지는 초거대 대박 구간! 진입 비중 1.5배 상향 및 적극 매수."
     elif cur_vix >= 20:
-        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 승률/손익비 점프 구간! 진입 비중 1.2배 상향."
+        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 손익비 3.16 상승 구간! 진입 비중 1.2배 상향."
     else:
         vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 매매."
 
-    # 💡 [V9.0 뱃지 시스템 및 밈 주식 예외 로직]
-    badge_str = ""
-    if total_score >= 80.0:
-        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (승률 30.1% 수학적 입증. UI 상단 노출 및 비중 1.5배 확대)"
-        sig_type = "👑 [1티어] " + sig_type
-    elif total_score < 80.0 and cur_rs > 500 and cur_cpv <= 0.3:
-        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (밈 주식 돌발 펌핑 가능성. 비중 10% 미만 소액 진입 허용)"
-        sig_type = "💎 [로또] " + sig_type
-    else:
-        badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 뱃지 위주로 매매 요망"
-
+    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립 (V9.0 적용)
     v9_comment = (
         f"📊 [System B 미국 눌림목 V9.0 마스터 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
@@ -336,14 +351,18 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     
     if trap_warning != "": v9_comment += f"\n{trap_warning}"
     if weekday == 4: v9_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
-    elif weekday == 0: v9_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
+    elif weekday == 0: v9_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}",
+        "recommend": f"{exit_strategy}", # 👈 종목 맞춤형 동적 전략 저장!
         "v9_comment": v9_comment,
-        "score": total_score
+        "score": total_score,
+        "v_cpv": cur_cpv,
+        "v_yang": cur_tb,
+        "v_energy": cur_bbe,
+        "v_rs": cur_rs
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -538,7 +557,7 @@ def scan_market_1d():
                         if main_chart_path and promo_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
-                           # 1️⃣ 본캐용 캡션 (유료방용 - V9.0 뱃지, VIX 및 점수 브리핑 출력)
+                           # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V9.0 브리핑 출력)
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
                                 f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
@@ -546,7 +565,7 @@ def scan_market_1d():
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
                                 f"{dbg.get('v9_comment', '')}\n"
                                 f"📉 [스마트 매수/청산 전략]\n"
-                                f"- {dbg.get('recommend', '')}\n\n"
+                                f"{dbg.get('recommend', '')}\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
@@ -554,24 +573,25 @@ def scan_market_1d():
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                             )
                             q_main.put((main_chart_path, main_caption))
-# 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
+
+                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
                     try:
-                        import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
+                        import auto_forward_tester as aft
                         
-                        market_type = 'US' # 미국장 검색기에는 'US'로 변경!!
+                        market_type = 'US'
                         entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', cur_cpv),
-                            'v_yang': dbg.get('v_yang', cur_tb),
-                            'v_energy': dbg.get('v_energy', cur_bbe),
-                            'v_rs': dbg.get('v_rs', cur_rs)
+                            'v_cpv': dbg.get('v_cpv', 0),
+                            'v_yang': dbg.get('v_yang', 0),
+                            'v_energy': dbg.get('v_energy', 0),
+                            'v_rs': dbg.get('v_rs', 0)
                         }
                         
                         success, fwd_msg = aft.try_add_virtual_position(
                             market=market_type,
                             code=code,
                             name=name,
-                            sig_type=dbg.get('sig_type', sig_type),
-                            score=dbg.get('score', total_score), # 총점 매핑 확인
+                            sig_type=dbg.get('sig_type', ''),
+                            score=dbg.get('score', 0), 
                             ep=dbg.get('last_close', c[-1]),
                             facts=entry_facts
                         )
