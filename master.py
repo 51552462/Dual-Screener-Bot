@@ -337,13 +337,38 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
 
     total_score = min(max(total_score, 0), 100)
 
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
+    # 기획서 특급비밀3 (한국형 RS 급등 설거지 패턴) 및 극단적 소외주 로또 타점 완벽 반영
+    # =========================================================================
+    # 1. 캔들(CPV) 및 한국장 특유의 RS 델타 설거지 패턴 경고
+    if cur_cpv >= 0.70:
+        cpv_stat = f"현재 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
+        action = "💡 [한국장 특급 주의] 세력 특성상, 진입 이후 꽉 찬 양봉을 유지한 채 상대강도(RS)가 300점 이상 비정상적으로 급등한다면 100% 설거지 꼬시기 패턴입니다. 조금이라도 꺾이면 'ZLEMA 이탈' 시 3일 내 즉각 칼손절하여 계좌를 방어하십시오."
+    elif cur_cpv <= 0.40:
+        cpv_stat = f"꼬리가 길게 달린 매물 소화 캔들 (CPV {cur_cpv:.2f})"
+        action = f"세력이 단타 개미를 흔들면서 올라가는 진짜 대장주 패턴입니다. 가짜 휩소에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 1~2주간 추세를 끝까지 발라먹으십시오."
+    else:
+        cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
+        action = f"상승 시 '단기데드'로 수익 극대화, 하락 시 'ZLEMA 이탈'로 짧게 끊어내는 기계적 대응을 권장합니다."
+
+    # 2. 점수 티어 및 S4 극단적 소외주(로또) 타점 판별
+    if hit_4[-1] and cur_rs <= -1000:
+        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f}) 바닥권입니다. 평소 승률은 낮지만, 진입 직후 비정상적인 거래량 폭발이 동반되면 손익비 4.0~5.0 이상 터지는 텐배거 자리입니다. 비중을 대폭 줄여 로또용으로만 접근하십시오."
+    elif total_score >= 80:
+        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 방어력이 수학적으로 완벽히 입증되었습니다. 메인 비중 진입을 권장합니다."
+    else:
+        tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 한국형 가짜 돌파 휩소 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
+
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+
     # 💡 [V8.0 뱃지 및 특급 예외 시스템 로직]
     badge_str = ""
     if total_score >= 80.0:
         badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (대박 비율 84~85% / 참사 2~3% 최우선 매매)"
         sig_type = "👑 [1티어] " + sig_type
-    elif total_score <= 50.0 and cur_cpv <= 0.3:
-        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (매물 소화 완벽, 돌발 펌핑 가능성. 소액 접근)"
+    elif total_score <= 50.0 and cur_rs <= -1000 and cur_cpv <= 0.3:
+        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (매물 소화 완벽, 극단적 소외주 돌발 펌핑. 소액 로또 접근)"
         sig_type = "💎 [로또] " + sig_type
     else:
         badge_str = "⚠️ [비중 축소] 80점 미만은 가짜 휩소 확률이 높으므로 철저히 비중 축소 요망"
@@ -368,7 +393,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}",
+        "recommend": f"{exit_strategy}", # 👈 종목 맞춤형 동적 전략 저장!
         "v8_comment": v8_comment,
         "score": total_score,
         "v_cpv": cur_cpv,
@@ -541,7 +566,7 @@ def scan_market_1d():
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - V8.0 뱃지 및 점수 브리핑 출력)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V8.0 브리핑 출력)
                     main_caption = (
                         f"🎯 [{dbg_info.get('sig_type', '')}]\n"
                         f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
@@ -549,32 +574,33 @@ def scan_market_1d():
                         f"💰 현재가: {dbg_info.get('last_close', 0):,.0f}원\n\n"
                         f"{dbg_info.get('v8_comment', '')}\n"
                         f"📉 [스마트 매수/청산 전략]\n"
-                        f"- {dbg_info.get('recommend', '')}\n\n"
+                        f"{dbg_info.get('recommend', '')}\n\n"  # 💡 종목 맞춤형 전략 송출!
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                     )
                     q_main.put((main_chart_path, main_caption))
-# 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
+
+                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
                     try:
-                        import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
+                        import auto_forward_tester as aft
                         
-                        market_type = 'KR' # 미국장 검색기에는 'US'로 변경!!
+                        market_type = 'KR' 
                         entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', cur_cpv),
-                            'v_yang': dbg.get('v_yang', cur_tb),
-                            'v_energy': dbg.get('v_energy', cur_bbe),
-                            'v_rs': dbg.get('v_rs', cur_rs)
+                            'v_cpv': dbg_info.get('v_cpv', 0),
+                            'v_yang': dbg_info.get('v_yang', 0),
+                            'v_energy': dbg_info.get('v_energy', 0),
+                            'v_rs': dbg_info.get('v_rs', 0)
                         }
                         
                         success, fwd_msg = aft.try_add_virtual_position(
                             market=market_type,
                             code=code,
                             name=name,
-                            sig_type=dbg.get('sig_type', sig_type),
-                            score=dbg.get('score', total_score), # 총점 매핑 확인
-                            ep=dbg.get('last_close', c[-1]),
+                            sig_type=dbg_info.get('sig_type', ''),
+                            score=dbg_info.get('score', 0), 
+                            ep=dbg_info.get('last_close', c[-1]),
                             facts=entry_facts
                         )
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
