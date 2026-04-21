@@ -215,7 +215,10 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     # ⚠️ S2, S3, S4 배제 (오직 S1 스나이퍼 타점만 포착)
     finalSignal = alignFullBull & isBullish & isBodyCross5 & condVol & moneyOk & priceOk
 
-    if not finalSignal[-1]: 
+    # 💡 [버그 픽스] Pandas 인덱싱 에러(KeyError) 방지를 위해 Numpy로 안전하게 변환
+    finalSignal_arr = finalSignal.values if isinstance(finalSignal, pd.Series) else finalSignal
+
+    if not finalSignal_arr[-1]: 
         return False, "", df, {}
 
     # =========================================================================
