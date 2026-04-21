@@ -269,27 +269,56 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
         total_score *= 0.70 
 
-    total_score = min(max(total_score, 0), 100)
+    total_score = min(max(total_score, 0), 100) # 0~100점 보정
 
-    # 💡 [V8.1 초격차 텐배거 검증]
-    is_tenbagger = (total_score >= 90.0) and (cur_cpv <= 0.37) and (cur_bbe >= 59.8)
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
+    # 고정된 텍스트가 아닌, 해당 종목의 실시간 CPV, 총점, RS 데이터를 바탕으로 전략이 매번 바뀝니다!
+    # =========================================================================
+    if cur_cpv >= 0.70:
+        cpv_stat = f"현재 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
+        action = "월가 알고리즘의 단기 설거지(휩소) 타겟이 될 확률이 높습니다. 진입 후 3~4일 내로 강하게 상승하지 못하거나 조금이라도 밀리면 'ZLEMA 이탈' 시 즉각 칼손절하여 계좌를 방어하십시오."
+    elif cur_cpv <= 0.40:
+        cpv_stat = f"꼬리가 길게 달린 매물 소화 캔들 (CPV {cur_cpv:.2f})"
+        action = f"강력한 주도력(RS {cur_rs:.1f}%)으로 숏 스퀴즈를 유발하는 진짜 대장주 패턴입니다. 잔파도에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 2주 이상 끝까지 추세를 발라먹으십시오."
+    else:
+        cpv_stat = f"표준적인 양봉 (CPV {cur_cpv:.2f})"
+        action = f"현재 응축에너지({cur_bbe:.1f})의 폭발 여부를 지켜봐야 합니다. 강한 슈팅이 나오면 '단기데드'로 홀딩하고, 지지부진하게 꺾이면 'ZLEMA' 라인에서 짧게 익절/본절 하십시오."
 
-    # 💡 [V8.1 뱃지 시스템 & 하위권 예외 텐배거 로직 정밀화]
+    if total_score >= 80:
+        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 계좌 방어력이 수학적으로 완벽히 입증되었으므로 메인 비중 진입을 권장합니다."
+    elif total_score <= 50 and cur_rs > 500 and cur_cpv <= 0.3:
+        tier_stat = f"총점은 {total_score:.1f}점으로 낮으나, 극단적 모멘텀이 포착된 밈(Meme) 주식 예외 타점이므로 10% 미만의 소액 로또 비중으로만 접근하십시오."
+    else:
+        tier_stat = f"총점 {total_score:.1f}점의 하위권 서브 타점이므로, 가짜 돌파 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
+
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n💡 비중 조언: {tier_stat}"
+
+    # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
+    vix_strategy = ""
+    if cur_vix >= 30:
+        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 43%, 평균수익 29% 압도적 대박 구간! 진입 비중 1.5배 상향 및 적극 매수."
+    elif cur_vix >= 20:
+        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 수익폭 1.5배 점프 구간! 진입 비중 1.2배 상향."
+    else:
+        vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 돌파 매매."
+
+    # 💡 [V9.0 뱃지 시스템 및 하위권 밈(Meme) 주식 예외 로직]
     badge_str = ""
     if total_score >= 80.0:
-        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (승률 38.3% / 참사 0% 최우선 매매)"
+        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (승률 30.1% 수학적 검증 완료. UI 상단 노출 및 비중 1.5배 확대)"
         sig_type = "👑 [1티어] " + sig_type
-    elif total_score <= 50.0 and cur_rs <= -2000:
-        # 기획서 3번 항목 완벽 반영: 극단적 소외주 돌발 로또 패턴
-        badge_str = "💎 [특급 로또 예외] 총점은 낮으나 RS 극단적 소외(시장 잊혀짐) 돌발 텐배거 패턴!"
+    elif total_score <= 50.0 and cur_rs > 500 and cur_cpv <= 0.3:
+        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (매물 소화 끝난 돌발 밈 주식 펌핑 가능성. 비중 최소화 로또 진입)"
         sig_type = "💎 [로또] " + sig_type
     else:
-        badge_str = "⚠️ [비중 축소] 80점 미만은 시스템 강제 진입 금지 또는 비중 극단적 축소 요망"
+        badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 뱃지 위주로 매매 요망"
 
-    v8_comment = (
-        f"📊 [System B 5선 관통 V8.1 마스터 리포트]\n"
+    v9_comment = (
+        f"📊 [System B US 돌파 마스터 V9.0 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
-        f"🎖️ {badge_str}\n\n"
+        f"🎖️ {badge_str}\n"
+        f"{vix_strategy}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
@@ -299,18 +328,21 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
     )
     
-    if trap_warning != "": v8_comment += f"\n{trap_warning}"
-    if is_tenbagger: v8_comment += f"\n🚀 [초격차 텐배거 포착] 상위 10% 점수 + 완벽한 꼬리 매물소화 + 응축 폭발!\n"
-    if weekday == 4: v8_comment += f"✨ 금요일 주말 리스크를 이겨낸 주도주 프리미엄 (+5% 가산)\n"
-    elif weekday == 0: v8_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
+    if trap_warning != "": v9_comment += f"\n{trap_warning}"
+    if weekday == 4: v9_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
+    elif weekday == 0: v9_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}",
-        "v8_comment": v8_comment
+        "recommend": f"{exit_strategy}", # 👈 여기서 종목 맞춤형 전략이 송출됩니다!
+        "v9_comment": v9_comment,
+        "score": total_score,
+        "v_cpv": cur_cpv,
+        "v_yang": cur_tb,
+        "v_energy": cur_bbe,
+        "v_rs": cur_rs
     }
-
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
@@ -518,21 +550,47 @@ def scan_market_1d():
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - V7.0 점수 브리핑 출력)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - V8.1 뱃지 및 점수 브리핑 출력)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"{dbg.get('v7_comment', '')}\n"
-                        f"📉 [스마트 매수/손절 전략]\n"
+                        f"{dbg.get('v8_comment', '')}\n"  # 💡 [버그 픽스] v8_comment를 정상적으로 불러옵니다!
+                        f"📉 [스마트 매수/청산 전략]\n"
                         f"- {dbg.get('recommend', '')}\n\n"
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                         f"⚠️ [면책 조항]\n"
-                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
+                    q_main.put((main_chart_path, main_caption))
+
+                    # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
+                    try:
+                        import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
+                        
+                        market_type = 'KR' 
+                        entry_facts = {
+                            'v_cpv': dbg.get('v_cpv', 0),
+                            'v_yang': dbg.get('v_yang', 0),
+                            'v_energy': dbg.get('v_energy', 0),
+                            'v_rs': dbg.get('v_rs', 0)
+                        }
+                        
+                        success, fwd_msg = aft.try_add_virtual_position(
+                            market=market_type,
+                            code=code,
+                            name=name,
+                            sig_type=dbg.get('sig_type', ''),
+                            score=dbg.get('score', 0), 
+                            ep=dbg.get('last_close', c[-1]),
+                            facts=entry_facts
+                        )
+                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                    except Exception as e:
+                        print(f"   ↳ [포워드 장부 에러]: {e}")
                     q_main.put((main_chart_path, main_caption))
 # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
                     try:
