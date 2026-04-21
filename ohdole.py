@@ -158,8 +158,9 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] 5일선 관통 전용 마스터 시그널 엔진 (8,485건 팩트 대입)
-def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
-    if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
+def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marcap: float = 0.0):
+    if df_raw is None or len(df_raw) < 500: 
+        return False, "", df_raw, {}
     df = df_raw.copy()
     
     df['Idx_Close'] = idx_close
@@ -224,8 +225,30 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     # =========================================================================
     # 👑 [3단계] S1 스코어링 매핑 (V8.1 최신 팩트 데이터 100% 대입)
     # =========================================================================
+    # =========================================================================
+    # 👑 [3단계] S1 스코어링 매핑 시작 부분에 시총 계산 로직 추가
+    # =========================================================================
     recent_hits = finalSignal[-252:-1].sum() if len(c) > 252 else finalSignal[:-1].sum()
     freq_count = int(recent_hits)
+
+    # 👇👇 [여기서부터 추가] 동적 시가총액 분류 및 점수화 👇👇
+    marcap_eok = current_marcap / 100_000_000  # 억원 단위 변환
+    if marcap_eok >= 100000:
+        marcap_str = "① 10조 이상 (초대형주)"
+        score_marcap = 10.0
+    elif marcap_eok >= 10000:
+        marcap_str = "② 1조 이상 (대형주)"
+        score_marcap = 8.0
+    elif marcap_eok >= 5000:
+        marcap_str = "③ 5천억 이상 (중형주)"
+        score_marcap = 6.0
+    elif marcap_eok >= 1000:
+        marcap_str = "④ 1천억 이상 (소형주)"
+        score_marcap = 4.0
+    else:
+        marcap_str = "⑤ 1천억 미만 (초소형주)"
+        score_marcap = 2.0
+    # 👆👆 [여기까지 추가] 👆👆
 
     ema_stat_str = "승률 26.8% / 손익비 3.40 (대세 상승장, 본 스나이퍼 타점 100% 점유)"
 
@@ -317,9 +340,11 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     else:
         badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 뱃지 위주로 매매 요망"
 
-    v9_comment = (
-        f"📊 [System B US 돌파 마스터 V9.0 리포트]\n"
+    # 👇👇 기존 v9_comment 조립 부분을 아래 코드로 교체 (하드코딩 제거 완료) 👇👇
+    v11_comment = (
+        f"📊 [System B 5일선 스나이퍼 V11.0 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
+        f"🔹 시가총액: {marcap_str}\n"
         f"🎖️ {badge_str}\n"
         f"{vix_strategy}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
@@ -327,19 +352,19 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
         f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점)\n"
         f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
-        f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
+        f"▪️ 시총 체급점수: {score_marcap:.1f}점\n\n"
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
     )
     
-    if trap_warning != "": v9_comment += f"\n{trap_warning}"
-    if weekday == 4: v9_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
-    elif weekday == 0: v9_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
+    if trap_warning != "": v11_comment += f"\n{trap_warning}"
+    if weekday == 4: v11_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
+    elif weekday == 0: v11_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}", # 👈 여기서 종목 맞춤형 전략이 송출됩니다!
-        "v9_comment": v9_comment,
+        "recommend": f"{exit_strategy}", 
+        "v11_comment": v11_comment, # 👈 변수명을 확실하게 V11로 매핑
         "score": total_score,
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
@@ -496,13 +521,23 @@ def scan_market_1d():
 
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
 
-    # 💡 [추가] 벤치마크 지수 데이터 로드 (상대강도 계산용)
+    # 💡 [추가] 벤치마크 지수 데이터 로드 (상대강도 계산용) 바로 밑에 아래 코드를 추가하세요.
     print("📊 벤치마크 지수(KODEX ETF 대용) 데이터 안전하게 로드 중...")
     try:
         kospi_idx = fdr.DataReader('069500', start_date)['Close']
         kosdaq_idx = fdr.DataReader('229200', start_date)['Close']
     except:
         kospi_idx, kosdaq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
+        
+    # 👇👇 [여기서부터 추가] 실시간 시가총액 데이터 동적 로드 👇👇
+    print("💰 실시간 KRX 전체 시가총액 데이터 로드 중...")
+    try:
+        df_marcap = fdr.StockListing('KRX')
+        marcap_dict = df_marcap.set_index('Code')['Marcap'].to_dict()
+    except Exception as e:
+        print(f"⚠️ 시가총액 데이터 로드 실패: {e}")
+        marcap_dict = {}
+    # 👆👆 [여기까지 추가] 👆👆
     
     def worker(row_tuple):
         try:
@@ -517,10 +552,13 @@ def scan_market_1d():
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
             hit, sig_type, df, dbg = False, "", None, {}
             
+            # 기존 is_valid 조건문 안의 내용을 아래와 같이 교체하세요.
             if is_valid: 
-                # 💡 시장에 맞는 지수를 넘겨줌
+                # 💡 시장에 맞는 지수 및 시가총액을 넘겨줌 (current_marcap 추가)
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
-                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close)
+                current_marcap = marcap_dict.get(code, 0) 
+                
+                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close, current_marcap)
             
             # 🚨 아래 구형 오돌이 로직은 트뷰와 다르므로 주석 처리(비활성화) 합니다.
             # if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
@@ -553,15 +591,16 @@ def scan_market_1d():
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - V8.1 뱃지 및 점수 브리핑 출력)
+                    # 1️⃣ 본캐용 캡션 (기존 부분 찾아서 아래처럼 교체)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"{dbg.get('v8_comment', '')}\n"  # 💡 V8.1 팩트 데이터 정상 로드
+                        # 👇👇 치명적 버그 수정: v8_comment -> v11_comment로 변경 👇👇
+                        f"{dbg.get('v11_comment', '')}\n"  
                         f"📉 [스마트 매수/청산 전략]\n"
-                        f"{dbg.get('recommend', '')}\n\n" # 💡 종목 맞춤형 동적 전략 정상 로드
+                        f"{dbg.get('recommend', '')}\n\n" 
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
