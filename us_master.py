@@ -553,7 +553,6 @@ def scan_market_1d():
     # 💡 'Market' 정보를 딕셔너리에 함께 저장합니다.
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name'], 'market': row['Market']} for _, row in stock_list.iterrows()}
     
-    ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     chunk_size = 100 
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
@@ -656,9 +655,10 @@ def scan_market_1d():
                             market=market_type,
                             code=code,
                             name=name,
-                            sig_type=dbg_info.get('sig_type', ''),
-                            score=dbg_info.get('score', 0), 
-                            ep=dbg_info.get('last_close', c[-1]),
+                            sig_type=dbg.get('sig_type', ''),
+                            score=dbg.get('score', 0), 
+                            # 👇👇 [수정] 스코프 밖에 있는 c[-1]을 0으로 변경 👇👇
+                            ep=dbg.get('last_close', 0), 
                             facts=entry_facts
                         )
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
