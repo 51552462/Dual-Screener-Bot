@@ -249,28 +249,31 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
             is_candle_bottom = False
 
     # =========================================================================
-    # 👑 [2단계] V9.0 시그널 확정 (S2, S3 월가 숏 타겟 원천 차단)
+    # 👑 [2단계] 트뷰 원본 시그널 확정 및 상호 배제 로직 (100% 동일 매핑)
     # =========================================================================
-    df['VIX_Close'] = vix_close.reindex(df.index).ffill() # 💡 VIX 지수 매핑
+    df['VIX_Close'] = vix_close.reindex(df.index).ffill() # VIX 지수 매핑
     
-    raw_sig_s3 = is_aligned_112 & cond_val_sig1 & cond_rising
-    raw_sig_s2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
-    raw_sig_s1 = is_aligned_448 & cond_val_sig2_3 & cond_rising
-    raw_sig_s4 = (~is_aligned_112) & (tb_index >= 15.0) & (vol_mult >= 2.0) & is_bullish
+    # 1. 트레이딩뷰 원본 그대로 raw_sig 계산 (112, 224, 448, V반등)
+    tv_raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
+    tv_raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
+    tv_raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+    tv_raw_sig4 = raw_sig4_arr # 👈 50도 이상 V반등 각도 로직 버그 픽스 및 연결
 
-    signal_1 = raw_sig_s1
-    signal_2 = raw_sig_s2 & ~signal_1
-    signal_3 = raw_sig_s3 & ~signal_2 & ~signal_1
-    signal_4 = raw_sig_s4 & ~signal_1 & ~signal_2 & ~signal_3
+    # 2. 트레이딩뷰 상호 배제 로직 (겹침 방지: S3 > S2 > S1 > S4)
+    tv_signal_3 = tv_raw_sig3
+    tv_signal_2 = tv_raw_sig2 & ~tv_signal_3
+    tv_signal_1 = tv_raw_sig1 & ~tv_signal_2 & ~tv_signal_3
+    tv_signal_4 = tv_raw_sig4 & ~tv_signal_1 & ~tv_signal_2 & ~tv_signal_3
 
     moneyOk = (c * v) >= 5_000_000
     priceOk = c >= 3.0
 
-    # 💡 [V9.0 핵심] 참사 리스크(월가 공매도 타겟)가 큰 S2, S3는 과감히 비활성화합니다.
-    hit_s1 = signal_1 & moneyOk & priceOk # S1 대세추세
-    hit_s2 = pd.Series(False, index=df.index) # 👈 S2 차단
-    hit_s3 = pd.Series(False, index=df.index) # 👈 S3 차단
-    hit_s4 = signal_4 & moneyOk & priceOk # S4 바닥탈출
+    # 3. 파이썬 직관적 변수명 매핑 및 컷오프
+    # 💡 [V9.0 핵심] 미국장 역시 월가 숏 타겟(S2, S3)은 명시적으로 차단합니다.
+    hit_s1 = tv_signal_3 & moneyOk & priceOk      # S1 대세추세 (트뷰 signal_3)
+    hit_s2 = pd.Series(False, index=df.index)     # 트뷰 signal_2 👈 차단
+    hit_s3 = pd.Series(False, index=df.index)     # 트뷰 signal_1 👈 차단
+    hit_s4 = tv_signal_4 & moneyOk & priceOk      # S4 바닥탈출 (트뷰 signal_4)
 
     final_hit = hit_s1 | hit_s2 | hit_s3 | hit_s4
 
