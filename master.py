@@ -257,7 +257,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     tv_raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
     tv_raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
     tv_raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
-    tv_raw_sig4 = raw_sig4_arr # 👈 50도 이상 V반등 각도 로직 정확히 연결
+    tv_raw_sig4 = raw_sig4_arr 
 
     # 2. 트레이딩뷰 상호 배제 로직 (겹침 방지: S3 > S2 > S1 > S4)
     tv_signal_3 = tv_raw_sig3
@@ -268,18 +268,17 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
 
-    # 3. 파이썬 직관적 변수명 매핑 및 컷오프
-    # 💡 기획서에 맞춰 확실한 S1(대세추세 448선)과 S4(바닥탈출)만 타점으로 잡습니다.
-    # 윗꼬리 휩소 위험이 큰 S2(224선)와 S3(112선)는 전면 배제(False)합니다.
-    hit_1 = pd.Series(False, index=df.index)     # 👈 트뷰 signal_1 차단
-    hit_2 = pd.Series(False, index=df.index)     # 👈 트뷰 signal_2 차단
-    hit_3 = pd.Series(tv_signal_3, index=df.index) & moneyOk & priceOk  # S1 대세추세 (트뷰 signal_3)
-    hit_4 = pd.Series(tv_signal_4, index=df.index) & moneyOk & priceOk  # S4 바닥탈출 (트뷰 signal_4)
+    # 3. 파이썬 직관적 변수명 매핑 및 컷오프 (Numpy 최적화 및 에러 완벽 차단)
+    # 💡 [팩트체크]: 트뷰의 signal_3(448선) = 기획서의 S1(대세추세) 이므로 연결합니다!
+    hit_1 = np.zeros(len(c), dtype=bool) # S3(112선) 참사 휩소 방지용 강제 차단
+    hit_2 = np.zeros(len(c), dtype=bool) # S2(224선) 참사 휩소 방지용 강제 차단
+    hit_3 = tv_signal_3 & moneyOk & priceOk  # S1 대세추세 (트뷰 signal_3 맵핑)
+    hit_4 = tv_signal_4 & moneyOk & priceOk  # S4 바닥탈출 (트뷰 signal_4 맵핑)
 
     final_hit = hit_1 | hit_2 | hit_3 | hit_4
 
-    if not final_hit.iloc[-1]: return False, "", df, {}
-    if final_hit.iloc[-4:-1].any(): return False, "", df, {}
+    if not final_hit[-1]: return False, "", df, {}
+    if np.any(final_hit[-4:-1]): return False, "", df, {}
 
     # =========================================================================
     # 👑 [3단계] S1, S4 스코어링 매핑 (V8.0 기준)
