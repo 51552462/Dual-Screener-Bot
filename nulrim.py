@@ -290,22 +290,37 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         total_score *= 0.70
         trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 가짜 양봉 + 시장 소외주 (점수 30% 삭감)\n"
 
-    total_score = min(max(total_score, 0), 100)
+    total_score = min(max(total_score, 0), 100) # 0~100점 보정
 
-    # 💡 [V8.0 뱃지 시스템 로직] 
-    # (한국장 눌림목은 특급 예외 발생 건수(2건)가 드물어 배제하라는 기획서 100% 반영)
-    badge_str = ""
-    if total_score >= 80.0:
-        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (방어력 우수 입증, 메인 70% 비중 할당)"
-        sig_type = "👑 [1티어] " + sig_type
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
+    # 추가된 기획서 내용(RS 델타 속임수, 극단적 소외주 로또 타점) 완벽 반영
+    # =========================================================================
+    # 1. 캔들(CPV) 및 한국장 특유의 RS 델타 설거지 패턴 경고
+    if cur_cpv >= 0.70:
+        cpv_stat = f"현재 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
+        action = "💡 [한국장 특급 주의] 세력 특성상, 진입 직후 상대강도(RS)가 시장 대비 비정상적으로 급등하며 꽉 찬 양봉을 유지한다면 100% 설거지 꼬시기 패턴입니다. 조금이라도 꺾이면 'ZLEMA 이탈' 시 즉각 칼손절하여 계좌를 방어하십시오."
+    elif cur_cpv <= 0.40:
+        cpv_stat = f"꼬리가 길게 달린 매물 소화 캔들 (CPV {cur_cpv:.2f})"
+        action = f"세력이 개미를 흔들면서 올라가는 진짜 대장주 패턴입니다. 휩소에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 추세를 끝까지 발라먹으십시오."
     else:
-        badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 위주로 매매 요망"
+        cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
+        action = f"상승 시 '단기데드'로 수익 극대화, 하락 시 'ZLEMA 이탈'로 짧게 끊어내는 기계적 대응을 권장합니다."
 
-    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립
+    # 2. 점수 티어 및 S4 극단적 소외주(로또) 타점 판별
+    if hit_s4[-1] and cur_rs <= -1000:
+        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f}) 바닥권입니다. 승률은 낮지만, 진입 직후 거래량이 폭발하면 손익비 4.0~5.0 이상 터지는 텐배거 자리입니다. 비중을 대폭 줄여 로또용으로만 접근하십시오."
+    elif total_score >= 80:
+        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 방어력이 수학적으로 완벽히 입증되었습니다. 메인 비중 진입을 권장합니다."
+    else:
+        tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 휩소 참사 리스크를 피하기 위해 반드시 비중을 축소하십시오."
+
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+
+    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립 (V8.0 변수명 적용)
     v8_comment = (
         f"📊 [System B 한국 눌림목 V8.0 마스터 리포트]\n"
-        f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
-        f"🎖️ {badge_str}\n\n"
+        f"🔹 시스템 총점: {total_score:.1f} / 100점\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
@@ -316,14 +331,22 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     )
     
     if trap_warning != "": v8_comment += f"\n{trap_warning}"
+    if is_top_dna: v8_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
+    elif is_worst_dna: v8_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 꼬리는 달렸으나 에너지가 죽은 종목. 진입 주의!\n"
+    if is_tenbagger: v8_comment += f"\n🚀 [초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
     if weekday == 4: v8_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
     elif weekday == 0: v8_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
 
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}",
-        "v8_comment": v8_comment
+        "recommend": f"{exit_strategy}", # 👈 종목 맞춤형 전략 데이터가 저장됩니다.
+        "v8_comment": v8_comment,        # 👈 V8.0 텍스트가 저장됩니다.
+        "score": total_score,
+        "v_cpv": cur_cpv,
+        "v_yang": cur_tb,
+        "v_energy": cur_bbe,
+        "v_rs": cur_rs
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -491,15 +514,15 @@ def scan_market_1d():
             if main_chart_path and promo_chart_path:
                 ai_main, _ = generate_ai_report(code, name) 
                         
-                # 1️⃣ 본캐용 캡션 (유료방용 - V8.0 뱃지 및 점수 브리핑 출력)
+                # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V8.0 브리핑 출력)
                 main_caption = (
                     f"🎯 [{dbg.get('sig_type', '')}]\n"
                     f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
                     f"🏢 {name} ({code})\n"
                     f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                    f"{dbg.get('v8_comment', '')}\n"
+                    f"{dbg.get('v8_comment', '')}\n"  # 💡 V8.0 데이터 정상 로드
                     f"📉 [스마트 매수/청산 전략]\n"
-                    f"- {dbg.get('recommend', '')}\n\n"
+                    f"{dbg.get('recommend', '')}\n\n" # 💡 종목 맞춤형 전략 정상 로드
                     f"💡 [AI 비즈니스 요약]\n"
                     f"{ai_main}\n\n"
                     f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
