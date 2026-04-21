@@ -556,20 +556,22 @@ def scan_market_1d():
                         f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
                         f"🏢 {name} ({code})\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"{dbg.get('v8_comment', '')}\n"  # 💡 [버그 픽스] v8_comment를 정상적으로 불러옵니다!
+                        f"{dbg.get('v8_comment', '')}\n"  # 💡 V8.1 팩트 데이터 정상 로드
                         f"📉 [스마트 매수/청산 전략]\n"
-                        f"- {dbg.get('recommend', '')}\n\n"
+                        f"{dbg.get('recommend', '')}\n\n" # 💡 종목 맞춤형 동적 전략 정상 로드
                         f"💡 [AI 비즈니스 요약]\n"
                         f"{ai_main}\n\n"
                         f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
+                    
+                    # 💡 캡션 큐에 1회만 정확히 담습니다.
                     q_main.put((main_chart_path, main_caption))
 
-                    # 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
+                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스 및 중복 제거]
                     try:
-                        import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
+                        import auto_forward_tester as aft
                         
                         market_type = 'KR' 
                         entry_facts = {
