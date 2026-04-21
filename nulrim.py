@@ -237,11 +237,18 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
 
     cond_base = moneyOk & priceOk
 
+    # 💡 [버그 픽스] Pandas 인덱싱 에러(KeyError) 방지를 위해 Numpy 배열로 값 추출
+    cond_base_arr = cond_base.values if isinstance(cond_base, pd.Series) else cond_base
+    s1_arr = s1.values if isinstance(s1, pd.Series) else s1
+    s4_arr = s4.values if isinstance(s4, pd.Series) else s4
+    s6_arr = s6.values if isinstance(s6, pd.Series) else s6
+    s7_arr = s7.values if isinstance(s7, pd.Series) else s7
+
     # 💡 S2, S3 배제! 오직 S1, S4, S6, S7만 명시적 분리 포착
-    hit_s1 = s1[-1] and cond_base[-1]
-    hit_s4 = s4[-1] and cond_base[-1]
-    hit_s6 = s6[-1] and cond_base[-1]
-    hit_s7 = s7[-1] and cond_base[-1]
+    hit_s1 = s1_arr[-1] and cond_base_arr[-1]
+    hit_s4 = s4_arr[-1] and cond_base_arr[-1]
+    hit_s6 = s6_arr[-1] and cond_base_arr[-1]
+    hit_s7 = s7_arr[-1] and cond_base_arr[-1]
 
     if not (hit_s1 or hit_s4 or hit_s6 or hit_s7): 
         return False, "", df, {}
