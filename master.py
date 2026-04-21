@@ -121,31 +121,35 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 3. 잡주 필터 (시가총액 데이터 추가)
+# 💡 3. 잡주 필터 및 시가총액 병합 (안전성 100% 보장형)
 def get_krx_list_kind():
     try:
-        df = fdr.StockListing('KRX')
-        df['Code'] = df['Code'].astype(str).str.zfill(6)
+        # 💡 [핵심 픽스] 이전 눌림목 검색기에서 검증된 KIND 베이스 + FDR 시총 병합 방식 이식
+        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
+        df_ks['Market'] = 'KOSPI'
+        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
+        df_kq['Market'] = 'KOSDAQ'
+        df = pd.concat([df_ks, df_kq])
+        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
+        df = df.rename(columns={'회사명': 'Name'})
+        
         junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
         filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
         
-        # 💡 [V11.0] 시가총액(Marcap) 데이터 추출
-        if 'Marcap' not in filtered_df.columns: filtered_df['Marcap'] = 0
-        return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
-    except Exception as e:
-        # 안전망: FDR 오류 시 기존 KIND 방식으로 우회
+        # 시가총액(Marcap) 데이터 안전 조인
         try:
-            df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
-            df_ks['Market'] = 'KOSPI'
-            df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
-            df_kq['Market'] = 'KOSDAQ'
-            df = pd.concat([df_ks, df_kq])
-            df['Code'] = df['종목코드'].astype(str).str.zfill(6)
-            df = df.rename(columns={'회사명': 'Name'})
-            filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
+            fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
+            fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6) 
+            filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
+            filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
+            print("✅ 시가총액(Marcap) 데이터 정상 조인 완료!")
+        except Exception as e:
+            print(f"⚠️ 시가총액 데이터 조인 실패 (API 서버 문제): {e}")
             filtered_df['Marcap'] = 0
-            return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
-        except: return pd.DataFrame()
+            
+        return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
+    except: 
+        return pd.DataFrame()
 
 # 💡 보조 함수 1: 1~10점 스케일링 함수 (방향성 완벽 지원)
 def scale_score(val, best, worst):
@@ -545,16 +549,19 @@ def scan_market_1d():
                             'v_rs': dbg.get('v_rs', 0)
                         }
                         
+                        # 👇👇 [수정해야 할 부분] 포워드 테스팅 시스템 호출부 👇👇
                         success, fwd_msg = aft.try_add_virtual_position(
                             market=market_type,
                             code=code,
                             name=name,
                             sig_type=dbg.get('sig_type', ''),
                             score=dbg.get('score', 0), 
-                            ep=dbg.get('last_close', c[-1]),
+                            # 💡 [핵심 픽스] 스코프 밖에 있는 c[-1] 참조 제거. 0으로 안전하게 예외처리!
+                            ep=dbg.get('last_close', 0), 
                             facts=entry_facts
                         )
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                        # 👆👆 [여기까지 덮어쓰기] 👆👆
                     except Exception as e:
                         print(f"   ↳ [포워드 장부 에러]: {e}")
 
