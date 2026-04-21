@@ -574,9 +574,9 @@ def scan_market_1d():
                     f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
                     f"🏢 {name} ({code})\n"
                     f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                    f"{dbg.get('v8_comment', '')}\n"  # 💡 V8.0 데이터 정상 로드
+                    f"{dbg.get('v8_comment', '')}\n"
                     f"📉 [스마트 매수/청산 전략]\n"
-                    f"{dbg.get('recommend', '')}\n\n" # 💡 종목 맞춤형 전략 정상 로드
+                    f"{dbg.get('recommend', '')}\n\n"
                     f"💡 [AI 비즈니스 요약]\n"
                     f"{ai_main}\n\n"
                     f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
@@ -584,30 +584,32 @@ def scan_market_1d():
                     f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                 )
                 q_main.put((main_chart_path, main_caption))
-# 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
-                    try:
-                        import auto_forward_tester as aft
-                        
-                        market_type = 'KR' 
-                        entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', 0),
-                            'v_yang': dbg.get('v_yang', 0),
-                            'v_energy': dbg.get('v_energy', 0),
-                            'v_rs': dbg.get('v_rs', 0)
-                        }
-                        
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', ''),
-                            score=dbg.get('score', 0), 
-                            ep=dbg.get('last_close', c[-1]),
-                            facts=entry_facts
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
+
+                # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
+                try:
+                    import auto_forward_tester as aft
+                    
+                    market_type = 'KR' 
+                    entry_facts = {
+                        'v_cpv': dbg.get('v_cpv', 0),
+                        'v_yang': dbg.get('v_yang', 0),
+                        'v_energy': dbg.get('v_energy', 0),
+                        'v_rs': dbg.get('v_rs', 0)
+                    }
+                    
+                    success, fwd_msg = aft.try_add_virtual_position(
+                        market=market_type,
+                        code=code,
+                        name=name,
+                        sig_type=dbg.get('sig_type', ''),
+                        score=dbg.get('score', 0), 
+                        ep=dbg.get('last_close', c[-1]),
+                        facts=entry_facts
+                    )
+                    print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                except Exception as e:
+                    print(f"   ↳ [포워드 장부 에러]: {e}")
+
                 # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                 try:
                     sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
@@ -619,7 +621,7 @@ def scan_market_1d():
                     f"📈 [알고리즘 차트 포착]\n\n"
                     f"🏢 종목: {name} ({code})\n"
                     f"🏷️ 섹터: {sector_info}\n"
-                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
                 )
                 q_promo.put((promo_chart_path, promo_caption))
                 
