@@ -235,12 +235,20 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
 
     cond_base = moneyOk & priceOk
 
+    cond_base = moneyOk & priceOk
+
     # 💡 [V9.0 업데이트] S3, S6, S7 배제! 오직 S1(대세추세), S2(급등눌림), S4(바닥탈출)만 타점으로 잡음
     df['VIX_Close'] = vix_close.reindex(df.index).ffill() # VIX 지수 매핑
     
-    hit_s1 = s1[-1] and cond_base[-1]
-    hit_s2 = s2[-1] and cond_base[-1]
-    hit_s4 = s4[-1] and cond_base[-1]
+    # 💡 [버그 픽스] Pandas 인덱싱 에러(KeyError) 방지를 위해 Numpy 배열로 값 추출
+    cond_base_arr = cond_base.values if isinstance(cond_base, pd.Series) else cond_base
+    s1_arr = s1.values if isinstance(s1, pd.Series) else s1
+    s2_arr = s2.values if isinstance(s2, pd.Series) else s2
+    s4_arr = s4.values if isinstance(s4, pd.Series) else s4
+
+    hit_s1 = s1_arr[-1] and cond_base_arr[-1]
+    hit_s2 = s2_arr[-1] and cond_base_arr[-1]
+    hit_s4 = s4_arr[-1] and cond_base_arr[-1]
 
     if not (hit_s1 or hit_s2 or hit_s4): 
         return False, "", df, {}
