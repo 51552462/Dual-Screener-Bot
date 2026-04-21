@@ -114,12 +114,16 @@ def track_daily_positions(market):
             if c > o: r['Up_Vol_Sum'] += float(v)
             elif c < o: r['Down_Vol_Sum'] += float(v)
 
+            # 👇👇 [수정된 안전한 지표 계산 로직] 👇👇
             # 지표 계산 (청산 룰)
             df['ema10'] = df['Close'].ewm(span=10, adjust=False).mean()
             df['ema20'] = df['Close'].ewm(span=20, adjust=False).mean()
-            z_ema1 = ta.ema(df['Close'].squeeze(), length=20)
-            z_ema2 = ta.ema(z_ema1, length=20)
+            
+            # Pandas 기본 함수를 활용하여 ZLEMA를 100% 안전하게 직접 계산합니다.
+            z_ema1 = df['Close'].ewm(span=20, adjust=False).mean()
+            z_ema2 = z_ema1.ewm(span=20, adjust=False).mean()
             cur_zlema = float((z_ema1 + (z_ema1 - z_ema2)).iloc[-1])
+            # 👆👆 [여기까지 덮어쓰기] 👆👆
 
             do_exit, exit_rsn = False, ""
             
