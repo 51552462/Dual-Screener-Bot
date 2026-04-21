@@ -137,9 +137,13 @@ def get_krx_list_kind():
         # 💡 [V11.0] 시가총액(Marcap) 데이터 추출 (fdr을 통해 안전하게 조인)
         try:
             fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
+            # 💡 [핵심 픽스] 양쪽 데이터의 'Code'를 강제로 6자리 문자열로 일치시켜 병합 누락(NaN -> 0원 처리) 원천 차단
+            fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6) 
             filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
             filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
-        except:
+            print("✅ 시가총액(Marcap) 데이터 정상 조인 완료!")
+        except Exception as e:
+            print(f"⚠️ 시가총액 데이터 로드 실패 (API 서버 문제): {e}")
             filtered_df['Marcap'] = 0
             
         return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
@@ -615,6 +619,7 @@ def scan_market_1d():
                 q_main.put((main_chart_path, main_caption))
 
                 # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
+                # 👇👇 [수정해야 할 부분] try_add_virtual_position 호출부를 아래 코드로 교체하세요. 👇👇
                 try:
                     import auto_forward_tester as aft
                     
@@ -632,12 +637,14 @@ def scan_market_1d():
                         name=name,
                         sig_type=dbg.get('sig_type', ''),
                         score=dbg.get('score', 0), 
-                        ep=dbg.get('last_close', c[-1]),
+                        # 💡 [핵심 픽스] c[-1]은 스코프(범위) 밖이라 에러가 납니다. 안전하게 0으로 예외 처리.
+                        ep=dbg.get('last_close', 0), 
                         facts=entry_facts
                     )
                     print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                 except Exception as e:
                     print(f"   ↳ [포워드 장부 에러]: {e}")
+                # 👆👆 [여기까지 덮어쓰기] 👆👆
 
                 # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                 try:
