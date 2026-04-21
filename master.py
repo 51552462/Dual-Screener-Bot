@@ -226,7 +226,9 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
         rs = (stock_ret / idx_ret) * 100
     rs = np.nan_to_num(rs, nan=0.0)
 
-    # 💡 [S4 하이브리드 엔진] 파인스크립트 V반등각도 결합
+    # ---------------------------------------------------------
+    # 💡 [S4 하이브리드 엔진] 트레이딩뷰 V반등각도 100% 동기화
+    # ---------------------------------------------------------
     c_3 = np.roll(c, 3)
     c_3[:3] = c[:3]
     candle_roc = np.where(c_3 != 0, ((c - c_3) / c_3) * 1000, 0)
@@ -242,35 +244,11 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     for i in range(len(c)):
         if candle_angle[i] <= 0:
             is_candle_bottom = True
+        
+        # 🚨 [버그 픽스 완료] 너무 빡빡했던 과거 좀비 필터 제거, 트뷰 원본 로직 완벽 복원
         if is_candle_bottom and candle_angle[i] >= 50 and is_aligned_30[i] and is_bullish[i]:
-            if (not is_aligned_112[i]) and tb_index[i] >= 15.0 and vol_mult[i] >= 2.0:
-                raw_sig4_arr[i] = True
-                is_candle_bottom = False
-
-    raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
-    raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
-    raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
-    raw_sig4 = raw_sig4_arr
-
-    signal_3 = raw_sig3
-    signal_2 = raw_sig2 & ~signal_3
-    signal_1 = raw_sig1 & ~signal_2 & ~signal_3
-    signal_4 = raw_sig4 & ~signal_1 & ~signal_2 & ~signal_3
-
-    moneyOk = (c * v) >= 100_000_000
-    priceOk = c >= 1000
-
-    # 💡 [V8.0 업데이트] 윗꼬리 설거지 확률이 높은 S2(단기급등), S3(과열권)는 전면 배제!
-    # 오직 확실한 S1(대세추세 448선)과 S4(바닥탈출) 2가지만 타점으로 잡습니다.
-    hit_1 = pd.Series(False, index=df.index) # S3 완벽 차단
-    hit_2 = pd.Series(False, index=df.index) # S2 완벽 차단
-    hit_3 = signal_3 & moneyOk & priceOk # S1 대세추세 (트뷰 signal_3)
-    hit_4 = signal_4 & moneyOk & priceOk # S4 바닥탈출 (트뷰 signal_4)
-
-    final_hit = hit_1 | hit_2 | hit_3 | hit_4
-
-    if not final_hit[-1]: return False, "", df, {}
-    if final_hit[-4:-1].any(): return False, "", df, {} 
+            raw_sig4_arr[i] = True
+            is_candle_bottom = False
 
     # =========================================================================
     # 👑 [2단계] 트뷰 원본 시그널 확정 및 상호 배제 로직 (100% 동일 매핑)
@@ -291,16 +269,17 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     priceOk = c >= 1000
 
     # 3. 파이썬 직관적 변수명 매핑 및 컷오프
-    # 트뷰의 signal_3(448일선)이 우리 기획서의 'S1 대세추세' 입니다.
-    hit_1 = pd.Series(False, index=df.index)     # 트뷰 signal_1 (112일선) 👈 윗꼬리 참사 위험으로 차단
-    hit_2 = pd.Series(False, index=df.index)     # 트뷰 signal_2 (224일선) 👈 윗꼬리 참사 위험으로 차단
-    hit_3 = tv_signal_3 & moneyOk & priceOk      # S1 대세추세 (트뷰 signal_3)
-    hit_4 = tv_signal_4 & moneyOk & priceOk      # S4 바닥탈출 (트뷰 signal_4)
+    # 💡 기획서에 맞춰 확실한 S1(대세추세 448선)과 S4(바닥탈출)만 타점으로 잡습니다.
+    # 윗꼬리 휩소 위험이 큰 S2(224선)와 S3(112선)는 전면 배제(False)합니다.
+    hit_1 = pd.Series(False, index=df.index)     # 👈 트뷰 signal_1 차단
+    hit_2 = pd.Series(False, index=df.index)     # 👈 트뷰 signal_2 차단
+    hit_3 = pd.Series(tv_signal_3, index=df.index) & moneyOk & priceOk  # S1 대세추세 (트뷰 signal_3)
+    hit_4 = pd.Series(tv_signal_4, index=df.index) & moneyOk & priceOk  # S4 바닥탈출 (트뷰 signal_4)
 
     final_hit = hit_1 | hit_2 | hit_3 | hit_4
 
-    if not final_hit[-1]: return False, "", df, {}
-    if final_hit[-4:-1].any(): return False, "", df, {}
+    if not final_hit.iloc[-1]: return False, "", df, {}
+    if final_hit.iloc[-4:-1].any(): return False, "", df, {}
 
     # =========================================================================
     # 👑 [3단계] S1, S4 스코어링 매핑 (V8.0 기준)
