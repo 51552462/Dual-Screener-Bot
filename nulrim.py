@@ -132,9 +132,19 @@ def get_krx_list_kind():
         df = pd.concat([df_ks, df_kq])
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
-        return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
+        filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
+        
+        # 💡 [V11.0] 시가총액(Marcap) 데이터 추출 (fdr을 통해 안전하게 조인)
+        try:
+            fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
+            filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
+            filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
+        except:
+            filtered_df['Marcap'] = 0
+            
+        return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
     except: return pd.DataFrame()
-
+        
 MIN_PRICE = 1000                  
 MIN_TRANS_MONEY = 100_000_000  
 
