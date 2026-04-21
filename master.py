@@ -273,13 +273,34 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series):
     if final_hit[-4:-1].any(): return False, "", df, {} 
 
     # =========================================================================
-    # 👑 [2단계] 매매 빈도 측정 및 이평선 데이터 통계 (V8.0 팩트 대입)
+    # 👑 [2단계] 트뷰 원본 시그널 확정 및 상호 배제 로직 (100% 동일 매핑)
     # =========================================================================
-    recent_hits = final_hit[-252:-1].sum() if len(final_hit) > 252 else final_hit[:-1].sum()
-    freq_count = int(recent_hits)
+    # 1. 트레이딩뷰 원본 그대로 raw_sig 계산 (112, 224, 448, V반등)
+    tv_raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
+    tv_raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
+    tv_raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+    tv_raw_sig4 = raw_sig4_arr # 👈 50도 이상 V반등 각도 로직 정확히 연결
 
-    if is_aligned_448[-1]: ema_stat_str = "승률 27.3% / 손익비 3.24 (승률 1위, 대세 상승장)"
-    else: ema_stat_str = "승률 24.0% / 손익비 2.96 (역배열/혼조세 찐바닥 탈출 구간)"
+    # 2. 트레이딩뷰 상호 배제 로직 (겹침 방지: S3 > S2 > S1 > S4)
+    tv_signal_3 = tv_raw_sig3
+    tv_signal_2 = tv_raw_sig2 & ~tv_signal_3
+    tv_signal_1 = tv_raw_sig1 & ~tv_signal_2 & ~tv_signal_3
+    tv_signal_4 = tv_raw_sig4 & ~tv_signal_1 & ~tv_signal_2 & ~tv_signal_3
+
+    moneyOk = (c * v) >= 100_000_000
+    priceOk = c >= 1000
+
+    # 3. 파이썬 직관적 변수명 매핑 및 컷오프
+    # 트뷰의 signal_3(448일선)이 우리 기획서의 'S1 대세추세' 입니다.
+    hit_1 = pd.Series(False, index=df.index)     # 트뷰 signal_1 (112일선) 👈 윗꼬리 참사 위험으로 차단
+    hit_2 = pd.Series(False, index=df.index)     # 트뷰 signal_2 (224일선) 👈 윗꼬리 참사 위험으로 차단
+    hit_3 = tv_signal_3 & moneyOk & priceOk      # S1 대세추세 (트뷰 signal_3)
+    hit_4 = tv_signal_4 & moneyOk & priceOk      # S4 바닥탈출 (트뷰 signal_4)
+
+    final_hit = hit_1 | hit_2 | hit_3 | hit_4
+
+    if not final_hit[-1]: return False, "", df, {}
+    if final_hit[-4:-1].any(): return False, "", df, {}
 
     # =========================================================================
     # 👑 [3단계] S1, S4 스코어링 매핑 (V8.0 기준)
