@@ -699,6 +699,12 @@ def scan_market_1d():
             
             if main_chart_path and promo_chart_path:
                 ai_main, _ = generate_ai_report(code, name) 
+
+                # 💡 1. [순서 픽스] 섹터(sector_info)를 가장 먼저 추출합니다.
+                            try:
+                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                            except:
+                                sector_info = "유망 섹터 포착"
                         
                 # 1️⃣ 본캐용 캡션 (유료방용 - V11.0 브리핑 출력)
                 main_caption = (
@@ -750,11 +756,7 @@ def scan_market_1d():
                 # 👆👆 [여기까지 덮어쓰기] 👆👆
 
                 # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                try:
-                    sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                except:
-                    sector_info = "유망 섹터 포착"
-
+        
                 promo_caption = (
                     f"📈 [알고리즘 차트 포착]\n\n"
                     f"🏢 종목: {name} ({code})\n"
