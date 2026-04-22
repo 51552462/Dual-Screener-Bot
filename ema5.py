@@ -691,7 +691,13 @@ def scan_market_1d():
                 
                 if main_chart_path and promo_chart_path:
                     ai_main, _ = generate_ai_report(code, name)
-                    
+
+                    # 💡 1. [순서 픽스] 섹터(sector_info)를 가장 먼저 추출합니다.
+                            try:
+                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                            except:
+                                sector_info = "유망 섹터 포착"
+                                
                     # 1️⃣ 본캐용 캡션 (기존 부분 찾아서 아래처럼 교체)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
@@ -712,73 +718,39 @@ def scan_market_1d():
                     # 💡 캡션 큐에 1회만 정확히 담습니다.
                     q_main.put((main_chart_path, main_caption))
 
-                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스 및 중복 제거]
-                    try:
-                        import auto_forward_tester as aft
-                        
-                        market_type = 'KR' 
-                        entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', 0),
-                            'v_yang': dbg.get('v_yang', 0),
-                            'v_energy': dbg.get('v_energy', 0),
-                            'v_rs': dbg.get('v_rs', 0),
-                            'dyn_rs': dbg.get('dyn_rs_score', 0),
-                            'dyn_cpv': dbg.get('dyn_cpv_score', 0),
-                            'dyn_tb': dbg.get('dyn_tb_score', 0)
-                        }
-                        
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', ''),
-                            score=dbg.get('score', 0), 
-                            ep=dbg.get('last_close', c[-1]),
-                            facts=entry_facts,
-                            sector=sector_info
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
-                    q_main.put((main_chart_path, main_caption))
-# 💡 [오토 포워드 테스팅 시스템에 종목 편입 시도]
-                    try:
-                        import auto_forward_tester as aft # 상단에 임포트 안 해도 여기서 동적 로드
-                        
-                        market_type = 'KR' # 미국장 검색기에는 'US'로 변경!!
-                        entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', cur_cpv),
-                            'v_yang': dbg.get('v_yang', cur_tb),
-                            'v_energy': dbg.get('v_energy', cur_bbe),
-                            'v_rs': dbg.get('v_rs', cur_rs)
-                        }
-                        
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', sig_type),
-                            score=dbg.get('score', total_score), # 총점 매핑 확인
-                            ep=dbg.get('last_close', c[-1]),
-                            facts=entry_facts
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
-                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                    try:
-                        sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                    except:
-                        sector_info = "유망 섹터 포착"
-                            
-                    # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만!
-                    promo_caption = (
-                        f"📈 [알고리즘 차트 포착]\n\n"
-                        f"🏢 종목: {name} ({code})\n"
-                        f"🏷️ 섹터: {sector_info}\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
-                    )
-                    q_promo.put((promo_chart_path, promo_caption))
+                    # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
+                            try:
+                                import auto_forward_tester as aft
+                                market_type = 'KR'
+                                entry_facts = {
+                                    'v_cpv': dbg.get('v_cpv', 0),
+                                    'v_yang': dbg.get('v_yang', 0),
+                                    'v_energy': dbg.get('v_energy', 0),
+                                    'v_rs': dbg.get('v_rs', 0),
+                                    # 👇 새로 추가된 백분위 데이터 3개
+                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
+                                    'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                                    'dyn_tb': dbg.get('dyn_tb_score', 0)
+                                }
+                                
+                                success, fwd_msg = aft.try_add_virtual_position(
+                                    market=market_type, code=code, name=name,
+                                    sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
+                                    ep=dbg.get('last_close', 0), facts=entry_facts,
+                                    sector=sector_info # 👈 위에서 추출한 섹터를 넘겨줌
+                                )
+                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                            except Exception as e:
+                                print(f"   ↳ [포워드 장부 에러]: {e}")
+
+                            # 💡 4. 홍보용 캡션을 만들고 전송합니다. (기존 코드 유지)
+                            promo_caption = (
+                                f"📈 [알고리즘 차트 포착]\n\n"
+                                f"🏢 종목: {name} ({code})\n"
+                                f"🏷️ 섹터: {sector_info}\n"
+                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
+                            )
+                            q_promo.put((promo_chart_path, promo_caption))
 
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
