@@ -689,7 +689,7 @@ def scan_market_1d():
                     # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
                             try:
                                 import auto_forward_tester as aft
-                                market_type = 'US'
+                                market_type = 'KR'
                                 entry_facts = {
                                     'v_cpv': dbg.get('v_cpv', 0),
                                     'v_yang': dbg.get('v_yang', 0),
