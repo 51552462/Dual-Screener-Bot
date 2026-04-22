@@ -381,9 +381,10 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     dyn_rs_score = get_dynamic_score(rs, higher_is_better=True)
     dyn_tb_score = get_dynamic_score(tb_index, higher_is_better=True)
     dyn_cpv_score = get_dynamic_score(cpv, higher_is_better=False)
+
     # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립 (V9.0 적용)
     v9_comment = (
-        f"📊 [System B 미국 눌림목 V9.0 마스터 리포트]\n"
+        f"📊 [System B US 시그널 V9.0 마스터 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
         f"🎖️ {badge_str}\n"
         f"{vix_strategy}\n\n"
@@ -394,6 +395,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
         f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+        # 👇 추가된 백분위 팩트 데이터
         f"💡 [상대평가] RS 상위 {(10 - dyn_rs_score) * 11.1:.1f}% / 찐양봉 상위 {(10 - dyn_tb_score) * 11.1:.1f}%\n"
     )
     
@@ -404,13 +406,14 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
-        "recommend": f"{exit_strategy}", # 👈 종목 맞춤형 동적 전략 저장!
+        "recommend": f"{exit_strategy}",
         "v9_comment": v9_comment,
         "score": total_score,
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
         "v_rs": cur_rs,
+        # 👇 장부 기록을 위해 3줄 추가
         "dyn_rs_score": dyn_rs_score,
         "dyn_cpv_score": dyn_cpv_score,
         "dyn_tb_score": dyn_tb_score
@@ -601,9 +604,9 @@ def scan_market_1d():
                             
                     if hit:
                         main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                        threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                        promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                         
-                        if main_chart_path and threads_chart_path:
+                        if main_chart_path and promo_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
                             # 💡 [버그 픽스] 섹터 추출을 장부 기록보다 '먼저' 실행하도록 위로 끌어올림!
@@ -612,7 +615,7 @@ def scan_market_1d():
                             except:
                                 sector_info = "유망 섹터 포착"
                             
-                           # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V9.0 브리핑 출력)
+                            # 1️⃣ 본캐용 캡션
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
                                 f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
@@ -625,11 +628,11 @@ def scan_market_1d():
                                 f"{ai_main}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
-                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                    # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
+                            # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
                             try:
                                 import auto_forward_tester as aft
                                 market_type = 'US'
@@ -638,7 +641,6 @@ def scan_market_1d():
                                     'v_yang': dbg.get('v_yang', 0),
                                     'v_energy': dbg.get('v_energy', 0),
                                     'v_rs': dbg.get('v_rs', 0),
-                                    # 👇 새로 추가된 백분위 데이터 3개
                                     'dyn_rs': dbg.get('dyn_rs_score', 0),
                                     'dyn_cpv': dbg.get('dyn_cpv_score', 0),
                                     'dyn_tb': dbg.get('dyn_tb_score', 0)
@@ -654,7 +656,7 @@ def scan_market_1d():
                             except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
 
-                            # 💡 4. 홍보용 캡션을 만들고 전송합니다. (기존 코드 유지)
+                            # 💡 4. 홍보용 캡션을 만들고 전송합니다.
                             promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
@@ -663,7 +665,7 @@ def scan_market_1d():
                             )
                             q_promo.put((promo_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                    print(f"\n✅ [{name}] 미국장 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
                 pass
         
