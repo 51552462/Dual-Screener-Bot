@@ -38,11 +38,18 @@ def init_forward_db():
             dyn_rs REAL,           -- 💡 [방향성 1,4번] 상대평가 백분위 기록
             dyn_cpv REAL,
             dyn_tb REAL,
+            is_tenbagger INTEGER,  -- 텐배거 조건 충족 여부 (0/1)
+            is_top_dna INTEGER,    -- 최상위 DNA 일치 여부
+            is_worst_dna INTEGER,  -- 최악의 DNA 일치 여부
+            is_death_combo INTEGER,-- 데스콤보 발생 여부
             entry_price REAL,
             v_cpv REAL,
             v_yang REAL,
-            v_energy REAL,
             v_rs REAL,
+            v_energy REAL,         -- 응축 에너지 (BB) 👈 추가
+            marcap_eok REAL,       -- 시가총액(억원) 👈 추가
+            score_marcap REAL,     -- 시총 체급 점수 👈 추가
+            freq_count INTEGER,    -- 과거 매매 빈도 👈 추가
             max_high REAL,
             min_low REAL,
             bars_held INTEGER DEFAULT 0,
