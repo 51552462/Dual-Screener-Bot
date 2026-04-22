@@ -721,7 +721,7 @@ def scan_market_1d():
                             )
                             q_promo.put((promo_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                        print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             # 💡 [에러 추적용] 나중에 또 이유 없이 포착이 안될 때 원인을 알 수 있도록 출력문을 추가했습니다.
             print(f"⚠️ Worker 구동 중 에러 발생 [{row_tuple[1].get('Name', 'Unknown')}]: {e}")
