@@ -657,12 +657,17 @@ def scan_market_1d():
                             pass
                     
             if hit:
-                # 💡 [수정 완료] 스크린샷의 IndentationError 방지를 위해 들여쓰기 완벽 정렬
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-                
-                if main_chart_path and promo_chart_path:
-                    ai_main, _ = generate_ai_report(code, name)
+                        main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                        threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                        
+                        if main_chart_path and threads_chart_path:
+                            ai_main, _ = generate_ai_report(code, name)
+                            
+                            # 💡 [버그 픽스] 섹터 추출을 장부 기록보다 '먼저' 실행하도록 위로 끌어올림!
+                            try:
+                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                            except:
+                                sector_info = "유망 섹터 포착"
                     
                     # 1️⃣ 본캐용 캡션
                     main_caption = (
@@ -681,34 +686,30 @@ def scan_market_1d():
                     )
                     q_main.put((main_chart_path, main_caption))
 
-                    try:
-                        import auto_forward_tester as aft
-                        
-                        market_type = 'KR' 
-                        entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', 0),
-                            'v_yang': dbg.get('v_yang', 0),
-                            'v_energy': dbg.get('v_energy', 0),
-                            'v_rs': dbg.get('v_rs', 0),
-                            'dyn_rs': dbg.get('dyn_rs_score', 0),
-                            'dyn_cpv': dbg.get('dyn_cpv_score', 0),
-                            'dyn_tb': dbg.get('dyn_tb_score', 0)
-                        }
-                        
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', ''),
-                            score=dbg.get('score', 0), 
-                            ep=dbg.get('last_close', 0), 
-                            facts=entry_facts,
-                            sector=sector_info
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-            
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
+                    # 💡 [오토 포워드 테스팅 시스템 기록]
+                            try:
+                                import auto_forward_tester as aft
+                                market_type = 'US' # (한국장은 'KR')
+                                entry_facts = {
+                                    'v_cpv': dbg.get('v_cpv', 0),
+                                    'v_yang': dbg.get('v_yang', 0),
+                                    'v_energy': dbg.get('v_energy', 0),
+                                    'v_rs': dbg.get('v_rs', 0),
+                                    # 👇 미국장 us_master.py에는 아래 3줄이 빠져있으니 꼭 추가하세요!
+                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
+                                    'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                                    'dyn_tb': dbg.get('dyn_tb_score', 0)
+                                }
+                                
+                                success, fwd_msg = aft.try_add_virtual_position(
+                                    market=market_type, code=code, name=name,
+                                    sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
+                                    ep=dbg.get('last_close', 0), facts=entry_facts,
+                                    sector=sector_info # 👈 위에서 먼저 선언했으므로 이제 에러가 안 남
+                                )
+                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                            except Exception as e:
+                                print(f"   ↳ [포워드 장부 에러]: {e}")
 
                     # 2️⃣ 홍보용 캡션
                     try:
