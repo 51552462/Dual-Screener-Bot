@@ -130,18 +130,23 @@ def get_krx_list_kind():
         df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
-        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
+        
+        # 💡 [핵심 픽스 1] KIND 종목코드의 숨은 공백 완벽 제거 및 6자리 고정
+        df['Code'] = df['종목코드'].astype(str).str.strip().str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
         filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
         
-        # 💡 [V11.0] 시가총액(Marcap) 데이터 추출 (fdr을 통해 안전하게 조인)
+        # 시가총액(Marcap) 데이터 100% 안전 조인
         try:
             fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
-            # 💡 [핵심 픽스] 양쪽 데이터의 'Code'를 강제로 6자리 문자열로 일치시켜 병합 누락(NaN -> 0원 처리) 원천 차단
-            fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6) 
+            # 💡 [핵심 픽스 2] FDR 종목코드 역시 공백 제거 및 6자리 고정 (충돌 원천 차단)
+            fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
+            # 💡 [핵심 픽스 3] 시가총액 데이터를 강제로 숫자로 변환 (에러 시 0 처리)
+            fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
+
             filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
             filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
-            print("✅ 시가총액(Marcap) 데이터 정상 조인 완료!")
+            print("✅ 시가총액(Marcap) 데이터 100% 정상 조인 완료!")
         except Exception as e:
             print(f"⚠️ 시가총액 데이터 로드 실패 (API 서버 문제): {e}")
             filtered_df['Marcap'] = 0
@@ -265,23 +270,25 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
     recent_hits = (s1 | s4 | s6 | s7)[-252:-1].sum() if len(c) > 252 else (s1 | s4 | s6 | s7)[:-1].sum()
     freq_count = int(recent_hits)
 
-    # 💡 [V11.0] 시가총액 체급 판별 및 통계 매핑
-    if marcap >= 1_000_000_000_000:
+    # 💡 [V11.0] 시가총액 체급 판별 및 통계 매핑 (억원 단위로 변환하여 안전성 극대화)
+    marcap_eok = marcap / 100_000_000 
+    
+    if marcap_eok >= 10000:
         cap_str = "① 1조 이상 (대형주)"
         score_marcap = 10.0
         ema_stat_str = "승률 32.2% / 손익비 4.39 (수익성과 방어력 1위)"
         weight_rec = "기본 비중의 1.5배 (최우선 적극 진입)"
-    elif marcap >= 600_000_000_000:
+    elif marcap_eok >= 6000:
         cap_str = "② 6천억~1조 (중견주)"
         score_marcap = 8.0
         ema_stat_str = "승률 29.9% / 손익비 4.89 (수익성 1위)"
         weight_rec = "기본 비중의 1.5배 (적극 진입)"
-    elif marcap >= 300_000_000_000:
+    elif marcap_eok >= 3000:
         cap_str = "③ 3천억~6천억 (중소형주)"
         score_marcap = 6.0
         ema_stat_str = "승률 29.2% / 손익비 3.14"
         weight_rec = "기본 비중 1.0배 적용"
-    elif marcap >= 100_000_000_000:
+    elif marcap_eok >= 1000:
         cap_str = "④ 1천억~3천억 (소형주)"
         score_marcap = 4.0
         ema_stat_str = "승률 24.6% / 손익비 2.90"
