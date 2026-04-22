@@ -591,12 +591,17 @@ def scan_market_1d():
                             except: pass
                             
                     if hit:
-                        # 💡 본캐용 및 홍보용 차트 생성
                         main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                        promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                        threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                         
-                        if main_chart_path and promo_chart_path:
+                        if main_chart_path and threads_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
+                            
+                            # 💡 [버그 픽스] 섹터 추출을 장부 기록보다 '먼저' 실행하도록 위로 끌어올림!
+                            try:
+                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                            except:
+                                sector_info = "유망 섹터 포착"
                             
                            # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V9.0 브리핑 출력)
                             main_caption = (
