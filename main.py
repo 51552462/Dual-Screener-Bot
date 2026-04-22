@@ -173,7 +173,7 @@ if __name__ == "__main__":
         "🇰🇷 6. KR 마스터": kr_master.run_scheduler,
         "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
         "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
-        "🇰🇷 9. KR 5일선": kr_ema5.run_scheduler
+        "🇰🇷 9. KR 5일선": kr_5ema.run_scheduler
     }
 
     active_threads = {}
