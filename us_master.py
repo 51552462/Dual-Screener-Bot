@@ -431,7 +431,13 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
         sig_type = "💎 [로또] " + sig_type
     else:
         badge_str = "⚠️ [비중 축소] 80점 미만은 가짜 휩소 리스크가 크므로 철저히 비중 축소 요망"
-
+    # =========================================================================
+    # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (미국장 백분위 랭크 추가)
+    # =========================================================================
+    dyn_rs_score = get_dynamic_score(rs, higher_is_better=True)
+    dyn_tb_score = get_dynamic_score(tb_index, higher_is_better=True)
+    dyn_cpv_score = get_dynamic_score(cpv, higher_is_better=False)
+    
     v9_comment = (
         f"📊 [System B US 이평선 돌파 V9.0 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
@@ -444,6 +450,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
         f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
         f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+        f"💡 [상대평가] RS 상위 {(10 - dyn_rs_score) * 11.1:.1f}% / 찐양봉 상위 {(10 - dyn_tb_score) * 11.1:.1f}%\n"
     )
     
     if trap_warning != "": v9_comment += f"\n{trap_warning}"
@@ -459,7 +466,10 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
-        "v_rs": cur_rs
+        "v_rs": cur_rs,
+        "dyn_rs_score": dyn_rs_score,
+        "dyn_cpv_score": dyn_cpv_score,
+        "dyn_tb_score": dyn_tb_score
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -666,6 +676,12 @@ def scan_market_1d():
                         if main_chart_path and threads_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
+                            try:
+                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                            except:
+                                sector_info = "유망 섹터 포착"
+
+                            
                             # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V9.0 브리핑 출력)
                             # 💡 [버그 픽스] 존재하지 않던 dbg_info 변수를 올바른 dbg로 전면 교체 완료
                             main_caption = (
@@ -683,45 +699,38 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 💡 [오토 포워드 테스팅 시스템 기록]
                             try:
                                 import auto_forward_tester as aft
-                                
                                 market_type = 'US'
                                 entry_facts = {
                                     'v_cpv': dbg.get('v_cpv', 0),
                                     'v_yang': dbg.get('v_yang', 0),
                                     'v_energy': dbg.get('v_energy', 0),
-                                    'v_rs': dbg.get('v_rs', 0)
+                                    'v_rs': dbg.get('v_rs', 0),
+                                    # 👇 새로 추가된 백분위 데이터 3개
+                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
+                                    'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                                    'dyn_tb': dbg.get('dyn_tb_score', 0)
                                 }
                                 
                                 success, fwd_msg = aft.try_add_virtual_position(
-                                    market=market_type,
-                                    code=code,
-                                    name=name,
-                                    sig_type=dbg.get('sig_type', ''),
-                                    score=dbg.get('score', 0), 
-                                    ep=dbg.get('last_close', 0), 
-                                    facts=entry_facts,
-                                    sector=sector_info
+                                    market=market_type, code=code, name=name,
+                                    sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
+                                    ep=dbg.get('last_close', 0), facts=entry_facts,
+                                    sector=sector_info # 👈 위에서 추출한 섹터를 넘겨줌
                                 )
                                 print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                             except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
-                                
-                            # 2️⃣ 홍보용 캡션
-                            try:
-                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                            except:
-                                sector_info = "유망 섹터 포착"
-                                
+
+                            # 💡 4. 홍보용 캡션을 만들고 전송합니다. (기존 코드 유지)
                             promo_caption = (
-                                f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
+                                f"📈 [알고리즘 차트 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
-                            q_promo.put((threads_chart_path, promo_caption))
+                            q_promo.put((promo_chart_path, promo_caption))
 
                             print(f"\n✅ [{name}] 미국장 Top 1% 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
