@@ -288,16 +288,16 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
 
-    hit_s1 = signal_1 & moneyOk & priceOk
-    hit_s4 = signal_4 & moneyOk & priceOk
+    # 배열 전체에 대해 AND 연산 후 마지막 캔들 확인
+    hit_s1_arr = signal_1 & moneyOk & priceOk
+    hit_s4_arr = signal_4 & moneyOk & priceOk
 
-    final_hit = hit_s1 | hit_s4
+    final_hit = hit_s1_arr | hit_s4_arr
     if not final_hit[-1]: return False, "", df, {}
 
     # =========================================================================
-    # 👑 5. 한국장 시가총액(Marcap) 필터 및 V11.0 완전체 스코어링 로직
+    # 👑 5. 한국장 시가총액(Marcap) 필터 및 V11.0 종목 맞춤형 스코어링 로직
     # =========================================================================
-    # 💡 [버그 픽스] Marcap 값이 NaN이거나 형변환 에러가 날 경우를 대비한 철저한 예외 처리
     try:
         marcap_val = float(marcap)
         if np.isnan(marcap_val): marcap_val = 0.0
@@ -306,85 +306,91 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         
     marcap_eok = marcap_val / 100_000_000 
     
-    # 💡 [추가정리파일 적용] 시가총액 체급별 극명한 체질 차이 반영 (승률, 손익비, 추천비중)
+    # 💡 [정리파일 1 반영] 시가총액 규모별 극명한 체질 차이 세팅
     if marcap_eok >= 10000:
-        cap_str = "① 1조 이상 (대형주)"
-        score_marcap = 10.0
+        cap_str, score_marcap = "① 1조 이상 (대형주)", 10.0
         cap_stat = "승률 33.0% / 손익비 4.51 (안정성 최강)"
         weight_rec = "기본 비중의 1.5배 (최우선 적극 진입)"
     elif marcap_eok >= 6000:
-        cap_str = "② 6천억~1조 (중견주)"
-        score_marcap = 8.0
+        cap_str, score_marcap = "② 6천억~1조 (중견주)", 8.0
         cap_stat = "승률 28.5% / 손익비 4.19"
         weight_rec = "기본 비중 1.0배 적용"
     elif marcap_eok >= 3000:
-        cap_str = "③ 3천억~6천억 (중소형주)"
-        score_marcap = 6.0
+        cap_str, score_marcap = "③ 3천억~6천억 (중소형주)", 6.0
         cap_stat = "승률 28.2% / 손익비 3.40"
         weight_rec = "기본 비중 1.0배 적용"
     elif marcap_eok >= 1000:
-        cap_str = "④ 1천억~3천억 (소형주)"
-        score_marcap = 4.0
+        cap_str, score_marcap = "④ 1천억~3천억 (소형주)", 4.0
         cap_stat = "승률 24.0% / 손익비 2.77"
         weight_rec = "기본 비중의 0.5배 (비중 축소)"
-    elif marcap_eok > 0:
-        cap_str = "⑤ 1천억 미만 (잡주/초소형주)"
-        score_marcap = 2.0
+    else:
+        cap_str, score_marcap = "⑤ 1천억 미만 (잡주/초소형주)", 2.0
         cap_stat = "승률 21.4% / 손익비 2.64 (가짜 돌파 휩소 최다 발생 구간)"
         weight_rec = "기본 비중의 0.5배 (철저한 로또용 소액 매매)"
-    else:
-        # 데이터 오류 대비 안전장치
-        cap_str = "❓ 시가총액 데이터 없음 (소형주 취급)"
-        score_marcap = 2.0
-        cap_stat = "시총 데이터 미수신 - 로또용 소액 접근 권장"
-        weight_rec = "기본 비중의 0.5배 (비중 축소)"
 
     recent_hits = final_hit[-252:-1].sum() if len(c) > 252 else final_hit[:-1].sum()
     freq_count = int(recent_hits)
-    cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     
-    # 💡 [추가정리파일 2 적용] 시그널별 이평선 승률 및 청산 생애주기 스위칭 전략
-    if hit_s1[-1]:
-        sig_type = "🔥 S1 (대세 추세 돌파 - 대형/중형주 특화)"
+    # 💡 [누락 지표 복구] 이평선 마스터 고유 변수 추출
+    cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
+    cur_momentum = true_momentum_line[-1] if not np.isnan(true_momentum_line[-1]) else 0.0
+    cur_spread   = spread_112_224[-1] if not np.isnan(spread_112_224[-1]) else 0.0
+    
+    # =========================================================================
+    # 👑 6. 시그널(S1/S4)과 시가총액 체급을 크로스 체킹한 [맞춤형 동적 전략]
+    # =========================================================================
+    if hit_s1_arr[-1]:
         ema_stat_str = "승률 26.5% / 손익비 3.27 (수익성과 방어력 1위)"
-        score_rs = scale_score(cur_rs, 2025.28, -821.13)
-        score_ema = 10.0
-        score_cpv = scale_score(cur_cpv, 0.39, 0.95)
-        score_bbe = scale_score(cur_bbe, 56.80, 3.80)
-        score_tb = scale_score(cur_tb, 20.13, 2.47)
+        score_rs   = scale_score(cur_rs, 2025.28, -821.13)
+        score_ema  = 10.0 if align448[-1] else 5.0
+        score_cpv  = scale_score(cur_cpv, 0.39, 0.95)
+        score_bbe  = scale_score(cur_bbe, 56.80, 3.80)
+        score_tb   = scale_score(cur_tb, 20.13, 2.47)
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
+        total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
         
-        exit_strategy = "📈 [S1 우량주 전략]\n수익이 평균 30%에 달하므로, MFE(최대수익) +15% 이상 달성 시 기계적 익절을 챙기며 눈덩이를 굴리십시오.\n(하락 시 ZLEMA 이탈 시 즉시 손절 방어)"
-    else:
-        sig_type = "🔥 S4 (역배열 바닥 탈출 - 초소형/잡주 특화)"
-        ema_stat_str = "승률 21.8% / 손익비 2.77 (승률은 낮으나 한방이 큰 텐배거 로또 타점)"
-        score_rs = scale_score(cur_rs, 500.0, -100.0)
-        score_ema = 5.0
-        score_cpv = scale_score(cur_cpv, 0.1, 0.8)
-        score_bbe = scale_score(cur_bbe, 40.0, 5.0)
-        score_tb = scale_score(cur_tb, 50.0, 5.0)
-        score_freq = 6.0
-        
-        exit_strategy = "🚀 [S4 텐배거 로또 전략]\n깡통 위험이 크므로 진입 금액(비중) 자체를 대형주의 1/3로 축소하십시오.\n한 번 터질 때 대박 기준을 MFE +40% 이상으로 높게 잡고 '단기데드(EMA20)'로 끝까지 버텨야 합니다."
+        # [교차 검증] S1 시그널이 어느 체급에 떴는가?
+        if marcap_eok >= 3000:
+            sig_type = "🔥 S1 (대세 추세 돌파 - 우량/중견주)"
+            exit_strategy = "📈 [우량주 대세 추세 추종 전략]\n대형/중견주의 안정적인 448일 정배열 돌파입니다. 승률이 높으므로 비중을 싣고, MFE(최대수익) +15% 이상 도달 시 기계적 익절을 시작하며 '단기데드(EMA20)'로 끝까지 발라먹으십시오. (이탈 시 ZLEMA 방어)"
+        else:
+            sig_type = "🔥 S1 (대세 추세 돌파 - 소형/테마주)"
+            exit_strategy = "📈 [소형주 단기 추세 스윙 전략]\n정배열이긴 하나 체급이 3천억 미만이라 휩소(가짜돌파) 위험이 큽니다. 비중을 절반으로 줄이고, 하락 시 며칠 못 버티고 밀리면 즉각 ZLEMA로 칼손절하여 기회비용을 살리십시오."
 
-    # 총점 계산
-    total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
+    else: # S4
+        ema_stat_str = "승률 21.8% / 손익비 2.77 (승률은 낮으나 한방이 큼)"
+        score_rs   = scale_score(cur_rs, 500.0, -100.0)
+        score_ema  = 5.0
+        score_cpv  = scale_score(cur_cpv, 0.1, 0.8)
+        score_bbe  = scale_score(cur_bbe, 40.0, 5.0)
+        score_tb   = scale_score(cur_tb, 50.0, 5.0)
+        score_freq = 6.0
+        total_score = (score_bbe*10 + score_cpv*9 + score_tb*8 + score_marcap*7 + score_rs*6 + score_ema*5 + score_freq*4) / 490 * 100
+        
+        # [교차 검증] S4 시그널이 어느 체급에 떴는가?
+        if marcap_eok >= 3000:
+            sig_type = "🔥 S4 (역배열 바닥 탈출 - 우량/중견주)"
+            exit_strategy = "🚀 [우량주 바닥턴 묵직한 스윙 전략]\n체급이 큰 종목의 역배열 바닥 매집 타점입니다. 초소형 잡주 로또와 달리 펀더멘탈이 있으므로, 기본 비중으로 진입 후 MFE +20% 이상을 스윙 목표로 삼고 홀딩하십시오."
+        else:
+            sig_type = "🔥 S4 (역배열 바닥 탈출 - 초소형 텐배거)"
+            exit_strategy = "🚀 [초소형 텐배거 로또 전략]\n승률이 20%대로 깡통 위험이 크므로 진입 금액 자체를 대형주의 1/3로 철저히 축소하십시오. 잦은 손절을 만회하려면 한 번 터질 때 MFE +40% 이상 크게 잡고 단기데드로 끝까지 버텨야 합니다."
+
     total_score = min(max(total_score, 0), 100)
 
-    # 💡 뱃지 및 CPV 평가 로직 (한국형 설거지 vs 대장주 구별)
+    # 💡 [정리파일 2 반영] 뱃지 및 CPV 평가 로직
     badge_str = ""
     if total_score >= 80: 
-        badge_str = "🔥 [1티어 뱃지] 가산점 대상 (평균 손실 -6.6% 방어. 최우선 매수)"
+        badge_str = "🔥 [1티어 뱃지] 최상위 타점 (평균 손실 -6.6% 철통방어 검증)"
     elif total_score <= 50 and cur_rs > 500: 
-        badge_str = "💎 [특급 모멘텀 예외] 소액 로또 접근"
+        badge_str = "💎 [특급 모멘텀 예외] 소액 로또 접근 허용"
     else: 
-        badge_str = "⚠️ [비중 축소] 하위권 점수 타점"
+        badge_str = "⚠️ [비중 축소] 하위권 점수 타점 (리스크 관리 요망)"
 
     cpv_comment = ""
     if cur_cpv >= 0.50:
-        cpv_comment = "🚨 [한국형 설거지 주의] 꽉 찬 양봉입니다. 돌파 직후 꽉 찬 양봉만 연속으로 그리면 100% 설거지이므로 주의 요망!"
+        cpv_comment = "🚨 [한국형 설거지 주의] 돌파 직후 꽉 찬 양봉만 연속으로 그리면 100% 설거지 확률 상승!"
     elif cur_cpv <= 0.23:
-        cpv_comment = "💎 [진짜 대장주 캔들] 위아래 꼬리를 지저분하게 달며 매물을 완벽히 소화했습니다."
+        cpv_comment = "💎 [진짜 대장주 캔들] 위아래 꼬리를 지저분하게 달며 악성 매물을 완벽히 소화했습니다."
 
     v11_comment = (
         f"📊 [System B 한국 이평선 마스터 V11.0 완전체 리포트]\n"
@@ -392,22 +398,29 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         f"🔹 시가총액 체급: {cap_str}\n"
         f"👉 [체급별 비중 조언]: {weight_rec}\n"
         f"🎖️ {badge_str}\n\n"
-        f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
-        f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
-        f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
-        f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점)\n"
-        f"▪️ 시총 체급점수: {score_marcap:.1f}점\n\n"
         f"💡 [이평선 팩트] {ema_stat_str}\n"
-        f"💡 [체급별 팩트] {cap_stat}\n"
+        f"💡 [체급별 팩트] {cap_stat}\n\n"
+        f"🔍 [이평선 정밀 분석 지표]\n"
+        f"▪️ 진모멘텀(TML): {cur_momentum:,.1f}\n"
+        f"▪️ 중기선 이격도(Spread): {cur_spread:.1f}%\n"
+        f"▪️ 캔들지배력(CPV): {cur_cpv:.2f}\n"
+        f"▪️ 응축에너지(BB): {cur_bbe:.1f}\n"
+        f"▪️ 시장상대강도(RS): {cur_rs:.1f}%\n"
     )
     
     if cpv_comment != "":
         v11_comment += f"\n{cpv_comment}\n"
-        
+
     return True, sig_type, df, {
-        "sig_type": sig_type, "last_close": float(c[-1]), "recommend": exit_strategy, 
-        "v11_comment": v11_comment, "score": total_score, "v_cpv": cur_cpv, 
-        "v_yang": cur_tb, "v_energy": cur_bbe, "v_rs": cur_rs
+        "sig_type": sig_type,
+        "last_close": float(c[-1]),
+        "recommend": exit_strategy,
+        "v11_comment": v11_comment,
+        "score": total_score,
+        "v_cpv": cur_cpv,
+        "v_yang": cur_tb,
+        "v_energy": cur_bbe,
+        "v_rs": cur_rs
     }
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
