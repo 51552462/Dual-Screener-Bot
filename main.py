@@ -67,7 +67,7 @@ import dante_krx_reverse_breakout_screener as kr_rev
 import master as kr_master
 import kr as kr_bowl
 import nulrim as kr_nul
-import ohdole as kr_ohdole
+import 5ema as kr_5ema
 
 # ==========================================
 # 🛑 주말 자동 휴장 스마트 차단기
@@ -110,7 +110,7 @@ apply_weekend_patch(kr_rev, False)
 apply_weekend_patch(kr_master, False)
 apply_weekend_patch(kr_bowl, False)
 apply_weekend_patch(kr_nul, False)
-apply_weekend_patch(kr_ohdole, False)
+apply_weekend_patch(kr_5ema, False)
 
 # ==========================================
 # 📊 실시간 생존 확인 및 종합 보고서
@@ -173,7 +173,7 @@ if __name__ == "__main__":
         "🇰🇷 6. KR 마스터": kr_master.run_scheduler,
         "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
         "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
-        "🇰🇷 9. KR 오돌이": kr_ohdole.run_scheduler
+        "🇰🇷 9. KR 5일선": kr_ohdole.run_scheduler
     }
 
     active_threads = {}
