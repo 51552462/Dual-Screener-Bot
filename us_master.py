@@ -268,12 +268,11 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     moneyOk = (c * v) >= 5_000_000
     priceOk = c >= 3.0
 
-    # 3. 파이썬 직관적 변수명 매핑 및 컷오프
-    # 💡 [V9.0 핵심] 미국장 역시 월가 숏 타겟(S2, S3)은 명시적으로 차단합니다.
-    hit_s1 = tv_signal_3 & moneyOk & priceOk      # S1 대세추세 (트뷰 signal_3)
-    hit_s2 = pd.Series(False, index=df.index)     # 트뷰 signal_2 👈 차단
-    hit_s3 = pd.Series(False, index=df.index)     # 트뷰 signal_1 👈 차단
-    hit_s4 = tv_signal_4 & moneyOk & priceOk      # S4 바닥탈출 (트뷰 signal_4)
+    # 3. 파이썬 직관적 변수명 매핑 및 컷오프 (수정 완료)
+    hit_s1 = tv_signal_1 & moneyOk & priceOk      # 🟢 찐 S1(EMA 112 기반) 정상 복구
+    hit_s2 = pd.Series(False, index=df.index)     # S2 차단
+    hit_s3 = pd.Series(False, index=df.index)     # S3 차단
+    hit_s4 = tv_signal_4 & moneyOk & priceOk      # 🟢 S4 바닥탈출 정상 유지
 
     final_hit = hit_s1 | hit_s2 | hit_s3 | hit_s4
 
@@ -583,9 +582,12 @@ def scan_market_1d():
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
                     else: 
-                        if tk not in df_batch.columns.get_level_values(0): continue
-                        df_ticker = df_batch[tk].copy()
-                else:
+                        if 'Ticker' in df_batch.columns.names:  # yfinance 최신 버전 대응
+    if tk not in df_batch.columns.get_level_values('Ticker'): continue
+    df_ticker = df_batch.xs(tk, level='Ticker', axis=1).copy()
+else:  # 구버전 대응
+    if tk not in df_batch.columns.get_level_values(0): continue
+    df_ticker = df_batch[tk].copy()
                     df_ticker = fallback_dict.get(tk)
                 if df_ticker is None or df_ticker.empty: continue
 
