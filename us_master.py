@@ -624,14 +624,15 @@ def scan_market_1d():
                             ai_main, _ = generate_ai_report(code, name)
                             
                             # 1️⃣ 본캐용 캡션 (유료방용 - 동적 전략 및 V9.0 브리핑 출력)
+                            # 💡 [버그 픽스] 존재하지 않던 dbg_info 변수를 올바른 dbg로 전면 교체 완료
                             main_caption = (
-                                f"🎯 [{dbg_info.get('sig_type', '')}]\n"
+                                f"🎯 [{dbg.get('sig_type', '')}]\n"
                                 f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
                                 f"🏢 {name} ({code})\n"
-                                f"💰 현재가: ${dbg_info.get('last_close', 0):,.2f}\n\n"
-                                f"{dbg_info.get('v9_comment', '')}\n"
+                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
+                                f"{dbg.get('v9_comment', '')}\n"
                                 f"📉 [스마트 매수/청산 전략]\n"
-                                f"{dbg_info.get('recommend', '')}\n\n"  # 💡 맞춤형 동적 전략 송출
+                                f"{dbg.get('recommend', '')}\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
                                 f"{ai_main}\n\n"
                                 f"⚠️ [면책 조항]\n"
@@ -639,45 +640,46 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
-                    try:
-                        import auto_forward_tester as aft
-                        
-                        market_type = 'US'
-                        entry_facts = {
-                            'v_cpv': dbg_info.get('v_cpv', 0),
-                            'v_yang': dbg_info.get('v_yang', 0),
-                            'v_energy': dbg_info.get('v_energy', 0),
-                            'v_rs': dbg_info.get('v_rs', 0)
-                        }
-                        
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', ''),
-                            score=dbg.get('score', 0), 
-                            # 👇👇 [수정] 스코프 밖에 있는 c[-1]을 0으로 변경 👇👇
-                            ep=dbg.get('last_close', 0), 
-                            facts=entry_facts
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
-                    try:
+                            # 💡 [오토 포워드 테스팅 시스템 기록]
+                            try:
+                                import auto_forward_tester as aft
+                                
+                                market_type = 'US'
+                                entry_facts = {
+                                    'v_cpv': dbg.get('v_cpv', 0),
+                                    'v_yang': dbg.get('v_yang', 0),
+                                    'v_energy': dbg.get('v_energy', 0),
+                                    'v_rs': dbg.get('v_rs', 0)
+                                }
+                                
+                                success, fwd_msg = aft.try_add_virtual_position(
+                                    market=market_type,
+                                    code=code,
+                                    name=name,
+                                    sig_type=dbg.get('sig_type', ''),
+                                    score=dbg.get('score', 0), 
+                                    ep=dbg.get('last_close', 0), 
+                                    facts=entry_facts
+                                )
+                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                            except Exception as e:
+                                print(f"   ↳ [포워드 장부 에러]: {e}")
+                                
+                            # 2️⃣ 홍보용 캡션
+                            try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                    except:
+                            except:
                                 sector_info = "유망 섹터 포착"
                                 
-                    promo_caption = (
+                            promo_caption = (
                                 f"📈 [Top 1% 마스터 알고리즘 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
-                    q_promo.put((threads_chart_path, promo_caption))
+                            q_promo.put((threads_chart_path, promo_caption))
 
-                    print(f"\n✅ [{name}] 미국장 Top 1% 포착! 듀얼 발송 대기열 추가 완료!")
+                            print(f"\n✅ [{name}] 미국장 Top 1% 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
                 pass
                 
