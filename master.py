@@ -296,62 +296,115 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     if not final_hit[-1]: return False, "", df, {}
 
     # =========================================================================
-    # 👑 5. 한국장 시가총액(Marcap) 및 스코어링 로직
+    # 👑 5. 한국장 시가총액(Marcap) 필터 및 V11.0 완전체 스코어링 로직
     # =========================================================================
-    marcap_eok = marcap / 100_000_000 
+    # 💡 [버그 픽스] Marcap 값이 NaN이거나 형변환 에러가 날 경우를 대비한 철저한 예외 처리
+    try:
+        marcap_val = float(marcap)
+        if np.isnan(marcap_val): marcap_val = 0.0
+    except:
+        marcap_val = 0.0
+        
+    marcap_eok = marcap_val / 100_000_000 
     
-    if marcap_eok >= 10000: cap_str, score_marcap = "① 1조 이상 (대형주)", 10.0
-    elif marcap_eok >= 3000: cap_str, score_marcap = "② 3천억~1조 (중형주)", 8.0
-    elif marcap_eok >= 1000: cap_str, score_marcap = "③ 1천억~3천억 (중소형주)", 6.0
-    elif marcap_eok >= 500: cap_str, score_marcap = "④ 500억~1천억 (소형주)", 4.0
-    else: cap_str, score_marcap = "⑤ 500억 미만 (초소형 잡주)", 2.0
+    # 💡 [추가정리파일 적용] 시가총액 체급별 극명한 체질 차이 반영 (승률, 손익비, 추천비중)
+    if marcap_eok >= 10000:
+        cap_str = "① 1조 이상 (대형주)"
+        score_marcap = 10.0
+        cap_stat = "승률 33.0% / 손익비 4.51 (안정성 최강)"
+        weight_rec = "기본 비중의 1.5배 (최우선 적극 진입)"
+    elif marcap_eok >= 6000:
+        cap_str = "② 6천억~1조 (중견주)"
+        score_marcap = 8.0
+        cap_stat = "승률 28.5% / 손익비 4.19"
+        weight_rec = "기본 비중 1.0배 적용"
+    elif marcap_eok >= 3000:
+        cap_str = "③ 3천억~6천억 (중소형주)"
+        score_marcap = 6.0
+        cap_stat = "승률 28.2% / 손익비 3.40"
+        weight_rec = "기본 비중 1.0배 적용"
+    elif marcap_eok >= 1000:
+        cap_str = "④ 1천억~3천억 (소형주)"
+        score_marcap = 4.0
+        cap_stat = "승률 24.0% / 손익비 2.77"
+        weight_rec = "기본 비중의 0.5배 (비중 축소)"
+    elif marcap_eok > 0:
+        cap_str = "⑤ 1천억 미만 (잡주/초소형주)"
+        score_marcap = 2.0
+        cap_stat = "승률 21.4% / 손익비 2.64 (가짜 돌파 휩소 최다 발생 구간)"
+        weight_rec = "기본 비중의 0.5배 (철저한 로또용 소액 매매)"
+    else:
+        # 데이터 오류 대비 안전장치
+        cap_str = "❓ 시가총액 데이터 없음 (소형주 취급)"
+        score_marcap = 2.0
+        cap_stat = "시총 데이터 미수신 - 로또용 소액 접근 권장"
+        weight_rec = "기본 비중의 0.5배 (비중 축소)"
 
     recent_hits = final_hit[-252:-1].sum() if len(c) > 252 else final_hit[:-1].sum()
     freq_count = int(recent_hits)
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     
+    # 💡 [추가정리파일 2 적용] 시그널별 이평선 승률 및 청산 생애주기 스위칭 전략
     if hit_s1[-1]:
-        sig_type = "🔥 S1 (대세 추세 모멘텀 - SIG 1)"
-        ema_stat_str = "승률 34.0% / 손익비 4.71 (대세 상승장)"
+        sig_type = "🔥 S1 (대세 추세 돌파 - 대형/중형주 특화)"
+        ema_stat_str = "승률 26.5% / 손익비 3.27 (수익성과 방어력 1위)"
         score_rs = scale_score(cur_rs, 2025.28, -821.13)
         score_ema = 10.0
         score_cpv = scale_score(cur_cpv, 0.39, 0.95)
         score_bbe = scale_score(cur_bbe, 56.80, 3.80)
         score_tb = scale_score(cur_tb, 20.13, 2.47)
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
+        
+        exit_strategy = "📈 [S1 우량주 전략]\n수익이 평균 30%에 달하므로, MFE(최대수익) +15% 이상 달성 시 기계적 익절을 챙기며 눈덩이를 굴리십시오.\n(하락 시 ZLEMA 이탈 시 즉시 손절 방어)"
     else:
-        sig_type = "🔥 S4 (V자 바닥 탈출 - SIG 4)"
-        ema_stat_str = "승률 24.3% / 손익비 3.00 (역배열 바닥 로또 타점)"
+        sig_type = "🔥 S4 (역배열 바닥 탈출 - 초소형/잡주 특화)"
+        ema_stat_str = "승률 21.8% / 손익비 2.77 (승률은 낮으나 한방이 큰 텐배거 로또 타점)"
         score_rs = scale_score(cur_rs, 500.0, -100.0)
         score_ema = 5.0
         score_cpv = scale_score(cur_cpv, 0.1, 0.8)
         score_bbe = scale_score(cur_bbe, 40.0, 5.0)
         score_tb = scale_score(cur_tb, 50.0, 5.0)
         score_freq = 6.0
+        
+        exit_strategy = "🚀 [S4 텐배거 로또 전략]\n깡통 위험이 크므로 진입 금액(비중) 자체를 대형주의 1/3로 축소하십시오.\n한 번 터질 때 대박 기준을 MFE +40% 이상으로 높게 잡고 '단기데드(EMA20)'로 끝까지 버텨야 합니다."
 
+    # 총점 계산
     total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
     total_score = min(max(total_score, 0), 100)
 
-    if total_score >= 80: badge_str = "🔥 [1티어 뱃지] 가산점 대상"
-    elif total_score <= 50 and cur_rs > 500: badge_str = "💎 [특급 모멘텀 예외] 소액 로또 접근"
-    else: badge_str = "⚠️ [비중 축소] 하위권 점수"
+    # 💡 뱃지 및 CPV 평가 로직 (한국형 설거지 vs 대장주 구별)
+    badge_str = ""
+    if total_score >= 80: 
+        badge_str = "🔥 [1티어 뱃지] 가산점 대상 (평균 손실 -6.6% 방어. 최우선 매수)"
+    elif total_score <= 50 and cur_rs > 500: 
+        badge_str = "💎 [특급 모멘텀 예외] 소액 로또 접근"
+    else: 
+        badge_str = "⚠️ [비중 축소] 하위권 점수 타점"
+
+    cpv_comment = ""
+    if cur_cpv >= 0.50:
+        cpv_comment = "🚨 [한국형 설거지 주의] 꽉 찬 양봉입니다. 돌파 직후 꽉 찬 양봉만 연속으로 그리면 100% 설거지이므로 주의 요망!"
+    elif cur_cpv <= 0.23:
+        cpv_comment = "💎 [진짜 대장주 캔들] 위아래 꼬리를 지저분하게 달며 매물을 완벽히 소화했습니다."
 
     v11_comment = (
-        f"📊 [System B 한국 이평선 마스터 V11.0 리포트]\n"
+        f"📊 [System B 한국 이평선 마스터 V11.0 완전체 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
-        f"🔹 시가총액: {cap_str}\n"
+        f"🔹 시가총액 체급: {cap_str}\n"
+        f"👉 [체급별 비중 조언]: {weight_rec}\n"
         f"🎖️ {badge_str}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
         f"▪️ 시장상대강도: {cur_rs:.1f}% ({score_rs:.1f}점)\n"
-        f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
         f"▪️ 시총 체급점수: {score_marcap:.1f}점\n\n"
-        f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+        f"💡 [이평선 팩트] {ema_stat_str}\n"
+        f"💡 [체급별 팩트] {cap_stat}\n"
     )
     
-    exit_strategy = "MFE 정점(평균 10.32일). ZLEMA 혹은 단기데드 기계적 청산."
-
+    if cpv_comment != "":
+        v11_comment += f"\n{cpv_comment}\n"
+        
     return True, sig_type, df, {
         "sig_type": sig_type, "last_close": float(c[-1]), "recommend": exit_strategy, 
         "v11_comment": v11_comment, "score": total_score, "v_cpv": cur_cpv, 
@@ -478,45 +531,36 @@ def scan_market_1d():
     console_lock = threading.Lock()
     
     def worker(row_tuple):
-        _, row = row_tuple
-        name, code = row["Name"], row["Code"]
-        marcap = row.get("Marcap", 0) # 💡 시가총액 데이터 추출
-        df_raw = None
-        is_valid = False
-        hit, sig_type, df, dbg = False, "", None, {}
-
         try:
-            # 💡 [필수 복구 1] 데이터 수집 시도
-            df_raw = fdr.DataReader(code, start_date)
+            _, row = row_tuple
+            name, code = row["Name"], row["Code"]
+            marcap = row.get("Marcap", 0)
+            df_raw = None
             
-            # 💡 [필수 복구 2] 눌림목 검색기와 동일하게 결측치(NaN) 완벽 제거 및 데이터 정제
-            if df_raw is not None and not df_raw.empty:
-                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            try:
+                df_raw = fdr.DataReader(code, start_date)
+            except: 
+                pass
 
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
+            hit, sig_type, df, dbg = False, "", None, {}
             
-            # 💡 [필수 복구 3] 정상 데이터일 경우에만 마스터 엔진 가동
-            if is_valid:
+            if is_valid: 
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
+                # 💡 [수정 완료] 없는 함수인 compute_5ema_signal 대신 올바른 마스터 함수로 변경했습니다.
                 hit, sig_type, df, dbg = compute_korea_master_signal(df_raw, idx_close, marcap)
-                
-        except Exception as e:
-            # 에러 발생 시 코드가 멈추지 않게 자연스럽게 패스
-            pass
+            
+            hit_rank = 0
+            with console_lock:
+                tracker['scanned'] += 1
+                if is_valid: tracker['analyzed'] += 1 
+                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
 
-        # 💡 [필수 복구 4] 스캔/분석 카운팅을 try-except 블록 밖으로 빼서 누락 방지 (눌림목과 동일)
-        hit_rank = 0
-        with console_lock:
-            tracker['scanned'] += 1
-            if is_valid: tracker['analyzed'] += 1
-            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
-
-        # 👇 아래쪽의 hit 확인 후 텔레그램 전송 및 차트 저장 로직은 기존 대표님 코드 그대로 둡니다.
-        if hit:
-            if code in sent_today:
-                hit = False 
-            else:
+                if hit:
+                    if code in sent_today:
+                        hit = False 
+                    else:
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']
                         sent_today.add(code) 
@@ -524,75 +568,77 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except: 
+                            pass
                     
             if hit:
-            main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-            promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-            
-            if main_chart_path and promo_chart_path:
-                ai_main, _ = generate_ai_report(code, name) 
-                        
-                # 1️⃣ 본캐용 캡션 (유료방용 - V11.0 브리핑 출력)
-                main_caption = (
-                    f"🎯 [{dbg.get('sig_type', '')}]\n"
-                    f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
-                    f"🏢 {name} ({code})\n"
-                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                    f"{dbg.get('v11_comment', '')}\n" # 💡 [V11.0 로드]
-                    f"📉 [스마트 매수/청산 전략]\n"
-                    f"{dbg.get('recommend', '')}\n\n" # 💡 [맞춤형 전략 로드]
-                    f"💡 [AI 비즈니스 요약]\n"
-                    f"{ai_main}\n\n"
-                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
-                    f"⚠️ [면책 조항]\n"
-                    f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                )
-                q_main.put((main_chart_path, main_caption))
-
-                # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
-                # 👇👇 [수정해야 할 부분] try_add_virtual_position 호출부를 아래 코드로 교체하세요. 👇👇
-                try:
-                    import auto_forward_tester as aft
-                    
-                    market_type = 'KR' 
-                    entry_facts = {
-                        'v_cpv': dbg.get('v_cpv', 0),
-                        'v_yang': dbg.get('v_yang', 0),
-                        'v_energy': dbg.get('v_energy', 0),
-                        'v_rs': dbg.get('v_rs', 0)
-                    }
-                    
-                    success, fwd_msg = aft.try_add_virtual_position(
-                        market=market_type,
-                        code=code,
-                        name=name,
-                        sig_type=dbg.get('sig_type', ''),
-                        score=dbg.get('score', 0), 
-                        # 💡 [핵심 픽스] c[-1]은 스코프(범위) 밖이라 에러가 납니다. 안전하게 0으로 예외 처리.
-                        ep=dbg.get('last_close', 0), 
-                        facts=entry_facts
-                    )
-                    print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                except Exception as e:
-                    print(f"   ↳ [포워드 장부 에러]: {e}")
-                # 👆👆 [여기까지 덮어쓰기] 👆👆
-
-                # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                try:
-                    sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                except:
-                    sector_info = "유망 섹터 포착"
-
-                promo_caption = (
-                    f"📈 [알고리즘 차트 포착]\n\n"
-                    f"🏢 종목: {name} ({code})\n"
-                    f"🏷️ 섹터: {sector_info}\n"
-                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
-                )
-                q_promo.put((promo_chart_path, promo_caption))
+                # 💡 [수정 완료] 스크린샷의 IndentationError 방지를 위해 들여쓰기 완벽 정렬
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                 
-                print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                if main_chart_path and promo_chart_path:
+                    ai_main, _ = generate_ai_report(code, name)
+                    
+                    # 1️⃣ 본캐용 캡션
+                    main_caption = (
+                        f"🎯 [{dbg.get('sig_type', '')}]\n"
+                        f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
+                        f"🏢 {name} ({code})\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                        f"{dbg.get('v11_comment', '')}\n"
+                        f"📉 [스마트 매수/청산 전략]\n"
+                        f"{dbg.get('recommend', '')}\n\n"
+                        f"💡 [AI 비즈니스 요약]\n"
+                        f"{ai_main}\n\n"
+                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                        f"⚠️ [면책 조항]\n"
+                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                    )
+                    q_main.put((main_chart_path, main_caption))
+
+                    try:
+                        import auto_forward_tester as aft
+                        
+                        market_type = 'KR' 
+                        entry_facts = {
+                            'v_cpv': dbg.get('v_cpv', 0),
+                            'v_yang': dbg.get('v_yang', 0),
+                            'v_energy': dbg.get('v_energy', 0),
+                            'v_rs': dbg.get('v_rs', 0)
+                        }
+                        
+                        success, fwd_msg = aft.try_add_virtual_position(
+                            market=market_type,
+                            code=code,
+                            name=name,
+                            sig_type=dbg.get('sig_type', ''),
+                            score=dbg.get('score', 0), 
+                            ep=dbg.get('last_close', 0), 
+                            facts=entry_facts
+                        )
+                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+            
+                    except Exception as e:
+                        print(f"   ↳ [포워드 장부 에러]: {e}")
+
+                    # 2️⃣ 홍보용 캡션
+                    try:
+                        sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                    except:
+                        sector_info = "유망 섹터 포착"
+                            
+                    promo_caption = (
+                        f"📈 [알고리즘 차트 포착]\n\n"
+                        f"🏢 종목: {name} ({code})\n"
+                        f"🏷️ 섹터: {sector_info}\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
+                    )
+                    q_promo.put((promo_chart_path, promo_caption))
+
+                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+        except Exception as e:
+            # 💡 [에러 추적용] 나중에 또 이유 없이 포착이 안될 때 원인을 알 수 있도록 출력문을 추가했습니다.
+            print(f"⚠️ Worker 구동 중 에러 발생 [{row_tuple[1].get('Name', 'Unknown')}]: {e}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
