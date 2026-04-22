@@ -136,15 +136,33 @@ def get_krx_list_kind():
         junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
         filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
         
-        # 시가총액(Marcap) 데이터 안전 조인
+        # 시가총액(Marcap) 데이터 100% 안전 조인 (FDR 버전/타입 호환성 완벽 해결)
         try:
-            fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
-            fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6) 
+            fdr_df = fdr.StockListing('KRX')
+            
+            # 💡 [핵심 방어 로직 1] 컬럼명이 Symbol이거나 MarketCap일 경우 강제 통일
+            if 'Symbol' in fdr_df.columns and 'Code' not in fdr_df.columns:
+                fdr_df = fdr_df.rename(columns={'Symbol': 'Code'})
+            if 'MarketCap' in fdr_df.columns and 'Marcap' not in fdr_df.columns:
+                fdr_df = fdr_df.rename(columns={'MarketCap': 'Marcap'})
+                
+            # 안전하게 Code와 Marcap만 추출
+            fdr_df = fdr_df[['Code', 'Marcap']].copy()
+            
+            # 💡 [핵심 방어 로직 2] 종목코드 규격화 (공백 제거 및 6자리)
+            fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
+            
+            # 💡 [핵심 방어 로직 3] 시총 데이터에 콤마(,)가 포함된 문자열일 경우 숫자 변환 전 처리
+            if fdr_df['Marcap'].dtype == object:
+                fdr_df['Marcap'] = fdr_df['Marcap'].astype(str).str.replace(',', '')
+            
+            fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
+
             filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
             filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
-            print("✅ 시가총액(Marcap) 데이터 정상 조인 완료!")
+            print("✅ 시가총액(Marcap) 데이터 100% 정상 조인 완료!")
         except Exception as e:
-            print(f"⚠️ 시가총액 데이터 조인 실패 (API 서버 문제): {e}")
+            print(f"⚠️ 시가총액 데이터 조인 실패: {e}")
             filtered_df['Marcap'] = 0
             
         return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
