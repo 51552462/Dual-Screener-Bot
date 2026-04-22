@@ -67,7 +67,7 @@ import dante_krx_reverse_breakout_screener as kr_rev
 import master as kr_master
 import kr as kr_bowl
 import nulrim as kr_nul
-import 5ema as kr_5ema
+import ema5 as kr_5ema
 
 # ==========================================
 # 🛑 주말 자동 휴장 스마트 차단기
