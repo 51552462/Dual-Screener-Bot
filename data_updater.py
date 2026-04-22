@@ -92,7 +92,27 @@ def run_daily_db_update():
             if future.result(): kr_success += 1
             sys.stdout.write(f"\r진행률: {i+1}/{len(kr_list)} (성공: {kr_success}개)")
             sys.stdout.flush()
-
+# (기존 run_daily_db_update 내부)
+    print("\n⏳ [0/2] 벤치마크 지수(VIX, SPY, QQQ, KOSPI, KOSDAQ) 갱신 중...")
+    try:
+        # 미국 지수
+        idx_us = yf.download("SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False)
+        for tk, tbl in zip(['SPY', 'QQQ', '^VIX'], ['US_SPY', 'US_QQQ', 'US_VIX']):
+            if tk in idx_us.columns.levels[0]:
+                df_temp = idx_us[tk].dropna().reset_index()
+                df_temp.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
+                df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
+                df_temp.to_sql(tbl, conn, if_exists='replace', index=False)
+        
+        # 한국 지수 (KODEX ETF 대용)
+        for tk, tbl in zip(['069500', '229200'], ['KR_KOSPI_IDX', 'KR_KOSDAQ_IDX']):
+            df_temp = fdr.DataReader(tk, (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')).reset_index()
+            df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
+            df_temp.to_sql(tbl, conn, if_exists='replace', index=False)
+        print("✅ 벤치마크 지수 DB 저장 완료!")
+    except Exception as e:
+        print(f"⚠️ 벤치마크 지수 갱신 실패: {e}")
+        
     conn.close()
     print(f"\n\n✅ DB 업데이트 완료! (미국: {us_success}개 / 한국: {kr_success}개 안전 저장 완료)")
 
