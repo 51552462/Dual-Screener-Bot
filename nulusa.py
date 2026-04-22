@@ -375,7 +375,12 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 손익비 3.16 상승 구간! 진입 비중 1.2배 상향."
     else:
         vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 매매."
-
+    # =========================================================================
+    # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (미국장 백분위 랭크 추가)
+    # =========================================================================
+    dyn_rs_score = get_dynamic_score(rs, higher_is_better=True)
+    dyn_tb_score = get_dynamic_score(tb_index, higher_is_better=True)
+    dyn_cpv_score = get_dynamic_score(cpv, higher_is_better=False)
     # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립 (V9.0 적용)
     v9_comment = (
         f"📊 [System B 미국 눌림목 V9.0 마스터 리포트]\n"
@@ -389,6 +394,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
         f"▪️ 이평선국면점수: {score_ema:.1f}점\n\n"
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+        f"💡 [상대평가] RS 상위 {(10 - dyn_rs_score) * 11.1:.1f}% / 찐양봉 상위 {(10 - dyn_tb_score) * 11.1:.1f}%\n"
     )
     
     if trap_warning != "": v9_comment += f"\n{trap_warning}"
@@ -404,7 +410,10 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
-        "v_rs": cur_rs
+        "v_rs": cur_rs,
+        "dyn_rs_score": dyn_rs_score,
+        "dyn_cpv_score": dyn_cpv_score,
+        "dyn_tb_score": dyn_tb_score
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -620,46 +629,39 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
-                    try:
-                        import auto_forward_tester as aft
-                        
-                        market_type = 'US'
-                        entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', 0),
-                            'v_yang': dbg.get('v_yang', 0),
-                            'v_energy': dbg.get('v_energy', 0),
-                            'v_rs': dbg.get('v_rs', 0)
-                        }
-                        
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', ''),
-                            score=dbg.get('score', 0), 
-                            # 👇👇 [수정] 스코프 밖의 변수인 c[-1]을 0으로 변경 👇👇
-                            ep=dbg.get('last_close', 0), 
-                            facts=entry_facts,
-                            sector=sector_info
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
-                            # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                    try:
-                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                    except:
-                                sector_info = "유망 섹터 포착"
+                    # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
+                            try:
+                                import auto_forward_tester as aft
+                                market_type = 'US'
+                                entry_facts = {
+                                    'v_cpv': dbg.get('v_cpv', 0),
+                                    'v_yang': dbg.get('v_yang', 0),
+                                    'v_energy': dbg.get('v_energy', 0),
+                                    'v_rs': dbg.get('v_rs', 0),
+                                    # 👇 새로 추가된 백분위 데이터 3개
+                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
+                                    'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                                    'dyn_tb': dbg.get('dyn_tb_score', 0)
+                                }
                                 
-                            # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만! (미국장이므로 $ 유지)
-                    promo_caption = (
+                                success, fwd_msg = aft.try_add_virtual_position(
+                                    market=market_type, code=code, name=name,
+                                    sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
+                                    ep=dbg.get('last_close', 0), facts=entry_facts,
+                                    sector=sector_info # 👈 위에서 추출한 섹터를 넘겨줌
+                                )
+                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                            except Exception as e:
+                                print(f"   ↳ [포워드 장부 에러]: {e}")
+
+                            # 💡 4. 홍보용 캡션을 만들고 전송합니다. (기존 코드 유지)
+                            promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
-                    q_promo.put((promo_chart_path, promo_caption))
+                            q_promo.put((promo_chart_path, promo_caption))
 
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
             except Exception as e:
