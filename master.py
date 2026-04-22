@@ -711,9 +711,13 @@ def scan_market_1d():
                                }
                     
                                success, fwd_msg = aft.try_add_virtual_position(
-                                  market=market_type, code=code, name=name,
-                                  sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
-                                  ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info
+                                  market=market_type, 
+                                  code=code, name=name,
+                                  sig_type=dbg.get('sig_type', ''), 
+                                  score=dbg.get('score', 0), 
+                                  ep=dbg.get('last_close', 0), 
+                                  facts=entry_facts, 
+                                  sector=sector_info
                                )
                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                             except Exception as e:
