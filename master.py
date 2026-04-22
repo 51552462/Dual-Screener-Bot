@@ -708,20 +708,20 @@ def scan_market_1d():
                                    'is_top_dna': 1 if dbg.get('is_top_dna') else 0,     # 👈 한국장만 있음
                                    'is_worst_dna': 1 if dbg.get('is_worst_dna') else 0, # 👈 한국장만 있음
                                    'is_death_combo': 1 if dbg.get('is_death_combo') else 0
-                               }
+                                }
                     
-                               success, fwd_msg = aft.try_add_virtual_position(
-                                  market=market_type, 
-                                  code=code, name=name,
-                                  sig_type=dbg.get('sig_type', ''), 
-                                  score=dbg.get('score', 0), 
-                                  ep=dbg.get('last_close', 0), 
-                                  facts=entry_facts, 
-                                  sector=sector_info
-                               )
-                               print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                            except Exception as e:
-                               print(f"   ↳ [포워드 장부 에러]: {e}")
+                                success, fwd_msg = aft.try_add_virtual_position(
+                                   market=market_type, 
+                                   code=code, name=name,
+                                   sig_type=dbg.get('sig_type', ''), 
+                                   score=dbg.get('score', 0), 
+                                   ep=dbg.get('last_close', 0), 
+                                   facts=entry_facts, 
+                                   sector=sector_info
+                                )
+                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                             except Exception as e:
+                                print(f"   ↳ [포워드 장부 에러]: {e}")
  
                             # 💡 4. 홍보용 캡션 (한국장에 맞게 원화로 픽스)
                             promo_caption = (
