@@ -180,7 +180,7 @@ def scale_score(val, best, worst):
         if val >= worst: return 1.0
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
-# 💡 4. Top 1% 마스터 (한국장 마스터 무타협 완전판 엔진 - SIG 1, 4 이식 및 시총 팩트 탑재)
+# 💡 4. Top 1% 마스터 (트뷰 원본 SIG 1, SIG 4 완벽 이식 엔진)
 def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
     if df_raw is None or len(df_raw) < 500: 
         return False, "", df_raw, {}
@@ -189,14 +189,14 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
     df['Idx_Close'] = idx_close.reindex(df.index).ffill()
 
-    # 7중 EMA 계산
+    # 1. 7중 EMA 계산
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
     
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
-    # ATR(변동성) 및 보조지표 계산
+    # 2. 기본 지표 및 4대 핵심 변수 수식 계산
     prev_c = np.roll(c, 1); prev_c[0] = c[0]
     tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
     atr = pd.Series(tr).ewm(alpha=1/20, adjust=False, min_periods=0).mean().values
@@ -211,7 +211,6 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     bb_width = np.where(bb_mid > 0, (4 * bb_std) / bb_mid, 0.01)
     bb_energy = np.where(bb_width > 0, (1.0 / bb_width) * vol_mult, 0)
 
-    # 💡 시장 상대강도(RS) 계산
     c_20 = pd.Series(c).shift(20).values
     idx_20 = df['Idx_Close'].shift(20).values
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -222,7 +221,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     rs = np.nan_to_num(rs, nan=0.0)
 
     # =========================================================================
-    # 👑 마스터 모멘텀 수식 (미국판 트뷰 로직 100% 이식 완료)
+    # 👑 3. 마스터 모멘텀 수식 (트뷰 로직 100% 이식)
     # =========================================================================
     is_aligned_30 = (e10 > e20) & (e20 > e30)
     is_aligned_112 = is_aligned_30 & (e30 > e60) & (e60 > e112)
@@ -232,63 +231,87 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     show_values = is_aligned_112 & is_bullish
 
     with np.errstate(divide='ignore', invalid='ignore'):
-        spread_10_20 = np.where(show_values, ((e10 - e20) / atr) * 100, 0)
-        spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
         spread_112_224 = np.where(show_values, ((e112 - e224) / atr) * 100, 0)
+        spread_10_30 = np.where(show_values, ((e10 - e30) / atr) * 100, 0)
+        spread_10_20 = np.where(show_values, ((e10 - e20) / atr) * 100, 0)
 
         idx_arr = np.arange(len(c))
         r_val = pd.Series(e10).rolling(10).corr(pd.Series(idx_arr)).fillna(0).values
+        r_squared = r_val * r_val
+        
         e10_3 = np.roll(e10, 3); e10_3[:3] = e10[:3]
         ema_roc = np.where(e10_3 != 0, ((e10 - e10_3) / e10_3) * 5000, 0)
         
-    true_momentum_line = np.where(is_aligned_30, ema_roc * (r_val**4), 0)
+    true_momentum_line = np.where(is_aligned_30, ema_roc * (r_squared**2), 0)
 
-    # 🚨 시그널 발생 로직 (미국판과 동일하게 월가 숏 타겟 S2, S3 완벽 차단)
+    # =========================================================================
+    # 👑 4. 타점 조건 및 상호 배제 로직 (S1, S4 추출)
+    # =========================================================================
     prev_tml = np.roll(true_momentum_line, 1); prev_tml[0] = 0
     cond_rising = true_momentum_line > prev_tml
     cond_blue_30 = spread_112_224 >= 30
     cond_highest_angle = (true_momentum_line > spread_10_20) & (true_momentum_line > spread_10_30) & (true_momentum_line > spread_112_224)
 
-    tv_raw_sig3 = is_aligned_448 & (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle & cond_rising
-    
-    # S4 바닥탈출 (V반등 각도 계산)
+    cond_val_sig1 = (spread_10_30 >= 100) & (spread_10_20 >= 50) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+    cond_val_sig2_3 = (spread_10_30 >= 150) & (spread_10_20 >= 100) & (true_momentum_line >= 150) & cond_blue_30 & cond_highest_angle
+
+    # Raw 시그널
+    raw_sig1 = is_aligned_112 & cond_val_sig1 & cond_rising
+    raw_sig2 = is_aligned_224 & cond_val_sig2_3 & cond_rising
+    raw_sig3 = is_aligned_448 & cond_val_sig2_3 & cond_rising
+
+    # 캔들 앵글 및 S4 바닥 로직 (WMA 3 계산)
     c_3 = np.roll(c, 3); c_3[:3] = c[:3]
     candle_roc = np.where(c_3 != 0, ((c - c_3) / c_3) * 1000, 0)
-    candle_angle = pd.Series(candle_roc).rolling(3).apply(lambda x: np.dot(x, [1,2,3])/6, raw=True).fillna(0).values
-    s4_signal = (candle_angle >= 50) & is_aligned_30 & is_bullish
+    wma_roc = pd.Series(candle_roc).rolling(3).apply(lambda x: np.dot(x, [1, 2, 3]) / 6, raw=True).fillna(0).values
+    candle_angle = np.where(is_aligned_30, wma_roc, 0)
 
+    raw_sig4 = np.zeros(len(c), dtype=bool)
+    is_candle_bottom = False
+    
+    for i in range(len(c)):
+        if candle_angle[i] <= 0:
+            is_candle_bottom = True
+        
+        if is_candle_bottom and (candle_angle[i] >= 50) and is_aligned_30[i] and is_bullish[i]:
+            raw_sig4[i] = True
+            is_candle_bottom = False
+
+    # 트뷰 원본 상호 배제 로직 적용
+    signal_3 = raw_sig3
+    signal_2 = raw_sig2 & (~signal_3)
+    signal_1 = raw_sig1 & (~signal_2) & (~signal_3)
+    signal_4 = raw_sig4 & (~signal_1) & (~signal_2) & (~signal_3)
+
+    # ---------------------------------------------------------
+    # 최종 타점 확정 (한국장 기준 거래대금/주가 필터 및 S1, S4 추출)
+    # ---------------------------------------------------------
     moneyOk = (c * v) >= 100_000_000
     priceOk = c >= 1000
 
-    hit_s1 = tv_raw_sig3 & moneyOk & priceOk # S1 대세추세
-    hit_s4 = s4_signal & moneyOk & priceOk   # S4 바닥탈출
+    hit_s1 = signal_1 & moneyOk & priceOk
+    hit_s4 = signal_4 & moneyOk & priceOk
 
     final_hit = hit_s1 | hit_s4
     if not final_hit[-1]: return False, "", df, {}
 
     # =========================================================================
-    # 👑 [핵심 버그 픽스] 한국장 시가총액(Marcap) 초정밀 등급 분류 (억원 단위 변환)
+    # 👑 5. 한국장 시가총액(Marcap) 및 스코어링 로직
     # =========================================================================
     marcap_eok = marcap / 100_000_000 
     
-    if marcap_eok >= 10000:
-        cap_str, score_marcap = "① 1조 이상 (대형주)", 10.0
-    elif marcap_eok >= 3000:
-        cap_str, score_marcap = "② 3천억~1조 (중형주)", 8.0
-    elif marcap_eok >= 1000:
-        cap_str, score_marcap = "③ 1천억~3천억 (중소형주)", 6.0
-    elif marcap_eok >= 500:
-        cap_str, score_marcap = "④ 500억~1천억 (소형주)", 4.0
-    else:
-        cap_str, score_marcap = "⑤ 500억 미만 (초소형 잡주)", 2.0
+    if marcap_eok >= 10000: cap_str, score_marcap = "① 1조 이상 (대형주)", 10.0
+    elif marcap_eok >= 3000: cap_str, score_marcap = "② 3천억~1조 (중형주)", 8.0
+    elif marcap_eok >= 1000: cap_str, score_marcap = "③ 1천억~3천억 (중소형주)", 6.0
+    elif marcap_eok >= 500: cap_str, score_marcap = "④ 500억~1천억 (소형주)", 4.0
+    else: cap_str, score_marcap = "⑤ 500억 미만 (초소형 잡주)", 2.0
 
     recent_hits = final_hit[-252:-1].sum() if len(c) > 252 else final_hit[:-1].sum()
     freq_count = int(recent_hits)
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     
-    # 타점별 스코어링
     if hit_s1[-1]:
-        sig_type = "🔥 S1 (대세 추세 돌파 - 448 완전정배열)"
+        sig_type = "🔥 S1 (대세 추세 모멘텀 - SIG 1)"
         ema_stat_str = "승률 34.0% / 손익비 4.71 (대세 상승장)"
         score_rs = scale_score(cur_rs, 2025.28, -821.13)
         score_ema = 10.0
@@ -297,7 +320,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         score_tb = scale_score(cur_tb, 20.13, 2.47)
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
     else:
-        sig_type = "🔥 S4 (이평 바닥 탈출 돌파)"
+        sig_type = "🔥 S4 (V자 바닥 탈출 - SIG 4)"
         ema_stat_str = "승률 24.3% / 손익비 3.00 (역배열 바닥 로또 타점)"
         score_rs = scale_score(cur_rs, 500.0, -100.0)
         score_ema = 5.0
@@ -309,7 +332,6 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
     total_score = min(max(total_score, 0), 100)
 
-    # 뱃지 시스템
     if total_score >= 80: badge_str = "🔥 [1티어 뱃지] 가산점 대상"
     elif total_score <= 50 and cur_rs > 500: badge_str = "💎 [특급 모멘텀 예외] 소액 로또 접근"
     else: badge_str = "⚠️ [비중 축소] 하위권 점수"
