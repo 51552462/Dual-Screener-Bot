@@ -527,75 +527,72 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                # 💡 본캐용 및 홍보용 차트 생성
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-                
-                if main_chart_path and promo_chart_path:
-                    ai_main, _ = generate_ai_report(code, name)
+            main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+            promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+            
+            if main_chart_path and promo_chart_path:
+                ai_main, _ = generate_ai_report(code, name) 
+                        
+                # 1️⃣ 본캐용 캡션 (유료방용 - V11.0 브리핑 출력)
+                main_caption = (
+                    f"🎯 [{dbg.get('sig_type', '')}]\n"
+                    f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
+                    f"🏢 {name} ({code})\n"
+                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                    f"{dbg.get('v11_comment', '')}\n" # 💡 [V11.0 로드]
+                    f"📉 [스마트 매수/청산 전략]\n"
+                    f"{dbg.get('recommend', '')}\n\n" # 💡 [맞춤형 전략 로드]
+                    f"💡 [AI 비즈니스 요약]\n"
+                    f"{ai_main}\n\n"
+                    f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                    f"⚠️ [면책 조항]\n"
+                    f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                )
+                q_main.put((main_chart_path, main_caption))
+
+                # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
+                # 👇👇 [수정해야 할 부분] try_add_virtual_position 호출부를 아래 코드로 교체하세요. 👇👇
+                try:
+                    import auto_forward_tester as aft
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - V11.0 뱃지 및 점수 브리핑 출력)
-                    main_caption = (
-                        f"🎯 [{dbg.get('sig_type', '')}]\n"
-                        f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
-                        f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        f"{dbg.get('v11_comment', '')}\n"  # 💡 [V11.0 적용]
-                        f"📉 [스마트 매수/청산 전략]\n"
-                        f"{dbg.get('recommend', '')}\n\n"
-                        f"💡 [AI 비즈니스 요약]\n"
-                        f"{ai_main}\n\n"
-                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
-                        f"⚠️ [면책 조항]\n"
-                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                    market_type = 'KR' 
+                    entry_facts = {
+                        'v_cpv': dbg.get('v_cpv', 0),
+                        'v_yang': dbg.get('v_yang', 0),
+                        'v_energy': dbg.get('v_energy', 0),
+                        'v_rs': dbg.get('v_rs', 0)
+                    }
+                    
+                    success, fwd_msg = aft.try_add_virtual_position(
+                        market=market_type,
+                        code=code,
+                        name=name,
+                        sig_type=dbg.get('sig_type', ''),
+                        score=dbg.get('score', 0), 
+                        # 💡 [핵심 픽스] c[-1]은 스코프(범위) 밖이라 에러가 납니다. 안전하게 0으로 예외 처리.
+                        ep=dbg.get('last_close', 0), 
+                        facts=entry_facts
                     )
-                    q_main.put((main_chart_path, main_caption))
+                    print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                except Exception as e:
+                    print(f"   ↳ [포워드 장부 에러]: {e}")
+                # 👆👆 [여기까지 덮어쓰기] 👆👆
 
-                    # 💡 [오토 포워드 테스팅 시스템 변수 에러 픽스]
-                    try:
-                        import auto_forward_tester as aft
-                        
-                        market_type = 'KR' 
-                        entry_facts = {
-                            'v_cpv': dbg.get('v_cpv', 0),
-                            'v_yang': dbg.get('v_yang', 0),
-                            'v_energy': dbg.get('v_energy', 0),
-                            'v_rs': dbg.get('v_rs', 0)
-                        }
-                        
-                        # 👇👇 [수정해야 할 부분] 포워드 테스팅 시스템 호출부 👇👇
-                        success, fwd_msg = aft.try_add_virtual_position(
-                            market=market_type,
-                            code=code,
-                            name=name,
-                            sig_type=dbg.get('sig_type', ''),
-                            score=dbg.get('score', 0), 
-                            # 💡 [핵심 픽스] 스코프 밖에 있는 c[-1] 참조 제거. 0으로 안전하게 예외처리!
-                            ep=dbg.get('last_close', 0), 
-                            facts=entry_facts
-                        )
-                        print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                        # 👆👆 [여기까지 덮어쓰기] 👆👆
-                    except Exception as e:
-                        print(f"   ↳ [포워드 장부 에러]: {e}")
+                # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
+                try:
+                    sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                except:
+                    sector_info = "유망 섹터 포착"
 
-                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                    try:
-                        sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                    except:
-                        sector_info = "유망 섹터 포착"
-                            
-                    promo_caption = (
-                        f"📈 [알고리즘 차트 포착]\n\n"
-                        f"🏢 종목: {name} ({code})\n"
-                        f"🏷️ 섹터: {sector_info}\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
-                    )
-                    q_promo.put((promo_chart_path, promo_caption))
-
-                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
-        except Exception as e:
-            pass
+                promo_caption = (
+                    f"📈 [알고리즘 차트 포착]\n\n"
+                    f"🏢 종목: {name} ({code})\n"
+                    f"🏷️ 섹터: {sector_info}\n"
+                    f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
+                )
+                q_promo.put((promo_chart_path, promo_caption))
+                
+                print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
