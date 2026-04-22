@@ -669,7 +669,8 @@ def scan_market_1d():
                                     sig_type=dbg.get('sig_type', ''),
                                     score=dbg.get('score', 0), 
                                     ep=dbg.get('last_close', 0), 
-                                    facts=entry_facts
+                                    facts=entry_facts,
+                                    sector=sector_info
                                 )
                                 print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                             except Exception as e:
