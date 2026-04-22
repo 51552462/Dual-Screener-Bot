@@ -580,15 +580,23 @@ def scan_market_1d():
 
             try:
                 if df_batch is not None:
-                    if len(chunk) == 1: df_ticker = df_batch.copy()
+                    if len(chunk) == 1: 
+                        df_ticker = df_batch.copy()
                     else: 
-                        if 'Ticker' in df_batch.columns.names:
-                            if tk not in df_batch.columns.get_level_values('Ticker'): continue
-                            df_ticker = df_batch.xs(tk, level='Ticker', axis=1).copy()
+                        # 💡 [핵심 픽스 1] yfinance 최신/구버전 완벽 호환 무적 방어 로직
+                        if isinstance(df_batch.columns, pd.MultiIndex):
+                            if tk in df_batch.columns.get_level_values(0):
+                                df_ticker = df_batch[tk].copy()
+                            elif tk in df_batch.columns.get_level_values(1):
+                                df_ticker = df_batch.xs(tk, level=1, axis=1).copy()
+                            else:
+                                continue
                         else:
-                            if tk not in df_batch.columns.get_level_values(0): continue
-                            df_ticker = df_batch[tk].copy()
+                            df_ticker = df_batch.copy()
+                else:
+                    # 💡 [핵심 픽스 2] batch 다운로드가 실패했을 때만 fallback_dict를 쓰도록 else 처리
                     df_ticker = fallback_dict.get(tk)
+
                 if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
