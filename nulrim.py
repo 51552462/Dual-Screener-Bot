@@ -13,6 +13,41 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
+import sqlite3
+
+# 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
+DB_PATH = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Quant_System', 'market_data.sqlite')
+
+# 💡 [Next Level 1] 하이브리드 데이터 로더 (한국장 전용)
+def get_safe_data(code, start_date):
+    table_name = f"KR_{code}"
+    try:
+        # 1. 내 컴퓨터(DB)에서 과거 데이터 광속 로드
+        conn = sqlite3.connect(DB_PATH)
+        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
+        conn.close()
+        df_db.index = pd.to_datetime(df_db.index)
+
+        # 2. 오늘 실시간 캔들 딱 1개만 가져오기
+        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
+        
+        if not df_live.empty:
+            df_combined = pd.concat([df_db, df_live])
+            return df_combined[~df_combined.index.duplicated(keep='last')]
+        return df_db
+    except:
+        # DB가 없거나 에러 시 즉시 기존 방식으로 우회 (절대 멈추지 않음)
+        return fdr.DataReader(code, start_date)
+
+# 💡 [Next Level 2] 동적 백분위 스코어링 함수
+def get_dynamic_score(series_data, higher_is_better=True, window=252):
+    if len(series_data) < 20: return 5.0
+    pct_rank = pd.Series(series_data).rolling(window, min_periods=20).apply(
+        lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+    ).fillna(0.5).values[-1]
+    
+    if higher_is_better: return 1.0 + (pct_rank * 9.0)
+    else: return 1.0 + ((1.0 - pct_rank) * 9.0)
 
 from google import genai
 from google.genai import types
@@ -123,6 +158,7 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
+# 💡 3. 잡주 필터 및 시가총액 병합 (캐싱 방어막 100% 보장형)
 def get_krx_list_kind():
     try:
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
@@ -130,43 +166,60 @@ def get_krx_list_kind():
         df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
-        
-        # 💡 [핵심 픽스 1] KIND 종목코드의 숨은 공백 완벽 제거 및 6자리 고정
-        df['Code'] = df['종목코드'].astype(str).str.strip().str.zfill(6)
+        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
-        filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
         
-        # 시가총액(Marcap) 데이터 100% 안전 조인 (FDR 버전/타입 호환성 완벽 해결)
+        junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
+        filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
+        
+        # 💡 [캐시 파일 경로 세팅] 서버에 저장될 시총 백업 파일
+        CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
+        
+        # 시가총액 데이터 추출 시도
         try:
             fdr_df = fdr.StockListing('KRX')
             
-            # 💡 [핵심 방어 로직 1] 컬럼명이 Symbol이거나 MarketCap일 경우 강제 통일
-            if 'Symbol' in fdr_df.columns and 'Code' not in fdr_df.columns:
-                fdr_df = fdr_df.rename(columns={'Symbol': 'Code'})
-            if 'MarketCap' in fdr_df.columns and 'Marcap' not in fdr_df.columns:
-                fdr_df = fdr_df.rename(columns={'MarketCap': 'Marcap'})
-                
-            # 안전하게 Code와 Marcap만 추출
-            fdr_df = fdr_df[['Code', 'Marcap']].copy()
+            rename_map = {}
+            if 'Symbol' in fdr_df.columns: rename_map['Symbol'] = 'Code'
+            if 'MarketCap' in fdr_df.columns: rename_map['MarketCap'] = 'Marcap'
+            if '시가총액' in fdr_df.columns: rename_map['시가총액'] = 'Marcap'
+            if rename_map: fdr_df = fdr_df.rename(columns=rename_map)
             
-            # 💡 [핵심 방어 로직 2] 종목코드 규격화 (공백 제거 및 6자리)
+            fdr_df = fdr_df[['Code', 'Marcap']].copy()
             fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
             
-            # 💡 [핵심 방어 로직 3] 시총 데이터에 콤마(,)가 포함된 문자열일 경우 숫자 변환 전 처리
             if fdr_df['Marcap'].dtype == object:
                 fdr_df['Marcap'] = fdr_df['Marcap'].astype(str).str.replace(',', '')
             
             fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
-
-            filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
-            filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
-            print("✅ 시가총액(Marcap) 데이터 100% 정상 조인 완료!")
+            
+            # API가 정상 작동하여 데이터가 1000개 이상 받아졌다면 캐시(백업) 파일 갱신
+            if len(fdr_df) > 1000:
+                fdr_df.to_csv(CACHE_FILE, index=False)
+                print("✅ 시가총액(Marcap) 라이브 로드 및 백업 완료!")
+            else:
+                raise ValueError("API가 빈 껍데기를 반환함")
+                
         except Exception as e:
-            print(f"⚠️ 시가총액 데이터 조인 실패: {e}")
-            filtered_df['Marcap'] = 0
+            # 🚨 API가 뻗었을 때 0원으로 퉁치지 않고 백업 파일에서 살려냄
+            print(f"⚠️ 라이브 시총 로드 실패({e}). 안전 백업(Cache) 데이터로 복구합니다!")
+            if os.path.exists(CACHE_FILE):
+                fdr_df = pd.read_csv(CACHE_FILE)
+                fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6)
+            else:
+                print("🚨 백업 파일도 없습니다. 최초 1회는 라이브 데이터가 필요합니다.")
+                fdr_df = pd.DataFrame(columns=['Code', 'Marcap'])
+
+        # 필터링된 리스트와 시총 데이터 병합
+        filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
+        
+        # 병합 후에도 NaN인 아주 희귀한 신규 상장 종목만 0으로 처리 (기존 우량주 보호)
+        filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
             
         return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
-    except: return pd.DataFrame()
+    except Exception as outer_e: 
+        print(f"🚨 리스트 수집 치명적 에러: {outer_e}")
+        return pd.DataFrame()
         
 MIN_PRICE = 1000                  
 MIN_TRANS_MONEY = 100_000_000  
@@ -424,7 +477,18 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         sig_type = "💎 [로또] " + sig_type
     else:
         badge_str = "⚠️ [비중 축소] 하위권 점수는 철저히 비중 축소 요망"
+    # =========================================================================
+    # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (기존 수치 유지 + 상대 랭크 추가)
+    # =========================================================================
+    dyn_rs_score = get_dynamic_score(rs, higher_is_better=True)
+    dyn_tb_score = get_dynamic_score(tb_index, higher_is_better=True)
+    dyn_cpv_score = get_dynamic_score(cpv, higher_is_better=False)
 
+    is_hybrid_trap = (dyn_rs_score <= 3.0) and (dyn_cpv_score <= 2.0)
+    if is_hybrid_trap:
+        total_score *= 0.60
+        badge_str += "\n⚠️ [NextLevel 경고] 1년 내 최하위 소외주의 억지 캔들! (가짜상승 주의, 점수 40% 삭감)"
+    
     v11_comment = (
         f"📊 [System B 한국 눌림목 V11.0 마스터 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
@@ -437,6 +501,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         f"▪️ 과거 매매빈도: {freq_count}회 ({score_freq:.1f}점)\n"
         f"▪️ 시총 체급점수: {score_marcap:.1f}점\n\n"
         f"💡 [이평선 국면 팩트 데이터]\n{ema_stat_str}\n"
+        f"💡 [상대평가] RS 상위 {(10 - dyn_rs_score) * 11.1:.1f}% / 찐양봉 상위 {(10 - dyn_tb_score) * 11.1:.1f}%\n"
     )
     
     if trap_warning != "": v11_comment += f"\n{trap_warning}"
@@ -455,7 +520,10 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
-        "v_rs": cur_rs
+        "v_rs": cur_rs,
+        "dyn_rs_score": dyn_rs_score,
+        "dyn_cpv_score": dyn_cpv_score,
+        "dyn_tb_score": dyn_tb_score
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -567,13 +635,23 @@ def scan_market_1d():
     
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
-    # 💡 [추가] 벤치마크 지수(KODEX ETF 대용) 로드 (상대강도 계산용)
-    print("📊 벤치마크 지수 데이터 안전하게 로드 중...")
+    # 💡 벤치마크 지수 (KOSPI/KOSDAQ) 일괄 로드 (하이브리드 엔진 적용)
+    print("📊 벤치마크 지수(KODEX ETF 대용) 데이터 안전하게 로드 중...")
     try:
-        kospi_idx = fdr.DataReader('069500', start_date)['Close']
-        kosdaq_idx = fdr.DataReader('229200', start_date)['Close']
-    except:
-        kospi_idx, kosdaq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
+        # 먼저 로컬 DB에서 불러오기 시도
+        conn = sqlite3.connect(DB_PATH)
+        kospi_idx = pd.read_sql("SELECT * FROM KR_KOSPI_IDX", conn, index_col='Date')['Close']
+        kosdaq_idx = pd.read_sql("SELECT * FROM KR_KOSDAQ_IDX", conn, index_col='Date')['Close']
+        conn.close()
+        kospi_idx.index = pd.to_datetime(kospi_idx.index)
+        kosdaq_idx.index = pd.to_datetime(kosdaq_idx.index)
+    except Exception as e:
+        print(f"⚠️ DB 지수 로드 실패, 실시간 API로 대체합니다: {e}")
+        try:
+            kospi_idx = fdr.DataReader('069500', start_date)['Close'] 
+            kosdaq_idx = fdr.DataReader('229200', start_date)['Close']
+        except:
+            kospi_idx, kosdaq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
 
     def worker(row_tuple):
         _, row = row_tuple
@@ -584,7 +662,7 @@ def scan_market_1d():
         hit, sig_type, df, dbg = False, "", None, {}
         
         try:
-            df_raw = fdr.DataReader(code, start_date)
+            df_raw = get_safe_data(code, start_date)
             if df_raw is not None and not df_raw.empty:
                 df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 
@@ -649,7 +727,10 @@ def scan_market_1d():
                         'v_cpv': dbg.get('v_cpv', 0),
                         'v_yang': dbg.get('v_yang', 0),
                         'v_energy': dbg.get('v_energy', 0),
-                        'v_rs': dbg.get('v_rs', 0)
+                        'v_rs': dbg.get('v_rs', 0),
+                        'dyn_rs': dbg.get('dyn_rs_score', 0),
+                        'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                        'dyn_tb': dbg.get('dyn_tb_score', 0)
                     }
                     
                     success, fwd_msg = aft.try_add_virtual_position(
