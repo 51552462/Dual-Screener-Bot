@@ -248,3 +248,94 @@ def send_daily_summary_report():
     report_msg += "\n💡 (모든 지표와 백분위 데이터는 DB에 완벽히 박제 중입니다.)"
     send_telegram_msg(report_msg)
     print(f"✅ 16:00 일일 종합 리포트 텔레그램 발송 완료.")
+    
+    # ==========================================
+# 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
+# ==========================================
+def run_deep_dive_analysis(market='KR'):
+    """
+    미래 데이터(포워드 테스팅)를 기반으로 내 시스템의 과최적화를 검증하고,
+    대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        # 이미 청산(결과가 확정된) 종목들만 불러옵니다.
+        df = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'", conn)
+        conn.close()
+        
+        if len(df) < 10:
+            print(f"⚠️ [{market}] 아직 통계를 낼 만큼 청산된 데이터가 충분하지 않습니다. (최소 10개 필요)")
+            return
+
+        df['Win'] = np.where(df['final_ret'] > 0, 1, 0)
+        
+        report_msg = f"🔬 [{market}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
+
+        # ---------------------------------------------------------
+        # [방향성 6번 해결] 티어별(10~30, 40~70, 70~100) 실전 성적표 추적
+        # ---------------------------------------------------------
+        report_msg += "📊 [티어별 실전 성적표]\n"
+        tier_grp = df.groupby('tier').agg(
+            매매건수=('id', 'count'),
+            승률=('Win', lambda x: round(x.mean() * 100, 1)),
+            평균수익=('final_ret', lambda x: round(x[x > 0].mean(), 2) if len(x[x > 0]) > 0 else 0),
+            평균손실=('final_ret', lambda x: round(x[x <= 0].mean(), 2) if len(x[x <= 0]) > 0 else 0)
+        ).reset_index()
+        
+        for _, r in tier_grp.iterrows():
+            report_msg += f"🏅 {r['tier']} (총 {r['매매건수']}건)\n"
+            report_msg += f" ↳ 실전 승률: {r['승률']}% | 평균 익절 +{r['평균수익']}% / 평균 손절 {r['평균손실']}%\n"
+        report_msg += "\n"
+
+        # ---------------------------------------------------------
+        # [방향성 5, 6번 해결] 어떤 지표가 진짜 도움이 되었나? (과최적화 솎아내기)
+        # ---------------------------------------------------------
+        winners = df[df['final_ret'] > 5.0]  # 대박 종목 기준 (5% 이상 수익)
+        losers = df[df['final_ret'] < -3.0]  # 참사 종목 기준 (-3% 이하 손실)
+        
+        report_msg += "🧬 [대박 vs 참사 종목 DNA(특징) 대조]\n"
+        if len(winners) > 0 and len(losers) > 0:
+            # 절대 수치가 아닌 '동적 백분위(dyn_)'를 대조하여 지표의 유효성 검증
+            w_rs, l_rs = winners['dyn_rs'].mean(), losers['dyn_rs'].mean()
+            w_cpv, l_cpv = winners['dyn_cpv'].mean(), losers['dyn_cpv'].mean()
+            
+            report_msg += f"📈 대박 종목 평균: RS 상위 {(10-w_rs)*11.1:.1f}% | 찐양봉 상위 {(10-winners['dyn_tb'].mean())*11.1:.1f}%\n"
+            report_msg += f"💀 참사 종목 평균: RS 상위 {(10-l_rs)*11.1:.1f}% | 찐양봉 상위 {(10-losers['dyn_tb'].mean())*11.1:.1f}%\n"
+            
+            # 피드백 자동 도출 (어떤 지표가 도움이 되고 무용지물인지)
+            if w_rs > l_rs + 1.0:
+                report_msg += "💡 결론: 상대강도(RS)가 높을수록 실전 수익률에 매우 큰 도움이 됨. (RS 가중치 신뢰도 높음)\n"
+            else:
+                report_msg += "💡 결론: RS는 실전 결과와 큰 연관이 없음. (다른 지표 가중치를 올려야 함)\n"
+        else:
+            report_msg += "데이터가 더 누적되어야 DNA 대조가 가능합니다.\n"
+        report_msg += "\n"
+
+        # ---------------------------------------------------------
+        # [방향성 6번 해결] 세부 특징(태그)별 승률 기여도 추적
+        # ---------------------------------------------------------
+        report_msg += "🏷️ [세부 흐름 태그별 승률 기여도]\n"
+        tag_stats = {}
+        for _, row in df.iterrows():
+            if pd.isna(row['flow_tags']): continue
+            for tag in str(row['flow_tags']).split():
+                if tag not in tag_stats: tag_stats[tag] = {'win': 0, 'total': 0}
+                tag_stats[tag]['total'] += 1
+                if row['Win'] == 1: tag_stats[tag]['win'] += 1
+                
+        for tag, stats in sorted(tag_stats.items(), key=lambda x: x[1]['total'], reverse=True)[:5]:
+            if stats['total'] >= 3: # 최소 3번 이상 등장한 태그만
+                tag_win_rate = round((stats['win'] / stats['total']) * 100, 1)
+                report_msg += f" ▪️ {tag}: 승률 {tag_win_rate}% (출현 {stats['total']}회)\n"
+
+        send_telegram_msg(report_msg)
+        print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
+        
+    except Exception as e:
+        print(f"⚠️ 딥 다이브 분석 중 에러: {e}")
+
+if __name__ == "__main__":
+    # 나중에 데이터가 충분히 쌓이면 주말에 한 번씩 이 파일을 직접 실행해서 분석 리포트를 받아봅니다.
+    # run_deep_dive_analysis('KR')
+    # run_deep_dive_analysis('US')
+    pass
