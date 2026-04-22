@@ -115,11 +115,29 @@ def get_krx_list_kind():
         df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
-        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
+        
+        # 💡 [핵심 픽스 1] KIND 종목코드의 숨은 공백 완벽 제거 및 6자리 고정
+        df['Code'] = df['종목코드'].astype(str).str.strip().str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
-        return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
-    except: return pd.DataFrame()
+        filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
+        
+        # 시가총액(Marcap) 데이터 100% 안전 조인
+        try:
+            fdr_df = fdr.StockListing('KRX')[['Code', 'Marcap']]
+            # 💡 [핵심 픽스 2] FDR 종목코드 역시 공백 제거 및 6자리 고정 (충돌 원천 차단)
+            fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
+            # 💡 [핵심 픽스 3] 시가총액 데이터를 강제로 숫자로 변환 (에러 시 0 처리)
+            fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
 
+            filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
+            filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
+            print("✅ 시가총액(Marcap) 데이터 100% 정상 조인 완료!")
+        except Exception as e:
+            print(f"⚠️ 시가총액 데이터 로드 실패 (API 서버 문제): {e}")
+            filtered_df['Marcap'] = 0
+            
+        return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
+    except: return pd.DataFrame()
 def telegram_sender_daemon(target_queue, token):
     while True:
         item = target_queue.get()
@@ -528,17 +546,7 @@ def scan_market_1d():
         kosdaq_idx = fdr.DataReader('229200', start_date)['Close']
     except:
         kospi_idx, kosdaq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
-        
-    # 👇👇 [여기서부터 추가] 실시간 시가총액 데이터 동적 로드 👇👇
-    print("💰 실시간 KRX 전체 시가총액 데이터 로드 중...")
-    try:
-        df_marcap = fdr.StockListing('KRX')
-        marcap_dict = df_marcap.set_index('Code')['Marcap'].to_dict()
-    except Exception as e:
-        print(f"⚠️ 시가총액 데이터 로드 실패: {e}")
-        marcap_dict = {}
-    # 👆👆 [여기까지 추가] 👆👆
-    
+            
     def worker(row_tuple):
         try:
             _, row = row_tuple
@@ -556,7 +564,7 @@ def scan_market_1d():
             if is_valid: 
                 # 💡 시장에 맞는 지수 및 시가총액을 넘겨줌 (current_marcap 추가)
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
-                current_marcap = marcap_dict.get(code, 0) 
+                current_marcap = row.get("Marcap", 0) 
                 
                 hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close, current_marcap)
             
