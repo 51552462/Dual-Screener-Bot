@@ -685,40 +685,37 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                # 💡 본캐용 및 홍보용 차트 생성
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-                
-                if main_chart_path and promo_chart_path:
-                    ai_main, _ = generate_ai_report(code, name)
-
-                    # 💡 1. [순서 픽스] 섹터(sector_info)를 가장 먼저 추출합니다.
+                        main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                        # 💡 [수정] threads_chart_path -> promo_chart_path 로 이름 통일
+                        promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                        
+                        if main_chart_path and promo_chart_path:
+                            ai_main, _ = generate_ai_report(code, name)
+                            
+                            # 💡 [버그 픽스] 섹터 추출을 장부 기록보다 '먼저' 실행
                             try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                             except:
                                 sector_info = "유망 섹터 포착"
-                                
-                    # 1️⃣ 본캐용 캡션 (기존 부분 찾아서 아래처럼 교체)
-                    main_caption = (
-                        f"🎯 [{dbg.get('sig_type', '')}]\n"
-                        f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
-                        f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
-                        # 👇👇 치명적 버그 수정: v8_comment -> v11_comment로 변경 👇👇
-                        f"{dbg.get('v11_comment', '')}\n"  
-                        f"📉 [스마트 매수/청산 전략]\n"
-                        f"{dbg.get('recommend', '')}\n\n" 
-                        f"💡 [AI 비즈니스 요약]\n"
-                        f"{ai_main}\n\n"
-                        f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
-                        f"⚠️ [면책 조항]\n"
-                        f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
-                    )
                     
-                    # 💡 캡션 큐에 1회만 정확히 담습니다.
-                    q_main.put((main_chart_path, main_caption))
+                            # 1️⃣ 본캐용 캡션
+                            main_caption = (
+                                f"🎯 [{dbg.get('sig_type', '')}]\n"
+                                f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
+                                f"🏢 {name} ({code})\n"
+                                f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                                f"{dbg.get('v11_comment', '')}\n"
+                                f"📉 [스마트 매수/청산 전략]\n"
+                                f"{dbg.get('recommend', '')}\n\n"
+                                f"💡 [AI 비즈니스 요약]\n"
+                                f"{ai_main}\n\n"
+                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                                f"⚠️ [면책 조항]\n"
+                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다.\n투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                            )
+                            q_main.put((main_chart_path, main_caption))
 
-                    # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
+                            # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
                             try:
                                 import auto_forward_tester as aft
                                 market_type = 'KR'
@@ -743,12 +740,12 @@ def scan_market_1d():
                             except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
 
-                            # 💡 4. 홍보용 캡션을 만들고 전송합니다. (기존 코드 유지)
+                            # 💡 4. 홍보용 캡션 (한국장에 맞게 원화로 픽스)
                             promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
                                 f"🏷️ 섹터: {sector_info}\n"
-                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
+                                f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
                             )
                             q_promo.put((promo_chart_path, promo_caption))
 
