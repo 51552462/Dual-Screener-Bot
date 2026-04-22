@@ -632,25 +632,35 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 💡 3. [오토 포워드 장부 기록] 동적 변수 3개와 섹터를 넘겨줍니다.
+                            # 💡 [오토 포워드 장부 기록] - 미국장 전용
                             try:
                                 import auto_forward_tester as aft
                                 market_type = 'US'
                                 entry_facts = {
+                                    'v_rs': dbg.get('v_rs', 0),
                                     'v_cpv': dbg.get('v_cpv', 0),
                                     'v_yang': dbg.get('v_yang', 0),
                                     'v_energy': dbg.get('v_energy', 0),
-                                    'v_rs': dbg.get('v_rs', 0),
+                                    # 👇 미국장은 시총 데이터와 텐배거/DNA 로직이 없으므로 무조건 0으로 처리 (에러 방지)
+                                    'marcap_eok': 0,       
+                                    'score_marcap': 0,     
+                                    'freq_count': dbg.get('freq_count', 0),
+                                    
                                     'dyn_rs': dbg.get('dyn_rs_score', 0),
                                     'dyn_cpv': dbg.get('dyn_cpv_score', 0),
-                                    'dyn_tb': dbg.get('dyn_tb_score', 0)
+                                    'dyn_tb': dbg.get('dyn_tb_score', 0),
+                                    
+                                    # 👇 미국장에도 있는 데스콤보만 살리고 나머지는 0
+                                    'is_tenbagger': 0, 
+                                    'is_top_dna': 0,   
+                                    'is_worst_dna': 0, 
+                                    'is_death_combo': 1 if dbg.get('is_death_combo') else 0
                                 }
                                 
                                 success, fwd_msg = aft.try_add_virtual_position(
                                     market=market_type, code=code, name=name,
                                     sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
-                                    ep=dbg.get('last_close', 0), facts=entry_facts,
-                                    sector=sector_info # 👈 위에서 추출한 섹터를 넘겨줌
+                                    ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info
                                 )
                                 print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                             except Exception as e:
