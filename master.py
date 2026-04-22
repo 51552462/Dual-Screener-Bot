@@ -13,6 +13,41 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
+import sqlite3
+
+# 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
+DB_PATH = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Quant_System', 'market_data.sqlite')
+
+# 💡 [Next Level 1] 하이브리드 데이터 로더 (한국장 전용)
+def get_safe_data(code, start_date):
+    table_name = f"KR_{code}"
+    try:
+        # 1. 내 컴퓨터(DB)에서 과거 데이터 광속 로드
+        conn = sqlite3.connect(DB_PATH)
+        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
+        conn.close()
+        df_db.index = pd.to_datetime(df_db.index)
+
+        # 2. 오늘 실시간 캔들 딱 1개만 가져오기
+        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
+        
+        if not df_live.empty:
+            df_combined = pd.concat([df_db, df_live])
+            return df_combined[~df_combined.index.duplicated(keep='last')]
+        return df_db
+    except:
+        # DB가 없거나 에러 시 즉시 기존 방식으로 우회 (절대 멈추지 않음)
+        return fdr.DataReader(code, start_date)
+
+# 💡 [Next Level 2] 동적 백분위 스코어링 함수
+def get_dynamic_score(series_data, higher_is_better=True, window=252):
+    if len(series_data) < 20: return 5.0
+    pct_rank = pd.Series(series_data).rolling(window, min_periods=20).apply(
+        lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+    ).fillna(0.5).values[-1]
+    
+    if higher_is_better: return 1.0 + (pct_rank * 9.0)
+    else: return 1.0 + ((1.0 - pct_rank) * 9.0)
 
 from google import genai
 from google.genai import types
@@ -391,7 +426,18 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         cpv_comment = "🚨 [한국형 설거지 주의] 돌파 직후 꽉 찬 양봉만 연속으로 그리면 100% 설거지 확률 상승!"
     elif cur_cpv <= 0.23:
         cpv_comment = "💎 [진짜 대장주 캔들] 위아래 꼬리를 지저분하게 달며 악성 매물을 완벽히 소화했습니다."
+    # =========================================================================
+    # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (기존 수치 유지 + 상대 랭크 추가)
+    # =========================================================================
+    dyn_rs_score = get_dynamic_score(rs, higher_is_better=True)
+    dyn_tb_score = get_dynamic_score(tb_index, higher_is_better=True)
+    dyn_cpv_score = get_dynamic_score(cpv, higher_is_better=False)
 
+    is_hybrid_trap = (dyn_rs_score <= 3.0) and (dyn_cpv_score <= 2.0)
+    if is_hybrid_trap:
+        total_score *= 0.60
+        badge_str += "\n⚠️ [NextLevel 경고] 1년 내 최하위 소외주의 억지 캔들! (가짜상승 주의, 점수 40% 삭감)"
+        
     v11_comment = (
         f"📊 [System B 한국 이평선 마스터 V11.0 완전체 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
@@ -406,6 +452,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f}\n"
         f"▪️ 응축에너지(BB): {cur_bbe:.1f}\n"
         f"▪️ 시장상대강도(RS): {cur_rs:.1f}%\n"
+        f"💡 [상대평가] RS 상위 {(10 - dyn_rs_score) * 11.1:.1f}% / 찐양봉 상위 {(10 - dyn_tb_score) * 11.1:.1f}%\n"
     )
     
     if cpv_comment != "":
@@ -421,6 +468,9 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
         "v_rs": cur_rs
+        "dyn_rs_score": dyn_rs_score,
+        "dyn_cpv_score": dyn_cpv_score,
+        "dyn_tb_score": dyn_tb_score
     }
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
@@ -528,16 +578,23 @@ def scan_market_1d():
     
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
     
-    # 💡 벤치마크 지수 (KOSPI/KOSDAQ) 일괄 로드 (상대강도 RS 계산용)
+    # 💡 벤치마크 지수 (KOSPI/KOSDAQ) 일괄 로드 (하이브리드 엔진 적용)
     print("📊 벤치마크 지수(KODEX ETF 대용) 데이터 안전하게 로드 중...")
     try:
-        # LOGOUT 에러 및 차단 방지를 위해 지수 추종 ETF를 대용으로 사용
-        kospi_idx = fdr.DataReader('069500', start_date)['Close']  # KODEX 200
-        kosdaq_idx = fdr.DataReader('229200', start_date)['Close'] # KODEX 코스닥150
+        # 먼저 로컬 DB에서 불러오기 시도
+        conn = sqlite3.connect(DB_PATH)
+        kospi_idx = pd.read_sql("SELECT * FROM KR_KOSPI_IDX", conn, index_col='Date')['Close']
+        kosdaq_idx = pd.read_sql("SELECT * FROM KR_KOSDAQ_IDX", conn, index_col='Date')['Close']
+        conn.close()
+        kospi_idx.index = pd.to_datetime(kospi_idx.index)
+        kosdaq_idx.index = pd.to_datetime(kosdaq_idx.index)
     except Exception as e:
-        print(f"⚠️ 벤치마크 지수 로드 실패 ({e}). 빈 데이터로 우회합니다.")
-        kospi_idx = pd.Series(dtype=float)
-        kosdaq_idx = pd.Series(dtype=float)
+        print(f"⚠️ DB 지수 로드 실패, 실시간 API로 대체합니다: {e}")
+        try:
+            kospi_idx = fdr.DataReader('069500', start_date)['Close'] 
+            kosdaq_idx = fdr.DataReader('229200', start_date)['Close']
+        except:
+            kospi_idx, kosdaq_idx = pd.Series(dtype=float), pd.Series(dtype=float)
         
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -550,7 +607,7 @@ def scan_market_1d():
             df_raw = None
             
             try:
-                df_raw = fdr.DataReader(code, start_date)
+                df_raw = get_safe_data(code, start_date)
             except: 
                 pass
 
@@ -617,6 +674,9 @@ def scan_market_1d():
                             'v_yang': dbg.get('v_yang', 0),
                             'v_energy': dbg.get('v_energy', 0),
                             'v_rs': dbg.get('v_rs', 0)
+                            'dyn_rs': dbg.get('dyn_rs_score', 0),
+                            'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                            'dyn_tb': dbg.get('dyn_tb_score', 0)
                         }
                         
                         success, fwd_msg = aft.try_add_virtual_position(
