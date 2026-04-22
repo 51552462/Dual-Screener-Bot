@@ -467,7 +467,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
-        "v_rs": cur_rs
+        "v_rs": cur_rs,
         "dyn_rs_score": dyn_rs_score,
         "dyn_cpv_score": dyn_cpv_score,
         "dyn_tb_score": dyn_tb_score
@@ -673,7 +673,7 @@ def scan_market_1d():
                             'v_cpv': dbg.get('v_cpv', 0),
                             'v_yang': dbg.get('v_yang', 0),
                             'v_energy': dbg.get('v_energy', 0),
-                            'v_rs': dbg.get('v_rs', 0)
+                            'v_rs': dbg.get('v_rs', 0),
                             'dyn_rs': dbg.get('dyn_rs_score', 0),
                             'dyn_cpv': dbg.get('dyn_cpv_score', 0),
                             'dyn_tb': dbg.get('dyn_tb_score', 0)
