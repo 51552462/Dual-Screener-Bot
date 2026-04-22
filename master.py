@@ -478,35 +478,45 @@ def scan_market_1d():
     console_lock = threading.Lock()
     
     def worker(row_tuple):
+        _, row = row_tuple
+        name, code = row["Name"], row["Code"]
+        marcap = row.get("Marcap", 0) # 💡 시가총액 데이터 추출
+        df_raw = None
+        is_valid = False
+        hit, sig_type, df, dbg = False, "", None, {}
+
         try:
-            _, row = row_tuple
-            name, code = row["Name"], row["Code"]
-            marcap = row.get("Marcap", 0) # 💡 [V11.0] 시가총액 데이터 추출
-            df_raw = None
+            # 💡 [필수 복구 1] 데이터 수집 시도
+            df_raw = fdr.DataReader(code, start_date)
             
-            try:
-                df_raw = fdr.DataReader(code, start_date)
-            except: pass
+            # 💡 [필수 복구 2] 눌림목 검색기와 동일하게 결측치(NaN) 완벽 제거 및 데이터 정제
+            if df_raw is not None and not df_raw.empty:
+                df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
 
             is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-            hit, sig_type, df, dbg = False, "", None, {}
             
-            if is_valid: 
+            # 💡 [필수 복구 3] 정상 데이터일 경우에만 마스터 엔진 가동
+            if is_valid:
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
-                # 💡 [V11.0] 엔진에 marcap 전달
-                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close, marcap)
-            
-            hit_rank = 0
-            with console_lock:
-                tracker['scanned'] += 1
-                if is_valid: tracker['analyzed'] += 1 
-                if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
-                    print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
+                hit, sig_type, df, dbg = compute_korea_master_signal(df_raw, idx_close, marcap)
+                
+        except Exception as e:
+            # 에러 발생 시 코드가 멈추지 않게 자연스럽게 패스
+            pass
 
-                if hit:
-                    if code in sent_today:
-                        hit = False 
-                    else:
+        # 💡 [필수 복구 4] 스캔/분석 카운팅을 try-except 블록 밖으로 빼서 누락 방지 (눌림목과 동일)
+        hit_rank = 0
+        with console_lock:
+            tracker['scanned'] += 1
+            if is_valid: tracker['analyzed'] += 1
+            if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
+                print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
+
+        # 👇 아래쪽의 hit 확인 후 텔레그램 전송 및 차트 저장 로직은 기존 대표님 코드 그대로 둡니다.
+        if hit:
+            if code in sent_today:
+                hit = False 
+            else:
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']
                         sent_today.add(code) 
