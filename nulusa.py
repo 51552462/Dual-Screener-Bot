@@ -601,7 +601,8 @@ def scan_market_1d():
                             score=dbg.get('score', 0), 
                             # 👇👇 [수정] 스코프 밖의 변수인 c[-1]을 0으로 변경 👇👇
                             ep=dbg.get('last_close', 0), 
-                            facts=entry_facts
+                            facts=entry_facts,
+                            sector=sector_info
                         )
                         print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                     except Exception as e:
