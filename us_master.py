@@ -582,12 +582,12 @@ def scan_market_1d():
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
                     else: 
-                        if 'Ticker' in df_batch.columns.names:  # yfinance 최신 버전 대응
-    if tk not in df_batch.columns.get_level_values('Ticker'): continue
-    df_ticker = df_batch.xs(tk, level='Ticker', axis=1).copy()
-else:  # 구버전 대응
-    if tk not in df_batch.columns.get_level_values(0): continue
-    df_ticker = df_batch[tk].copy()
+                        if 'Ticker' in df_batch.columns.names:
+                            if tk not in df_batch.columns.get_level_values('Ticker'): continue
+                            df_ticker = df_batch.xs(tk, level='Ticker', axis=1).copy()
+                        else:
+                            if tk not in df_batch.columns.get_level_values(0): continue
+                            df_ticker = df_batch[tk].copy()
                     df_ticker = fallback_dict.get(tk)
                 if df_ticker is None or df_ticker.empty: continue
 
