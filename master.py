@@ -16,7 +16,7 @@ import FinanceDataReader as fdr
 import sqlite3
 
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
-DB_PATH = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Quant_System', 'market_data.sqlite')
+DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
 # 💡 [Next Level 1] 하이브리드 데이터 로더 (한국장 전용)
 def get_safe_data(code, start_date):
@@ -156,10 +156,9 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 3. 잡주 필터 및 시가총액 병합 (안전성 100% 보장형)
+# 💡 3. 잡주 필터 및 시가총액 병합 (캐싱 방어막 100% 보장형)
 def get_krx_list_kind():
     try:
-        # 💡 [핵심 픽스] 이전 눌림목 검색기에서 검증된 KIND 베이스 + FDR 시총 병합 방식 이식
         df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
         df_ks['Market'] = 'KOSPI'
         df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
@@ -171,36 +170,53 @@ def get_krx_list_kind():
         junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
         filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
         
-        # 시가총액(Marcap) 데이터 100% 안전 조인 (FDR 버전/타입 호환성 완벽 해결)
+        # 💡 [캐시 파일 경로 세팅] 서버에 저장될 시총 백업 파일
+        CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
+        
+        # 시가총액 데이터 추출 시도
         try:
             fdr_df = fdr.StockListing('KRX')
             
-            # 💡 [핵심 픽스 1] FDR 최신 버전 한글 컬럼명('시가총액') 완벽 매핑
             rename_map = {}
             if 'Symbol' in fdr_df.columns: rename_map['Symbol'] = 'Code'
             if 'MarketCap' in fdr_df.columns: rename_map['MarketCap'] = 'Marcap'
             if '시가총액' in fdr_df.columns: rename_map['시가총액'] = 'Marcap'
-            
             if rename_map: fdr_df = fdr_df.rename(columns=rename_map)
-                
+            
             fdr_df = fdr_df[['Code', 'Marcap']].copy()
             fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
             
-            # 💡 [핵심 픽스 2] 콤마 제거 및 안전한 숫자형 변환
             if fdr_df['Marcap'].dtype == object:
                 fdr_df['Marcap'] = fdr_df['Marcap'].astype(str).str.replace(',', '')
             
             fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
-
-            filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
-            filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
-            print("✅ 시가총액(Marcap) 데이터 정상 조인 완료!")
+            
+            # API가 정상 작동하여 데이터가 1000개 이상 받아졌다면 캐시(백업) 파일 갱신
+            if len(fdr_df) > 1000:
+                fdr_df.to_csv(CACHE_FILE, index=False)
+                print("✅ 시가총액(Marcap) 라이브 로드 및 백업 완료!")
+            else:
+                raise ValueError("API가 빈 껍데기를 반환함")
+                
         except Exception as e:
-            print(f"⚠️ 시가총액 데이터 조인 실패: {e}")
-            filtered_df['Marcap'] = 0
+            # 🚨 API가 뻗었을 때 0원으로 퉁치지 않고 백업 파일에서 살려냄
+            print(f"⚠️ 라이브 시총 로드 실패({e}). 안전 백업(Cache) 데이터로 복구합니다!")
+            if os.path.exists(CACHE_FILE):
+                fdr_df = pd.read_csv(CACHE_FILE)
+                fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6)
+            else:
+                print("🚨 백업 파일도 없습니다. 최초 1회는 라이브 데이터가 필요합니다.")
+                fdr_df = pd.DataFrame(columns=['Code', 'Marcap'])
+
+        # 필터링된 리스트와 시총 데이터 병합
+        filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
+        
+        # 병합 후에도 NaN인 아주 희귀한 신규 상장 종목만 0으로 처리 (기존 우량주 보호)
+        filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
             
         return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
-    except: 
+    except Exception as outer_e: 
+        print(f"🚨 리스트 수집 치명적 에러: {outer_e}")
         return pd.DataFrame()
 
 # 💡 보조 함수 1: 1~10점 스케일링 함수 (방향성 완벽 지원)
@@ -377,7 +393,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     if hit_s1_arr[-1]:
         ema_stat_str = "승률 26.5% / 손익비 3.27 (수익성과 방어력 1위)"
         score_rs   = scale_score(cur_rs, 2025.28, -821.13)
-        score_ema  = 10.0 if align448[-1] else 5.0
+        score_ema  = 10.0 if is_aligned_448[-1] else 5.0
         score_cpv  = scale_score(cur_cpv, 0.39, 0.95)
         score_bbe  = scale_score(cur_bbe, 56.80, 3.80)
         score_tb   = scale_score(cur_tb, 20.13, 2.47)
