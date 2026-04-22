@@ -720,7 +720,7 @@ def scan_market_1d():
                                    sector=sector_info
                                 )
                                 print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
-                             except Exception as e:
+                            except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
  
                             # 💡 4. 홍보용 캡션 (한국장에 맞게 원화로 픽스)
