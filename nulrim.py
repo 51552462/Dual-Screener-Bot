@@ -741,7 +741,8 @@ def scan_market_1d():
                         score=dbg.get('score', 0), 
                         # 💡 [핵심 픽스] c[-1]은 스코프(범위) 밖이라 에러가 납니다. 안전하게 0으로 예외 처리.
                         ep=dbg.get('last_close', 0), 
-                        facts=entry_facts
+                        facts=entry_facts,
+                        sector=sector_info
                     )
                     print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
                 except Exception as e:
