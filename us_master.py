@@ -13,6 +13,39 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+# 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
+DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+
+# 💡 [Next Level 1] 하이브리드 데이터 로더 (한국장 전용)
+def get_safe_data(code, start_date):
+    table_name = f"KR_{code}"
+    try:
+        # 1. 내 컴퓨터(DB)에서 과거 데이터 광속 로드
+        conn = sqlite3.connect(DB_PATH)
+        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
+        conn.close()
+        df_db.index = pd.to_datetime(df_db.index)
+
+        # 2. 오늘 실시간 캔들 딱 1개만 가져오기
+        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
+        
+        if not df_live.empty:
+            df_combined = pd.concat([df_db, df_live])
+            return df_combined[~df_combined.index.duplicated(keep='last')]
+        return df_db
+    except:
+        # DB가 없거나 에러 시 즉시 기존 방식으로 우회 (절대 멈추지 않음)
+        return fdr.DataReader(code, start_date)
+
+# 💡 [Next Level 2] 동적 백분위 스코어링 함수
+def get_dynamic_score(series_data, higher_is_better=True, window=252):
+    if len(series_data) < 20: return 5.0
+    pct_rank = pd.Series(series_data).rolling(window, min_periods=20).apply(
+        lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+    ).fillna(0.5).values[-1]
+    
+    if higher_is_better: return 1.0 + (pct_rank * 9.0)
+    else: return 1.0 + ((1.0 - pct_rank) * 9.0)
 
 from google import genai
 from google.genai import types
