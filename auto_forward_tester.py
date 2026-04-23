@@ -7,6 +7,7 @@ import os, time, requests
 from datetime import datetime, timedelta
 import pytz
 import sqlite3
+import json
 
 TELEGRAM_TOKEN = "7988939051:AAG4FqMzzz12vd7Crzt8DVPWiL3fMHM8tEc"
 TELEGRAM_CHAT_ID = "6838834566"
@@ -21,50 +22,38 @@ def send_telegram_msg(text):
     except: pass
 
 def init_forward_db():
-    """장부 테이블 생성 (섹터 및 동적 백분위 점수 추가)"""
+    """장부 테이블 생성 및 V12.0 필수 컬럼 안전 추가"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS forward_trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_date TEXT,
-            market TEXT,
-            code TEXT,
-            name TEXT,
-            sector TEXT,           -- 💡 [방향성 3번] 주도 섹터 추적용
-            sig_type TEXT,
-            tier TEXT,
-            total_score REAL,
-            dyn_rs REAL,           -- 💡 [방향성 1,4번] 상대평가 백분위 기록
-            dyn_cpv REAL,
-            dyn_tb REAL,
-            is_tenbagger INTEGER,  -- 텐배거 조건 충족 여부 (0/1)
-            is_top_dna INTEGER,    -- 최상위 DNA 일치 여부
-            is_worst_dna INTEGER,  -- 최악의 DNA 일치 여부
-            is_death_combo INTEGER,-- 데스콤보 발생 여부
-            entry_price REAL,
-            v_cpv REAL,
-            v_yang REAL,
-            v_rs REAL,
-            v_energy REAL,         -- 응축 에너지 (BB) 👈 추가
-            marcap_eok REAL,       -- 시가총액(억원) 👈 추가
-            score_marcap REAL,     -- 시총 체급 점수 👈 추가
-            freq_count INTEGER,    -- 과거 매매 빈도 👈 추가
-            max_high REAL,
-            min_low REAL,
-            bars_held INTEGER DEFAULT 0,
-            up_vol_sum REAL DEFAULT 0,
-            down_vol_sum REAL DEFAULT 0,
-            status TEXT DEFAULT 'OPEN',
-            exit_date TEXT,
-            exit_reason TEXT,
-            flow_tags TEXT,
-            final_ret REAL,
-            mfe REAL
+            id INTEGER PRIMARY KEY AUTOINCREMENT, entry_date TEXT, market TEXT, code TEXT, name TEXT, sector TEXT,    
+            sig_type TEXT, tier TEXT, total_score REAL, dyn_rs REAL, dyn_cpv REAL, dyn_tb REAL,
+            is_tenbagger INTEGER, is_top_dna INTEGER, is_worst_dna INTEGER, is_death_combo INTEGER,
+            entry_price REAL, v_cpv REAL, v_yang REAL, v_rs REAL, v_energy REAL, marcap_eok REAL,       
+            score_marcap REAL, freq_count INTEGER, max_high REAL, min_low REAL, bars_held INTEGER DEFAULT 0,
+            up_vol_sum REAL DEFAULT 0, down_vol_sum REAL DEFAULT 0, status TEXT DEFAULT 'OPEN',
+            exit_date TEXT, exit_reason TEXT, flow_tags TEXT, final_ret REAL, mfe REAL
         )
     ''')
+    
+    # 💡 [V12.0 팩트 추가] 기존 DB를 날리지 않고 안전하게 컬럼 추가
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN entry_atr REAL DEFAULT 0.0")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN exit_type TEXT DEFAULT 'UNKNOWN'")
+    except: pass
+    
     conn.commit()
     conn.close()
+
+# 💡 [시스템 연결] 관제탑 설정 로드 함수 추가 (init_forward_db 밑에 추가)
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {}
 
 # ==========================================
 # 1. 신규 종목 편입 엔진 (검색기에서 호출)
@@ -150,26 +139,66 @@ def track_daily_positions(market):
             new_up_vol = r['up_vol_sum'] + (v if c > o else 0)
             new_down_vol = r['down_vol_sum'] + (v if c < o else 0)
 
-            # 지표 계산
+            # =================================================================
+            # 👑 [3차원 청산 최적화 엔진 가동] MFE/MAE, ATR, Time Stop 연산
+            # =================================================================
+            # 1. 14일 ATR(변동성) 실시간 연산
+            df['prev_c'] = df['Close'].shift(1)
+            df['tr'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['prev_c']), abs(df['Low'] - df['prev_c'])))
+            df['atr'] = df['tr'].ewm(span=14, adjust=False).mean()
+            cur_atr = float(df['atr'].iloc[-1])
+            
+            # 진입 시점의 ATR이 DB에 없다면 현재 ATR로 팩트 보정 후 저장
+            entry_atr = r.get('entry_atr', 0.0)
+            if entry_atr == 0.0 or pd.isna(entry_atr):
+                entry_atr = cur_atr
+                conn.execute("UPDATE forward_trades SET entry_atr=? WHERE id=?", (entry_atr, r['id']))
+
+            # 2. 기술적(TECH) 지표 연산 (기존 ZLEMA 및 단기데드)
             df['ema10'] = df['Close'].ewm(span=10, adjust=False).mean()
             df['ema20'] = df['Close'].ewm(span=20, adjust=False).mean()
             z_ema1 = df['Close'].ewm(span=20, adjust=False).mean()
             z_ema2 = z_ema1.ewm(span=20, adjust=False).mean()
             cur_zlema = float((z_ema1 + (z_ema1 - z_ema2)).iloc[-1])
-
-            do_exit, exit_rsn = False, ""
             
-            if c < cur_zlema: do_exit, exit_rsn = True, "ZLEMA 이탈"
-            elif float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]):
-                do_exit, exit_rsn = True, "단기데드"
-            elif new_bars >= 10 and c <= ep:
-                do_exit, exit_rsn = True, "10일 횡보 타임컷"
+            is_tech_exit = (c < cur_zlema) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
 
+            # 3. 🎯 관제탑 네임스페이스 매핑 및 JSON 지시사항 수신
+            sys_config = load_system_config()
+            active_mode = sys_config.get("ACTIVE_EXIT_MODE", "HYBRID")
+            
+            # 종목의 시장(KR/US)과 시그널(S1/S4)을 분석해 고유 방(Namespace) 찾기
+            ns_prefix = f"{market}_MASTER_S1" # 기본값
+            if "S4" in r['sig_type']: ns_prefix = f"{market}_MASTER_S4"
+            if "눌림" in r['sig_type']: ns_prefix = f"{market}_NULRIM_S4" if "S4" in r['sig_type'] else f"{market}_NULRIM_S1"
+            if "5선" in r['sig_type']: ns_prefix = f"{market}_5EMA_S1"
+            
+            opt_time_stop = sys_config.get(f"{ns_prefix}_TIME_STOP", 10)
+            opt_sl_atr    = sys_config.get(f"{ns_prefix}_ATR_SL", 2.0)
+            
+            # 수학적 손절가(SL) 산출: 진입가 - (관제탑 승수 * 진입변동성)
+            sl_price = ep - (opt_sl_atr * entry_atr)
+
+            # 4. ⚔️ 청산 아레나: 관제탑 모드에 따른 기계적 사형 집행
+            do_exit, exit_rsn, actual_exit_type = False, "", "HOLD"
+
+            if active_mode == "TECH":
+                if is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
+            
+            elif active_mode == "STAT":
+                if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT"
+                elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 수학적 손절", "STAT"
+            
+            else: # HYBRID (공수겸장)
+                if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID"
+                elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 방어 손절", "HYBRID"
+                elif is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID"
+
+            # 5. DB 업데이트 실행 (청산 시)
             if do_exit:
                 ret = round(((c - ep) / ep) * 100, 2)
                 mfe = round(((new_max - ep) / ep) * 100, 2)
                 
-                # 💡 [방향성 4번] 태깅 시스템 (과최적화 분석용)
                 tags = []
                 if mfe >= 7.0 and new_bars <= 8: tags.append("#빠른슈팅_완벽")
                 elif mfe >= 7.0 and new_bars > 8: tags.append("#지연슈팅_수명연장")
@@ -179,24 +208,18 @@ def track_daily_positions(market):
                 if vol_ratio >= 1.5: tags.append("#건전한조정_매집우위")
                 elif vol_ratio < 0.8: tags.append("#음봉대량거래_세력이탈")
                 
-                try:
-                    idx_ret = ((idx_close.iloc[-1] - idx_close.loc[r['entry_date']:].iloc[0]) / idx_close.loc[r['entry_date']:].iloc[0]) * 100
-                    if ret > float(idx_ret): tags.append("#RS_방어성공")
-                    else: tags.append("#주도력_상실")
-                except: pass
-                
                 flow_tags = " ".join(tags)
                 exit_date = datetime.now().strftime('%Y-%m-%d')
                 
-                # DB 업데이트 (청산)
+                # 💡 관제탑이 피드백을 위해 수집할 exit_type 완벽 로깅
                 conn.execute('''
                     UPDATE forward_trades 
-                    SET status=?, exit_date=?, exit_reason=?, flow_tags=?, final_ret=?, mfe=?, max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?
+                    SET status=?, exit_date=?, exit_reason=?, flow_tags=?, final_ret=?, mfe=?, max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?, exit_type=?
                     WHERE id=?
-                ''', ('CLOSED_WIN' if ret > 0 else 'CLOSED_LOSS', exit_date, exit_rsn, flow_tags, ret, mfe, new_max, new_min, new_bars, new_up_vol, new_down_vol, r['id']))
+                ''', ('CLOSED_WIN' if ret > 0 else 'CLOSED_LOSS', exit_date, exit_rsn, flow_tags, ret, mfe, new_max, new_min, new_bars, new_up_vol, new_down_vol, actual_exit_type, r['id']))
                 
-                icon = "🔥익절" if ret > 0 else "💀손절"
-                send_telegram_msg(f"🤖 [{market}] 청산: {icon} {r['name']} ({r['total_score']}점)\n▪️ 수익: {ret}%\n▪️ 태그: {flow_tags}\n▪️ 사유: {exit_rsn}")
+                icon = "🔥스마트청산" if ret > 0 else "🛡️방어손절"
+                send_telegram_msg(f"🤖 [{market} 관제탑 제어] {icon}: {r['name']} ({r['total_score']}점)\n▪️ 수익: {ret}%\n▪️ 모드: {active_mode}\n▪️ 사유: {exit_rsn}\n▪️ 태그: {flow_tags}")
             else:
                 # DB 업데이트 (유지)
                 conn.execute('''
