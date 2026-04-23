@@ -14,6 +14,19 @@ from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
 import sqlite3
+import json
+
+# 💡 [자율 관제탑 연결] 조율된 파라미터 수신
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {} # 에러 시 빈 데이터 반환 (하드코딩된 기본값으로 자동 우회)
+
+SYS_CONFIG = load_system_config()
 
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
 DB_PATH = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_Quant_System', 'market_data.sqlite')
@@ -417,6 +430,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 
 
         total_score = (score_bbe*10 + score_cpv*9 + score_tb*8 + score_marcap*7 + score_rs*6 + score_ema*5 + score_freq*4) / 490 * 100
+        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S4", 1.0)
         trap_warning += "⚠️ [S4 바닥 탈출] 승률 방어를 위해 반드시 서브 비중으로만 접근 요망!\n"
 
     else: # S1
@@ -429,6 +443,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 
 
         total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
+        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S1", 1.0)
         if cur_rs < -745.10: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
         if not align112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
 
@@ -474,7 +489,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
     else:
         tier_stat = f"총점 {total_score:.1f}점 하위권 타점입니다. 소형주일수록 지하실 참사 확률이 높으므로 반드시 비중을 축소하십시오. 👉 [비중 조언: {weight_rec}]"
 
-    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+    regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
 
     badge_str = ""
     if total_score >= 80.0:
