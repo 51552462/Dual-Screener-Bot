@@ -427,7 +427,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
         
         total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
-        regime_weight = SYS_CONFIG.get("WEIGHT_S1", 1.0) # 👈 관제탑 S1 자본 배분율 로드
+        regime_weight = SYS_CONFIG.get("WEIGHT_KR_MASTER_S1", 1.0)
         
         # [교차 검증] S1 시그널이 어느 체급에 떴는가?
         if marcap_eok >= 3000:
@@ -446,7 +446,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         score_tb   = scale_score(cur_tb, 50.0, 5.0)
         score_freq = 6.0
         total_score = (score_bbe*10 + score_cpv*9 + score_tb*8 + score_marcap*7 + score_rs*6 + score_ema*5 + score_freq*4) / 490 * 100
-        regime_weight = SYS_CONFIG.get("WEIGHT_S4", 1.0) # 👈 관제탑 S4 자본 배분율 로드
+        regime_weight = SYS_CONFIG.get("WEIGHT_KR_MASTER_S4", 1.0)
         
         # [교차 검증] S4 시그널이 어느 체급에 떴는가?
         if marcap_eok >= 3000:
