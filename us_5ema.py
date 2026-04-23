@@ -287,6 +287,30 @@ def compute_us_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close
     total_score = min(max(total_score, 0), 100)
 
     # =========================================================================
+    # 👑 [비선형 의사결정 나무 (Decision Tree) 필터] - 선형 덧셈의 오류 차단
+    # =========================================================================
+    tree_fatal_cpv = SYS_CONFIG.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
+    is_tree_rejected = False
+    tree_reason = ""
+
+    # [Node 1]: CPV가 한계치를 넘으면 RS 점수가 아무리 높아도 무조건 기각 (Death Combo)
+    if cur_cpv > tree_fatal_cpv:
+        is_tree_rejected = True
+        tree_reason = f"악성 매물 캔들 한계치 초과 (CPV {cur_cpv:.2f} > {tree_fatal_cpv})"
+        
+    # [Node 2]: VIX가 25 이상(공포장)인데, 모멘텀(RS)이 0 이하면 기각 (약한 놈부터 죽음)
+    elif cur_vix >= 25.0 and cur_rs < 0:
+        is_tree_rejected = True
+        tree_reason = f"공포장(VIX {cur_vix:.1f}) 속 모멘텀 붕괴 (RS {cur_rs:.1f})"
+
+    # 비선형 필터에 걸렸다면 총점을 강제로 0점 처리하고 사형 선고
+    if is_tree_rejected:
+        total_score = 0.0
+        trap_warning += f"🚫 <b>[Decision Tree 기각]</b>: 선형 점수는 높을 수 있으나, 비선형 팩트에 의해 차단되었습니다. (사유: {tree_reason})\n"
+        badge_str = "💀 [비선형 필터 기각] 매수 절대 금지"
+    # =========================================================================
+
+    # =========================================================================
     # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
     # =========================================================================
     if cur_cpv >= 0.31:
