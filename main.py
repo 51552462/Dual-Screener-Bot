@@ -14,7 +14,7 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 # ==========================================
-# 🕵️ 스마트 에러 추적기 (속도 지장 0%)
+# 🕵️ 스마트 에러 추적기
 # ==========================================
 class SmartErrorTracker:
     def __init__(self):
@@ -24,7 +24,6 @@ class SmartErrorTracker:
 
     def write(self, text):
         self.original_stderr.write(text) 
-        
         if text.strip() and ("Exception" in text or "Traceback" in text or "Error" in text):
             with self.lock:
                 now = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%H:%M:%S')
@@ -56,18 +55,23 @@ plt.rcParams['axes.unicode_minus'] = False
 print("✅ 한글 폰트 준비 완료!\n")
 
 # ==========================================
-# 로직 파일 임포트
+# 👑 퀀트 팩토리 9대 모듈 완벽 임포트
 # ==========================================
 import us_master as us_master
 import nasdaq_dante_reverse_breakout_screener as us_rev
 import nulusa as us_nul
 import usa as us_bowl
-import us_5ema as us_5ema  # 👈 [추가] 미국장 5일선 관통 로직
+import us_5ema as us_5ema  
 import dante_krx_reverse_breakout_screener as kr_rev
 import master as kr_master
 import kr as kr_bowl
 import nulrim as kr_nul
 import ema5 as kr_5ema
+
+# 👇👇 [핵심 추가] 중앙 통제 시스템 3대장 임포트
+import data_updater
+import auto_forward_tester
+import system_auto_pilot
 
 # ==========================================
 # 🛑 주말 자동 휴장 스마트 차단기
@@ -92,7 +96,6 @@ def skip_weekend_us(func):
         return func(*args, **kwargs)
     return wrapper
 
-# ⭐️ 어떤 함수 이름이든 알아서 찾아서 패치하는 무적 로직
 def apply_weekend_patch(module, is_us):
     patcher = skip_weekend_us if is_us else skip_weekend_kr
     if hasattr(module, 'scan_market_1d'):
@@ -104,7 +107,7 @@ apply_weekend_patch(us_master, True)
 apply_weekend_patch(us_rev, True)
 apply_weekend_patch(us_nul, True)
 apply_weekend_patch(us_bowl, True)
-apply_weekend_patch(us_5ema, True)  # 👈 [추가] 미국 5일선 주말 휴장 적용
+apply_weekend_patch(us_5ema, True)
 
 apply_weekend_patch(kr_rev, False)
 apply_weekend_patch(kr_master, False)
@@ -113,110 +116,92 @@ apply_weekend_patch(kr_nul, False)
 apply_weekend_patch(kr_5ema, False)
 
 # ==========================================
-# 📊 실시간 생존 확인 및 종합 보고서
+# 👑 [신규] 아침 07:00 DB 자동 업데이트 스케줄러
+# ==========================================
+def run_db_updater_scheduler():
+    tz = pytz.timezone('Asia/Seoul')
+    print("💠 [데이터 파이프라인] 매일 07:00 DB 갱신 대기 중...")
+    while True:
+        now = datetime.now(tz)
+        # 매일 아침 7시 정각에 최신 차트 데이터 DB로 긁어오기
+        if now.hour == 7 and now.minute == 0:
+            print("🚀 [데이터 파이프라인] 아침 DB 자동 갱신 가동!")
+            try: data_updater.run_daily_db_update()
+            except Exception as e: print(f"DB 업데이트 에러: {e}")
+            time.sleep(65)
+        time.sleep(30)
+
+# ==========================================
+# 📊 실시간 생존 확인 및 종합 보고서 (모니터)
 # ==========================================
 def status_monitor(threads_dict):
     seoul_tz = pytz.timezone('Asia/Seoul')
-    ny_tz = pytz.timezone('America/New_York')
-
-    print("\n📡 [스마트 관제탑] 실시간 모니터링 및 자동 에러 감지 시스템 가동!\n")
+    print("\n📡 [스마트 관제탑] 실시간 모니터링 시스템 가동!\n")
 
     while True:
         now_kr = datetime.now(seoul_tz)
-        now_ny = datetime.now(ny_tz)
-
         if now_kr.minute == 59 and now_kr.second >= 50:
             print("\n" + "━"*65)
             print(f"📊 [관제탑 1시간 종합 보고서] 🇰🇷 {now_kr.strftime('%H:%M')} 기준 마감")
             print("━"*65)
 
-            dead_bots = []
-            for name, t in threads_dict.items():
-                if not t.is_alive():
-                    dead_bots.append(name)
+            dead_bots = [name for name, t in threads_dict.items() if not t.is_alive()]
 
             if not dead_bots:
-                print("🟢 [스레드 상태] 9개 검색기 모두 100% 정상 작동 중! (사망 없음)")
+                print("🟢 [스레드 상태] 퀀트 팩토리 코어 엔진 100% 정상 작동 중!")
             else:
                 print(f"🔴 [스레드 상태] 🚨 경고! 사망한 봇 발견: {', '.join(dead_bots)}")
 
             recent_errors = error_tracker.get_and_clear()
             if not recent_errors:
-                print("🟢 [시스템 건강] 지난 1시간 동안 충돌이나 에러 없이 완벽하게 스캔했습니다.")
+                print("🟢 [시스템 건강] 에러 없이 완벽 구동 중.")
             else:
-                print(f"🟡 [시스템 건강] 지난 1시간 동안 {len(recent_errors)}건의 경미한 에러/지연이 있었습니다:")
-                for err in recent_errors[-5:]: 
-                    print(f"   ↳ {err}")
+                print(f"🟡 [시스템 건강] {len(recent_errors)}건의 경미한 에러 감지:")
+                for err in recent_errors[-5:]: print(f"   ↳ {err}")
 
             print("━"*65 + "\n")
             time.sleep(15) 
 
-        elif now_kr.minute % 10 == 0 and now_kr.second < 2:
-            print(f"📡 [관제탑 핑] 🇰🇷 {now_kr.strftime('%H:%M:%S')} | 🇺🇸 {now_ny.strftime('%H:%M:%S')} (모든 시스템 감시 중...)")
-            time.sleep(2)
-
         time.sleep(1)
 
 # ==========================================
-# 🚀 메인 실행부
+# 🚀 메인 실행부 (컨트롤 타워)
 # ==========================================
 if __name__ == "__main__":
     print("🚀 24시간 독립 멀티스레딩 컨트롤 타워 가동 시작...")
 
     bot_targets = {
+        # 1. 텔레그램 발송 검색기 봇들
         "🇺🇸 1. US 마스터": us_master.run_scheduler,
         "🇺🇸 2. US 역매공파": us_rev.run_scheduler,
         "🇺🇸 3. US 눌림목": us_nul.run_scheduler,
         "🇺🇸 4. US 밥그릇": us_bowl.run_scheduler,
-        "🇺🇸 10. US 5일선": us_5ema.run_scheduler,  # 👈 [추가] 10번째 봇으로 등록
+        "🇺🇸 10. US 5일선": us_5ema.run_scheduler,
         "🇰🇷 5. KR 역매공파": kr_rev.run_scheduler,
         "🇰🇷 6. KR 마스터": kr_master.run_scheduler,
         "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
         "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
-        "🇰🇷 9. KR 5일선": kr_5ema.run_scheduler
+        "🇰🇷 9. KR 5일선": kr_5ema.run_scheduler,
+        
+        # 2. 👑 자율 운영 코어 엔진 3대장 (절대 멈추면 안 됨)
+        "💠 [엔진] DB 자동 갱신": run_db_updater_scheduler,
+        "💠 [엔진] 장부 관리기": auto_forward_tester.run_daily_scheduler,
+        "💠 [엔진] 2주 자율 관제탑": system_auto_pilot.system_main_loop
     }
 
     active_threads = {}
 
+    # 스레드 13개 동시 구동
     for name, target_func in bot_targets.items():
         t = threading.Thread(target=target_func, daemon=True, name=name)
         t.start()
         active_threads[name] = t
-        time.sleep(1)
+        time.sleep(0.5)
 
-    monitor_thread = threading.Thread(target=status_monitor, args=(active_threads,), daemon=True, name="관제탑")
+    # 관제 모니터 구동
+    monitor_thread = threading.Thread(target=status_monitor, args=(active_threads,), daemon=True, name="관제탑_모니터")
     monitor_thread.start()
 
+    # 메인 프로세스가 꺼지지 않도록 영원히 대기
     for t in active_threads.values():
         t.join()
-# main.py의 메인 실행부 근처
-import auto_forward_tester
-
-def run_forward_validation():
-    kr_tz = pytz.timezone('Asia/Seoul')
-    ny_tz = pytz.timezone('America/New_York')
-    
-    while True:
-        now_kr = datetime.now(kr_tz)
-        now_ny = datetime.now(ny_tz)
-        
-        # 1. 매일 15:40 (한국장 마감 10분 후) -> DB 조용히 업데이트 및 채점
-        if now_kr.hour == 15 and now_kr.minute == 40:
-            print("⏳ [백그라운드 작업] 한국장 포워드 테스팅 추적 및 DB 갱신 중...")
-            auto_forward_tester.track_daily_positions('KR')
-            time.sleep(60)
-
-        # 2. 매일 16:00 정각 -> 질문자님 텔레그램으로 최종 요약본 1장 발송!
-        if now_kr.hour == 16 and now_kr.minute == 0:
-            auto_forward_tester.send_daily_summary_report()
-            time.sleep(60)
-            
-        # (미국장 추적은 동부시간 장 마감 후인 16:15에 조용히 진행)
-        if now_ny.hour == 16 and now_ny.minute == 15:
-            print("⏳ [백그라운드 작업] 미국장 포워드 테스팅 추적 및 DB 갱신 중...")
-            auto_forward_tester.track_daily_positions('US')
-            time.sleep(60)
-            
-        time.sleep(20)
-
-# (기존 bot_targets 에 등록하는 부분은 동일)
