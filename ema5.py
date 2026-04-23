@@ -414,15 +414,6 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
 
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n💡 비중 조언: {tier_stat}"
 
-    # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
-    vix_strategy = ""
-    if cur_vix >= 30:
-        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 43%, 평균수익 29% 압도적 대박 구간! 진입 비중 1.5배 상향 및 적극 매수."
-    elif cur_vix >= 20:
-        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 수익폭 1.5배 점프 구간! 진입 비중 1.2배 상향."
-    else:
-        vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 돌파 매매."
-
     # 💡 [V9.0 뱃지 시스템 및 하위권 밈(Meme) 주식 예외 로직]
     badge_str = ""
     if total_score >= 80.0:
@@ -433,6 +424,7 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         sig_type = "💎 [로또] " + sig_type
     else:
         badge_str = "⚠️ [비중 축소] 80점 미만은 철저히 비중을 축소하고 1티어 뱃지 위주로 매매 요망"
+
     # =========================================================================
     # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (기존 수치 유지 + 상대 랭크 추가)
     # =========================================================================
@@ -445,13 +437,12 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         total_score *= 0.60
         badge_str += "\n⚠️ [NextLevel 경고] 1년 내 최하위 소외주의 억지 캔들! (가짜상승 주의, 점수 40% 삭감)"
         
-    # 👇👇 기존 v9_comment 조립 부분을 아래 코드로 교체 (하드코딩 제거 완료) 👇👇
+    # 💡 텔레그램 결과지에 출력될 브리핑 데이터 조립 (VIX 블록 완전 제거)
     v11_comment = (
         f"📊 [System B 5일선 스나이퍼 V11.0 리포트]\n"
         f"🔹 시스템 총점: {total_score:.1f} / 100점\n"
         f"🔹 시가총액: {marcap_str}\n"
-        f"🎖️ {badge_str}\n"
-        f"{vix_strategy}\n\n"
+        f"🎖️ {badge_str}\n\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.2f} ({score_cpv:.1f}점)\n"
         f"▪️ 진짜양봉지수: {cur_tb:.1f} ({score_tb:.1f}점)\n"
         f"▪️ 응축에너지: {cur_bbe:.1f} ({score_bbe:.1f}점)\n"
@@ -470,7 +461,7 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": f"{exit_strategy}", 
-        "v11_comment": v11_comment, # 👈 변수명을 확실하게 V11로 매핑
+        "v11_comment": v11_comment,
         "score": total_score,
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
