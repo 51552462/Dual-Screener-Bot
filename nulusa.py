@@ -13,6 +13,20 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+import json
+
+# 💡 [자율 관제탑 연결] 조율된 파라미터 수신
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {} # 에러 시 빈 데이터 반환 (하드코딩된 기본값으로 자동 우회)
+
+SYS_CONFIG = load_system_config()
+
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
@@ -316,17 +330,34 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         score_tb   = scale_score(cur_tb, 11.10, 0.90)      
         score_freq = 6.0
         total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
-
-    elif hit_s1 or hit_s4: # [S1, S4 대세 추세 및 바닥]
-        sig_type = "🔥 [눌림] S4 (바닥 탈출 밈 주식 로또 타점)" if hit_s4 else "🔥 [눌림] S1 (448 대세 추세)"
-        score_rs   = scale_score(cur_rs, 990.40, -102.75)  
-        score_ema  = 10.0 if align448[-1] else 1.0         
-        score_cpv  = scale_score(cur_cpv, 0.12, 0.87)      
-        score_bbe  = scale_score(cur_bbe, 31.60, 2.50)     
-        score_tb   = scale_score(cur_tb, 11.10, 0.90)      
-        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0                             
+        regime_weight = SYS_CONFIG.get("WEIGHT_US_NULRIM_S2", 1.0)
+        
+    elif hit_s1: # [S1 448 대세 추세 전용 블록]
+        sig_type = "🔥 [눌림] S1 (448 대세 추세)"
+        score_rs   = scale_score(cur_rs, SYS_CONFIG.get("US_NULRIM_S1_RS_BEST", 990.40), SYS_CONFIG.get("US_NULRIM_S1_RS_WORST", -102.75))
+        score_ema  = 10.0 if align448[-1] else 1.0
+        score_cpv  = scale_score(cur_cpv, SYS_CONFIG.get("US_NULRIM_S1_CPV_BEST", 0.12), SYS_CONFIG.get("US_NULRIM_S1_CPV_WORST", 0.87))
+        score_bbe  = scale_score(cur_bbe, SYS_CONFIG.get("US_NULRIM_S1_BBE_BEST", 31.60), SYS_CONFIG.get("US_NULRIM_S1_BBE_WORST", 2.50))
+        score_tb   = scale_score(cur_tb, SYS_CONFIG.get("US_NULRIM_S1_TB_BEST", 11.10), SYS_CONFIG.get("US_NULRIM_S1_TB_WORST", 0.90))
+        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
+        
         total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
+        
+        regime_weight = SYS_CONFIG.get("WEIGHT_US_NULRIM_S1", 1.0) # 👈 관제탑 S1 자본 배분율 로드
 
+    elif hit_s4: # [S4 바닥 탈출 전용 블록]
+        sig_type = "🔥 [눌림] S4 (바닥 탈출 밈 주식 로또 타점)"
+        score_rs   = scale_score(cur_rs, SYS_CONFIG.get("US_NULRIM_S4_RS_BEST", 990.40), SYS_CONFIG.get("US_NULRIM_S4_RS_WORST", -102.75))
+        score_ema  = 10.0 if align448[-1] else 1.0
+        score_cpv  = scale_score(cur_cpv, SYS_CONFIG.get("US_NULRIM_S4_CPV_BEST", 0.12), SYS_CONFIG.get("US_NULRIM_S4_CPV_WORST", 0.87))
+        score_bbe  = scale_score(cur_bbe, SYS_CONFIG.get("US_NULRIM_S4_BBE_BEST", 31.60), SYS_CONFIG.get("US_NULRIM_S4_BBE_WORST", 2.50))
+        score_tb   = scale_score(cur_tb, SYS_CONFIG.get("US_NULRIM_S4_TB_BEST", 11.10), SYS_CONFIG.get("US_NULRIM_S4_TB_WORST", 0.90))
+        score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
+        
+        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
+        
+        regime_weight = SYS_CONFIG.get("WEIGHT_US_NULRIM_S4", 1.0) # 👈 관제탑 S4 자본 배분율 로드
+        
     # =========================================================================
     # 👑 [4단계] 미국장 V9.0 디테일: VIX 매핑, 요일 효과, 데스콤보, 뱃지 시스템
     # =========================================================================
@@ -365,7 +396,8 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     else:
         tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 가짜 휩소 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
 
-    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+    regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
 
     # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
     vix_strategy = ""
