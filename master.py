@@ -14,6 +14,19 @@ from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
 import sqlite3
+import json
+
+# 💡 [자율 관제탑 연결] 조율된 파라미터 수신
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {} # 에러 시 빈 데이터 반환 (하드코딩된 기본값으로 자동 우회)
+
+SYS_CONFIG = load_system_config()
 
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
@@ -398,15 +411,23 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     # =========================================================================
     # 👑 6. 시그널(S1/S4)과 시가총액 체급을 크로스 체킹한 [맞춤형 동적 전략]
     # =========================================================================
+    # =========================================================================
+    # 👑 6. 시그널(S1/S4)과 시가총액 체급을 크로스 체킹한 [맞춤형 동적 전략]
+    # =========================================================================
+    regime_weight = 1.0 # 💡 기본 자본 배분율
+    
     if hit_s1_arr[-1]:
         ema_stat_str = "승률 26.5% / 손익비 3.27 (수익성과 방어력 1위)"
-        score_rs   = scale_score(cur_rs, 2025.28, -821.13)
+        # 👇 고정 숫자를 SYS_CONFIG.get() 으로 감싸서 관제탑의 통제를 받게 함
+        score_rs   = scale_score(cur_rs, SYS_CONFIG.get("KR_S1_RS_BEST", 2025.28), SYS_CONFIG.get("KR_S1_RS_WORST", -821.13))
         score_ema  = 10.0 if is_aligned_448[-1] else 5.0
-        score_cpv  = scale_score(cur_cpv, 0.39, 0.95)
-        score_bbe  = scale_score(cur_bbe, 56.80, 3.80)
-        score_tb   = scale_score(cur_tb, 20.13, 2.47)
+        score_cpv  = scale_score(cur_cpv, SYS_CONFIG.get("KR_S1_CPV_BEST", 0.39), SYS_CONFIG.get("KR_S1_CPV_WORST", 0.95))
+        score_bbe  = scale_score(cur_bbe, SYS_CONFIG.get("KR_S1_BBE_BEST", 56.80), SYS_CONFIG.get("KR_S1_BBE_WORST", 3.80))
+        score_tb   = scale_score(cur_tb, SYS_CONFIG.get("KR_S1_TB_BEST", 20.13), SYS_CONFIG.get("KR_S1_TB_WORST", 2.47))
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0
+        
         total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
+        regime_weight = SYS_CONFIG.get("WEIGHT_S1", 1.0) # 👈 관제탑 S1 자본 배분율 로드
         
         # [교차 검증] S1 시그널이 어느 체급에 떴는가?
         if marcap_eok >= 3000:
@@ -425,6 +446,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         score_tb   = scale_score(cur_tb, 50.0, 5.0)
         score_freq = 6.0
         total_score = (score_bbe*10 + score_cpv*9 + score_tb*8 + score_marcap*7 + score_rs*6 + score_ema*5 + score_freq*4) / 490 * 100
+        regime_weight = SYS_CONFIG.get("WEIGHT_S4", 1.0) # 👈 관제탑 S4 자본 배분율 로드
         
         # [교차 검증] S4 시그널이 어느 체급에 떴는가?
         if marcap_eok >= 3000:
@@ -436,7 +458,12 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
 
     total_score = min(max(total_score, 0), 100)
 
+    # 👇👇 [여기에 2줄 추가] 관제탑 자본 통제 문장 이어붙이기 👇👇
+    regime_msg = f"\n🚨 [관제탑 자본 통제]: 현재 국면 판단에 따라 진입 비중이 기본값의 {regime_weight}배로 강제 조율됩니다."
+    exit_strategy += regime_msg
+    # 👆👆 [추가 완료] 👆👆
     # 💡 [정리파일 2 반영] 뱃지 및 CPV 평가 로직
+    
     badge_str = ""
     if total_score >= 80: 
         badge_str = "🔥 [1티어 뱃지] 최상위 타점 (평균 손실 -6.6% 철통방어 검증)"
