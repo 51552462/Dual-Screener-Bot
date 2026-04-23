@@ -408,6 +408,25 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     total_score = min(max(total_score, 0), 100) # 0~100점 보정
 
     # =========================================================================
+    # 👑 [비선형 의사결정 나무 (Decision Tree) 필터] - 선형 덧셈의 오류 차단
+    # =========================================================================
+    tree_fatal_cpv = SYS_CONFIG.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
+    is_tree_rejected = False
+    tree_reason = ""
+
+    # [Node 1]: CPV가 한계치를 넘으면 RS 점수가 아무리 높아도 무조건 기각 (Death Combo)
+    if cur_cpv > tree_fatal_cpv:
+        is_tree_rejected = True
+        tree_reason = f"악성 매물 캔들 한계치 초과 (CPV {cur_cpv:.2f} > {tree_fatal_cpv})"
+
+    # 비선형 필터에 걸렸다면 총점을 강제로 0점 처리하고 사형 선고
+    if is_tree_rejected:
+        total_score = 0.0
+        trap_warning += f"🚫 <b>[Decision Tree 기각]</b>: 선형 점수는 높을 수 있으나, 비선형 팩트에 의해 차단되었습니다. (사유: {tree_reason})\n"
+        badge_str = "💀 [비선형 필터 기각] 매수 절대 금지"
+    # =========================================================================
+
+    # =========================================================================
     # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
     # 고정된 텍스트가 아닌, 해당 종목의 실시간 CPV, 총점, RS 데이터를 바탕으로 전략이 매번 바뀝니다!
     # =========================================================================
