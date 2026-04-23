@@ -13,6 +13,20 @@ import warnings, urllib3
 import yfinance as yf
 import FinanceDataReader as fdr
 import logging
+import json
+
+# 💡 [자율 관제탑 연결] 조율된 파라미터 수신
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {} # 에러 시 빈 데이터 반환 (하드코딩된 기본값으로 자동 우회)
+
+SYS_CONFIG = load_system_config()
+
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
@@ -346,7 +360,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
         else: score_freq = 6.0                         
         
         total_score = (score_rs*10 + score_tb*9 + score_cpv*8 + score_bbe*7 + score_ema*6 + score_freq*5) / 450 * 100
-        
+        regime_weight = SYS_CONFIG.get("WEIGHT_US_MASTER_S4", 1.0)
         if cur_tb < 16.60 and cur_bbe < 5.70: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
         if cur_cpv > 0.72 and freq_count >= 16: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
 
@@ -361,7 +375,7 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
         score_bbe  = 5.0             
 
         total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_tb*7 + score_freq*6) / 400 * 100
-
+        regime_weight = SYS_CONFIG.get("WEIGHT_US_MASTER_S1", 1.0)
         if cur_rs < 214.32: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
         if not is_aligned_112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
 
@@ -410,7 +424,8 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     else:
         tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 미국장 가짜 휩소 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
 
-    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}"
+    regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
 
     # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
     vix_strategy = ""
