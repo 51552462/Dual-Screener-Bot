@@ -458,13 +458,31 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
 
     total_score = min(max(total_score, 0), 100)
 
-    # 👇👇 [여기에 2줄 추가] 관제탑 자본 통제 문장 이어붙이기 👇👇
-    regime_msg = f"\n🚨 [관제탑 자본 통제]: 현재 국면 판단에 따라 진입 비중이 기본값의 {regime_weight}배로 강제 조율됩니다."
-    exit_strategy += regime_msg
-    # 👆👆 [추가 완료] 👆👆
-    # 💡 [정리파일 2 반영] 뱃지 및 CPV 평가 로직
+    # 👇👇 [수정] 관제탑 청산 모드 로드 및 문자열 이어붙이기
+    ns_prefix = "KR_MASTER_S1" if hit_s1_arr[-1] else "KR_MASTER_S4"
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10)
+    opt_sl_atr       = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+
+    if active_exit_mode == "TECH":
+        action_msg = "\n\n📈 <b>[TECH 추세 모드 가동]</b>: 대세 상승장이므로 기계적 타임스탑을 해제하고 차트 추세(ZLEMA/단기데드)를 끝까지 추종하십시오."
+    elif active_exit_mode == "STAT":
+        action_msg = (f"\n\n🎯 <b>[STAT 통계 모드 가동]</b>: 변동성 장세이므로 차트를 무시하십시오!\n"
+                      f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(청산) 하십시오.\n"
+                      f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
+    else:
+        action_msg = (f"\n\n⚖️ <b>[HYBRID 공수겸장 가동]</b>: 추세를 타되(ZLEMA 익절),\n"
+                      f"▪️ 최대 <b>{opt_time_stop}일</b> 내에 승부를 보십시오.\n"
+                      f"▪️ 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
+
+    regime_msg = f"\n🚨 <b>[관제탑 자본 통제]: 현재 국면 판단에 따라 진입 비중이 기본값의 {regime_weight}배로 강제 조율됩니다.</b>"
     
+    # 최종 문자열 합체
+    exit_strategy += action_msg + regime_msg
+
+    # 💡 [정리파일 2 반영] 뱃지 및 CPV 평가 로직
     badge_str = ""
+    
     if total_score >= 80: 
         badge_str = "🔥 [1티어 뱃지] 최상위 타점 (평균 손실 -6.6% 철통방어 검증)"
     elif total_score <= 50 and cur_rs > 500: 
