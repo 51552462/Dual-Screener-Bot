@@ -365,8 +365,39 @@ def run_deep_dive_analysis(market='KR'):
     except Exception as e:
         print(f"⚠️ 딥 다이브 분석 중 에러: {e}")
 
+# ==========================================
+# 🕒 [무한 루프 스케줄러] 24시간 감시 및 보고 시스템
+# ==========================================
+def run_daily_scheduler():
+    tz_kr = pytz.timezone('Asia/Seoul')
+    print("🕒 [포워드 장부 관리기] 24시간 감시 스케줄러 가동 시작!")
+    print(" - 15:40 : 한국장 종가 추적 및 청산 집행")
+    print(" - 16:00 : 일일 종합 리포트 텔레그램 발송")
+    print(" - 06:10 : 미국장 종가 추적 및 청산 집행")
+    
+    while True:
+        now = datetime.now(tz_kr)
+        
+        # 1. 한국장 마감 직후 (15:40) -> 종가 확인 및 청산 실행
+        if now.hour == 15 and now.minute == 40:
+            print("🚀 한국장 종가 추적 및 청산 업데이트 시작...")
+            track_daily_positions('KR')
+            time.sleep(60) # 중복 실행 방지
+            
+        # 2. 일일 종합 리포트 발송 (16:00)
+        elif now.hour == 16 and now.minute == 0:
+            print("🚀 16:00 일일 종합 리포트 발송 시작...")
+            send_daily_summary_report()
+            time.sleep(60)
+            
+        # 3. 미국장 마감 직후 (한국시간 오전 06:10) -> 종가 확인 및 청산 실행
+        elif now.hour == 6 and now.minute == 10:
+            print("🚀 미국장 종가 추적 및 청산 업데이트 시작...")
+            track_daily_positions('US')
+            time.sleep(60)
+
+        time.sleep(10) # 10초마다 시간 확인
+
 if __name__ == "__main__":
-    # 나중에 데이터가 충분히 쌓이면 주말에 한 번씩 이 파일을 직접 실행해서 분석 리포트를 받아봅니다.
-    # run_deep_dive_analysis('KR')
-    # run_deep_dive_analysis('US')
-    pass
+    # 이 파일을 CMD에서 실행해두면 24시간 살아 숨쉬며 리포트를 보냅니다.
+    run_daily_scheduler()
