@@ -56,43 +56,45 @@ def load_system_config():
     return {}
 
 # ==========================================
-# 1. 신규 종목 편입 엔진 (검색기에서 호출)
+# 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
 def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sector="유망섹터"):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
     
-    # 🟢 수정 코드 (용량을 10배 이상 대폭 확장)
-    if score < 40: tier, limit = '10~30점대', 300
-    elif score < 70: tier, limit = '40~70점대', 300
-    else: tier, limit = '70~100점대', 300
+    # 💡 [V13.0 가상매매] 10점 단위 정밀 버킷 생성 (예: 85점 -> 80점대)
+    score_bucket = int(score // 10) * 10
+    if score_bucket >= 100: score_bucket = 90 # 100점은 90점대 최상위 티어로 병합
+    tier_label = f"{score_bucket}점대"
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 중복 체크
+    # 1. 중복 체크 (이미 포트폴리오에 보유 중인 종목은 제외)
     cursor.execute("SELECT id FROM forward_trades WHERE code=? AND status='OPEN'", (code_str,))
     if cursor.fetchone():
         conn.close()
         return False, "중복 보유 중"
         
-    # 쿼터 체크
-    cursor.execute("SELECT COUNT(*) FROM forward_trades WHERE tier=? AND status='OPEN'", (tier,))
-    current_tier_count = cursor.fetchone()[0]
-    if current_tier_count >= limit:
-        conn.close()
-        return False, f"쿼터 초과 ({tier} 꽉 참)"
-
+    # 2. 🎯 [티어별 정밀 통제] 오늘 해당 시장 & 해당 점수대에서 몇 개를 샀는지 체크 (하루 최대 2개)
     tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
     today_str = datetime.now(tz).strftime('%Y-%m-%d')
+    
+    check_query = "SELECT COUNT(*) FROM forward_trades WHERE entry_date=? AND market=? AND tier=?"
+    cursor.execute(check_query, (today_str, market, tier_label))
+    current_daily_count = cursor.fetchone()[0]
+    
+    if current_daily_count >= 2:
+        conn.close()
+        return False, f"오늘의 {tier_label} 표본 2개 모두 확보됨 (스킵)"
 
-    # 💡 모든 팩트(절대수치 + 백분위 + 섹터) 완벽 박제
+    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록
     cursor.execute('''
         INSERT INTO forward_trades 
         (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        today_str, market, code_str, name, sector, sig_type, tier, score,
+        today_str, market, code_str, name, sector, sig_type, tier_label, score,
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
         ep, ep
@@ -100,7 +102,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     conn.commit()
     conn.close()
     
-    return True, f"{tier} 편입 성공 (현재 {current_tier_count+1}/{limit})"
+    return True, f"🎯 {tier_label} 가상매매 편입 성공 ({current_daily_count+1}/2): {name} ({score:.1f}점)"
 
 # ==========================================
 # 2. 매일 종가 흐름 추적 및 청산 엔진 (DB 기반)
