@@ -589,6 +589,48 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         pass # 에러 시 시스템 정지 방지용 조용히 패스
     # =========================================================================
 
+    # =========================================================================
+    # 👑 [변동성 타겟팅 정밀 매수 가이드 (리스크 패리티)]
+    # =========================================================================
+    try:
+        TOTAL_CAPITAL = 50_000_000  # 👈 본인의 실제 투자 원금으로 수정하세요 (예: 5천만원)
+        BASE_RISK = 0.015           # 👈 1종목당 기본 허용 리스크 1.5%
+
+        # 1. 14일 평균 변동폭(ATR) 계산 (결측치 방어)
+        tr = np.maximum(h[-14:] - l[-14:], np.maximum(abs(h[-14:] - np.roll(c[-14:], 1)), abs(l[-14:] - np.roll(c[-14:], 1))))
+        cur_atr = np.mean(tr) if np.mean(tr) > 0 else c[-1] * 0.03
+        
+        # 2. 관제탑 손절 승수 로드 (파일별 ns_prefix 사용)
+        opt_sl_atr = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+        
+        # 3. 1주당 손실 예상 금액 (리스크 폭)
+        risk_per_share = cur_atr * opt_sl_atr
+        
+        # 4. KNN 도플갱어 매칭 결과에 따른 비중 승수 조작
+        final_weight = regime_weight
+        if "ALPHA" in match_result and match_similarity >= 80.0:
+            final_weight *= 1.5  # 대장주 패턴이면 비중 1.5배 확대
+        elif "TRAP" in match_result and match_similarity >= 80.0:
+            final_weight *= 0.0  # 참사 패턴이면 매수 금지 (0배)
+            
+        # 5. 최종 매수 수량 및 투입 금액 계산
+        target_risk_amount = TOTAL_CAPITAL * BASE_RISK * final_weight
+        target_shares = int(target_risk_amount / risk_per_share) if risk_per_share > 0 else 0
+        recommended_investment = target_shares * c[-1]
+
+        if final_weight > 0 and target_shares > 0:
+            currency = "원"
+            sizing_msg = (
+                f"\n\n💰 <b>[변동성 타겟팅 정밀 매수 지시]</b>\n"
+                f"▪️ 권장 매수 수량: <b>{target_shares:,}주</b>\n"
+                f"▪️ 총 투입 금액: <b>{recommended_investment:,.0f}{currency}</b>\n"
+                f"<i>(💡 팩트: 손절선을 터치해도 계좌 총손실은 안전하게 방어됩니다.)</i>"
+            )
+            exit_strategy += sizing_msg
+    except Exception as e:
+        pass
+    # =========================================================================
+
     badge_str = ""
     if total_score >= 80.0:
         badge_str = "🔥 [1티어 뱃지] 가산점 대상 (지옥행 참사 비율 1~2% 완벽 차단. 최우선 매수)"
