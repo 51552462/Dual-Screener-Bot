@@ -182,20 +182,33 @@ def track_daily_positions(market):
             # 수학적 손절가(SL) 산출: 진입가 - (관제탑 승수 * 진입변동성)
             sl_price = ep - (opt_sl_atr * entry_atr)
 
-            # 4. ⚔️ 청산 아레나: 관제탑 모드에 따른 기계적 사형 집행
+            # 4. ⚔️ 청산 아레나: MFE/MAE 및 관제탑 모드에 따른 수학적 사형 집행
             do_exit, exit_rsn, actual_exit_type = False, "", "HOLD"
+            
+            # 현재 누적 수익률 계산
+            current_ret_pct = ((c - ep) / ep) * 100
 
-            if active_mode == "TECH":
-                if is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
-            
-            elif active_mode == "STAT":
-                if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT"
-                elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 수학적 손절", "STAT"
-            
-            else: # HYBRID (공수겸장)
-                if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID"
-                elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 방어 손절", "HYBRID"
-                elif is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID"
+            # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
+            dyn_mae_sl = sys_config.get("DYNAMIC_MAE_SL", -3.5)
+            dyn_mfe_tp = sys_config.get("DYNAMIC_MFE_TP", 10.0)
+
+            # 1순위: MFE/MAE 절대 한계점 도달 시 무조건 청산 (가장 강력한 비선형 규칙)
+            if current_ret_pct <= dyn_mae_sl:
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 이탈 칼손절 ({dyn_mae_sl}%)", "STAT_MAE"
+            elif current_ret_pct >= dyn_mfe_tp:
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 도달 기계적 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
+                
+            # 2순위: 한계점 내부에서 움직일 경우, 국면(Regime) 모드에 따른 추세/시간 청산
+            if not do_exit:
+                if active_mode == "TECH":
+                    if is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
+                elif active_mode == "STAT":
+                    if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT_TIME"
+                    elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 수학적 손절", "STAT_ATR"
+                else: # HYBRID
+                    if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID_TIME"
+                    elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 방어 손절", "HYBRID_ATR"
+                    elif is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
 
             # 5. DB 업데이트 실행 (청산 시)
             if do_exit:
