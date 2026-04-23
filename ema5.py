@@ -369,7 +369,7 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     score_freq = 10.0 if 1 <= freq_count <= 5 else (2.0 if freq_count >= 10 else 6.0) 
 
     total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
-    regime_weight = SYS_CONFIG.get("WEIGHT_S1", 1.0)
+    regime_weight = SYS_CONFIG.get("WEIGHT_KR_EMA5_S1", 1.0)
     
     # 💡 [V8.1 청산 전략 가이드 (미래 시계열 데이터 대응)]
     trap_warning = ""
