@@ -594,7 +594,7 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         recommended_investment = target_shares * c[-1]
 
         if final_weight > 0 and target_shares > 0:
-            currency = "원" if market_prefix == "KR" else "달러"
+            currency = "원"
             sizing_msg = (
                 f"\n\n💰 <b>[변동성 타겟팅 정밀 매수 지시]</b>\n"
                 f"▪️ 권장 매수 수량: <b>{target_shares:,}주</b>\n"
