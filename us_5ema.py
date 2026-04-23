@@ -286,18 +286,31 @@ def compute_us_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close
 
     total_score = min(max(total_score, 0), 100)
 
-    # 💡 [V9.0 종목 맞춤형 동적 청산 전략]
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
+    # =========================================================================
     if cur_cpv >= 0.31:
         cpv_stat = f"양봉/꽉찬 캔들 (CPV {cur_cpv:.2f})"
-        action = "월가 알고리즘의 단기 설거지(휩소) 타겟이 될 확률이 높습니다. 진입 후 3~4일 내로 꺾이는 모습이 나오면 'ZLEMA 이탈' 시 즉각 칼손절하여 계좌를 방어하십시오."
     else:
         cpv_stat = f"꼬리가 길게 달린 캔들 (CPV {cur_cpv:.2f})"
-        action = f"숏 스퀴즈를 유발하는 진짜 대장주 패턴입니다. 잔파도에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 약 10일간 추세를 발라먹으십시오."
+
+    # 👇 관제탑 청산 모드 로드 (US_5EMA_S1 단일 네임스페이스)
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = SYS_CONFIG.get("US_5EMA_S1_TIME_STOP", 10)
+    opt_sl_atr       = SYS_CONFIG.get("US_5EMA_S1_ATR_SL", 2.0)
+
+    if active_exit_mode == "TECH":
+        action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
+    elif active_exit_mode == "STAT":
+        action = (f"🎯 <b>[STAT 통계 모드 가동]</b>\n변동성/휩소 장세 판독 완료. 차트 무시!\n"
+                  f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(기계적 청산) 하십시오.\n"
+                  f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
+    else: # HYBRID
+        action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
+                  f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
     if total_score >= 80:
         tier_stat = f"총점 {total_score:.1f}점(1티어). 수학적으로 방어력이 입증되었으므로 메인 비중 진입 권장."
-    else:
-        tier_stat = f"총점 {total_score:.1f}점 하위권. 가짜 휩소 리스크가 크므로 철저히 비중 축소 요망."
 
     regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
