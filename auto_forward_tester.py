@@ -62,9 +62,10 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
     
-    if score < 40: tier, limit = '10~30점대', 15
-    elif score < 70: tier, limit = '40~70점대', 15
-    else: tier, limit = '70~100점대', 30
+    # 🟢 수정 코드 (용량을 10배 이상 대폭 확장)
+    if score < 40: tier, limit = '10~30점대', 300
+    elif score < 70: tier, limit = '40~70점대', 300
+    else: tier, limit = '70~100점대', 300
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
