@@ -162,43 +162,69 @@ def run_autonomous_analysis():
             else: report_lines.append("")
 
     # ---------------------------------------------------------
-    # 👑 엔진 4.5: 주도 섹터 대장주 DNA 추출 및 진화 (KNN Base)
+    # 👑 엔진 4.8: [Multi-Centroid DNA] 대장주 & 참사주 Top 3 독립 궤적 추출 (7D 텐서)
     # ---------------------------------------------------------
-    report_lines.append("<b>[4.5 주도 섹터 대장주 DNA (도플갱어 벡터)]</b>")
+    report_lines.append("\n<b>[4.8 대장주 및 참사주 Top 3 궤적 독립 추출 (도플갱어 템플릿)]</b>")
     try:
-        for market_prefix in ['KR', 'US']:
-            # 해당 시장에서 +10% 이상 크게 먹여준 대장주들만 색출
-            alpha_df = df[(df['market'] == market_prefix) & (df['final_ret'] >= 10.0)]
-            
-            if len(alpha_df) >= 3:
-                # 1. 최근 가장 핫한 주도 섹터 1위 파악
-                top_sector = alpha_df['sector'].value_counts().index[0]
+        conn = sqlite3.connect(DB_PATH)
+        
+        # 1. 대박 종목 Top 3 (수익률 최상위) & 참사/횡보 종목 Top 3 (손실/타임컷 최하위) 색출
+        alphas = df[df['final_ret'] >= 15.0].sort_values(by='final_ret', ascending=False).head(3)
+        traps = df[df['final_ret'] <= -5.0].sort_values(by='final_ret', ascending=True).head(3)
+
+        def extract_7d_vector(row):
+            table_name = f"{row['market']}_{row['code']}"
+            entry_dt = row['entry_date']
+            try:
+                query = f"SELECT * FROM {table_name} WHERE Date < '{entry_dt}' ORDER BY Date DESC LIMIT 150"
+                hist_df = pd.read_sql(query, conn).sort_values('Date')
                 
-                # 2. 해당 섹터 대장주들의 평균 팩트 수치(DNA) 추출
-                sector_alphas = alpha_df[alpha_df['sector'] == top_sector]
-                raw_dna_rs = sector_alphas['v_rs'].mean()
-                raw_dna_cpv = sector_alphas['v_cpv'].mean()
-                raw_dna_tb = sector_alphas['v_yang'].mean()
-                raw_dna_bbe = sector_alphas['v_energy'].mean()
+                if len(hist_df) >= 150:
+                    c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
+                    
+                    # 7D 연산 (시계열 흐름)
+                    cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
+                    v_ma20 = pd.Series(v).rolling(20).mean().values
+                    tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
+                    bb_std = pd.Series(c).rolling(20).std().values
+                    bbe = np.nanmax(np.where(bb_std > 0, 1.0 / ((4 * bb_std) / pd.Series(c).rolling(20).mean().values), 0)[-20:])
+                    rs_slope = ((c[-1] - c[0]) / c[0]) * 100
+                    tr = np.maximum(h - l, np.maximum(abs(h - np.roll(c, 1)), abs(l - np.roll(c, 1))))
+                    vcp_ratio = np.mean(tr[-20:]) / np.mean(tr) if np.mean(tr) > 0 else 1.0
+                    vol_flow = np.sum(np.where(c > o, v, 0)) / (np.sum(np.where(c < o, v, 0)) + 1)
+                    emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
+                    ma_conv = (max(emas) - min(emas)) / min(emas) * 100
+                    
+                    return {'name': row['name'], 'cpv': cpv, 'tb': tb, 'bbe': bbe, 'rs': rs_slope, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv}
+            except Exception as e: 
+                return None
+            return None
+
+        # 2. JSON에 Rank 1~3 독립 저장 (대장주)
+        alpha_count = 0
+        for idx, row in enumerate(alphas.iterrows(), 1):
+            vec = extract_7d_vector(row[1])
+            if vec:
+                current_config[f"DNA_ALPHA_RANK{idx}"] = vec
+                report_lines.append(f"🟢 [Alpha {idx}위] {vec['name']} 5개월 궤적 저장 완료")
+                alpha_count += 1
+        
+        if alpha_count == 0: report_lines.append("▪️ 슈퍼 알파 표본 부족으로 대장주 궤적 추출 스킵")
+
+        # 3. JSON에 Rank 1~3 독립 저장 (참사주)
+        trap_count = 0
+        for idx, row in enumerate(traps.iterrows(), 1):
+            vec = extract_7d_vector(row[1])
+            if vec:
+                current_config[f"DNA_TRAP_RANK{idx}"] = vec
+                report_lines.append(f"🔴 [Trap {idx}위] {vec['name']} (참사) 5개월 궤적 저장 완료")
+                trap_count += 1
                 
-                # 3. 과거 DNA와 새로운 DNA의 융합 (유연한 업데이트)
-                old_dna_rs = current_config.get(f"DNA_{market_prefix}_RS", raw_dna_rs)
-                old_dna_cpv = current_config.get(f"DNA_{market_prefix}_CPV", raw_dna_cpv)
-                old_dna_tb = current_config.get(f"DNA_{market_prefix}_TB", raw_dna_tb)
-                old_dna_bbe = current_config.get(f"DNA_{market_prefix}_BBE", raw_dna_bbe)
-                
-                current_config[f"DNA_{market_prefix}_RS"] = round((old_dna_rs * 0.7) + (raw_dna_rs * 0.3), 2)
-                current_config[f"DNA_{market_prefix}_CPV"] = round((old_dna_cpv * 0.7) + (raw_dna_cpv * 0.3), 2)
-                current_config[f"DNA_{market_prefix}_TB"] = round((old_dna_tb * 0.7) + (raw_dna_tb * 0.3), 2)
-                current_config[f"DNA_{market_prefix}_BBE"] = round((old_dna_bbe * 0.7) + (raw_dna_bbe * 0.3), 2)
-                current_config[f"DNA_{market_prefix}_SECTOR"] = top_sector
-                
-                report_lines.append(f"▪️ {market_prefix} 주도 섹터: <b>{top_sector}</b>")
-                report_lines.append(f"▪️ 대장주 DNA 업데이트 완료 (RS: {current_config[f'DNA_{market_prefix}_RS']}, CPV: {current_config[f'DNA_{market_prefix}_CPV']})")
-            else:
-                report_lines.append(f"▪️ {market_prefix}장 표본 부족으로 이번 주 DNA 진화 스킵")
+        if trap_count == 0: report_lines.append("▪️ 참사 표본 부족으로 참사주 궤적 추출 스킵")
+
+        conn.close()
     except Exception as e:
-        report_lines.append(f"⚠️ DNA 추출 에러: {e}")
+        report_lines.append(f"⚠️ 다중 궤적 추출 에러: {e}")
     
     # ---------------------------------------------------------
     # 👑 엔진 5: 청산 로직 데스매치 (인과 추론 피드백 루프)
