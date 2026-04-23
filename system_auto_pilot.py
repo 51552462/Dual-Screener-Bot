@@ -162,6 +162,45 @@ def run_autonomous_analysis():
             else: report_lines.append("")
 
     # ---------------------------------------------------------
+    # 👑 엔진 4.5: 주도 섹터 대장주 DNA 추출 및 진화 (KNN Base)
+    # ---------------------------------------------------------
+    report_lines.append("<b>[4.5 주도 섹터 대장주 DNA (도플갱어 벡터)]</b>")
+    try:
+        for market_prefix in ['KR', 'US']:
+            # 해당 시장에서 +10% 이상 크게 먹여준 대장주들만 색출
+            alpha_df = df[(df['market'] == market_prefix) & (df['final_ret'] >= 10.0)]
+            
+            if len(alpha_df) >= 3:
+                # 1. 최근 가장 핫한 주도 섹터 1위 파악
+                top_sector = alpha_df['sector'].value_counts().index[0]
+                
+                # 2. 해당 섹터 대장주들의 평균 팩트 수치(DNA) 추출
+                sector_alphas = alpha_df[alpha_df['sector'] == top_sector]
+                raw_dna_rs = sector_alphas['v_rs'].mean()
+                raw_dna_cpv = sector_alphas['v_cpv'].mean()
+                raw_dna_tb = sector_alphas['v_yang'].mean()
+                raw_dna_bbe = sector_alphas['v_energy'].mean()
+                
+                # 3. 과거 DNA와 새로운 DNA의 융합 (유연한 업데이트)
+                old_dna_rs = current_config.get(f"DNA_{market_prefix}_RS", raw_dna_rs)
+                old_dna_cpv = current_config.get(f"DNA_{market_prefix}_CPV", raw_dna_cpv)
+                old_dna_tb = current_config.get(f"DNA_{market_prefix}_TB", raw_dna_tb)
+                old_dna_bbe = current_config.get(f"DNA_{market_prefix}_BBE", raw_dna_bbe)
+                
+                current_config[f"DNA_{market_prefix}_RS"] = round((old_dna_rs * 0.7) + (raw_dna_rs * 0.3), 2)
+                current_config[f"DNA_{market_prefix}_CPV"] = round((old_dna_cpv * 0.7) + (raw_dna_cpv * 0.3), 2)
+                current_config[f"DNA_{market_prefix}_TB"] = round((old_dna_tb * 0.7) + (raw_dna_tb * 0.3), 2)
+                current_config[f"DNA_{market_prefix}_BBE"] = round((old_dna_bbe * 0.7) + (raw_dna_bbe * 0.3), 2)
+                current_config[f"DNA_{market_prefix}_SECTOR"] = top_sector
+                
+                report_lines.append(f"▪️ {market_prefix} 주도 섹터: <b>{top_sector}</b>")
+                report_lines.append(f"▪️ 대장주 DNA 업데이트 완료 (RS: {current_config[f'DNA_{market_prefix}_RS']}, CPV: {current_config[f'DNA_{market_prefix}_CPV']})")
+            else:
+                report_lines.append(f"▪️ {market_prefix}장 표본 부족으로 이번 주 DNA 진화 스킵")
+    except Exception as e:
+        report_lines.append(f"⚠️ DNA 추출 에러: {e}")
+    
+    # ---------------------------------------------------------
     # 👑 엔진 5: 청산 로직 데스매치 (인과 추론 피드백 루프)
     # ---------------------------------------------------------
     report_lines.append("<b>[5. 청산 아레나 및 시스템 피드백 (Why?)]</b>")
