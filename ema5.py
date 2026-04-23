@@ -15,6 +15,19 @@ import FinanceDataReader as fdr
 import random
 import matplotlib.font_manager as fm
 import sqlite3
+import json
+
+# 💡 [자율 관제탑 연결] 조율된 파라미터 수신
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {} # 에러 시 빈 데이터 반환 (하드코딩된 기본값으로 자동 우회)
+
+SYS_CONFIG = load_system_config()
 
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
