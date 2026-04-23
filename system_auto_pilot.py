@@ -131,35 +131,43 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 표본 부족으로 진입점 스무딩 스킵\n")
 
     # ---------------------------------------------------------
-    # 👑 엔진 4: 3차원 청산 최적화 (MFE/MAE & ATR/TimeStop)
+    # 👑 엔진 4: 3차원 청산 최적화 (MFE/MAE) & 비선형 의사결정 나무(Decision Tree) 학습
     # ---------------------------------------------------------
-    report_lines.append("<b>[4. 다차원 청산선 최적화 (SL/TP & E-Ratio)]</b>")
+    report_lines.append("\n<b>[4. MFE/MAE 최적화 및 비선형 규칙(Decision Tree) 학습]</b>")
     if 'max_high' in df.columns and 'min_low' in df.columns and 'entry_price' in df.columns:
+        # 1. MFE / MAE 계산
         df['mfe_pct'] = (df['max_high'] - df['entry_price']) / df['entry_price'] * 100
         df['mae_pct'] = (df['min_low'] - df['entry_price']) / df['entry_price'] * 100
         
-        winners_s1 = kr_s1_df[kr_s1_df['final_ret'] > 0]
-        if len(winners_s1) >= 5:
-            raw_sl = np.percentile(winners_s1['mae_pct'], 10) 
-            raw_tp = np.percentile(winners_s1['mfe_pct'], 50)
+        winners = df[df['final_ret'] > 0]
+        losers = df[df['final_ret'] <= 0]
+        
+        if len(winners) >= 5:
+            # 💡 [팩트 1] MFE/MAE 기반 수학적 손절/익절 한계점 도출
+            raw_sl = np.percentile(winners['mae_pct'], 15) # 승리한 종목들이 겪은 최대 고통(하위 15%)
+            raw_tp = np.percentile(winners['mfe_pct'], 50) # 승리한 종목들의 평균 도달 수익(중앙값)
             
-            old_sl = current_config.get("KR_MASTER_S1_SL", -3.0)
-            old_tp = current_config.get("KR_MASTER_S1_TP", 10.0)
+            old_sl = current_config.get("DYNAMIC_MAE_SL", -3.5)
+            old_tp = current_config.get("DYNAMIC_MFE_TP", 10.0)
             
             smoothed_sl = round((old_sl * 0.7) + (raw_sl * 0.3), 2)
             smoothed_tp = round((old_tp * 0.7) + (raw_tp * 0.3), 2)
             
-            current_config["KR_MASTER_S1_SL"] = smoothed_sl
-            current_config["KR_MASTER_S1_TP"] = smoothed_tp
-            report_lines.append(f"▪️ 최적 SL: {old_sl}% ➔ <b>{smoothed_sl}%</b>")
-            report_lines.append(f"▪️ 최적 TP: {old_tp}% ➔ <b>{smoothed_tp}%</b>")
+            current_config["DYNAMIC_MAE_SL"] = smoothed_sl
+            current_config["DYNAMIC_MFE_TP"] = smoothed_tp
             
-            # E-Ratio 및 ATR 가상 로직 (DB에 bars_held가 기록되어야 완벽 가동)
-            if 'bars_held' in winners_s1.columns:
-                opt_time = int(winners_s1['bars_held'].mean())
-                current_config["KR_MASTER_S1_TIME_STOP"] = opt_time
-                report_lines.append(f"▪️ Time Stop: 진입 후 <b>{opt_time}일</b> 초과 시 엣지 붕괴\n")
-            else: report_lines.append("")
+            report_lines.append(f"▪️ MAE 최적 손절선: {old_sl}% ➔ <b>{smoothed_sl}%</b> (진화)")
+            report_lines.append(f"▪️ MFE 최적 익절선: {old_tp}% ➔ <b>{smoothed_tp}%</b> (진화)")
+
+        if len(losers) >= 5:
+            # 💡 [팩트 2] 비선형 의사결정 나무 (Death Node) 학습
+            # 참사 종목들의 CPV 최악의 10% 컷오프를 찾아냄
+            fatal_cpv = np.percentile(losers['v_cpv'].dropna(), 90) # 꼬리가 가장 긴 악성 캔들 기준점
+            old_fatal_cpv = current_config.get("TREE_FATAL_CPV", 0.85)
+            smoothed_fatal_cpv = round((old_fatal_cpv * 0.7) + (fatal_cpv * 0.3), 2)
+            
+            current_config["TREE_FATAL_CPV"] = smoothed_fatal_cpv
+            report_lines.append(f"▪️ Decision Tree [Death Node 1]: CPV <b>{smoothed_fatal_cpv}</b> 이상 시 무조건 기각 학습 완료.")
 
     # ---------------------------------------------------------
     # 👑 엔진 4.8: [Multi-Centroid DNA] 대장주 & 참사주 Top 3 독립 궤적 추출 (7D 텐서)
