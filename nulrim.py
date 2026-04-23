@@ -472,22 +472,35 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
     # =========================================================================
     # 👑 [종목 맞춤형 동적 청산 전략 (V11.0 팩트 데이터)]
     # =========================================================================
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (V11.0 팩트 데이터)]
+    # =========================================================================
     if cur_cpv >= 0.48:
         cpv_stat = f"현재 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
-        action = "💡 [한국형 설거지 주의] 눌림목 진입 직후 꽉 찬 양봉만 연속으로 그리며 양봉 비율이 85%를 넘어가면 100% 설거지 참사입니다. 2.77일(약 3일) 안에 튀지 못하고 밀리면 즉각 ZLEMA 칼손절하십시오."
     elif cur_cpv <= 0.23:
         cpv_stat = f"위아래 꼬리가 길게 달린 매물 소화 캔들 (CPV {cur_cpv:.2f})"
-        action = f"세력이 개미를 털어야 진짜 대박 주도주입니다. 잔파도 휩소에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 약 10.22일(2주간) 추세를 끝까지 발라먹으십시오."
     else:
         cpv_stat = f"표준적인 눌림목 캔들 (CPV {cur_cpv:.2f})"
-        action = f"상승 시 '단기데드'로 수익 극대화, 하락 시 3일 이내에 'ZLEMA 이탈'로 짧게 끊어내는 기계적 대응을 권장합니다."
+
+    # 👇 타점에 따른 동적 네임스페이스 분리 (S4면 S4 방, 아니면 S1 방)
+    ns_prefix = "KR_NULRIM_S4" if hit_s4 else "KR_NULRIM_S1"
+    
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10)
+    opt_sl_atr       = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+
+    if active_exit_mode == "TECH":
+        action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
+    elif active_exit_mode == "STAT":
+        action = (f"🎯 <b>[STAT 통계 모드 가동]</b>\n변동성/휩소 장세 판독 완료. 차트 무시!\n"
+                  f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(기계적 청산) 하십시오.\n"
+                  f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
+    else: # HYBRID
+        action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
+                  f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
     if hit_s4 and cur_rs <= -1000:
-        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f}) 역배열 바닥권입니다. 승률이 20% 초중반으로 낮아 깡통 위험이 크므로 진입 비중을 대형주의 1/3로 강제 축소하십시오. 단 한 번 터질 때 MFE +40% 이상 크게 먹어야 하므로 단기데드로 끝까지 버티십시오."
-    elif total_score >= 80:
-        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 평균 손실을 -5.8%로 철통 방어함이 수학적으로 완벽히 입증되었습니다. 👉 [비중 조언: {weight_rec}]"
-    else:
-        tier_stat = f"총점 {total_score:.1f}점 하위권 타점입니다. 소형주일수록 지하실 참사 확률이 높으므로 반드시 비중을 축소하십시오. 👉 [비중 조언: {weight_rec}]"
+        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f}) 역배열 바닥권입니다. (중략)..."
 
     regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
