@@ -173,15 +173,20 @@ def get_krx_list_kind():
         junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
         filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
         
-        # 💡 [캐시 파일 경로 세팅] 서버에 저장될 시총 백업 파일
+        # 💡 [캐시 파일 경로 세팅]
         CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
         
         try:
-            # 💡 [방어 2] 라이브러리 구버전 호환 (Marcap 컬럼 누락 시 보조 API 호출)
-            fdr_df = fdr.StockListing('KRX')
+            # 💡 [방어 2] KRX 서버 차단 시 KOSPI/KOSDAQ 분할 우회 로드
+            try:
+                fdr_df = fdr.StockListing('KRX')
+            except Exception as e:
+                print(f"💡 KRX 메인 서버 지연. KOSPI/KOSDAQ 우회 로드 가동: {e}")
+                df_k = fdr.StockListing('KOSPI')
+                df_q = fdr.StockListing('KOSDAQ')
+                fdr_df = pd.concat([df_k, df_q])
             
             if not any(col in fdr_df.columns for col in ['Marcap', 'MarketCap', '시가총액']):
-                print("💡 FDR 구버전 감지됨. 보조 API(KRX-MARCAP)로 시가총액을 강제 로드합니다.")
                 fdr_df = fdr.StockListing('KRX-MARCAP')
                 
             rename_map = {}
