@@ -317,9 +317,6 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         return False, "", df, {}
 
     # =========================================================================
-    # 👑 [3단계] S1 스코어링 매핑 (V8.1 최신 팩트 데이터 100% 대입)
-    # =========================================================================
-    # =========================================================================
     # 👑 [3단계] S1 스코어링 매핑 시작 부분에 시총 계산 로직 추가
     # =========================================================================
     recent_hits = finalSignal[-252:-1].sum() if len(c) > 252 else finalSignal[:-1].sum()
@@ -359,6 +356,7 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     score_freq = 10.0 if 1 <= freq_count <= 5 else (2.0 if freq_count >= 10 else 6.0) 
 
     total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_bbe*7 + score_tb*6 + score_freq*5) / 450 * 100
+    regime_weight = SYS_CONFIG.get("WEIGHT_S1", 1.0)
     
     # 💡 [V8.1 청산 전략 가이드 (미래 시계열 데이터 대응)]
     trap_warning = ""
@@ -412,7 +410,8 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     else:
         tier_stat = f"총점 {total_score:.1f}점의 하위권 서브 타점이므로, 가짜 돌파 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
 
-    exit_strategy = f"[{cpv_stat}]\n{action}\n\n💡 비중 조언: {tier_stat}"
+    regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
+    exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
 
     # 💡 [V9.0 뱃지 시스템 및 하위권 밈(Meme) 주식 예외 로직]
     badge_str = ""
