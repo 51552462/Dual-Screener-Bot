@@ -1,0 +1,179 @@
+import sqlite3
+import pandas as pd
+import numpy as np
+import os
+import json
+from datetime import datetime, timedelta
+import pytz
+import requests
+import yfinance as yf
+
+
+# 💡 설정
+TELEGRAM_TOKEN_MAIN = "7988939051:AAG4FqMzzz12vd7Crzt8DVPWiL3fMHM8tEc"
+TELEGRAM_CHAT_ID    = "6838834566"
+DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+# 💡 2주 주기 세팅 및 스무딩
+LOOKBACK_DAYS = 14
+SMOOTHING_ALPHA = 0.3 
+START_DATE = datetime.now() + timedelta(days=LOOKBACK_DAYS)
+
+def detect_market_regime_and_allocate(current_config):
+    """VIX와 SPY 데이터를 분석하여 현재 시장 국면을 판독하고 자본 배분율을 결정합니다."""
+    try:
+        # 최근 250일치 SPY와 VIX 데이터 로드
+        df_idx = yf.download("SPY ^VIX", period="1y", interval="1d", group_by="ticker", progress=False)
+        spy_c = df_idx['SPY']['Close'].dropna()
+        vix_c = df_idx['^VIX']['Close'].dropna()
+        
+        spy_last = spy_c.iloc[-1]
+        spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
+        vix_last = vix_c.iloc[-1]
+        
+        regime = "UNKNOWN"
+        # 💡 자본 배분율 (S1_Weight, S4_Weight)
+        w_s1, w_s4 = 1.0, 1.0 
+        
+        if spy_last >= spy_ema200 and vix_last < 18.0:
+            regime = "Bull (대세 상승장)"
+            w_s1, w_s4 = 1.5, 0.5  # S1 비중 1.5배, S4 비중 반토막
+        elif spy_last >= spy_ema200 and 18.0 <= vix_last < 25.0:
+            regime = "Chop (변동성/조정장)"
+            w_s1, w_s4 = 0.8, 1.2  # S1 방어적 축소, S4 비중 확대
+        elif spy_last < spy_ema200 or vix_last >= 25.0:
+            regime = "Bear (폭락/공포장)"
+            w_s1, w_s4 = 0.2, 2.0  # S1 사실상 셧다운, S4 로또 매집 극대화
+            
+        # 관제탑이 Config 파일에 자본 배분율을 강제로 덮어씁니다.
+        current_config["WEIGHT_S1"] = w_s1
+        current_config["WEIGHT_S4"] = w_s4
+        
+        report = (
+            f"<b>[거시 국면 판독 및 자본 배분 (Regime Allocation)]</b>\n"
+            f"▪️ SPY 상태: {spy_last:.2f} (EMA200: {spy_ema200:.2f})\n"
+            f"▪️ VIX 수치: {vix_last:.2f}\n"
+            f"▪️ 현재 국면: <b>{regime}</b>\n"
+            f"🚨 <b>시스템 액션:</b> S1 가중치 {w_s1}배 / S4 가중치 {w_s4}배 강제 조율 완료\n"
+        )
+        return report, current_config
+    except Exception as e:
+        return f"⚠️ 거시 국면 판독 실패: {e}", current_config
+
+def send_telegram_report(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    try: requests.post(url, json=payload, timeout=10)
+    except: pass
+
+def load_or_create_config():
+    default_config = {"KR_S1_RS_CUTOFF": 165.0, "US_S4_CPV_LIMIT": 0.72} # 기존 설정들
+    if not os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
+        return default_config
+    with open(CONFIG_PATH, 'r') as f: return json.load(f)
+
+def save_config(config_data):
+    with open(CONFIG_PATH, 'w') as f: json.dump(config_data, f, indent=4)
+
+def calculate_metrics(df_subset):
+    """승률과 손익비(Profit Factor)를 계산하는 퀀트 코어 함수"""
+    if len(df_subset) == 0: return 0.0, 0.0
+    
+    wins = df_subset[df_subset['final_ret'] > 0]
+    losses = df_subset[df_subset['final_ret'] <= 0]
+    
+    win_rate = (len(wins) / len(df_subset)) * 100
+    
+    gross_profit = wins['final_ret'].sum()
+    gross_loss = abs(losses['final_ret'].sum())
+    
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 99.9 # 손실이 없으면 무한대
+    return win_rate, profit_factor
+
+def run_autonomous_analysis():
+    print(f"🚀 [자율 관제탑] {LOOKBACK_DAYS}일 롤링 최적화 및 다차원 매트릭스 분석 시작...")
+    
+    conn = sqlite3.connect(DB_PATH)
+    start_date = (datetime.now() - timedelta(days=LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+    query = f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{start_date}'"
+    df = pd.read_sql(query, conn)
+    
+    if len(df) < 20:
+        send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n최근 {LOOKBACK_DAYS}일 실전 데이터가 부족합니다. 과최적화 방지를 위해 조율을 스킵합니다.")
+        conn.close(); return
+
+    current_config = load_or_create_config()
+    report_lines = [f"<b>📊 [System B {LOOKBACK_DAYS}일 자율 조율 리포트]</b>\n"]
+
+    # ==========================================
+    # 1. 점수 티어별 성적표 (현 가중치 시스템 평가)
+    # ==========================================
+    report_lines.append("<b>[1. 점수 티어별 승률 및 손익비]</b>")
+    tier_1 = df[df['total_score'] >= 80]
+    tier_mid = df[(df['total_score'] >= 50) & (df['total_score'] < 80)]
+    tier_lotto = df[df['total_score'] < 50]
+
+    for name, subset in [("1티어 (80점 이상)", tier_1), ("서브 (50~79점)", tier_mid), ("로또 (50점 미만)", tier_lotto)]:
+        wr, pf = calculate_metrics(subset)
+        report_lines.append(f"▪️ {name}: 승률 {wr:.1f}% | PF {pf:.2f} (표본 {len(subset)})")
+    report_lines.append("<i>💡 1티어의 승률이 서브보다 낮다면 덧셈 가중치 로직이 붕괴된 것입니다.</i>\n")
+
+    # ==========================================
+    # 2. 비선형 필터(플래그) 추적 검증
+    # ==========================================
+    report_lines.append("<b>[2. 초정밀 필터 방어력 검증]</b>")
+    
+    # 텐배거 조건 (한국장)
+    if 'is_tenbagger' in df.columns:
+        tb_wr, tb_pf = calculate_metrics(df[df['is_tenbagger'] == 1])
+        report_lines.append(f"▪️ 텐배거 플래그: 승률 {tb_wr:.1f}% | PF {tb_pf:.2f}")
+
+    # 데스콤보 (한국/미국 공통)
+    dc_wr, dc_pf = calculate_metrics(df[df['is_death_combo'] == 1])
+    report_lines.append(f"▪️ 데스콤보 플래그: 승률 {dc_wr:.1f}% | PF {dc_pf:.2f}")
+    if dc_wr > 40.0: report_lines.append("🚨 <b>경고:</b> 데스콤보가 수익을 냅니다. 필터 조건 수정 요망.\n")
+    else: report_lines.append("✅ 데스콤보가 휩소를 정상적으로 차단 중입니다.\n")
+
+    # ==========================================
+    # 3. 날것의 데이터(Raw) 기반 파라미터 스무딩 조율
+    # ==========================================
+    report_lines.append("<b>[3. 파라미터 스무딩 (중간 합의점 조율)]</b>")
+    
+    # 한국장 S1 로직 조율 예시
+    kr_s1_df = df[(df['market'] == 'KR') & (df['sig_type'].str.contains('S1'))]
+    if len(kr_s1_df) >= 5:
+        winners = kr_s1_df[kr_s1_df['final_ret'] > 0]['v_rs'].dropna()
+        if len(winners) > 0:
+            raw_new_rs = np.percentile(winners, 25) # 하위 25% 지점 도출
+            old_rs = current_config.get("KR_S1_RS_CUTOFF", 165.0)
+            
+            # 💡 기존 데이터(70%) + 새로운 2주 데이터(30%)
+            smoothed_rs = round((old_rs * (1 - SMOOTHING_ALPHA)) + (raw_new_rs * SMOOTHING_ALPHA), 2)
+            current_config["KR_S1_RS_CUTOFF"] = smoothed_rs
+            
+            report_lines.append(f"▪️ <b>KR_S1_RS 컷오프:</b> {old_rs} ➔ <b>{smoothed_rs}</b>")
+            report_lines.append(f"  <i>(최근 2주 최적값 {raw_new_rs:.1f} / 스무딩 30% 반영)</i>")
+
+    save_config(current_config)
+    conn.close()
+    
+    report_lines.append("\n✅ 시스템 조율 완료 및 Json 업데이트 적용.")
+    send_telegram_report("\n".join(report_lines))
+
+def system_main_loop():
+    tz = pytz.timezone('Asia/Seoul')
+    print(f"🕒 [완전 자율 오토파일럿] 대기 중... (첫 조율: {START_DATE.strftime('%Y-%m-%d')})")
+    
+    while True:
+        now = datetime.now(tz)
+        if now > START_DATE.replace(tzinfo=tz):
+            # 매주 토요일 오전 10시에 자율 조율 (2주 데이터 기반)
+            if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+                run_autonomous_analysis()
+                time.sleep(65) 
+        time.sleep(30)
+
+if __name__ == "__main__":
+    system_main_loop()
