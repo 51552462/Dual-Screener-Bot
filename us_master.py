@@ -404,32 +404,30 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     # =========================================================================
     # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
     # =========================================================================
-    # 1. 캔들(CPV) 팩트 진단은 그대로 유지 (참고용 팁)
     if cur_cpv >= 0.35: cpv_stat = f"예쁜 꽉 찬 양봉 (CPV {cur_cpv:.2f} - 휩소 주의)"
     elif cur_cpv <= 0.24: cpv_stat = f"지저분한 꼬리 캔들 (CPV {cur_cpv:.2f} - 찐 대장주 패턴)"
     else: cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
 
-    # 👇👇 [여기서부터 팩트 적용] 관제탑의 청산 모드 및 3차원 파라미터 로드
-    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
-    opt_time_stop = SYS_CONFIG.get("US_MASTER_S1_TIME_STOP", 10) # 관제탑 산출 타임스탑
-    opt_sl_atr = SYS_CONFIG.get("US_MASTER_S1_ATR_SL", 2.0)      # 관제탑 산출 ATR 손절승수
+    # 👇 타점에 따른 동적 네임스페이스 분리 (S1 vs S4)
+    # [버그 픽스]: hit_s1은 Series 배열이므로 [-1] 인덱스를 통해 마지막 값을 확인해야 합니다.
+    ns_prefix = "US_MASTER_S1" if hit_s1[-1] else "US_MASTER_S4"
 
-    # 👇👇 관제탑의 모드(Regime) 지시에 따라 행동(action) 브리핑이 기계적으로 바뀝니다.
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10)
+    opt_sl_atr       = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+
     if active_exit_mode == "TECH":
         action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
-    
     elif active_exit_mode == "STAT":
         action = (f"🎯 <b>[STAT 통계 모드 가동]</b>\n변동성/휩소 장세 판독 완료. 차트 무시!\n"
                   f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(기계적 청산) 하십시오.\n"
                   f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
-    
     else: # HYBRID
         action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
                   f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손실을 차단하십시오.")
 
-    # 2. 점수 티어 및 극단적 모멘텀(로또) 밈 주식 펌핑 판별
     if total_score <= 50 and cur_rs > 513 and cur_cpv <= 0.3:
-        tier_stat = f"💡 [특급 로또 타점] 총점은 낮으나 진입 전 시장 주도력(RS {cur_rs:.1f})이 최상위권입니다. 돌발 거래량 폭발 및 밈(Meme) 주식 펌핑 가능성이 있으므로 비중을 10% 미만으로 대폭 줄여 서브 로또용으로만 접근하십시오."
+        tier_stat = f"💡 [특급 로또 타점] 총점은 낮으나 진입 전 시장 주도력(RS {cur_rs:.1f})이 최상위권입니다..."
     elif total_score >= 80:
         tier_stat = f"총점 {total_score:.1f}점(1티어)으로 방어력과 평균수익(24.2%)이 수학적으로 완벽히 입증되었습니다. 메인 1.5배 비중 진입을 권장합니다."
     else:
