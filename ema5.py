@@ -442,6 +442,85 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
 
+    # =========================================================================
+    # 👑 [다중 클러스터 도플갱어 매칭] 5개월(150일) 7차원 궤적 KNN 대조
+    # =========================================================================
+    match_result = "NONE"
+    match_similarity = 0.0
+    matched_name = ""
+
+    try:
+        if len(c) >= 150:
+            # 1. 현재 종목의 150일(5개월) 7D 팩터 연산
+            cur_cpv_150 = np.nanmean(cpv[-150:])
+            cur_tb_150 = np.nanmean(tb_index[-150:])
+            cur_bbe_max = np.nanmax(bb_energy[-20:])
+            cur_rs_150 = ((c[-1] - c[-150]) / c[-150]) * 100 if c[-150] != 0 else 0
+            
+            tr_150 = np.maximum(h[-150:] - l[-150:], np.maximum(abs(h[-150:] - np.roll(c[-150:], 1)), abs(l[-150:] - np.roll(c[-150:], 1))))
+            cur_vcp = np.mean(tr_150[-20:]) / np.mean(tr_150) if np.mean(tr_150) > 0 else 1.0
+            
+            up_v = np.sum(np.where(c[-150:] > o[-150:], v[-150:], 0))
+            dn_v = np.sum(np.where(c[-150:] < o[-150:], v[-150:], 0))
+            cur_vol = up_v / dn_v if dn_v > 0 else 1.0
+            
+            cur_emas = [e10[-1], e20[-1], e60[-1], e112[-1], e224[-1]]
+            cur_ma = (max(cur_emas) - min(cur_emas)) / min(cur_emas) * 100 if min(cur_emas) > 0 else 0
+
+            # 2. 7차원 유클리디안 거리(유사도) 연산 함수 (오류 방지 0.001 보정)
+            def calc_similarity(dna):
+                if not dna: return 0.0
+                err = (
+                    min(abs(cur_cpv_150 - dna.get('cpv', 0.5)) / (dna.get('cpv', 0.5) + 0.001), 1.0) * 0.15 +
+                    min(abs(cur_tb_150 - dna.get('tb', 1.0)) / (dna.get('tb', 1.0) + 0.001), 1.0) * 0.15 +
+                    min(abs(cur_bbe_max - dna.get('bbe', 0.1)) / (dna.get('bbe', 0.1) + 0.001), 1.0) * 0.15 +
+                    min(abs(cur_rs_150 - dna.get('rs', 0)) / (abs(dna.get('rs', 0)) + 0.001), 1.0) * 0.15 +
+                    min(abs(cur_vcp - dna.get('vcp', 1.0)) / (dna.get('vcp', 1.0) + 0.001), 1.0) * 0.15 +
+                    min(abs(cur_vol - dna.get('vol', 1.0)) / (dna.get('vol', 1.0) + 0.001), 1.0) * 0.10 +
+                    min(abs(cur_ma - dna.get('ma', 5.0)) / (dna.get('ma', 5.0) + 0.001), 1.0) * 0.15
+                )
+                return max(0, 100.0 - (err * 100))
+
+            # 3. 대장주 1~3위 & 참사주 1~3위와 대조하여 가장 닮은 놈(Centroid) 찾기
+            best_sim = 0.0
+            for i in [1, 2, 3]:
+                # Alpha(대박주) 매칭
+                a_dna = SYS_CONFIG.get(f"DNA_ALPHA_RANK{i}")
+                if a_dna:
+                    sim = calc_similarity(a_dna)
+                    if sim > best_sim: best_sim, match_result, matched_name = sim, f"ALPHA_{i}", a_dna.get('name', '대장주')
+                
+                # Trap(참사주) 매칭
+                t_dna = SYS_CONFIG.get(f"DNA_TRAP_RANK{i}")
+                if t_dna:
+                    sim = calc_similarity(t_dna)
+                    if sim > best_sim: best_sim, match_result, matched_name = sim, f"TRAP_{i}", t_dna.get('name', '참사주')
+
+            match_similarity = best_sim
+
+            # 4. 80% 이상 매칭 시 전략(exit_strategy) 문구 삽입 및 점수(total_score) 보정
+            if match_similarity >= 80.0:
+                if "ALPHA" in match_result:
+                    rank = match_result.split('_')[1]
+                    doppel_msg = (
+                        f"\n\n🌌 <b>[대장주 {rank}순위 궤적 매칭! - 유사도 {match_similarity:.1f}%]</b>\n"
+                        f"이 종목의 5개월 궤적이 역대 최고 알파 종목이었던 <b>[{matched_name}]</b>의 폭등 전 매집 흐름과 사실상 동일합니다. 세력의 빌드업이 끝났으니 비중을 높이십시오."
+                    )
+                    exit_strategy += doppel_msg
+                    total_score = min(total_score + 10, 100.0) # 대장주 일치 시 강제 가산점 부여
+                
+                elif "TRAP" in match_result:
+                    rank = match_result.split('_')[1]
+                    doppel_msg = (
+                        f"\n\n💀 <b>[참사/지옥행 {rank}순위 궤적 매칭! - 유사도 {match_similarity:.1f}%]</b>\n"
+                        f"🚨 <b>치명적 경고:</b> 과거 계좌를 녹였던 <b>[{matched_name}]</b>의 가짜 돌파(설거지) 궤적과 똑같습니다. 점수를 무시하고 매수 취소!"
+                    )
+                    exit_strategy += doppel_msg
+                    total_score = max(total_score - 30, 0.0) # 참사주 일치 시 치명적 감점
+    except Exception as e:
+        pass # 에러 시 시스템 정지 방지용 조용히 패스
+    # =========================================================================
+
     # 💡 [V9.0 뱃지 시스템 및 하위권 밈(Meme) 주식 예외 로직]
     badge_str = ""
     if total_score >= 80.0:
