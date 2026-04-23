@@ -374,27 +374,36 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     total_score = min(max(total_score, 0), 100)
 
     # =========================================================================
-    # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
-    # 추가된 기획서 내용(미국장 RS 델타 특징, S2/S4 극단적 소외주 로또 타점) 완벽 반영
+    # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
     # =========================================================================
-    # 1. 캔들(CPV) 및 미국장 특유의 정직한 흐름 가이드
     if cur_cpv >= 0.30:
         cpv_stat = f"예쁜 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
-        action = "💡 [월가 휩소 경고] 진입 직후 꽉 찬 양봉을 며칠간 그리면 개인을 꼬시는 전형적인 100% 설거지 패턴입니다. 반등을 기다리지 말고 'ZLEMA 이탈' 시 3~4일 내에 즉각 칼손절하여 계좌를 방어하십시오."
     elif cur_cpv <= 0.24:
         cpv_stat = f"지저분한 꼬리 캔들 (CPV {cur_cpv:.2f})"
-        action = "💡 [찐 대장주 패턴] 꼬리를 지저분하게 달며 숏 스퀴즈를 유발하는 진짜 트렌드입니다. 미국장은 '갈 놈은 처음부터 끝까지 시장을 이기면서(RS 상승) 가는' 정직한 흐름을 보입니다. '단기데드' 이탈 전까지 2.5주 이상 끝까지 홀딩하십시오."
     else:
         cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
-        action = "상승 시 '단기데드'로 수익 극대화, 하락 시 'ZLEMA 이탈'로 4일 내 짧게 끊어내는 기계적 대응을 권장합니다."
 
-    # 2. 점수 티어 및 S2/S4 극단적 소외주(로또) 밈 주식 펌핑 판별
-    if (hit_s4[-1] or hit_s2[-1]) and cur_rs <= -1000:
-        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f})입니다. 평소엔 승률이 낮아 패스해야 하지만, 시장이 극단적 공포(VIX 30 부근)에 빠졌을 때 거래량이 폭발하면 손익비 4.0~5.0 이상 터지는 밈(Meme) 주식 텐배거 자리입니다. 비중을 대폭 줄여 로또용으로만 줍습니다."
-    elif total_score >= 80:
-        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 방어력과 평균수익(29.4%)이 수학적으로 완벽히 입증되었습니다. 메인 1.5배 비중 진입을 권장합니다."
-    else:
-        tier_stat = f"총점 {total_score:.1f}점의 하위권 타점입니다. 가짜 휩소 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
+    # 👇 타점에 따른 동적 네임스페이스 분리 (S1, S2, S4)
+    if hit_s1: ns_prefix = "US_NULRIM_S1"
+    elif hit_s2: ns_prefix = "US_NULRIM_S2"
+    else: ns_prefix = "US_NULRIM_S4"
+
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10)
+    opt_sl_atr       = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+
+    if active_exit_mode == "TECH":
+        action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
+    elif active_exit_mode == "STAT":
+        action = (f"🎯 <b>[STAT 통계 모드 가동]</b>\n변동성/휩소 장세 판독 완료. 차트 무시!\n"
+                  f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(기계적 청산) 하십시오.\n"
+                  f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
+    else: # HYBRID
+        action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
+                  f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
+
+    if (hit_s4 or hit_s2) and cur_rs <= -1000:
+        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f})입니다. 평소엔 승률이 낮아 패스해야 하지만..."
 
     regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
