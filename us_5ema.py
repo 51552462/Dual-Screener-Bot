@@ -102,7 +102,7 @@ def telegram_sender_daemon(target_queue, token):
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
+                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except: time.sleep(2)
@@ -398,7 +398,7 @@ def compute_us_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close
     # 👑 [변동성 타겟팅 정밀 매수 가이드 (리스크 패리티)]
     # =========================================================================
     try:
-        TOTAL_CAPITAL = 50_000_000  # 👈 본인의 실제 투자 원금으로 수정하세요 (예: 5천만원)
+        TOTAL_CAPITAL = 35_000  # 👈 (수정완료) 약 5천만원에 해당하는 3만5천 '달러'로 입력
         BASE_RISK = 0.015           # 👈 1종목당 기본 허용 리스크 1.5%
 
         # 1. 14일 평균 변동폭(ATR) 계산 (결측치 방어)
