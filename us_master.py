@@ -402,19 +402,30 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     total_score = min(max(total_score, 0), 100) # 0~100점 보정
 
     # =========================================================================
-    # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
-    # 기획서 특급비밀3 (미국장 RS 정직한 우상향 패턴) 및 밈 주식 예외 타점 완벽 반영
+    # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
     # =========================================================================
-    # 1. 캔들(CPV) 및 미국장 특유의 정직한 흐름 가이드
-    if cur_cpv >= 0.35:
-        cpv_stat = f"예쁜 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
-        action = "💡 [월가 휩소 경고] 이평선 돌파 후 꽉 찬 양봉을 며칠간 그리면 개인을 꼬시는 전형적인 100% 설거지 패턴입니다. 반등을 기다리지 말고 조금이라도 밀리면 'ZLEMA 이탈' 시 3일 내에 즉각 칼손절하여 계좌를 방어하십시오."
-    elif cur_cpv <= 0.24:
-        cpv_stat = f"지저분한 꼬리 캔들 (CPV {cur_cpv:.2f})"
-        action = "💡 [찐 대장주 패턴] 꼬리를 지저분하게 달며 숏 스퀴즈를 유발하는 진짜 트렌드입니다. 미국장은 '갈 놈은 처음부터 끝까지 시장을 이기면서(RS 상승) 가는' 정직한 흐름을 보입니다. '단기데드' 이탈 전까지 약 2.5주(11.5일) 이상 끝까지 홀딩하십시오."
-    else:
-        cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
-        action = "상승 시 '단기데드'로 수익 극대화, 하락 시 'ZLEMA 이탈'로 3일 내 짧게 끊어내는 기계적 대응을 권장합니다."
+    # 1. 캔들(CPV) 팩트 진단은 그대로 유지 (참고용 팁)
+    if cur_cpv >= 0.35: cpv_stat = f"예쁜 꽉 찬 양봉 (CPV {cur_cpv:.2f} - 휩소 주의)"
+    elif cur_cpv <= 0.24: cpv_stat = f"지저분한 꼬리 캔들 (CPV {cur_cpv:.2f} - 찐 대장주 패턴)"
+    else: cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
+
+    # 👇👇 [여기서부터 팩트 적용] 관제탑의 청산 모드 및 3차원 파라미터 로드
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop = SYS_CONFIG.get("US_MASTER_S1_TIME_STOP", 10) # 관제탑 산출 타임스탑
+    opt_sl_atr = SYS_CONFIG.get("US_MASTER_S1_ATR_SL", 2.0)      # 관제탑 산출 ATR 손절승수
+
+    # 👇👇 관제탑의 모드(Regime) 지시에 따라 행동(action) 브리핑이 기계적으로 바뀝니다.
+    if active_exit_mode == "TECH":
+        action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
+    
+    elif active_exit_mode == "STAT":
+        action = (f"🎯 <b>[STAT 통계 모드 가동]</b>\n변동성/휩소 장세 판독 완료. 차트 무시!\n"
+                  f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(기계적 청산) 하십시오.\n"
+                  f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
+    
+    else: # HYBRID
+        action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
+                  f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손실을 차단하십시오.")
 
     # 2. 점수 티어 및 극단적 모멘텀(로또) 밈 주식 펌핑 판별
     if total_score <= 50 and cur_rs > 513 and cur_cpv <= 0.3:
