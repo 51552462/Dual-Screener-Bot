@@ -465,6 +465,25 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 만든 가짜 양봉 + 시장 소외주 (점수 30% 삭감)\n"
 
     total_score = min(max(total_score, 0), 100) 
+
+    # =========================================================================
+    # 👑 [비선형 의사결정 나무 (Decision Tree) 필터] - 선형 덧셈의 오류 차단
+    # =========================================================================
+    tree_fatal_cpv = SYS_CONFIG.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
+    is_tree_rejected = False
+    tree_reason = ""
+
+    # [Node 1]: CPV가 한계치를 넘으면 RS 점수가 아무리 높아도 무조건 기각 (Death Combo)
+    if cur_cpv > tree_fatal_cpv:
+        is_tree_rejected = True
+        tree_reason = f"악성 매물 캔들 한계치 초과 (CPV {cur_cpv:.2f} > {tree_fatal_cpv})"
+
+    # 비선형 필터에 걸렸다면 총점을 강제로 0점 처리하고 사형 선고
+    if is_tree_rejected:
+        total_score = 0.0
+        trap_warning += f"🚫 <b>[Decision Tree 기각]</b>: 선형 점수는 높을 수 있으나, 비선형 팩트에 의해 차단되었습니다. (사유: {tree_reason})\n"
+        badge_str = "💀 [비선형 필터 기각] 매수 절대 금지"
+    # =========================================================================
     
     is_tenbagger = False
     if hit_s6 and cur_rs >= 207.60 and cur_cpv <= 0.46 and (not align112[-1]): is_tenbagger = True
@@ -474,9 +493,6 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
     is_top_dna = (cur_cpv <= 0.56) and (cur_tb >= 10.83) and (cur_bbe >= 16.12)
     is_worst_dna = (cur_cpv >= 0.56) and (cur_tb <= 10.36) and (cur_bbe <= 5.20) 
 
-    # =========================================================================
-    # 👑 [종목 맞춤형 동적 청산 전략 (V11.0 팩트 데이터)]
-    # =========================================================================
     # =========================================================================
     # 👑 [종목 맞춤형 동적 청산 전략 (V11.0 팩트 데이터)]
     # =========================================================================
