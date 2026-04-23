@@ -146,9 +146,12 @@ def generate_ai_report(code: str, company_name: str):
 # 💡 3. 잡주 필터 및 시가총액 병합 (캐싱 방어막 100% 보장형)
 def get_krx_list_kind():
     try:
-        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
+        # 💡 [방어 1] User-Agent 헤더를 추가하여 KRX 봇 차단 완벽 회피
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        
+        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", headers=headers, verify=False, timeout=10).text), header=0)[0]
         df_ks['Market'] = 'KOSPI'
-        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
+        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", headers=headers, verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
@@ -160,16 +163,25 @@ def get_krx_list_kind():
         # 💡 [캐시 파일 경로 세팅] 서버에 저장될 시총 백업 파일
         CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
         
-        # 시가총액 데이터 추출 시도
         try:
+            # 💡 [방어 2] 라이브러리 구버전 호환 (Marcap 컬럼 누락 시 보조 API 호출)
             fdr_df = fdr.StockListing('KRX')
             
+            if not any(col in fdr_df.columns for col in ['Marcap', 'MarketCap', '시가총액']):
+                print("💡 FDR 구버전 감지됨. 보조 API(KRX-MARCAP)로 시가총액을 강제 로드합니다.")
+                fdr_df = fdr.StockListing('KRX-MARCAP')
+                
             rename_map = {}
             if 'Symbol' in fdr_df.columns: rename_map['Symbol'] = 'Code'
+            if '종목코드' in fdr_df.columns: rename_map['종목코드'] = 'Code'
             if 'MarketCap' in fdr_df.columns: rename_map['MarketCap'] = 'Marcap'
             if '시가총액' in fdr_df.columns: rename_map['시가총액'] = 'Marcap'
+            
             if rename_map: fdr_df = fdr_df.rename(columns=rename_map)
             
+            if 'Marcap' not in fdr_df.columns:
+                raise ValueError("FinanceDataReader에서 시가총액을 찾을 수 없습니다.")
+                
             fdr_df = fdr_df[['Code', 'Marcap']].copy()
             fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
             
@@ -178,7 +190,6 @@ def get_krx_list_kind():
             
             fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
             
-            # API가 정상 작동하여 데이터가 1000개 이상 받아졌다면 캐시(백업) 파일 갱신
             if len(fdr_df) > 1000:
                 fdr_df.to_csv(CACHE_FILE, index=False)
                 print("✅ 시가총액(Marcap) 라이브 로드 및 백업 완료!")
@@ -186,22 +197,19 @@ def get_krx_list_kind():
                 raise ValueError("API가 빈 껍데기를 반환함")
                 
         except Exception as e:
-            # 🚨 API가 뻗었을 때 0원으로 퉁치지 않고 백업 파일에서 살려냄
             print(f"⚠️ 라이브 시총 로드 실패({e}). 안전 백업(Cache) 데이터로 복구합니다!")
             if os.path.exists(CACHE_FILE):
                 fdr_df = pd.read_csv(CACHE_FILE)
                 fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6)
             else:
-                print("🚨 백업 파일도 없습니다. 최초 1회는 라이브 데이터가 필요합니다.")
+                print("🚨 백업 파일도 없습니다. 전 종목 시가총액이 0으로 계산됩니다.")
                 fdr_df = pd.DataFrame(columns=['Code', 'Marcap'])
 
-        # 필터링된 리스트와 시총 데이터 병합
         filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
-        
-        # 병합 후에도 NaN인 아주 희귀한 신규 상장 종목만 0으로 처리 (기존 우량주 보호)
         filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
             
         return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
+        
     except Exception as outer_e: 
         print(f"🚨 리스트 수집 치명적 에러: {outer_e}")
         return pd.DataFrame()
