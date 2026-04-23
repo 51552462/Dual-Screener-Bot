@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 import json
+import time   # 👈 이 줄을 반드시 추가하십시오!
 from datetime import datetime, timedelta
 import pytz
 import requests
