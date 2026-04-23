@@ -406,22 +406,33 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     # 👑 [종목 맞춤형 동적 청산 전략 (스마트 매수/손절)]
     # 고정된 텍스트가 아닌, 해당 종목의 실시간 CPV, 총점, RS 데이터를 바탕으로 전략이 매번 바뀝니다!
     # =========================================================================
+    # =========================================================================
+    # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
+    # =========================================================================
     if cur_cpv >= 0.70:
         cpv_stat = f"현재 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
-        action = "월가 알고리즘의 단기 설거지(휩소) 타겟이 될 확률이 높습니다. 진입 후 3~4일 내로 강하게 상승하지 못하거나 조금이라도 밀리면 'ZLEMA 이탈' 시 즉각 칼손절하여 계좌를 방어하십시오."
     elif cur_cpv <= 0.40:
         cpv_stat = f"꼬리가 길게 달린 매물 소화 캔들 (CPV {cur_cpv:.2f})"
-        action = f"강력한 주도력(RS {cur_rs:.1f}%)으로 숏 스퀴즈를 유발하는 진짜 대장주 패턴입니다. 잔파도에 털리지 말고 '단기데드(EMA 20)' 이탈 전까지 2주 이상 끝까지 추세를 발라먹으십시오."
     else:
         cpv_stat = f"표준적인 양봉 (CPV {cur_cpv:.2f})"
-        action = f"현재 응축에너지({cur_bbe:.1f})의 폭발 여부를 지켜봐야 합니다. 강한 슈팅이 나오면 '단기데드'로 홀딩하고, 지지부진하게 꺾이면 'ZLEMA' 라인에서 짧게 익절/본절 하십시오."
+
+    # 👇 관제탑 청산 모드 로드 (KR_5EMA_S1 단일 네임스페이스)
+    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = SYS_CONFIG.get("KR_5EMA_S1_TIME_STOP", 10)
+    opt_sl_atr       = SYS_CONFIG.get("KR_5EMA_S1_ATR_SL", 2.0)
+
+    if active_exit_mode == "TECH":
+        action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
+    elif active_exit_mode == "STAT":
+        action = (f"🎯 <b>[STAT 통계 모드 가동]</b>\n변동성/휩소 장세 판독 완료. 차트 무시!\n"
+                  f"▪️ 진입 후 <b>{opt_time_stop}일 차 종가</b>에 무조건 타임스탑(기계적 청산) 하십시오.\n"
+                  f"▪️ 진입가 대비 <b>ATR {opt_sl_atr}배</b> 이탈 시 즉각 칼손절하십시오.")
+    else: # HYBRID
+        action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
+                  f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
     if total_score >= 80:
         tier_stat = f"총점 {total_score:.1f}점(1티어)으로 계좌 방어력이 수학적으로 완벽히 입증되었으므로 메인 비중 진입을 권장합니다."
-    elif total_score <= 50 and cur_rs > 500 and cur_cpv <= 0.3:
-        tier_stat = f"총점은 {total_score:.1f}점으로 낮으나, 극단적 모멘텀이 포착된 밈(Meme) 주식 예외 타점이므로 10% 미만의 소액 로또 비중으로만 접근하십시오."
-    else:
-        tier_stat = f"총점 {total_score:.1f}점의 하위권 서브 타점이므로, 가짜 돌파 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
 
     regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
