@@ -105,7 +105,7 @@ def telegram_sender_daemon(target_queue, token):
             for _ in range(3):
                 try:
                     with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
+                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except: time.sleep(2)
