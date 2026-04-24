@@ -151,36 +151,61 @@ def run_autonomous_analysis():
     # ---------------------------------------------------------
     report_lines.append("\n<b>[4. 다중 타임프레임 앙상블(14/30/60d) 최적화]</b>")
     
-    def get_period_stats(days):
-        """특정 기간의 최적 파라미터 날것(Raw) 추출"""
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            s_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-            p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}'", conn)
-            conn.close()
-            
-            if len(p_df) < 5: return None
-            
-            p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
-            p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
-            
-            win_subset = p_df[p_df['final_ret'] > 0]
-            lose_subset = p_df[p_df['final_ret'] <= 0]
-            
-            return {
-                "sl": np.percentile(win_subset['mae_pct'], 15) if len(win_subset) >= 3 else -3.5,
-                "tp": np.percentile(win_subset['mfe_pct'], 50) if len(win_subset) >= 3 else 10.0,
-                "fatal_cpv": np.percentile(lose_subset['v_cpv'].dropna(), 90) if len(lose_subset) >= 3 else 0.85
-            }
-        except: return None
+    # 2. [V18.0 앙상블 및 통계적 신뢰도 필터 함수]
+        def get_period_stats(days):
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                s_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+                p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}'", conn)
+                conn.close()
+                
+                n_trades = len(p_df)
+                if n_trades < 5: 
+                    return None # 표본 절대 부족
+                
+                win_s = p_df[p_df['final_ret'] > 0]
+                lose_s = p_df[p_df['final_ret'] <= 0]
+                
+                # 💡 [핵심] 통계적 신뢰도(Confidence) 검증
+                gross_profit = win_s['final_ret'].sum() if len(win_s) > 0 else 0
+                gross_loss = abs(lose_s['final_ret'].sum()) + 0.1
+                pf = gross_profit / gross_loss
+                
+                # 컷오프 룰: 손익비(PF)가 0.85 ~ 1.25 사이인 횡보/노이즈 장세에서는
+                # 압도적인 표본(20개 이상)이 뒷받침되지 않는 한 '무의미한 데이터'로 기각함
+                is_meaningless_chop = (0.85 <= pf <= 1.25) and (n_trades < 20)
+                
+                if is_meaningless_chop:
+                    return "NOISE" # 단순 표본 부족(None)과 노이즈 기각(NOISE)을 구분하여 반환
 
-    # 1. 시계열별 데이터 수집 (14일/30일/60일)
-    t14 = get_period_stats(14)
-    t30 = get_period_stats(30)
-    t60 = get_period_stats(60)
+                p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
+                p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
+                
+                # 재계산 후 할당
+                win_s = p_df[p_df['final_ret'] > 0]
+                lose_s = p_df[p_df['final_ret'] <= 0]
 
-    # 2. 가중치 앙상블 연산 (단기 50% : 중기 30% : 장기 20%)
-    valid_stats = [s for s in [t14, t30, t60] if s is not None]
+                return {
+                    "sl": np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5,
+                    "tp": np.percentile(win_s['mfe_pct'], 50) if len(win_s) >= 3 else 10.0,
+                    "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85
+                }
+            except: return None
+
+        # 3. [앙상블 실행] 14일, 30일, 60일의 지혜를 블렌딩
+        t14, t30, t60 = get_period_stats(14), get_period_stats(30), get_period_stats(60)
+        
+        report_lines.append("\n<b>[4. 다중 타임프레임 앙상블 및 신뢰도 컷오프]</b>")
+        
+        # 💡 관제탑 텔레그램 피드백 (어떤 데이터를 왜 버렸는지 보고)
+        if t14 == "NOISE": report_lines.append("🛡️ 14일 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
+        elif not t14: report_lines.append("▪️ 14일 데이터: 표본 부족으로 배제.")
+        
+        if t30 == "NOISE": report_lines.append("🛡️ 30일 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
+        elif not t30: report_lines.append("▪️ 30일 데이터: 표본 부족으로 배제.")
+
+        # NOISE나 None이 아닌 순수 유효 데이터만 필터링
+        valid = [s for s in [t14, t30, t60] if isinstance(s, dict)]
     if len(valid_stats) >= 2:
         # 단기 데이터가 있으면 가중 평균(5:3:2), 없으면 유효 데이터끼리 평균 적용
         w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid_stats)] * len(valid_stats)
