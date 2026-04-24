@@ -262,7 +262,7 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] V11.0 눌림목 마스터 시그널 엔진 (시가총액 팩트 데이터 완벽 적용)
-def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float): 
+def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, code: str = ""): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     
@@ -362,6 +362,16 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
     # =========================================================================
     recent_hits = (s1 | s4 | s6 | s7)[-252:-1].sum() if len(c) > 252 else (s1 | s4 | s6 | s7)[:-1].sum()
     freq_count = int(recent_hits)
+
+    # 💡 [무적 방어 로직] KRX 차단으로 시가총액이 0일 경우, 포착된 종목만 실시간 스크래핑!
+    if marcap == 0 and code != "":
+        try:
+            import requests, re
+            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
+            m = re.search(r'<em id="_market_sum">\s*([\d,]+)\s*</em>', res.text)
+            if m:
+                marcap = float(m.group(1).replace(',', '')) * 100_000_000
+        except: pass
 
     # 💡 [V11.0] 시가총액 체급 판별 및 통계 매핑 (억원 단위로 변환하여 안전성 극대화)
     marcap_eok = marcap / 100_000_000 
@@ -703,7 +713,10 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
         "v_rs": cur_rs,
         "dyn_rs_score": dyn_rs_score,
         "dyn_cpv_score": dyn_cpv_score,
-        "dyn_tb_score": dyn_tb_score
+        "dyn_tb_score": dyn_tb_score,
+        "marcap_eok": marcap_eok,          # 👈 추가
+        "score_marcap": score_marcap,      # 👈 추가
+        "freq_count": freq_count           # 👈 추가
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -850,7 +863,7 @@ def scan_market_1d():
             if is_valid: 
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
                 # 💡 [V11.0] 엔진에 marcap 전달
-                hit, sig_type, df, dbg = compute_signal(df_raw, idx_close, marcap)
+                hit, sig_type, df, dbg = compute_signal(df_raw, idx_close, marcap, code)
         except Exception:
             pass
 
@@ -913,8 +926,8 @@ def scan_market_1d():
                                    'v_cpv': dbg.get('v_cpv', 0),
                                    'v_yang': dbg.get('v_yang', 0),
                                    'v_energy': dbg.get('v_energy', 0),
-                                   'marcap_eok': marcap / 100000000,    # 👈 한국장만 있음
-                                   'score_marcap': dbg.get('score_marcap', 0), # 👈 한국장만 있음
+                                   'marcap_eok': dbg.get('marcap_eok', 0),    
+                                   'score_marcap': dbg.get('score_marcap', 0), 
                                    'freq_count': dbg.get('freq_count', 0),
                         
                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
