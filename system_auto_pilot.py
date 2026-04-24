@@ -271,28 +271,43 @@ def run_autonomous_analysis():
         report_lines.append(f"⚠️ 다중 궤적 추출 에러: {e}")
     
     # ---------------------------------------------------------
-    # 👑 엔진 5: 청산 로직 데스매치 (인과 추론 피드백 루프)
+    # 👑 엔진 5: [V17.0 청산 우선순위 데스매치 및 DNA 분석 (STAT vs TECH)]
     # ---------------------------------------------------------
-    report_lines.append("<b>[5. 청산 아레나 및 시스템 피드백 (Why?)]</b>")
-    if 'exit_type' in df.columns:
-        _, tech_pf = calculate_metrics(df[df['exit_type'] == 'TECH'])
-        _, stat_pf = calculate_metrics(df[df['exit_type'] == 'STAT'])
-        _, hybrid_pf = calculate_metrics(df[df['exit_type'] == 'HYBRID'])
+    report_lines.append("\n<b>[5. 청산 우선순위 데스매치 및 인과 분석]</b>")
+    if 'sim_stat_ret' in df.columns and 'sim_tech_ret' in df.columns:
+        # 종료된 시뮬레이션 결과 추출
+        stat_df = df[df['sim_stat_status'].str.contains('CLOSED', na=False)]
+        tech_df = df[df['sim_tech_status'].str.contains('CLOSED', na=False)]
         
-        scores = {"TECH": tech_pf, "STAT": stat_pf, "HYBRID": hybrid_pf}
-        winner_mode = max(scores, key=scores.get) if max(scores.values()) > 0 else "HYBRID"
+        stat_pf = (stat_df[stat_df['sim_stat_ret']>0]['sim_stat_ret'].sum()) / abs(stat_df[stat_df['sim_stat_ret']<=0]['sim_stat_ret'].sum() + 0.1) if len(stat_df)>0 else 0
+        tech_pf = (tech_df[tech_df['sim_tech_ret']>0]['sim_tech_ret'].sum()) / abs(tech_df[tech_df['sim_tech_ret']<=0]['sim_tech_ret'].sum() + 0.1) if len(tech_df)>0 else 0
         
-        report_lines.append(f"▪️ TECH PF: {tech_pf:.2f} | STAT PF: {stat_pf:.2f} | HYBRID PF: {hybrid_pf:.2f}")
-        report_lines.append(f"🏆 <b>승리 로직: [{winner_mode}]</b>")
+        report_lines.append(f"▪️ MFE 목표가(STAT) 우선 PF: <b>{stat_pf:.2f}</b>")
+        report_lines.append(f"▪️ 추세추종(TECH) 무한홀딩 PF: <b>{tech_pf:.2f}</b>")
         
-        if winner_mode == "HYBRID": report_lines.append("💡 팩트: 손절 차단과 추세 홀딩의 완벽한 공수 밸런스 입증.")
-        elif winner_mode == "STAT": report_lines.append("💡 팩트: 휩소가 잦아 타임스탑(기계적 매도)이 기회비용을 완벽히 방어함.")
-        else: report_lines.append("💡 팩트: 대세 상승 국면이므로 추세(TECH)를 끝까지 타는 것이 압도적.")
+        if tech_pf > stat_pf * 1.1:
+            winner_mode = "TECH"
+            report_lines.append("🏆 <b>승리: [TECH 우선]</b> (MFE 익절이 오히려 추세의 수익을 깎아먹고 있습니다. 끝까지 홀딩하세요.)")
             
+            # 💡 [공통점 분석] TECH가 압도적으로 유리했던 종목들의 DNA 추적
+            tech_winners = df[(df['sim_tech_ret'] > df['sim_stat_ret'] + 5.0)]
+            if len(tech_winners) >= 3:
+                rs_mean = tech_winners['dyn_rs'].mean()
+                report_lines.append(f"💡 <b>[추세 추종(무한 홀딩) 성공 DNA]</b>: RS 상위 {(10-rs_mean)*11.1:.1f}% 종목들. 상대강도가 강한 대장주는 단기 목표가(MFE)를 무시하고 데드크로스까지 놔둬야 합니다.")
+        else:
+            winner_mode = "STAT"
+            report_lines.append("🏆 <b>승리: [STAT 우선]</b> (데드크로스를 기다리면 수익을 다 토해냅니다. 목표가 도달 시 기계적으로 챙기세요.)")
+            
+            # 💡 [공통점 분석] STAT이 압도적으로 유리했던 종목들의 DNA 추적
+            stat_winners = df[(df['sim_stat_ret'] > df['sim_tech_ret'] + 2.0)]
+            if len(stat_winners) >= 3:
+                cpv_mean = stat_winners['dyn_cpv'].mean()
+                report_lines.append(f"💡 <b>[단기 목표가 익절(STAT) 성공 DNA]</b>: 캔들지배력 상위 {(10-cpv_mean)*11.1:.1f}% 종목들. 매도 압력이 큰 캔들 패턴은 슈팅을 줄 때 욕심부리지 말고 즉시 도망가야 합니다.")
+
         current_config["ACTIVE_EXIT_MODE"] = winner_mode
-        report_lines.append(f"🚨 <b>시스템 액션:</b> 모든 검색기 청산 가이드를 <b>[{winner_mode}]</b> 모드로 강제 고정합니다.")
+        report_lines.append(f"🚨 <b>액션:</b> 다음 주 청산 가이드를 <b>[{winner_mode}]</b> 모드로 강제 고정합니다.")
     else:
-        report_lines.append("⚠️ DB에 'exit_type' 기록이 없어 대결을 보류합니다.")
+        report_lines.append("⚠️ 장부에 시뮬레이션 컬럼이 부족하여 대결을 보류합니다.")
     # ---------------------------------------------------------
     # 👑 엔진 6: [V15.0 ABC Tournament Arena & 오답 노트]
     # ---------------------------------------------------------
