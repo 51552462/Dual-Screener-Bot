@@ -372,8 +372,43 @@ def send_daily_summary_report():
     report_msg += "\n💡 (모든 지표와 백분위 데이터는 DB에 완벽히 박제 중입니다.)"
     send_telegram_msg(report_msg)
     print(f"✅ 16:00 일일 종합 리포트 텔레그램 발송 완료.")
-    
-    # ==========================================
+
+# ---------------------------------------------------------
+        # 👑 [V20.0 거시적(Macro) 전체 그룹 통합 DNA 교차 분석]
+        # ---------------------------------------------------------
+        report_msg += "🌍 [전체 티어 통합: 유니버설(Universal) DNA 분석]\n"
+        
+        # 티어(점수) 계급장을 모두 떼고 절대 수익률 기준으로만 3분할
+        all_winners = df[df['final_ret'] > 5.0]
+        all_sideways = df[(df['final_ret'] >= -3.0) & (df['final_ret'] <= 5.0)]
+        all_losers = df[df['final_ret'] < -3.0]
+
+        if len(all_winners) >= 5 and len(all_losers) >= 5:
+            aw_rs = all_winners['dyn_rs'].mean()
+            aw_eng = all_winners['v_energy'].mean()
+            report_msg += f"✅ [전체 대박주 {len(all_winners)}개 절대 공통점]\n"
+            report_msg += f" ↳ 평균 RS: 상위 {(10-aw_rs)*11.1:.1f}% | 평균 에너지: {aw_eng:.1f}\n"
+
+            as_cpv = all_sideways['dyn_cpv'].mean()
+            report_msg += f"↔️ [전체 횡보주 {len(all_sideways)}개 절대 공통점]\n"
+            report_msg += f" ↳ 평균 캔들지배력(CPV): 상위 {(10-as_cpv)*11.1:.1f}% (애매한 매도세가 횡보를 유발함)\n"
+
+            al_cpv = all_losers['dyn_cpv'].mean()
+            al_tb = all_losers['dyn_tb'].mean()
+            report_msg += f"💀 [전체 참사주 {len(all_losers)}개 절대 공통점]\n"
+            report_msg += f" ↳ 평균 캔들지배력(CPV): 상위 {(10-al_cpv)*11.1:.1f}% | 찐양봉 빈도 하위 {(al_tb)*11.1:.1f}%\n"
+
+            # 💡 시스템의 거시적 통찰 자동 도출
+            report_msg += f"💡 <b>[관제탑 최종 결론]</b>\n"
+            if aw_rs < al_cpv: # (주의: 값이 작을수록 상위 백분위)
+                report_msg += "현재 시장은 점수와 무관하게 철저히 '상대강도(RS)'가 주도하는 추세장입니다.\n"
+            else:
+                report_msg += "현재 시장은 악성 윗꼬리(CPV)에 한 번 걸리면 무조건 계좌가 녹아내리는 변동성 장세입니다.\n"
+        else:
+            report_msg += "⚠️ 전체 그룹 통합 분석을 위한 표본이 아직 부족합니다.\n"
+        
+        report_msg += "\n"
+# ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
 # ==========================================
 def run_deep_dive_analysis(market='KR'):
