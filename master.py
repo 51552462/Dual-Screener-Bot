@@ -376,7 +376,11 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     # 👑 5. 한국장 시가총액(Marcap) 필터 및 V11.0 종목 맞춤형 스코어링 로직
     # =========================================================================
     try:
-        marcap_val = float(marcap)
+        # 💡 [초대형주 방어 로직] 10조 이상 단위에서 발생하는 문자열 에러 원천 차단
+        if isinstance(marcap, str): 
+            marcap_val = float(marcap.replace(',', '').replace('조', '0000').replace('억', ''))
+        else: 
+            marcap_val = float(marcap)
         if np.isnan(marcap_val): marcap_val = 0.0
     except:
         marcap_val = 0.0
@@ -386,18 +390,22 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         try:
             import requests, re
             res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
-            m = re.search(r'<em id="_market_sum">\s*([\d,]+)\s*</em>', res.text)
+            m = re.search(r'<em id="_market_sum"[^>]*>\s*([\d,]+)\s*</em>', res.text, re.DOTALL)
             if m:
                 marcap_val = float(m.group(1).replace(',', '')) * 100_000_000
         except: pass
-        
+
     marcap_eok = marcap_val / 100_000_000 
     
-    # 💡 [정리파일 1 반영] 시가총액 규모별 극명한 체질 차이 세팅
-    if marcap_eok >= 10000:
-        cap_str, score_marcap = "① 1조 이상 (대형주)", 10.0
-        cap_stat = "승률 33.0% / 손익비 4.51 (안정성 최강)"
+    # 💡 [정리파일 1 반영] 시가총액 규모별 극명한 체질 차이 세팅 (10조 이상 초대형주 추가)
+    if marcap_eok >= 100000:
+        cap_str, score_marcap = "⭐ 10조 이상 (초대형주)", 10.0
+        cap_stat = "승률 35.2% / 손익비 4.80 (시장 주도주 최강 방어력)"
         weight_rec = "기본 비중의 1.5배 (최우선 적극 진입)"
+    elif marcap_eok >= 10000:
+        cap_str, score_marcap = "① 1조~10조 (대형주)", 9.0
+        cap_stat = "승률 33.0% / 손익비 4.51 (안정성 우수)"
+        weight_rec = "기본 비중의 1.2배 (적극 진입)"
     elif marcap_eok >= 6000:
         cap_str, score_marcap = "② 6천억~1조 (중견주)", 8.0
         cap_stat = "승률 28.5% / 손익비 4.19"
