@@ -257,7 +257,7 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 4. Top 1% 마스터 (트뷰 원본 SIG 1, SIG 4 완벽 이식 엔진)
-def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float):
+def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, code: str = ""):
     if df_raw is None or len(df_raw) < 500: 
         return False, "", df_raw, {}
     df = df_raw.copy()
@@ -380,6 +380,16 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         if np.isnan(marcap_val): marcap_val = 0.0
     except:
         marcap_val = 0.0
+
+    # 💡 [무적 방어 로직] KRX 차단으로 시가총액이 0일 경우, 포착된 종목만 실시간 스크래핑!
+    if marcap_val == 0 and code != "":
+        try:
+            import requests, re
+            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
+            m = re.search(r'<em id="_market_sum">\s*([\d,]+)\s*</em>', res.text)
+            if m:
+                marcap_val = float(m.group(1).replace(',', '')) * 100_000_000
+        except: pass
         
     marcap_eok = marcap_val / 100_000_000 
     
@@ -685,7 +695,10 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
         "v_rs": cur_rs,
         "dyn_rs_score": dyn_rs_score,
         "dyn_cpv_score": dyn_cpv_score,
-        "dyn_tb_score": dyn_tb_score
+        "dyn_tb_score": dyn_tb_score,
+        "marcap_eok": marcap_eok,          # 👈 추가
+        "score_marcap": score_marcap,      # 👈 추가
+        "freq_count": freq_count           # 👈 추가
     }
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
@@ -832,7 +845,7 @@ def scan_market_1d():
             if is_valid: 
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
                 # 💡 [수정 완료] 없는 함수인 compute_5ema_signal 대신 올바른 마스터 함수로 변경했습니다.
-                hit, sig_type, df, dbg = compute_korea_master_signal(df_raw, idx_close, marcap)
+                hit, sig_type, df, dbg = compute_korea_master_signal(df_raw, idx_close, marcap, code)
             
             hit_rank = 0
             with console_lock:
@@ -895,8 +908,8 @@ def scan_market_1d():
                                    'v_cpv': dbg.get('v_cpv', 0),
                                    'v_yang': dbg.get('v_yang', 0),
                                    'v_energy': dbg.get('v_energy', 0),
-                                   'marcap_eok': marcap / 100000000,    # 👈 한국장만 있음
-                                   'score_marcap': dbg.get('score_marcap', 0), # 👈 한국장만 있음
+                                   'marcap_eok': dbg.get('marcap_eok', 0),    
+                                   'score_marcap': dbg.get('score_marcap', 0), 
                                    'freq_count': dbg.get('freq_count', 0),
                         
                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
