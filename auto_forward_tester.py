@@ -326,22 +326,43 @@ def send_daily_summary_report():
             
             report_msg += f"📈 [{market}장 누적 실전 승률]: {win_rate}% (총 {total_closed}건 검증)\n"
             
-            # 보유 쿼터 현황
+            # 보유 쿼터 현황 (9단계 정밀 표시)
             cursor = conn.execute("SELECT tier, COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY tier", (market,))
             tier_counts = {row[0]: row[1] for row in cursor.fetchall()}
-            total_active = sum(tier_counts.values())
             
-            report_msg += f"📦 [현재 포트폴리오: 총 {total_active}종목]\n"
-            report_msg += f" - 70~100점: {tier_counts.get('70~100점대', 0)}/30\n"
-            report_msg += f" - 40~69점: {tier_counts.get('40~70점대', 0)}/15\n"
-            report_msg += f" - 10~39점: {tier_counts.get('10~30점대', 0)}/15\n\n"
+            # ---------------------------------------------------------
+    # 👑 [V19.0 구간별 Micro-DNA 정밀 분석 엔진]
+    # ---------------------------------------------------------
+    for t in range(10, 100, 10):
+        tier_label = f"{t}점대"
+        t_df = df[df['tier'] == tier_label]
+        if len(t_df) < 5: continue # 데이터가 최소 5개는 쌓여야 분석 시작
+
+        report_msg += f"📌 <b>[{tier_label} 구간 심층 분석]</b>\n"
         
-            # 💡 [V16.0 픽스] 한국장/미국장 섹터 완벽 분리 집계
-            report_msg += f"🔥 [{market}장 최근 7일 알고리즘 주도 섹터 TOP 3]\n"
-            query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 3"
-            for row in conn.execute(query).fetchall():
-                report_msg += f" 🎯 {row[0]} ({row[1]}개 포착)\n"
-            report_msg += "\n"
+        # 가계부 및 승률
+        t_wr, t_pf = calculate_metrics(t_df)
+        report_msg += f"▪️ 성적: 승률 {t_wr:.1f}% | PF {t_pf:.2f}\n"
+
+        # 그룹핑 (대박 / 횡보 / 참사)
+        winners = t_df[t_df['final_ret'] > 5.0]
+        sideways = t_df[(t_df['final_ret'] >= -3.0) & (t_df['final_ret'] <= 5.0)]
+        losers = t_df[t_df['final_ret'] < -3.0]
+
+        # DNA 추출 함수
+        def get_dna(sub_df):
+            if len(sub_df) == 0: return "표본없음"
+            return f"RS:{(10-sub_df['dyn_rs'].mean())*11.1:.1f}% | CPV:{(10-sub_df['dyn_cpv'].mean())*11.1:.1f}% | ENG:{sub_df['v_energy'].mean():.1f}"
+
+        report_msg += f" ✅ 대박 DNA: {get_dna(winners)}\n"
+        report_msg += f" ↔️ 횡보 DNA: {get_dna(sideways)}\n"
+        report_msg += f" 💀 참사 DNA: {get_dna(losers)}\n"
+        
+        # 전략적 통찰 자동 도출
+        if len(winners) > 0 and len(losers) > 0:
+            if winners['v_energy'].mean() > losers['v_energy'].mean() + 1.0:
+                report_msg += f" 💡 통찰: {tier_label}는 에너지가 높을 때만 날아갑니다. 에너지 낮은 종목은 거르십시오.\n"
+        report_msg += "\n"
             
         conn.close()
         
