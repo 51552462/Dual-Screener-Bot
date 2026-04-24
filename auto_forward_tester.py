@@ -43,8 +43,15 @@ def init_forward_db():
     try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN exit_type TEXT DEFAULT 'UNKNOWN'")
     except: pass
     
-    # 👇👇 [여기에 V15.0 ABC 토너먼트 컬럼 추가] 👇👇
+    # 👇👇 [추가] V16.0 ABC 토너먼트 병렬 성적 기록 컬럼 👇👇
     for p in ['live_a', 'cand_b', 'champ_c']:
+        try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_ret REAL DEFAULT 0.0")
+        except: pass
+        try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_status TEXT DEFAULT 'OPEN'")
+        except: pass
+
+    # 👇👇 [추가] V17.0 청산 우선순위 시뮬레이션 컬럼 👇👇
+    for p in ['sim_stat', 'sim_tech']:
         try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_ret REAL DEFAULT 0.0")
         except: pass
         try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_status TEXT DEFAULT 'OPEN'")
@@ -208,12 +215,32 @@ def track_daily_positions(market):
                 # 각 셋트에서 손절선(SL) 추출 (없으면 기본값 -3.5)
                 sl_limit = params.get("DYNAMIC_MAE_SL", -3.5)
                 
-                # 각 로직별 수익률 및 상태 저장 (실제 장부 메인 상태는 LIVE_A가 결정)
                 if current_ret_pct <= sl_limit:
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=?, {key}_status=? WHERE id=?", (sl_limit, "CLOSED_LOSS", r['id']))
                 else:
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=? WHERE id=?", (current_ret_pct, r['id']))
+
+            # 👇👇 [추가] V17.0 청산 평행우주 (STAT 우선 vs TECH 우선) 가상 대결 👇👇
+            # 1. STAT 맹신 (MFE 도달 시 즉시 익절, 데드크로스 무시)
+            if r.get('sim_stat_status', 'OPEN') == 'OPEN':
+                if current_ret_pct <= dyn_mae_sl:
+                    conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
+                elif current_ret_pct >= dyn_mfe_tp:
+                    conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
+                else:
+                    conn.execute("UPDATE forward_trades SET sim_stat_ret=? WHERE id=?", (current_ret_pct, r['id']))
+
+            # 2. TECH 맹신 (MFE 무시하고 데드크로스 날 때까지 무한 홀딩. 계좌 보호용 MAE만 유지)
+            if r.get('sim_tech_status', 'OPEN') == 'OPEN':
+                if current_ret_pct <= dyn_mae_sl:
+                    conn.execute("UPDATE forward_trades SET sim_tech_ret=?, sim_tech_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
+                elif is_tech_exit:
+                    conn.execute("UPDATE forward_trades SET sim_tech_ret=?, sim_tech_status='CLOSED_WIN' WHERE id=?", (current_ret_pct, r['id']))
+                else:
+                    conn.execute("UPDATE forward_trades SET sim_tech_ret=? WHERE id=?", (current_ret_pct, r['id']))
             # 👆👆 [추가 끝] 👆👆
+
+            # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
 
             # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
             dyn_mae_sl = sys_config.get("DYNAMIC_MAE_SL", -3.5)
