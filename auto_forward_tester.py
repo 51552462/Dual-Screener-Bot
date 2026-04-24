@@ -330,39 +330,19 @@ def send_daily_summary_report():
             cursor = conn.execute("SELECT tier, COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY tier", (market,))
             tier_counts = {row[0]: row[1] for row in cursor.fetchall()}
             
-            # ---------------------------------------------------------
-    # 👑 [V19.0 구간별 Micro-DNA 정밀 분석 엔진]
-    # ---------------------------------------------------------
-    for t in range(10, 100, 10):
-        tier_label = f"{t}점대"
-        t_df = df[df['tier'] == tier_label]
-        if len(t_df) < 5: continue # 데이터가 최소 5개는 쌓여야 분석 시작
+            report_msg += f"📦 [{market}장 9단계 정밀 포트폴리오]\n"
+            for t in range(10, 100, 10):
+                label = f"{t}점대"
+                count = tier_counts.get(label, 0)
+                report_msg += f" - {label}: {count}/20\n"
+            report_msg += "\n"
 
-        report_msg += f"📌 <b>[{tier_label} 구간 심층 분석]</b>\n"
-        
-        # 가계부 및 승률
-        t_wr, t_pf = calculate_metrics(t_df)
-        report_msg += f"▪️ 성적: 승률 {t_wr:.1f}% | PF {t_pf:.2f}\n"
-
-        # 그룹핑 (대박 / 횡보 / 참사)
-        winners = t_df[t_df['final_ret'] > 5.0]
-        sideways = t_df[(t_df['final_ret'] >= -3.0) & (t_df['final_ret'] <= 5.0)]
-        losers = t_df[t_df['final_ret'] < -3.0]
-
-        # DNA 추출 함수
-        def get_dna(sub_df):
-            if len(sub_df) == 0: return "표본없음"
-            return f"RS:{(10-sub_df['dyn_rs'].mean())*11.1:.1f}% | CPV:{(10-sub_df['dyn_cpv'].mean())*11.1:.1f}% | ENG:{sub_df['v_energy'].mean():.1f}"
-
-        report_msg += f" ✅ 대박 DNA: {get_dna(winners)}\n"
-        report_msg += f" ↔️ 횡보 DNA: {get_dna(sideways)}\n"
-        report_msg += f" 💀 참사 DNA: {get_dna(losers)}\n"
-        
-        # 전략적 통찰 자동 도출
-        if len(winners) > 0 and len(losers) > 0:
-            if winners['v_energy'].mean() > losers['v_energy'].mean() + 1.0:
-                report_msg += f" 💡 통찰: {tier_label}는 에너지가 높을 때만 날아갑니다. 에너지 낮은 종목은 거르십시오.\n"
-        report_msg += "\n"
+            # 한국장/미국장 주도 섹터 완벽 분리 집계
+            report_msg += f"🔥 [{market}장 최근 7일 알고리즘 주도 섹터 TOP 3]\n"
+            query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 3"
+            for row in conn.execute(query).fetchall():
+                report_msg += f" 🎯 {row[0]} ({row[1]}개 포착)\n"
+            report_msg += "\n"
             
         conn.close()
         
@@ -373,7 +353,67 @@ def send_daily_summary_report():
     send_telegram_msg(report_msg)
     print(f"✅ 16:00 일일 종합 리포트 텔레그램 발송 완료.")
 
-# ---------------------------------------------------------
+# ==========================================
+# 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
+# ==========================================
+def run_deep_dive_analysis(market='KR'):
+    """
+    미래 데이터(포워드 테스팅)를 기반으로 내 시스템의 과최적화를 검증하고,
+    대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'", conn)
+        conn.close()
+        
+        if len(df) < 10:
+            print(f"⚠️ [{market}] 아직 통계를 낼 만큼 청산된 데이터가 충분하지 않습니다. (최소 10개 필요)")
+            return
+
+        df['Win'] = np.where(df['final_ret'] > 0, 1, 0)
+        
+        report_msg = f"🔬 [{market}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
+
+        # ---------------------------------------------------------
+        # 👑 [V19.0 구간별 Micro-DNA 정밀 분석 엔진]
+        # ---------------------------------------------------------
+        for t in range(10, 100, 10):
+            tier_label = f"{t}점대"
+            t_df = df[df['tier'] == tier_label]
+            if len(t_df) < 5: continue # 데이터가 최소 5개는 쌓여야 분석 시작
+
+            report_msg += f"📌 <b>[{tier_label} 구간 심층 분석]</b>\n"
+            
+            # 가계부 및 승률
+            wins_count = len(t_df[t_df['final_ret'] > 0])
+            t_wr = (wins_count / len(t_df)) * 100
+            gross_profit = t_df[t_df['final_ret'] > 0]['final_ret'].sum()
+            gross_loss = abs(t_df[t_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1
+            t_pf = gross_profit / gross_loss
+
+            report_msg += f"▪️ 성적: 승률 {t_wr:.1f}% | PF {t_pf:.2f}\n"
+
+            # 그룹핑 (대박 / 횡보 / 참사)
+            winners = t_df[t_df['final_ret'] > 5.0]
+            sideways = t_df[(t_df['final_ret'] >= -3.0) & (t_df['final_ret'] <= 5.0)]
+            losers = t_df[t_df['final_ret'] < -3.0]
+
+            # DNA 추출 함수
+            def get_dna(sub_df):
+                if len(sub_df) == 0: return "표본없음"
+                return f"RS:{(10-sub_df['dyn_rs'].mean())*11.1:.1f}% | CPV:{(10-sub_df['dyn_cpv'].mean())*11.1:.1f}% | ENG:{sub_df['v_energy'].mean():.1f}"
+
+            report_msg += f" ✅ 대박 DNA: {get_dna(winners)}\n"
+            report_msg += f" ↔️ 횡보 DNA: {get_dna(sideways)}\n"
+            report_msg += f" 💀 참사 DNA: {get_dna(losers)}\n"
+            
+            # 전략적 통찰 자동 도출
+            if len(winners) > 0 and len(losers) > 0:
+                if winners['v_energy'].mean() > losers['v_energy'].mean() + 1.0:
+                    report_msg += f" 💡 통찰: {tier_label}는 에너지가 높을 때만 날아갑니다. 에너지 낮은 종목은 거르십시오.\n"
+            report_msg += "\n"
+
+        # ---------------------------------------------------------
         # 👑 [V20.0 거시적(Macro) 전체 그룹 통합 DNA 교차 분석]
         # ---------------------------------------------------------
         report_msg += "🌍 [전체 티어 통합: 유니버설(Universal) DNA 분석]\n"
@@ -400,7 +440,7 @@ def send_daily_summary_report():
 
             # 💡 시스템의 거시적 통찰 자동 도출
             report_msg += f"💡 <b>[관제탑 최종 결론]</b>\n"
-            if aw_rs < al_cpv: # (주의: 값이 작을수록 상위 백분위)
+            if aw_rs < al_cpv: 
                 report_msg += "현재 시장은 점수와 무관하게 철저히 '상대강도(RS)'가 주도하는 추세장입니다.\n"
             else:
                 report_msg += "현재 시장은 악성 윗꼬리(CPV)에 한 번 걸리면 무조건 계좌가 녹아내리는 변동성 장세입니다.\n"
@@ -408,70 +448,9 @@ def send_daily_summary_report():
             report_msg += "⚠️ 전체 그룹 통합 분석을 위한 표본이 아직 부족합니다.\n"
         
         report_msg += "\n"
-# ==========================================
-# 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
-# ==========================================
-def run_deep_dive_analysis(market='KR'):
-    """
-    미래 데이터(포워드 테스팅)를 기반으로 내 시스템의 과최적화를 검증하고,
-    대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
-    """
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        # 이미 청산(결과가 확정된) 종목들만 불러옵니다.
-        df = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'", conn)
-        conn.close()
-        
-        if len(df) < 10:
-            print(f"⚠️ [{market}] 아직 통계를 낼 만큼 청산된 데이터가 충분하지 않습니다. (최소 10개 필요)")
-            return
-
-        df['Win'] = np.where(df['final_ret'] > 0, 1, 0)
-        
-        report_msg = f"🔬 [{market}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
 
         # ---------------------------------------------------------
-        # [방향성 6번 해결] 티어별(10~30, 40~70, 70~100) 실전 성적표 추적
-        # ---------------------------------------------------------
-        report_msg += "📊 [티어별 실전 성적표]\n"
-        tier_grp = df.groupby('tier').agg(
-            매매건수=('id', 'count'),
-            승률=('Win', lambda x: round(x.mean() * 100, 1)),
-            평균수익=('final_ret', lambda x: round(x[x > 0].mean(), 2) if len(x[x > 0]) > 0 else 0),
-            평균손실=('final_ret', lambda x: round(x[x <= 0].mean(), 2) if len(x[x <= 0]) > 0 else 0)
-        ).reset_index()
-        
-        for _, r in tier_grp.iterrows():
-            report_msg += f"🏅 {r['tier']} (총 {r['매매건수']}건)\n"
-            report_msg += f" ↳ 실전 승률: {r['승률']}% | 평균 익절 +{r['평균수익']}% / 평균 손절 {r['평균손실']}%\n"
-        report_msg += "\n"
-
-        # ---------------------------------------------------------
-        # [방향성 5, 6번 해결] 어떤 지표가 진짜 도움이 되었나? (과최적화 솎아내기)
-        # ---------------------------------------------------------
-        winners = df[df['final_ret'] > 5.0]  # 대박 종목 기준 (5% 이상 수익)
-        losers = df[df['final_ret'] < -3.0]  # 참사 종목 기준 (-3% 이하 손실)
-        
-        report_msg += "🧬 [대박 vs 참사 종목 DNA(특징) 대조]\n"
-        if len(winners) > 0 and len(losers) > 0:
-            # 절대 수치가 아닌 '동적 백분위(dyn_)'를 대조하여 지표의 유효성 검증
-            w_rs, l_rs = winners['dyn_rs'].mean(), losers['dyn_rs'].mean()
-            w_cpv, l_cpv = winners['dyn_cpv'].mean(), losers['dyn_cpv'].mean()
-            
-            report_msg += f"📈 대박 종목 평균: RS 상위 {(10-w_rs)*11.1:.1f}% | 찐양봉 상위 {(10-winners['dyn_tb'].mean())*11.1:.1f}%\n"
-            report_msg += f"💀 참사 종목 평균: RS 상위 {(10-l_rs)*11.1:.1f}% | 찐양봉 상위 {(10-losers['dyn_tb'].mean())*11.1:.1f}%\n"
-            
-            # 피드백 자동 도출 (어떤 지표가 도움이 되고 무용지물인지)
-            if w_rs > l_rs + 1.0:
-                report_msg += "💡 결론: 상대강도(RS)가 높을수록 실전 수익률에 매우 큰 도움이 됨. (RS 가중치 신뢰도 높음)\n"
-            else:
-                report_msg += "💡 결론: RS는 실전 결과와 큰 연관이 없음. (다른 지표 가중치를 올려야 함)\n"
-        else:
-            report_msg += "데이터가 더 누적되어야 DNA 대조가 가능합니다.\n"
-        report_msg += "\n"
-
-        # ---------------------------------------------------------
-        # [방향성 6번 해결] 세부 특징(태그)별 승률 기여도 추적
+        # [기존 유지] 세부 흐름 태그별 승률 기여도 추적
         # ---------------------------------------------------------
         report_msg += "🏷️ [세부 흐름 태그별 승률 기여도]\n"
         tag_stats = {}
@@ -483,7 +462,7 @@ def run_deep_dive_analysis(market='KR'):
                 if row['Win'] == 1: tag_stats[tag]['win'] += 1
                 
         for tag, stats in sorted(tag_stats.items(), key=lambda x: x[1]['total'], reverse=True)[:5]:
-            if stats['total'] >= 3: # 최소 3번 이상 등장한 태그만
+            if stats['total'] >= 3:
                 tag_win_rate = round((stats['win'] / stats['total']) * 100, 1)
                 report_msg += f" ▪️ {tag}: 승률 {tag_win_rate}% (출현 {stats['total']}회)\n"
 
