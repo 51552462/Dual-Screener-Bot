@@ -902,7 +902,6 @@ def scan_market_1d():
                             try:
                                 import auto_forward_tester as aft
                                 market_type = 'KR'
-                                entry_facts = {
                                    entry_facts = {
                                    'v_rs': dbg.get('v_rs', 0),
                                    'v_cpv': dbg.get('v_cpv', 0),
