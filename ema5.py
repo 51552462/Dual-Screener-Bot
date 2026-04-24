@@ -902,23 +902,23 @@ def scan_market_1d():
                             try:
                                 import auto_forward_tester as aft
                                 market_type = 'KR'
-                                   entry_facts = {
-                                   'v_rs': dbg.get('v_rs', 0),
-                                   'v_cpv': dbg.get('v_cpv', 0),
-                                   'v_yang': dbg.get('v_yang', 0),
-                                   'v_energy': dbg.get('v_energy', 0),
+                                entry_facts = {
+                                 'v_rs': dbg.get('v_rs', 0),
+                                 'v_cpv': dbg.get('v_cpv', 0),
+                                 'v_yang': dbg.get('v_yang', 0),
+                                 'v_energy': dbg.get('v_energy', 0),
                                    # 🚨 [버그 픽스] 존재하지 않는 오타 변수 대신 dbg에서 안전하게 로드
-                                   'marcap_eok': dbg.get('marcap_eok', 0),    
-                                   'score_marcap': dbg.get('score_marcap', 0),
+                                 'marcap_eok': dbg.get('marcap_eok', 0),    
+                                 'score_marcap': dbg.get('score_marcap', 0),
                         
-                                   'dyn_rs': dbg.get('dyn_rs_score', 0),
-                                   'dyn_cpv': dbg.get('dyn_cpv_score', 0),
-                                   'dyn_tb': dbg.get('dyn_tb_score', 0),
+                                 'dyn_rs': dbg.get('dyn_rs_score', 0),
+                                 'dyn_cpv': dbg.get('dyn_cpv_score', 0),
+                                 'dyn_tb': dbg.get('dyn_tb_score', 0),
                         
-                                   'is_tenbagger': 1 if dbg.get('is_tenbagger') else 0, # 👈 한국장만 있음
-                                   'is_top_dna': 1 if dbg.get('is_top_dna') else 0,     # 👈 한국장만 있음
-                                   'is_worst_dna': 1 if dbg.get('is_worst_dna') else 0, # 👈 한국장만 있음
-                                   'is_death_combo': 1 if dbg.get('is_death_combo') else 0
+                                 'is_tenbagger': 1 if dbg.get('is_tenbagger') else 0, # 👈 한국장만 있음
+                                 'is_top_dna': 1 if dbg.get('is_top_dna') else 0,     # 👈 한국장만 있음
+                                 'is_worst_dna': 1 if dbg.get('is_worst_dna') else 0, # 👈 한국장만 있음
+                                 'is_death_combo': 1 if dbg.get('is_death_combo') else 0
                                 }
                     
                                 success, fwd_msg = aft.try_add_virtual_position(
