@@ -187,6 +187,25 @@ def track_daily_positions(market):
             
             # 현재 누적 수익률 계산
             current_ret_pct = ((c - ep) / ep) * 100
+            
+            # 👇👇 [추가] V15.0 ABC 토너먼트 병렬 연산 👇👇
+            abc_sets = {
+                'live_a': sys_config, # 루트 자체가 라이브(A)
+                'cand_b': sys_config.get("CANDIDATE_PARAMS", {}), # 대기실 후보(B)
+                'champ_c': sys_config.get("CHAMPION_PARAMS", {})  # 명예의 전당(C)
+            }
+
+            for key, params in abc_sets.items():
+                if not params: continue
+                # 각 셋트에서 손절선(SL) 추출 (없으면 기본값 -3.5)
+                sl_limit = params.get("DYNAMIC_MAE_SL", -3.5)
+                
+                # 각 로직별 수익률 및 상태 저장 (실제 장부 메인 상태는 LIVE_A가 결정)
+                if current_ret_pct <= sl_limit:
+                    conn.execute(f"UPDATE forward_trades SET {key}_ret=?, {key}_status=? WHERE id=?", (sl_limit, "CLOSED_LOSS", r['id']))
+                else:
+                    conn.execute(f"UPDATE forward_trades SET {key}_ret=? WHERE id=?", (current_ret_pct, r['id']))
+            # 👆👆 [추가 끝] 👆👆
 
             # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
             dyn_mae_sl = sys_config.get("DYNAMIC_MAE_SL", -3.5)
