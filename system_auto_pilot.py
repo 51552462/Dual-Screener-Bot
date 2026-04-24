@@ -257,6 +257,63 @@ def run_autonomous_analysis():
         report_lines.append(f"🚨 <b>시스템 액션:</b> 모든 검색기 청산 가이드를 <b>[{winner_mode}]</b> 모드로 강제 고정합니다.")
     else:
         report_lines.append("⚠️ DB에 'exit_type' 기록이 없어 대결을 보류합니다.")
+    # ---------------------------------------------------------
+    # 👑 엔진 6: [V15.0 ABC Tournament Arena & 오답 노트]
+    # ---------------------------------------------------------
+    report_lines.append("\n<b>[6. ABC 토너먼트 데스매치 및 오답 노트]</b>")
+    if 'live_a_ret' in df.columns:
+        results = {}
+        for col in ['live_a_ret', 'cand_b_ret', 'champ_c_ret']:
+            if col in df.columns:
+                # 손익비(PF) 연산
+                pf = (df[df[col] > 0][col].sum()) / abs(df[df[col] <= 0][col].sum() + 0.1)
+                results[col] = pf
+        
+        if results:
+            winner_key = max(results, key=results.get)
+            report_lines.append(f"▪️ LIVE(A): {results.get('live_a_ret', 0):.2f} | CAND(B): {results.get('cand_b_ret', 0):.2f} | CHAMP(C): {results.get('champ_c_ret', 0):.2f}")
+            
+            # 💡 [승격 엔진] 5% 이상 확실한 우위가 있을 때만 교체
+            if winner_key == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
+                # 챔피언 백업
+                current_config["CHAMPION_PARAMS"] = {
+                    "DYNAMIC_MAE_SL": current_config.get("DYNAMIC_MAE_SL", -3.5),
+                    "DYNAMIC_MFE_TP": current_config.get("DYNAMIC_MFE_TP", 10.0),
+                    "TREE_FATAL_CPV": current_config.get("TREE_FATAL_CPV", 0.85)
+                }
+                # 라이브 승격
+                cand = current_config.get("CANDIDATE_PARAMS", {})
+                if cand:
+                    for k, v in cand.items(): current_config[k] = v
+                report_lines.append("🏆 <b>[신규 로직 승격]</b> CAND(B)가 압승하여 실전(A)으로 배치되었습니다.")
+                
+            elif winner_key == 'champ_c_ret' and results['champ_c_ret'] > results.get('live_a_ret', 0) * 1.05:
+                champ = current_config.get("CHAMPION_PARAMS", {})
+                if champ:
+                    for k, v in champ.items(): current_config[k] = v
+                report_lines.append("♻️ <b>[챔피언 귀환]</b> 과거의 CHAMP(C)가 더 우수하여 다시 라이브(A)로 복귀합니다.")
+            else:
+                report_lines.append("🛡️ <b>[라이브 방어]</b> LIVE(A)가 방어에 성공했습니다. 현재 세팅을 유지합니다.")
+
+            # 💡 [오답 노트 추출] 패배한 케이스의 공통점
+            losers = df[df[winner_key] < 0]
+            if len(losers) >= 5:
+                report_lines.append(f"\n💀 <b>[오답 노트: 패배한 {len(losers)}개 케이스 팩트 분석]</b>")
+                l_rs = losers['dyn_rs'].mean()
+                l_cpv = losers['dyn_cpv'].mean()
+                
+                report_lines.append(f"▪️ 패배 종목 평균: RS 상위 {(10-l_rs)*11.1:.1f}% | 캔들지배력 상위 {(10-l_cpv)*11.1:.1f}%")
+                
+                if (10-l_cpv)*11.1 > 50:
+                    report_lines.append("💡 결론: 윗꼬리가 긴 악성 캔들(CPV)에서 휩소가 집중적으로 발생. CPV 컷오프를 더 낮춰야 함.")
+                elif (10-l_rs)*11.1 > 50:
+                    report_lines.append("💡 결론: 시장 소외주(Low RS)에서 손실이 집중 발생. 추세가 강한 종목 위주로 필터 강화 필요.")
+                else:
+                    report_lines.append("💡 결론: 특정 지표 쏠림보다는 거시 시장(VIX) 폭락의 영향이 컸음.")
+    else:
+        report_lines.append("⚠️ 장부에 ABC 컬럼이 부족하여 토너먼트를 보류합니다.")
+
+    
 
     # ==========================================
     # 🚀 최종 저장 및 발송 (단 1번만 실행)
