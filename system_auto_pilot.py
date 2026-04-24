@@ -153,21 +153,28 @@ def run_autonomous_analysis():
             smoothed_sl = round((old_sl * 0.7) + (raw_sl * 0.3), 2)
             smoothed_tp = round((old_tp * 0.7) + (raw_tp * 0.3), 2)
             
-            current_config["DYNAMIC_MAE_SL"] = smoothed_sl
-            current_config["DYNAMIC_MFE_TP"] = smoothed_tp
+            # 🟢 [V15.0 변경점] 즉시 라이브에 적용하지 않고 후보군(B) 대기실로 격리
+            if "CANDIDATE_PARAMS" not in current_config: 
+                current_config["CANDIDATE_PARAMS"] = {}
             
-            report_lines.append(f"▪️ MAE 최적 손절선: {old_sl}% ➔ <b>{smoothed_sl}%</b> (진화)")
-            report_lines.append(f"▪️ MFE 최적 익절선: {old_tp}% ➔ <b>{smoothed_tp}%</b> (진화)")
+            current_config["CANDIDATE_PARAMS"]["DYNAMIC_MAE_SL"] = smoothed_sl
+            current_config["CANDIDATE_PARAMS"]["DYNAMIC_MFE_TP"] = smoothed_tp
+            
+            report_lines.append(f"▪️ MAE 손절선 후보(B): <b>{smoothed_sl}%</b> (대기실 격리)")
+            report_lines.append(f"▪️ MFE 익절선 후보(B): <b>{smoothed_tp}%</b> (대기실 격리)")
 
         if len(losers) >= 5:
             # 💡 [팩트 2] 비선형 의사결정 나무 (Death Node) 학습
-            # 참사 종목들의 CPV 최악의 10% 컷오프를 찾아냄
-            fatal_cpv = np.percentile(losers['v_cpv'].dropna(), 90) # 꼬리가 가장 긴 악성 캔들 기준점
+            fatal_cpv = np.percentile(losers['v_cpv'].dropna(), 90)
             old_fatal_cpv = current_config.get("TREE_FATAL_CPV", 0.85)
             smoothed_fatal_cpv = round((old_fatal_cpv * 0.7) + (fatal_cpv * 0.3), 2)
             
-            current_config["TREE_FATAL_CPV"] = smoothed_fatal_cpv
-            report_lines.append(f"▪️ Decision Tree [Death Node 1]: CPV <b>{smoothed_fatal_cpv}</b> 이상 시 무조건 기각 학습 완료.")
+            # 🟢 이곳도 마찬가지로 후보군 대기실로 격리
+            if "CANDIDATE_PARAMS" not in current_config: 
+                current_config["CANDIDATE_PARAMS"] = {}
+                
+            current_config["CANDIDATE_PARAMS"]["TREE_FATAL_CPV"] = smoothed_fatal_cpv
+            report_lines.append(f"▪️ Death Node 후보(B): CPV <b>{smoothed_fatal_cpv}</b> (대기실 격리)")
 
     # ---------------------------------------------------------
     # 👑 엔진 4.8: [Multi-Centroid DNA] 대장주 & 참사주 Top 3 독립 궤적 추출 (7D 텐서)
