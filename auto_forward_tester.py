@@ -262,7 +262,8 @@ def track_daily_positions(market):
                 ''', ('CLOSED_WIN' if ret > 0 else 'CLOSED_LOSS', exit_date, exit_rsn, flow_tags, ret, mfe, new_max, new_min, new_bars, new_up_vol, new_down_vol, actual_exit_type, r['id']))
                 
                 icon = "🔥스마트청산" if ret > 0 else "🛡️방어손절"
-                send_telegram_msg(f"🤖 [{market} 관제탑 제어] {icon}: {r['name']} ({r['total_score']}점)\n▪️ 수익: {ret}%\n▪️ 모드: {active_mode}\n▪️ 사유: {exit_rsn}\n▪️ 태그: {flow_tags}")
+                # 💡 [V15.1 픽스] 시그널 타입(sig_type) 명시 및 점수 소수점 첫째 자리 정리
+                send_telegram_msg(f"🤖 [{market} 관제탑 제어] {icon}: {r['name']} ({r['sig_type']} | {round(r['total_score'], 1)}점)\n▪️ 수익: {ret}%\n▪️ 모드: {active_mode}\n▪️ 사유: {exit_rsn}\n▪️ 태그: {flow_tags}")
             else:
                 # DB 업데이트 (유지)
                 conn.execute('''
@@ -308,11 +309,16 @@ def send_daily_summary_report():
             report_msg += f" - 40~69점: {tier_counts.get('40~70점대', 0)}/15\n"
             report_msg += f" - 10~39점: {tier_counts.get('10~30점대', 0)}/15\n\n"
         
-        # 💡 [방향성 3번] 최근 7일 주도 섹터(돈이 몰리는 곳) 추출
-        report_msg += "🔥 [최근 7일 알고리즘 주도 섹터 TOP 3]\n"
-        query = "SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') GROUP BY sector ORDER BY cnt DESC LIMIT 3"
-        for row in conn.execute(query).fetchall():
-            report_msg += f" 🎯 {row[0]} ({row[1]}개 포착)\n"
+        report_msg += f" - 70~100점: {tier_counts.get('70~100점대', 0)}/30\n"
+            report_msg += f" - 40~69점: {tier_counts.get('40~70점대', 0)}/15\n"
+            report_msg += f" - 10~39점: {tier_counts.get('10~30점대', 0)}/15\n\n"
+        
+            # 💡 [V15.1 픽스] 한국장/미국장 섹터 완벽 분리 집계
+            report_msg += f"🔥 [{market}장 최근 7일 알고리즘 주도 섹터 TOP 3]\n"
+            query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 3"
+            for row in conn.execute(query).fetchall():
+                report_msg += f" 🎯 {row[0]} ({row[1]}개 포착)\n"
+            report_msg += "\n"
             
         conn.close()
     except Exception as e:
