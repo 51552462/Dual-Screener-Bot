@@ -270,7 +270,7 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] 5일선 관통 전용 마스터 시그널 엔진 (8,485건 팩트 대입)
-def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marcap: float = 0.0):
+def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marcap: float = 0.0, code: str = ""):
     if df_raw is None or len(df_raw) < 500: 
         return False, "", df_raw, {}
     df = df_raw.copy()
@@ -333,6 +333,17 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
 
     if not finalSignal_arr[-1]: 
         return False, "", df, {}
+
+    # 💡 [무적 방어 로직] KRX 서버 차단으로 시가총액이 0일 경우, 타점이 포착된 종목만 네이버에서 실시간 팩트 체크!
+    if current_marcap == 0 and code != "":
+        try:
+            import requests, re
+            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            m = re.search(r'<em id="_market_sum">\s*([\d,]+)\s*</em>', res.text)
+            if m:
+                current_marcap = float(m.group(1).replace(',', '')) * 100_000_000
+        except:
+            pass
 
     # =========================================================================
     # 👑 [3단계] S1 스코어링 매핑 시작 부분에 시총 계산 로직 추가
@@ -638,7 +649,10 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         "v_rs": cur_rs,
         "dyn_rs_score": dyn_rs_score,
         "dyn_cpv_score": dyn_cpv_score,
-        "dyn_tb_score": dyn_tb_score
+        "dyn_tb_score": dyn_tb_score,
+        "marcap_eok": marcap_eok,          # 👈 포워드 장부 에러 픽스용 추가
+        "score_marcap": score_marcap,      # 👈 포워드 장부 에러 픽스용 추가
+        "freq_count": freq_count           # 👈 포워드 장부 에러 픽스용 추가
     }
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
@@ -827,7 +841,8 @@ def scan_market_1d():
                 idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
                 current_marcap = row.get("Marcap", 0) 
                 
-                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close, current_marcap)
+                # 💡 code를 파라미터로 넘겨 네이버 실시간 스크래핑이 가능하게 함
+                hit, sig_type, df, dbg = compute_5ema_signal(df_raw, idx_close, current_marcap, code)
             
             # 🚨 아래 구형 오돌이 로직은 트뷰와 다르므로 주석 처리(비활성화) 합니다.
             # if is_valid: hit, sig_type, df, dbg = compute_ohdole_1d(df_raw)
@@ -888,13 +903,14 @@ def scan_market_1d():
                                 import auto_forward_tester as aft
                                 market_type = 'KR'
                                 entry_facts = {
+                                   entry_facts = {
                                    'v_rs': dbg.get('v_rs', 0),
                                    'v_cpv': dbg.get('v_cpv', 0),
                                    'v_yang': dbg.get('v_yang', 0),
                                    'v_energy': dbg.get('v_energy', 0),
-                                   'marcap_eok': marcap / 100000000,    # 👈 한국장만 있음
-                                   'score_marcap': dbg.get('score_marcap', 0), # 👈 한국장만 있음
-                                   'freq_count': dbg.get('freq_count', 0),
+                                   # 🚨 [버그 픽스] 존재하지 않는 오타 변수 대신 dbg에서 안전하게 로드
+                                   'marcap_eok': dbg.get('marcap_eok', 0),    
+                                   'score_marcap': dbg.get('score_marcap', 0),
                         
                                    'dyn_rs': dbg.get('dyn_rs_score', 0),
                                    'dyn_cpv': dbg.get('dyn_cpv_score', 0),
