@@ -335,13 +335,23 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         return False, "", df, {}
 
     # 💡 [무적 방어 로직] KRX 서버 차단으로 시가총액이 0일 경우, 타점이 포착된 종목만 네이버에서 실시간 팩트 체크!
-    if current_marcap == 0 and code != "":
+    # 💡 [무적 방어 로직] KRX 서버 차단으로 시가총액이 0일 경우, 타점이 포착된 종목만 네이버에서 실시간 팩트 체크!
+    try:
+        if isinstance(current_marcap, str): 
+            marcap_val = float(current_marcap.replace(',', '').replace('조', '0000').replace('억', ''))
+        else: 
+            marcap_val = float(current_marcap)
+        if np.isnan(marcap_val): marcap_val = 0.0
+    except:
+        marcap_val = 0.0
+
+    if marcap_val == 0 and code != "":
         try:
             import requests, re
-            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-            m = re.search(r'<em id="_market_sum">\s*([\d,]+)\s*</em>', res.text)
+            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
+            m = re.search(r'<em id="_market_sum"[^>]*>\s*([\d,]+)\s*</em>', res.text, re.DOTALL)
             if m:
-                current_marcap = float(m.group(1).replace(',', '')) * 100_000_000
+                marcap_val = float(m.group(1).replace(',', '')) * 100_000_000
         except:
             pass
 
@@ -352,23 +362,22 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     freq_count = int(recent_hits)
 
     # 👇👇 [여기서부터 추가] 동적 시가총액 분류 및 점수화 👇👇
-    marcap_eok = current_marcap / 100_000_000  # 억원 단위 변환
+    marcap_eok = marcap_val / 100_000_000  # 억원 단위 변환
     if marcap_eok >= 100000:
-        marcap_str = "① 10조 이상 (초대형주)"
+        marcap_str = "⭐ 10조 이상 (초대형주)"
         score_marcap = 10.0
     elif marcap_eok >= 10000:
-        marcap_str = "② 1조 이상 (대형주)"
-        score_marcap = 8.0
+        marcap_str = "① 1조~10조 (대형주)"
+        score_marcap = 9.0
     elif marcap_eok >= 5000:
-        marcap_str = "③ 5천억 이상 (중형주)"
-        score_marcap = 6.0
+        marcap_str = "② 5천억~1조 (중견주)"
+        score_marcap = 7.0
     elif marcap_eok >= 1000:
-        marcap_str = "④ 1천억 이상 (소형주)"
-        score_marcap = 4.0
+        marcap_str = "③ 1천억~5천억 (중소형주)"
+        score_marcap = 5.0
     else:
-        marcap_str = "⑤ 1천억 미만 (초소형주)"
+        marcap_str = "④ 1천억 미만 (초소형주/잡주)"
         score_marcap = 2.0
-    # 👆👆 [여기까지 추가] 👆👆
 
     ema_stat_str = "승률 26.8% / 손익비 3.40 (대세 상승장, 본 스나이퍼 타점 100% 점유)"
 
