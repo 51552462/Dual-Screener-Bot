@@ -336,11 +336,7 @@ def send_daily_summary_report():
             report_msg += f" - 40~69점: {tier_counts.get('40~70점대', 0)}/15\n"
             report_msg += f" - 10~39점: {tier_counts.get('10~30점대', 0)}/15\n\n"
         
-        report_msg += f" - 70~100점: {tier_counts.get('70~100점대', 0)}/30\n"
-            report_msg += f" - 40~69점: {tier_counts.get('40~70점대', 0)}/15\n"
-            report_msg += f" - 10~39점: {tier_counts.get('10~30점대', 0)}/15\n\n"
-        
-            # 💡 [V15.1 픽스] 한국장/미국장 섹터 완벽 분리 집계
+            # 💡 [V16.0 픽스] 한국장/미국장 섹터 완벽 분리 집계
             report_msg += f"🔥 [{market}장 최근 7일 알고리즘 주도 섹터 TOP 3]\n"
             query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 3"
             for row in conn.execute(query).fetchall():
@@ -348,6 +344,7 @@ def send_daily_summary_report():
             report_msg += "\n"
             
         conn.close()
+        
     except Exception as e:
         report_msg += f"\n에러 발생: {e}"
 
