@@ -147,50 +147,63 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 표본 부족으로 진입점 스무딩 스킵\n")
 
     # ---------------------------------------------------------
-    # 👑 엔진 4: 3차원 청산 최적화 (MFE/MAE) & 비선형 의사결정 나무(Decision Tree) 학습
+    # 👑 엔진 4: [V16.0 Multi-Timeframe Ensemble] 앙상블 최적화
     # ---------------------------------------------------------
-    report_lines.append("\n<b>[4. MFE/MAE 최적화 및 비선형 규칙(Decision Tree) 학습]</b>")
-    if 'max_high' in df.columns and 'min_low' in df.columns and 'entry_price' in df.columns:
-        # 1. MFE / MAE 계산
-        df['mfe_pct'] = (df['max_high'] - df['entry_price']) / df['entry_price'] * 100
-        df['mae_pct'] = (df['min_low'] - df['entry_price']) / df['entry_price'] * 100
-        
-        winners = df[df['final_ret'] > 0]
-        losers = df[df['final_ret'] <= 0]
-        
-        if len(winners) >= 5:
-            # 💡 [팩트 1] MFE/MAE 기반 수학적 손절/익절 한계점 도출
-            raw_sl = np.percentile(winners['mae_pct'], 15) # 승리한 종목들이 겪은 최대 고통(하위 15%)
-            raw_tp = np.percentile(winners['mfe_pct'], 50) # 승리한 종목들의 평균 도달 수익(중앙값)
+    report_lines.append("\n<b>[4. 다중 타임프레임 앙상블(14/30/60d) 최적화]</b>")
+    
+    def get_period_stats(days):
+        """특정 기간의 최적 파라미터 날것(Raw) 추출"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            s_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}'", conn)
+            conn.close()
             
-            old_sl = current_config.get("DYNAMIC_MAE_SL", -3.5)
-            old_tp = current_config.get("DYNAMIC_MFE_TP", 10.0)
+            if len(p_df) < 5: return None
             
-            smoothed_sl = round((old_sl * 0.7) + (raw_sl * 0.3), 2)
-            smoothed_tp = round((old_tp * 0.7) + (raw_tp * 0.3), 2)
+            p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
+            p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
             
-            # 🟢 [V15.0 변경점] 즉시 라이브에 적용하지 않고 후보군(B) 대기실로 격리
-            if "CANDIDATE_PARAMS" not in current_config: 
-                current_config["CANDIDATE_PARAMS"] = {}
+            win_subset = p_df[p_df['final_ret'] > 0]
+            lose_subset = p_df[p_df['final_ret'] <= 0]
             
-            current_config["CANDIDATE_PARAMS"]["DYNAMIC_MAE_SL"] = smoothed_sl
-            current_config["CANDIDATE_PARAMS"]["DYNAMIC_MFE_TP"] = smoothed_tp
-            
-            report_lines.append(f"▪️ MAE 손절선 후보(B): <b>{smoothed_sl}%</b> (대기실 격리)")
-            report_lines.append(f"▪️ MFE 익절선 후보(B): <b>{smoothed_tp}%</b> (대기실 격리)")
+            return {
+                "sl": np.percentile(win_subset['mae_pct'], 15) if len(win_subset) >= 3 else -3.5,
+                "tp": np.percentile(win_subset['mfe_pct'], 50) if len(win_subset) >= 3 else 10.0,
+                "fatal_cpv": np.percentile(lose_subset['v_cpv'].dropna(), 90) if len(lose_subset) >= 3 else 0.85
+            }
+        except: return None
 
-        if len(losers) >= 5:
-            # 💡 [팩트 2] 비선형 의사결정 나무 (Death Node) 학습
-            fatal_cpv = np.percentile(losers['v_cpv'].dropna(), 90)
-            old_fatal_cpv = current_config.get("TREE_FATAL_CPV", 0.85)
-            smoothed_fatal_cpv = round((old_fatal_cpv * 0.7) + (fatal_cpv * 0.3), 2)
-            
-            # 🟢 이곳도 마찬가지로 후보군 대기실로 격리
-            if "CANDIDATE_PARAMS" not in current_config: 
-                current_config["CANDIDATE_PARAMS"] = {}
-                
-            current_config["CANDIDATE_PARAMS"]["TREE_FATAL_CPV"] = smoothed_fatal_cpv
-            report_lines.append(f"▪️ Death Node 후보(B): CPV <b>{smoothed_fatal_cpv}</b> (대기실 격리)")
+    # 1. 시계열별 데이터 수집 (14일/30일/60일)
+    t14 = get_period_stats(14)
+    t30 = get_period_stats(30)
+    t60 = get_period_stats(60)
+
+    # 2. 가중치 앙상블 연산 (단기 50% : 중기 30% : 장기 20%)
+    valid_stats = [s for s in [t14, t30, t60] if s is not None]
+    if len(valid_stats) >= 2:
+        # 단기 데이터가 있으면 가중 평균(5:3:2), 없으면 유효 데이터끼리 평균 적용
+        w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid_stats)] * len(valid_stats)
+        
+        ensemble_sl = sum(s['sl'] * w[i] for i, s in enumerate(valid_stats))
+        ensemble_tp = sum(s['tp'] * w[i] for i, s in enumerate(valid_stats))
+        ensemble_cpv = sum(s['fatal_cpv'] * w[i] for i, s in enumerate(valid_stats))
+        
+        # 3. 학습 결과를 후보군(B) 대기실로 격리 보관
+        if "CANDIDATE_PARAMS" not in current_config: 
+            current_config["CANDIDATE_PARAMS"] = {}
+        
+        current_config["CANDIDATE_PARAMS"] = {
+            "DYNAMIC_MAE_SL": round(ensemble_sl, 2),
+            "DYNAMIC_MFE_TP": round(ensemble_tp, 2),
+            "TREE_FATAL_CPV": round(ensemble_cpv, 2)
+        }
+        
+        report_lines.append(f"▪️ 앙상블 손절/익절 후보(B): <b>{round(ensemble_sl, 2)}% / {round(ensemble_tp, 2)}%</b>")
+        report_lines.append(f"▪️ 앙상블 기각 CPV 후보(B): <b>{round(ensemble_cpv, 2)}</b> (대기실 격리)")
+        report_lines.append("💡 팩트: 14/30/60일 데이터를 5:3:2로 블렌딩하여 안정적인 후보군을 생성했습니다.")
+    else:
+        report_lines.append("⚠️ 앙상블을 위한 장기 데이터 표본이 부족하여 기존 수치 유지")
 
     # ---------------------------------------------------------
     # 👑 엔진 4.8: [Multi-Centroid DNA] 대장주 & 참사주 Top 3 독립 궤적 추출 (7D 텐서)
