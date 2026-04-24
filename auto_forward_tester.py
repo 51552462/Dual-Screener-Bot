@@ -43,6 +43,14 @@ def init_forward_db():
     try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN exit_type TEXT DEFAULT 'UNKNOWN'")
     except: pass
     
+    # 👇👇 [여기에 V15.0 ABC 토너먼트 컬럼 추가] 👇👇
+    for p in ['live_a', 'cand_b', 'champ_c']:
+        try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_ret REAL DEFAULT 0.0")
+        except: pass
+        try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_status TEXT DEFAULT 'OPEN'")
+        except: pass
+    # 👆👆 [추가 끝] 👆👆
+
     conn.commit()
     conn.close()
 
