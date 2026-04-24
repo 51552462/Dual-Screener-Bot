@@ -60,12 +60,45 @@ def calculate_metrics(df_subset):
 # 🚀 [메인 분석 엔진] 
 # ==========================================
 def run_autonomous_analysis():
-    print(f"🚀 [자율 관제탑] {LOOKBACK_DAYS}일 롤링 최적화 및 정밀 인과 분석 시작...")
+    print(f"🚀 [자율 관제탑] 거시 경제(VIX) 기반 동적 룩백 윈도우 스캔 시작...")
     
-    # 1. DB 데이터 로드
+    # ---------------------------------------------------------
+    # 👑 [사전 작업] 변동성(VIX & KOSPI) 기반 동적 룩백(Lookback) 결정
+    # ---------------------------------------------------------
+    dyn_lookback = 14 # 기본값
+    vix_status = "데이터 없음"
+    regime = "분석 중"
+    w_s1, w_s4 = 1.0, 1.0 
+    
+    try:
+        # VIX, SPY, KOSPI 데이터 동시 로드
+        df_idx = yf.download("SPY ^VIX ^KS11", period="1y", interval="1d", group_by="ticker", progress=False)
+        spy_c = df_idx['SPY']['Close'].dropna()
+        vix_c = df_idx['^VIX']['Close'].dropna()
+        
+        spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
+        spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
+        
+        # 💡 [핵심] VIX 기반 룩백 윈도우 및 국면 비중 동적 조율
+        if vix_last >= 28.0:
+            dyn_lookback = 7  # 🚨 극단적 공포장: 낡은 기억 폐기, 최근 7일에만 초집중 (기민성 MAX)
+            regime, w_s1, w_s4 = "Bear (극단적 공포장)", 0.0, 2.0 # S1 매수 전면 금지
+            vix_status = f"VIX 폭발 ({vix_last:.1f}) - 기억력 7일로 초압축"
+        elif vix_last >= 18.0:
+            dyn_lookback = 15 # ⚠️ 변동성 장세: 표준 룩백 적용
+            regime, w_s1, w_s4 = "Chop (변동성/조정장)", 0.5, 1.5
+            vix_status = f"VIX 경계 ({vix_last:.1f}) - 기억력 15일 유지"
+        else:
+            dyn_lookback = 45 # 🌊 대세 상승/평온장: 노이즈 필터링, 긴 추세 확인 (안정성 MAX)
+            regime, w_s1, w_s4 = "Bull (대세 상승장)", 1.5, 0.5
+            vix_status = f"VIX 평온 ({vix_last:.1f}) - 기억력 45일로 확장"
+    except Exception as e:
+        print(f"거시 지표 로드 에러: {e}")
+
+    # 1. 계산된 [동적 룩백]으로 DB 데이터 로드
     try:
         conn = sqlite3.connect(DB_PATH)
-        start_date = (datetime.now() - timedelta(days=LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=dyn_lookback)).strftime('%Y-%m-%d')
         query = f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{start_date}'"
         df = pd.read_sql(query, conn)
         conn.close()
@@ -73,37 +106,20 @@ def run_autonomous_analysis():
         print(f"DB 로드 에러: {e}")
         return
 
-    if len(df) < 20:
-        send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n최근 {LOOKBACK_DAYS}일 실전 OOS 데이터가 20건 미만입니다. 과최적화 방지를 위해 이번 주 조율을 스킵합니다.")
+    if len(df) < 10:
+        send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n거시 국면 전환으로 룩백이 {dyn_lookback}일로 조정되었으나, 해당 기간 내 청산 표본이 10건 미만입니다. 이번 주 조율을 스킵합니다.")
         return
 
     current_config = load_or_create_config()
-    report_lines = [f"<b>📊 [System B {LOOKBACK_DAYS}일 자율 조율 리포트]</b>\n"]
-
-    # ---------------------------------------------------------
-    # 👑 엔진 1: 거시 국면 판독 (Regime Allocation)
-    # ---------------------------------------------------------
-    try:
-        df_idx = yf.download("SPY ^VIX", period="1y", interval="1d", group_by="ticker", progress=False)
-        spy_c, vix_c = df_idx['SPY']['Close'].dropna(), df_idx['^VIX']['Close'].dropna()
-        spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
-        spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
-        
-        w_s1, w_s4 = 1.0, 1.0 
-        if spy_last >= spy_ema200 and vix_last < 18.0:
-            regime, w_s1, w_s4 = "Bull (대세 상승장)", 1.5, 0.5
-        elif spy_last >= spy_ema200 and 18.0 <= vix_last < 25.0:
-            regime, w_s1, w_s4 = "Chop (변동성/조정장)", 0.8, 1.2
-        else:
-            regime, w_s1, w_s4 = "Bear (폭락/공포장)", 0.2, 2.0
-            
-        current_config["WEIGHT_S1"], current_config["WEIGHT_S4"] = w_s1, w_s4
-        report_lines.append(f"<b>[1. 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime} (VIX: {vix_last:.1f})\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
-    except: pass
+    current_config["WEIGHT_S1"], current_config["WEIGHT_S4"] = w_s1, w_s4
+    
+    report_lines = [f"<b>📊 [System B 자율 조율 리포트]</b>\n"]
+    report_lines.append(f"<b>[1. 동적 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime}\n▪️ <b>동적 룩백: {vix_status}</b>\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
 
     # ---------------------------------------------------------
     # 👑 엔진 2: 점수 티어 및 초정밀 필터 검증
     # ---------------------------------------------------------
+    # (... 기존 엔진 2 코드 그대로 이어짐 ...)
     report_lines.append("<b>[2. 필터 및 티어 승률 검증]</b>")
     t1_wr, t1_pf = calculate_metrics(df[df['total_score'] >= 80])
     sub_wr, sub_pf = calculate_metrics(df[(df['total_score'] >= 50) & (df['total_score'] < 80)])
