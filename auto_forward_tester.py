@@ -184,6 +184,16 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         print(f"DNA 벡터 매칭 에러: {e}")
     # 👆👆 [추가 끝] 👆👆
 
+    # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
+    cur_breadth = 1.0
+    try:
+        b_df = yf.download("RSP SPY", period="5d", interval="1d", progress=False)
+        if not b_df.empty:
+            cur_breadth = (b_df['Close']['RSP'].iloc[-1] / b_df['Close']['SPY'].iloc[-1]) / \
+                          (b_df['Close']['RSP'].mean() / b_df['Close']['SPY'].mean())
+    except: pass
+    # 👆👆 [추가 끝] 👆👆
+
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록
     cursor.execute('''
         INSERT INTO forward_trades
@@ -325,8 +335,25 @@ def track_daily_positions(market):
                     conn.execute("UPDATE forward_trades SET sim_tech_ret=? WHERE id=?", (current_ret_pct, r['id']))
             # 👆👆 [추가 끝] 👆👆
 
-            # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
+            # 👇👇 [추가] V24.0 시장 폭 필터링 실험 존 👇👇
+            if r.get('sim_breadth_status', 'OPEN') == 'OPEN':
+                e_breadth = r.get('entry_breadth', 1.0)
+                if pd.isna(e_breadth): e_breadth = 1.0
+                
+                # 🚨 [실험 룰] 진입 시 시장 폭이 0.97 미만(취약)이었다면 '기각'된 것으로 간주
+                if e_breadth < 0.97:
+                    conn.execute("UPDATE forward_trades SET sim_breadth_status='FILTERED_OUT' WHERE id=?", (r['id'],))
+                else:
+                    if current_ret_pct <= dyn_mae_sl:
+                        conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
+                    elif current_ret_pct >= dyn_mfe_tp:
+                        conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
+                    else:
+                        conn.execute("UPDATE forward_trades SET sim_breadth_ret=? WHERE id=?", (current_ret_pct, r['id']))
+            # 👆👆 [추가 끝] 👆👆
 
+
+            
             # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
             dyn_mae_sl = sys_config.get("DYNAMIC_MAE_SL", -3.5)
             dyn_mfe_tp = sys_config.get("DYNAMIC_MFE_TP", 10.0)
