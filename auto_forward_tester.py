@@ -199,20 +199,16 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
-    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록
-    cursor.execute('''
-        INSERT INTO forward_trades
-
-    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록
+    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V24.0 시장 폭 컬럼 추가 반영)
     cursor.execute('''
         INSERT INTO forward_trades 
-        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         today_str, market, code_str, name, sector, sig_type, tier_label, score,
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
-        ep, ep
+        ep, ep, round(cur_breadth, 3), round(cur_breadth, 3)
     ))
     conn.commit()
     conn.close()
