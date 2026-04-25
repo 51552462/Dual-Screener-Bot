@@ -52,7 +52,16 @@ def update_single_ticker(row, country):
         except: return False
 
     try:
-        df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+        
+        # 👇👇 [수정] V26.0 시계열 왜곡 방지 및 횡단면 동기화 👇👇
+        # 1. 거래량 결측치는 명백한 거래 없음이므로 0으로 채움
+        df['Volume'] = df['Volume'].fillna(0)
+        # 2. 가격 결측치는 거래 정지 상태이므로 이전 종가로 채움 (Forward Fill)
+        # 3. 데이터 맨 앞부분의 무의미한 결측치만 최종 제거
+        df = df.ffill().dropna()
+        # 👆👆 [수정 끝] 👆👆
+        
         df.reset_index(inplace=True)
         df.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
         df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
