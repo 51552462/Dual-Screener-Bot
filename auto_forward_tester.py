@@ -90,8 +90,10 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     if score_bucket >= 100: score_bucket = 90 # 100점은 90점대 최상위 티어로 병합
     tier_label = f"{score_bucket}점대"
 
-    conn = sqlite3.connect(DB_PATH)
+    # 💡 [V25.0 픽스] 진입 함수에도 Timeout과 WAL 모드 필수 적용
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
     
     # 1. 중복 체크 (이미 포트폴리오에 보유 중인 종목은 제외)
     cursor.execute("SELECT id FROM forward_trades WHERE code=? AND status='OPEN'", (code_str,))
