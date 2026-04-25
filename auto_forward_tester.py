@@ -43,15 +43,20 @@ def init_forward_db():
     try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN exit_type TEXT DEFAULT 'UNKNOWN'")
     except: pass
     
-    # 👇👇 [추가] V16.0 ABC 토너먼트 병렬 성적 기록 컬럼 👇👇
-    for p in ['live_a', 'cand_b', 'champ_c']:
+    # 👇👇 [추가] V17.0 청산 우선순위 시뮬레이션 컬럼 👇👇
+    for p in ['sim_stat', 'sim_tech']:
         try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_ret REAL DEFAULT 0.0")
         except: pass
         try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_status TEXT DEFAULT 'OPEN'")
         except: pass
+    # 👆👆 [추가 끝] 👆👆
 
-    # 👇👇 [추가] V17.0 청산 우선순위 시뮬레이션 컬럼 👇👇
-    for p in ['sim_stat', 'sim_tech']:
+    # 👇👇 [추가] V24.0 시장 폭(Breadth) 실험 존 컬럼 👇👇
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN market_breadth REAL DEFAULT 1.0")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN entry_breadth REAL DEFAULT 1.0")
+    except: pass
+    for p in ['sim_breadth']:
         try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_ret REAL DEFAULT 0.0")
         except: pass
         try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_status TEXT DEFAULT 'OPEN'")
