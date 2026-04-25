@@ -71,27 +71,54 @@ def run_autonomous_analysis():
     w_s1, w_s4 = 1.0, 1.0 
     
     try:
-        # VIX, SPY, KOSPI 데이터 동시 로드
-        df_idx = yf.download("SPY ^VIX ^KS11", period="1y", interval="1d", group_by="ticker", progress=False)
-        spy_c = df_idx['SPY']['Close'].dropna()
-        vix_c = df_idx['^VIX']['Close'].dropna()
+        # 💡 [V24.0] SPY(시총비중), ^VIX(공포), RSP(동일비중) 데이터 동시 로드
+        df_idx = yf.download("SPY ^VIX RSP", period="1y", interval="1d", group_by="ticker", progress=False)
+        
+        # 데이터 추출 (멀티인덱스 대응)
+        spy_c = df_idx['SPY']['Close'].dropna() if 'SPY' in df_idx.columns.levels[0] else df_idx['Close']['SPY'].dropna()
+        vix_c = df_idx['^VIX']['Close'].dropna() if '^VIX' in df_idx.columns.levels[0] else df_idx['Close']['^VIX'].dropna()
+        rsp_c = df_idx['RSP']['Close'].dropna() if 'RSP' in df_idx.columns.levels[0] else df_idx['Close']['RSP'].dropna()
         
         spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
         spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
         
-        # 💡 [핵심] VIX 기반 룩백 윈도우 및 국면 비중 동적 조율
-        if vix_last >= 28.0:
-            dyn_lookback = 7  # 🚨 극단적 공포장: 낡은 기억 폐기, 최근 7일에만 초집중 (기민성 MAX)
-            regime, w_s1, w_s4 = "Bear (극단적 공포장)", 0.0, 2.0 # S1 매수 전면 금지
-            vix_status = f"VIX 폭발 ({vix_last:.1f}) - 기억력 7일로 초압축"
-        elif vix_last >= 18.0:
-            dyn_lookback = 15 # ⚠️ 변동성 장세: 표준 룩백 적용
-            regime, w_s1, w_s4 = "Chop (변동성/조정장)", 0.5, 1.5
-            vix_status = f"VIX 경계 ({vix_last:.1f}) - 기억력 15일 유지"
+        # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
+        # 1.0보다 낮으면 대형주만 오르는 '취약한 장세', 높으면 낙수효과가 있는 '건강한 장세'
+        breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
+
+        # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
+        if spy_last > spy_ema200 and vix_last < 18:
+            regime = "Bull (상승장)"
+            base_w1, base_w4 = 1.2, 0.8
         else:
-            dyn_lookback = 45 # 🌊 대세 상승/평온장: 노이즈 필터링, 긴 추세 확인 (안정성 MAX)
-            regime, w_s1, w_s4 = "Bull (대세 상승장)", 1.5, 0.5
-            vix_status = f"VIX 평온 ({vix_last:.1f}) - 기억력 45일로 확장"
+            regime = "Bear/Chop (하락/횡보)"
+            base_w1, base_w4 = 0.5, 1.5
+
+        # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
+        breadth_status = "건강 (Broad)"
+        if breadth_ratio < 0.97: 
+            breadth_status = "취약 (Narrow/쏠림)"
+            base_w1 *= 0.5  # 공격(S1) 비중 반토막 (함정 방어)
+            base_w4 *= 1.2  # 방어/눌림(S4) 비중 강화
+        elif breadth_ratio > 1.03: 
+            breadth_status = "강력 (확산)"
+            base_w1 *= 1.2  # 공격(S1) 비중 추가 확대
+
+        w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
+        
+        # 3. VIX 기반 동적 룩백 설정 결합
+        if vix_last >= 28.0:
+            dyn_lookback = 7
+            regime = "Bear (극단적 공포장)"
+            w_s1, w_s4 = 0.0, 2.0
+            vix_status = f"VIX 폭발({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 7일"
+        elif vix_last >= 18.0:
+            dyn_lookback = 15
+            vix_status = f"VIX 경계({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 15일"
+        else:
+            dyn_lookback = 45
+            vix_status = f"VIX 평온({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 45일"
+            
     except Exception as e:
         print(f"거시 지표 로드 에러: {e}")
 
