@@ -323,6 +323,38 @@ def run_autonomous_analysis():
         conn.close()
     except Exception as e:
         report_lines.append(f"⚠️ 다중 궤적 추출 에러: {e}")
+
+    # ---------------------------------------------------------
+    # 👑 엔진 4.9: [V27.0 예측 오차율(Tracking Error) 및 세이프티 가드]
+    # ---------------------------------------------------------
+    report_lines.append("\n<b>[4.9 예측 오차 검증 및 세이프티 가드]</b>")
+    
+    # 1. 최근 14일 데이터의 MAE(최대낙폭) 변동성 측정
+    # 실제 발생한 낙폭과 우리가 설정했던 손절선(-3.5% 등) 사이의 괴리 분석
+    df['mae_error'] = abs(df['min_low'] - df['entry_price']) / df['entry_price'] * 100
+    avg_mae = df['mae_error'].mean()
+    std_mae = df['mae_error'].std() # 낙폭의 표준편차 (시장 발작 지수)
+
+    # 💡 [핵심] 예측 오차율 계산: 평소 변동성 대비 최근 변동성이 1.5배 이상 튀었는가?
+    # (과거 60일 데이터가 있다면 더 정확하나, 여기선 현재 셋셋의 안정성 검증)
+    tracking_error_score = std_mae / (abs(current_config.get("DYNAMIC_MAE_SL", -3.5)) + 0.1)
+    
+    is_failsafe_mode = False
+    if tracking_error_score > 1.2 or std_mae > 5.0: # 오차율이 너무 높거나, 평균 낙폭 편차가 5%를 넘을 때
+        is_failsafe_mode = True
+        report_lines.append(f"🚨 <b>안전 모드(Failsafe) 발동!</b> (오차율: {tracking_error_score:.2f} | 편차: {std_mae:.2f})")
+        report_lines.append("💡 사유: 시장 변동성이 통제 범위를 벗어났습니다. 모든 조율값을 무시하고 베이스라인으로 복귀합니다.")
+        
+        # 🛡️ 최보수적 베이스라인으로 강제 회귀 (Override)
+        current_config["DYNAMIC_MAE_SL"] = -5.0  # 더 넓은 방어선 (시장 발작 대응)
+        current_config["DYNAMIC_MFE_TP"] = 10.0  # 표준 수익선
+        current_config["TREE_FATAL_CPV"] = 0.75  # 윗꼬리 필터 대폭 강화 (속임수 방어)
+        
+        # Candidate B(후보군) 삭제 (오염된 데이터 학습 방지)
+        if "CANDIDATE_PARAMS" in current_config:
+            del current_config["CANDIDATE_PARAMS"]
+    else:
+        report_lines.append(f"✅ 예측 안정성 확인 (오차율: {tracking_error_score:.2f} | 편차: {std_mae:.2f})")
     
     # ---------------------------------------------------------
     # 👑 엔진 5: [V17.0 청산 우선순위 데스매치 및 DNA 분석 (STAT vs TECH)]
