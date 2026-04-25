@@ -124,7 +124,8 @@ def run_autonomous_analysis():
 
     # 1. 계산된 [동적 룩백]으로 DB 데이터 로드
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
         start_date = (datetime.now() - timedelta(days=dyn_lookback)).strftime('%Y-%m-%d')
         query = f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{start_date}'"
         df = pd.read_sql(query, conn)
@@ -181,7 +182,8 @@ def run_autonomous_analysis():
     # 2. [V18.0 앙상블 및 통계적 신뢰도 필터 함수]
     def get_period_stats(days):
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            conn.execute("PRAGMA journal_mode=WAL;")
             s_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
             p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}'", conn)
             conn.close()
@@ -261,7 +263,8 @@ def run_autonomous_analysis():
     # ---------------------------------------------------------
     report_lines.append("\n<b>[4.8 대장주 및 참사주 Top 3 궤적 독립 추출 (도플갱어 템플릿)]</b>")
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
         
         # 1. 대박 종목 Top 3 (수익률 최상위) & 참사/횡보 종목 Top 3 (손실/타임컷 최하위) 색출
         alphas = df[df['final_ret'] >= 15.0].sort_values(by='final_ret', ascending=False).head(3)
