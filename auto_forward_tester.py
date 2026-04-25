@@ -23,8 +23,11 @@ def send_telegram_msg(text):
 
 def init_forward_db():
     """장부 테이블 생성 및 V12.0 필수 컬럼 안전 추가"""
-    conn = sqlite3.connect(DB_PATH)
+    # 💡 [V25.0] Timeout 60초 대기열 및 WAL 모드 전면 활성화
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS forward_trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, entry_date TEXT, market TEXT, code TEXT, name TEXT, sector TEXT,    
@@ -219,7 +222,9 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
 # ==========================================
 def track_daily_positions(market):
     init_forward_db()
-    conn = sqlite3.connect(DB_PATH)
+    # 💡 [V25.0] 긴 작업 시 다른 스레드가 대기할 수 있도록 60초 타임아웃 적용
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn.execute("PRAGMA journal_mode=WAL;")
     
     # 현재 보유 중인 종목만 불러오기
     df_active = pd.read_sql("SELECT * FROM forward_trades WHERE market=? AND status='OPEN'", conn, params=(market,))
@@ -426,7 +431,9 @@ def send_daily_summary_report():
     report_msg = f"📊 [포워드 테스팅 일일 종합 리포트]\n📅 {today_str} 기준\n\n"
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        # 💡 데이터 수집기와 충돌 없이 읽기 위해 WAL 모드 활성화
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
         
         for market in ['KR', 'US']:
             # 승률 계산
@@ -474,7 +481,8 @@ def run_deep_dive_analysis(market='KR'):
     대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;") # 💡 추가
         df = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'", conn)
         conn.close()
         
