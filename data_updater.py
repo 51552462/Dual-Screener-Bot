@@ -32,8 +32,8 @@ def get_kr_tickers():
     filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
     return filtered_df[['Code', 'Name', 'Market']].dropna()
 
-# 개별 종목 데이터 다운로드 및 DB 저장 엔진
-def update_single_ticker(row, country, conn):
+# 개별 종목 데이터 다운로드 및 DB 저장 엔진 (💡 인자에서 conn 제거)
+def update_single_ticker(row, country): 
     if country == 'US':
         sym = row['Symbol']
         table_name = f"US_{sym}"
@@ -57,7 +57,13 @@ def update_single_ticker(row, country, conn):
         df.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
         df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
         
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        # 💡 [핵심] 각 스레드가 독립적인 출입문 생성 및 Timeout 대기열(Queue) 확보
+        local_conn = sqlite3.connect(DB_PATH, timeout=30)
+        local_conn.execute("PRAGMA journal_mode=WAL;")       # 동시 읽기/쓰기 허용
+        local_conn.execute("PRAGMA synchronous=NORMAL;")     # WAL 모드 최적화 (속도 향상)
+        
+        df.to_sql(table_name, local_conn, if_exists='replace', index=False)
+        local_conn.close()
         return True
     except: return False
 
@@ -68,49 +74,50 @@ def run_daily_db_update():
     us_list = get_us_tickers()
     kr_list = get_kr_tickers()
     
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    
-    # 💡 [순서 교정] 0/2 벤치마크 지수 먼저 실행
+    # 💡 [순서 교정] 0/2 벤치마크 지수 먼저 실행 (독립 연결 사용)
     print("\n⏳ [0/2] 벤치마크 지수(VIX, SPY, QQQ, KOSPI, KOSDAQ) 갱신 중...")
     try:
+        bm_conn = sqlite3.connect(DB_PATH, timeout=30)
+        bm_conn.execute("PRAGMA journal_mode=WAL;")
+        
         idx_us = yf.download("SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False)
         for tk, tbl in zip(['SPY', 'QQQ', '^VIX'], ['US_SPY', 'US_QQQ', 'US_VIX']):
             if tk in idx_us.columns.levels[0]:
                 df_temp = idx_us[tk].dropna().reset_index()
                 df_temp.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
                 df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
-                df_temp.to_sql(tbl, conn, if_exists='replace', index=False)
+                df_temp.to_sql(tbl, bm_conn, if_exists='replace', index=False)
         
         for tk, tbl in zip(['069500', '229200'], ['KR_KOSPI_IDX', 'KR_KOSDAQ_IDX']):
             df_temp = fdr.DataReader(tk, (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')).reset_index()
             df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
-            df_temp.to_sql(tbl, conn, if_exists='replace', index=False)
+            df_temp.to_sql(tbl, bm_conn, if_exists='replace', index=False)
+        bm_conn.close()
         print("✅ 벤치마크 지수 DB 저장 완료!")
     except Exception as e:
         print(f"⚠️ 벤치마크 지수 갱신 실패: {e}")
 
-    # 1/2 미국장
+    # 1/2 미국장 (스레드 실행부 conn 제거)
     print("\n⏳ [1/2] 미국장 데이터 갱신 중... (야후 파이낸스 접속)")
     us_success = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(update_single_ticker, row, 'US', conn): row['Symbol'] for _, row in us_list.iterrows()}
+        futures = {executor.submit(update_single_ticker, row, 'US'): row['Symbol'] for _, row in us_list.iterrows()}
         import sys
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             if future.result(): us_success += 1
             sys.stdout.write(f"\r진행률: {i+1}/{len(us_list)} (성공: {us_success}개)")
             sys.stdout.flush()
 
-    # 2/2 한국장
+    # 2/2 한국장 (스레드 실행부 conn 제거)
     print("\n\n⏳ [2/2] 한국장 데이터 갱신 중... (KRX 접속)")
     kr_success = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(update_single_ticker, row, 'KR', conn): row['Code'] for _, row in kr_list.iterrows()}
+        futures = {executor.submit(update_single_ticker, row, 'KR'): row['Code'] for _, row in kr_list.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             if future.result(): kr_success += 1
             sys.stdout.write(f"\r진행률: {i+1}/{len(kr_list)} (성공: {kr_success}개)")
             sys.stdout.flush()
 
-    conn.close()
     print(f"\n\n✅ DB 업데이트 완료! (미국: {us_success}개 / 한국: {kr_success}개 안전 저장 완료)")
 
 if __name__ == "__main__":
