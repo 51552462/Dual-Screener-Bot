@@ -103,6 +103,63 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         conn.close()
         return False, f"오늘의 {tier_label} 표본 2개 모두 확보됨 (스킵)"
 
+    # 👇👇 [추가] V22.0 7D DNA 실시간 유도탄 (코사인 유사도 매칭) 👇👇
+    try:
+        sys_config = load_system_config()
+        table_name = f"{market}_{code_str}"
+        hist_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
+        
+        if len(hist_df) >= 150:
+            c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
+            
+            # 실시간 7D 벡터 연산 (관제탑의 Engine 4.8과 동일한 로직)
+            cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
+            v_ma20 = pd.Series(v).rolling(20).mean().values
+            tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
+            bb_std = pd.Series(c).rolling(20).std().values
+            bbe = np.nanmax(np.where(bb_std > 0, 1.0 / ((4 * bb_std) / pd.Series(c).rolling(20).mean().values), 0)[-20:])
+            rs_slope = ((c[-1] - c[0]) / c[0]) * 100
+            tr = np.maximum(h - l, np.maximum(abs(h - np.roll(c, 1)), abs(l - np.roll(c, 1))))
+            vcp_ratio = np.mean(tr[-20:]) / np.mean(tr) if np.mean(tr) > 0 else 1.0
+            vol_flow = np.sum(np.where(c > o, v, 0)) / (np.sum(np.where(c < o, v, 0)) + 1)
+            emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
+            ma_conv = (max(emas) - min(emas)) / min(emas) * 100
+            
+            new_vec = np.array([cpv, tb, bbe, rs_slope, vcp_ratio, vol_flow, ma_conv])
+            new_vec = np.nan_to_num(new_vec)
+            
+            def cosine_sim(a, b):
+                norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
+                return np.dot(a, b) / (norm_a * norm_b) if norm_a > 0 and norm_b > 0 else 0
+                
+            trap_sims, alpha_sims = [], []
+            for k, v_dict in sys_config.items():
+                if "DNA_TRAP" in k and isinstance(v_dict, dict):
+                    t_vec = np.array([v_dict.get('cpv',0), v_dict.get('tb',0), v_dict.get('bbe',0), v_dict.get('rs',0), v_dict.get('vcp',0), v_dict.get('vol',0), v_dict.get('ma',0)])
+                    trap_sims.append(cosine_sim(new_vec, np.nan_to_num(t_vec)))
+                elif "DNA_ALPHA" in k and isinstance(v_dict, dict):
+                    a_vec = np.array([v_dict.get('cpv',0), v_dict.get('tb',0), v_dict.get('bbe',0), v_dict.get('rs',0), v_dict.get('vcp',0), v_dict.get('vol',0), v_dict.get('ma',0)])
+                    alpha_sims.append(cosine_sim(new_vec, np.nan_to_num(a_vec)))
+                    
+            max_trap = max(trap_sims) if trap_sims else 0
+            max_alpha = max(alpha_sims) if alpha_sims else 0
+            
+            # 🛡️ 페일세이프: 참사주 DNA와 85% 이상 일치하면 무조건 기각
+            if max_trap >= 0.85 and max_trap > max_alpha:
+                conn.close()
+                return False, f"🚨 [DNA 방어막] 과거 참사주 DNA와 {max_trap*100:.1f}% 일치하여 매수 강제 기각"
+            
+            # 🚀 슈퍼 부스트: 대장주 DNA와 85% 이상 일치하면 시그널 태그 강화
+            if max_alpha >= 0.85:
+                sig_type += f" [🌟DNA {max_alpha*100:.0f}% 일치]"
+    except Exception as e:
+        print(f"DNA 벡터 매칭 에러: {e}")
+    # 👆👆 [추가 끝] 👆👆
+
+    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록
+    cursor.execute('''
+        INSERT INTO forward_trades
+
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록
     cursor.execute('''
         INSERT INTO forward_trades 
