@@ -91,17 +91,40 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         conn.close()
         return False, "중복 보유 중"
         
-    # 2. 🎯 [티어별 정밀 통제] 오늘 해당 시장 & 해당 점수대에서 몇 개를 샀는지 체크 (하루 최대 2개)
+    # 2. 👑 [V23.0 포트폴리오 다중화: 주도섹터 폭격(2) + 차기섹터 정찰(2)]
     tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
     today_str = datetime.now(tz).strftime('%Y-%m-%d')
-    
-    check_query = "SELECT COUNT(*) FROM forward_trades WHERE entry_date=? AND market=? AND tier=?"
-    cursor.execute(check_query, (today_str, market, tier_label))
-    current_daily_count = cursor.fetchone()[0]
-    
-    if current_daily_count >= 2:
+
+    # 현재 포트폴리오의 1위 주도 섹터 파악 (자금 쏠림 감지)
+    cursor.execute("SELECT sector FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY sector ORDER BY COUNT(*) DESC LIMIT 1", (market,))
+    dom_row = cursor.fetchone()
+    dominant_sector = dom_row[0] if dom_row else "None"
+
+    # 오늘 해당 티어에서 매수한 종목들의 섹터 확인
+    cursor.execute("SELECT sector FROM forward_trades WHERE entry_date=? AND market=? AND tier=?", (today_str, market, tier_label))
+    today_sectors = [r[0] for r in cursor.fetchall()]
+
+    if len(today_sectors) >= 4:
         conn.close()
-        return False, f"오늘의 {tier_label} 표본 2개 모두 확보됨 (스킵)"
+        return False, f"오늘의 {tier_label} 최대 쿼터(4개) 모두 확보됨 (스킵)"
+
+    # 로직 분기: 진입하려는 종목이 현재 시장을 주도하는 섹터인가?
+    trend_bought = sum(1 for s in today_sectors if s == dominant_sector)
+    hedge_bought = sum(1 for s in today_sectors if s != dominant_sector)
+
+    if sector == dominant_sector:
+        if trend_bought >= 2:
+            conn.close()
+            return False, f"🚨 섹터 쿼터 초과: 이미 주도섹터({dominant_sector}) 공격 편대 2기를 모두 파견했습니다."
+        track_tag = "[🔥주도주 편대]"
+    else:
+        if hedge_bought >= 2:
+            conn.close()
+            return False, f"🛡️ 섹터 쿼터 초과: 이미 타 섹터 정찰대 2기를 모두 파견했습니다."
+        track_tag = "[🛡️차기섹터 정찰]"
+
+    # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
+    sig_type = f"{sig_type} {track_tag}"
 
     # 👇👇 [추가] V22.0 7D DNA 실시간 유도탄 (코사인 유사도 매칭) 👇👇
     try:
