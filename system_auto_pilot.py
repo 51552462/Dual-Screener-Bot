@@ -290,15 +290,21 @@ def run_autonomous_analysis():
 
         def extract_7d_vector(row):
             table_name = f"{row['market']}_{row['code']}"
+            idx_table = 'US_SPY' if row['market'] == 'US' else 'KR_KOSDAQ_IDX' # 💡 벤치마크 테이블
             entry_dt = row['entry_date']
             try:
+                # 종목 데이터와 벤치마크(시장) 데이터를 동일 기간(150일)으로 동시 로드
                 query = f"SELECT * FROM {table_name} WHERE Date < '{entry_dt}' ORDER BY Date DESC LIMIT 150"
-                hist_df = pd.read_sql(query, conn).sort_values('Date')
+                idx_query = f"SELECT * FROM {idx_table} WHERE Date < '{entry_dt}' ORDER BY Date DESC LIMIT 150"
                 
-                if len(hist_df) >= 150:
+                hist_df = pd.read_sql(query, conn).sort_values('Date')
+                idx_df = pd.read_sql(idx_query, conn).sort_values('Date')
+                
+                if len(hist_df) >= 150 and len(idx_df) >= 150:
                     c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
+                    idx_c = idx_df['Close'].values
                     
-                    # 7D 연산 (시계열 흐름)
+                    # 1. Raw 7D 연산
                     cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
                     v_ma20 = pd.Series(v).rolling(20).mean().values
                     tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
@@ -311,7 +317,18 @@ def run_autonomous_analysis():
                     emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
                     ma_conv = (max(emas) - min(emas)) / min(emas) * 100
                     
-                    return {'name': row['name'], 'cpv': cpv, 'tb': tb, 'bbe': bbe, 'rs': rs_slope, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv}
+                    # 2. 💡 [V33.0] Z-Score 정규화 (시장 인플레이션 제거)
+                    # 벤치마크 수익률(Mean) 및 변동성(StdDev) 추출
+                    idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
+                    idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252) # 연율화 변동성 프록시
+                    safe_vol = idx_vol if idx_vol > 0.1 else 1.0
+                    
+                    # 극심한 인플레이션을 겪는 지표(RS, BBE)를 시장 베이스라인으로 Z-Score 치환
+                    z_rs = (rs_slope - idx_rs) / safe_vol
+                    z_bbe = bbe / safe_vol  # 에너지는 시장 변동성 대비 비율로 스케일링
+                    
+                    # 정규화된 텐서 리턴
+                    return {'name': row['name'], 'cpv': cpv, 'tb': tb, 'bbe': z_bbe, 'rs': z_rs, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv}
             except Exception as e: 
                 return None
             return None
