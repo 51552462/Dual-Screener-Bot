@@ -260,17 +260,21 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             sl_price = ep - (opt_sl_atr * entry_atr)
             risk_distance = ep - sl_price # 1주당 감당해야 할 손실 금액
 
-            # 3. 매수 수량 및 투입 금액 역산 (Inverse Volatility Sizing)
-            account_size = sys_config.get("ACCOUNT_SIZE", 20000000) # 💡 2,000만 원으로 수정
-            risk_pct = sys_config.get("RISK_PCT", 0.02)
-            max_loss_amount = account_size * risk_pct # 2천만 원의 2% = 40만 원
-
+            # 3. 매수 수량 및 투입 금액 역산 (투트랙: 고정 vs 동적 켈리)
+            account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
+            fixed_risk_pct = 0.02 # 기존 고정 2% 룰
+            kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) # V39.0 관제탑 하달 켈리 리스크
+            cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
+            
             if risk_distance > 0:
-                shares = int(max_loss_amount / risk_distance)
+                # 트랙 A: 고정 2%
+                shares = int((account_size * fixed_risk_pct) / risk_distance)
                 invest_amount = shares * ep
+                # 트랙 B: 국면 연동 동적 켈리
+                k_shares = int((account_size * kelly_risk_pct) / risk_distance)
+                sim_kelly_invest = k_shares * ep
             else:
-                shares, invest_amount = 0, 0
-            # 👆👆 [추가 끝] 👆👆
+                shares, invest_amount, sim_kelly_invest = 0, 0, 0
 
     # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
     cur_breadth = 1.0
@@ -781,6 +785,31 @@ def run_deep_dive_analysis(market='KR'):
         
     except Exception as e:
         print(f"⚠️ 딥 다이브 분석 중 에러: {e}")
+
+
+# ---------------------------------------------------------
+        # 👑 엔진 9: [V39.0 자금 관리 시뮬레이션: 고정 리스크 vs 켈리 리스크]
+        # ---------------------------------------------------------
+        if 'invest_amount' in df.columns and 'sim_kelly_invest' in df.columns:
+            report_msg += "\n⚖️ <b>[V39.0 자금 관리 평행우주 대결 (누적 실현 손익)]</b>\n"
+            
+            # 고정 2% 룰의 누적 손익 (투자금 * 수익률)
+            df['fixed_profit'] = df['invest_amount'] * (df['final_ret'] / 100)
+            total_fixed_profit = df['fixed_profit'].sum()
+            
+            # 동적 켈리 룰의 누적 손익 (시뮬레이션 투자금 * 수익률)
+            df['kelly_profit'] = df['sim_kelly_invest'] * (df['final_ret'] / 100)
+            total_kelly_profit = df['kelly_profit'].sum()
+            
+            report_msg += f"▪️ 고정 2% 베팅 누적 손익: <b>{total_fixed_profit:,.0f}원</b>\n"
+            report_msg += f"▪️ 국면형 켈리 누적 손익: <b>{total_kelly_profit:,.0f}원</b>\n"
+            
+            if total_kelly_profit > total_fixed_profit:
+                report_msg += "🏆 <b>결론: 동적 켈리가 승리했습니다.</b> 상승장에서 비중을 싣고 하락장에서 방어한 전략이 누적 자본 증식에 훨씬 유리함을 데이터로 증명했습니다.\n"
+            else:
+                report_msg += "🛡️ <b>결론: 고정 리스크가 유리했습니다.</b> 켈리 베팅이 과도한 리스크를 지거나 휩소에 당했습니다. 켈리 승수를 하향 조정해야 합니다.\n"
+
+
 
 # ==========================================
 # 🕒 [무한 루프 스케줄러] 24시간 감시 및 보고 시스템
