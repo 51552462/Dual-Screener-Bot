@@ -80,6 +80,17 @@ def init_forward_db():
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
+    # 👇👇 [추가] V39.0 동적 켈리 베팅 시뮬레이션 컬럼 👇👇
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN entry_regime TEXT DEFAULT 'UNKNOWN'")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN sim_kelly_risk_pct REAL DEFAULT 0.02")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN sim_kelly_invest REAL DEFAULT 0.0")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN sim_kelly_profit REAL DEFAULT 0.0")
+    except: pass
+    # 👆👆 [추가 끝] 👆👆
+
     conn.commit()
     conn.close()
 
