@@ -512,26 +512,25 @@ def run_autonomous_analysis():
         
         report_lines.append(f"▪️ 데이터 격리: Train 표본 {len(train_df)}개 vs OOS 표본 {len(test_df)}개")
         
-        else:
-            # 👇👇 [수정] V36.0 몬테카를로 부트스트래핑(Monte Carlo Bootstrapping) 엔진 👇👇
-            def get_bootstrapped_pf(returns_series, n_iterations=1000, confidence_level=5):
-                """1,000번의 평행우주를 생성하여 하위 5%(최악의 상황)의 손익비를 추출"""
-                returns = returns_series.dropna().values
-                if len(returns) < 5: # 표본이 너무 적으면 일반 PF 리턴
-                    win, lose = returns[returns > 0], returns[returns <= 0]
-                    return np.sum(win) / (abs(np.sum(lose)) + 0.1)
+        # 👇👇 [수정] V36.0 몬테카를로 부트스트래핑(Monte Carlo Bootstrapping) 엔진 👇👇
+        def get_bootstrapped_pf(returns_series, n_iterations=1000, confidence_level=5):
+            """1,000번의 평행우주를 생성하여 하위 5%(최악의 상황)의 손익비를 추출"""
+            returns = returns_series.dropna().values
+            if len(returns) < 5: # 표본이 너무 적으면 일반 PF 리턴
+                win, lose = returns[returns > 0], returns[returns <= 0]
+                return np.sum(win) / (abs(np.sum(lose)) + 0.1)
 
-                pfs = []
-                # 1. 1,000번의 무작위 복원 추출(Resampling)
-                for _ in range(n_iterations):
-                    sample = np.random.choice(returns, size=len(returns), replace=True)
-                    win = sample[sample > 0]
-                    lose = sample[sample <= 0]
-                    pf = np.sum(win) / (abs(np.sum(lose)) + 0.1)
-                    pfs.append(pf)
+            pfs = []
+            # 1. 1,000번의 무작위 복원 추출(Resampling)
+            for _ in range(n_iterations):
+                sample = np.random.choice(returns, size=len(returns), replace=True)
+                win = sample[sample > 0]
+                lose = sample[sample <= 0]
+                pf = np.sum(win) / (abs(np.sum(lose)) + 0.1)
+                pfs.append(pf)
 
-                # 2. 1,000개의 평행우주 중 하위 5%(가장 운이 없었던 상황)의 PF 반환
-                return np.percentile(pfs, confidence_level)
+            # 2. 1,000개의 평행우주 중 하위 5%(가장 운이 없었던 상황)의 PF 반환
+            return np.percentile(pfs, confidence_level)
 
             results = {}
             report_lines.append("\n🎲 <b>[V36.0 몬테카를로 1,000회 시뮬레이션 가동]</b>")
