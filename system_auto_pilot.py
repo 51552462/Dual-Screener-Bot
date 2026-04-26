@@ -212,28 +212,29 @@ def run_autonomous_analysis():
             
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
-            
-            # 💡 [핵심] 통계적 신뢰도(Confidence) 검증
-            gross_profit = win_s['final_ret'].sum() if len(win_s) > 0 else 0
-            gross_loss = abs(lose_s['final_ret'].sum()) + 0.1
-            pf = gross_profit / gross_loss
-            
-            # 컷오프 룰: 손익비(PF)가 0.85 ~ 1.25 사이인 횡보/노이즈 장세에서는 기각
-            is_meaningless_chop = (0.85 <= pf <= 1.25) and (n_trades < 20)
-            
-            if is_meaningless_chop:
-                return "NOISE" 
 
-            p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
-            p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
+            # 💡 [V35.0] 내 장부의 실제 승리/패배 데이터를 바탕으로 커트라인 자율 산출
+            opt_alpha_limit = 0.75
+            opt_trap_limit = 0.75
+            opt_dtw_limit = 2.5
             
-            win_s = p_df[p_df['final_ret'] > 0]
-            lose_s = p_df[p_df['final_ret'] <= 0]
+            if 'entry_cos_score' in p_df.columns and len(win_s) >= 3:
+                # 수익 난 종목들의 코사인 점수 하위 15% 지점을 합격선으로 유연하게 설정
+                opt_alpha_limit = np.percentile(win_s['entry_cos_score'].dropna(), 15)
+                # 수익 난 종목들의 DTW 궤적 점수 상위 85% 지점(거리는 짧을수록 좋음)을 궤적 커트라인으로 설정
+                opt_dtw_limit = np.percentile(win_s['entry_dtw_score'].dropna(), 85)
+                
+                # 손실 난 종목들의 평균 코사인 점수를 함정 방어선으로 설정
+                if len(lose_s) >= 3:
+                    opt_trap_limit = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
 
             return {
                 "sl": np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5,
                 "tp": np.percentile(win_s['mfe_pct'], 50) if len(win_s) >= 3 else 10.0,
-                "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85
+                "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85,
+                "alpha_limit": opt_alpha_limit, # 💡 자율 도출
+                "trap_limit": opt_trap_limit,   # 💡 자율 도출
+                "dtw_limit": opt_dtw_limit      # 💡 자율 도출
             }
         except: return None
 
@@ -259,15 +260,21 @@ def run_autonomous_analysis():
         ensemble_sl = sum(s['sl'] * w[i] for i, s in enumerate(valid))
         ensemble_tp = sum(s['tp'] * w[i] for i, s in enumerate(valid))
         ensemble_cpv = sum(s['fatal_cpv'] * w[i] for i, s in enumerate(valid))
+        # 💡 각 기간의 자율 커트라인을 하나로 블렌딩
+        ensemble_alpha = sum(s['alpha_limit'] * w[i] for i, s in enumerate(valid))
+        ensemble_trap = sum(s['trap_limit'] * w[i] for i, s in enumerate(valid))
+        ensemble_dtw = sum(s['dtw_limit'] * w[i] for i, s in enumerate(valid))
         
-        # 3. 학습 결과를 후보군(B) 대기실로 격리 보관
         if "CANDIDATE_PARAMS" not in current_config: 
             current_config["CANDIDATE_PARAMS"] = {}
         
         current_config["CANDIDATE_PARAMS"] = {
             "DYNAMIC_MAE_SL": round(ensemble_sl, 2),
             "DYNAMIC_MFE_TP": round(ensemble_tp, 2),
-            "TREE_FATAL_CPV": round(ensemble_cpv, 2)
+            "TREE_FATAL_CPV": round(ensemble_cpv, 2),
+            "DYNAMIC_ALPHA_LIMIT": round(ensemble_alpha, 3), # 💡 자율 합격선 JSON 전송
+            "DYNAMIC_TRAP_LIMIT": round(ensemble_trap, 3),   # 💡 자율 방어선 JSON 전송
+            "DYNAMIC_DTW_LIMIT": round(ensemble_dtw, 3)      # 💡 자율 궤적거리 JSON 전송
         }
         
         report_lines.append(f"▪️ 앙상블 손절/익절 후보(B): <b>{round(ensemble_sl, 2)}% / {round(ensemble_tp, 2)}%</b>")
