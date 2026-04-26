@@ -452,19 +452,48 @@ def run_autonomous_analysis():
         
         report_lines.append(f"▪️ 데이터 격리: Train 표본 {len(train_df)}개 vs OOS 표본 {len(test_df)}개")
         
-        if len(test_df) < 5:
-            report_lines.append("⚠️ OOS 검증 구간의 표본이 부족하여 이번 주 승격을 보류합니다.")
         else:
-            # 💡 오직 OOS 구간(최근 14일)에서의 손익비(PF)만 연산하여 승격 자격 부여
+            # 👇👇 [수정] V36.0 몬테카를로 부트스트래핑(Monte Carlo Bootstrapping) 엔진 👇👇
+            def get_bootstrapped_pf(returns_series, n_iterations=1000, confidence_level=5):
+                """1,000번의 평행우주를 생성하여 하위 5%(최악의 상황)의 손익비를 추출"""
+                returns = returns_series.dropna().values
+                if len(returns) < 5: # 표본이 너무 적으면 일반 PF 리턴
+                    win, lose = returns[returns > 0], returns[returns <= 0]
+                    return np.sum(win) / (abs(np.sum(lose)) + 0.1)
+
+                pfs = []
+                # 1. 1,000번의 무작위 복원 추출(Resampling)
+                for _ in range(n_iterations):
+                    sample = np.random.choice(returns, size=len(returns), replace=True)
+                    win = sample[sample > 0]
+                    lose = sample[sample <= 0]
+                    pf = np.sum(win) / (abs(np.sum(lose)) + 0.1)
+                    pfs.append(pf)
+
+                # 2. 1,000개의 평행우주 중 하위 5%(가장 운이 없었던 상황)의 PF 반환
+                return np.percentile(pfs, confidence_level)
+
             results = {}
+            report_lines.append("\n🎲 <b>[V36.0 몬테카를로 1,000회 시뮬레이션 가동]</b>")
+            
             for col in ['live_a_ret', 'cand_b_ret', 'champ_c_ret']:
                 if col in test_df.columns:
-                    pf = (test_df[test_df[col] > 0][col].sum()) / abs(test_df[test_df[col] <= 0][col].sum() + 0.1)
-                    results[col] = pf
+                    # 기존의 단순 계산(환상) PF
+                    raw_win = test_df[test_df[col] > 0][col].sum()
+                    raw_lose = abs(test_df[test_df[col] <= 0][col].sum() + 0.1)
+                    raw_pf = raw_win / raw_lose
+                    
+                    # 💡 [V36.0] 운이 제거된 하위 5%의 절대 방어력 PF
+                    strict_pf = get_bootstrapped_pf(test_df[col])
+                    results[col] = strict_pf
+                    
+                    if raw_pf > 0:
+                        report_lines.append(f"▪️ {col[:6].upper()} ➔ 단순 PF: {raw_pf:.2f} | <b>운 제거 PF(하위5%): {strict_pf:.2f}</b>")
+            # 👆👆 [수정 끝] 👆👆
             
             if results:
                 winner_key = max(results, key=results.get)
-                report_lines.append(f"▪️ [OOS 성적] LIVE(A): {results.get('live_a_ret', 0):.2f} | CAND(B): {results.get('cand_b_ret', 0):.2f} | CHAMP(C): {results.get('champ_c_ret', 0):.2f}")
+                report_lines.append(f"\n▪️ [부트스트랩 최종 성적] LIVE(A): {results.get('live_a_ret', 0):.2f} | CAND(B): {results.get('cand_b_ret', 0):.2f} | CHAMP(C): {results.get('champ_c_ret', 0):.2f}")
                 
                 # 💡 [승격 엔진] 미지의 데이터(OOS)에서 5% 이상 확실한 우위가 있을 때만 교체
                 if winner_key == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
