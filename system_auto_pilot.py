@@ -213,28 +213,38 @@ def run_autonomous_analysis():
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
 
-            # 💡 [V35.0] 내 장부의 실제 승리/패배 데이터를 바탕으로 커트라인 자율 산출
-            opt_alpha_limit = 0.75
-            opt_trap_limit = 0.75
-            opt_dtw_limit = 2.5
-            
+            # 💡 [V35.0] 자율 커트라인 도출
+            opt_alpha_limit, opt_trap_limit, opt_dtw_limit = 0.75, 0.75, 2.5
             if 'entry_cos_score' in p_df.columns and len(win_s) >= 3:
-                # 수익 난 종목들의 코사인 점수 하위 15% 지점을 합격선으로 유연하게 설정
                 opt_alpha_limit = np.percentile(win_s['entry_cos_score'].dropna(), 15)
-                # 수익 난 종목들의 DTW 궤적 점수 상위 85% 지점(거리는 짧을수록 좋음)을 궤적 커트라인으로 설정
                 opt_dtw_limit = np.percentile(win_s['entry_dtw_score'].dropna(), 85)
-                
-                # 손실 난 종목들의 평균 코사인 점수를 함정 방어선으로 설정
                 if len(lose_s) >= 3:
                     opt_trap_limit = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
 
+            # 👇👇 [추가] V37.0 파라미터 절벽(Cliff) 및 지형 강건성(Robustness) 검증 👇👇
+            raw_sl = np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5
+            raw_tp = np.percentile(win_s['mfe_pct'], 50) if len(win_s) >= 3 else 10.0
+            
+            robust_sl = raw_sl
+            if len(win_s) >= 5:
+                # 1. 이웃 공간(Neighborhood Space) 노이즈 테스트
+                # 도출된 손절선(raw_sl) 주변 0.5% 오차 공간에 승리한 종목이 얼마나 빽빽하게 몰려있는가?
+                cliff_zone_wins = win_s[(win_s['mae_pct'] <= raw_sl + 0.5) & (win_s['mae_pct'] >= raw_sl - 0.5)]
+                cliff_risk_ratio = len(cliff_zone_wins) / len(win_s)
+                
+                # 2. 강건성 판독: 승리 종목의 30% 이상이 '단 0.5%의 바늘 탑'에 아슬아슬하게 서 있다면?
+                if cliff_risk_ratio >= 0.30:
+                    # 절벽 판정! 노이즈에 휩쓸리지 않도록 손절선을 1.0% 후퇴시켜 넓은 고원(Plateau)으로 이동
+                    robust_sl = raw_sl - 1.0 
+            # 👆👆 [추가 끝] 👆👆
+
             return {
-                "sl": np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5,
-                "tp": np.percentile(win_s['mfe_pct'], 50) if len(win_s) >= 3 else 10.0,
+                "sl": robust_sl, # 💡 지형 검증이 끝난 강건한 SL
+                "tp": raw_tp,
                 "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85,
-                "alpha_limit": opt_alpha_limit, # 💡 자율 도출
-                "trap_limit": opt_trap_limit,   # 💡 자율 도출
-                "dtw_limit": opt_dtw_limit      # 💡 자율 도출
+                "alpha_limit": opt_alpha_limit,
+                "trap_limit": opt_trap_limit,
+                "dtw_limit": opt_dtw_limit
             }
         except: return None
 
