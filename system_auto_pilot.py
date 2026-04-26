@@ -149,18 +149,17 @@ def run_autonomous_analysis():
     # ---------------------------------------------------------
     # 👑 엔진 1.8: [V32.0 국면별 독립 기억소(Regime Memory) 로드]
     # ---------------------------------------------------------
-    # 현재 국면을 3단계 키로 표준화 (BULL / CHOP / BEAR)
     regime_key = "BULL" if "Bull" in regime else ("BEAR" if "극단적" in regime else "CHOP")
     last_analysed_regime = current_config.get("LAST_ANALYSED_REGIME", "")
 
     if last_analysed_regime != regime_key:
         report_lines.append(f"\n🔄 <b>[V32.0 국면 전환 감지]</b> {last_analysed_regime} ➔ {regime_key}")
         
-        # 💾 과거 해당 국면에서 가장 성적이 좋았던 기억소(Champion) 조회
+        # 💾 과거 해당 국면의 챔피언 파라미터 뭉치 로드 (Zero-Lag)
         regime_memory = current_config.get(f"{regime_key}_CHAMPION_PARAMS", {})
         if regime_memory:
             for k, v in regime_memory.items(): current_config[k] = v
-            report_lines.append(f"💾 <b>[기억소 로드]</b> 과거 {regime_key} 국면의 황금 파라미터를 즉시 복구했습니다 (Zero-Lag).")
+            report_lines.append(f"💾 <b>[기억소 로드]</b> 과거 {regime_key} 국면의 황금 파라미터를 즉시 복구했습니다.")
         
         current_config["LAST_ANALYSED_REGIME"] = regime_key
 
@@ -554,9 +553,11 @@ def run_autonomous_analysis():
             
             if results:
                 winner_key = max(results, key=results.get)
-                report_lines.append(f"\n▪️ [부트스트랩 최종 성적] LIVE(A): {results.get('live_a_ret', 0):.2f} | CAND(B): {results.get('cand_b_ret', 0):.2f} | CHAMP(C): {results.get('champ_c_ret', 0):.2f}")
+                report_lines.append(f"▪️ [OOS 성적] LIVE(A): {results.get('live_a_ret', 0):.2f} | CAND(B): {results.get('cand_b_ret', 0):.2f} | CHAMP(C): {results.get('champ_c_ret', 0):.2f}")
                 
-                # 💡 [승격 엔진] 미지의 데이터(OOS)에서 5% 이상 확실한 우위가 있을 때만 교체
+                # 💡 [V32.0 버그 픽스] 승격 여부 추적 스위치
+                is_promoted = False 
+
                 if winner_key == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
                     # 챔피언 백업
                     current_config["CHAMPION_PARAMS"] = {
@@ -564,12 +565,12 @@ def run_autonomous_analysis():
                         "DYNAMIC_MFE_TP": current_config.get("DYNAMIC_MFE_TP", 10.0),
                         "TREE_FATAL_CPV": current_config.get("TREE_FATAL_CPV", 0.85)
                     }
-                    # 라이브 승격
                     cand = current_config.get("CANDIDATE_PARAMS", {})
                     if cand:
                         for k, v in cand.items(): current_config[k] = v
                     current_config["LIVE_A_PROMOTION_DATE"] = datetime.now().strftime('%Y-%m-%d')
-                    report_lines.append("🏆 <b>[신규 로직 승격]</b> CAND(B)가 미지의 데이터(OOS) 검증을 통과하여 실전 배치됩니다.")
+                    report_lines.append("🏆 <b>[신규 로직 승격]</b> CAND(B)가 OOS 검증을 통과하여 실전 배치됩니다.")
+                    is_promoted = True # 💡 승격 활성화
                     
                 elif winner_key == 'champ_c_ret' and results['champ_c_ret'] > results.get('live_a_ret', 0) * 1.05:
                     champ = current_config.get("CHAMPION_PARAMS", {})
@@ -577,19 +578,23 @@ def run_autonomous_analysis():
                         for k, v in champ.items(): current_config[k] = v
                     current_config["LIVE_A_PROMOTION_DATE"] = datetime.now().strftime('%Y-%m-%d')
                     report_lines.append("♻️ <b>[챔피언 귀환]</b> CHAMP(C)가 미지의 데이터에서 최고 성적을 내어 복귀합니다.")
-                else:
-                    report_lines.append("🛡️ <b>[승격 기각 및 라이브 방어]</b> 새로운 룰들이 미지의 데이터(OOS)에서 기존 LIVE(A)를 압도하지 못해 기각되었습니다.")
+                    is_promoted = True # 💡 승격 활성화
 
+                # 👇👇 [V32.0 & V35.0 시너지] 국면별 금고 영구 저장 👇👇
                 if is_promoted:
-                    # 방금 승격되어 current_config에 적용된 새로운 파라미터들을 현재 국면 금고에 영구 박제
                     regime_key = current_config.get("LAST_ANALYSED_REGIME", "CHOP")
+                    # SL/TP 뿐만 아니라 V35.0에서 자율 도출된 임계값들까지 통째로 기억소에 저장하여 '기억 상실' 원천 차단
                     current_config[f"{regime_key}_CHAMPION_PARAMS"] = {
-                        "DYNAMIC_MAE_SL": current_config.get("DYNAMIC_MAE_SL", -3.5),
-                        "DYNAMIC_MFE_TP": current_config.get("DYNAMIC_MFE_TP", 10.0),
-                        "TREE_FATAL_CPV": current_config.get("TREE_FATAL_CPV", 0.85)
+                        "DYNAMIC_MAE_SL": current_config.get("DYNAMIC_MAE_SL"),
+                        "DYNAMIC_MFE_TP": current_config.get("DYNAMIC_MFE_TP"),
+                        "TREE_FATAL_CPV": current_config.get("TREE_FATAL_CPV"),
+                        "DYNAMIC_ALPHA_LIMIT": current_config.get("DYNAMIC_ALPHA_LIMIT"),
+                        "DYNAMIC_TRAP_LIMIT": current_config.get("DYNAMIC_TRAP_LIMIT"),
+                        "DYNAMIC_DTW_LIMIT": current_config.get("DYNAMIC_DTW_LIMIT")
                     }
-                    report_lines.append(f"🗳️ <b>[기억소 갱신]</b> 방금 승격된 룰이 {regime_key} 국면의 새로운 황금 파라미터로 영구 저장되었습니다.")
-
+                    report_lines.append(f"🗳️ <b>[기억소 갱신]</b> {regime_key} 국면의 모든 최적화 파라미터가 금고에 저장되었습니다.")
+                # 👆👆 [시너지 강화 끝] 👆👆
+                
                 # 💡 [오답 노트 추출] 패배한 케이스의 공통점 (오답 분석은 전체 표본 사용)
                 losers = df[df[winner_key] < 0]
                 if len(losers) >= 5:
