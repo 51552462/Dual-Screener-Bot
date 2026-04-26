@@ -136,16 +136,20 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
     sig_type = f"{sig_type} {track_tag}"
 
-    # 👇👇 [추가] V22.0 7D DNA 실시간 유도탄 (코사인 유사도 매칭) 👇👇
+    # 👇👇 [추가] V22.0 & V33.0 7D DNA 실시간 Z-Score 매칭 👇👇
     try:
         sys_config = load_system_config()
         table_name = f"{market}_{code_str}"
-        hist_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
+        idx_table = 'US_SPY' if market == 'US' else 'KR_KOSDAQ_IDX'
         
-        if len(hist_df) >= 150:
+        hist_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
+        idx_df = pd.read_sql(f"SELECT * FROM {idx_table} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
+        
+        if len(hist_df) >= 150 and len(idx_df) >= 150:
             c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
+            idx_c = idx_df['Close'].values
             
-            # 실시간 7D 벡터 연산 (관제탑의 Engine 4.8과 동일한 로직)
+            # 1. Raw 7D 연산
             cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
             v_ma20 = pd.Series(v).rolling(20).mean().values
             tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
@@ -158,7 +162,16 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
             ma_conv = (max(emas) - min(emas)) / min(emas) * 100
             
-            new_vec = np.array([cpv, tb, bbe, rs_slope, vcp_ratio, vol_flow, ma_conv])
+            # 2. 💡 [V33.0] Z-Score 횡단면 정규화 적용
+            idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
+            idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252)
+            safe_vol = idx_vol if idx_vol > 0.1 else 1.0
+            
+            z_rs = (rs_slope - idx_rs) / safe_vol
+            z_bbe = bbe / safe_vol
+            
+            # 정규화된 텐서로 재결합
+            new_vec = np.array([cpv, tb, z_bbe, z_rs, vcp_ratio, vol_flow, ma_conv])
             new_vec = np.nan_to_num(new_vec)
             
             def cosine_sim(a, b):
@@ -177,12 +190,12 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             max_trap = max(trap_sims) if trap_sims else 0
             max_alpha = max(alpha_sims) if alpha_sims else 0
             
-            # 🛡️ 페일세이프: 참사주 DNA와 85% 이상 일치하면 무조건 기각
+            # 🛡️ 페일세이프 (기준 유지)
             if max_trap >= 0.85 and max_trap > max_alpha:
                 conn.close()
-                return False, f"🚨 [DNA 방어막] 과거 참사주 DNA와 {max_trap*100:.1f}% 일치하여 매수 강제 기각"
+                return False, f"🚨 [DNA 방어막] 과거 참사주(Z-Score) 패턴과 {max_trap*100:.1f}% 일치하여 매수 강제 기각"
             
-            # 🚀 슈퍼 부스트: 대장주 DNA와 85% 이상 일치하면 시그널 태그 강화
+            # 🚀 슈퍼 부스트
             if max_alpha >= 0.85:
                 sig_type += f" [🌟DNA {max_alpha*100:.0f}% 일치]"
     except Exception as e:
