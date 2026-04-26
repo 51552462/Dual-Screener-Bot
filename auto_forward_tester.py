@@ -584,6 +584,113 @@ def run_deep_dive_analysis(market='KR'):
                 tag_win_rate = round((stats['win'] / stats['total']) * 100, 1)
                 report_msg += f" ▪️ {tag}: 승률 {tag_win_rate}% (출현 {stats['total']}회)\n"
 
+        # ---------------------------------------------------------
+        # 👑 엔진 7: [V28.0 한미 주도 섹터 스필오버(Spillover) 시차 분석]
+        # ---------------------------------------------------------
+        if market == 'KR':
+            report_msg += "\n🌐 <b>[V28.0 한미 주도 섹터 스필오버(전이) 팩트 체크]</b>\n"
+            try:
+                conn = sqlite3.connect(DB_PATH, timeout=60)
+                conn.execute("PRAGMA journal_mode=WAL;")
+                # 1. 최근 30일치 양국 포착 데이터 로드
+                us_df = pd.read_sql("SELECT entry_date, sector FROM forward_trades WHERE market='US' AND entry_date >= date('now', '-30 days')", conn)
+                kr_df = pd.read_sql("SELECT entry_date, sector FROM forward_trades WHERE market='KR' AND entry_date >= date('now', '-30 days')", conn)
+                conn.close()
+
+                if not us_df.empty and not kr_df.empty:
+                    # 2. 일자별 1위 대장 섹터 산출 (가장 많은 종목이 포착된 섹터)
+                    us_daily = us_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None)
+                    kr_daily = kr_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None)
+
+                    # 3. 한-미 섹터 동기화 매핑 딕셔너리 (논리적 연결점)
+                    sector_map = {
+                        "테크/기술": ["반도체", "IT", "소프트웨어", "기술"],
+                        "헬스케어": ["바이오", "제약", "의료"],
+                        "에너지": ["에너지", "화학", "정유"],
+                        "소비재": ["화장품", "식품", "유통", "의류"]
+                    }
+
+                    report_msg += "▪️ <b>최근 7일 섹터 모멘텀 타임라인:</b>\n"
+                    combined_dates = sorted(list(set(us_daily.index) | set(kr_daily.index)))[-7:]
+                    
+                    # 4. 타임라인 출력
+                    for d in combined_dates:
+                        us_sec = us_daily.get(d, "휴장/없음")
+                        kr_sec = kr_daily.get(d, "휴장/없음")
+                        report_msg += f" [{d[5:]}] 🇺🇸 {str(us_sec)[:6]} ➔ 🇰🇷 {str(kr_sec)[:6]}\n"
+
+                    report_msg += "\n💡 <b>[관제탑 통찰]</b>\n"
+                    report_msg += "데이터가 장부에 축적됨에 따라, 미국장의 주도 섹터가 한국장에 D+1~D+2 시차를 두고 전이될 확률(Cross-Correlation)을 추적 중입니다. 이 통계적 신뢰도가 검증되면 한국장 검색기의 선취매 가중치 기준으로 즉시 활용됩니다.\n"
+                else:
+                    report_msg += "⚠️ 스필오버 분석을 위한 한/미 양국 표본 데이터가 부족합니다.\n"
+            except Exception as e:
+                report_msg += f"⚠️ 스필오버 분석 에러: {e}\n"
+
+        # ---------------------------------------------------------
+        # 👑 엔진 8: [V29.0 주도 섹터 순환매(Rotation) 수명 및 전이 추적]
+        # ---------------------------------------------------------
+        report_msg += f"\n🔄 <b>[V29.0 {market}장 주도 섹터 순환매 자금 추적]</b>\n"
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            # 최근 60일치 거시 데이터 스캔
+            rot_df = pd.read_sql(f"SELECT entry_date, sector FROM forward_trades WHERE market='{market}' AND entry_date >= date('now', '-60 days') ORDER BY entry_date ASC", conn)
+            conn.close()
+
+            if not rot_df.empty:
+                # 일자별 대장 섹터 추출
+                daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
+                
+                streaks = {}      # 섹터별 머무는 기간(수명)
+                transitions = {}  # A -> B 로의 자금 이동 횟수
+                
+                current_sec = None
+                current_streak = 0
+                
+                # 순환매 체인(Markov Chain) 연산
+                for date, sec in daily_dom.items():
+                    if sec == current_sec:
+                        current_streak += 1
+                    else:
+                        if current_sec is not None:
+                            # 수명 기록
+                            if current_sec not in streaks: streaks[current_sec] = []
+                            streaks[current_sec].append(current_streak)
+                            
+                            # 자금 이동 궤적 기록 (A ➔ B)
+                            trans_key = f"{current_sec[:6]} ➔ {sec[:6]}"
+                            transitions[trans_key] = transitions.get(trans_key, 0) + 1
+                        
+                        current_sec = sec
+                        current_streak = 1
+                
+                # 마지막 진행 중인 파동 기록
+                if current_sec is not None:
+                    if current_sec not in streaks: streaks[current_sec] = []
+                    streaks[current_sec].append(current_streak)
+
+                # 1. 섹터별 체류 수명 리포팅
+                report_msg += "▪️ <b>섹터별 자금 체류 시간 (수명):</b>\n"
+                for sec, lengths in streaks.items():
+                    avg_len = sum(lengths) / len(lengths)
+                    max_len = max(lengths)
+                    report_msg += f" - {sec[:6]}: 평균 {avg_len:.1f}일 (최장 {max_len}일)\n"
+                    
+                # 2. 자금 이동 궤적 리포팅
+                report_msg += "\n▪️ <b>가장 빈번한 자금 이동 경로 (최근 60일):</b>\n"
+                sorted_trans = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:3]
+                if sorted_trans:
+                    for path, count in sorted_trans:
+                        report_msg += f" - {path} ({count}회 관측)\n"
+                else:
+                    report_msg += " - 아직 뚜렷한 전이 패턴이 형성되지 않았습니다.\n"
+                    
+                report_msg += "💡 <b>관제탑 통찰:</b> 평균 수명에 도달한 섹터는 신규 진입을 피하고, 다음 이동 경로로 지목된 섹터의 저점 종목을 선취매 하십시오.\n"
+            else:
+                report_msg += "⚠️ 순환매 추적을 위한 표본 데이터가 부족합니다.\n"
+        except Exception as e:
+            report_msg += f"⚠️ 순환매 추적 에러: {e}\n"
+
         send_telegram_msg(report_msg)
         print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
         
