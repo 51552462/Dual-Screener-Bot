@@ -147,6 +147,34 @@ def run_autonomous_analysis():
     report_lines.append(f"<b>[1. 동적 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime}\n▪️ <b>동적 룩백: {vix_status}</b>\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
 
     # ---------------------------------------------------------
+    # 🛡️ 엔진 1.7.5: [V45.0 DNA 변위(Drift) 감지 선제적 방어막]
+    # ---------------------------------------------------------
+    report_lines.append("\n<b>[1.7.5 DNA 변위 기반 선제적 국면 검증]</b>")
+    dna_drift_warning = False
+    
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        # 최근 진입한 10개 종목의 DNA 매칭 성적과 참사주 일치도 데이터 로드
+        recent_dna_df = pd.read_sql("SELECT entry_cos_score, entry_dtw_score FROM forward_trades ORDER BY id DESC LIMIT 10", conn)
+        conn.close()
+        
+        if len(recent_dna_df) >= 5:
+            avg_alpha_sim = recent_dna_df['entry_cos_score'].mean()
+            # 💡 핵심 로직: 지수가 BULL(상승장)이어도 종목들의 대장주 DNA 일치율이 
+            # 갑자기 60% 밑으로 떨어지거나, 참사주 냄새가 짙어지면 'DNA 변위'로 간주
+            if avg_alpha_sim < 0.65:
+                dna_drift_warning = True
+                report_lines.append(f"🚨 <b>[DNA 변위 감지]</b> 지수는 상승장이나 포착 종목의 대장주 일치율이 {avg_alpha_sim*100:.1f}%로 급감했습니다.")
+                report_lines.append("⚠️ <b>조치:</b> 지수 판독 결과를 무시하고 '방어(CHOP)' 모드로 선제 전환합니다.")
+    except: pass
+
+    # 국면 판독 결과 강제 보정 (지수보다 DNA 우선)
+    if dna_drift_warning and "Bull" in regime:
+        regime = "Chop (DNA 변위로 인한 선제적 방어)"
+        w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
+    # 👆👆 [V45.0 엔진 끝] 👆👆
+
+    # ---------------------------------------------------------
     # 👑 엔진 1.8: [V32.0 국면별 독립 기억소(Regime Memory) 로드]
     # ---------------------------------------------------------
     regime_key = "BULL" if "Bull" in regime else ("BEAR" if "극단적" in regime else "CHOP")
@@ -413,15 +441,33 @@ def run_autonomous_analysis():
                     emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
                     ma_conv = (max(emas) - min(emas)) / min(emas) * 100
                     
-                    # 2. 💡 [V33.0] Z-Score 정규화 (시장 인플레이션 제거)
-                    # 벤치마크 수익률(Mean) 및 변동성(StdDev) 추출
+                    # 2. 💡 [V46.0] 비대칭 Z-Score 정규화 (하락장 초과 강도 프리미엄 주입)
                     idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
-                    idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252) # 연율화 변동성 프록시
+                    idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252)
                     safe_vol = idx_vol if idx_vol > 0.1 else 1.0
                     
-                    # 극심한 인플레이션을 겪는 지표(RS, BBE)를 시장 베이스라인으로 Z-Score 치환
-                    z_rs = (rs_slope - idx_rs) / safe_vol
-                    z_bbe = bbe / safe_vol  # 에너지는 시장 변동성 대비 비율로 스케일링
+                    excess_return = rs_slope - idx_rs
+                    
+                    # 👇👇 [핵심] 시장이 하락(idx_rs < 0)하는데 종목이 덜 빠졌거나 올랐다면 프리미엄 부여
+                    defiance_premium = 0.0
+                    if idx_rs < 0 and excess_return > 0:
+                        # 시장이 빠진 폭의 1.5배를 프리미엄으로 얹어 하락장 방어 팩트를 극대화
+                        defiance_premium = abs(idx_rs) * 1.5 
+                    
+                    z_rs = (excess_return + defiance_premium) / safe_vol
+                    z_bbe = bbe / safe_vol
+
+                    # 👇👇 [V45.0] 국면별 대표 DNA 시그니처 생성 👇👇
+        if alpha_count > 0:
+            regime_key = current_config.get("LAST_ANALYSED_REGIME", "CHOP")
+            # Alpha Rank 1의 벡터를 이 국면의 '대표 유전자'로 지정
+            regime_dna = current_config.get(f"DNA_ALPHA_RANK1")
+            if regime_dna:
+                if f"{regime_key}_CHAMPION_PARAMS" not in current_config:
+                    current_config[f"{regime_key}_CHAMPION_PARAMS"] = {}
+                # 금고에 해당 국면의 챔피언 유전자 정보 박제
+                current_config[f"{regime_key}_CHAMPION_PARAMS"]["REPRESENTATIVE_DNA"] = regime_dna
+        # 👆👆 [V45.0 추가 끝] 👆👆
                     
                     # 정규화된 텐서 리턴
                     return {'name': row['name'], 'cpv': cpv, 'tb': tb, 'bbe': z_bbe, 'rs': z_rs, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv}
