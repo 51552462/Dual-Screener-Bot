@@ -249,7 +249,15 @@ def run_autonomous_analysis():
             
             n_trades = len(p_df)
             if n_trades < 5: 
-                return None # 표본 절대 부족
+                # 👇👇 [추가] V44.0 독성 시장(Toxic Market) 판독 👇👇
+                if n_trades > 0:
+                    toxic_wins = len(p_df[p_df['final_ret'] > 0])
+                    toxic_avg_ret = p_df['final_ret'].mean()
+                    # 단 1~4개의 표본이라도 전패(승률 0%)이거나, 평균 수익률이 -3% 이하라면
+                    if toxic_wins == 0 or toxic_avg_ret <= -3.0:
+                        return "TOXIC" # 단순 표본 부족이 아닌 시장 붕괴로 규정
+                return None # 순수한 표본 부족 (평화롭지만 타점이 안 온 상태)
+                # 👆👆 [추가 끝] 👆👆
             
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
@@ -303,45 +311,66 @@ def run_autonomous_analysis():
     
     report_lines.append("\n<b>[4. 다중 타임프레임 앙상블 및 신뢰도 컷오프]</b>")
     
-    # 💡 관제탑 텔레그램 피드백
-    if t14 == "NOISE": report_lines.append("🛡️ 14일 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
-    elif not t14: report_lines.append("▪️ 14일 데이터: 표본 부족으로 배제.")
-    
-    if t30 == "NOISE": report_lines.append("🛡️ 30일 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
-    elif not t30: report_lines.append("▪️ 30일 데이터: 표본 부족으로 배제.")
+    # 👇👇 [추가] V44.0 TOXIC 인터셉트 및 텔레그램 피드백 👇👇
+    is_toxic = False
+    for name, t_stat in zip(['14일', '30일', '60일'], [t14, t30, t60]):
+        if t_stat == "TOXIC":
+            report_lines.append(f"🚨 {name} 데이터: <b>[TOXIC 붕괴]</b> 표본은 극소수이나 전패/급락 상태입니다.")
+            is_toxic = True
+        elif t_stat == "NOISE": 
+            report_lines.append(f"🛡️ {name} 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
+        elif not t_stat: 
+            report_lines.append(f"▪️ {name} 데이터: 순수 표본 부족으로 배제.")
 
-    # NOISE나 None이 아닌 순수 유효 데이터만 필터링 (변수명 통일 완료)
-    valid = [s for s in [t14, t30, t60] if isinstance(s, dict)]
-    
-    if len(valid) >= 2:
-        # 단기 데이터가 있으면 가중 평균(5:3:2), 없으면 유효 데이터끼리 평균 적용
-        w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid)] * len(valid)
-        
-        ensemble_sl = sum(s['sl'] * w[i] for i, s in enumerate(valid))
-        ensemble_tp = sum(s['tp'] * w[i] for i, s in enumerate(valid))
-        ensemble_cpv = sum(s['fatal_cpv'] * w[i] for i, s in enumerate(valid))
-        # 💡 각 기간의 자율 커트라인을 하나로 블렌딩
-        ensemble_alpha = sum(s['alpha_limit'] * w[i] for i, s in enumerate(valid))
-        ensemble_trap = sum(s['trap_limit'] * w[i] for i, s in enumerate(valid))
-        ensemble_dtw = sum(s['dtw_limit'] * w[i] for i, s in enumerate(valid))
-        
+    # TOXIC 발동 시 앙상블 무시하고 '극단적 방어 모드' 후보군 강제 생성
+    if is_toxic:
+        report_lines.append("🚨 <b>[V44.0 독성 장세 세이프가드 발동]</b> 데이터 부족을 가장한 폭락장입니다. '기존 수치 유지'를 거부하고 최강 방어 파라미터를 강제 하달합니다.")
         if "CANDIDATE_PARAMS" not in current_config: 
             current_config["CANDIDATE_PARAMS"] = {}
         
         current_config["CANDIDATE_PARAMS"] = {
-            "DYNAMIC_MAE_SL": round(ensemble_sl, 2),
-            "DYNAMIC_MFE_TP": round(ensemble_tp, 2),
-            "TREE_FATAL_CPV": round(ensemble_cpv, 2),
-            "DYNAMIC_ALPHA_LIMIT": round(ensemble_alpha, 3), # 💡 자율 합격선 JSON 전송
-            "DYNAMIC_TRAP_LIMIT": round(ensemble_trap, 3),   # 💡 자율 방어선 JSON 전송
-            "DYNAMIC_DTW_LIMIT": round(ensemble_dtw, 3)      # 💡 자율 궤적거리 JSON 전송
+            "DYNAMIC_MAE_SL": -2.5,       # 💡 손절선을 -2.5%로 바짝 당겨 철통 방어
+            "DYNAMIC_MFE_TP": 10.0,
+            "TREE_FATAL_CPV": 0.70,       # 💡 윗꼬리 허용치 대폭 축소 (0.7 이상 무조건 기각)
+            "DYNAMIC_ALPHA_LIMIT": 0.85,  # 💡 대장주 DNA와 85% 이상 똑같아야만 진입
+            "DYNAMIC_TRAP_LIMIT": 0.70,   # 💡 참사주 냄새만 나도 기각
+            "DYNAMIC_DTW_LIMIT": 1.5      # 💡 궤적이 1.5 이하로 거의 완벽하게 똑같아야 통과
         }
-        
-        report_lines.append(f"▪️ 앙상블 손절/익절 후보(B): <b>{round(ensemble_sl, 2)}% / {round(ensemble_tp, 2)}%</b>")
-        report_lines.append(f"▪️ 앙상블 기각 CPV 후보(B): <b>{round(ensemble_cpv, 2)}</b> (대기실 격리)")
-        report_lines.append("💡 팩트: 유효한 데이터만을 블렌딩하여 안정적인 후보군을 생성했습니다.")
+        report_lines.append("▪️ 앙상블 결과: <b>안전판 강제 생성 완료 (SL -2.5% / DNA 85%↑)</b>")
+
     else:
-        report_lines.append("⚠️ 앙상블을 위한 장기 데이터 표본이 부족하여 기존 수치 유지")
+        # NOISE나 None, TOXIC이 아닌 순수 유효 데이터만 필터링
+        valid = [s for s in [t14, t30, t60] if isinstance(s, dict)]
+        
+        if len(valid) >= 2:
+            # 단기 데이터가 있으면 가중 평균(5:3:2), 없으면 유효 데이터끼리 평균 적용
+            w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid)] * len(valid)
+            
+            ensemble_sl = sum(s['sl'] * w[i] for i, s in enumerate(valid))
+            ensemble_tp = sum(s['tp'] * w[i] for i, s in enumerate(valid))
+            ensemble_cpv = sum(s['fatal_cpv'] * w[i] for i, s in enumerate(valid))
+            ensemble_alpha = sum(s['alpha_limit'] * w[i] for i, s in enumerate(valid))
+            ensemble_trap = sum(s['trap_limit'] * w[i] for i, s in enumerate(valid))
+            ensemble_dtw = sum(s['dtw_limit'] * w[i] for i, s in enumerate(valid))
+            
+            if "CANDIDATE_PARAMS" not in current_config: 
+                current_config["CANDIDATE_PARAMS"] = {}
+            
+            current_config["CANDIDATE_PARAMS"] = {
+                "DYNAMIC_MAE_SL": round(ensemble_sl, 2),
+                "DYNAMIC_MFE_TP": round(ensemble_tp, 2),
+                "TREE_FATAL_CPV": round(ensemble_cpv, 2),
+                "DYNAMIC_ALPHA_LIMIT": round(ensemble_alpha, 3), 
+                "DYNAMIC_TRAP_LIMIT": round(ensemble_trap, 3),   
+                "DYNAMIC_DTW_LIMIT": round(ensemble_dtw, 3)      
+            }
+            
+            report_lines.append(f"▪️ 앙상블 손절/익절 후보(B): <b>{round(ensemble_sl, 2)}% / {round(ensemble_tp, 2)}%</b>")
+            report_lines.append(f"▪️ 앙상블 기각 CPV 후보(B): <b>{round(ensemble_cpv, 2)}</b> (대기실 격리)")
+            report_lines.append("💡 팩트: 유효한 데이터만을 블렌딩하여 안정적인 후보군을 생성했습니다.")
+        else:
+            report_lines.append("⚠️ 앙상블을 위한 장기 데이터 표본이 부족하여 기존 수치 유지")
+    # 👆👆 [수정 끝] 👆👆
 
     # ---------------------------------------------------------
     # 👑 엔진 4.8: [Multi-Centroid DNA] 대장주 & 참사주 Top 3 독립 궤적 추출 (7D 텐서)
