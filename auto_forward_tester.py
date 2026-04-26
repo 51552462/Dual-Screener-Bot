@@ -196,7 +196,17 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
             idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252)
             safe_vol = idx_vol if idx_vol > 0.1 else 1.0
-            new_vec = np.nan_to_num(np.array([cpv, tb, bbe/safe_vol, (rs_slope-idx_rs)/safe_vol, vcp_ratio, vol_flow, ma_conv]))
+            
+            # 👇👇 [추가] V46.0 실시간 하락장 방어 프리미엄 주입 👇👇
+            excess_return = rs_slope - idx_rs
+            defiance_premium = 0.0
+            if idx_rs < 0 and excess_return > 0:
+                defiance_premium = abs(idx_rs) * 1.5
+            
+            z_rs = (excess_return + defiance_premium) / safe_vol
+            # 👆👆 [추가 끝] 👆👆
+            
+            new_vec = np.nan_to_num(np.array([cpv, tb, bbe/safe_vol, z_rs, vcp_ratio, vol_flow, ma_conv]))
             
             # 2. [V34.0] 가격 궤적(Shape) 압축
             c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
