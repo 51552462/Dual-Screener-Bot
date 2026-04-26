@@ -490,16 +490,11 @@ def track_daily_positions(market):
                     elif is_tech_exit: 
                         do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
 
+
             # 5. DB 업데이트 실행 (청산 시)
             if do_exit:
                 # 💡 [핵심] 최종 수익률(ret)은 희망회로 종가(c)가 아니라 '실제 증권사가 던진 가격(actual_exit_price)' 기반으로 계산
                 ret = round(((actual_exit_price - ep) / ep) * 100, 2)
-                mfe = round(((new_max - ep) / ep) * 100, 2)
-            # 👆👆 [수정 끝] 👆👆
-
-            # 5. DB 업데이트 실행 (청산 시)
-            if do_exit:
-                ret = round(((c - ep) / ep) * 100, 2)
                 mfe = round(((new_max - ep) / ep) * 100, 2)
                 
                 tags = []
