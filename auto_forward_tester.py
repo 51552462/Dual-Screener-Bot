@@ -66,6 +66,13 @@ def init_forward_db():
         except: pass
     # 👆👆 [추가 끝] 👆👆
 
+    # 👇👇 [추가] V35.0 자율 조율을 위한 진입 시점 DNA/DTW 채점표 박제 👇👇
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN entry_cos_score REAL DEFAULT 0.0")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN entry_dtw_score REAL DEFAULT 99.0")
+    except: pass
+    # 👆👆 [추가 끝] 👆👆
+
     conn.commit()
     conn.close()
 
@@ -136,7 +143,10 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
     sig_type = f"{sig_type} {track_tag}"
 
-    # 👇👇 [추가] V22.0 & V33.0 7D DNA 실시간 Z-Score 매칭 👇👇
+    # 👇👇 [수정] V34.0 DTW 투트랙 + V35.0 동적 커트라인 자율 매칭 👇👇
+    max_alpha_cos, min_alpha_dtw = 0.0, 99.0
+    max_trap_cos, min_trap_dtw = 0.0, 99.0
+    
     try:
         sys_config = load_system_config()
         table_name = f"{market}_{code_str}"
@@ -149,7 +159,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
             idx_c = idx_df['Close'].values
             
-            # 1. Raw 7D 연산
+            # 1. 7D Z-Score 연산 (기존 유지)
             cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
             v_ma20 = pd.Series(v).rolling(20).mean().values
             tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
@@ -162,45 +172,63 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
             ma_conv = (max(emas) - min(emas)) / min(emas) * 100
             
-            # 2. 💡 [V33.0] Z-Score 횡단면 정규화 적용
             idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
             idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252)
             safe_vol = idx_vol if idx_vol > 0.1 else 1.0
+            new_vec = np.nan_to_num(np.array([cpv, tb, bbe/safe_vol, (rs_slope-idx_rs)/safe_vol, vcp_ratio, vol_flow, ma_conv]))
             
-            z_rs = (rs_slope - idx_rs) / safe_vol
-            z_bbe = bbe / safe_vol
-            
-            # 정규화된 텐서로 재결합
-            new_vec = np.array([cpv, tb, z_bbe, z_rs, vcp_ratio, vol_flow, ma_conv])
-            new_vec = np.nan_to_num(new_vec)
-            
+            # 2. [V34.0] 가격 궤적(Shape) 압축
+            c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
+            new_shape = np.mean(np.array_split(c_norm, 20), axis=1)
+
+            # 3. [V34.0] 순수 파이썬 DTW 
+            def calc_dtw(s, t):
+                n, m = len(s), len(t)
+                dtw = np.full((n+1, m+1), np.inf)
+                dtw[0, 0] = 0
+                for i in range(1, n+1):
+                    for j in range(1, m+1):
+                        cost = abs(s[i-1] - t[j-1])
+                        dtw[i, j] = cost + min(dtw[i-1, j], dtw[i, j-1], dtw[i-1, j-1])
+                return dtw[n, m]
+
             def cosine_sim(a, b):
-                norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
-                return np.dot(a, b) / (norm_a * norm_b) if norm_a > 0 and norm_b > 0 else 0
+                n_a, n_b = np.linalg.norm(a), np.linalg.norm(b)
+                return np.dot(a, b) / (n_a * n_b) if n_a > 0 and n_b > 0 else 0
                 
-            trap_sims, alpha_sims = [], []
+            # 투트랙 대조 (Cosine + DTW)
             for k, v_dict in sys_config.items():
-                if "DNA_TRAP" in k and isinstance(v_dict, dict):
-                    t_vec = np.array([v_dict.get('cpv',0), v_dict.get('tb',0), v_dict.get('bbe',0), v_dict.get('rs',0), v_dict.get('vcp',0), v_dict.get('vol',0), v_dict.get('ma',0)])
-                    trap_sims.append(cosine_sim(new_vec, np.nan_to_num(t_vec)))
-                elif "DNA_ALPHA" in k and isinstance(v_dict, dict):
-                    a_vec = np.array([v_dict.get('cpv',0), v_dict.get('tb',0), v_dict.get('bbe',0), v_dict.get('rs',0), v_dict.get('vcp',0), v_dict.get('vol',0), v_dict.get('ma',0)])
-                    alpha_sims.append(cosine_sim(new_vec, np.nan_to_num(a_vec)))
+                if isinstance(v_dict, dict) and 'shape' in v_dict:
+                    t_vec = np.nan_to_num(np.array([v_dict.get('cpv',0), v_dict.get('tb',0), v_dict.get('bbe',0), v_dict.get('rs',0), v_dict.get('vcp',0), v_dict.get('vol',0), v_dict.get('ma',0)]))
+                    t_shape = np.array(v_dict.get('shape'))
                     
-            max_trap = max(trap_sims) if trap_sims else 0
-            max_alpha = max(alpha_sims) if alpha_sims else 0
+                    cos_score = cosine_sim(new_vec, t_vec)
+                    dtw_dist = calc_dtw(new_shape, t_shape)
+                    
+                    if "DNA_TRAP" in k:
+                        max_trap_cos = max(max_trap_cos, cos_score)
+                        min_trap_dtw = min(min_trap_dtw, dtw_dist)
+                    elif "DNA_ALPHA" in k:
+                        max_alpha_cos = max(max_alpha_cos, cos_score)
+                        min_alpha_dtw = min(min_alpha_dtw, dtw_dist)
             
-            # 🛡️ 페일세이프 (기준 유지)
-            if max_trap >= 0.85 and max_trap > max_alpha:
-                conn.close()
-                return False, f"🚨 [DNA 방어막] 과거 참사주(Z-Score) 패턴과 {max_trap*100:.1f}% 일치하여 매수 강제 기각"
+            # 💡 [V35.0] 관제탑이 하달한 동적 커트라인 로드 (하드코딩 삭제)
+            dyn_cos_limit = sys_config.get("DYNAMIC_ALPHA_LIMIT", 0.75) # 자율 코사인 합격선
+            dyn_trap_limit = sys_config.get("DYNAMIC_TRAP_LIMIT", 0.75) # 자율 참사주 방어선
+            dyn_dtw_limit = sys_config.get("DYNAMIC_DTW_LIMIT", 2.5)    # 자율 궤적 허용 거리
+
+            # 🛡️ 페일세이프 (내부수급과 궤적이 모두 자율 방어선을 넘었을 때만 기각)
+            if max_trap_cos >= dyn_trap_limit and min_trap_dtw <= dyn_dtw_limit:
+                if max_trap_cos > max_alpha_cos:
+                    conn.close()
+                    return False, f"🚨 [자율 투트랙 방어막] 세력의 시간끌기(DTW:{min_trap_dtw:.1f}) 및 내부수급(Cos:{max_trap_cos*100:.0f}%) 일치. 매수 기각"
             
             # 🚀 슈퍼 부스트
-            if max_alpha >= 0.85:
-                sig_type += f" [🌟DNA {max_alpha*100:.0f}% 일치]"
+            if max_alpha_cos >= dyn_cos_limit and min_alpha_dtw <= dyn_dtw_limit:
+                sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
     except Exception as e:
-        print(f"DNA 벡터 매칭 에러: {e}")
-    # 👆👆 [추가 끝] 👆👆
+        print(f"하이브리드 벡터 매칭 에러: {e}")
+    # 👆👆 [수정 끝] 👆👆
 
     # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
     cur_breadth = 1.0
@@ -212,16 +240,17 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
-    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V24.0 시장 폭 컬럼 추가 반영)
+    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V35.0 채점표 추가)
     cursor.execute('''
         INSERT INTO forward_trades 
-        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         today_str, market, code_str, name, sector, sig_type, tier_label, score,
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
-        ep, ep, round(cur_breadth, 3), round(cur_breadth, 3)
+        ep, ep, round(cur_breadth, 3), round(cur_breadth, 3),
+        round(max_alpha_cos, 3), round(min_alpha_dtw, 3) # 💡 V35.0 자율 학습용 채점표 기록
     ))
     conn.commit()
     conn.close()
