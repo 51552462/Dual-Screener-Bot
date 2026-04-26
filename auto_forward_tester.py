@@ -165,6 +165,9 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     max_alpha_cos, min_alpha_dtw = 0.0, 99.0
     max_trap_cos, min_trap_dtw = 0.0, 99.0
     
+    # 💡 [버그 픽스] 안전 변수 초기화 (에러 시 DB 엉킴 원천 방지)
+    entry_atr, invest_amount, shares, sim_kelly_invest = 0.0, 0, 0, 0
+    
     try:
         sys_config = load_system_config()
         table_name = f"{market}_{code_str}"
@@ -244,37 +247,34 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             # 🚀 슈퍼 부스트
             if max_alpha_cos >= dyn_cos_limit and min_alpha_dtw <= dyn_dtw_limit:
                 sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
-    except Exception as e:
-        print(f"하이브리드 벡터 매칭 에러: {e}")
-    # 👆👆 [수정 끝] 👆👆
 
-    # 👇👇 [추가] V38.0 리스크 패리티 포지션 사이징 연산 👇👇
-            # 1. 진입 시점의 14일 ATR 실시간 연산
+            # 👇👇 [들여쓰기 픽스 완료] 리스크 패리티 연산은 반드시 try 블록 안에 있어야 합니다 👇👇
             hist_df['prev_c'] = hist_df['Close'].shift(1)
             hist_df['tr'] = np.maximum(hist_df['High'] - hist_df['Low'], np.maximum(abs(hist_df['High'] - hist_df['prev_c']), abs(hist_df['Low'] - hist_df['prev_c'])))
             hist_df['atr'] = hist_df['tr'].ewm(span=14, adjust=False).mean()
             entry_atr = float(hist_df['atr'].iloc[-1])
 
-            # 2. 관제탑 승수 로드 및 Risk Distance(손절폭) 산출
             opt_sl_atr = sys_config.get(f"{market}_MASTER_S1_ATR_SL", 2.0)
             sl_price = ep - (opt_sl_atr * entry_atr)
-            risk_distance = ep - sl_price # 1주당 감당해야 할 손실 금액
+            risk_distance = ep - sl_price
 
-            # 3. 매수 수량 및 투입 금액 역산 (투트랙: 고정 vs 동적 켈리)
             account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
-            fixed_risk_pct = 0.02 # 기존 고정 2% 룰
-            kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) # V39.0 관제탑 하달 켈리 리스크
+            fixed_risk_pct = 0.02 
+            kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) 
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
             if risk_distance > 0:
-                # 트랙 A: 고정 2%
                 shares = int((account_size * fixed_risk_pct) / risk_distance)
                 invest_amount = shares * ep
-                # 트랙 B: 국면 연동 동적 켈리
                 k_shares = int((account_size * kelly_risk_pct) / risk_distance)
                 sim_kelly_invest = k_shares * ep
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
+            # 👆👆 [수정 끝] 👆👆
+
+    except Exception as e:
+        print(f"하이브리드 벡터 매칭 에러: {e}")
+    # 👆👆 [try 블록 완전 종료] 👆👆
 
     # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
     cur_breadth = 1.0
@@ -794,7 +794,6 @@ def run_deep_dive_analysis(market='KR'):
                 report_msg += "⚠️ 순환매 추적을 위한 표본 데이터가 부족합니다.\n"
         except Exception as e:
             report_msg += f"⚠️ 순환매 추적 에러: {e}\n"
-
         send_telegram_msg(report_msg)
         print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
         
