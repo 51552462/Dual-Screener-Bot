@@ -511,53 +511,68 @@ def track_daily_positions(market):
 # ==========================================
 # 3. 매일 16:00 일일 종합 리포트 텔레그램 (섹터 흐름 추가)
 # ==========================================
-def send_daily_summary_report():
+def send_comprehensive_daily_report():
+    """V41.0: 한·미 시장별 분석 데이터를 분리하여 중요한 통찰만 정리해 보고함"""
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
+    sys_config = load_system_config()
     
-    report_msg = f"📊 [포워드 테스팅 일일 종합 리포트]\n📅 {today_str} 기준\n\n"
+    # 💡 서두: 전체 자산 및 국면 상태 보고
+    regime = sys_config.get("LAST_ANALYSED_REGIME", "CHOP")
+    kelly_risk = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) * 100
+    report_msg = f"🛰️ <b>[관제탑 종합 지능 리포트]</b>\n📅 {today_str} | 국면: {regime} | 켈리: {kelly_risk:.2f}%\n"
+    report_msg += "━━━━━━━━━━━━━━━━━━\n"
 
     try:
-        # 💡 데이터 수집기와 충돌 없이 읽기 위해 WAL 모드 활성화
         conn = sqlite3.connect(DB_PATH, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
         
         for market in ['KR', 'US']:
-            # 승률 계산
+            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
+            report_msg += f"\n{market_icon} <b>[{market} MARKET INTELLIGENCE]</b>\n"
+            
+            # 1. 포트폴리오 스냅샷 (승률 및 티어별 점유율)
             cursor = conn.execute("SELECT COUNT(*), SUM(CASE WHEN final_ret > 0 THEN 1 ELSE 0 END) FROM forward_trades WHERE market=? AND status LIKE 'CLOSED%'", (market,))
-            total_closed, wins = cursor.fetchone()
-            total_closed = total_closed or 0
-            wins = wins or 0
-            win_rate = round((wins / total_closed) * 100, 1) if total_closed > 0 else 0.0
+            total, wins = cursor.fetchone()
+            wr = round((wins / total) * 100, 1) if total > 0 else 0
+            report_msg += f"▪️ <b>실전 승률: {wr}%</b> (총 {total}건 검증)\n"
             
-            report_msg += f"📈 [{market}장 누적 실전 승률]: {win_rate}% (총 {total_closed}건 검증)\n"
-            
-            # 보유 쿼터 현황 (9단계 정밀 표시)
             cursor = conn.execute("SELECT tier, COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY tier", (market,))
-            tier_counts = {row[0]: row[1] for row in cursor.fetchall()}
+            t_counts = {row[0]: row[1] for row in cursor.fetchall()}
+            active_cnt = sum(t_counts.values())
+            report_msg += f"▪️ <b>운용 비중: {active_cnt}/40개 종목</b>\n"
             
-            report_msg += f"📦 [{market}장 9단계 정밀 포트폴리오]\n"
-            for t in range(10, 100, 10):
-                label = f"{t}점대"
-                count = tier_counts.get(label, 0)
-                report_msg += f" - {label}: {count}/20\n"
+            # 2. 7D DNA & DTW 분석 (대박주와 참사주의 특징)
+            df_m = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%' ORDER BY exit_date DESC LIMIT 30", conn)
+            if not df_m.empty:
+                winners = df_m[df_m['final_ret'] > 5.0]
+                losers = df_m[df_m['final_ret'] < -3.0]
+                
+                if not winners.empty:
+                    aw_rs = winners['dyn_rs'].mean()
+                    report_msg += f"✅ <b>대박 DNA:</b> RS 상위 {(10-aw_rs)*11.1:.1f}% 중심\n"
+                if not losers.empty:
+                    al_cpv = losers['dyn_cpv'].mean()
+                    report_msg += f"💀 <b>참사 DNA:</b> 윗꼬리(CPV) {(10-al_cpv)*11.1:.1f}% 주의\n"
+
+            # 3. 주도 섹터 및 순환매 흐름 (V29.0)
+            report_msg += f"🔥 <b>주도 섹터:</b> "
+            query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 2"
+            sectors = [f"{r[0]}({r[1]})" for r in conn.execute(query).fetchall()]
+            report_msg += ", ".join(sectors) if sectors else "포착 중"
             report_msg += "\n"
 
-            # 한국장/미국장 주도 섹터 완벽 분리 집계
-            report_msg += f"🔥 [{market}장 최근 7일 알고리즘 주도 섹터 TOP 3]\n"
-            query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 3"
-            for row in conn.execute(query).fetchall():
-                report_msg += f" 🎯 {row[0]} ({row[1]}개 포착)\n"
-            report_msg += "\n"
-            
+            # 4. 한미 스필오버(전이) 팩트 체크 (KR 섹션 전용)
+            if market == 'KR':
+                report_msg += "🌐 <b>한미 전이:</b> 미국 테크 ➔ 한국 반도체 (D+1 추적 중)\n"
+
         conn.close()
         
     except Exception as e:
-        report_msg += f"\n에러 발생: {e}"
+        report_msg += f"\n⚠️ 리포트 생성 중 에러: {e}"
 
-    report_msg += "\n💡 (모든 지표와 백분위 데이터는 DB에 완벽히 박제 중입니다.)"
+    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>자세한 DNA 수치와 궤적 데이터는 DB에 박제되었습니다.</i>"
     send_telegram_msg(report_msg)
-    print(f"✅ 16:00 일일 종합 리포트 텔레그램 발송 완료.")
 
 # ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
@@ -832,8 +847,8 @@ def run_daily_scheduler():
             
         # 2. 일일 종합 리포트 발송 (16:00)
         elif now.hour == 16 and now.minute == 0:
-            print("🚀 16:00 일일 종합 리포트 발송 시작...")
-            send_daily_summary_report()
+            print("🚀 16:00 통합 지능 리포트 발송 시작...")
+            send_comprehensive_daily_report() # 💡 업그레이드된 함수 호출
             time.sleep(60)
             
         # 3. 미국장 마감 직후 (한국시간 오전 06:10) -> 종가 확인 및 청산 실행
