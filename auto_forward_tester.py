@@ -73,6 +73,13 @@ def init_forward_db():
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
+    # 👇👇 [추가] V38.0 자본 기반 리스크 패리티 컬럼 👇👇
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN invest_amount REAL DEFAULT 0.0")
+    except: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN shares INTEGER DEFAULT 0")
+    except: pass
+    # 👆👆 [추가 끝] 👆👆
+
     conn.commit()
     conn.close()
 
@@ -230,6 +237,30 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         print(f"하이브리드 벡터 매칭 에러: {e}")
     # 👆👆 [수정 끝] 👆👆
 
+    # 👇👇 [추가] V38.0 리스크 패리티 포지션 사이징 연산 👇👇
+            # 1. 진입 시점의 14일 ATR 실시간 연산
+            hist_df['prev_c'] = hist_df['Close'].shift(1)
+            hist_df['tr'] = np.maximum(hist_df['High'] - hist_df['Low'], np.maximum(abs(hist_df['High'] - hist_df['prev_c']), abs(hist_df['Low'] - hist_df['prev_c'])))
+            hist_df['atr'] = hist_df['tr'].ewm(span=14, adjust=False).mean()
+            entry_atr = float(hist_df['atr'].iloc[-1])
+
+            # 2. 관제탑 승수 로드 및 Risk Distance(손절폭) 산출
+            opt_sl_atr = sys_config.get(f"{market}_MASTER_S1_ATR_SL", 2.0)
+            sl_price = ep - (opt_sl_atr * entry_atr)
+            risk_distance = ep - sl_price # 1주당 감당해야 할 손실 금액
+
+            # 3. 매수 수량 및 투입 금액 역산 (Inverse Volatility Sizing)
+            account_size = sys_config.get("ACCOUNT_SIZE", 20000000) # 💡 2,000만 원으로 수정
+            risk_pct = sys_config.get("RISK_PCT", 0.02)
+            max_loss_amount = account_size * risk_pct # 2천만 원의 2% = 40만 원
+
+            if risk_distance > 0:
+                shares = int(max_loss_amount / risk_distance)
+                invest_amount = shares * ep
+            else:
+                shares, invest_amount = 0, 0
+            # 👆👆 [추가 끝] 👆👆
+
     # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
     cur_breadth = 1.0
     try:
@@ -240,17 +271,18 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
-    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V35.0 채점표 추가)
+    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     cursor.execute('''
         INSERT INTO forward_trades 
-        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         today_str, market, code_str, name, sector, sig_type, tier_label, score,
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
-        ep, ep, round(cur_breadth, 3), round(cur_breadth, 3),
-        round(max_alpha_cos, 3), round(min_alpha_dtw, 3) # 💡 V35.0 자율 학습용 채점표 기록
+        ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
+        round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
+        round(entry_atr, 4), invest_amount, shares # 💡 V38.0 ATR 및 투입 금액/수량 기록
     ))
     conn.commit()
     conn.close()
