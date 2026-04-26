@@ -264,10 +264,14 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
             if risk_distance > 0:
-                shares = int((account_size * fixed_risk_pct) / risk_distance)
-                invest_amount = shares * ep
-                k_shares = int((account_size * kelly_risk_pct) / risk_distance)
-                sim_kelly_invest = k_shares * ep
+                # 👇👇 [V43.0 핵심] 판단과 실행의 완전 동기화 👇👇
+                # 1. 실전 API로 넘어갈 '진짜 매수 수량(shares)'을 관제탑의 동적 켈리 리스크로 산출
+                shares = int((account_size * kelly_risk_pct) / risk_distance)
+                sim_kelly_invest = shares * ep  # 켈리 기반 실제 투입 금액
+                
+                # 2. V39.0 딥 다이브 비교 엔진(고정 2% vs 켈리)을 위해 가상의 고정 투입금 유지
+                fixed_shares = int((account_size * fixed_risk_pct) / risk_distance)
+                invest_amount = fixed_shares * ep  
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
             # 👆👆 [수정 끝] 👆👆
