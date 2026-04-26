@@ -489,6 +489,18 @@ def run_autonomous_analysis():
         
         if alpha_count == 0: report_lines.append("▪️ 슈퍼 알파 표본 부족으로 대장주 궤적 추출 스킵")
 
+        # 👇👇 [V45.0 올바른 위치] 국면별 대표 DNA 시그니처 생성 👇👇
+        if alpha_count > 0:
+            regime_key = current_config.get("LAST_ANALYSED_REGIME", "CHOP")
+            # Alpha Rank 1의 벡터를 이 국면의 '대표 유전자'로 지정
+            regime_dna = current_config.get("DNA_ALPHA_RANK1")
+            if regime_dna:
+                if f"{regime_key}_CHAMPION_PARAMS" not in current_config:
+                    current_config[f"{regime_key}_CHAMPION_PARAMS"] = {}
+                # 금고에 해당 국면의 챔피언 유전자 정보 박제
+                current_config[f"{regime_key}_CHAMPION_PARAMS"]["REPRESENTATIVE_DNA"] = regime_dna
+        # 👆👆 [V45.0 추가 끝] 👆👆
+
         # 3. JSON에 Rank 1~3 독립 저장 (참사주)
         trap_count = 0
         for idx, row in enumerate(traps.iterrows(), 1):
