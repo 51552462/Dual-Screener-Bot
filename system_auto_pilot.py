@@ -36,7 +36,9 @@ def load_or_create_config():
     if not os.path.exists(CONFIG_PATH):
         default_config = {
             "ACTIVE_EXIT_MODE": "HYBRID",
-            "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0
+            "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
+            "ACCOUNT_SIZE": 20000000,   # 💡 2,000만 원 (수정됨)
+            "RISK_PCT": 0.02            # 💡 고정 리스크 2% (손절 시 최대 40만 원 타격)
         }
         with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
         return default_config
