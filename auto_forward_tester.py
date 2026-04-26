@@ -387,86 +387,101 @@ def track_daily_positions(market):
             # 4. ⚔️ 청산 아레나: MFE/MAE 및 관제탑 모드에 따른 수학적 사형 집행
             do_exit, exit_rsn, actual_exit_type = False, "", "HOLD"
             
-            # 현재 누적 수익률 계산
-            current_ret_pct = ((c - ep) / ep) * 100
+            # 👇👇 [수정] V42.0 장중 틱(Intraday) 모사 엔진 (낙관적 편향 제거) 👇👇
+            current_ret_pct = ((c - ep) / ep) * 100        # 종가 기준 수익률
+            low_ret_pct = ((l - ep) / ep) * 100            # 장중 최저 수익률 (손절 터치 감시용)
+            high_ret_pct = ((h - ep) / ep) * 100           # 장중 최고 수익률 (익절 터치 감시용)
             
-            # 👇👇 [추가] V15.0 ABC 토너먼트 병렬 연산 👇👇
+            # [V15.0 ABC 토너먼트 병렬 연산 (장중 손절 우선 반영)]
             abc_sets = {
-                'live_a': sys_config, # 루트 자체가 라이브(A)
-                'cand_b': sys_config.get("CANDIDATE_PARAMS", {}), # 대기실 후보(B)
-                'champ_c': sys_config.get("CHAMPION_PARAMS", {})  # 명예의 전당(C)
+                'live_a': sys_config,
+                'cand_b': sys_config.get("CANDIDATE_PARAMS", {}),
+                'champ_c': sys_config.get("CHAMPION_PARAMS", {})
             }
 
             for key, params in abc_sets.items():
                 if not params: continue
-                # 각 셋트에서 손절선(SL) 추출 (없으면 기본값 -3.5)
                 sl_limit = params.get("DYNAMIC_MAE_SL", -3.5)
                 
-                if current_ret_pct <= sl_limit:
+                # 💡 팩트: 종가(current_ret_pct)가 아니라 장중 저가(low_ret_pct)가 손절선을 건드렸는지 확인
+                if low_ret_pct <= sl_limit:
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=?, {key}_status=? WHERE id=?", (sl_limit, "CLOSED_LOSS", r['id']))
                 else:
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=? WHERE id=?", (current_ret_pct, r['id']))
 
-            # 👇👇 [추가] V17.0 청산 평행우주 (STAT 우선 vs TECH 우선) 가상 대결 👇👇
-            # 1. STAT 맹신 (MFE 도달 시 즉시 익절, 데드크로스 무시)
+            # [V17.0 청산 평행우주 대결 (STAT vs TECH)]
             if r.get('sim_stat_status', 'OPEN') == 'OPEN':
-                if current_ret_pct <= dyn_mae_sl:
+                if low_ret_pct <= dyn_mae_sl: # 장중 손절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
-                elif current_ret_pct >= dyn_mfe_tp:
+                elif high_ret_pct >= dyn_mfe_tp: # 장중 익절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
                 else:
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=? WHERE id=?", (current_ret_pct, r['id']))
 
-            # 2. TECH 맹신 (MFE 무시하고 데드크로스 날 때까지 무한 홀딩. 계좌 보호용 MAE만 유지)
             if r.get('sim_tech_status', 'OPEN') == 'OPEN':
-                if current_ret_pct <= dyn_mae_sl:
+                if low_ret_pct <= dyn_mae_sl:
                     conn.execute("UPDATE forward_trades SET sim_tech_ret=?, sim_tech_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
                 elif is_tech_exit:
                     conn.execute("UPDATE forward_trades SET sim_tech_ret=?, sim_tech_status='CLOSED_WIN' WHERE id=?", (current_ret_pct, r['id']))
                 else:
                     conn.execute("UPDATE forward_trades SET sim_tech_ret=? WHERE id=?", (current_ret_pct, r['id']))
-            # 👆👆 [추가 끝] 👆👆
 
-            # 👇👇 [추가] V24.0 시장 폭 필터링 실험 존 👇👇
+            # [V24.0 시장 폭 필터링 실험 존]
             if r.get('sim_breadth_status', 'OPEN') == 'OPEN':
                 e_breadth = r.get('entry_breadth', 1.0)
                 if pd.isna(e_breadth): e_breadth = 1.0
                 
-                # 🚨 [실험 룰] 진입 시 시장 폭이 0.97 미만(취약)이었다면 '기각'된 것으로 간주
                 if e_breadth < 0.97:
                     conn.execute("UPDATE forward_trades SET sim_breadth_status='FILTERED_OUT' WHERE id=?", (r['id'],))
                 else:
-                    if current_ret_pct <= dyn_mae_sl:
+                    if low_ret_pct <= dyn_mae_sl:
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
-                    elif current_ret_pct >= dyn_mfe_tp:
+                    elif high_ret_pct >= dyn_mfe_tp:
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
                     else:
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=? WHERE id=?", (current_ret_pct, r['id']))
-            # 👆👆 [추가 끝] 👆👆
 
-
-            
             # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
             dyn_mae_sl = sys_config.get("DYNAMIC_MAE_SL", -3.5)
             dyn_mfe_tp = sys_config.get("DYNAMIC_MFE_TP", 10.0)
 
-            # 1순위: MFE/MAE 절대 한계점 도달 시 무조건 청산 (가장 강력한 비선형 규칙)
-            if current_ret_pct <= dyn_mae_sl:
-                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 이탈 칼손절 ({dyn_mae_sl}%)", "STAT_MAE"
-            elif current_ret_pct >= dyn_mfe_tp:
-                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 도달 기계적 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
-                
-            # 2순위: 한계점 내부에서 움직일 경우, 국면(Regime) 모드에 따른 추세/시간 청산
+            # 1순위: MFE/MAE 절대 한계점 도달 시 무조건 청산 
+            actual_exit_price = c # 기본 청산가는 종가로 세팅
+            
+            # 💡 [핵심 교정] 종가가 아닌 '저가(l)'와 '고가(h)'로 실전과 똑같이 슬리피지 청산
+            if low_ret_pct <= dyn_mae_sl:
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl}%)", "STAT_MAE"
+                actual_exit_price = ep * (1 + (dyn_mae_sl / 100.0)) # 손절선에서 털린 가격
+            elif high_ret_pct >= dyn_mfe_tp:
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
+                actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0)) # 익절선에서 팔린 가격
+            
+            # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산
             if not do_exit:
                 if active_mode == "TECH":
-                    if is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
+                    if is_tech_exit: 
+                        do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
                 elif active_mode == "STAT":
-                    if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT_TIME"
-                    elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 수학적 손절", "STAT_ATR"
+                    if new_bars >= opt_time_stop: 
+                        do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT_TIME"
+                    elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
+                        do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "STAT_ATR"
+                        actual_exit_price = sl_price
                 else: # HYBRID
-                    if new_bars >= opt_time_stop: do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID_TIME"
-                    elif c <= sl_price: do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 방어 손절", "HYBRID_ATR"
-                    elif is_tech_exit: do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
+                    if new_bars >= opt_time_stop: 
+                        do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID_TIME"
+                    elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
+                        do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "HYBRID_ATR"
+                        actual_exit_price = sl_price
+                    elif is_tech_exit: 
+                        do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
+
+            # 5. DB 업데이트 실행 (청산 시)
+            if do_exit:
+                # 💡 [핵심] 최종 수익률(ret)은 희망회로 종가(c)가 아니라 '실제 증권사가 던진 가격(actual_exit_price)' 기반으로 계산
+                ret = round(((actual_exit_price - ep) / ep) * 100, 2)
+                mfe = round(((new_max - ep) / ep) * 100, 2)
+            # 👆👆 [수정 끝] 👆👆
 
             # 5. DB 업데이트 실행 (청산 시)
             if do_exit:
