@@ -305,13 +305,26 @@ def run_autonomous_analysis():
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
 
-            # [V35.0 자율 커트라인 도출]
+            # 💡 [V35.0 & V47.0] 자율 커트라인 도출 및 '정찰대(Data Scout)' 로직
             opt_alpha_limit, opt_trap_limit, opt_dtw_limit = 0.75, 0.75, 2.5
+            
+            # 1. 최근 7일간 매매(데이터 수집)가 단 한 건도 없었는가? (거래 가뭄 체크)
+            recent_7d_trades = p_df[p_df['entry_date'] >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')]
+            is_data_drought = len(recent_7d_trades) == 0
+            
             if 'entry_cos_score' in p_df.columns and len(win_s) >= 3:
+                # 데이터가 충분하면 승리한 종목 하위 15%로 유연하게 설정 (기존 V35.0)
                 opt_alpha_limit = np.percentile(win_s['entry_cos_score'].dropna(), 15)
                 opt_dtw_limit = np.percentile(win_s['entry_dtw_score'].dropna(), 85)
                 if len(lose_s) >= 3:
                     opt_trap_limit = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
+            else:
+                # 🚨 [V47.0 핵심] 과거 승리 데이터가 부족한데, 최근 7일간 거래마저 0건(가뭄)이라면?
+                if is_data_drought:
+                    # 데이터를 강제로 쌓기 위해 커트라인의 빗장을 과감히 풀어버림 (탐색 모드)
+                    opt_alpha_limit = 0.60  # 75% -> 60% 로 대폭 하향 (웬만하면 진입시킴)
+                    opt_dtw_limit = 3.5     # 궤적 허용 거리도 대폭 늘려줌
+                    opt_trap_limit = 0.85   # 대신 참사주 방어막은 단단하게 유지
 
             # [V37.0 파라미터 절벽 검증 및 고원 확보]
             raw_sl = np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5
