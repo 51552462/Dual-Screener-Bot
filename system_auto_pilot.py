@@ -470,17 +470,7 @@ def run_autonomous_analysis():
                     z_rs = (excess_return + defiance_premium) / safe_vol
                     z_bbe = bbe / safe_vol
 
-                    # 👇👇 [V45.0] 국면별 대표 DNA 시그니처 생성 👇👇
-        if alpha_count > 0:
-            regime_key = current_config.get("LAST_ANALYSED_REGIME", "CHOP")
-            # Alpha Rank 1의 벡터를 이 국면의 '대표 유전자'로 지정
-            regime_dna = current_config.get(f"DNA_ALPHA_RANK1")
-            if regime_dna:
-                if f"{regime_key}_CHAMPION_PARAMS" not in current_config:
-                    current_config[f"{regime_key}_CHAMPION_PARAMS"] = {}
-                # 금고에 해당 국면의 챔피언 유전자 정보 박제
-                current_config[f"{regime_key}_CHAMPION_PARAMS"]["REPRESENTATIVE_DNA"] = regime_dna
-        # 👆👆 [V45.0 추가 끝] 👆👆
+                    # 💡 (이곳에 잘못 들어갔던 V45.0 코드는 완전히 삭제했습니다)
                     
                     # 정규화된 텐서 리턴
                     return {'name': row['name'], 'cpv': cpv, 'tb': tb, 'bbe': z_bbe, 'rs': z_rs, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv}
