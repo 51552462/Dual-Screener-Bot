@@ -229,17 +229,23 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 표본 부족으로 진입점 스무딩 스킵\n")
 
     # ---------------------------------------------------------
-    # 👑 엔진 4: [V16.0 Multi-Timeframe Ensemble] 앙상블 최적화
+    # 👑 엔진 4: [V40.0 True Walk-Forward 다중 타임프레임 앙상블]
     # ---------------------------------------------------------
-    report_lines.append("\n<b>[4. 다중 타임프레임 앙상블(14/30/60d) 최적화]</b>")
+    report_lines.append("\n<b>[4. 다중 타임프레임 앙상블(Train Set) 최적화]</b>")
     
-    # 2. [V18.0 앙상블 및 통계적 신뢰도 필터 함수]
-    def get_period_stats(days):
+    # 💡 [V40.0 핵심] 최근 14일은 OOS(미지의 데이터)이므로 학습에서 완벽히 격리(차단)
+    oos_barrier = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+
+    def get_period_stats(train_days):
         try:
             conn = sqlite3.connect(DB_PATH, timeout=60)
             conn.execute("PRAGMA journal_mode=WAL;")
-            s_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-            p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}'", conn)
+            
+            # 💡 [시간축 교정] 훈련 시작일 = 현재 - 14일(OOS격리) - 학습일수(Train)
+            s_date = (datetime.now() - timedelta(days=14 + train_days)).strftime('%Y-%m-%d')
+            
+            # 쿼리: s_date부터 oos_barrier(14일 전) 직전까지만 긁어옴 (답안지 훔쳐보기 원천 차단)
+            p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}' AND entry_date < '{oos_barrier}'", conn)
             conn.close()
             
             n_trades = len(p_df)
@@ -248,8 +254,23 @@ def run_autonomous_analysis():
             
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
+            
+            gross_profit = win_s['final_ret'].sum() if len(win_s) > 0 else 0
+            gross_loss = abs(lose_s['final_ret'].sum()) + 0.1
+            pf = gross_profit / gross_loss
+            
+            # 컷오프 룰: 손익비(PF)가 0.85 ~ 1.25 사이인 횡보 장세 기각
+            is_meaningless_chop = (0.85 <= pf <= 1.25) and (n_trades < 20)
+            if is_meaningless_chop:
+                return "NOISE" 
 
-            # 💡 [V35.0] 자율 커트라인 도출
+            p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
+            p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
+            
+            win_s = p_df[p_df['final_ret'] > 0]
+            lose_s = p_df[p_df['final_ret'] <= 0]
+
+            # [V35.0 자율 커트라인 도출]
             opt_alpha_limit, opt_trap_limit, opt_dtw_limit = 0.75, 0.75, 2.5
             if 'entry_cos_score' in p_df.columns and len(win_s) >= 3:
                 opt_alpha_limit = np.percentile(win_s['entry_cos_score'].dropna(), 15)
@@ -257,32 +278,26 @@ def run_autonomous_analysis():
                 if len(lose_s) >= 3:
                     opt_trap_limit = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
 
-            # 👇👇 [추가] V37.0 파라미터 절벽(Cliff) 및 지형 강건성(Robustness) 검증 👇👇
+            # [V37.0 파라미터 절벽 검증 및 고원 확보]
             raw_sl = np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5
             raw_tp = np.percentile(win_s['mfe_pct'], 50) if len(win_s) >= 3 else 10.0
-            
             robust_sl = raw_sl
             if len(win_s) >= 5:
-                # 1. 이웃 공간(Neighborhood Space) 노이즈 테스트
-                # 도출된 손절선(raw_sl) 주변 0.5% 오차 공간에 승리한 종목이 얼마나 빽빽하게 몰려있는가?
                 cliff_zone_wins = win_s[(win_s['mae_pct'] <= raw_sl + 0.5) & (win_s['mae_pct'] >= raw_sl - 0.5)]
-                cliff_risk_ratio = len(cliff_zone_wins) / len(win_s)
-                
-                # 2. 강건성 판독: 승리 종목의 30% 이상이 '단 0.5%의 바늘 탑'에 아슬아슬하게 서 있다면?
-                if cliff_risk_ratio >= 0.30:
-                    # 절벽 판정! 노이즈에 휩쓸리지 않도록 손절선을 1.0% 후퇴시켜 넓은 고원(Plateau)으로 이동
+                if len(cliff_zone_wins) / len(win_s) >= 0.30:
                     robust_sl = raw_sl - 1.0 
-            # 👆👆 [추가 끝] 👆👆
 
             return {
-                "sl": robust_sl, # 💡 지형 검증이 끝난 강건한 SL
+                "sl": robust_sl,
                 "tp": raw_tp,
                 "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85,
                 "alpha_limit": opt_alpha_limit,
                 "trap_limit": opt_trap_limit,
                 "dtw_limit": opt_dtw_limit
             }
-        except: return None
+        except Exception as e:
+            print(f"앙상블 에러: {e}")
+            return None
 
     # 3. [앙상블 실행] 14일, 30일, 60일의 지혜를 블렌딩
     t14, t30, t60 = get_period_stats(14), get_period_stats(30), get_period_stats(60)
