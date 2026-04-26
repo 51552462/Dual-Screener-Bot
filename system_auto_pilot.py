@@ -165,6 +165,40 @@ def run_autonomous_analysis():
         current_config["LAST_ANALYSED_REGIME"] = regime_key
 
     # ---------------------------------------------------------
+    # 👑 엔진 1.9: [V39.0 국면별 데이터 기반 켈리 베팅(Kelly Criterion) 도출]
+    # ---------------------------------------------------------
+    report_lines.append(f"\n<b>[1.9 {regime_key} 국면 최적 켈리(Kelly) 베팅 사이즈 조율]</b>")
+    
+    # 1. 내 장부에서 '현재와 동일한 국면(Regime)'에 진입했던 청산 종목들만 추출
+    regime_df = df[df['entry_regime'] == regime_key] if 'entry_regime' in df.columns else df
+    
+    if len(regime_df) >= 10: # 데이터가 충분할 때만 켈리 공식 가동
+        r_wins = regime_df[regime_df['final_ret'] > 0]
+        r_loses = regime_df[regime_df['final_ret'] <= 0]
+        
+        r_win_rate = len(r_wins) / len(regime_df)
+        r_pf = r_wins['final_ret'].sum() / (abs(r_loses['final_ret'].sum()) + 0.1)
+        
+        # 2. 켈리 공식 적용: f = W - (1-W)/R (안전성을 위해 Half-Kelly 적용)
+        if r_pf > 0:
+            kelly_fraction = r_win_rate - ((1 - r_win_rate) / r_pf)
+            half_kelly = kelly_fraction / 2.0
+            # 3. 리스크 허용 범위 강제 바운딩 (최소 0.2% ~ 최대 3.0%)
+            optimal_risk = max(0.002, min(0.030, half_kelly * 0.1)) # 자본 보존을 위해 스케일 다운
+        else:
+            optimal_risk = 0.002 # 승률/손익비가 박살난 상태면 0.2% 극방어 모드
+            
+        report_lines.append(f"▪️ {regime_key} 과거 성적: 승률 {r_win_rate*100:.1f}% | PF {r_pf:.2f}")
+        report_lines.append(f"💡 <b>수학적 최적 리스크(Half-Kelly): 계좌의 {optimal_risk*100:.2f}% (동적 스케일링)</b>")
+    else:
+        # 데이터가 부족하면 인간의 뇌피셜이 아닌, 가장 보수적인 베이스라인(1.0%) 적용
+        optimal_risk = 0.01
+        report_lines.append(f"▪️ 표본 부족으로 안전 베이스라인(1.0%) 적용")
+
+    current_config["DYNAMIC_KELLY_RISK"] = round(optimal_risk, 4)
+    current_config["CURRENT_REGIME_KEY"] = regime_key
+
+    # ---------------------------------------------------------
     # 👑 엔진 2: 점수 티어 및 초정밀 필터 검증
     # ---------------------------------------------------------
     # (... 기존 엔진 2 코드 그대로 이어짐 ...)
