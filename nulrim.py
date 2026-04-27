@@ -978,6 +978,12 @@ def scan_market_1d():
                             q_promo.put((promo_chart_path, promo_caption))
 
                         print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+        except Exception as e:
+            err_name = row.get("Name", "Unknown") if 'row' in locals() else "Unknown"
+            err_text = f"⚠️ Worker 구동 중 에러 발생 [{err_name}]: {e}"
+            print(err_text)
+            q_main.put((None, f"🚨 <b>[한국장 검색기 워커 에러]</b>\n{err_text}"))
+        
     # 💡 5. 일꾼들(스레드) 가동
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
