@@ -917,7 +917,10 @@ def scan_market_1d():
 
                         print(f"\n✅ [{name}] 미국장 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
-                pass
+                err_name = name if 'name' in locals() else tk
+                err_text = f"⚠️ Worker 구동 중 에러 발생 [{err_name}]: {e}"
+                print(err_text)
+                q_main.put((None, f"🚨 <b>[미국장 검색기 워커 에러]</b>\n{err_text}"))
                 
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
