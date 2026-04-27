@@ -316,7 +316,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     conn.commit()
     conn.close()
     
-    return True, f"🎯 {tier_label} 가상매매 편입 성공 ({current_daily_count+1}/2): {name} ({score:.1f}점)"
+    return True, f"🎯 {tier_label} 가상매매 편입 성공: {name} ({score:.1f}점)"
 
 # ==========================================
 # 2. 매일 종가 흐름 추적 및 청산 엔진 (DB 기반)
