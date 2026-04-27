@@ -68,10 +68,11 @@ import kr as kr_bowl
 import nulrim as kr_nul
 import ema5 as kr_5ema
 
-# 👇👇 [핵심 추가] 중앙 통제 시스템 3대장 임포트
+# 👇👇 [핵심 추가] 중앙 통제 시스템 코어 엔진 임포트
 import data_updater
 import auto_forward_tester
 import system_auto_pilot
+import supernova_hunter  # 💡 [추가] 4번째 코어 엔진 임포트!
 
 # ==========================================
 # 🛑 주말 자동 휴장 스마트 차단기
@@ -183,10 +184,11 @@ if __name__ == "__main__":
         "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
         "🇰🇷 9. KR 5일선": kr_5ema.run_scheduler,
         
-        # 2. 👑 자율 운영 코어 엔진 3대장 (절대 멈추면 안 됨)
+        # 2. 👑 자율 운영 코어 엔진 (절대 멈추면 안 됨)
         "💠 [엔진] DB 자동 갱신": run_db_updater_scheduler,
         "💠 [엔진] 장부 관리기": auto_forward_tester.run_daily_scheduler,
-        "💠 [엔진] 2주 자율 관제탑": system_auto_pilot.system_main_loop
+        "💠 [엔진] 2주 자율 관제탑": system_auto_pilot.system_main_loop,
+        "💠 [엔진] 초신성 역추적기": supernova_hunter.run_scheduler  # 💡 [추가] 매주 월요일 17시 자동 실행 장착!
     }
 
     active_threads = {}
