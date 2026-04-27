@@ -958,9 +958,10 @@ def scan_market_1d():
 
                         print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
-            # 💡 [에러 추적용] 나중에 또 이유 없이 포착이 안될 때 원인을 알 수 있도록 출력문을 추가했습니다.
-            err_text = f"⚠️ Worker 구동 중 에러 발생 [{row_tuple[1].get('Name', 'Unknown')}]: {e}"
+            err_name = row.get("Name", "Unknown") if 'row' in locals() else "Unknown"
+            err_text = f"⚠️ Worker 구동 중 에러 발생 [{err_name}]: {e}"
             print(err_text)
+            q_main.put((None, f"🚨 <b>[한국장 검색기 워커 에러]</b>\n{err_text}"))
             
             # 👇👇 [추가] 텔레그램 본캐 방으로 이미지 없이 텍스트 에러만 송출 👇👇
             q_main.put((None, f"🚨 <b>[마스터 검색기 워커 에러]</b>\n{err_text}"))
