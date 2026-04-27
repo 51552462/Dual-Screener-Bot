@@ -106,7 +106,7 @@ def load_system_config():
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
-def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sector="유망섹터"):
+def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sector="유망섹터", trade_source="STANDARD"):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
     
@@ -159,7 +159,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         track_tag = "[🛡️차기섹터 정찰]"
 
     # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
-    sig_type = f"{sig_type} {track_tag}"
+    sig_type = f"[{trade_source}] {sig_type} {track_tag}"
 
     # 👇👇 [수정] V34.0 DTW 투트랙 + V35.0 동적 커트라인 자율 매칭 👇👇
     max_alpha_cos, min_alpha_dtw = 0.0, 99.0
