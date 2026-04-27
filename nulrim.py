@@ -971,15 +971,15 @@ def scan_market_1d():
                         print(f"   ↳ [오리지널 장부]: {fwd_msg}")
                                 
                                 # 2. 초신성 공통점 매칭 합격 시 추가 진입 (SUPERNOVA 진영 선취매)
-                                sn_score = dbg.get('sn_score', 0.0)
-                                if sn_score >= 85.0: # 💡 폭등 6개월 전 DNA와 85% 이상 일치 시
-                                    _, sn_msg = aft.try_add_virtual_position(
-                                        market=market_type, code=code, name=name,
-                                        sig_type=dbg.get('sig_type', ''), score=max(dbg.get('score', 0), 85.0), # 점수 보정
-                                        ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
-                                        trade_source="SUPERNOVA"
-                                    )
-                                    print(f"   ↳ [초신성 장부]: {sn_msg}")
+                        sn_score = dbg.get('sn_score', 0.0)
+                        if sn_score >= 85.0: # 💡 폭등 6개월 전 DNA와 85% 이상 일치 시
+                            _, sn_msg = aft.try_add_virtual_position(
+                                market=market_type, code=code, name=name,
+                                sig_type=dbg.get('sig_type', ''), score=max(dbg.get('score', 0), 85.0), # 점수 보정
+                                ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
+                                trade_source="SUPERNOVA"
+                            )
+                            print(f"   ↳ [초신성 장부]: {sn_msg}")
                                     
                             except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
