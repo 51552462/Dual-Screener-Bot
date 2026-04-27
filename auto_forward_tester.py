@@ -406,11 +406,14 @@ def track_daily_positions(market):
             low_ret_pct = ((l - ep) / ep) * 100            # 장중 최저 수익률 (손절 터치 감시용)
             high_ret_pct = ((h - ep) / ep) * 100           # 장중 최고 수익률 (익절 터치 감시용)
             
+            # 💡 [V51.0 핵심] 내 전략(Namespace) 방에 할당된 독립 파라미터 뇌(Brain) 꺼내오기
+            ns_live_params = sys_config.get(f"{ns_prefix}_LIVE_PARAMS", sys_config)
+            
             # [V15.0 ABC 토너먼트 병렬 연산 (장중 손절 우선 반영)]
             abc_sets = {
-                'live_a': sys_config,
-                'cand_b': sys_config.get("CANDIDATE_PARAMS", {}),
-                'champ_c': sys_config.get("CHAMPION_PARAMS", {})
+                'live_a': ns_live_params,
+                'cand_b': sys_config.get(f"{ns_prefix}_CANDIDATE_PARAMS", sys_config.get("CANDIDATE_PARAMS", {})),
+                'champ_c': sys_config.get(f"{ns_prefix}_CHAMPION_PARAMS", sys_config.get("CHAMPION_PARAMS", {}))
             }
 
             for key, params in abc_sets.items():
@@ -424,6 +427,10 @@ def track_daily_positions(market):
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=? WHERE id=?", (current_ret_pct, r['id']))
 
             # [V17.0 청산 평행우주 대결 (STAT vs TECH)]
+            # 💡 [팩트] 관제탑이 내 전략방(ns_prefix) 맞춤형으로 깎아둔 실전 한계점 로드
+            dyn_mae_sl = ns_live_params.get("DYNAMIC_MAE_SL", -3.5)
+            dyn_mfe_tp = ns_live_params.get("DYNAMIC_MFE_TP", 10.0)
+
             if r.get('sim_stat_status', 'OPEN') == 'OPEN':
                 if low_ret_pct <= dyn_mae_sl: # 장중 손절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
@@ -454,10 +461,6 @@ def track_daily_positions(market):
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
                     else:
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=? WHERE id=?", (current_ret_pct, r['id']))
-
-            # 💡 [팩트] 관제탑이 학습한 비선형 수학적 한계점 로드
-            dyn_mae_sl = sys_config.get("DYNAMIC_MAE_SL", -3.5)
-            dyn_mfe_tp = sys_config.get("DYNAMIC_MFE_TP", 10.0)
 
             # 1순위: MFE/MAE 절대 한계점 도달 시 무조건 청산 
             actual_exit_price = c # 기본 청산가는 종가로 세팅
