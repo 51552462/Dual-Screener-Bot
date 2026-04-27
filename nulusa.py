@@ -489,6 +489,15 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
                         if sim > match_similarity: 
                             match_similarity, match_result, matched_name, best_window = sim, f"TRAP_{i}", t_dna.get('name', '참사주'), window
 
+        # 👇👇 [여기에 V53.0 초신성(Supernova) 타임머신 매칭 로직을 추가합니다!] 👇👇
+                market_str = "US" if "US" in ns_prefix else "KR"
+                sn_dna = SYS_CONFIG.get(f"DNA_SUPERNOVA_{market_str}")
+                if sn_dna:
+                    sn_sim = calc_similarity(sn_dna)
+                    if sn_sim > max_sn_similarity: 
+                        max_sn_similarity = sn_sim
+                # 👆👆 [초신성 매칭 끝] 👆👆
+        
         # 4. 80% 이상 매칭 시 전략(exit_strategy) 문구 삽입 및 점수(total_score) 보정
         if match_similarity >= 80.0:
             if "ALPHA" in match_result:
@@ -603,7 +612,8 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         # 👇 장부 기록을 위해 3줄 추가
         "dyn_rs_score": dyn_rs_score,
         "dyn_cpv_score": dyn_cpv_score,
-        "dyn_tb_score": dyn_tb_score
+        "dyn_tb_score": dyn_tb_score,
+        "sn_score": max_sn_similarity
     }
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
@@ -822,7 +832,7 @@ def scan_market_1d():
                             # 💡 [오토 포워드 장부 기록] - 미국장 전용
                             try:
                                 import auto_forward_tester as aft
-                                market_type = 'US'
+                                market_type = 'US' if 'US' in dbg.get('sig_type', '') else 'KR' # 파일에 맞게 자동 인식
                                 entry_facts = {
                                     'v_rs': dbg.get('v_rs', 0),
                                     'v_cpv': dbg.get('v_cpv', 0),
@@ -844,14 +854,29 @@ def scan_market_1d():
                                     'is_death_combo': 1 if dbg.get('is_death_combo') else 0
                                 }
                                 
+                                # 1. 오리지널 로직 장부 기록 (STANDARD 진영)
                                 success, fwd_msg = aft.try_add_virtual_position(
                                     market=market_type, code=code, name=name,
                                     sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
-                                    ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info
+                                    ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
+                                    trade_source="STANDARD"
                                 )
-                                print(f"   ↳ [포워드 장부 기록]: {fwd_msg}")
+                                print(f"   ↳ [오리지널 장부]: {fwd_msg}")
+                                
+                                # 2. 초신성 공통점 매칭 합격 시 추가 진입 (SUPERNOVA 진영 선취매)
+                                sn_score = dbg.get('sn_score', 0.0)
+                                if sn_score >= 85.0: # 💡 폭등 6개월 전 DNA와 85% 이상 일치 시
+                                    _, sn_msg = aft.try_add_virtual_position(
+                                        market=market_type, code=code, name=name,
+                                        sig_type=dbg.get('sig_type', ''), score=max(dbg.get('score', 0), 85.0), # 점수 보정
+                                        ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
+                                        trade_source="SUPERNOVA"
+                                    )
+                                    print(f"   ↳ [초신성 장부]: {sn_msg}")
+                                    
                             except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
+                            # 👆👆 [듀얼 리그 진입 끝] 👆👆
 
                             # 💡 4. 홍보용 캡션을 만들고 전송합니다.
                             promo_caption = (
