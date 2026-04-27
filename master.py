@@ -430,10 +430,11 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     cur_momentum = true_momentum_line[-1] if not np.isnan(true_momentum_line[-1]) else 0.0
     cur_spread   = spread_112_224[-1] if not np.isnan(spread_112_224[-1]) else 0.0
+   
+    trap_warning = ""
     
-    # =========================================================================
-    # 👑 6. 시그널(S1/S4)과 시가총액 체급을 크로스 체킹한 [맞춤형 동적 전략]
-    # =========================================================================
+    
+
     # =========================================================================
     # 👑 6. 시그널(S1/S4)과 시가총액 체급을 크로스 체킹한 [맞춤형 동적 전략]
     # =========================================================================
