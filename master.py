@@ -957,7 +957,7 @@ def scan_market_1d():
             # 💡 [에러 추적용] 나중에 또 이유 없이 포착이 안될 때 원인을 알 수 있도록 출력문을 추가했습니다.
             print(f"⚠️ Worker 구동 중 에러 발생 [{row_tuple[1].get('Name', 'Unknown')}]: {e}")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
 
     if tracker['hits'] > 0:
