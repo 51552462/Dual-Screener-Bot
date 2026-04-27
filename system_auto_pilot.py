@@ -290,14 +290,26 @@ def run_autonomous_analysis():
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
             
-            gross_profit = win_s['final_ret'].sum() if len(win_s) > 0 else 0
-            gross_loss = abs(lose_s['final_ret'].sum()) + 0.1
-            pf = gross_profit / gross_loss
+            # 👇👇 [수정] V48.0 단순 PF를 넘어선 통계적 기댓값(Expectancy) 검증 👇👇
+            win_rate = len(win_s) / n_trades if n_trades > 0 else 0
+            loss_rate = 1.0 - win_rate
             
-            # 컷오프 룰: 손익비(PF)가 0.85 ~ 1.25 사이인 횡보 장세 기각
-            is_meaningless_chop = (0.85 <= pf <= 1.25) and (n_trades < 20)
+            avg_win = win_s['final_ret'].mean() if len(win_s) > 0 else 0
+            avg_loss = abs(lose_s['final_ret'].mean()) if len(lose_s) > 0 else 0.1
+            
+            # 기댓값 = (승률 * 평균수익) - (패률 * 평균손실)
+            expectancy = (win_rate * avg_win) - (loss_rate * avg_loss)
+            
+            # 컷오프 룰 1: 1회 매매당 기대 수익이 +0.5% 이하라면 '엣지 없음(NO_EDGE)'으로 즉각 기각
+            # 컷오프 룰 2: 승률과 손익비의 밸런스가 무너진 횡보장 노이즈(NOISE) 기각
+            is_no_edge = (expectancy < 0.5) and (n_trades >= 5)
+            is_meaningless_chop = (0.85 <= (avg_win/(avg_loss+0.1)) <= 1.25) and (n_trades < 20)
+            
+            if is_no_edge:
+                return "NO_EDGE"
             if is_meaningless_chop:
                 return "NOISE" 
+            # 👆👆 [수정 끝] 👆👆 
 
             p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
             p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
