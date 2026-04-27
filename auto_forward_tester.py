@@ -822,7 +822,10 @@ def run_deep_dive_analysis(market='KR'):
         print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
         
     except Exception as e:
-        print(f"⚠️ 딥 다이브 분석 중 에러: {e}")
+        # 👇👇 이렇게 덮어쓰세요 👇👇
+        err_msg = f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n{e}"
+        print(err_msg)
+        send_telegram_msg(err_msg)
 
 
 # ---------------------------------------------------------
@@ -860,27 +863,34 @@ def run_daily_scheduler():
     print(" - 06:10 : 미국장 종가 추적 및 청산 집행")
     
     while True:
-        now = datetime.now(tz_kr)
-        
-        # 1. 한국장 마감 직후 (15:40) -> 종가 확인 및 청산 실행
-        if now.hour == 15 and now.minute == 40:
-            print("🚀 한국장 종가 추적 및 청산 업데이트 시작...")
-            track_daily_positions('KR')
-            time.sleep(60) # 중복 실행 방지
-            
-        # 2. 일일 종합 리포트 발송 (16:00)
-        elif now.hour == 16 and now.minute == 0:
-            print("🚀 16:00 통합 지능 리포트 발송 시작...")
-            send_comprehensive_daily_report() # 💡 업그레이드된 함수 호출
-            time.sleep(60)
-            
-        # 3. 미국장 마감 직후 (한국시간 오전 06:10) -> 종가 확인 및 청산 실행
-        elif now.hour == 6 and now.minute == 10:
-            print("🚀 미국장 종가 추적 및 청산 업데이트 시작...")
-            track_daily_positions('US')
-            time.sleep(60)
+        try:
+            now = datetime.now(tz_kr)
+            # 1. 한국장 마감 직후 (15:40) -> 종가 확인 및 청산 실행
+            if now.hour == 15 and now.minute == 40:
+                print("🚀 한국장 종가 추적 및 청산 업데이트 시작...")
+                track_daily_positions('KR')
+                time.sleep(60) # 중복 실행 방지
+                
+            # 2. 일일 종합 리포트 발송 (16:00)
+            elif now.hour == 16 and now.minute == 0:
+                print("🚀 16:00 통합 지능 리포트 발송 시작...")
+                send_comprehensive_daily_report() 
+                time.sleep(60)
+                
+            # 3. 미국장 마감 직후 (한국시간 오전 06:10) -> 종가 확인 및 청산 실행
+            elif now.hour == 6 and now.minute == 10:
+                print("🚀 미국장 종가 추적 및 청산 업데이트 시작...")
+                track_daily_positions('US')
+                time.sleep(60)
 
-        time.sleep(10) # 10초마다 시간 확인
+            time.sleep(10) # 10초마다 시간 확인
+            
+        except Exception as e:
+            # 👇👇 에러 발생 시 텔레그램으로 긴급 타전 👇👇
+            err_msg = f"🚨 <b>[관제탑 스케줄러 긴급 에러]</b> 무한 루프 구동 중 꼬임 발생:\n{e}"
+            print(err_msg)
+            send_telegram_msg(err_msg)
+            time.sleep(60) # 에러 폭탄(Spam) 방지를 위해 1분 대기 후 재가동
 
 if __name__ == "__main__":
     # 이 파일을 CMD에서 실행해두면 24시간 살아 숨쉬며 리포트를 보냅니다.
