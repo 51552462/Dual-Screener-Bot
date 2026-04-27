@@ -773,6 +773,8 @@ def run_autonomous_analysis():
     send_telegram_report("\n".join(report_lines))
     print("✅ 분석 완료! JSON 파일 덮어쓰기 및 텔레그램 발송 성공.")
 
+# (이 부분에 만약 전체를 감싸는 try-except가 없다면, 메인 루프 쪽에 추가합니다)
+
 # ==========================================
 # 🕒 루프 실행기
 # ==========================================
@@ -781,12 +783,18 @@ def system_main_loop():
     print(f"🕒 [완전 자율 오토파일럿 V12.0] 대기 중... (첫 조율: {START_DATE.strftime('%Y-%m-%d')})")
     
     while True:
-        now = datetime.now(tz)
-        if now > START_DATE.replace(tzinfo=tz):
-            if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
-                run_autonomous_analysis()
-                time.sleep(65) 
-        time.sleep(30)
+        try:
+            now = datetime.now(tz)
+            if now > START_DATE.replace(tzinfo=tz):
+                if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+                    run_autonomous_analysis()
+                    time.sleep(65) 
+            time.sleep(30)
+        except Exception as e:
+            err_msg = f"🚨 <b>[오토파일럿 뇌수술 에러]</b> 주말 자율 학습 중 에러 발생:\n{e}"
+            print(err_msg)
+            send_telegram_report(err_msg)
+            time.sleep(300) # 에러 후 5분 대기
 
 if __name__ == "__main__":
     system_main_loop()
