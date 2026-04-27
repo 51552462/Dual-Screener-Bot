@@ -256,460 +256,131 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 표본 부족으로 진입점 스무딩 스킵\n")
 
     # ---------------------------------------------------------
-    # 👑 엔진 4: [V40.0 True Walk-Forward 다중 타임프레임 앙상블]
+    # 👑 엔진 4 ~ 6: [V51.0 다중 뇌(Multi-Brain) 자율 분할 최적화 엔진]
     # ---------------------------------------------------------
-    report_lines.append("\n<b>[4. 다중 타임프레임 앙상블(Train Set) 최적화]</b>")
-    
-    # 💡 [V40.0 핵심] 최근 14일은 OOS(미지의 데이터)이므로 학습에서 완벽히 격리(차단)
+    # 1. 종목별 출신 성분(Namespace) 매핑 함수
+    def map_namespace(row):
+        m = row['market']
+        st = str(row['sig_type'])
+        ns = f"{m}_MASTER_S1" # 기본값
+        if "S4" in st: ns = f"{m}_MASTER_S4"
+        if "눌림" in st: ns = f"{m}_NULRIM_S4" if "S4" in st else f"{m}_NULRIM_S1"
+        if "5선" in st: ns = f"{m}_5EMA_S1"
+        return ns
+
+    if 'market' in df.columns and 'sig_type' in df.columns:
+        df['namespace'] = df.apply(map_namespace, axis=1)
+    else:
+        df['namespace'] = "KR_MASTER_S1" # Fail-safe
+
+    unique_namespaces = df['namespace'].unique()
+
+    report_lines.append(f"\n🧠 <b>[V51.0 다중 뇌(Multi-Brain) 분할 최적화 가동]</b>\n발견된 독립 전략 방: {', '.join(unique_namespaces)}")
     oos_barrier = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
 
-    def get_period_stats(train_days):
-        try:
-            conn = sqlite3.connect(DB_PATH, timeout=60)
-            conn.execute("PRAGMA journal_mode=WAL;")
-            
-            # 💡 [시간축 교정] 훈련 시작일 = 현재 - 14일(OOS격리) - 학습일수(Train)
+    for target_ns in unique_namespaces:
+        ns_df = df[df['namespace'] == target_ns].copy()
+        if len(ns_df) < 5: continue # 해당 전략의 표본 부족 시 스킵
+        
+        report_lines.append(f"\n=========================================")
+        report_lines.append(f"🧬 <b>[{target_ns} 전용 뇌수술 진행]</b> (표본: {len(ns_df)}개)")
+        
+        # --- [엔진 4: 독립 앙상블 생성] ---
+        def get_period_stats(train_days):
             s_date = (datetime.now() - timedelta(days=14 + train_days)).strftime('%Y-%m-%d')
-            
-            # 쿼리: s_date부터 oos_barrier(14일 전) 직전까지만 긁어옴 (답안지 훔쳐보기 원천 차단)
-            p_df = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{s_date}' AND entry_date < '{oos_barrier}'", conn)
-            conn.close()
-            
+            p_df = ns_df[(ns_df['entry_date'] >= s_date) & (ns_df['entry_date'] < oos_barrier)].copy()
             n_trades = len(p_df)
-            if n_trades < 5: 
-                # 👇👇 [추가] V44.0 독성 시장(Toxic Market) 판독 👇👇
-                if n_trades > 0:
-                    toxic_wins = len(p_df[p_df['final_ret'] > 0])
-                    toxic_avg_ret = p_df['final_ret'].mean()
-                    # 단 1~4개의 표본이라도 전패(승률 0%)이거나, 평균 수익률이 -3% 이하라면
-                    if toxic_wins == 0 or toxic_avg_ret <= -3.0:
-                        return "TOXIC" # 단순 표본 부족이 아닌 시장 붕괴로 규정
-                return None # 순수한 표본 부족 (평화롭지만 타점이 안 온 상태)
-                # 👆👆 [추가 끝] 👆👆
             
+            if n_trades < 5:
+                if n_trades > 0 and (len(p_df[p_df['final_ret'] > 0]) == 0 or p_df['final_ret'].mean() <= -3.0): return "TOXIC"
+                return None
+
             win_s = p_df[p_df['final_ret'] > 0]
             lose_s = p_df[p_df['final_ret'] <= 0]
-            
-            # 👇👇 [수정] V48.0 단순 PF를 넘어선 통계적 기댓값(Expectancy) 검증 👇👇
             win_rate = len(win_s) / n_trades if n_trades > 0 else 0
-            loss_rate = 1.0 - win_rate
-            
             avg_win = win_s['final_ret'].mean() if len(win_s) > 0 else 0
             avg_loss = abs(lose_s['final_ret'].mean()) if len(lose_s) > 0 else 0.1
+            expectancy = (win_rate * avg_win) - ((1.0 - win_rate) * avg_loss)
             
-            # 기댓값 = (승률 * 평균수익) - (패률 * 평균손실)
-            expectancy = (win_rate * avg_win) - (loss_rate * avg_loss)
-            
-            # 컷오프 룰 1: 1회 매매당 기대 수익이 +0.5% 이하라면 '엣지 없음(NO_EDGE)'으로 즉각 기각
-            # 컷오프 룰 2: 승률과 손익비의 밸런스가 무너진 횡보장 노이즈(NOISE) 기각
-            is_no_edge = (expectancy < 0.5) and (n_trades >= 5)
-            is_meaningless_chop = (0.85 <= (avg_win/(avg_loss+0.1)) <= 1.25) and (n_trades < 20)
-            
-            if is_no_edge:
-                return "NO_EDGE"
-            if is_meaningless_chop:
-                return "NOISE" 
-            # 👆👆 [수정 끝] 👆👆 
+            if (expectancy < 0.5) and (n_trades >= 5): return "NO_EDGE"
+            if (0.85 <= (avg_win/(avg_loss+0.1)) <= 1.25) and (n_trades < 20): return "NOISE"
 
             p_df['mae_pct'] = (p_df['min_low'] - p_df['entry_price']) / p_df['entry_price'] * 100
             p_df['mfe_pct'] = (p_df['max_high'] - p_df['entry_price']) / p_df['entry_price'] * 100
             
-            win_s = p_df[p_df['final_ret'] > 0]
-            lose_s = p_df[p_df['final_ret'] <= 0]
-
-            # 💡 [V35.0 & V47.0] 자율 커트라인 도출 및 '정찰대(Data Scout)' 로직
-            opt_alpha_limit, opt_trap_limit, opt_dtw_limit = 0.75, 0.75, 2.5
-            
-            # 1. 최근 7일간 매매(데이터 수집)가 단 한 건도 없었는가? (거래 가뭄 체크)
-            recent_7d_trades = p_df[p_df['entry_date'] >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')]
-            is_data_drought = len(recent_7d_trades) == 0
-            
+            opt_alpha, opt_trap, opt_dtw = 0.75, 0.75, 2.5
+            is_drought = len(p_df[p_df['entry_date'] >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')]) == 0
             if 'entry_cos_score' in p_df.columns and len(win_s) >= 3:
-                # 데이터가 충분하면 승리한 종목 하위 15%로 유연하게 설정 (기존 V35.0)
-                opt_alpha_limit = np.percentile(win_s['entry_cos_score'].dropna(), 15)
-                opt_dtw_limit = np.percentile(win_s['entry_dtw_score'].dropna(), 85)
-                if len(lose_s) >= 3:
-                    opt_trap_limit = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
-            else:
-                # 🚨 [V47.0 핵심] 과거 승리 데이터가 부족한데, 최근 7일간 거래마저 0건(가뭄)이라면?
-                if is_data_drought:
-                    # 데이터를 강제로 쌓기 위해 커트라인의 빗장을 과감히 풀어버림 (탐색 모드)
-                    opt_alpha_limit = 0.60  # 75% -> 60% 로 대폭 하향 (웬만하면 진입시킴)
-                    opt_dtw_limit = 3.5     # 궤적 허용 거리도 대폭 늘려줌
-                    opt_trap_limit = 0.85   # 대신 참사주 방어막은 단단하게 유지
+                opt_alpha = np.percentile(win_s['entry_cos_score'].dropna(), 15)
+                opt_dtw = np.percentile(win_s['entry_dtw_score'].dropna(), 85)
+                if len(lose_s) >= 3: opt_trap = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
+            elif is_drought:
+                opt_alpha, opt_dtw, opt_trap = 0.60, 3.5, 0.85
 
-            # [V37.0 파라미터 절벽 검증 및 고원 확보]
-            raw_sl = np.percentile(win_s['mae_pct'], 15) if len(win_s) >= 3 else -3.5
-            raw_tp = np.percentile(win_s['mfe_pct'], 50) if len(win_s) >= 3 else 10.0
-            robust_sl = raw_sl
-            if len(win_s) >= 5:
-                cliff_zone_wins = win_s[(win_s['mae_pct'] <= raw_sl + 0.5) & (win_s['mae_pct'] >= raw_sl - 0.5)]
-                if len(cliff_zone_wins) / len(win_s) >= 0.30:
-                    robust_sl = raw_sl - 1.0 
+            raw_sl = np.percentile(win_s['mae_pct'].dropna(), 15) if len(win_s) >= 3 else -3.5
+            raw_tp = np.percentile(win_s['mfe_pct'].dropna(), 50) if len(win_s) >= 3 else 10.0
+            
+            return {"sl": raw_sl, "tp": raw_tp, "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85, "alpha_limit": opt_alpha, "trap_limit": opt_trap, "dtw_limit": opt_dtw}
 
-            return {
-                "sl": robust_sl,
-                "tp": raw_tp,
-                "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85,
-                "alpha_limit": opt_alpha_limit,
-                "trap_limit": opt_trap_limit,
-                "dtw_limit": opt_dtw_limit
-            }
-        except Exception as e:
-            print(f"앙상블 에러: {e}")
-            return None
-
-    # 3. [앙상블 실행] 14일, 30일, 60일의 지혜를 블렌딩
-    t14, t30, t60 = get_period_stats(14), get_period_stats(30), get_period_stats(60)
-    
-    report_lines.append("\n<b>[4. 다중 타임프레임 앙상블 및 신뢰도 컷오프]</b>")
-    
-    # 👇👇 [추가] V44.0 TOXIC 인터셉트 및 텔레그램 피드백 👇👇
-    is_toxic = False
-    for name, t_stat in zip(['14일', '30일', '60일'], [t14, t30, t60]):
-        if t_stat == "TOXIC":
-            report_lines.append(f"🚨 {name} 데이터: <b>[TOXIC 붕괴]</b> 표본은 극소수이나 전패/급락 상태입니다.")
-            is_toxic = True
-        elif t_stat == "NO_EDGE": # 💡 [V48.0 추가]
-            report_lines.append(f"✂️ {name} 데이터: <b>[기댓값 미달]</b> 승률/손익비 밸런스 붕괴(증기롤러 앞 동전 줍기)로 앙상블 배제.")
-        elif t_stat == "NOISE": 
-            report_lines.append(f"🛡️ {name} 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
-
-    # TOXIC 발동 시 앙상블 무시하고 '극단적 방어 모드' 후보군 강제 생성
-    if is_toxic:
-        report_lines.append("🚨 <b>[V44.0 독성 장세 세이프가드 발동]</b> 데이터 부족을 가장한 폭락장입니다. '기존 수치 유지'를 거부하고 최강 방어 파라미터를 강제 하달합니다.")
-        if "CANDIDATE_PARAMS" not in current_config: 
-            current_config["CANDIDATE_PARAMS"] = {}
+        t14, t30, t60 = get_period_stats(14), get_period_stats(30), get_period_stats(60)
+        is_toxic = False
+        for name, t_stat in zip(['14일', '30일', '60일'], [t14, t30, t60]):
+            if t_stat == "TOXIC": is_toxic = True; report_lines.append(f"🚨 {name}: <b>[TOXIC 붕괴]</b> 강제 방어")
+            elif t_stat == "NO_EDGE": report_lines.append(f"✂️ {name}: <b>[기댓값 미달]</b> 배제.")
         
-        current_config["CANDIDATE_PARAMS"] = {
-            "DYNAMIC_MAE_SL": -2.5,       # 💡 손절선을 -2.5%로 바짝 당겨 철통 방어
-            "DYNAMIC_MFE_TP": 10.0,
-            "TREE_FATAL_CPV": 0.70,       # 💡 윗꼬리 허용치 대폭 축소 (0.7 이상 무조건 기각)
-            "DYNAMIC_ALPHA_LIMIT": 0.85,  # 💡 대장주 DNA와 85% 이상 똑같아야만 진입
-            "DYNAMIC_TRAP_LIMIT": 0.70,   # 💡 참사주 냄새만 나도 기각
-            "DYNAMIC_DTW_LIMIT": 1.5      # 💡 궤적이 1.5 이하로 거의 완벽하게 똑같아야 통과
-        }
-        report_lines.append("▪️ 앙상블 결과: <b>안전판 강제 생성 완료 (SL -2.5% / DNA 85%↑)</b>")
-
-    else:
-        # NOISE나 None, TOXIC이 아닌 순수 유효 데이터만 필터링
-        valid = [s for s in [t14, t30, t60] if isinstance(s, dict)]
-        
-        if len(valid) >= 2:
-            # 단기 데이터가 있으면 가중 평균(5:3:2), 없으면 유효 데이터끼리 평균 적용
-            w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid)] * len(valid)
-            
-            ensemble_sl = sum(s['sl'] * w[i] for i, s in enumerate(valid))
-            ensemble_tp = sum(s['tp'] * w[i] for i, s in enumerate(valid))
-            ensemble_cpv = sum(s['fatal_cpv'] * w[i] for i, s in enumerate(valid))
-            ensemble_alpha = sum(s['alpha_limit'] * w[i] for i, s in enumerate(valid))
-            ensemble_trap = sum(s['trap_limit'] * w[i] for i, s in enumerate(valid))
-            ensemble_dtw = sum(s['dtw_limit'] * w[i] for i, s in enumerate(valid))
-            
-            if "CANDIDATE_PARAMS" not in current_config: 
-                current_config["CANDIDATE_PARAMS"] = {}
-            
-            current_config["CANDIDATE_PARAMS"] = {
-                "DYNAMIC_MAE_SL": round(ensemble_sl, 2),
-                "DYNAMIC_MFE_TP": round(ensemble_tp, 2),
-                "TREE_FATAL_CPV": round(ensemble_cpv, 2),
-                "DYNAMIC_ALPHA_LIMIT": round(ensemble_alpha, 3), 
-                "DYNAMIC_TRAP_LIMIT": round(ensemble_trap, 3),   
-                "DYNAMIC_DTW_LIMIT": round(ensemble_dtw, 3)      
-            }
-            
-            report_lines.append(f"▪️ 앙상블 손절/익절 후보(B): <b>{round(ensemble_sl, 2)}% / {round(ensemble_tp, 2)}%</b>")
-            report_lines.append(f"▪️ 앙상블 기각 CPV 후보(B): <b>{round(ensemble_cpv, 2)}</b> (대기실 격리)")
-            report_lines.append("💡 팩트: 유효한 데이터만을 블렌딩하여 안정적인 후보군을 생성했습니다.")
+        # 💡 [핵심] 파라미터를 저장할 때 '전략의 방 이름(target_ns)'을 열쇠에 붙여서 독립 보관
+        cand_key = f"{target_ns}_CANDIDATE_PARAMS"
+        if is_toxic:
+            current_config[cand_key] = {"DYNAMIC_MAE_SL": -2.5, "DYNAMIC_MFE_TP": 10.0, "TREE_FATAL_CPV": 0.70, "DYNAMIC_ALPHA_LIMIT": 0.85, "DYNAMIC_TRAP_LIMIT": 0.70, "DYNAMIC_DTW_LIMIT": 1.5}
         else:
-            report_lines.append("⚠️ 앙상블을 위한 장기 데이터 표본이 부족하여 기존 수치 유지")
-    # 👆👆 [수정 끝] 👆👆
+            valid = [s for s in [t14, t30, t60] if isinstance(s, dict)]
+            if len(valid) >= 2:
+                w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid)] * len(valid)
+                current_config[cand_key] = {
+                    "DYNAMIC_MAE_SL": round(sum(s['sl']*w[i] for i,s in enumerate(valid)), 2),
+                    "DYNAMIC_MFE_TP": round(sum(s['tp']*w[i] for i,s in enumerate(valid)), 2),
+                    "TREE_FATAL_CPV": round(sum(s['fatal_cpv']*w[i] for i,s in enumerate(valid)), 2),
+                    "DYNAMIC_ALPHA_LIMIT": round(sum(s['alpha_limit']*w[i] for i,s in enumerate(valid)), 3),
+                    "DYNAMIC_TRAP_LIMIT": round(sum(s['trap_limit']*w[i] for i,s in enumerate(valid)), 3),
+                    "DYNAMIC_DTW_LIMIT": round(sum(s['dtw_limit']*w[i] for i,s in enumerate(valid)), 3)
+                }
+                report_lines.append(f"▪️ 앙상블 생성: SL {current_config[cand_key]['DYNAMIC_MAE_SL']}% / TP {current_config[cand_key]['DYNAMIC_MFE_TP']}%")
 
-    # ---------------------------------------------------------
-    # 👑 엔진 4.8: [Multi-Centroid DNA] 대장주 & 참사주 Top 3 독립 궤적 추출 (7D 텐서)
-    # ---------------------------------------------------------
-    report_lines.append("\n<b>[4.8 대장주 및 참사주 Top 3 궤적 독립 추출 (도플갱어 템플릿)]</b>")
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        # --- [엔진 5: 독립 STAT vs TECH 결투] ---
+        if 'sim_stat_ret' in ns_df.columns:
+            st_df = ns_df[ns_df['sim_stat_status'].str.contains('CLOSED', na=False)]
+            te_df = ns_df[ns_df['sim_tech_status'].str.contains('CLOSED', na=False)]
+            s_pf = (st_df[st_df['sim_stat_ret']>0]['sim_stat_ret'].sum()) / abs(st_df[st_df['sim_stat_ret']<=0]['sim_stat_ret'].sum() + 0.1) if len(st_df)>0 else 0
+            t_pf = (te_df[te_df['sim_tech_ret']>0]['sim_tech_ret'].sum()) / abs(te_df[te_df['sim_tech_ret']<=0]['sim_tech_ret'].sum() + 0.1) if len(te_df)>0 else 0
+            winner = "TECH" if t_pf > s_pf * 1.1 else "STAT"
+            current_config[f"{target_ns}_ACTIVE_EXIT_MODE"] = winner
+            report_lines.append(f"▪️ 청산 결투: {winner} 모드가 우세함")
+
+        # --- [엔진 6: 독립 OOS 진검승부 및 챔피언 승격] ---
+        train_df = ns_df[ns_df['entry_date'] < oos_barrier]
+        test_df = ns_df[ns_df['entry_date'] >= oos_barrier]
         
-        # 1. 대박 종목 Top 3 (수익률 최상위) & 참사/횡보 종목 Top 3 (손실/타임컷 최하위) 색출
-        alphas = df[df['final_ret'] >= 15.0].sort_values(by='final_ret', ascending=False).head(3)
-        traps = df[df['final_ret'] <= -5.0].sort_values(by='final_ret', ascending=True).head(3)
-
-        def extract_7d_vector(row):
-            table_name = f"{row['market']}_{row['code']}"
-            idx_table = 'US_SPY' if row['market'] == 'US' else 'KR_KOSDAQ_IDX' # 💡 벤치마크 테이블
-            entry_dt = row['entry_date']
-            try:
-                # 종목 데이터와 벤치마크(시장) 데이터를 동일 기간(150일)으로 동시 로드
-                query = f"SELECT * FROM {table_name} WHERE Date < '{entry_dt}' ORDER BY Date DESC LIMIT 150"
-                idx_query = f"SELECT * FROM {idx_table} WHERE Date < '{entry_dt}' ORDER BY Date DESC LIMIT 150"
-                
-                hist_df = pd.read_sql(query, conn).sort_values('Date')
-                idx_df = pd.read_sql(idx_query, conn).sort_values('Date')
-                
-                if len(hist_df) >= 150 and len(idx_df) >= 150:
-                    c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
-                    idx_c = idx_df['Close'].values
-                    
-                    # 1. Raw 7D 연산
-                    cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
-                    v_ma20 = pd.Series(v).rolling(20).mean().values
-                    tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
-                    bb_std = pd.Series(c).rolling(20).std().values
-                    bbe = np.nanmax(np.where(bb_std > 0, 1.0 / ((4 * bb_std) / pd.Series(c).rolling(20).mean().values), 0)[-20:])
-                    rs_slope = ((c[-1] - c[0]) / c[0]) * 100
-                    tr = np.maximum(h - l, np.maximum(abs(h - np.roll(c, 1)), abs(l - np.roll(c, 1))))
-                    vcp_ratio = np.mean(tr[-20:]) / np.mean(tr) if np.mean(tr) > 0 else 1.0
-                    vol_flow = np.sum(np.where(c > o, v, 0)) / (np.sum(np.where(c < o, v, 0)) + 1)
-                    emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
-                    ma_conv = (max(emas) - min(emas)) / min(emas) * 100
-                    
-                    # 2. 💡 [V46.0] 비대칭 Z-Score 정규화 (하락장 초과 강도 프리미엄 주입)
-                    idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
-                    idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252)
-                    safe_vol = idx_vol if idx_vol > 0.1 else 1.0
-                    
-                    excess_return = rs_slope - idx_rs
-                    
-                    # 👇👇 [핵심] 시장이 하락(idx_rs < 0)하는데 종목이 덜 빠졌거나 올랐다면 프리미엄 부여
-                    defiance_premium = 0.0
-                    if idx_rs < 0 and excess_return > 0:
-                        # 시장이 빠진 폭의 1.5배를 프리미엄으로 얹어 하락장 방어 팩트를 극대화
-                        defiance_premium = abs(idx_rs) * 1.5 
-                    
-                    z_rs = (excess_return + defiance_premium) / safe_vol
-                    z_bbe = bbe / safe_vol
-
-                    # 💡 (이곳에 잘못 들어갔던 V45.0 코드는 완전히 삭제했습니다)
-                    
-                    # 정규화된 텐서 리턴
-                    return {'name': row['name'], 'cpv': cpv, 'tb': tb, 'bbe': z_bbe, 'rs': z_rs, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv}
-            except Exception as e: 
-                return None
-            return None
-
-        # 2. JSON에 Rank 1~3 독립 저장 (대장주)
-        alpha_count = 0
-        for idx, row in enumerate(alphas.iterrows(), 1):
-            vec = extract_7d_vector(row[1])
-            if vec:
-                current_config[f"DNA_ALPHA_RANK{idx}"] = vec
-                report_lines.append(f"🟢 [Alpha {idx}위] {vec['name']} 5개월 궤적 저장 완료")
-                alpha_count += 1
-        
-        if alpha_count == 0: report_lines.append("▪️ 슈퍼 알파 표본 부족으로 대장주 궤적 추출 스킵")
-
-        # 👇👇 [V45.0 올바른 위치] 국면별 대표 DNA 시그니처 생성 👇👇
-        if alpha_count > 0:
-            regime_key = current_config.get("LAST_ANALYSED_REGIME", "CHOP")
-            # Alpha Rank 1의 벡터를 이 국면의 '대표 유전자'로 지정
-            regime_dna = current_config.get("DNA_ALPHA_RANK1")
-            if regime_dna:
-                if f"{regime_key}_CHAMPION_PARAMS" not in current_config:
-                    current_config[f"{regime_key}_CHAMPION_PARAMS"] = {}
-                # 금고에 해당 국면의 챔피언 유전자 정보 박제
-                current_config[f"{regime_key}_CHAMPION_PARAMS"]["REPRESENTATIVE_DNA"] = regime_dna
-        # 👆👆 [V45.0 추가 끝] 👆👆
-
-        # 3. JSON에 Rank 1~3 독립 저장 (참사주)
-        trap_count = 0
-        for idx, row in enumerate(traps.iterrows(), 1):
-            vec = extract_7d_vector(row[1])
-            if vec:
-                current_config[f"DNA_TRAP_RANK{idx}"] = vec
-                report_lines.append(f"🔴 [Trap {idx}위] {vec['name']} (참사) 5개월 궤적 저장 완료")
-                trap_count += 1
-                
-        if trap_count == 0: report_lines.append("▪️ 참사 표본 부족으로 참사주 궤적 추출 스킵")
-
-        conn.close()
-    except Exception as e:
-        report_lines.append(f"⚠️ 다중 궤적 추출 에러: {e}")
-
-    # ---------------------------------------------------------
-    # 👑 엔진 4.9: [V27.0 예측 오차율(Tracking Error) 및 세이프티 가드]
-    # ---------------------------------------------------------
-    report_lines.append("\n<b>[4.9 예측 오차 검증 및 세이프티 가드]</b>")
-    
-    # 1. 최근 14일 데이터의 MAE(최대낙폭) 변동성 측정
-    # 실제 발생한 낙폭과 우리가 설정했던 손절선(-3.5% 등) 사이의 괴리 분석
-    df['mae_error'] = abs(df['min_low'] - df['entry_price']) / df['entry_price'] * 100
-    avg_mae = df['mae_error'].mean()
-    std_mae = df['mae_error'].std() # 낙폭의 표준편차 (시장 발작 지수)
-
-    # 💡 [핵심] 예측 오차율 계산: 평소 변동성 대비 최근 변동성이 1.5배 이상 튀었는가?
-    # (과거 60일 데이터가 있다면 더 정확하나, 여기선 현재 셋셋의 안정성 검증)
-    tracking_error_score = std_mae / (abs(current_config.get("DYNAMIC_MAE_SL", -3.5)) + 0.1)
-    
-    is_failsafe_mode = False
-    if tracking_error_score > 1.2 or std_mae > 5.0: # 오차율이 너무 높거나, 평균 낙폭 편차가 5%를 넘을 때
-        is_failsafe_mode = True
-        report_lines.append(f"🚨 <b>안전 모드(Failsafe) 발동!</b> (오차율: {tracking_error_score:.2f} | 편차: {std_mae:.2f})")
-        report_lines.append("💡 사유: 시장 변동성이 통제 범위를 벗어났습니다. 모든 조율값을 무시하고 베이스라인으로 복귀합니다.")
-        
-        # 🛡️ 최보수적 베이스라인으로 강제 회귀 (Override)
-        current_config["DYNAMIC_MAE_SL"] = -5.0  # 더 넓은 방어선 (시장 발작 대응)
-        current_config["DYNAMIC_MFE_TP"] = 10.0  # 표준 수익선
-        current_config["TREE_FATAL_CPV"] = 0.75  # 윗꼬리 필터 대폭 강화 (속임수 방어)
-        
-        # Candidate B(후보군) 삭제 (오염된 데이터 학습 방지)
-        if "CANDIDATE_PARAMS" in current_config:
-            del current_config["CANDIDATE_PARAMS"]
-    else:
-        report_lines.append(f"✅ 예측 안정성 확인 (오차율: {tracking_error_score:.2f} | 편차: {std_mae:.2f})")
-    
-    # ---------------------------------------------------------
-    # 👑 엔진 5: [V17.0 청산 우선순위 데스매치 및 DNA 분석 (STAT vs TECH)]
-    # ---------------------------------------------------------
-    report_lines.append("\n<b>[5. 청산 우선순위 데스매치 및 인과 분석]</b>")
-    if 'sim_stat_ret' in df.columns and 'sim_tech_ret' in df.columns:
-        # 종료된 시뮬레이션 결과 추출
-        stat_df = df[df['sim_stat_status'].str.contains('CLOSED', na=False)]
-        tech_df = df[df['sim_tech_status'].str.contains('CLOSED', na=False)]
-        
-        stat_pf = (stat_df[stat_df['sim_stat_ret']>0]['sim_stat_ret'].sum()) / abs(stat_df[stat_df['sim_stat_ret']<=0]['sim_stat_ret'].sum() + 0.1) if len(stat_df)>0 else 0
-        tech_pf = (tech_df[tech_df['sim_tech_ret']>0]['sim_tech_ret'].sum()) / abs(tech_df[tech_df['sim_tech_ret']<=0]['sim_tech_ret'].sum() + 0.1) if len(tech_df)>0 else 0
-        
-        report_lines.append(f"▪️ MFE 목표가(STAT) 우선 PF: <b>{stat_pf:.2f}</b>")
-        report_lines.append(f"▪️ 추세추종(TECH) 무한홀딩 PF: <b>{tech_pf:.2f}</b>")
-        
-        if tech_pf > stat_pf * 1.1:
-            winner_mode = "TECH"
-            report_lines.append("🏆 <b>승리: [TECH 우선]</b> (MFE 익절이 오히려 추세의 수익을 깎아먹고 있습니다. 끝까지 홀딩하세요.)")
-            
-            # 💡 [공통점 분석] TECH가 압도적으로 유리했던 종목들의 DNA 추적
-            tech_winners = df[(df['sim_tech_ret'] > df['sim_stat_ret'] + 5.0)]
-            if len(tech_winners) >= 3:
-                rs_mean = tech_winners['dyn_rs'].mean()
-                report_lines.append(f"💡 <b>[추세 추종(무한 홀딩) 성공 DNA]</b>: RS 상위 {(10-rs_mean)*11.1:.1f}% 종목들. 상대강도가 강한 대장주는 단기 목표가(MFE)를 무시하고 데드크로스까지 놔둬야 합니다.")
-        else:
-            winner_mode = "STAT"
-            report_lines.append("🏆 <b>승리: [STAT 우선]</b> (데드크로스를 기다리면 수익을 다 토해냅니다. 목표가 도달 시 기계적으로 챙기세요.)")
-            
-            # 💡 [공통점 분석] STAT이 압도적으로 유리했던 종목들의 DNA 추적
-            stat_winners = df[(df['sim_stat_ret'] > df['sim_tech_ret'] + 2.0)]
-            if len(stat_winners) >= 3:
-                cpv_mean = stat_winners['dyn_cpv'].mean()
-                report_lines.append(f"💡 <b>[단기 목표가 익절(STAT) 성공 DNA]</b>: 캔들지배력 상위 {(10-cpv_mean)*11.1:.1f}% 종목들. 매도 압력이 큰 캔들 패턴은 슈팅을 줄 때 욕심부리지 말고 즉시 도망가야 합니다.")
-
-        current_config["ACTIVE_EXIT_MODE"] = winner_mode
-        report_lines.append(f"🚨 <b>액션:</b> 다음 주 청산 가이드를 <b>[{winner_mode}]</b> 모드로 강제 고정합니다.")
-    else:
-        report_lines.append("⚠️ 장부에 시뮬레이션 컬럼이 부족하여 대결을 보류합니다.")
-    # ---------------------------------------------------------
-    # 👑 엔진 6: [V31.0 Walk-Forward (OOS) 데이터 격리 및 진검승부]
-    # ---------------------------------------------------------
-    report_lines.append("\n<b>[6. OOS(Out-of-Sample) 진검승부 및 승격]</b>")
-    if 'live_a_ret' in df.columns:
-        # 💡 [V31.0 핵심] 데이터 격리 (Train vs Test 분리)
-        # 현재 기준 14일 전 날짜를 임계점으로 설정
-        oos_threshold = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-        
-        # 학습 구간 (Train): 14일 이전의 과거 데이터
-        train_df = df[df['entry_date'] < oos_threshold]
-        # 검증 구간 (Test/OOS): 최근 14일 데이터 (한 번도 보지 못한 미지의 데이터)
-        test_df = df[df['entry_date'] >= oos_threshold]
-        
-        report_lines.append(f"▪️ 데이터 격리: Train 표본 {len(train_df)}개 vs OOS 표본 {len(test_df)}개")
-        
-        # 👇👇 [수정] V49.0 승률/손익비를 초월한 '실제 계좌 우상향(복리 누적)' 절대 평가 👇👇
-        def get_bootstrapped_equity(returns_series, n_iterations=1000, confidence_level=5):
-            """1,000번의 평행우주를 생성하여 하위 5%(가장 운이 나빴던 상황)의 '실제 복리 누적 수익률'을 추출"""
-            returns = returns_series.dropna().values
-            if len(returns) < 3: # 표본이 너무 적으면 단순 합산 리턴
-                return sum(returns)
-
-            eqs = []
-            # 1. 1,000번의 무작위 복원 추출(Resampling)
-            for _ in range(n_iterations):
-                sample = np.random.choice(returns, size=len(returns), replace=True)
-                # 💡 핵심: PF(비율)가 아니라 (1+r1)*(1+r2)... 의 실제 '복리 계좌 우상향 곡선' 계산
-                compounded_return = (np.prod(1 + sample / 100.0) - 1) * 100
-                eqs.append(compounded_return)
-
-            # 2. 1,000개의 우주 중 하위 5%로 재수 없었던 우주의 '실제 누적 수익률(%)' 반환
-            return np.percentile(eqs, confidence_level)
+        def get_eq(ret_s):
+            v = ret_s.dropna().values
+            if len(v) < 3: return sum(v)
+            return np.percentile([(np.prod(1+np.random.choice(v, size=len(v), replace=True)/100.0)-1)*100 for _ in range(1000)], 5)
 
         results = {}
-        report_lines.append("\n🎲 <b>[V49.0 몬테카를로 1,000회 가동 (실제 계좌 우상향 검증)]</b>")
-        
         for col in ['live_a_ret', 'cand_b_ret', 'champ_c_ret']:
-            if col in test_df.columns:
-                # 기존 단순 합산 누적 수익
-                raw_cumulative = (np.prod(1 + test_df[col].dropna() / 100.0) - 1) * 100
-                
-                # 💡 [V49.0] 운이 제거된 하위 5% 우주의 최악의 복리 누적 수익률
-                strict_equity_growth = get_bootstrapped_equity(test_df[col])
-                results[col] = strict_equity_growth
-                
-                if raw_cumulative != 0:
-                    report_lines.append(f"▪️ {col[:6].upper()} ➔ 단순 누적: {raw_cumulative:.2f}% | <b>운 제거 누적(하위5%): {strict_equity_growth:.2f}%</b>")
-        # 👆👆 [수정 끝] 👆👆
+            if col in test_df.columns: results[col] = get_eq(test_df[col])
+        
+        if results:
+            win_k = max(results, key=results.get)
+            report_lines.append(f"▪️ OOS 성적(복리): LIVE({results.get('live_a_ret',0):.2f}%) B({results.get('cand_b_ret',0):.2f}%) C({results.get('champ_c_ret',0):.2f}%)")
             
-            if results:
-                winner_key = max(results, key=results.get)
-                report_lines.append(f"▪️ [OOS 성적] LIVE(A): {results.get('live_a_ret', 0):.2f} | CAND(B): {results.get('cand_b_ret', 0):.2f} | CHAMP(C): {results.get('champ_c_ret', 0):.2f}")
+            if win_k == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
+                current_config[f"{target_ns}_CHAMPION_PARAMS"] = current_config.get(f"{target_ns}_LIVE_PARAMS", {})
+                current_config[f"{target_ns}_LIVE_PARAMS"] = current_config.get(cand_key, {})
+                report_lines.append("🏆 <b>[신규 승격]</b> B가 실전 배치됩니다.")
+            elif win_k == 'champ_c_ret' and results['champ_c_ret'] > results.get('live_a_ret', 0) * 1.05:
+                current_config[f"{target_ns}_LIVE_PARAMS"] = current_config.get(f"{target_ns}_CHAMPION_PARAMS", {})
+                report_lines.append("♻️ <b>[챔피언 귀환]</b> C가 복귀합니다.")
                 
-                # 💡 [V32.0 버그 픽스] 승격 여부 추적 스위치
-                is_promoted = False 
-
-                if winner_key == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
-                    # 챔피언 백업
-                    current_config["CHAMPION_PARAMS"] = {
-                        "DYNAMIC_MAE_SL": current_config.get("DYNAMIC_MAE_SL", -3.5),
-                        "DYNAMIC_MFE_TP": current_config.get("DYNAMIC_MFE_TP", 10.0),
-                        "TREE_FATAL_CPV": current_config.get("TREE_FATAL_CPV", 0.85)
-                    }
-                    cand = current_config.get("CANDIDATE_PARAMS", {})
-                    if cand:
-                        for k, v in cand.items(): current_config[k] = v
-                    current_config["LIVE_A_PROMOTION_DATE"] = datetime.now().strftime('%Y-%m-%d')
-                    report_lines.append("🏆 <b>[신규 로직 승격]</b> CAND(B)가 OOS 검증을 통과하여 실전 배치됩니다.")
-                    is_promoted = True # 💡 승격 활성화
-                    
-                elif winner_key == 'champ_c_ret' and results['champ_c_ret'] > results.get('live_a_ret', 0) * 1.05:
-                    champ = current_config.get("CHAMPION_PARAMS", {})
-                    if champ:
-                        for k, v in champ.items(): current_config[k] = v
-                    current_config["LIVE_A_PROMOTION_DATE"] = datetime.now().strftime('%Y-%m-%d')
-                    report_lines.append("♻️ <b>[챔피언 귀환]</b> CHAMP(C)가 미지의 데이터에서 최고 성적을 내어 복귀합니다.")
-                    is_promoted = True # 💡 승격 활성화
-
-                # 👇👇 [V32.0 & V35.0 시너지] 국면별 금고 영구 저장 👇👇
-                if is_promoted:
-                    regime_key = current_config.get("LAST_ANALYSED_REGIME", "CHOP")
-                    # SL/TP 뿐만 아니라 V35.0에서 자율 도출된 임계값들까지 통째로 기억소에 저장하여 '기억 상실' 원천 차단
-                    current_config[f"{regime_key}_CHAMPION_PARAMS"] = {
-                        "DYNAMIC_MAE_SL": current_config.get("DYNAMIC_MAE_SL"),
-                        "DYNAMIC_MFE_TP": current_config.get("DYNAMIC_MFE_TP"),
-                        "TREE_FATAL_CPV": current_config.get("TREE_FATAL_CPV"),
-                        "DYNAMIC_ALPHA_LIMIT": current_config.get("DYNAMIC_ALPHA_LIMIT"),
-                        "DYNAMIC_TRAP_LIMIT": current_config.get("DYNAMIC_TRAP_LIMIT"),
-                        "DYNAMIC_DTW_LIMIT": current_config.get("DYNAMIC_DTW_LIMIT")
-                    }
-                    report_lines.append(f"🗳️ <b>[기억소 갱신]</b> {regime_key} 국면의 모든 최적화 파라미터가 금고에 저장되었습니다.")
-                # 👆👆 [시너지 강화 끝] 👆👆
-                
-                # 💡 [오답 노트 추출] 패배한 케이스의 공통점 (오답 분석은 전체 표본 사용)
-                losers = df[df[winner_key] < 0]
-                if len(losers) >= 5:
-                    report_lines.append(f"\n💀 <b>[오답 노트: 패배한 {len(losers)}개 케이스 팩트 분석]</b>")
-                    l_rs = losers['dyn_rs'].mean()
-                    l_cpv = losers['dyn_cpv'].mean()
-                    
-                    report_lines.append(f"▪️ 패배 평균: RS 상위 {(10-l_rs)*11.1:.1f}% | 캔들지배력 상위 {(10-l_cpv)*11.1:.1f}%")
-                    
-                    if (10-l_cpv)*11.1 > 50:
-                        report_lines.append("💡 결론: 윗꼬리가 긴 악성 캔들(CPV)에서 휩소가 집중적으로 발생. CPV 컷오프를 더 낮춰야 함.")
-                    elif (10-l_rs)*11.1 > 50:
-                        report_lines.append("💡 결론: 시장 소외주(Low RS)에서 손실이 집중 발생. 추세 필터 강화 필요.")
-                    else:
-                        report_lines.append("💡 결론: 특정 지표 쏠림보다는 거시 시장(VIX) 폭락의 영향이 컸음.")
-    else:
-        report_lines.append("⚠️ 장부에 ABC 컬럼이 부족하여 토너먼트를 보류합니다.")
-
     # ---------------------------------------------------------
     # 👑 엔진 6.5: [V30.0 알파 반감기(Alpha Decay) 및 노화 부검 엔진]
     # ---------------------------------------------------------
