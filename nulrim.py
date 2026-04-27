@@ -999,12 +999,20 @@ def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
     print("🕒 [5번 검색기] 10:30 / 13:30 / 15:10 대기 중...")
     while True:
-        now_kr = datetime.now(kr_tz)
-        if (now_kr.hour == 10 and now_kr.minute == 30) or (now_kr.hour == 13 and now_kr.minute == 30) or (now_kr.hour == 15 and now_kr.minute == 10):
-            print(f"🚀 [5번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
-            scan_market_1d()
-            time.sleep(60) 
-        else: time.sleep(10)
+        try: # 💡 try는 while문 안쪽으로 4칸 들여쓰기
+            now_kr = datetime.now(kr_tz)
+            if (now_kr.hour == 10 and now_kr.minute == 30) or (now_kr.hour == 13 and now_kr.minute == 30) or (now_kr.hour == 15 and now_kr.minute == 10):
+                print(f"🚀 [5번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+                scan_market_1d()
+                time.sleep(60) 
+            else: 
+                time.sleep(10)
+                
+        except Exception as e: # 💡 except는 try와 완벽히 일직선상에 위치해야 함
+            err_msg = f"🚨 <b>[검색기 스케줄러 긴급 에러]</b> 스캔 중 치명적 꼬임 발생:\n{e}"
+            print(err_msg)
+            q_main.put((None, err_msg))
+            time.sleep(60)
 
 if __name__ == "__main__":
     # run_scheduler()  <-- 이 줄을 주석 처리하거나 지우고
