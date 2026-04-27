@@ -745,7 +745,7 @@ def scan_market_1d():
                     df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
                     if not df_s.empty: fallback_dict[tk] = df_s
                 except: pass
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
                 executor.map(fetch_single, chunk)
         
         for tk in chunk:
