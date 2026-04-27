@@ -978,7 +978,7 @@ def scan_market_1d():
 
                         print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
     # 💡 5. 일꾼들(스레드) 가동
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
         
     if tracker['hits'] > 0:
