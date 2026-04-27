@@ -957,7 +957,7 @@ def scan_market_1d():
             pass
 
     # 💡 5. 일꾼(스레드) 가동 및 대기
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
         
     if tracker['hits'] > 0:
