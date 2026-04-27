@@ -252,8 +252,10 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             # 🛡️ 페일세이프 (내부수급과 궤적이 모두 자율 방어선을 넘었을 때만 기각)
             if max_trap_cos >= dyn_trap_limit and min_trap_dtw <= dyn_dtw_limit:
                 if max_trap_cos > max_alpha_cos:
-                    conn.close()
-                    return False, f"🚨 [자율 투트랙 방어막] 세력의 시간끌기(DTW:{min_trap_dtw:.1f}) 및 내부수급(Cos:{max_trap_cos*100:.0f}%) 일치. 매수 기각"
+                    # 💡 [V53.2 데이터 기아 방지 픽스] return False 로 DB 저장을 막는 행위 원천 금지!
+                    # 실매매에서만 거를 수 있도록 이름표(💀[기각/관찰용])만 달고 무조건 DB에 집어넣어 관제탑의 먹이로 줍니다.
+                    sig_type = f"💀[기각/관찰용] {sig_type}"
+                    track_tag = "(참사 방어막 터치 - 관찰 표본)"
             
             # 🚀 슈퍼 부스트
             if max_alpha_cos >= dyn_cos_limit and min_alpha_dtw <= dyn_dtw_limit:
