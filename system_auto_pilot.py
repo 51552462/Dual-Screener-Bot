@@ -370,10 +370,10 @@ def run_autonomous_analysis():
         if t_stat == "TOXIC":
             report_lines.append(f"🚨 {name} 데이터: <b>[TOXIC 붕괴]</b> 표본은 극소수이나 전패/급락 상태입니다.")
             is_toxic = True
+        elif t_stat == "NO_EDGE": # 💡 [V48.0 추가]
+            report_lines.append(f"✂️ {name} 데이터: <b>[기댓값 미달]</b> 승률/손익비 밸런스 붕괴(증기롤러 앞 동전 줍기)로 앙상블 배제.")
         elif t_stat == "NOISE": 
             report_lines.append(f"🛡️ {name} 데이터: <b>무의미한 횡보(노이즈)</b>로 판독되어 앙상블 배제.")
-        elif not t_stat: 
-            report_lines.append(f"▪️ {name} 데이터: 순수 표본 부족으로 배제.")
 
     # TOXIC 발동 시 앙상블 무시하고 '극단적 방어 모드' 후보군 강제 생성
     if is_toxic:
@@ -614,43 +614,39 @@ def run_autonomous_analysis():
         
         report_lines.append(f"▪️ 데이터 격리: Train 표본 {len(train_df)}개 vs OOS 표본 {len(test_df)}개")
         
-        # 👇👇 [수정] V36.0 몬테카를로 부트스트래핑(Monte Carlo Bootstrapping) 엔진 👇👇
-        def get_bootstrapped_pf(returns_series, n_iterations=1000, confidence_level=5):
-            """1,000번의 평행우주를 생성하여 하위 5%(최악의 상황)의 손익비를 추출"""
+        # 👇👇 [수정] V49.0 승률/손익비를 초월한 '실제 계좌 우상향(복리 누적)' 절대 평가 👇👇
+        def get_bootstrapped_equity(returns_series, n_iterations=1000, confidence_level=5):
+            """1,000번의 평행우주를 생성하여 하위 5%(가장 운이 나빴던 상황)의 '실제 복리 누적 수익률'을 추출"""
             returns = returns_series.dropna().values
-            if len(returns) < 5: # 표본이 너무 적으면 일반 PF 리턴
-                win, lose = returns[returns > 0], returns[returns <= 0]
-                return np.sum(win) / (abs(np.sum(lose)) + 0.1)
+            if len(returns) < 3: # 표본이 너무 적으면 단순 합산 리턴
+                return sum(returns)
 
-            pfs = []
+            eqs = []
             # 1. 1,000번의 무작위 복원 추출(Resampling)
             for _ in range(n_iterations):
                 sample = np.random.choice(returns, size=len(returns), replace=True)
-                win = sample[sample > 0]
-                lose = sample[sample <= 0]
-                pf = np.sum(win) / (abs(np.sum(lose)) + 0.1)
-                pfs.append(pf)
+                # 💡 핵심: PF(비율)가 아니라 (1+r1)*(1+r2)... 의 실제 '복리 계좌 우상향 곡선' 계산
+                compounded_return = (np.prod(1 + sample / 100.0) - 1) * 100
+                eqs.append(compounded_return)
 
-            # 2. 1,000개의 평행우주 중 하위 5%(가장 운이 없었던 상황)의 PF 반환
-            return np.percentile(pfs, confidence_level)
+            # 2. 1,000개의 우주 중 하위 5%로 재수 없었던 우주의 '실제 누적 수익률(%)' 반환
+            return np.percentile(eqs, confidence_level)
 
-            results = {}
-            report_lines.append("\n🎲 <b>[V36.0 몬테카를로 1,000회 시뮬레이션 가동]</b>")
-            
-            for col in ['live_a_ret', 'cand_b_ret', 'champ_c_ret']:
-                if col in test_df.columns:
-                    # 기존의 단순 계산(환상) PF
-                    raw_win = test_df[test_df[col] > 0][col].sum()
-                    raw_lose = abs(test_df[test_df[col] <= 0][col].sum() + 0.1)
-                    raw_pf = raw_win / raw_lose
-                    
-                    # 💡 [V36.0] 운이 제거된 하위 5%의 절대 방어력 PF
-                    strict_pf = get_bootstrapped_pf(test_df[col])
-                    results[col] = strict_pf
-                    
-                    if raw_pf > 0:
-                        report_lines.append(f"▪️ {col[:6].upper()} ➔ 단순 PF: {raw_pf:.2f} | <b>운 제거 PF(하위5%): {strict_pf:.2f}</b>")
-            # 👆👆 [수정 끝] 👆👆
+        results = {}
+        report_lines.append("\n🎲 <b>[V49.0 몬테카를로 1,000회 가동 (실제 계좌 우상향 검증)]</b>")
+        
+        for col in ['live_a_ret', 'cand_b_ret', 'champ_c_ret']:
+            if col in test_df.columns:
+                # 기존 단순 합산 누적 수익
+                raw_cumulative = (np.prod(1 + test_df[col].dropna() / 100.0) - 1) * 100
+                
+                # 💡 [V49.0] 운이 제거된 하위 5% 우주의 최악의 복리 누적 수익률
+                strict_equity_growth = get_bootstrapped_equity(test_df[col])
+                results[col] = strict_equity_growth
+                
+                if raw_cumulative != 0:
+                    report_lines.append(f"▪️ {col[:6].upper()} ➔ 단순 누적: {raw_cumulative:.2f}% | <b>운 제거 누적(하위5%): {strict_equity_growth:.2f}%</b>")
+        # 👆👆 [수정 끝] 👆👆
             
             if results:
                 winner_key = max(results, key=results.get)
