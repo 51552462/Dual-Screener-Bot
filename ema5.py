@@ -582,7 +582,8 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         # 1. 14일 평균 변동폭(ATR) 계산 (결측치 방어)
         tr = np.maximum(h[-14:] - l[-14:], np.maximum(abs(h[-14:] - np.roll(c[-14:], 1)), abs(l[-14:] - np.roll(c[-14:], 1))))
         cur_atr = np.mean(tr) if np.mean(tr) > 0 else c[-1] * 0.03
-        
+
+        ns_prefix = "KR_5EMA_S1"
         # 2. 관제탑 손절 승수 로드 (파일별 ns_prefix 사용)
         opt_sl_atr = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
         
