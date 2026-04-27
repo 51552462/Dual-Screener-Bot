@@ -417,10 +417,11 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
         ema_stat_str = "승률 23.8% / 손익비 2.87 (지지선 이탈 휩소 최다 발생 구간)"
         weight_rec = "기본 비중의 0.5배 (철저한 소액 로또용)"
 
-    cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
     total_score = 0
     trap_warning = ""
+    # 👇👇 [수술 2: 버그 픽스] exit_strategy 초기값 세팅 및 V11.0 멘트 준비 👇👇
+    exit_strategy = "MFE 정점 도달 시 기계적 익절을 권장하며, 진입 후 윗꼬리 긴 악성 캔들 출현 시 ZLEMA 기준 즉각 칼손절하십시오."
 
     if hit_s6: 
         sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
