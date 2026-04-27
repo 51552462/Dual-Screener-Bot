@@ -962,13 +962,13 @@ def scan_market_1d():
                         }
             
                         # 1. 오리지널 로직 장부 기록 (STANDARD 진영)
-                                success, fwd_msg = aft.try_add_virtual_position(
-                                    market=market_type, code=code, name=name,
-                                    sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
-                                    ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
-                                    trade_source="STANDARD"
-                                )
-                                print(f"   ↳ [오리지널 장부]: {fwd_msg}")
+                        success, fwd_msg = aft.try_add_virtual_position(
+                            market=market_type, code=code, name=name,
+                            sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
+                            ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
+                            trade_source="STANDARD"
+                        )
+                        print(f"   ↳ [오리지널 장부]: {fwd_msg}")
                                 
                                 # 2. 초신성 공통점 매칭 합격 시 추가 진입 (SUPERNOVA 진영 선취매)
                                 sn_score = dbg.get('sn_score', 0.0)
