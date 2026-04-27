@@ -981,8 +981,8 @@ def scan_market_1d():
                             )
                             print(f"   ↳ [초신성 장부]: {sn_msg}")
                                     
-                            except Exception as e:
-                                print(f"   ↳ [포워드 장부 에러]: {e}")
+                    except Exception as e:
+                        print(f"   ↳ [포워드 장부 에러]: {e}")
                             # 👆👆 [듀얼 리그 진입 끝] 👆👆
 
                     promo_caption = (
