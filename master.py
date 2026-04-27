@@ -692,6 +692,9 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
     if cpv_comment != "":
         v11_comment += f"\n{cpv_comment}\n"
 
+    if trap_warning != "":
+        v11_comment += f"\n{trap_warning}\n"
+
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
