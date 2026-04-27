@@ -489,6 +489,7 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     match_similarity = 0.0
     matched_name = ""
     best_window = 150
+    max_sn_similarity = 0.0
 
     try:
         # 💡 [핵심] 30, 60, 90, 120, 150, 180, 210일 7가지 렌즈로 시계열 압축/팽창 탐색
