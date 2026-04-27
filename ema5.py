@@ -270,6 +270,7 @@ def scale_score(val, best, worst):
         return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 # 💡 [교체] 5일선 관통 전용 마스터 시그널 엔진 (8,485건 팩트 대입)
+# 💡 [버그 픽스] current_marcap과 code를 받을 수 있도록 인자(Parameter) 수정
 def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marcap: float = 0.0, code: str = ""):
     if df_raw is None or len(df_raw) < 500: 
         return False, "", df_raw, {}
