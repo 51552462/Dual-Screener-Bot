@@ -438,34 +438,29 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 알파 반감기 추적을 위한 최초 승격일을 오늘로 기록했습니다.")
 
     # ---------------------------------------------------------
-    # 👑 엔진 7: [V53.0 듀얼 리그(Standard vs Supernova) 진검승부 결산]
+    # 👑 엔진 7: [V53.0 무차별 통합 리그 결산]
     # ---------------------------------------------------------
-    report_lines.append("\n⚔️ <b>[V53.0 듀얼 리그(Standard vs Supernova) 성적 대결]</b>")
+    report_lines.append("\n⚔️ <b>[V53.0 통합 시스템 데스매치 결산]</b>")
     
-    # 1. 진영별 데이터 분리
+    # 1. 오리지널 vs 초신성 베이스라인 대결
     std_df = df[df['sig_type'].str.contains('STANDARD', na=False)]
     sn_df = df[df['sig_type'].str.contains('SUPERNOVA', na=False)]
     
-    def get_league_stats(target_df):
-        if len(target_df) == 0: return 0.0, 0.0
-        # 복리 누적 수익률 계산
-        eq_growth = (np.prod(1 + target_df['final_ret'].dropna() / 100.0) - 1) * 100
-        win_rate = (len(target_df[target_df['final_ret'] > 0]) / len(target_df)) * 100
-        return eq_growth, win_rate
-
-    std_growth, std_wr = get_league_stats(std_df)
-    sn_growth, sn_wr = get_league_stats(sn_df)
+    # 2. ABC 평행우주별 '진짜 승자' 판독 (Out-of-Sample)
+    # 초신성 진영의 후보(B) 성적이 기존 오리지널 실전(A)을 이기고 있다면?
+    sn_b_ret = sn_df['cand_b_ret'].mean() if not sn_df.empty else -99
+    std_a_ret = std_df['live_a_ret'].mean() if not std_df.empty else -99
     
-    report_lines.append(f"▪️ <b>오리지널 진영:</b> 누적 {std_growth:.2f}% | 승률 {std_wr:.1f}% (표본 {len(std_df)}개)")
-    report_lines.append(f"▪️ <b>초신성 선취매:</b> 누적 {sn_growth:.2f}% | 승률 {sn_wr:.1f}% (표본 {len(sn_df)}개)")
-    
-    if len(std_df) > 0 and len(sn_df) > 0:
-        if sn_growth > std_growth:
-            report_lines.append("🏆 <b>이번 주 승자: [초신성 진영]</b> - 폭등주 타임머신 역추적 데이터 마이닝이 시장을 이기고 있습니다.")
-        else:
-            report_lines.append("🛡️ <b>이번 주 승자: [오리지널 진영]</b> - 전통적 기술 필터가 휩소를 방어하며 더 안정적으로 우상향 중입니다.")
+    if sn_b_ret > std_a_ret:
+        report_lines.append(f"🔥 <b>[시스템 추월 발생]</b> 초신성 후보군({sn_b_ret:+.2f}%)이 오리지널 실전({std_a_ret:+.2f}%)을 앞질렀습니다.")
+        # 조치: 초신성 진영의 비중을 대폭 상향하고 오리지널은 관찰 모드로 전환
+        current_config["WEIGHT_SUPERNOVA"] = 1.6
+        current_config["WEIGHT_STANDARD"] = 0.4
+        report_lines.append("🚀 <b>액션:</b> 다음 주 자본의 80%를 초신성 엔진에 우선 배정합니다.")
     else:
-        report_lines.append("⚠️ 아직 양 진영의 결산 표본이 모이지 않았습니다.")
+        report_lines.append(f"🛡️ <b>[방어 성공]</b> 오리지널 실전 엔진이 초신성 도전군을 방어해냈습니다.")
+        current_config["WEIGHT_SUPERNOVA"] = 0.8
+        current_config["WEIGHT_STANDARD"] = 1.2
 
     # ==========================================
     # 🚀 최종 저장 및 발송 (단 1번만 실행)
