@@ -496,17 +496,23 @@ def run_live_sniper_scheduler():
             print(f"스나이퍼 스케줄러 에러: {e}")
             time.sleep(60)
 
-if __name__ == "__main__":
+# ==========================================
+# 🕒 [메인 래퍼 함수] main.py 연동 및 동시 가동
+# ==========================================
+def run_scheduler():
+    """main.py에서 단일 엔진으로 호출했을 때 마이너와 스나이퍼를 동시에 가동시키는 래퍼 함수"""
     import threading
     
     print("🚀 [초기화] 즉시 1회 타임머신 스캔을 시작하여 최신 템플릿을 만듭니다...")
     hunt_supernovas('KR')
     hunt_supernovas('US')
     
-    # 1. 템플릿 갱신 마이너는 백그라운드 스레드로 분리
+    # 1. 템플릿 갱신 마이너는 백그라운드 스레드로 분리하여 1주일마다 실행
     t_miner = threading.Thread(target=run_miner_scheduler, daemon=True)
     t_miner.start()
     
-    # 2. 실시간 진입 스나이퍼는 메인 스레드에서 무한 실행
+    # 2. 실시간 진입 스나이퍼는 현재 스레드에서 무한 실행 (main.py의 멀티스레딩과 완벽 호환)
     run_live_sniper_scheduler()
-# 👆👆 [덮어쓰기 끝] 👆👆
+
+if __name__ == "__main__":
+    run_scheduler()
