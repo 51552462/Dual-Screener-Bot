@@ -518,6 +518,44 @@ def run_autonomous_analysis():
     else:
         report_lines.append("▪️ 초신성 로직의 실전 수치 검증을 위한 청산 데이터 표본이 아직 부족합니다.")
 
+    # ---------------------------------------------------------
+    # 👑 엔진 9: [V56.0 초신성 유사도 컷오프 자동 조율 (Auto-Tuning)]
+    # ---------------------------------------------------------
+    report_lines.append("\n⚙️ <b>[V56.0 초신성 유사도 커트라인 자동 튜닝]</b>")
+    
+    # 1. 초신성 태그로 진입하여 청산된 데이터만 추출
+    sn_tuning_df = df[(df['sig_type'].str.contains('SUPERNOVA_초입', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+    
+    # 현재 설정된 컷오프 값 불러오기 (없으면 대표님이 지시한 초기값 0.50 적용)
+    current_cutoff = current_config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
+    
+    # 데이터가 5개 이상 쌓였을 때만 튜닝 진행
+    if len(sn_tuning_df) >= 5:
+        sn_wins = sn_tuning_df[sn_tuning_df['final_ret'] > 0]
+        sn_wr = len(sn_wins) / len(sn_tuning_df)
+        
+        report_lines.append(f"▪️ 현재 컷오프({current_cutoff*100:.0f}%) 성적: 승률 {sn_wr*100:.1f}% (검증 표본 {len(sn_tuning_df)}개)")
+        
+        # 💡 [튜닝 로직 1] 승률이 45% 미만이면 가짜 초신성(휩소)이 너무 많이 걸리는 것 ➔ 컷오프 상향
+        if sn_wr < 0.45:
+            new_cutoff = min(0.85, current_cutoff + 0.05) # 최대 85%까지만 올림
+            report_lines.append(f"🚨 <b>[컷오프 상향]</b> 50% 언저리의 헐거운 유사도로 진입한 종목들이 줄줄이 손절 당하고 있습니다.")
+            report_lines.append(f"  ↳ <b>액션:</b> 다음 주부터 초신성 스캐너의 유사도 컷오프를 <b>{new_cutoff*100:.0f}%</b>로 깐깐하게 올려 방어력을 높입니다.")
+            current_config["DYNAMIC_SUPERNOVA_CUTOFF"] = round(new_cutoff, 2)
+            
+        # 💡 [튜닝 로직 2] 승률은 65% 이상으로 높은데, 진입 횟수(표본)가 너무 적으면 ➔ 컷오프 하향 (그물 넓히기)
+        elif sn_wr >= 0.65 and len(sn_tuning_df) < 10:
+            new_cutoff = max(0.50, current_cutoff - 0.02) # 최소 50% 밑으로는 안내림
+            report_lines.append(f"🔥 <b>[컷오프 하향]</b> 승률이 압도적이나, 타점이 너무 엄격해 기회를 놓치고 있습니다.")
+            report_lines.append(f"  ↳ <b>액션:</b> 컷오프를 <b>{new_cutoff*100:.0f}%</b>로 소폭 낮춰 공격적으로 포착합니다.")
+            current_config["DYNAMIC_SUPERNOVA_CUTOFF"] = round(new_cutoff, 2)
+            
+        # 💡 [튜닝 로직 3] 적정 균형 유지 중
+        else:
+            report_lines.append(f"✅ <b>[컷오프 유지]</b> 현재의 {current_cutoff*100:.0f}% 허들이 타점과 방어력의 최적 균형을 유지하고 있습니다.")
+    else:
+        report_lines.append(f"▪️ 현재 컷오프: <b>{current_cutoff*100:.0f}%</b> (튜닝을 위한 검증 표본이 아직 부족합니다)")
+
     # ==========================================
     # 🚀 최종 저장 및 발송 (단 1번만 실행)
     # ==========================================
