@@ -106,10 +106,27 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
         # ---------------------------------------------------------
         # 👑 [슈퍼노바 정리본 100% 반영: 한국/미국 분리 3단계 기만술 가동]
         # ---------------------------------------------------------
-        dday_idx = len(hist_df) - 1
+        # 👇👇 [수술 1: 대표님 고유 수치 기반 진짜 폭발 초입(T-1) 탐지] 👇👇
+        breakout_signals = []
+        for i in range(20, len(hist_df) - 5): # 최근 5일 제외 (노이즈 방지)
+            # 조건: 거래대금 2배 터짐 + TML 10 이상 급등 + 양봉(CPV 0.5초과)
+            if (trd_val_eok[i] > np.mean(trd_val_eok[max(0, i-20):i]) * 2.0) and \
+               (tml[i] >= 10.0) and (cpv[i] > 0.5):
+                future_ret = (max(h[i:i+5]) - c[i]) / c[i] * 100
+                if future_ret >= 10.0: # 가짜 돌파 거르고 진짜 대박 파동만 선별
+                    breakout_signals.append((i, future_ret))
+        
+        if breakout_signals:
+            # 수익률이 가장 컸던 날을 찾아, 정확히 그 '하루 전(T-1)'을 타겟으로 고정!
+            dday_idx = sorted(breakout_signals, key=lambda x: x[1], reverse=True)[0][0] - 1
+        else:
+            # 폭발이 없으면 안전하게 에너지(BBE) 최대 응축일로 대체
+            dday_idx = np.nanargmax(bbe) if not np.isnan(bbe).all() else len(hist_df) - 1
+            
         t7_idx = max(0, dday_idx - 5)
         t30_idx = max(0, dday_idx - 20)
         t120_idx = max(0, dday_idx - 120)
+        # 👆👆 [수술 1 끝] 👆👆
         # 👇👇 [추가] 6개월 전 장기 매집/횡보 판독 로직 👇👇
         # 6개월 전 시점의 변동성(ATR) 대비 가격이 밴드 내에 수렴하고 있었는지 확인
         long_term_base = (hist_df['ATR20'].iloc[t120_idx] / hist_df['Close'].iloc[t120_idx] * 100) < 5.0
@@ -432,24 +449,51 @@ def execute_supernova_live_scan(market):
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
             
-            # 💡 대조 벡터: [CPV, TB, BBE] 3차원
-            current_vec = np.nan_to_num(np.array([cpv, tb, bbe]))
-            
-            best_sim = 0.0
-            best_pattern_name = "UNKNOWN"
-            
-            # 그룹/랭크별 하드코딩 절대 수치와 코사인 유사도 1:1 대결
+            # 👇👇 [수술 2] Min-Max 범위(체급 검사) + 코사인 유사도 듀얼 엔진 👇👇
+        best_sim = 0.0
+        best_pattern_name = "UNKNOWN"
+        
+        # 1. 오늘 종목의 5차원 팩트 수치
+        today_tml = tml[-1] if isinstance(tml, (list, np.ndarray)) else tml 
+        today_rs = 0.0 # 스나이퍼 스캔 시점에는 z_rs 연산이 무거워 일단 0으로 처리 (혹은 rs 계산 로직 추가 시 변경 가능)
+        today_vec = np.nan_to_num(np.array([cpv, tb, bbe, today_tml, today_rs]))
+
+        # 2. V65.0 엔진이 CSV에서 뽑아놓은 3개의 클러스터 템플릿 로드
+        cluster_templates = config.get('LIVE_CLUSTER_TEMPLATES', {})
+        
+        if cluster_templates:
+            for c_name, c_range in cluster_templates.items():
+                # [1차 관문] 체급 검증: 오늘의 팩트가 CSV에서 뽑은 Min-Max 범위의 교집합에 완벽히 들어오는가?
+                if (c_range.get('cpv_min', -99) <= cpv <= c_range.get('cpv_max', 99)) and \
+                   (c_range.get('tb_min', -99) <= tb <= c_range.get('tb_max', 999)) and \
+                   (c_range.get('bbe_min', -99) <= bbe <= c_range.get('bbe_max', 999)):
+                    
+                    # [2차 관문] 비율 검증: 체급을 통과했다면, 범위의 중앙값을 이용해 코사인 유사도(DNA 형태) 채점!
+                    target_vec = np.array([
+                        (c_range.get('cpv_min', 0) + c_range.get('cpv_max', 0)) / 2,
+                        (c_range.get('tb_min', 0) + c_range.get('tb_max', 0)) / 2,
+                        (c_range.get('bbe_min', 0) + c_range.get('bbe_max', 0)) / 2,
+                        (c_range.get('tml_min', 0) + c_range.get('tml_max', 0)) / 2,
+                        (c_range.get('rs_min', 0) + c_range.get('rs_max', 0)) / 2
+                    ])
+                    sim = get_similarity(today_vec, target_vec)
+                    
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_pattern_name = c_name
+
+        # 3. 만약 범위에 걸리는 게 하나도 없으면? (플랜B: 기존 3차원 하드코딩 템플릿 대조)
+        if best_sim == 0.0:
+            current_vec_3d = np.nan_to_num(np.array([cpv, tb, bbe]))
             for t_name, base_vec in ideal_templates.items():
-                sim = get_similarity(current_vec, base_vec)
-                
+                sim = get_similarity(current_vec_3d, base_vec)
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name
-            
-            # 👇👇 (수정 후: 관제탑의 동적 컷오프 지시 수신) 👇👇
-            dynamic_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
-            
-            if best_sim >= dynamic_cutoff:
+
+        dynamic_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
+        
+        if best_sim >= dynamic_cutoff:
                 is_success, msg = aft.try_add_virtual_position(
                     market=market, 
                     code=code, 
