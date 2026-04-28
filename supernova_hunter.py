@@ -319,24 +319,39 @@ def hunt_supernovas(market):
         if volatile_dnas:
             market_templates[f"RANK_{rank}_VOLATILE"] = make_template(volatile_dnas)
 
+    # 👇👇 [수술 1] 템플릿 버전 관리 및 누적 저장 (세포 분열) 👇👇
     config = load_config()
-    # 단일 DNA가 아닌 '다중 템플릿(Multi)' 사전을 통째로 관제탑에 저장
-    config[f"DNA_SUPERNOVA_{market}_MULTI"] = market_templates 
+    multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
+    
+    # 1. 기존에 살아남은 템플릿 뭉치를 불러옵니다 (없으면 빈 사전)
+    existing_templates = config.get(multi_key, {})
+    
+    # 2. 오늘 날짜를 버전 번호로 생성 (예: V_240528)
+    version_tag = datetime.now().strftime('V_%y%m%d')
+    
+    # 3. 새로 찾은 템플릿에 버전 꼬리표를 달아 기존 뭉치에 '추가(Append)' 합니다.
+    new_added = 0
+    for t_name, t_dna in market_templates.items():
+        versioned_name = f"{t_name}_{version_tag}"
+        existing_templates[versioned_name] = t_dna
+        new_added += 1
+
+    # 4. 최대 보유 한도 방어 (서버 터짐 방지를 위해 가장 오래된 것부터 삭제해 최대 50개 유지)
+    if len(existing_templates) > 50:
+        sorted_keys = sorted(existing_templates.keys()) # 이름에 날짜가 있어 정렬 가능
+        excess = len(existing_templates) - 50
+        for k in sorted_keys[:excess]:
+            del existing_templates[k]
+            
+    config[multi_key] = existing_templates
     save_config(config)
     
-    # 👇👇 [텔레그램 리포트 내용도 다중 템플릿에 맞게 수정] 👇👇
-    report_msg = f"🚀 <b>[{market} 다차원 초신성 역추적 완료]</b>\n"
-    report_msg += "💡 단순 평균의 오류를 제거하고, 랭크별/패턴별(조용한 매집 vs 변동성 폭발)로 DNA를 완벽히 분리 추출했습니다.\n\n"
-    report_msg += f"🧪 <b>[발견된 세력 패턴 거울(템플릿) 수: 총 {len(market_templates)}개]</b>\n"
-    
-    for t_name, t_dna in market_templates.items():
-        style = "🤫 조용한 매집형" if "STEALTH" in t_name else "🌋 변동성 폭발형"
-        report_msg += f"▪️ {t_name} ({style}) ➔ BBE: {t_dna['bbe']:.1f} | RS: {t_dna['rs']:.1f}\n"
-
-    report_msg += f"\n💡 <i>실시간 장중 스캐너가 위 {len(market_templates)}개의 거울 중 단 하나라도 50% 이상 일치하는 종목을 발견하면 즉시 진입합니다.</i>"
-    
+    # 텔레그램 리포트 내용도 다중 템플릿에 맞게 수정
+    report_msg = f"🚀 <b>[{market} 템플릿 세포 분열 완료]</b>\n"
+    report_msg += f"💡 기존의 승리 DNA를 보존한 채, 새로운 {new_added}개의 변이 유전자({version_tag})가 관제탑에 추가되었습니다.\n"
+    report_msg += f"🧪 <b>[현재 관제탑 보유 템플릿 수: 총 {len(existing_templates)}개]</b>\n"
     send_telegram_msg(report_msg)
-    print(f"✅ [{market}] 다차원 DNA 템플릿 갱신 완료!")
+    print(f"✅ [{market}] 다차원 DNA 템플릿 누적 갱신 완료!")
 
 # ==========================================
 # 🚀 [신규 엔진] 초신성 실시간 스나이퍼 (절대 수치 기반 코사인 매칭)
@@ -347,6 +362,15 @@ def execute_supernova_live_scan(market):
     # 💡 [핵심] 대표님의 하드코딩 수치를 기반으로 한 '완벽한 타점(Ideal Vector)' 정의
     # 순서: [CPV, TB, BBE]
     ideal_templates = {}
+    
+    # 👇👇 [수술 2] 관제탑에서 살아남은 모든 생존 템플릿 로드 👇👇
+    config = load_config()
+    multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
+    surviving_templates = config.get(multi_key, {})
+    
+    # JSON에 저장된 딕셔너리를 코사인 계산을 위한 3차원 Numpy Array로 변환
+    for t_name, t_dna in surviving_templates.items():
+        ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
     
     if market == 'KR':
         # Rank A: c_0 = cpv(0.5~1.0), tb(8.7~14.9), bbe(12.3~42.0)
