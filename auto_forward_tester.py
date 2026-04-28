@@ -432,18 +432,22 @@ def track_daily_positions(market):
             # 💡 [V51.0 핵심] 내 전략(Namespace) 방에 할당된 독립 파라미터 뇌(Brain) 꺼내오기
             ns_live_params = sys_config.get(f"{ns_prefix}_LIVE_PARAMS", sys_config)
             
-            # [V15.0 ABC 토너먼트 병렬 연산 (장중 손절 우선 반영)]
+            # 💡 [보강] 종목의 출신 성분(STANDARD vs SUPERNOVA)에 맞는 파라미터 팩 로드
+            is_sn = "[SUPERNOVA]" in r['sig_type']
+            prefix = ns_prefix # 기본값 (KR_MASTER_S1 등)
+
             abc_sets = {
                 'live_a': ns_live_params,
-                'cand_b': sys_config.get(f"{ns_prefix}_CANDIDATE_PARAMS", sys_config.get("CANDIDATE_PARAMS", {})),
-                'champ_c': sys_config.get(f"{ns_prefix}_CHAMPION_PARAMS", sys_config.get("CHAMPION_PARAMS", {}))
+                'cand_b': sys_config.get(f"{prefix}_CANDIDATE_PARAMS", {}),
+                'champ_c': sys_config.get(f"{prefix}_CHAMPION_PARAMS", {})
             }
 
+            # 모든 평행우주(A, B, C)에 대해 장중 저가(Low) 기준으로 손절 여부 판독
             for key, params in abc_sets.items():
                 if not params: continue
                 sl_limit = params.get("DYNAMIC_MAE_SL", -3.5)
                 
-                # 💡 팩트: 종가(current_ret_pct)가 아니라 장중 저가(low_ret_pct)가 손절선을 건드렸는지 확인
+                # 장중 저가가 손절선을 건드렸다면 해당 평행우주는 'CLOSED_LOSS'
                 if low_ret_pct <= sl_limit:
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=?, {key}_status=? WHERE id=?", (sl_limit, "CLOSED_LOSS", r['id']))
                 else:
@@ -601,6 +605,39 @@ def send_comprehensive_daily_report():
             t_counts = {row[0]: row[1] for row in cursor.fetchall()}
             active_cnt = sum(t_counts.values())
             report_msg += f"📦 <b>현재 운용 비중: {active_cnt}/40개 종목</b> (가동률 {(active_cnt/40)*100:.0f}%)\n"
+            
+            # 👇👇 [여기에 추가] 2.5 ⚔️ 듀얼 리그 실시간 대결 대시보드 👇👇
+            report_msg += f"\n⚔️ <b>[듀얼 리그 실시간 대결 대시보드]</b>\n"
+            
+            # [STANDARD] 진영과 [SUPERNOVA] 진영의 청산된 데이터 로드
+            cursor = conn.execute("SELECT sig_type, final_ret FROM forward_trades WHERE market=? AND status LIKE 'CLOSED%'", (market,))
+            all_closed = cursor.fetchall()
+            
+            std_trades = [r[1] for r in all_closed if '[STANDARD]' in str(r[0])]
+            sn_trades = [r[1] for r in all_closed if '[SUPERNOVA]' in str(r[0])]
+            
+            def calc_league_stats(trades):
+                if not trades: return 0, 0.0, 0.0
+                wins = sum(1 for t in trades if t > 0)
+                wr = (wins / len(trades)) * 100
+                total_ret = sum(trades) # 단순 누적 수익률 합산
+                return len(trades), wr, total_ret
+                
+            std_cnt, std_wr, std_ret = calc_league_stats(std_trades)
+            sn_cnt, sn_wr, sn_ret = calc_league_stats(sn_trades)
+            
+            report_msg += f"🛡️ <b>오리지널 [STANDARD]</b>\n"
+            report_msg += f" ↳ 누적 수익: <b>{std_ret:+.2f}%</b> | 승률: {std_wr:.1f}% (검증 {std_cnt}건)\n"
+            
+            report_msg += f"🚀 <b>초신성 [SUPERNOVA]</b>\n"
+            report_msg += f" ↳ 누적 수익: <b>{sn_ret:+.2f}%</b> | 승률: {sn_wr:.1f}% (검증 {sn_cnt}건)\n"
+            
+            # 실시간 승자 판독
+            if std_cnt > 0 and sn_cnt > 0:
+                if sn_ret > std_ret:
+                    report_msg += f"👑 <b>현재 우위: 초신성 진영 압승 중</b>\n"
+                else:
+                    report_msg += f"👑 <b>현재 우위: 오리지널 진영 방어 성공</b>\n"
 
             # 3. 💡 [추가] 최근 7일 청산 사유 통계 (관제탑 로직 정상 작동 여부 팩트 체크)
             cursor = conn.execute("SELECT exit_type, COUNT(*) FROM forward_trades WHERE market=? AND exit_date >= date('now', '-7 days') AND status LIKE 'CLOSED%' GROUP BY exit_type", (market,))
