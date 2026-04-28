@@ -420,11 +420,15 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
     total_score = 0
     trap_warning = ""
-    # 👇👇 [수술 2: 버그 픽스] exit_strategy 초기값 세팅 및 V11.0 멘트 준비 👇👇
     exit_strategy = "MFE 정점 도달 시 기계적 익절을 권장하며, 진입 후 윗꼬리 긴 악성 캔들 출현 시 ZLEMA 기준 즉각 칼손절하십시오."
-
+    
+    # 👇👇 [수술 1: 변수 초기화] 어떤 타점이든 에러가 나지 않게 기본값 세팅 👇👇
+    regime_weight = 1.0 
+    tier_stat = ""
+    
     if hit_s6: 
         sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
+        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S6", 1.0) # 누락되었던 가중치 추가
         score_rs   = scale_score(cur_rs, 770.60, -65.50)   
         score_tb   = scale_score(cur_tb, 24.60, 0.90)      
         score_cpv  = scale_score(cur_cpv, 0.14, 0.83)      
@@ -891,7 +895,9 @@ def scan_market_1d():
                 if is_valid:
                     idx_close = kospi_idx if row["Market"] == 'KOSPI' else kosdaq_idx
                     hit, sig_type, df, dbg = compute_signal(df_raw, idx_close, marcap, code)
-            except Exception:
+            except Exception as inner_e:
+                # 💡 [버그 픽스] 에러를 조용히 삼키지 않고 콘솔에 출력하도록 수정!
+                print(f"⚠️ [{name}] 시그널 연산 중 에러: {inner_e}")
                 pass
 
             hit_rank = 0
