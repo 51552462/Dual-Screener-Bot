@@ -422,13 +422,15 @@ def execute_supernova_live_scan(market):
                     best_sim = sim
                     best_pattern_name = t_name
             
-            # 50% 이상 일치 시 강제 편입 및 태깅
-            if best_sim >= 0.50:
+            # 👇👇 (수정 후: 관제탑의 동적 컷오프 지시 수신) 👇👇
+            dynamic_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
+            
+            if best_sim >= dynamic_cutoff:
                 is_success, msg = aft.try_add_virtual_position(
                     market=market, 
                     code=code, 
                     name=stock_list[stock_list['Code']==code]['Name'].values[0],
-                    sig_type=f"[SUPERNOVA_초입] {best_pattern_name}", # 💡 "RANK_A_장기매집" 등 명확한 이름표 각인
+                    sig_type=f"[SUPERNOVA_초입] {best_pattern_name}", 
                     score=best_sim * 100, 
                     ep=current_close,
                     facts={'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe},
@@ -437,7 +439,7 @@ def execute_supernova_live_scan(market):
                 
                 if is_success:
                     scanned_today_cache[market].add(code)
-                    send_telegram_msg(f"🦅 <b>[초신성 정밀 타격]</b>\n{code} ({best_pattern_name})\n일치율: {best_sim*100:.1f}%\n대표님의 절대 수치 기준과 부합하여 가상매매 장부에 편입했습니다.")
+                    send_telegram_msg(f"🦅 <b>[초신성 정밀 타격]</b>\n{code} ({best_pattern_name})\n일치율: {best_sim*100:.1f}% (통과 기준: {dynamic_cutoff*100:.0f}%)\n동적 커트라인을 통과하여 가상매매 장부에 편입했습니다.")
         except: pass
 # ==========================================
 # 🕒 [메인 스케줄러] 타임머신(과거) + 스나이퍼(실시간) 병렬 가동
