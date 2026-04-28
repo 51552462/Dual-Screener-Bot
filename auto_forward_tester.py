@@ -174,12 +174,32 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         table_name = f"{market}_{code_str}"
         idx_table = 'US_SPY' if market == 'US' else 'KR_KOSDAQ_IDX'
         
-        hist_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
-        idx_df = pd.read_sql(f"SELECT * FROM {idx_table} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
-        
-        if len(hist_df) >= 150 and len(idx_df) >= 150:
+        # 💡 [버그 픽스] DB에 종목 테이블이 없어서 터지는 현상(no such table) 완벽 방어
+        # DB에 없으면 실시간 API로 즉시 긁어와서 중단 없이 계산을 이어갑니다.
+        try:
+            hist_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
+        except:
+            st_dt = (datetime.now() - timedelta(days=300)).strftime('%Y-%m-%d')
+            hist_df = fdr.DataReader(code_str, st_dt).tail(150) if market == 'KR' else yf.download(code_str, start=st_dt, progress=False).tail(150)
+            if isinstance(hist_df.columns, pd.MultiIndex): hist_df.columns = hist_df.columns.droplevel(1)
+            hist_df = hist_df.reset_index()
+            if 'index' in hist_df.columns: hist_df.rename(columns={'index': 'Date'}, inplace=True)
+
+        try:
+            idx_df = pd.read_sql(f"SELECT * FROM {idx_table} ORDER BY Date DESC LIMIT 150", conn).sort_values('Date')
+        except:
+            st_dt = (datetime.now() - timedelta(days=300)).strftime('%Y-%m-%d')
+            idx_tk = '229200' if market == 'KR' else 'SPY'
+            idx_df = fdr.DataReader(idx_tk, st_dt).tail(150) if market == 'KR' else yf.download(idx_tk, start=st_dt, progress=False).tail(150)
+            if isinstance(idx_df.columns, pd.MultiIndex): idx_df.columns = idx_df.columns.droplevel(1)
+            idx_df = idx_df.reset_index()
+            if 'index' in idx_df.columns: idx_df.rename(columns={'index': 'Date'}, inplace=True)
+            
+        # 💡 조건 완화: 신규 상장주나 데이터 누락을 위해 최소 60개 캔들만 있어도 무조건 계산 진행
+        if len(hist_df) >= 60 and len(idx_df) >= 60:
             c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
             idx_c = idx_df['Close'].values
+            # (이하 기존 7D Z-Score 연산 및 DTW 로직 그대로 이어짐)
             
             # 1. 7D Z-Score 연산 (기존 유지)
             cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
