@@ -416,11 +416,18 @@ def track_daily_positions(market):
             sys_config = load_system_config()
             active_mode = sys_config.get("ACTIVE_EXIT_MODE", "HYBRID")
             
-            # 종목의 시장(KR/US)과 시그널(S1/S4)을 분석해 고유 방(Namespace) 찾기
+            # 👇👇 [수정] 초신성(SUPERNOVA) 전용 독립 네임스페이스 분기 추가 👇👇
             ns_prefix = f"{market}_MASTER_S1" # 기본값
-            if "S4" in r['sig_type']: ns_prefix = f"{market}_MASTER_S4"
-            if "눌림" in r['sig_type']: ns_prefix = f"{market}_NULRIM_S4" if "S4" in r['sig_type'] else f"{market}_NULRIM_S1"
-            if "5선" in r['sig_type']: ns_prefix = f"{market}_5EMA_S1"
+            
+            if "SUPERNOVA" in r['sig_type']:
+                # 초신성은 오리지널과 완전히 분리된 전용 파라미터 방을 사용합니다.
+                ns_prefix = f"{market}_SUPERNOVA_MASTER"
+            else:
+                # 기존 오리지널 로직 분류 유지
+                if "S4" in r['sig_type']: ns_prefix = f"{market}_MASTER_S4"
+                if "눌림" in r['sig_type']: ns_prefix = f"{market}_NULRIM_S4" if "S4" in r['sig_type'] else f"{market}_NULRIM_S1" 
+                if "5선" in r['sig_type']: ns_prefix = f"{market}_5EMA_S1" 
+            # 👆👆 [수정 끝] 👆👆
             
             opt_time_stop = sys_config.get(f"{ns_prefix}_TIME_STOP", 10)
             opt_sl_atr    = sys_config.get(f"{ns_prefix}_ATR_SL", 2.0)
@@ -542,6 +549,25 @@ def track_daily_positions(market):
                 vol_ratio = new_up_vol / (new_down_vol + 1)
                 if vol_ratio >= 1.5: tags.append("#건전한조정_매집우위")
                 elif vol_ratio < 0.8: tags.append("#음봉대량거래_세력이탈")
+
+                # 👇👇 [추가] 오리지널과 초신성의 흐름(Flow) 오토 추적 분리 👇👇
+                if "SUPERNOVA" in r['sig_type']:
+                    # 초신성 전용 광기/투매 추적 로직 (스케일이 다름)
+                    if mfe >= 20.0: tags.append("#초신성_광기폭발_성공")
+                    elif mfe >= 10.0: tags.append("#초신성_1차슈팅_완료")
+                    elif mfe < 3.0: tags.append("#가짜초신성_수급불발")
+                    
+                    if vol_ratio >= 2.0: tags.append("#미친매수세_잔류")
+                    elif vol_ratio < 0.6: tags.append("#세력_엑시트_투매출회")
+                else:
+                    # 기존 오리지널 로직 유지
+                    if mfe >= 7.0 and new_bars <= 8: tags.append("#빠른슈팅_완벽")
+                    elif mfe >= 7.0 and new_bars > 8: tags.append("#지연슈팅_수명연장")
+                    elif mfe < 3.0: tags.append("#슈팅실패_조기소멸")
+                    
+                    if vol_ratio >= 1.5: tags.append("#건전한조정_매집우위")
+                    elif vol_ratio < 0.8: tags.append("#음봉대량거래_세력이탈")
+                # 👆👆 [추가 끝] 👆👆
                 
                 flow_tags = " ".join(tags)
                 exit_date = datetime.now().strftime('%Y-%m-%d')
