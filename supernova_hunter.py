@@ -281,69 +281,74 @@ def hunt_supernovas(market):
         
     if not dna_list: return
     
-    centroid = {
-        'name': f"SUPERNOVA_{market}_CENTROID",
-        'cpv': np.mean([d['cpv'] for d in dna_list]),
-        'tb': np.mean([d['tb'] for d in dna_list]),
-        'bbe': np.mean([d['bbe'] for d in dna_list]),
-        'rs': np.mean([d['rs'] for d in dna_list]),
-        'vcp': np.mean([d['vcp'] for d in dna_list]),
-        'vol': np.mean([d['vol'] for d in dna_list]),
-        'ma': np.mean([d['ma'] for d in dna_list]),
-        'shape': np.mean([d['shape'] for d in dna_list], axis=0).tolist()
-    }
+    if not dna_list: return
     
+    # 👇👇 [기존 단일 평균(Centroid) 멍청한 로직 완전 삭제 후 교체] 👇👇
+    # 👑 1. 랭크별로 DNA 1차 분류
+    rank_dnas = {"A": [], "B": [], "C": [], "D": []}
+    for d in dna_list:
+        if "Rank A" in d['rank_name']: rank_dnas["A"].append(d)
+        elif "Rank B" in d['rank_name']: rank_dnas["B"].append(d)
+        elif "Rank C" in d['rank_name']: rank_dnas["C"].append(d)
+        elif "Rank D" in d['rank_name']: rank_dnas["D"].append(d)
+
+    market_templates = {}
+    
+    # 👑 2. 랭크 내에서 다시 '조용한 매집(Stealth)'과 '변동성 폭발(Volatile)' 2차 정밀 분리
+    for rank, dnas in rank_dnas.items():
+        if not dnas: continue
+        
+        # BBE(응축 에너지)의 중간값을 기준으로 조용함과 변동성을 가름 (대표님 지적 완벽 반영)
+        median_bbe = np.median([d['bbe'] for d in dnas])
+        
+        stealth_dnas = [d for d in dnas if d['bbe'] <= median_bbe]
+        volatile_dnas = [d for d in dnas if d['bbe'] > median_bbe]
+        
+        def make_template(sub_dnas):
+            if not sub_dnas: return None
+            return {
+                'cpv': np.mean([d['cpv'] for d in sub_dnas]),
+                'tb': np.mean([d['tb'] for d in sub_dnas]),
+                'bbe': np.mean([d['bbe'] for d in sub_dnas]),
+                'rs': np.mean([d['rs'] for d in sub_dnas]),
+                'shape': np.mean([d['shape'] for d in sub_dnas], axis=0).tolist()
+            }
+            
+        if stealth_dnas:
+            market_templates[f"RANK_{rank}_STEALTH"] = make_template(stealth_dnas)
+        if volatile_dnas:
+            market_templates[f"RANK_{rank}_VOLATILE"] = make_template(volatile_dnas)
+
     config = load_config()
-    config[f"DNA_SUPERNOVA_{market}"] = centroid
+    # 단일 DNA가 아닌 '다중 템플릿(Multi)' 사전을 통째로 관제탑에 저장
+    config[f"DNA_SUPERNOVA_{market}_MULTI"] = market_templates 
     save_config(config)
     
-    # 💡 [정리본 100% 이식 텔레그램 발송]
-    report_msg = f"🚀 <b>[{market} 초신성 역추적 분석 완료]</b>\n"
+    # 👇👇 [텔레그램 리포트 내용도 다중 템플릿에 맞게 수정] 👇👇
+    report_msg = f"🚀 <b>[{market} 다차원 초신성 역추적 완료]</b>\n"
+    report_msg += "💡 단순 평균의 오류를 제거하고, 랭크별/패턴별(조용한 매집 vs 변동성 폭발)로 DNA를 완벽히 분리 추출했습니다.\n\n"
+    report_msg += f"🧪 <b>[발견된 세력 패턴 거울(템플릿) 수: 총 {len(market_templates)}개]</b>\n"
     
-    if market == 'KR':
-        report_msg += "단순 평균의 '노이즈'를 완전히 제거하고, 세력의 <b>'3단계 기만술'</b>을 견뎌낸 진짜 대박주 표본만 추출했습니다.\n\n"
-        report_msg += "💡 <b>[3단계 질문표 검증 현황]</b>\n"
-        report_msg += f"1️⃣ 과거 1달 전 이평선 혼조/역배열 웅크림 통과\n"
-        report_msg += f"2️⃣ 과거 1주 전 음수 CPV 악성 윗꼬리 털기 통과\n"
-        report_msg += f"3️⃣ D-Day 당일 죽어있던 진모멘텀(TML) 폭발 통과\n\n"
-    elif market == 'US':
-        report_msg += "미국장 특유의 '조용한 웅크림 ➔ 폭풍 전야의 휩소 ➔ 비정상적 지표 폭증' 3단계 밀집 구간 필터링을 완료했습니다.\n\n"
-    
-    report_msg += f"🧪 <b>[랭크별 최종 합격 표본 수]</b>\n"
-    report_msg += f"🥇 Rank A (6개월): {rank_counts['A']}개\n"
-    report_msg += f"🥈 Rank B (3개월): {rank_counts['B']}개\n"
-    report_msg += f"🥉 Rank C (1개월): {rank_counts['C']}개\n"
-    report_msg += f"🏅 Rank D (10일): {rank_counts['D']}개\n\n"
+    for t_name, t_dna in market_templates.items():
+        style = "🤫 조용한 매집형" if "STEALTH" in t_name else "🌋 변동성 폭발형"
+        report_msg += f"▪️ {t_name} ({style}) ➔ BBE: {t_dna['bbe']:.1f} | RS: {t_dna['rs']:.1f}\n"
 
-    report_msg += f"🧬 <b>[폭등 전야 통합 DNA(Centroid) 기준값]</b>\n"
-    report_msg += f"▪️ 캔들지배력(CPV): <b>{centroid['cpv']:.2f}</b>\n"
-    report_msg += f"▪️ 진짜양봉(TB): <b>{centroid['tb']:.2f}</b>\n"
-    report_msg += f"▪️ 응축에너지(BBE): <b>{centroid['bbe']:.2f}</b>\n"
-    report_msg += f"▪️ 상대강도(RS): <b>{centroid['rs']:.2f}</b>\n\n"
-    
-    if market == 'KR':
-        report_msg += f"💡 <b>[인사이트]</b> 이평선 배열 흐름: 거의 모든 랭크가 [과거 1달: 역배열/혼조] ➡️ [과거 1주: 혼조] ➡️ [D-Day: 혼조 또는 정배열 진입]의 공통된 흐름을 거치며, 이미 한 달 전부터 '정배열'인 종목은 폭발력이 없습니다.\n\n"
-    elif market == 'US':
-        report_msg += f"🎯 <b>[미국장 가상매매 트레일링 액션]</b>\n"
-        report_msg += f"💡 <b>[인사이트]</b> 미국 밈/소형주의 특성상, 지수 방향과 완전히 반대로 움직이며 RS 수치가 위아래로 미친 듯이 날뛰며 폭발합니다.\n"
-        report_msg += f"미국 밈(Meme)/소형주 급등 패턴은 한국장보다 상승폭(MFE 최대 28.0%)은 상대적으로 날카롭지만, 아래로 꽂는 지하실 변동성(MAE -14.6% 이상)이 훨씬 살벌합니다.\n"
-        report_msg += f"따라서 D-Day에 진입한 후 +10% ~ +25% 수익권에 도달하면 <b>분할 매도로 익절을 챙겨가는 트레일링 스탑 전략</b>이 필수적입니다.\n\n"
-
-    report_msg += f"💡 <i>미래 가상매매 트래킹 시, 위 관상과 50% 이상 일치하는 종목은 즉시 [SUPERNOVA] 태그를 달고 장부에 선취매 편입됩니다.</i>"
+    report_msg += f"\n💡 <i>실시간 장중 스캐너가 위 {len(market_templates)}개의 거울 중 단 하나라도 50% 이상 일치하는 종목을 발견하면 즉시 진입합니다.</i>"
     
     send_telegram_msg(report_msg)
-    print(f"✅ [{market}] 3단계 기만술 필터링 템플릿 갱신 및 텔레그램 발송 완료!")
+    print(f"✅ [{market}] 다차원 DNA 템플릿 갱신 완료!")
 
 # ==========================================
 # 🚀 [신규 엔진] 초신성 실시간 즉각 진입 스캐너 (50% 커트라인)
 # ==========================================
 def execute_supernova_live_scan(market):
-    print(f"\n🦅 [{market}] 초신성 실시간 스나이퍼 스캔 가동 (즉각 진입 모드)...")
+    print(f"\n🦅 [{market}] 초신성 다차원 스나이퍼 스캔 가동...")
     config = load_config()
-    target_dna = config.get(f"DNA_SUPERNOVA_{market}")
+    # 💡 [핵심] 단일 DNA가 아닌, MULTI 템플릿 딕셔너리를 통째로 로드
+    multi_templates = config.get(f"DNA_SUPERNOVA_{market}_MULTI")
     
-    if not target_dna:
-        print("⚠️ 타임머신 DNA 템플릿이 없습니다. 스캔을 스킵합니다.")
+    if not multi_templates:
+        print("⚠️ 다차원 타임머신 DNA 템플릿이 없습니다. 스캔을 스킵합니다.")
         return
 
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
@@ -353,32 +358,25 @@ def execute_supernova_live_scan(market):
         n1, n2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
         return np.dot(vec1, vec2) / (n1 * n2) if n1 > 0 and n2 > 0 else 0
 
-    base_vec = np.array([target_dna['cpv'], target_dna['tb'], target_dna['bbe'], target_dna['rs']])
-    
-    # 1차 방어막: 현재 장부에 'OPEN' 상태로 보유 중인 종목 불러오기
     try:
-        conn = sqlite3.connect(aft.DB_PATH, timeout=10) # aft 모듈의 DB 경로 사용
+        conn = sqlite3.connect(aft.DB_PATH, timeout=10)
         cursor = conn.cursor()
         cursor.execute("SELECT code FROM forward_trades WHERE market=? AND status='OPEN'", (market,))
         open_positions = {row[0] for row in cursor.fetchall()}
         conn.close()
-    except:
-        open_positions = set()
+    except: open_positions = set()
 
     for code in tickers:
-        # 중복 방지: 이미 보유 중이거나 오늘 쐈던 종목은 연산 스킵
         if code in open_positions or code in scanned_today_cache[market]:
             continue
             
         try:
-            # 실시간 데이터 로드 (최근 30일치만 빠르게 로드)
             df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d')) if market == 'KR' else yf.download(code, period="2mo", progress=False)
             if df.empty or len(df) < 20: continue
             
             c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
             current_close = c[-1]
             
-            # 실시간 DNA 추출 (간략화된 버전)
             v_ma20 = pd.Series(v).rolling(20).mean().values
             cpv = np.where(h != l, (c - o) / (h - l), 0.5)[-1]
             vol_mult = (v[-1] / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
@@ -387,24 +385,35 @@ def execute_supernova_live_scan(market):
             bb_mid = pd.Series(c).rolling(20).mean().values[-1]
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
-            rs = ((c[-1] - c[-20]) / c[-20]) * 100 if len(c) >= 20 else 0 # 약식 RS
+            rs = ((c[-1] - c[-20]) / c[-20]) * 100 if len(c) >= 20 else 0 
             
             current_vec = np.nan_to_num(np.array([cpv, tb, bbe, rs]))
             
-            sim_score = get_similarity(current_vec, base_vec)
+            # 💡 [핵심] 관제탑이 가진 모든 패턴(거울)과 대조하여 최고 궁합 찾기
+            best_sim = 0.0
+            best_pattern_name = "UNKNOWN"
             
-            # 💡 [핵심] 대표님 요청: 초기 커트라인 50% (0.50) 설정 완료
-            if sim_score >= 0.50:
+            for t_name, t_dna in multi_templates.items():
+                base_vec = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe'], t_dna['rs']])
+                sim = get_similarity(current_vec, base_vec)
+                
+                if sim > best_sim:
+                    best_sim = sim
+                    best_pattern_name = t_name
+            
+            # 대표님 요청: 가장 잘 맞는 패턴이 50% 이상 일치하면 해당 이름표를 달고 즉시 진입
+            if best_sim >= 0.50:
                 is_success, msg = aft.try_add_virtual_position(
                     market=market, code=code, name=stock_list[stock_list['Code']==code]['Name'].values[0],
-                    sig_type="초신성 실시간 매칭", score=sim_score*100, ep=current_close,
+                    sig_type=f"초신성 {best_pattern_name}", # 예: "초신성 RANK_A_STEALTH"
+                    score=best_sim*100, ep=current_close,
                     facts={'dyn_cpv': cpv, 'dyn_tb': tb},
-                    trade_source="SUPERNOVA" # 데스매치 분류용 태그
+                    trade_source="SUPERNOVA" # 💡 시스템 오토파일럿의 듀얼 리그 결산을 위한 태그
                 )
                 
                 if is_success:
                     scanned_today_cache[market].add(code)
-                    send_telegram_msg(f"🦅 <b>[초신성 즉각 진입]</b>\n{code} / 일치율: {sim_score*100:.1f}%\n타임머신 DNA와 50% 이상 일치하여 데이터 수집을 위해 가상매매에 편입했습니다.")
+                    send_telegram_msg(f"🦅 <b>[초신성 정밀 타격]</b>\n{code} ({best_pattern_name})\n일치율: {best_sim*100:.1f}%\n세력의 '{best_pattern_name}' 패턴과 일치하여 데이터 수집을 위해 가상매매에 편입했습니다.")
         except: pass
 # 👆👆 [붙여넣기 끝] 👆👆
 
