@@ -58,57 +58,155 @@ def get_us_list():
     except: return pd.DataFrame()
 
 # ==========================================
-# 💡 [핵심] 타임머신 DNA 추출기
+# 💡 [핵심] 타임머신 DNA 추출기 (한/미 시장 완벽 분리형 3단계 기만술 및 랭크 정밀 필터)
 # ==========================================
-def extract_dna_from_df(df_raw, idx_df, target_date):
+def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", market="KR"):
     try:
-        hist_df = df_raw[df_raw.index < target_date].tail(150)
-        i_df = idx_df[idx_df.index < target_date].tail(150)
-        
-        if len(hist_df) < 100 or len(i_df) < 100: return None
+        hist_df = df_raw[df_raw.index <= target_date].tail(150).copy()
+        if len(hist_df) < 100: return None
         
         c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
-        idx_c = i_df['Close'].values
+        trd_val_eok = (c * v) / 100_000_000 
         
-        cpv = np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5))
+        for n in [10, 20, 30, 60, 112, 224]:
+            hist_df[f'EMA{n}'] = hist_df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
+        
+        is_aligned_30 = (hist_df['EMA10'] > hist_df['EMA20']) & (hist_df['EMA20'] > hist_df['EMA30'])
+        is_aligned_112 = is_aligned_30 & (hist_df['EMA30'] > hist_df['EMA60']) & (hist_df['EMA60'] > hist_df['EMA112'])
+        
         v_ma20 = pd.Series(v).rolling(20).mean().values
-        tb = np.nanmean(np.where(h != l, (v / v_ma20) / np.maximum((c - o) / (h - l), 0.01), 1.0))
+        cpv = np.where(h != l, (c - o) / (h - l), 0.5)
+        vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
+        tb = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
+        
         bb_std = pd.Series(c).rolling(20).std().values
-        bbe = np.nanmax(np.where(bb_std > 0, 1.0 / ((4 * bb_std) / pd.Series(c).rolling(20).mean().values), 0)[-20:])
-        rs_slope = ((c[-1] - c[0]) / c[0]) * 100
-        tr = np.maximum(h - l, np.maximum(abs(h - np.roll(c, 1)), abs(l - np.roll(c, 1))))
-        vcp_ratio = np.mean(tr[-20:]) / np.mean(tr) if np.mean(tr) > 0 else 1.0
-        vol_flow = np.sum(np.where(c > o, v, 0)) / (np.sum(np.where(c < o, v, 0)) + 1)
-        emas = [pd.Series(c).ewm(span=n).mean().iloc[-1] for n in [10, 20, 60, 112, 224]]
-        ma_conv = (max(emas) - min(emas)) / min(emas) * 100
+        bb_mid = pd.Series(c).rolling(20).mean().values
+        bb_width = np.where(bb_mid > 0, (4 * bb_std) / bb_mid, 0.01)
+        bbe = np.where(bb_width > 0, (1.0 / bb_width) * vol_mult, 0)
         
-        idx_rs = ((idx_c[-1] - idx_c[0]) / idx_c[0]) * 100
-        idx_vol = pd.Series(idx_c).pct_change().std() * 100 * np.sqrt(252)
-        safe_vol = idx_vol if idx_vol > 0.1 else 1.0
-        
-        z_rs = ((rs_slope - idx_rs) + (abs(idx_rs) * 1.5 if idx_rs < 0 and rs_slope > idx_rs else 0)) / safe_vol
-        z_bbe = bbe / safe_vol
+        idx_arr = np.arange(len(hist_df))
+        r_val = hist_df['EMA10'].rolling(10).corr(pd.Series(idx_arr, index=hist_df.index)).fillna(0)
+        r_squared = r_val * r_val
+        ema10_3 = hist_df['EMA10'].shift(3).fillna(hist_df['EMA10'])
+        ema_roc = np.where(ema10_3 != 0, ((hist_df['EMA10'] - ema10_3) / ema10_3) * 5000, 0)
+        tml = np.where(is_aligned_30, ema_roc * (r_squared ** 2), 0)
+        hist_df['TML'] = tml
+        hist_df['ALL_UP'] = (tml > 0) & is_aligned_30 & (hist_df['EMA112'] > hist_df['EMA224'])
 
+        # 이격도 산출
+        prev_c = np.roll(c, 1); prev_c[0] = c[0]
+        tr_arr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
+        hist_df['ATR20'] = pd.Series(tr_arr).ewm(alpha=1/20, adjust=False, min_periods=0).mean()
+        spread_10_20 = np.where(hist_df['EMA10'] > hist_df['EMA20'], ((hist_df['EMA10'] - hist_df['EMA20']) / hist_df['ATR20']) * 100, 0)
+        spread_112_224 = np.where(hist_df['EMA112'] > hist_df['EMA224'], ((hist_df['EMA112'] - hist_df['EMA224']) / hist_df['ATR20']) * 100, 0)
+
+        # ---------------------------------------------------------
+        # 👑 [슈퍼노바 정리본 100% 반영: 한국/미국 분리 3단계 기만술 가동]
+        # ---------------------------------------------------------
+        dday_idx = len(hist_df) - 1
+        t7_idx = max(0, dday_idx - 5)
+        t30_idx = max(0, dday_idx - 20)
+        
+        c_20 = c[max(0, dday_idx-20)] if dday_idx >= 20 else c[0]
+        stock_ret = ((c[dday_idx] - c_20) / c_20) * 100 if c_20 > 0 else 0
+
+        if market == 'KR':
+            idx_c = benchmarks['KR'][benchmarks['KR'].index <= target_date].tail(150)['Close'].values
+            idx_20 = idx_c[max(0, dday_idx-20)] if dday_idx >= 20 else idx_c[0]
+            idx_ret = ((idx_c[dday_idx] - idx_20) / idx_20) * 100 if idx_20 > 0 else 0.0001
+            rs = np.full(len(c), (stock_ret / (idx_ret if idx_ret != 0 else 0.0001)) * 100)
+
+            # 💡 [한국장 공통 3단계 기만술]
+            q1_aligned = is_aligned_112.iloc[t30_idx]
+            q1_all_up = hist_df['ALL_UP'].iloc[max(0, t30_idx-5):t30_idx+1].sum() <= 1
+            pass_q1 = (not q1_aligned) and q1_all_up
+            
+            q2_cpv = cpv[t7_idx]
+            pass_q2 = (-0.2 <= q2_cpv <= 0.0) 
+            
+            q3_tml = tml[dday_idx]
+            q3_vol_surge = trd_val_eok[dday_idx] > np.mean(trd_val_eok[max(0, dday_idx-20):dday_idx]) * 1.5
+            pass_q3 = (q3_tml >= 10.0) and q3_vol_surge
+            
+            if not (pass_q1 and pass_q2 and pass_q3): return None
+
+            # 💡 [한국장 랭크별 세부 로직 범위 100% 하드코딩 필터링]
+            if "Rank A" in rank_name:
+                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (45.4<=tb[t30_idx]<=69.9) and (5.5<=bbe[t30_idx]<=14.7) and (5.4<=tml[t30_idx]<=48.9) and (0.8<=trd_val_eok[t30_idx]<=22.2)
+                c_7 = (-0.0<=cpv[t7_idx]<=0.2) and (45.7<=tb[t7_idx]<=78.6) and (0.0<=tml[t7_idx]<=59.4) and (0.0<=spread_112_224[t7_idx]<=8.8)
+                c_0 = (0.5<=cpv[dday_idx]<=1.0) and (8.7<=tb[dday_idx]<=14.9) and (12.3<=bbe[dday_idx]<=42.0) and (9.7<=tml[dday_idx]<=272.0) and (38.8<=trd_val_eok[dday_idx]<=599.8)
+                if not (c_30 and c_7 and c_0): return None
+            elif "Rank B" in rank_name:
+                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (49.0<=tb[t30_idx]<=69.0) and (5.4<=bbe[t30_idx]<=11.4) and (37.0<=rs[t30_idx]<=359.0) and (1.0<=trd_val_eok[t30_idx]<=12.5)
+                c_7 = (-0.0<=cpv[t7_idx]<=0.2) and (56.5<=tb[t7_idx]<=103.8) and (0.0<=spread_112_224[t7_idx]<=1.4)
+                c_0 = (0.5<=cpv[dday_idx]<=1.0) and (14.8<=bbe[dday_idx]<=39.9) and (20.6<=tml[dday_idx]<=310.4) and (0.0<=spread_10_20[dday_idx]<=75.0) and (40.5<=trd_val_eok[dday_idx]<=461.5)
+                if not (c_30 and c_7 and c_0): return None
+            elif "Rank C" in rank_name:
+                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (48.2<=tb[t30_idx]<=75.8) and (5.1<=bbe[t30_idx]<=10.1) and (3.0<=trd_val_eok[t30_idx]<=23.5)
+                c_7 = (-360.2<=rs[t7_idx]<=151.2) and (4.5<=tml[t7_idx]<=72.7) and (23.8<=spread_10_20[t7_idx]<=62.0)
+                c_0 = (9.6<=bbe[dday_idx]<=29.8) and (39.5<=tml[dday_idx]<=387.1) and (0.0<=spread_112_224[dday_idx]<=33.9) and (54.0<=trd_val_eok[dday_idx]<=213.0)
+                if not (c_30 and c_7 and c_0): return None
+            elif "Rank D" in rank_name:
+                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (5.3<=bbe[t30_idx]<=8.3) and (-130.5<=rs[t30_idx]<=164.0) and (0.0<=spread_10_20[t30_idx]<=1.9)
+                c_7 = (36.1<=tb[t7_idx]<=90.4) and (0.0<=tml[t7_idx]<=30.1) and (7.2<=trd_val_eok[t7_idx]<=79.2)
+                c_0 = (16.6<=bbe[dday_idx]<=32.3) and (13.7<=tml[dday_idx]<=269.0) and (-1491.9<=rs[dday_idx]<=680.1) and (109.8<=trd_val_eok[dday_idx]<=1419.5)
+                if not (c_30 and c_7 and c_0): return None
+                
+            final_rs = rs[-1]
+
+        elif market == 'US':
+            spy_c = benchmarks['SPY'][benchmarks['SPY'].index <= target_date].tail(150)['Close'].values
+            qqq_c = benchmarks['QQQ'][benchmarks['QQQ'].index <= target_date].tail(150)['Close'].values
+            
+            spy_20 = spy_c[max(0, dday_idx-20)] if dday_idx >= 20 else spy_c[0]
+            qqq_20 = qqq_c[max(0, dday_idx-20)] if dday_idx >= 20 else qqq_c[0]
+            spy_ret = ((spy_c[dday_idx] - spy_20) / spy_20) * 100 if spy_20 > 0 else 0.0001
+            qqq_ret = ((qqq_c[dday_idx] - qqq_20) / qqq_20) * 100 if qqq_20 > 0 else 0.0001
+            
+            rs_spy = np.full(len(c), (stock_ret / (spy_ret if spy_ret != 0 else 0.0001)) * 100)
+            rs_qqq = np.full(len(c), (stock_ret / (qqq_ret if qqq_ret != 0 else 0.0001)) * 100)
+
+            # 💡 [미국장 3단계 밀집 구간 100% 하드코딩 필터링]
+            q1 = (-0.0 <= cpv[t30_idx] <= 0.1) and (3.2 <= bbe[t30_idx] <= 6.6) and (-339.2 <= rs_spy[t30_idx] <= 539.6) and (-108.3 <= rs_qqq[t30_idx] <= 510.7) and (0.0 <= tml[t30_idx] <= 48.9)
+            q2 = (0.1 <= cpv[t7_idx] <= 0.2) and (30.8 <= tb[t7_idx] <= 50.9) and (3.1 <= bbe[t7_idx] <= 8.2) and (-626.6 <= rs_qqq[t7_idx] <= 182.3)
+            q3 = (0.3 <= cpv[dday_idx] <= 0.8) and (5.6 <= tb[dday_idx] <= 12.0) and (9.0 <= bbe[dday_idx] <= 16.6) and (0.0 <= tml[dday_idx] <= 247.2) and (-804.4 <= rs_spy[dday_idx] <= 1323.4) and (-1338.8 <= rs_qqq[dday_idx] <= 761.9) and (0.0 <= spread_10_20[dday_idx] <= 75.8)
+
+            if not (q1 and q2 and q3): return None
+            final_rs = rs_spy[-1]
+
+        # 형상 압축 및 반환
         c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
         new_shape = np.mean(np.array_split(c_norm, 20), axis=1).tolist()
-
-        return {'cpv': cpv, 'tb': tb, 'bbe': z_bbe, 'rs': z_rs, 'vcp': vcp_ratio, 'vol': vol_flow, 'ma': ma_conv, 'shape': new_shape}
+        
+        return {
+            'rank_name': rank_name,
+            'cpv': cpv[-1], 'tb': tb[-1], 'bbe': bbe[-1], 'rs': final_rs, 
+            'vcp': 1.0, 'vol': 1.0, 'ma': 0.0, 'shape': new_shape,
+            'tml': tml[dday_idx], 'trd_val': trd_val_eok[-1]
+        }
     except: return None
 
 # ==========================================
-# 🚀 메인 역추적 로직
+# 🚀 메인 역추적 로직 (Rank A~D 및 미국/한국 분리 마이닝)
 # ==========================================
 def hunt_supernovas(market):
-    print(f"\n🚀 [{market}] 전체 시장 타임머신 역추적 가동...")
-    send_telegram_msg(f"⏳ <b>[{market} 초신성 타임머신 가동]</b>\n전체 상장 종목을 대상으로 1주/1달/3달 대박주를 스캔합니다. (약 10~20분 소요)")
+    print(f"\n🚀 [{market}] 전체 시장 3단계 기만술 타임머신 역추적 가동...")
+    send_telegram_msg(f"⏳ <b>[{market} 초신성 타임머신 가동]</b>\n전체 상장 종목을 대상으로 과거 노이즈를 제거하고 '3단계 기만술'을 통과한 찐 대박주만 스캔합니다. (약 10~20분 소요)")
     
     now = datetime.now()
-    start_date = (now - timedelta(days=180)).strftime('%Y-%m-%d')
+    start_date = (now - timedelta(days=200)).strftime('%Y-%m-%d')
     
-    idx_ticker = '069500' if market == 'KR' else 'SPY'
     try:
-        idx_df = fdr.DataReader(idx_ticker, start_date) if market == 'KR' else yf.download(idx_ticker, start=start_date, progress=False)
-        idx_df.index = pd.to_datetime(idx_df.index).tz_localize(None)
+        if market == 'US':
+            spy_df = yf.download('SPY', start=start_date, progress=False)
+            qqq_df = yf.download('QQQ', start=start_date, progress=False)
+            spy_df.index = pd.to_datetime(spy_df.index).tz_localize(None)
+            qqq_df.index = pd.to_datetime(qqq_df.index).tz_localize(None)
+            benchmarks = {'SPY': spy_df, 'QQQ': qqq_df}
+        else:
+            idx_df = fdr.DataReader('069500', start_date)
+            idx_df.index = pd.to_datetime(idx_df.index).tz_localize(None)
+            benchmarks = {'KR': idx_df}
     except: return
 
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
@@ -121,20 +219,20 @@ def hunt_supernovas(market):
     def process_ticker(code):
         try:
             df = fdr.DataReader(code, start_date) if market == 'KR' else yf.download(code, start=start_date, progress=False)
-            if df.empty or len(df) < 100: return None
+            if df.empty or len(df) < 130: return None
             df.index = pd.to_datetime(df.index).tz_localize(None)
             
             c = df['Close'].values
             if c[-1] < (1000 if market == 'KR' else 3.0): return None 
             
-            ret_1w = (c[-1] - c[-5]) / c[-5] * 100 if len(c) >= 5 else 0
+            ret_1w = (c[-1] - c[-8]) / c[-8] * 100 if len(c) >= 8 else 0
             ret_1m = (c[-1] - c[-20]) / c[-20] * 100 if len(c) >= 20 else 0
             ret_3m = (c[-1] - c[-60]) / c[-60] * 100 if len(c) >= 60 else 0
+            ret_6m = (c[-1] - c[-120]) / c[-120] * 100 if len(c) >= 120 else 0
             
-            return {'code': code, 'df': df, 'ret_1w': ret_1w, 'ret_1m': ret_1m, 'ret_3m': ret_3m}
+            return {'code': code, 'df': df, 'ret_1w': ret_1w, 'ret_1m': ret_1m, 'ret_3m': ret_3m, 'ret_6m': ret_6m}
         except: return None
 
-    # 💡 터미널 답답함 방지를 위해 500개마다 진행률 출력
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         for res in executor.map(process_ticker, tickers):
             scanned_count += 1
@@ -146,25 +244,31 @@ def hunt_supernovas(market):
     
     res_df = pd.DataFrame(results)
     
-    top_1w = res_df.sort_values('ret_1w', ascending=False).head(10)
-    rem_1m = res_df[~res_df['code'].isin(top_1w['code'])]
-    top_1m = rem_1m.sort_values('ret_1m', ascending=False).head(10)
-    rem_3m = rem_1m[~rem_1m['code'].isin(top_1m['code'])]
+    top_6m = res_df.sort_values('ret_6m', ascending=False).head(10)
+    rem_3m = res_df[~res_df['code'].isin(top_6m['code'])]
     top_3m = rem_3m.sort_values('ret_3m', ascending=False).head(10)
+    rem_1m = rem_3m[~rem_3m['code'].isin(top_3m['code'])]
+    top_1m = rem_1m.sort_values('ret_1m', ascending=False).head(10)
+    rem_1w = rem_1m[~rem_1m['code'].isin(top_1m['code'])]
+    top_1w = rem_1w.sort_values('ret_1w', ascending=False).head(10)
     
     supernovas = []
-    for _, r in top_1w.iterrows(): supernovas.append((r['code'], r['df'], now - timedelta(days=7)))
-    for _, r in top_1m.iterrows(): supernovas.append((r['code'], r['df'], now - timedelta(days=30)))
-    for _, r in top_3m.iterrows(): supernovas.append((r['code'], r['df'], now - timedelta(days=90)))
+    for _, r in top_6m.iterrows(): supernovas.append((r['code'], r['df'], now, "🥇 Rank A: '6개월' 장기 매집형 (진성 대장주)"))
+    for _, r in top_3m.iterrows(): supernovas.append((r['code'], r['df'], now, "🥈 Rank B: '3개월' 중기 매집형 (강력한 스윙 추세주)"))
+    for _, r in top_1m.iterrows(): supernovas.append((r['code'], r['df'], now, "🥉 Rank C: '1개월' 단기 매집형 (트렌드 테마주)"))
+    for _, r in top_1w.iterrows(): supernovas.append((r['code'], r['df'], now, "🏅 Rank D: '10일' 초단기/밈(Meme) 작전주"))
 
     dna_list = []
-    analyzed_names = []
+    rank_counts = {"A":0, "B":0, "C":0, "D":0}
     
-    for code, df, target_date in supernovas:
-        dna = extract_dna_from_df(df, idx_df, target_date.strftime('%Y-%m-%d'))
+    for code, df, target_date, rank_name in supernovas:
+        dna = extract_dna_from_df(df, benchmarks, target_date.strftime('%Y-%m-%d'), rank_name, market)
         if dna: 
             dna_list.append(dna)
-            analyzed_names.append(name_map.get(code, str(code)))
+            if "Rank A" in rank_name: rank_counts["A"] += 1
+            elif "Rank B" in rank_name: rank_counts["B"] += 1
+            elif "Rank C" in rank_name: rank_counts["C"] += 1
+            elif "Rank D" in rank_name: rank_counts["D"] += 1
         
     if not dna_list: return
     
@@ -184,23 +288,42 @@ def hunt_supernovas(market):
     config[f"DNA_SUPERNOVA_{market}"] = centroid
     save_config(config)
     
-    # 💡 [핵심] 회원님 텔레그램으로 상세 분석 결과 발송!
+    # 💡 [정리본 100% 이식 텔레그램 발송]
     report_msg = f"🚀 <b>[{market} 초신성 역추적 분석 완료]</b>\n"
-    report_msg += f"최근 1~3개월 폭등 대장주 {len(dna_list)}개의 '폭등 직전 DNA'를 추출하여 선취매 템플릿을 갱신했습니다.\n\n"
     
-    report_msg += f"🧪 <b>[이번 주 초신성 추출 표본]</b>\n"
-    sample_str = ", ".join(analyzed_names[:10]) + (" 등..." if len(analyzed_names) > 10 else "")
-    report_msg += f"▪️ {sample_str}\n\n"
+    if market == 'KR':
+        report_msg += "단순 평균의 '노이즈'를 완전히 제거하고, 세력의 <b>'3단계 기만술'</b>을 견뎌낸 진짜 대박주 표본만 추출했습니다.\n\n"
+        report_msg += "💡 <b>[3단계 질문표 검증 현황]</b>\n"
+        report_msg += f"1️⃣ 과거 1달 전 이평선 혼조/역배열 웅크림 통과\n"
+        report_msg += f"2️⃣ 과거 1주 전 음수 CPV 악성 윗꼬리 털기 통과\n"
+        report_msg += f"3️⃣ D-Day 당일 죽어있던 진모멘텀(TML) 폭발 통과\n\n"
+    elif market == 'US':
+        report_msg += "미국장 특유의 '조용한 웅크림 ➔ 폭풍 전야의 휩소 ➔ 비정상적 지표 폭증' 3단계 밀집 구간 필터링을 완료했습니다.\n\n"
+    
+    report_msg += f"🧪 <b>[랭크별 최종 합격 표본 수]</b>\n"
+    report_msg += f"🥇 Rank A (6개월): {rank_counts['A']}개\n"
+    report_msg += f"🥈 Rank B (3개월): {rank_counts['B']}개\n"
+    report_msg += f"🥉 Rank C (1개월): {rank_counts['C']}개\n"
+    report_msg += f"🏅 Rank D (10일): {rank_counts['D']}개\n\n"
 
-    report_msg += f"🧬 <b>[폭등 전야 공통점(Centroid) 기준값]</b>\n"
+    report_msg += f"🧬 <b>[폭등 전야 통합 DNA(Centroid) 기준값]</b>\n"
     report_msg += f"▪️ 캔들지배력(CPV): <b>{centroid['cpv']:.2f}</b>\n"
     report_msg += f"▪️ 진짜양봉(TB): <b>{centroid['tb']:.2f}</b>\n"
     report_msg += f"▪️ 응축에너지(BBE): <b>{centroid['bbe']:.2f}</b>\n"
     report_msg += f"▪️ 상대강도(RS): <b>{centroid['rs']:.2f}</b>\n\n"
-    report_msg += f"💡 <i>이 관상과 50% 이상 일치하는 종목은 즉시 [SUPERNOVA] 태그를 달고 장부에 편입됩니다.</i>"
+    
+    if market == 'KR':
+        report_msg += f"💡 <b>[인사이트]</b> 이평선 배열 흐름: 거의 모든 랭크가 [과거 1달: 역배열/혼조] ➡️ [과거 1주: 혼조] ➡️ [D-Day: 혼조 또는 정배열 진입]의 공통된 흐름을 거치며, 이미 한 달 전부터 '정배열'인 종목은 폭발력이 없습니다.\n\n"
+    elif market == 'US':
+        report_msg += f"🎯 <b>[미국장 가상매매 트레일링 액션]</b>\n"
+        report_msg += f"💡 <b>[인사이트]</b> 미국 밈/소형주의 특성상, 지수 방향과 완전히 반대로 움직이며 RS 수치가 위아래로 미친 듯이 날뛰며 폭발합니다.\n"
+        report_msg += f"미국 밈(Meme)/소형주 급등 패턴은 한국장보다 상승폭(MFE 최대 28.0%)은 상대적으로 날카롭지만, 아래로 꽂는 지하실 변동성(MAE -14.6% 이상)이 훨씬 살벌합니다.\n"
+        report_msg += f"따라서 D-Day에 진입한 후 +10% ~ +25% 수익권에 도달하면 <b>분할 매도로 익절을 챙겨가는 트레일링 스탑 전략</b>이 필수적입니다.\n\n"
+
+    report_msg += f"💡 <i>미래 가상매매 트래킹 시, 위 관상과 50% 이상 일치하는 종목은 즉시 [SUPERNOVA] 태그를 달고 장부에 선취매 편입됩니다.</i>"
     
     send_telegram_msg(report_msg)
-    print(f"✅ [{market}] 초신성 템플릿 갱신 및 텔레그램 발송 완료!")
+    print(f"✅ [{market}] 3단계 기만술 필터링 템플릿 갱신 및 텔레그램 발송 완료!")
 
 def run_scheduler():
     tz_kr = pytz.timezone('Asia/Seoul')
