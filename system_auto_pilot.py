@@ -485,6 +485,7 @@ def run_autonomous_analysis():
             # 3. 승리한 초신성들의 '실제 DNA 수치값' 평균 산출 (MFE 가중치 템플릿)
             real_cpv = high_mfe_sn['dyn_cpv'].mean()
             real_tb = high_mfe_sn['dyn_tb'].mean()
+            real_bbe = high_mfe_sn['v_energy'].mean()
             
             # 기존 과거 백테스트 템플릿(Centroid) 값 가져오기 (비교용)
             multi_templates = current_config.get(f"DNA_SUPERNOVA_{high_mfe_sn['market'].iloc[0]}_MULTI", {})
@@ -510,16 +511,19 @@ def run_autonomous_analysis():
             # (기존 값 * 0.7) + (새로운 실전 값 * 0.3) = 점진적 오토 추적
             smoothed_cpv = (old_mfe_template["cpv"] * (1 - SMOOTHING_ALPHA)) + (real_cpv * SMOOTHING_ALPHA)
             smoothed_tb = (old_mfe_template["tb"] * (1 - SMOOTHING_ALPHA)) + (real_tb * SMOOTHING_ALPHA)
+            smoothed_bbe = (old_mfe_template.get("bbe", real_bbe) * (1 - SMOOTHING_ALPHA)) + (real_bbe * SMOOTHING_ALPHA)
             
             current_config["DNA_SUPERNOVA_MFE_WEIGHTED"] = {
                 "cpv": round(smoothed_cpv, 3),
                 "tb": round(smoothed_tb, 3),
+                "bbe": round(smoothed_bbe, 3),
                 "last_updated": datetime.now().strftime('%Y-%m-%d')
             }
             
             report_lines.append(f"\n🧬 <b>[MFE 황금 템플릿 오토 스무딩]</b>")
-            report_lines.append(f" ↳ CPV: {old_mfe_template['cpv']:.2f} ➔ <b>{smoothed_cpv:.2f}</b> (새 파동 30% 흡수)")
-            report_lines.append(f" ↳ TB: {old_mfe_template['tb']:.1f} ➔ <b>{smoothed_tb:.1f}</b> (새 파동 30% 흡수)")
+            report_lines.append(f" ↳ CPV: {old_mfe_template.get('cpv', real_cpv):.2f} ➔ <b>{smoothed_cpv:.2f}</b>")
+            report_lines.append(f" ↳ TB: {old_mfe_template.get('tb', real_tb):.1f} ➔ <b>{smoothed_tb:.1f}</b>")
+            report_lines.append(f" ↳ BBE: {old_mfe_template.get('bbe', real_bbe):.1f} ➔ <b>{smoothed_bbe:.1f}</b>")
 
     # ---------------------------------------------------------
     # 👑 엔진 9: [V56.0 초신성 유사도 컷오프 자동 조율 (Auto-Tuning)]
