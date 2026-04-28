@@ -437,14 +437,20 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     total_score = 0
     trap_warning = ""
     exit_strategy = "MFE 정점 도달 시 기계적 익절을 권장하며, 진입 후 윗꼬리 긴 악성 캔들 출현 시 ZLEMA 기준 즉각 칼손절하십시오."
-    
+
     # 👇👇 [수술 1: 변수 초기화] 어떤 타점이든 에러가 나지 않게 기본값 세팅 👇👇
     regime_weight = 1.0 
     tier_stat = ""
     
+    # 💡 [치명적 버그 픽스] 현재 캔들의 팩트 데이터를 배열의 맨 끝(-1)에서 뽑아주는 필수 선언 추가!
+    cur_cpv = cpv[-1]
+    cur_tb = tb_index[-1]
+    cur_bbe = bb_energy[-1]
+    cur_rs = rs[-1]
+    
     if hit_s6: 
         sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
-        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S6", 1.0) # 누락되었던 가중치 추가
+        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S6", 1.0)
         score_rs   = scale_score(cur_rs, 770.60, -65.50)   
         score_tb   = scale_score(cur_tb, 24.60, 0.90)      
         score_cpv  = scale_score(cur_cpv, 0.14, 0.83)      
