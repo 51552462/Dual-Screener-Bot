@@ -518,10 +518,18 @@ def compute_korea_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marc
                       f"▪️ 최대 <b>{opt_time_stop}일</b> 내에 승부를 보십시오.\n"
                       f"▪️ 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
+    # 💡 [버그 픽스] 모든 점수대에서 tier_stat 변수가 무조건 할당되도록 강제 설정
+    if total_score >= 80:
+        tier_stat = f"총점 {total_score:.1f}점(1티어)으로 계좌 방어력이 수학적으로 완벽히 입증되었으므로 메인 비중 진입을 권장합니다."
+    elif total_score <= 50 and cur_rs > 500 and cur_cpv <= 0.3:
+        tier_stat = f"💡 [특급 모멘텀 예외] 총점은 낮으나 시장 주도력(RS {cur_rs:.1f})이 압도적입니다. 소액 진입을 허용합니다."
+    else:
+        tier_stat = f"총점 {total_score:.1f}점의 하위/일반 타점입니다. 가짜 휩소 리스크를 피하기 위해 반드시 비중을 대폭 축소하십시오."
+
     regime_msg = f"\n🚨 <b>[관제탑 자본 통제]: 현재 국면 판단에 따라 진입 비중이 기본값의 {regime_weight}배로 강제 조율됩니다.</b>"
     
-    # 최종 문자열 합체
-    exit_strategy += action_msg + regime_msg
+    # 💡 [수정] 최종 문자열 합체 시 tier_stat도 안전하게 포함되도록 조립
+    exit_strategy += action_msg + "\n\n" + tier_stat + regime_msg
 
     # =========================================================================
     # 👑 [다중 클러스터 도플갱어 매칭] 다중 시계열 워핑(DTW) 렌즈 적용 (30~210일 확장)
