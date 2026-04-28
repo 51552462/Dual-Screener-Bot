@@ -563,6 +563,47 @@ def run_autonomous_analysis():
     else:
         report_lines.append(f"▪️ 현재 컷오프: <b>{current_cutoff*100:.0f}%</b> (튜닝을 위한 검증 표본이 아직 부족합니다)")
 
+    # ---------------------------------------------------------
+    # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 (자연 도태)]
+    # ---------------------------------------------------------
+    report_lines.append("\n💀 <b>[V60.0 진화론 기반 템플릿 도태 심판]</b>")
+    
+    # 초신성 태그로 진입하여 청산 완료된 전체 데이터 추출
+    sn_all_closed = df[(df['sig_type'].str.contains('SUPERNOVA_초입', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+    
+    for mkt in ['KR', 'US']:
+        multi_key = f"DNA_SUPERNOVA_{mkt}_MULTI"
+        if multi_key not in current_config: continue
+        
+        market_templates = current_config[multi_key]
+        culled_list = []
+        
+        # 현재 살아있는 각 템플릿 버전에 대해 성적 평가
+        for template_name in list(market_templates.keys()):
+            # 해당 템플릿 이름표를 달고 진입했던 매매 내역만 필터링
+            t_trades = sn_all_closed[sn_all_closed['sig_type'].str.contains(template_name, na=False)]
+            
+            # 💡 [도태 기준] 최소 5번 이상 매매해 본 템플릿만 평가대에 올림
+            if len(t_trades) >= 5:
+                t_wins = t_trades[t_trades['final_ret'] > 0]
+                t_wr = len(t_wins) / len(t_trades)
+                t_pf = t_wins['final_ret'].sum() / (abs(t_trades[t_trades['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+                
+                # 🚨 [사형 선고] 승률 35% 미만이거나, 손익비가 1.0(본전)이 안 되면 영구 삭제
+                if t_wr < 0.35 or t_pf < 1.0:
+                    del market_templates[template_name]
+                    culled_list.append(f"{template_name} (승률 {t_wr*100:.1f}%, PF {t_pf:.2f})")
+        
+        # 도태된 결과를 JSON에 반영
+        current_config[multi_key] = market_templates
+        
+        if culled_list:
+            report_lines.append(f"▪️ <b>{mkt}장 도태 집행: {len(culled_list)}개 유전자 영구 삭제</b>")
+            for c_name in culled_list: 
+                report_lines.append(f"  ❌ {c_name}")
+        else:
+            report_lines.append(f"▪️ {mkt}장: 검증 대상이 없거나, 모든 유전자가 생존 기준을 통과했습니다.")
+
     # ==========================================
     # 🚀 최종 저장 및 발송 (단 1번만 실행)
     # ==========================================
