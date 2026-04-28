@@ -339,17 +339,33 @@ def hunt_supernovas(market):
     print(f"✅ [{market}] 다차원 DNA 템플릿 갱신 완료!")
 
 # ==========================================
-# 🚀 [신규 엔진] 초신성 실시간 즉각 진입 스캐너 (50% 커트라인)
+# 🚀 [신규 엔진] 초신성 실시간 스나이퍼 (절대 수치 기반 코사인 매칭)
 # ==========================================
 def execute_supernova_live_scan(market):
-    print(f"\n🦅 [{market}] 초신성 다차원 스나이퍼 스캔 가동...")
-    config = load_config()
-    # 💡 [핵심] 단일 DNA가 아닌, MULTI 템플릿 딕셔너리를 통째로 로드
-    multi_templates = config.get(f"DNA_SUPERNOVA_{market}_MULTI")
+    print(f"\n🦅 [{market}] 초신성 스나이퍼 스캔 가동 (절대 수치 코사인 매칭)...")
     
-    if not multi_templates:
-        print("⚠️ 다차원 타임머신 DNA 템플릿이 없습니다. 스캔을 스킵합니다.")
-        return
+    # 💡 [핵심] 대표님의 하드코딩 수치를 기반으로 한 '완벽한 타점(Ideal Vector)' 정의
+    # 순서: [CPV, TB, BBE]
+    ideal_templates = {}
+    
+    if market == 'KR':
+        # Rank A: c_0 = cpv(0.5~1.0), tb(8.7~14.9), bbe(12.3~42.0)
+        ideal_templates['RANK_A_장기매집'] = np.array([0.75, 11.8, 27.15])
+        # Rank B: c_0 = cpv(0.5~1.0), bbe(14.8~39.9) / tb는 A와 C의 중간 10.0 가정
+        ideal_templates['RANK_B_중기스윙'] = np.array([0.75, 10.0, 27.35])
+        # Rank C: c_0 = bbe(9.6~29.8) / cpv 0.6, tb 8.0 가정
+        ideal_templates['RANK_C_단기테마'] = np.array([0.60, 8.0, 19.70])
+        # Rank D: c_0 = bbe(16.6~32.3) / cpv 0.6, tb 8.0 가정
+        ideal_templates['RANK_D_초단기밈'] = np.array([0.60, 8.0, 24.45])
+    elif market == 'US':
+        # US: q3 = cpv(0.3~0.8), tb(5.6~12.0), bbe(9.0~16.6)
+        ideal_templates['US_MEME_슈팅'] = np.array([0.55, 8.8, 12.80])
+
+    # 💡 [V55.0 관제탑 연동] 만약 실전 MFE 가중치로 진화한 템플릿이 있다면 추가 로드
+    config = load_config()
+    mfe_weighted = config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
+    if mfe_weighted:
+        ideal_templates['MFE_진화형_황금타점'] = np.array([mfe_weighted['cpv'], mfe_weighted['tb'], mfe_weighted.get('bbe', 20.0)])
 
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
     tickers = stock_list['Code'].tolist()
@@ -377,6 +393,12 @@ def execute_supernova_live_scan(market):
             c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
             current_close = c[-1]
             
+            # 잡주 필터링 (동전주, 소외주 원천 차단)
+            if market == 'KR' and current_close < 1000: continue 
+            if market == 'US' and current_close < 1.0: continue  
+            if np.mean(v[-5:]) < 50000: continue                 
+            
+            # 현재 종목의 DNA 벡터 추출 (RS 제외, 순수 캔들/수급 에너지 3차원 대조)
             v_ma20 = pd.Series(v).rolling(20).mean().values
             cpv = np.where(h != l, (c - o) / (h - l), 0.5)[-1]
             vol_mult = (v[-1] / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
@@ -385,38 +407,38 @@ def execute_supernova_live_scan(market):
             bb_mid = pd.Series(c).rolling(20).mean().values[-1]
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
-            rs = ((c[-1] - c[-20]) / c[-20]) * 100 if len(c) >= 20 else 0 
             
-            current_vec = np.nan_to_num(np.array([cpv, tb, bbe, rs]))
+            # 💡 대조 벡터: [CPV, TB, BBE] 3차원
+            current_vec = np.nan_to_num(np.array([cpv, tb, bbe]))
             
-            # 💡 [핵심] 관제탑이 가진 모든 패턴(거울)과 대조하여 최고 궁합 찾기
             best_sim = 0.0
             best_pattern_name = "UNKNOWN"
             
-            for t_name, t_dna in multi_templates.items():
-                base_vec = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe'], t_dna['rs']])
+            # 그룹/랭크별 하드코딩 절대 수치와 코사인 유사도 1:1 대결
+            for t_name, base_vec in ideal_templates.items():
                 sim = get_similarity(current_vec, base_vec)
                 
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name
             
-            # 대표님 요청: 가장 잘 맞는 패턴이 50% 이상 일치하면 해당 이름표를 달고 즉시 진입
+            # 50% 이상 일치 시 강제 편입 및 태깅
             if best_sim >= 0.50:
                 is_success, msg = aft.try_add_virtual_position(
-                    market=market, code=code, name=stock_list[stock_list['Code']==code]['Name'].values[0],
-                    sig_type=f"초신성 {best_pattern_name}", # 예: "초신성 RANK_A_STEALTH"
-                    score=best_sim*100, ep=current_close,
-                    facts={'dyn_cpv': cpv, 'dyn_tb': tb},
-                    trade_source="SUPERNOVA" # 💡 시스템 오토파일럿의 듀얼 리그 결산을 위한 태그
+                    market=market, 
+                    code=code, 
+                    name=stock_list[stock_list['Code']==code]['Name'].values[0],
+                    sig_type=f"[SUPERNOVA_초입] {best_pattern_name}", # 💡 "RANK_A_장기매집" 등 명확한 이름표 각인
+                    score=best_sim * 100, 
+                    ep=current_close,
+                    facts={'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe},
+                    trade_source="SUPERNOVA" 
                 )
                 
                 if is_success:
                     scanned_today_cache[market].add(code)
-                    send_telegram_msg(f"🦅 <b>[초신성 정밀 타격]</b>\n{code} ({best_pattern_name})\n일치율: {best_sim*100:.1f}%\n세력의 '{best_pattern_name}' 패턴과 일치하여 데이터 수집을 위해 가상매매에 편입했습니다.")
+                    send_telegram_msg(f"🦅 <b>[초신성 정밀 타격]</b>\n{code} ({best_pattern_name})\n일치율: {best_sim*100:.1f}%\n대표님의 절대 수치 기준과 부합하여 가상매매 장부에 편입했습니다.")
         except: pass
-# 👆👆 [붙여넣기 끝] 👆👆
-
 # ==========================================
 # 🕒 [메인 스케줄러] 타임머신(과거) + 스나이퍼(실시간) 병렬 가동
 # ==========================================
