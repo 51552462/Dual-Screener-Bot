@@ -11,6 +11,8 @@ import warnings
 from io import StringIO
 import requests
 warnings.filterwarnings('ignore')
+import auto_forward_tester as aft
+scanned_today_cache = {'KR': set(), 'US': set()}
 
 # ==========================================
 # 💡 [환경 설정 및 텔레그램 세팅]
@@ -62,8 +64,9 @@ def get_us_list():
 # ==========================================
 def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", market="KR"):
     try:
-        hist_df = df_raw[df_raw.index <= target_date].tail(150).copy()
-        if len(hist_df) < 100: return None
+        # 💡 [수정] 150일 -> 200일로 늘려 6개월(약 125 거래일) 이상의 데이터를 완벽 확보
+        hist_df = df_raw[df_raw.index <= target_date].tail(200).copy()
+        if len(hist_df) < 130: return None # 6개월 데이터가 안 되면 기각
         
         c, o, h, l, v = hist_df['Close'].values, hist_df['Open'].values, hist_df['High'].values, hist_df['Low'].values, hist_df['Volume'].values
         trd_val_eok = (c * v) / 100_000_000 
@@ -106,6 +109,12 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
         dday_idx = len(hist_df) - 1
         t7_idx = max(0, dday_idx - 5)
         t30_idx = max(0, dday_idx - 20)
+        t120_idx = max(0, dday_idx - 120)
+        # 👇👇 [추가] 6개월 전 장기 매집/횡보 판독 로직 👇👇
+        # 6개월 전 시점의 변동성(ATR) 대비 가격이 밴드 내에 수렴하고 있었는지 확인
+        long_term_base = (hist_df['ATR20'].iloc[t120_idx] / hist_df['Close'].iloc[t120_idx] * 100) < 5.0
+        if "Rank A" in rank_name and not long_term_base:
+            return None # A랭크(6개월 장기 매집형)인데 6개월 전 횡보 매집 구간이 없으면 가차 없이 기각
         
         c_20 = c[max(0, dday_idx-20)] if dday_idx >= 20 else c[0]
         stock_ret = ((c[dday_idx] - c_20) / c_20) * 100 if c_20 > 0 else 0
@@ -325,13 +334,90 @@ def hunt_supernovas(market):
     send_telegram_msg(report_msg)
     print(f"✅ [{market}] 3단계 기만술 필터링 템플릿 갱신 및 텔레그램 발송 완료!")
 
-def run_scheduler():
-    tz_kr = pytz.timezone('Asia/Seoul')
-    print("🕒 [초신성 타임머신 역추적기] 스케줄러 대기 중...")
+# ==========================================
+# 🚀 [신규 엔진] 초신성 실시간 즉각 진입 스캐너 (50% 커트라인)
+# ==========================================
+def execute_supernova_live_scan(market):
+    print(f"\n🦅 [{market}] 초신성 실시간 스나이퍼 스캔 가동 (즉각 진입 모드)...")
+    config = load_config()
+    target_dna = config.get(f"DNA_SUPERNOVA_{market}")
     
+    if not target_dna:
+        print("⚠️ 타임머신 DNA 템플릿이 없습니다. 스캔을 스킵합니다.")
+        return
+
+    stock_list = get_krx_list() if market == 'KR' else get_us_list()
+    tickers = stock_list['Code'].tolist()
+    
+    def get_similarity(vec1, vec2):
+        n1, n2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
+        return np.dot(vec1, vec2) / (n1 * n2) if n1 > 0 and n2 > 0 else 0
+
+    base_vec = np.array([target_dna['cpv'], target_dna['tb'], target_dna['bbe'], target_dna['rs']])
+    
+    # 1차 방어막: 현재 장부에 'OPEN' 상태로 보유 중인 종목 불러오기
+    try:
+        conn = sqlite3.connect(aft.DB_PATH, timeout=10) # aft 모듈의 DB 경로 사용
+        cursor = conn.cursor()
+        cursor.execute("SELECT code FROM forward_trades WHERE market=? AND status='OPEN'", (market,))
+        open_positions = {row[0] for row in cursor.fetchall()}
+        conn.close()
+    except:
+        open_positions = set()
+
+    for code in tickers:
+        # 중복 방지: 이미 보유 중이거나 오늘 쐈던 종목은 연산 스킵
+        if code in open_positions or code in scanned_today_cache[market]:
+            continue
+            
+        try:
+            # 실시간 데이터 로드 (최근 30일치만 빠르게 로드)
+            df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d')) if market == 'KR' else yf.download(code, period="2mo", progress=False)
+            if df.empty or len(df) < 20: continue
+            
+            c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+            current_close = c[-1]
+            
+            # 실시간 DNA 추출 (간략화된 버전)
+            v_ma20 = pd.Series(v).rolling(20).mean().values
+            cpv = np.where(h != l, (c - o) / (h - l), 0.5)[-1]
+            vol_mult = (v[-1] / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
+            tb = vol_mult / max(cpv, 0.01) if cpv > 0 else vol_mult / 0.01
+            bb_std = pd.Series(c).rolling(20).std().values[-1]
+            bb_mid = pd.Series(c).rolling(20).mean().values[-1]
+            bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
+            bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
+            rs = ((c[-1] - c[-20]) / c[-20]) * 100 if len(c) >= 20 else 0 # 약식 RS
+            
+            current_vec = np.nan_to_num(np.array([cpv, tb, bbe, rs]))
+            
+            sim_score = get_similarity(current_vec, base_vec)
+            
+            # 💡 [핵심] 대표님 요청: 초기 커트라인 50% (0.50) 설정 완료
+            if sim_score >= 0.50:
+                is_success, msg = aft.try_add_virtual_position(
+                    market=market, code=code, name=stock_list[stock_list['Code']==code]['Name'].values[0],
+                    sig_type="초신성 실시간 매칭", score=sim_score*100, ep=current_close,
+                    facts={'dyn_cpv': cpv, 'dyn_tb': tb},
+                    trade_source="SUPERNOVA" # 데스매치 분류용 태그
+                )
+                
+                if is_success:
+                    scanned_today_cache[market].add(code)
+                    send_telegram_msg(f"🦅 <b>[초신성 즉각 진입]</b>\n{code} / 일치율: {sim_score*100:.1f}%\n타임머신 DNA와 50% 이상 일치하여 데이터 수집을 위해 가상매매에 편입했습니다.")
+        except: pass
+# 👆👆 [붙여넣기 끝] 👆👆
+
+# ==========================================
+# 🕒 [메인 스케줄러] 타임머신(과거) + 스나이퍼(실시간) 병렬 가동
+# ==========================================
+def run_miner_scheduler():
+    """1주일에 한 번 과거 데이터를 마이닝하여 템플릿을 갱신하는 봇"""
+    tz_kr = pytz.timezone('Asia/Seoul')
     while True:
         try:
             now = datetime.now(tz_kr)
+            # 매주 월요일 17:00 템플릿 갱신
             if now.weekday() == 0 and now.hour == 17 and now.minute == 0:
                 hunt_supernovas('KR')
                 hunt_supernovas('US')
@@ -340,8 +426,54 @@ def run_scheduler():
         except Exception as e:
             time.sleep(60)
 
+def run_live_sniper_scheduler():
+    """매일 4번 지정된 시간에 실시간 시장을 스캔하고 쏘는 봇"""
+    tz_kr = pytz.timezone('Asia/Seoul')
+    print("🕒 [초신성 실시간 스나이퍼] 대기 중...")
+    print(" - 🇰🇷 한국 타격: 09:00, 09:30, 15:00, 16:00 (KST)")
+    print(" - 🇺🇸 미국 타격: 23:30, 00:00, 05:00, 06:00 (KST)")
+    
+    global scanned_today_cache
+    last_cleared_day = datetime.now(tz_kr).day
+
+    while True:
+        try:
+            now = datetime.now(tz_kr)
+            time_str = f"{now.hour:02d}:{now.minute:02d}"
+            
+            # 날짜가 바뀌면 어제 쐈던 기록(캐시) 초기화
+            if now.day != last_cleared_day:
+                scanned_today_cache = {'KR': set(), 'US': set()}
+                last_cleared_day = now.day
+
+            kr_target_times = ["09:00", "09:30", "15:00", "16:00"]
+            us_target_times = ["23:30", "00:00", "05:00", "06:00"]
+            
+            if time_str in kr_target_times:
+                execute_supernova_live_scan('KR')
+                time.sleep(65) 
+                
+            elif time_str in us_target_times:
+                execute_supernova_live_scan('US')
+                time.sleep(65) 
+
+            time.sleep(20) 
+            
+        except Exception as e:
+            print(f"스나이퍼 스케줄러 에러: {e}")
+            time.sleep(60)
+
 if __name__ == "__main__":
-    print("🚀 [초기화] 즉시 1회 타임머신 스캔을 시작합니다...")
+    import threading
+    
+    print("🚀 [초기화] 즉시 1회 타임머신 스캔을 시작하여 최신 템플릿을 만듭니다...")
     hunt_supernovas('KR')
     hunt_supernovas('US')
-    run_scheduler()
+    
+    # 1. 템플릿 갱신 마이너는 백그라운드 스레드로 분리
+    t_miner = threading.Thread(target=run_miner_scheduler, daemon=True)
+    t_miner.start()
+    
+    # 2. 실시간 진입 스나이퍼는 메인 스레드에서 무한 실행
+    run_live_sniper_scheduler()
+# 👆👆 [덮어쓰기 끝] 👆👆
