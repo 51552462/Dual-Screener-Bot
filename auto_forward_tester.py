@@ -40,7 +40,14 @@ def init_forward_db():
             exit_date TEXT, exit_reason TEXT, flow_tags TEXT, final_ret REAL, mfe REAL
         )
     ''')
-    
+
+
+    # 👇👇 [추가] ABC 토너먼트 성적 기록을 위한 컬럼 👇👇
+    for p in ['live_a', 'cand_b', 'champ_c']:
+        try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_ret REAL DEFAULT 0.0")
+        except: pass
+        try: cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {p}_status TEXT DEFAULT 'OPEN'")
+        except: pass
     # 💡 [V12.0 팩트 추가] 기존 DB를 날리지 않고 안전하게 컬럼 추가
     try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN entry_atr REAL DEFAULT 0.0")
     except: pass
@@ -606,38 +613,32 @@ def send_comprehensive_daily_report():
             active_cnt = sum(t_counts.values())
             report_msg += f"📦 <b>현재 운용 비중: {active_cnt}/40개 종목</b> (가동률 {(active_cnt/40)*100:.0f}%)\n"
             
-            # 👇👇 [여기에 추가] 2.5 ⚔️ 듀얼 리그 실시간 대결 대시보드 👇👇
-            report_msg += f"\n⚔️ <b>[듀얼 리그 실시간 대결 대시보드]</b>\n"
+            # 👇👇 [여기에 삽입] ⚔️ 그랜드 데스매치 통합 순위표 👇👇
+            report_msg += f"\n🏆 <b>[가상매매 평행우주 통합 성적표]</b>\n"
             
-            # [STANDARD] 진영과 [SUPERNOVA] 진영의 청산된 데이터 로드
-            cursor = conn.execute("SELECT sig_type, final_ret FROM forward_trades WHERE market=? AND status LIKE 'CLOSED%'", (market,))
-            all_closed = cursor.fetchall()
-            
-            std_trades = [r[1] for r in all_closed if '[STANDARD]' in str(r[0])]
-            sn_trades = [r[1] for r in all_closed if '[SUPERNOVA]' in str(r[0])]
-            
-            def calc_league_stats(trades):
-                if not trades: return 0, 0.0, 0.0
-                wins = sum(1 for t in trades if t > 0)
-                wr = (wins / len(trades)) * 100
-                total_ret = sum(trades) # 단순 누적 수익률 합산
-                return len(trades), wr, total_ret
+            # DB에서 해당 시장의 모든 청산 데이터의 평균 수익률 산출
+            results = conn.execute(f"""
+                SELECT 
+                    AVG(live_a_ret) as A, AVG(cand_b_ret) as B, AVG(champ_c_ret) as C,
+                    AVG(sim_stat_ret) as STAT, AVG(sim_tech_ret) as TECH
+                FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'
+            """).fetchone()
+
+            if results and any(v is not None for v in results):
+                leaderboard = [
+                    ("실전(Live A)", results[0] or 0),
+                    ("후보(Cand B)", results[1] or 0),
+                    ("챔피언(Champ C)", results[2] or 0),
+                    ("통계모드(Stat)", results[3] or 0),
+                    ("기술모드(Tech)", results[4] or 0)
+                ]
+                # 수익률이 높은 순서대로 정렬
+                leaderboard.sort(key=lambda x: x[1], reverse=True)
                 
-            std_cnt, std_wr, std_ret = calc_league_stats(std_trades)
-            sn_cnt, sn_wr, sn_ret = calc_league_stats(sn_trades)
-            
-            report_msg += f"🛡️ <b>오리지널 [STANDARD]</b>\n"
-            report_msg += f" ↳ 누적 수익: <b>{std_ret:+.2f}%</b> | 승률: {std_wr:.1f}% (검증 {std_cnt}건)\n"
-            
-            report_msg += f"🚀 <b>초신성 [SUPERNOVA]</b>\n"
-            report_msg += f" ↳ 누적 수익: <b>{sn_ret:+.2f}%</b> | 승률: {sn_wr:.1f}% (검증 {sn_cnt}건)\n"
-            
-            # 실시간 승자 판독
-            if std_cnt > 0 and sn_cnt > 0:
-                if sn_ret > std_ret:
-                    report_msg += f"👑 <b>현재 우위: 초신성 진영 압승 중</b>\n"
-                else:
-                    report_msg += f"👑 <b>현재 우위: 오리지널 진영 방어 성공</b>\n"
+                for i, (name, ret) in enumerate(leaderboard):
+                    medal = "🥇" if i==0 else ("🥈" if i==1 else "🥉" if i==2 else "▫️")
+                    report_msg += f"{medal} {name}: {ret:+.2f}%\n"
+            # 👆👆 [삽입 끝] 👆👆
 
             # 3. 💡 [추가] 최근 7일 청산 사유 통계 (관제탑 로직 정상 작동 여부 팩트 체크)
             cursor = conn.execute("SELECT exit_type, COUNT(*) FROM forward_trades WHERE market=? AND exit_date >= date('now', '-7 days') AND status LIKE 'CLOSED%' GROUP BY exit_type", (market,))
