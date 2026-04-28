@@ -256,17 +256,22 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 표본 부족으로 진입점 스무딩 스킵\n")
 
     # ---------------------------------------------------------
-    # 👑 엔진 4 ~ 6: [V51.0 다중 뇌(Multi-Brain) 자율 분할 최적화 엔진]
+    # 👑 엔진 4 ~ 6: [V51.0 다중 뇌(Multi-Brain) 자율 분할 최적화 엔진] 
     # ---------------------------------------------------------
     # 1. 종목별 출신 성분(Namespace) 매핑 함수
-    def map_namespace(row):
+    def map_namespace(row): 
         m = row['market']
-        st = str(row['sig_type'])
-        ns = f"{m}_MASTER_S1" # 기본값
-        if "S4" in st: ns = f"{m}_MASTER_S4"
-        if "눌림" in st: ns = f"{m}_NULRIM_S4" if "S4" in st else f"{m}_NULRIM_S1"
-        if "5선" in st: ns = f"{m}_5EMA_S1"
-        return ns
+        st = str(row['sig_type']) 
+        
+        # 👇👇 [수정] 초신성 태그 감지 시 전용 네임스페이스 즉시 반환 👇👇
+        if "SUPERNOVA" in st: 
+            return f"{m}_SUPERNOVA_MASTER"
+            
+        ns = f"{m}_MASTER_S1" # 기본값 
+        if "S4" in st: ns = f"{m}_MASTER_S4" 
+        if "눌림" in st: ns = f"{m}_NULRIM_S4" if "S4" in st else f"{m}_NULRIM_S1" 
+        if "5선" in st: ns = f"{m}_5EMA_S1" 
+        return ns 
 
     if 'market' in df.columns and 'sig_type' in df.columns:
         df['namespace'] = df.apply(map_namespace, axis=1)
@@ -497,26 +502,24 @@ def run_autonomous_analysis():
                     report_lines.append(f" ↳ <b>[{rank}]</b> 평균 MFE: <b>{rank_mfe:.1f}%</b> 달성")
                     report_lines.append(f"    - 실전 CPV: {rank_cpv:.2f} | 실전 TB: {rank_tb:.1f}")
             
-            # 5. [메타 최적화] 승리한 실전 DNA를 기존 템플릿에 스며들게 함 (베이지안 스무딩)
-            # 과거의 템플릿에 머물지 않고, 실전에서 통하는 수치(MFE 가중치)로 30%씩 동적 이동
-            smoothed_cpv = real_cpv
-            smoothed_tb = real_tb
+            # 5. [메타 최적화] 오리지널 로직의 '스무딩(Smoothing)' 오토 추적 시스템 이식
+            # 과거의 템플릿을 한 번에 갈아엎지 않고, SMOOTHING_ALPHA(0.3) 비율만큼만 시장 흐름을 부드럽게 흡수합니다.
             
-            # MFE 가중치 템플릿을 관제탑(config)에 별도로 저장하여, 
-            # 향후 스캐너가 이 값을 기준으로 점수를 더 주도록(보너스 가중치) 활용 가능하게 함
+            old_mfe_template = current_config.get("DNA_SUPERNOVA_MFE_WEIGHTED", {"cpv": real_cpv, "tb": real_tb})
+            
+            # (기존 값 * 0.7) + (새로운 실전 값 * 0.3) = 점진적 오토 추적
+            smoothed_cpv = (old_mfe_template["cpv"] * (1 - SMOOTHING_ALPHA)) + (real_cpv * SMOOTHING_ALPHA)
+            smoothed_tb = (old_mfe_template["tb"] * (1 - SMOOTHING_ALPHA)) + (real_tb * SMOOTHING_ALPHA)
+            
             current_config["DNA_SUPERNOVA_MFE_WEIGHTED"] = {
                 "cpv": round(smoothed_cpv, 3),
                 "tb": round(smoothed_tb, 3),
                 "last_updated": datetime.now().strftime('%Y-%m-%d')
             }
             
-            report_lines.append(f"\n🧬 <b>[MFE 가중치 템플릿 갱신 완료]</b> 실전 데이터를 기반으로 초신성 DNA가 진화했습니다.")
-
-        else:
-            report_lines.append("▪️ 실전 진입 초신성 중 아직 MFE 10% 이상을 달성한 찐대박주 표본이 없습니다.")
-            report_lines.append("  ↳ 하드코딩된 과거 템플릿과 현재 시장 사이의 '괴리'를 의심해야 합니다.")
-    else:
-        report_lines.append("▪️ 초신성 로직의 실전 수치 검증을 위한 청산 데이터 표본이 아직 부족합니다.")
+            report_lines.append(f"\n🧬 <b>[MFE 황금 템플릿 오토 스무딩]</b>")
+            report_lines.append(f" ↳ CPV: {old_mfe_template['cpv']:.2f} ➔ <b>{smoothed_cpv:.2f}</b> (새 파동 30% 흡수)")
+            report_lines.append(f" ↳ TB: {old_mfe_template['tb']:.1f} ➔ <b>{smoothed_tb:.1f}</b> (새 파동 30% 흡수)")
 
     # ---------------------------------------------------------
     # 👑 엔진 9: [V56.0 초신성 유사도 컷오프 자동 조율 (Auto-Tuning)]
