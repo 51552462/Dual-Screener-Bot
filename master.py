@@ -95,25 +95,36 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
 def telegram_sender_daemon(target_queue, token):
+    import re # 💡 정규식 사용을 위해 추가
     while True:
         item = target_queue.get()
         if item is None: break
         img_path, caption = item
         safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-   
+        
         if SEND_TELEGRAM:
             for attempt in range(3):
                 try:
                     if img_path: 
                         with open(img_path, 'rb') as f:
-                            res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
+                            # 💡 params 대신 data를 사용하여 안정성 확보
+                            res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
                     else:
                         res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption, "parse_mode": "HTML"}, timeout=60, verify=False)
+
+                    # 💡 [핵심 버그 픽스] 특수문자(<, >, &)로 인해 텔레그램이 수신을 거부(400 에러)하면, 태그를 다 벗기고 쌩텍스트로 끈질기게 강제 전송!
+                    if res.status_code == 400:
+                        plain_caption = re.sub(r'<[^>]+>', '', safe_caption).replace('&', 'and').replace('<', '〈').replace('>', '〉')
+                        if img_path:
+                            with open(img_path, 'rb') as f:
+                                res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID, "caption": plain_caption}, files={"photo": f}, timeout=60, verify=False)
+                        else:
+                            res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_caption}, timeout=60, verify=False)
 
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except requests.exceptions.ReadTimeout: break
-                except: time.sleep(2)
+                except Exception: time.sleep(2)
             time.sleep(1.5)
         target_queue.task_done()
 
