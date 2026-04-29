@@ -184,10 +184,11 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         # 💡 [버그 픽스] DB에 종목 테이블이 없어서 터지는 현상(no such table) 완벽 방어
         # DB에 없으면 실시간 API로 즉시 긁어와서 중단 없이 계산을 이어갑니다.
         try:
-            # 👇👇 [V102.4 버그 픽스] EMA 224 정상 계산을 위한 300 거래일 데이터 확보 👇👇
-            hist_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY Date DESC LIMIT 300", conn).sort_values('Date')
+            # 👇👇 [V102.5 버그 픽스] 하이픈(-) 포함 테이블명 파싱 오류(Minus 연산자 오인) 해결 👇👇
+            # 테이블명을 "{table_name}"으로 감싸주어야 BRK-B와 같은 티커를 정상 인식합니다.
+            hist_df = pd.read_sql(f'SELECT * FROM "{table_name}" ORDER BY Date DESC LIMIT 300', conn).sort_values('Date')
         except:
-            # 💡 핵심: 영업일 기준 300일을 확보하기 위해 캘린더 날짜는 넉넉하게 450일 전으로 세팅
+            # 💡 [V102.4] EMA 224 정상 계산을 위한 300 거래일 데이터 확보 로직 유지
             st_dt = (datetime.now() - timedelta(days=450)).strftime('%Y-%m-%d')
             hist_df = fdr.DataReader(code_str, st_dt).tail(300) if market == 'KR' else yf.download(code_str, start=st_dt, progress=False).tail(300)
             if isinstance(hist_df.columns, pd.MultiIndex): hist_df.columns = hist_df.columns.droplevel(1)
@@ -195,8 +196,8 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             if 'index' in hist_df.columns: hist_df.rename(columns={'index': 'Date'}, inplace=True)
 
         try:
-            # 벤치마크 지수 역시 동일하게 300 거래일 확보
-            idx_df = pd.read_sql(f"SELECT * FROM {idx_table} ORDER BY Date DESC LIMIT 300", conn).sort_values('Date')
+            # 벤치마크 지수 테이블 역시 안전하게 쌍따옴표 처리
+            idx_df = pd.read_sql(f'SELECT * FROM "{idx_table}" ORDER BY Date DESC LIMIT 300', conn).sort_values('Date')
         except:
             st_dt = (datetime.now() - timedelta(days=450)).strftime('%Y-%m-%d')
             idx_tk = '229200' if market == 'KR' else 'SPY'
@@ -204,6 +205,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             if isinstance(idx_df.columns, pd.MultiIndex): idx_df.columns = idx_df.columns.droplevel(1)
             idx_df = idx_df.reset_index()
             if 'index' in idx_df.columns: idx_df.rename(columns={'index': 'Date'}, inplace=True)
+        # 👆👆 [패치 완료] 👆👆
             
         # 💡 조건 완화: 신규 상장주나 데이터 누락을 위해 최소 60개 캔들만 있어도 무조건 계산 진행
         if len(hist_df) >= 60 and len(idx_df) >= 60:
