@@ -143,13 +143,14 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     dom_row = cursor.fetchone()
     dominant_sector = dom_row[0] if dom_row else "None"
 
-    # 오늘 해당 티어에서 매수한 종목들의 섹터 확인
-    cursor.execute("SELECT sector FROM forward_trades WHERE entry_date=? AND market=? AND tier=?", (today_str, market, tier_label))
+    # 👇👇 [V102.7 버그 픽스] 글로벌 쿼터제 ➔ '독립 펀드매니저(로직)'별 쿼터제로 완벽 분리 👇👇
+    # '점수 티어'가 아닌, 진입을 요청한 해당 '시그널 로직(sig_type)'만의 오늘 진입 내역을 불러옵니다.
+    cursor.execute("SELECT sector FROM forward_trades WHERE entry_date=? AND market=? AND sig_type LIKE ?", (today_str, market, f"%{sig_type}%"))
     today_sectors = [r[0] for r in cursor.fetchall()]
 
     if len(today_sectors) >= 4:
         conn.close()
-        return False, f"오늘의 {tier_label} 최대 쿼터(4개) 모두 확보됨 (스킵)"
+        return False, f"오늘의 [{sig_type}] 최대 쿼터(4개) 모두 확보됨 (스킵)"
 
     # 로직 분기: 진입하려는 종목이 현재 시장을 주도하는 섹터인가?
     trend_bought = sum(1 for s in today_sectors if s == dominant_sector)
@@ -158,13 +159,17 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     if sector == dominant_sector:
         if trend_bought >= 2:
             conn.close()
-            return False, f"🚨 섹터 쿼터 초과: 이미 주도섹터({dominant_sector}) 공격 편대 2기를 모두 파견했습니다."
+            return False, f"🚨 섹터 쿼터 초과: [{sig_type}] 엔진이 이미 주도섹터({dominant_sector}) 공격 편대 2기를 모두 파견했습니다."
         track_tag = "[🔥주도주 편대]"
     else:
         if hedge_bought >= 2:
             conn.close()
-            return False, f"🛡️ 섹터 쿼터 초과: 이미 타 섹터 정찰대 2기를 모두 파견했습니다."
+            return False, f"🛡️ 섹터 쿼터 초과: [{sig_type}] 엔진이 이미 타 섹터 정찰대 2기를 모두 파견했습니다."
         track_tag = "[🛡️차기섹터 정찰]"
+    # 👆👆 [패치 완료] 👆👆
+
+    # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
+    sig_type = f"[{trade_source}] {sig_type} {track_tag}"
 
     # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
     sig_type = f"[{trade_source}] {sig_type} {track_tag}"
