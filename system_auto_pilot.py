@@ -615,9 +615,18 @@ def system_main_loop():
         try:
             now = datetime.now(tz)
             if now > START_DATE.replace(tzinfo=tz):
+                # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
                 if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+                    print("🚀 주말 관제탑 자율 튜닝(뇌수술)을 시작합니다...")
                     run_autonomous_analysis()
-                    time.sleep(65) 
+                    time.sleep(60) 
+                    
+                # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
+                    print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
+                    send_weekly_flow_master_report()
+                    time.sleep(60)
+                    
             time.sleep(30)
         except Exception as e:
             err_msg = f"🚨 <b>[오토파일럿 뇌수술 에러]</b> 주말 자율 학습 중 에러 발생:\n{e}"
