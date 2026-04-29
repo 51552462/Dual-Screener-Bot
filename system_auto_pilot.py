@@ -525,43 +525,36 @@ def run_autonomous_analysis():
             report_lines.append(f" ↳ TB: {old_mfe_template.get('tb', real_tb):.1f} ➔ <b>{smoothed_tb:.1f}</b>")
             report_lines.append(f" ↳ BBE: {old_mfe_template.get('bbe', real_bbe):.1f} ➔ <b>{smoothed_bbe:.1f}</b>")
 
+    # 👇👇 [기존 엔진 9 영역을 이걸로 완전히 덮어쓰세요] 👇👇
     # ---------------------------------------------------------
-    # 👑 엔진 9: [V56.0 초신성 유사도 컷오프 자동 조율 (Auto-Tuning)]
+    # 👑 엔진 9: [V56.0 초신성 내부 서브-데스매치 & 컷오프 자율 튜닝]
     # ---------------------------------------------------------
-    report_lines.append("\n⚙️ <b>[V56.0 초신성 유사도 커트라인 자동 튜닝]</b>")
+    report_lines.append("\n⚙️ <b>[V56.0 초신성 내부 결투 및 자율 튜닝]</b>")
     
-    # 1. 초신성 태그로 진입하여 청산된 데이터만 추출
-    sn_tuning_df = df[(df['sig_type'].str.contains('SUPERNOVA_초입', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
-    
-    # 현재 설정된 컷오프 값 불러오기 (없으면 대표님이 지시한 초기값 0.50 적용)
-    current_cutoff = current_config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
-    
-    # 데이터가 5개 이상 쌓였을 때만 튜닝 진행
-    if len(sn_tuning_df) >= 5:
-        sn_wins = sn_tuning_df[sn_tuning_df['final_ret'] > 0]
-        sn_wr = len(sn_wins) / len(sn_tuning_df)
+    # 코사인 진영과 ML박스 진영의 유동적 컷오프 자율 튜닝 (독립 진행)
+    for tag_key, config_key in [("COSINE", "DYNAMIC_SUPERNOVA_CUTOFF"), ("MLBOX", "DYNAMIC_ML_BOX_CUTOFF")]:
+        sub_df = df[(df['sig_type'].str.contains(tag_key, na=False)) & (df['status'].str.contains('CLOSED', na=False))]
         
-        report_lines.append(f"▪️ 현재 컷오프({current_cutoff*100:.0f}%) 성적: 승률 {sn_wr*100:.1f}% (검증 표본 {len(sn_tuning_df)}개)")
+        curr_val = current_config.get(config_key, 0.50) # 기본 50%
         
-        # 💡 [튜닝 로직 1] 승률이 45% 미만이면 가짜 초신성(휩소)이 너무 많이 걸리는 것 ➔ 컷오프 상향
-        if sn_wr < 0.45:
-            new_cutoff = min(0.85, current_cutoff + 0.05) # 최대 85%까지만 올림
-            report_lines.append(f"🚨 <b>[컷오프 상향]</b> 50% 언저리의 헐거운 유사도로 진입한 종목들이 줄줄이 손절 당하고 있습니다.")
-            report_lines.append(f"  ↳ <b>액션:</b> 다음 주부터 초신성 스캐너의 유사도 컷오프를 <b>{new_cutoff*100:.0f}%</b>로 깐깐하게 올려 방어력을 높입니다.")
-            current_config["DYNAMIC_SUPERNOVA_CUTOFF"] = round(new_cutoff, 2)
+        if len(sub_df) >= 5:
+            wr = len(sub_df[sub_df['final_ret'] > 0]) / len(sub_df)
+            pf = sub_df[sub_df['final_ret'] > 0]['final_ret'].sum() / (abs(sub_df[sub_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
             
-        # 💡 [튜닝 로직 2] 승률은 65% 이상으로 높은데, 진입 횟수(표본)가 너무 적으면 ➔ 컷오프 하향 (그물 넓히기)
-        elif sn_wr >= 0.65 and len(sn_tuning_df) < 10:
-            new_cutoff = max(0.50, current_cutoff - 0.02) # 최소 50% 밑으로는 안내림
-            report_lines.append(f"🔥 <b>[컷오프 하향]</b> 승률이 압도적이나, 타점이 너무 엄격해 기회를 놓치고 있습니다.")
-            report_lines.append(f"  ↳ <b>액션:</b> 컷오프를 <b>{new_cutoff*100:.0f}%</b>로 소폭 낮춰 공격적으로 포착합니다.")
-            current_config["DYNAMIC_SUPERNOVA_CUTOFF"] = round(new_cutoff, 2)
+            report_lines.append(f"▪️ [{tag_key} 타점]: 승률 {wr*100:.1f}% | PF {pf:.2f} (표본 {len(sub_df)}개)")
             
-        # 💡 [튜닝 로직 3] 적정 균형 유지 중
+            if wr < 0.45: # 승률 낮으면 허들 조이기
+                new_val = min(0.90, curr_val + 0.05)
+                current_config[config_key] = round(new_val, 2)
+                report_lines.append(f" 🚨 <b>[방어력 강화]</b> 승률 저조 ➔ 허들을 {new_val*100:.0f}%로 상향 조율")
+            elif wr > 0.65 and len(sub_df) < 10: # 승률 좋은데 표본 적으면 그물 넓히기
+                new_val = max(0.40, curr_val - 0.03)
+                current_config[config_key] = round(new_val, 2)
+                report_lines.append(f" 🔥 <b>[공격적 포착]</b> 승률 우수 ➔ 허들을 {new_val*100:.0f}%로 하향 조율")
+            else:
+                report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
         else:
-            report_lines.append(f"✅ <b>[컷오프 유지]</b> 현재의 {current_cutoff*100:.0f}% 허들이 타점과 방어력의 최적 균형을 유지하고 있습니다.")
-    else:
-        report_lines.append(f"▪️ 현재 컷오프: <b>{current_cutoff*100:.0f}%</b> (튜닝을 위한 검증 표본이 아직 부족합니다)")
+            report_lines.append(f"▪️ [{tag_key} 타점]: 현재 커트라인 {curr_val*100:.0f}% (표본 데이터 수집 중)")
 
     # ---------------------------------------------------------
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 (자연 도태)]
