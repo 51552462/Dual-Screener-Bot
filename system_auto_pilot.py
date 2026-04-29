@@ -605,6 +605,123 @@ def run_autonomous_analysis():
     print("✅ 분석 완료! JSON 파일 덮어쓰기 및 텔레그램 발송 성공.")
 
 # ==========================================
+# 👑 엔진 11: [V100.0 주간 흐름(Flow) 총결산 마스터 리포트]
+# ==========================================
+def send_weekly_flow_master_report():
+    """일주일간의 하루하루 자금 흐름, 승률 변화, 섹터 이동 궤적을 총결산하는 마스터 결과지"""
+    tz_kr = pytz.timezone('Asia/Seoul')
+    now = datetime.now(tz_kr)
+    week_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    today_str = now.strftime('%Y-%m-%d')
+    
+    sys_config = load_or_create_config()
+    regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
+    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
+
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        
+        report_msg = f"🗺️ <b>[V100.0 퀀트 팩토리 주간 흐름(Flow) 총결산]</b>\n📅 기간: {week_ago} ~ {today_str}\n"
+        report_msg += "━━━━━━━━━━━━━━━━━━\n"
+
+        for market in ['KR', 'US']:
+            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
+            report_msg += f"\n{market_icon} <b>[{market} 일주일 자금 및 섹터 흐름 궤적]</b>\n"
+            
+            # ------------------------------------------------
+            # 1. 일자별(Day-by-Day) 자금 흐름 및 승률 궤적
+            # ------------------------------------------------
+            report_msg += f"🗓️ <b>[일자별 실현 손익 및 승률 타임라인]</b>\n"
+            
+            cursor = conn.execute("""
+                SELECT exit_date, 
+                       SUM((sim_kelly_invest * final_ret) / 100) as daily_pnl,
+                       SUM(CASE WHEN final_ret > 0 THEN 1 ELSE 0 END) as wins,
+                       COUNT(*) as total
+                FROM forward_trades 
+                WHERE market=? AND exit_date >= ? AND status LIKE 'CLOSED%'
+                GROUP BY exit_date ORDER BY exit_date ASC
+            """, (market, week_ago))
+            
+            daily_stats = cursor.fetchall()
+            weekly_pnl = 0.0
+            
+            if daily_stats:
+                for row in daily_stats:
+                    e_date, d_pnl, wins, total = row[0], row[1] or 0.0, row[2], row[3]
+                    d_wr = (wins / total) * 100 if total > 0 else 0
+                    weekly_pnl += d_pnl
+                    # 날짜에서 월-일만 추출 (예: 05-28)
+                    short_date = e_date[5:]
+                    icon = "🔴" if d_pnl < 0 else "🟢"
+                    report_msg += f" {icon} {short_date}: <b>{d_pnl:+,.0f}원</b> (승률 {d_wr:.0f}% / {total}건 청산)\n"
+                
+                report_msg += f" 💰 <b>주간 누적 실현 손익: {weekly_pnl:+,.0f} 원</b>\n"
+            else:
+                report_msg += " ↳ 이번 주 청산 데이터가 없습니다.\n"
+
+            # ------------------------------------------------
+            # 2. 일주일간 섹터 자금 이동 궤적 (요일별 흐름)
+            # ------------------------------------------------
+            report_msg += f"\n🔄 <b>[주간 주도 섹터 진화 궤적]</b>\n"
+            cursor = conn.execute("""
+                SELECT entry_date, sector 
+                FROM forward_trades 
+                WHERE market=? AND entry_date >= ? 
+                ORDER BY entry_date ASC
+            """, (market, week_ago))
+            
+            rot_df = pd.DataFrame(cursor.fetchall(), columns=['entry_date', 'sector'])
+            if not rot_df.empty:
+                daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
+                flow_path = []
+                for d, s in daily_dom.items():
+                    flow_path.append(f"{s[:4]}({d[5:]})")
+                
+                # ➔ 화살표로 이어붙여서 일주일의 흐름을 한눈에 시각화
+                report_msg += f" 🌊 <b>흐름:</b> {' ➔ '.join(flow_path)}\n"
+            else:
+                report_msg += " ↳ 섹터 편입 데이터가 없습니다.\n"
+
+            # ------------------------------------------------
+            # 3. 주간 MVP 로직 (이번 주 가장 돈을 많이 벌어온 로직)
+            # ------------------------------------------------
+            report_msg += f"\n🏆 <b>[이번 주 MVP 시그널 엔진]</b>\n"
+            cursor = conn.execute("""
+                SELECT sig_type, SUM((sim_kelly_invest * final_ret) / 100) as profit, COUNT(*) 
+                FROM forward_trades 
+                WHERE market=? AND exit_date >= ? AND status LIKE 'CLOSED%'
+                GROUP BY sig_type ORDER BY profit DESC LIMIT 3
+            """, (market, week_ago))
+            
+            top_sigs = cursor.fetchall()
+            if top_sigs:
+                for i, row in enumerate(top_sigs):
+                    sig, pnl, cnt = row[0], row[1] or 0.0, row[2]
+                    clean_sig = str(sig).split(']')[0] + "]" if "]" in str(sig) else str(sig)[:15]
+                    medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉"
+                    report_msg += f" {medal} {clean_sig}: <b>{pnl:+,.0f}원</b> 기여 ({cnt}건)\n"
+            else:
+                report_msg += " ↳ MVP 데이터가 없습니다.\n"
+
+        # ------------------------------------------------
+        # 4. 관제탑 주말 메타 최적화 결과 요약 (Before & After)
+        # ------------------------------------------------
+        report_msg += f"\n⚙️ <b>[주말 관제탑 자율 튜닝 결과 요약]</b>\n"
+        report_msg += f" ▪️ <b>현재 국면:</b> {regime}\n"
+        report_msg += f" ▪️ <b>동적 켈리 비중:</b> {sys_config.get('DYNAMIC_KELLY_RISK', 0.01)*100:.1f}%\n"
+        report_msg += f" ▪️ <b>초신성 허들:</b> 코사인 {sys_config.get('DYNAMIC_SUPERNOVA_CUTOFF', 0.50)*100:.0f}% | ML박스 {sys_config.get('DYNAMIC_ML_BOX_CUTOFF', 0.50)*100:.0f}%\n"
+        report_msg += f" ▪️ <b>로직 수명:</b> 최초 작동일로부터 {(now - datetime.strptime(sys_config.get('LIVE_A_PROMOTION_DATE', today_str), '%Y-%m-%d').replace(tzinfo=tz_kr)).days}일차 유지 중\n"
+
+        conn.close()
+    except Exception as e:
+        report_msg += f"\n⚠️ 주간 리포트 생성 중 에러: {e}"
+
+    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템이 일주일간 시장의 궤적을 어떻게 흡수하고 진화했는지 증명하는 마스터 결과지입니다.</i>"
+    send_telegram_report(report_msg)
+
+# ==========================================
 # 🕒 루프 실행기
 # ==========================================
 def system_main_loop():
