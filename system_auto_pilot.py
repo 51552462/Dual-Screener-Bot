@@ -598,6 +598,44 @@ def run_autonomous_analysis():
                 report_lines.append(f"  ❌ {c_name}")
             report_lines.append(f"💰 {mkt} 국고 총액: {current_treasury:,.0f}원")
 
+    # ---------------------------------------------------------
+    # 👑 엔진 12: [V105.0 순환매 예측 로직 자율 검증 및 가중치 부여]
+    # ---------------------------------------------------------
+    report_lines.append("\n🔄 <b>[V105.0 순환매 예측 로직 자율 검증]</b>")
+    
+    # 태그 유무로 일반 매매와 선취매 매매를 완벽히 분리
+    rot_df = df[df['sig_type'].str.contains('#순환매_선취매', na=False)]
+    std_df = df[~df['sig_type'].str.contains('#순환매_선취매', na=False)]
+    
+    def get_pf(target_df):
+        if len(target_df) == 0: return 0
+        wins = target_df[target_df['final_ret'] > 0]['final_ret'].sum()
+        loses = abs(target_df[target_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1
+        return wins / loses
+
+    # 최소 표본 3개 이상일 때만 수학적 검증 진행
+    if len(rot_df) >= 3:
+        rot_pf = get_pf(rot_df)
+        std_pf = get_pf(std_df)
+        
+        report_lines.append(f" ▪️ 예측그룹 PF: {rot_pf:.2f} vs 일반그룹 PF: {std_pf:.2f}")
+        
+        # 💡 [자율 진화 핵심] 1.5배 우위 증명 시 가중치 플래그 활성화
+        if rot_pf > std_pf * 1.5:
+            current_config["ROTATION_ADVANTAGE_ACTIVE"] = True
+            report_lines.append("🚀 <b>[검증 성공]</b> 순환매 선취매 우위 증명 ➔ 다음 주 <b>켈리 비중 2배</b> 적용")
+        else:
+            current_config["ROTATION_ADVANTAGE_ACTIVE"] = False
+            report_lines.append("🛡️ <b>[검증 실패]</b> 예측 우위 부족 ➔ 일반 베팅 유지")
+    else:
+        report_lines.append(" ▪️ 표본 부족으로 순환매 자율 검증 스킵")
+
+    # ==========================================
+    # 🚀 최종 저장 및 발송 (단 1번만 실행)
+    # ==========================================
+    save_config(current_config)
+    send_telegram_report("\n".join(report_lines))
+
     # ==========================================
     # 🚀 최종 저장 및 발송 (단 1번만 실행)
     # ==========================================
