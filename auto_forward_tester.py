@@ -669,169 +669,190 @@ def track_daily_positions(market):
     conn.commit()
     conn.close()
 
-# ==========================================
-# 3. 매일 16:00 일일 종합 정밀 리포트 텔레그램 (V100.0 팩토리 완전 해부)
-# ==========================================
 def send_comprehensive_daily_report():
-    """대표님의 모든 은닉 로직(VIX/Breadth, 편대/정찰, 데스콤보, 반감기 노화율 등) 100% 강제 노출"""
+    """[V104.1] 국가별 9분할 정밀 리포트 (순환매 및 스필오버 복원 완료)"""
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
     
-    # [거시 및 켈리 베팅 지표 로드]
+    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
     kelly_risk = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) * 100
-    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
 
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+    for market in ['KR', 'US']:
+        market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
+        treasury_balance = sys_config.get(f"CENTRAL_TREASURY_{market}", 0)
         
-        # 👑 [1. 통합 계좌 및 켈리 vs 고정리스크 진검승부]
-        cursor = conn.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100), SUM(invest_amount * (final_ret / 100)) FROM forward_trades WHERE status LIKE 'CLOSED%'")
-        pnl_data = cursor.fetchone()
-        kelly_pnl = pnl_data[0] if pnl_data and pnl_data[0] else 0.0
-        fixed_pnl = pnl_data[1] if pnl_data and pnl_data[1] else 0.0
-        current_seed = base_seed + kelly_pnl
-
-        report_msg = f"🛰️ <b>[V100.0 퀀트 팩토리 완전 해부 리포트]</b>\n📅 {today_str} | 국면: {regime}\n"
-        report_msg += "━━━━━━━━━━━━━━━━━━\n"
-        
-        # 👑 [2. 거시 경제 & VIX/Breadth 통제 팩트 체크]
-        report_msg += f"🧭 <b>[거시 국면 & 켈리 동적 조율]</b>\n"
-        report_msg += f" ▪️ 동적 켈리 비중: <b>{kelly_risk:.2f}%</b> (현재 국면 성적 기반 산출)\n"
-        recent_dna_df = pd.read_sql("SELECT entry_cos_score FROM forward_trades ORDER BY id DESC LIMIT 10", conn)
-        if not recent_dna_df.empty and recent_dna_df['entry_cos_score'].mean() < 0.65:
-            report_msg += f" 🚨 <b>[DNA 변위 감지]</b> 대장주 일치율 급감({recent_dna_df['entry_cos_score'].mean()*100:.1f}%) ➔ 선제적 방어 모드(CHOP) 개입\n"
-
-        report_msg += f"\n🏦 <b>[통합 가상 계좌 & 자금 대결]</b>\n"
-        report_msg += f" ▪️ 현재 총 자산: <b>{current_seed:+,.0f} 원</b> (시드 {base_seed:,})\n"
-        report_msg += f" ▪️ 동적 켈리 수익: {kelly_pnl:+,.0f} 원\n"
-        report_msg += f" ▪️ 고정(2%) 수익: {fixed_pnl:+,.0f} 원\n"
-        report_msg += f" 💡 <b>자금관리 우위:</b> {'동적 켈리(Kelly)' if kelly_pnl > fixed_pnl else '고정 리스크(Fixed)'}\n"
-        
-        for market in ['KR', 'US']:
-            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
-            report_msg += f"\n{market_icon} <b>[{market} 시스템 정밀 해부 현황]</b>\n"
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            conn.execute("PRAGMA journal_mode=WAL;")
             
-            # 👇👇 [수정] 3. 생존자 리더보드 부분 삽입 (기존 복잡한 청산 부검 교체) 👇👇
-            report_msg += f"🏆 <b>[로직별 복리 생존 리더보드]</b>\n"
-            df_all = pd.read_sql(f"SELECT sig_type, final_ret, sim_kelly_invest, status FROM forward_trades WHERE market='{market}'", conn)
+            # [사전 데이터 로드]
+            df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}'", conn)
+            df_closed = df_all[df_all['status'].str.contains('CLOSED', na=False)]
+            df_open = df_all[df_all['status'] == 'OPEN']
             
+            # ---------------------------------------------------------
+            # 📑 결과지 1: 거시 국면 & 국고 현황
+            # ---------------------------------------------------------
+            msg1 = f"{market_icon} <b>[1/9] 거시 국면 및 국고(Treasury) 현황</b>\n"
+            msg1 += f"📅 {today_str} | 국면: <b>{regime}</b>\n"
+            msg1 += f"🏦 <b>{market} 국고 잔여금:</b> {treasury_balance:,.0f} 원\n"
+            msg1 += f"⚖️ 동적 켈리 비중: {kelly_risk:.2f}%\n"
+            send_telegram_msg(msg1); time.sleep(1)
+
+            # ---------------------------------------------------------
+            # 📑 결과지 2: 생존자 리더보드 (프로듀스 101)
+            # ---------------------------------------------------------
             import re
             def get_core_group(sig):
                 sig = str(sig).replace('💀[기각/관찰용] ', '')
                 sig = re.sub(r'^\[.*?\]\s*', '', sig)
                 return sig.split(' [')[0]
 
+            msg2 = f"{market_icon} <b>[2/9] 로직별 복리 생존 리더보드</b>\n"
             if not df_all.empty:
-                df_all['group'] = df_all['sig_type'].apply(get_core_group)
+                df_all_copy = df_all.copy()
+                df_all_copy['group'] = df_all_copy['sig_type'].apply(get_core_group)
                 leaderboard = []
-                for group in df_all['group'].unique():
-                    g_df = df_all[df_all['group'] == group]
+                for group in df_all_copy['group'].unique():
+                    g_df = df_all_copy[df_all_copy['group'] == group]
                     g_closed = g_df[g_df['status'].str.contains('CLOSED', na=False)]
-                    g_open = g_df[g_df['status'] == 'OPEN']
                     pnl = (g_closed['sim_kelly_invest'] * g_closed['final_ret'] / 100.0).sum()
                     wr = (len(g_closed[g_closed['final_ret'] > 0]) / len(g_closed)) * 100 if len(g_closed) > 0 else 0
-                    leaderboard.append({'group': group, 'balance': base_seed + pnl, 'wr': wr, 'open_cnt': len(g_open)})
+                    leaderboard.append({'g': group, 'bal': base_seed + pnl, 'wr': wr, 'op': len(g_df[g_df['status']=='OPEN'])})
                 
-                leaderboard = sorted(leaderboard, key=lambda x: x['balance'], reverse=True)
-                for i, entry in enumerate(leaderboard): 
-                    medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "🏃"
-                    if entry['balance'] < base_seed * 0.8: medal = "📉"
-                    if entry['balance'] < base_seed * 0.5: medal = "💀"
-                    report_msg += f" {medal} <b>{i+1}위: {entry['group']}</b>\n"
-                    report_msg += f"    ↳ 자산: <b>{entry['balance']:,.0f}원</b> (승률 {entry['wr']:.1f}% | 보유 {entry['open_cnt']})\n"
-            else:
-                report_msg += " ↳ 매매 데이터 없음.\n"
-            # 👆👆 [수정 끝] 👆👆
+                leaderboard = sorted(leaderboard, key=lambda x: x['bal'], reverse=True)
+                for i, e in enumerate(leaderboard[:7]):
+                    m = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "🏃"
+                    if e['bal'] < base_seed * 0.8: m = "📉"
+                    if e['bal'] < base_seed * 0.5: m = "💀"
+                    msg2 += f"{m} <b>{e['g']}</b>: {e['bal']:,.0f}원 (승률 {e['wr']:.0f}%)\n"
+            else: msg2 += " ↳ 매매 데이터 없음\n"
+            send_telegram_msg(msg2); time.sleep(1)
+
+            # ---------------------------------------------------------
+            # 📑 결과지 3: 통합 계좌 대결 (켈리 vs 고정)
+            # ---------------------------------------------------------
+            kelly_pnl = (df_closed['sim_kelly_invest'] * df_closed['final_ret'] / 100).sum() if not df_closed.empty else 0
+            fixed_pnl = (df_closed['invest_amount'] * df_closed['final_ret'] / 100).sum() if not df_closed.empty else 0
             
-            # 👇👇 [복구] 기존의 4~6번 로직(포트폴리오, 티어, 순환매, 메타최적화) 100% 원상 복구 👇👇
-            cursor = conn.execute("SELECT sig_type, COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY sig_type", (market,))
-            open_counts = cursor.fetchall()
-            trend_fleet = sum(cnt for sig, cnt in open_counts if "🔥주도주" in str(sig))
-            recon_fleet = sum(cnt for sig, cnt in open_counts if "🛡️차기섹터" in str(sig))
-            report_msg += f"\n 🎯 <b>[섹터 포트폴리오 다중화 현황]</b> 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
+            msg3 = f"{market_icon} <b>[3/9] 통합 자금 관리 진검승부</b>\n"
+            msg3 += f"💰 누적 켈리 수익: <b>{kelly_pnl:+,.0f} 원</b>\n"
+            msg3 += f"🛡️ 누적 고정 수익: {fixed_pnl:+,.0f} 원\n"
+            msg3 += f"💡 자금관리 우위: {'동적 켈리' if kelly_pnl > fixed_pnl else '고정 리스크 2%'}\n"
+            send_telegram_msg(msg3); time.sleep(1)
 
-            # 👑 [4. 티어 검증 & 데스콤보(Death Combo) & 4차원 DNA]
-            df_m = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%' ORDER BY exit_date DESC", conn)
-            if not df_m.empty:
-                report_msg += f"\n🔬 <b>[티어 검증 & 4차원 DNA 부검]</b>\n"
-                
-                # 티어 & 데스콤보 분석
-                t1_df = df_m[df_m['tier'] == '80점대']
-                dc_df = df_m[df_m['is_death_combo'] == 1]
-                if not t1_df.empty: report_msg += f" ▪️ 1티어(80점↑) 승률: <b>{(len(t1_df[t1_df['final_ret']>0])/len(t1_df))*100:.1f}%</b>\n"
-                if not dc_df.empty: report_msg += f" 💀 데스콤보 승률: <b>{(len(dc_df[dc_df['final_ret']>0])/len(dc_df))*100:.1f}%</b> (필터링 작동 중)\n"
+            # ---------------------------------------------------------
+            # 📑 결과지 4: 포트폴리오 다중화
+            # ---------------------------------------------------------
+            open_sigs = df_open['sig_type'].tolist()
+            trend_fleet = sum(1 for s in open_sigs if "🔥주도주" in str(s))
+            recon_fleet = sum(1 for s in open_sigs if "🛡️차기섹터" in str(s))
+            
+            msg4 = f"{market_icon} <b>[4/9] 섹터 포트폴리오 다중화 현황</b>\n"
+            msg4 += f"🎯 편대 현황: 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
+            send_telegram_msg(msg4); time.sleep(1)
 
-                # 대박주/참사주 DNA
-                winners = df_m[df_m['final_ret'] >= 5.0].head(50)
-                losers = df_m[df_m['final_ret'] <= -3.0].head(50)
-                
-                if not winners.empty: report_msg += f" ✅ 대박(표본 {len(winners)}): 윗꼬리 {winners['dyn_cpv'].mean():.2f} | 응축 {winners['v_energy'].mean():.1f} | DTW거리 {winners['entry_dtw_score'].mean():.1f}\n"
-                if not losers.empty: report_msg += f" ❌ 참사(표본 {len(losers)}): 윗꼬리 {losers['dyn_cpv'].mean():.2f} | 찐양봉 {losers['dyn_tb'].mean():.1f} 미만\n"
-                
-                # 흐름 태그 통계
-                tag_stats = {}
-                for _, row in df_m.head(100).iterrows():
-                    if pd.isna(row['flow_tags']): continue
-                    for tag in str(row['flow_tags']).split():
-                        if tag not in tag_stats: tag_stats[tag] = {'win': 0, 'total': 0}
-                        tag_stats[tag]['total'] += 1
-                        if row['final_ret'] > 0: tag_stats[tag]['win'] += 1
-                if tag_stats:
-                    top_tags = sorted(tag_stats.items(), key=lambda x: x[1]['total'], reverse=True)[:2]
-                    for tag, stats in top_tags: report_msg += f" 🏷️ {tag}: 승률 {(stats['win']/stats['total'])*100:.0f}% ({stats['total']}회)\n"
+            # ---------------------------------------------------------
+            # 📑 결과지 5: 티어 및 데스콤보 검증
+            # ---------------------------------------------------------
+            msg5 = f"{market_icon} <b>[5/9] 티어 및 데스콤보 검증</b>\n"
+            t1_df = df_closed[df_closed['tier'] == '80점대']
+            dc_df = df_closed[df_closed['is_death_combo'] == 1]
+            
+            if not t1_df.empty: msg5 += f"💎 1티어(80점↑) 승률: {(len(t1_df[t1_df['final_ret']>0])/len(t1_df))*100:.1f}%\n"
+            if not dc_df.empty: msg5 += f"💀 데스콤보 승률: {(len(dc_df[dc_df['final_ret']>0])/len(dc_df))*100:.1f}% (필터 작동 중)\n"
+            if t1_df.empty and dc_df.empty: msg5 += " ↳ 검증 표본 부족\n"
+            send_telegram_msg(msg5); time.sleep(1)
 
-            # 👑 [5. 순환매 추적 & 스필오버(Spillover) 타임라인]
-            report_msg += f"\n🔄 <b>[섹터 자금 순환매 & 스필오버]</b>\n"
-            rot_df = pd.read_sql(f"SELECT entry_date, sector FROM forward_trades WHERE market='{market}' AND entry_date >= date('now', '-30 days')", conn)
+            # ---------------------------------------------------------
+            # 📑 결과지 6: 4차원 DNA 정밀 부검
+            # ---------------------------------------------------------
+            msg6 = f"{market_icon} <b>[6/9] 대박주/참사주 4차원 DNA 부검</b>\n"
+            winners = df_closed[df_closed['final_ret'] >= 5.0].head(50)
+            losers = df_closed[df_closed['final_ret'] <= -3.0].head(50)
+            
+            if not winners.empty: msg6 += f"✅ 대박 DNA: 윗꼬리 {winners['dyn_cpv'].mean():.2f} | 응축 {winners['v_energy'].mean():.1f}\n"
+            if not losers.empty:  msg6 += f"❌ 참사 DNA: 윗꼬리 {losers['dyn_cpv'].mean():.2f} | 찐양봉 {losers['dyn_tb'].mean():.1f} 미만\n"
+            send_telegram_msg(msg6); time.sleep(1)
+
+            # ---------------------------------------------------------
+            # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버 (✅ 완벽 복원)
+            # ---------------------------------------------------------
+            msg7 = f"{market_icon} <b>[7/9] 섹터 순환매 궤적 및 스필오버</b>\n"
+            rot_df = df_all[df_all['entry_date'] >= (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')]
+            
             if not rot_df.empty:
                 daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
-                current_sec, current_streak, transitions = None, 0, {}
+                streaks, transitions = {}, {}
+                current_sec, current_streak = None, 0
+                
                 for date, sec in daily_dom.items():
                     if sec == current_sec: current_streak += 1
                     else:
                         if current_sec is not None:
-                            trans_key = f"{current_sec[:4]}➔{sec[:4]}"
-                            transitions[trans_key] = transitions.get(trans_key, 0) + 1
-                        current_sec = sec; current_streak = 1
-                report_msg += f" 🔥 <b>주도 섹터:</b> {current_sec} ({current_streak}일째 체류 중)\n"
-                if transitions:
-                    top_trans = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[0]
-                    report_msg += f" 💸 <b>최다 이동 경로:</b> {top_trans[0]} ({top_trans[1]}회)\n"
-            
+                            if current_sec not in streaks: streaks[current_sec] = []
+                            streaks[current_sec].append(current_streak)
+                            t_key = f"{current_sec[:6]}➔{sec[:6]}"
+                            transitions[t_key] = transitions.get(t_key, 0) + 1
+                        current_sec = sec
+                        current_streak = 1
+                if current_sec is not None:
+                    if current_sec not in streaks: streaks[current_sec] = []
+                    streaks[current_sec].append(current_streak)
+
+                msg7 += f"🔥 <b>현재 주도 섹터:</b> {current_sec} ({current_streak}일째 체류 중)\n\n"
+                msg7 += "▪️ <b>섹터별 자금 체류 시간(수명):</b>\n"
+                for s, lengths in streaks.items():
+                    msg7 += f" - {s[:6]}: 평균 {sum(lengths)/len(lengths):.1f}일\n"
+
+                sorted_trans = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:2]
+                if sorted_trans:
+                    msg7 += "\n▪️ <b>빈번한 자금 이동 궤적:</b>\n"
+                    for p, c in sorted_trans: msg7 += f" - {p} ({c}회 관측)\n"
+            else:
+                msg7 += " ↳ 순환매 데이터 부족\n"
+
             if market == 'KR':
-                report_msg += " 🌐 <b>한미 스필오버:</b> 미국 테크주 ➔ 한국 반도체 (D+1 시차 전이 추적 중)\n"
+                msg7 += "\n🌐 <b>한미 스필오버:</b> 미국 테크주 ➔ 한국 반도체 (시차 전이 추적 중)\n"
+            send_telegram_msg(msg7); time.sleep(1)
 
-            # 👑 [6. 메타 최적화 (알파 반감기 및 오토파일럿 부검)]
-            report_msg += f"\n⚙️ <b>[메타 최적화 (오토파일럿 팩트 체크)]</b>\n"
+            # ---------------------------------------------------------
+            # 📑 결과지 8: 메타 최적화 및 반감기
+            # ---------------------------------------------------------
+            cos_limit = sys_config.get("DYNAMIC_ALPHA_LIMIT", 0.75)
+            ml_limit = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+            promo_str = sys_config.get("LIVE_A_PROMOTION_DATE", today_str)
+            days_alive = (datetime.now(tz_kr) - datetime.strptime(promo_str, '%Y-%m-%d').replace(tzinfo=tz_kr)).days
             
-            cos_cutoff = sys_config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
-            ml_cutoff = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
-            report_msg += f" ▪️ 초신성 자율 허들: 코사인 <b>{cos_cutoff*100:.0f}%</b> | ML박스 <b>{ml_cutoff*100:.0f}%</b>\n"
+            msg8 = f"{market_icon} <b>[8/9] 메타 최적화 및 알파 반감기</b>\n"
+            msg8 += f"🦅 커트라인 방어막: 코사인 {cos_limit*100:.0f}% | ML박스 {ml_limit*100:.0f}%\n"
+            msg8 += f"⏳ 오토파일럿 수명: <b>{days_alive}일차</b>\n"
             
-            promo_date_str = sys_config.get("LIVE_A_PROMOTION_DATE", today_str)
-            days_alive = (datetime.now(tz_kr) - datetime.strptime(promo_date_str, '%Y-%m-%d').replace(tzinfo=tz_kr)).days
-            report_msg += f" ▪️ 알파(룰) 수명: <b>{days_alive}일차</b>\n"
-            
-            decay_df = df_m[df_m['entry_date'] >= promo_date_str]
-            if len(decay_df) >= 8:
-                half = len(decay_df) // 2
-                e_df, l_df = decay_df.iloc[half:], decay_df.iloc[:half] 
-                e_pf = e_df[e_df['final_ret']>0]['final_ret'].sum() / (abs(e_df[e_df['final_ret']<=0]['final_ret'].sum())+0.1) if len(e_df)>0 else 0
-                l_pf = l_df[l_df['final_ret']>0]['final_ret'].sum() / (abs(l_df[l_df['final_ret']<=0]['final_ret'].sum())+0.1) if len(l_df)>0 else 0
-                report_msg += f"    ↳ 초기 PF: {e_pf:.2f} ➔ 최근 PF: {l_pf:.2f} {'(⚠️ 노화 진행 중)' if l_pf < e_pf*0.7 else '(✅ 엣지 유지)'}\n"
+            recent_dna = df_all.sort_values('id', ascending=False).head(10)
+            if not recent_dna.empty and recent_dna['entry_cos_score'].mean() < 0.65:
+                msg8 += f"🚨 <b>[DNA 변위 감지]</b> 대장주 일치율 급감 ➔ 방어 개입 중\n"
+            send_telegram_msg(msg8); time.sleep(1)
 
-            results = conn.execute(f"SELECT AVG(live_a_ret), AVG(cand_b_ret), AVG(champ_c_ret), AVG(sim_stat_ret), AVG(sim_tech_ret) FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'").fetchone()
-            if results and any(v is not None for v in results):
-                lb = [("실전(A)", results[0] or 0), ("후보(B)", results[1] or 0), ("챔피언(C)", results[2] or 0), ("통계", results[3] or 0), ("기술", results[4] or 0)]
-                lb.sort(key=lambda x: x[1], reverse=True)
-                report_msg += f" ▪️ 평행우주 1위: <b>{lb[0][0]}</b> ({lb[0][1]:+.2f}%)\n"
+            # ---------------------------------------------------------
+            # 📑 결과지 9: 시스템 데스매치 결산
+            # ---------------------------------------------------------
+            std_df = df_closed[df_closed['sig_type'].str.contains('STANDARD', na=False)]
+            sn_df = df_closed[df_closed['sig_type'].str.contains('SUPERNOVA', na=False)]
+            
+            std_ret = std_df['live_a_ret'].mean() if not std_df.empty else 0
+            sn_ret = sn_df['cand_b_ret'].mean() if not sn_df.empty else 0
+            
+            msg9 = f"{market_icon} <b>[9/9] 시스템 데스매치 결산</b>\n"
+            msg9 += f"⚔️ 오리지널(A) 평균 성적: {std_ret:+.2f}%\n"
+            msg9 += f"⚔️ 초신성(B) 평균 성적: {sn_ret:+.2f}%\n"
+            msg9 += f"💡 결론: {'초신성 우위 (시스템 진화 중)' if sn_ret > std_ret else '오리지널 방어 성공'}\n"
+            send_telegram_msg(msg9); time.sleep(1)
 
-        conn.close()
-    except Exception as e:
-        report_msg += f"\n⚠️ 리포트 생성 중 에러: {e}"
+            conn.close()
+        except Exception as e:
+            send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
 
     report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템에 내장된 거시통제/순환매/데스콤보/반감기 로직을 100% 해부하여 보고합니다.</i>"
     send_telegram_msg(report_msg)
