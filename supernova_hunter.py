@@ -449,72 +449,71 @@ def execute_supernova_live_scan(market):
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
             
-            # 👇👇 [수술 2] Min-Max 범위(체급 검사) + 코사인 유사도 듀얼 엔진 👇👇
-        best_sim = 0.0
-        best_pattern_name = "UNKNOWN"
-        
-        # 1. 오늘 종목의 5차원 팩트 수치
-        today_tml = tml[-1] if isinstance(tml, (list, np.ndarray)) else tml 
-        today_rs = 0.0 # 스나이퍼 스캔 시점에는 z_rs 연산이 무거워 일단 0으로 처리 (혹은 rs 계산 로직 추가 시 변경 가능)
-        today_vec = np.nan_to_num(np.array([cpv, tb, bbe, today_tml, today_rs]))
-
-        # 2. V65.0 엔진이 CSV에서 뽑아놓은 3개의 클러스터 템플릿 로드
-        cluster_templates = config.get('LIVE_CLUSTER_TEMPLATES', {})
-        
-        if cluster_templates:
-            for c_name, c_range in cluster_templates.items():
-                # [1차 관문] 체급 검증: 오늘의 팩트가 CSV에서 뽑은 Min-Max 범위의 교집합에 완벽히 들어오는가?
-                if (c_range.get('cpv_min', -99) <= cpv <= c_range.get('cpv_max', 99)) and \
-                   (c_range.get('tb_min', -99) <= tb <= c_range.get('tb_max', 999)) and \
-                   (c_range.get('bbe_min', -99) <= bbe <= c_range.get('bbe_max', 999)):
-                    
-                    # [2차 관문] 비율 검증: 체급을 통과했다면, 범위의 중앙값을 이용해 코사인 유사도(DNA 형태) 채점!
-                    target_vec = np.array([
-                        (c_range.get('cpv_min', 0) + c_range.get('cpv_max', 0)) / 2,
-                        (c_range.get('tb_min', 0) + c_range.get('tb_max', 0)) / 2,
-                        (c_range.get('bbe_min', 0) + c_range.get('bbe_max', 0)) / 2,
-                        (c_range.get('tml_min', 0) + c_range.get('tml_max', 0)) / 2,
-                        (c_range.get('rs_min', 0) + c_range.get('rs_max', 0)) / 2
-                    ])
-                    sim = get_similarity(today_vec, target_vec)
-                    
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_pattern_name = c_name
-
-        # 3. 만약 범위에 걸리는 게 하나도 없으면? (플랜B: 기존 3차원 하드코딩 템플릿 대조)
-        if best_sim == 0.0:
+            # 👇👇 [여기로 통째로 덮어쓰기] 👇👇
+            # 1. 코사인 유사도 결과값 계산
+            best_sim = 0.0
+            best_pattern_name = "UNKNOWN"
             current_vec_3d = np.nan_to_num(np.array([cpv, tb, bbe]))
+            
             for t_name, base_vec in ideal_templates.items():
                 sim = get_similarity(current_vec_3d, base_vec)
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name
+                    
+            dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50) # 코사인용 자율 허들
+            is_pass_cosine = best_sim >= dynamic_cos_cutoff
+            
+            # 2. ML 클러스터 바운딩 박스 결과값 계산 (50%부터 시작)
+            is_pass_ml_box = False
+            ml_match_count = 0 
+            ml_pattern_name = "UNKNOWN"
+            live_clusters = config.get('LIVE_CLUSTER_TEMPLATES', {})
+            
+            for c_name, bounds in live_clusters.items():
+                ml_match_count = 0
+                if bounds.get('cpv_min', -99) <= cpv <= bounds.get('cpv_max', 99): ml_match_count += 1
+                if bounds.get('tb_min', -99) <= tb <= bounds.get('tb_max', 999): ml_match_count += 1
+                if bounds.get('bbe_min', -99) <= bbe <= bounds.get('bbe_max', 999): ml_match_count += 1
+                
+                ml_score = ml_match_count / 3.0 
+                dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50) # ML용 자율 허들
+                
+                if ml_score >= dynamic_ml_cutoff:
+                    is_pass_ml_box = True
+                    ml_pattern_name = c_name
+                    break
 
-        dynamic_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
-        
-        if best_sim >= dynamic_cutoff:
+            # 3. 독립적 진입 실행 (태그와 점수 완벽 분리)
+            if is_pass_ml_box or is_pass_cosine:
+                if is_pass_ml_box:
+                    final_sig = f"[SUPERNOVA_MLBOX] 🤖{ml_pattern_name}"
+                    final_score = ml_score * 100
+                    msg_type = f"🤖 ML 클러스터 통과 (기준:{dynamic_ml_cutoff*100:.0f}%)"
+                else:
+                    final_sig = f"[SUPERNOVA_COSINE] {best_pattern_name}"
+                    final_score = best_sim * 100
+                    msg_type = f"🦅 코사인 컷오프 통과 (기준:{dynamic_cos_cutoff*100:.0f}%)"
+                
                 is_success, msg = aft.try_add_virtual_position(
-                    market=market, 
-                    code=code, 
+                    market=market, code=code, 
                     name=stock_list[stock_list['Code']==code]['Name'].values[0],
-                    sig_type=f"[SUPERNOVA_초입] {best_pattern_name}", 
-                    score=best_sim * 100, 
-                    ep=current_close,
+                    sig_type=final_sig, 
+                    score=final_score, ep=current_close,
                     facts={'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe},
                     trade_source="SUPERNOVA" 
                 )
                 
                 if is_success:
                     scanned_today_cache[market].add(code)
-                    send_telegram_msg(f"🦅 <b>[초신성 정밀 타격]</b>\n{code} ({best_pattern_name})\n일치율: {best_sim*100:.1f}% (통과 기준: {dynamic_cutoff*100:.0f}%)\n동적 커트라인을 통과하여 가상매매 장부에 편입했습니다.")
+                    send_telegram_msg(f"<b>{msg_type}</b>\n{code} / {final_sig}\n일치율: {final_score:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다.")
         except: pass
-# ==========================================
-# 🕒 [메인 스케줄러] 타임머신(과거) + 스나이퍼(실시간) 병렬 가동
-# ==========================================
+# 👇👇 [기존 run_miner_scheduler 함수 덮어쓰기] 👇👇
 def run_miner_scheduler():
     """1주일에 한 번 과거 데이터를 마이닝하여 템플릿을 갱신하는 봇"""
     tz_kr = pytz.timezone('Asia/Seoul')
+    import data_miner  # 💡 [추가] 마이닝 엔진 호출 준비
+    
     while True:
         try:
             now = datetime.now(tz_kr)
@@ -522,6 +521,11 @@ def run_miner_scheduler():
             if now.weekday() == 0 and now.hour == 17 and now.minute == 0:
                 hunt_supernovas('KR')
                 hunt_supernovas('US')
+                
+                # 💡 [추가] 역추적이 끝나면 즉시 K-Means 클러스터링 가동
+                print("🔄 [스케줄러] 타임머신 완료. K-Means 클러스터 마이닝으로 자동 이관합니다...")
+                data_miner.run_cluster_mining()
+                
                 time.sleep(65) 
             time.sleep(30)
         except Exception as e:
