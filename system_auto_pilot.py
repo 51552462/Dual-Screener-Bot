@@ -553,11 +553,10 @@ def run_autonomous_analysis():
             report_lines.append(f"▪️ [{tag_key} 타점]: 현재 커트라인 {curr_val*100:.0f}% (표본 데이터 수집 중)")
 
     # ---------------------------------------------------------
-    # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 (자연 도태)]
+    # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
     # ---------------------------------------------------------
-    report_lines.append("\n💀 <b>[V60.0 진화론 기반 템플릿 도태 심판]</b>")
+    report_lines.append("\n💀 <b>[V60.0 진화론 도태 심판 및 국고 환수]</b>")
     
-    # 초신성 태그로 진입하여 청산 완료된 전체 데이터 추출
     sn_all_closed = df[(df['sig_type'].str.contains('SUPERNOVA_초입', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
     
     for mkt in ['KR', 'US']:
@@ -565,33 +564,39 @@ def run_autonomous_analysis():
         if multi_key not in current_config: continue
         
         market_templates = current_config[multi_key]
+        treasury_key = f"CENTRAL_TREASURY_{mkt}"
+        current_treasury = current_config.get(treasury_key, 0)
         culled_list = []
         
-        # 현재 살아있는 각 템플릿 버전에 대해 성적 평가
         for template_name in list(market_templates.keys()):
-            # 해당 템플릿 이름표를 달고 진입했던 매매 내역만 필터링
             t_trades = sn_all_closed[sn_all_closed['sig_type'].str.contains(template_name, na=False)]
             
-            # 💡 [도태 기준] 최소 5번 이상 매매해 본 템플릿만 평가대에 올림
             if len(t_trades) >= 5:
                 t_wins = t_trades[t_trades['final_ret'] > 0]
                 t_wr = len(t_wins) / len(t_trades)
                 t_pf = t_wins['final_ret'].sum() / (abs(t_trades[t_trades['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
                 
-                # 🚨 [사형 선고] 승률 35% 미만이거나, 손익비가 1.0(본전)이 안 되면 영구 삭제
+                # 🚨 [사형 선고 및 자금 회수]
                 if t_wr < 0.35 or t_pf < 1.0:
                     del market_templates[template_name]
-                    culled_list.append(f"{template_name} (승률 {t_wr*100:.1f}%, PF {t_pf:.2f})")
+                    
+                    # 💡 [신규 추가] 해당 로직의 최종 잔고 역산 및 국고 반환
+                    total_pnl = (t_trades['sim_kelly_invest'] * t_trades['final_ret'] / 100).sum()
+                    final_balance = 20000000 + total_pnl
+                    
+                    # 국고에 잔고 더하기 (Plus)
+                    current_treasury += final_balance 
+                    
+                    culled_list.append(f"{template_name} (회수금: {final_balance:,.0f}원)")
         
-        # 도태된 결과를 JSON에 반영
         current_config[multi_key] = market_templates
+        current_config[treasury_key] = current_treasury # 업데이트된 국고 저장
         
         if culled_list:
-            report_lines.append(f"▪️ <b>{mkt}장 도태 집행: {len(culled_list)}개 유전자 영구 삭제</b>")
+            report_lines.append(f"▪️ <b>{mkt}장 도태 집행 및 국고 환수 완료</b>")
             for c_name in culled_list: 
                 report_lines.append(f"  ❌ {c_name}")
-        else:
-            report_lines.append(f"▪️ {mkt}장: 검증 대상이 없거나, 모든 유전자가 생존 기준을 통과했습니다.")
+            report_lines.append(f"💰 {mkt} 국고 총액: {current_treasury:,.0f}원")
 
     # ==========================================
     # 🚀 최종 저장 및 발송 (단 1번만 실행)
