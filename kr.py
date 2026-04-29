@@ -13,6 +13,11 @@ from bs4 import BeautifulSoup
 from io import StringIO
 import FinanceDataReader as fdr
 import matplotlib.font_manager as fm
+import sqlite3  # DB 접속용
+import os
+
+# data_updater.py와 동일한 DB 경로 설정 [cite: 82]
+DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
 from google import genai
 from google.genai import types
@@ -374,10 +379,17 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            try:
-                df_raw = fdr.DataReader(code, start_date)
-                if df_raw is not None and not df_raw.empty:
-                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            # 변경 방식: DB 연동을 통한 데이터 무결성 확보
+try:
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
+    conn.close()
+    
+    if not df_raw.empty:
+        df_raw['Date'] = pd.to_datetime(df_raw['Date'])
+        df_raw.set_index('Date', inplace=True)
+        # 이평선 왜곡 방지를 위해 dropna() 대신 원본 데이터 구조 유지 
+        df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
                     
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
                 if is_valid: 
