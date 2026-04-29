@@ -382,12 +382,29 @@ def track_daily_positions(market):
 
     print(f"\n🔍 [포워드 테스팅] {market} 시장 {len(df_active)}개 종목 추적 중...")
     
+    # 👇👇 [V102.3 버그 픽스] 주말 및 공휴일 유령 카운팅(Double Counting) 원천 차단 👇👇
+    tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
+    today_mkt_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
+    
     start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
     idx_ticker = '069500' if market == 'KR' else 'SPY'
+    
     try:
         idx_df = fdr.DataReader(idx_ticker, start_date) if market == 'KR' else yf.download(idx_ticker, start=start_date, progress=False)
+        
+        # 💡 핵심: 벤치마크 지수의 가장 최근 캔들 날짜가 '해당 국가의 오늘 날짜'와 일치하는지 팩트 체크
+        latest_candle_date = idx_df.index[-1].strftime('%Y-%m-%d')
+        
+        if latest_candle_date != today_mkt_str:
+            print(f"💤 [{market}] 휴장일 감지 (최신캔들: {latest_candle_date} ≠ 오늘: {today_mkt_str}). 유령 카운팅 방어를 위해 추적을 건너뜁니다.")
+            conn.close()
+            return
+            
         idx_close = idx_df['Close'] if market == 'KR' else idx_df['Close'].squeeze()
-    except: idx_close = pd.Series(dtype=float)
+    except Exception as e: 
+        print(f"⚠️ 벤치마크 로드 에러: {e}")
+        idx_close = pd.Series(dtype=float)
+    # 👆👆 [패치 완료] 👆👆
 
     for _, r in df_active.iterrows():
         code = r['code']
