@@ -71,11 +71,21 @@ def update_single_ticker(row, country):
         local_conn.execute("PRAGMA journal_mode=WAL;")       # 동시 읽기/쓰기 허용
         local_conn.execute("PRAGMA synchronous=NORMAL;")     # WAL 모드 최적화 (속도 향상)
         
-        df.to_sql(table_name, local_conn, if_exists='replace', index=False)
+        # 👇👇 [V102.6 버그 픽스] Replace(DROP) 폭파 방지 및 무정지 Append 엔진 👇👇
+        try:
+            # 1. 뼈대(테이블)는 살려두고 기존 데이터 알맹이만 조용히 삭제 (DB Lock 방지)
+            local_conn.execute(f'DELETE FROM "{table_name}"')
+        except sqlite3.OperationalError:
+            # 처음 수집하는 종목이라 테이블이 아예 없다면 조용히 패스
+            pass
+        
+        # 2. Append 모드로 알맹이만 안전하게 주입 (다른 봇들이 0.1초도 멈추지 않음)
+        df.to_sql(table_name, local_conn, if_exists='append', index=False)
+        # 👆👆 [패치 완료] 👆👆
+
         local_conn.close()
         return True
     except: return False
-
 # 메인 업데이트 실행기
 def run_daily_db_update():
     print(f"\n🛢️ 글로벌 퀀트 로컬 데이터베이스 갱신 시작 (경로: {DB_PATH})")
@@ -95,12 +105,21 @@ def run_daily_db_update():
                 df_temp = idx_us[tk].dropna().reset_index()
                 df_temp.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
                 df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
-                df_temp.to_sql(tbl, bm_conn, if_exists='replace', index=False)
+                
+                # 👇👇 [V102.6] 지수 데이터 역시 무정지 Append 적용 👇👇
+                try: bm_conn.execute(f'DELETE FROM "{tbl}"')
+                except: pass
+                df_temp.to_sql(tbl, bm_conn, if_exists='append', index=False)
         
         for tk, tbl in zip(['069500', '229200'], ['KR_KOSPI_IDX', 'KR_KOSDAQ_IDX']):
             df_temp = fdr.DataReader(tk, (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')).reset_index()
             df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
-            df_temp.to_sql(tbl, bm_conn, if_exists='replace', index=False)
+            
+            # 👇👇 [V102.6] 한국 지수 데이터 무정지 Append 적용 👇👇
+            try: bm_conn.execute(f'DELETE FROM "{tbl}"')
+            except: pass
+            df_temp.to_sql(tbl, bm_conn, if_exists='append', index=False)
+            
         bm_conn.close()
         print("✅ 벤치마크 지수 DB 저장 완료!")
     except Exception as e:
