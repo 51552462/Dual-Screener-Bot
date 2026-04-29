@@ -368,23 +368,35 @@ def hunt_supernovas(market):
     # 👇👇 [수술 1] 템플릿 버전 관리 및 누적 저장 (세포 분열) 👇👇
     config = load_config()
     multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
+    treasury_key = f"CENTRAL_TREASURY_{market}" # 💡 국고 키 세팅
     
-    # 1. 기존에 살아남은 템플릿 뭉치를 불러옵니다 (없으면 빈 사전)
+    # 1. 기존 템플릿 뭉치와 현재 국고 잔액 로드
     existing_templates = config.get(multi_key, {})
+    current_treasury = config.get(treasury_key, 0)
     
     # 2. 오늘 날짜를 버전 번호로 생성 (예: V_240528)
     version_tag = datetime.now().strftime('V_%y%m%d')
     
-    # 3. 새로 찾은 템플릿에 버전 꼬리표를 달아 기존 뭉치에 '추가(Append)' 합니다.
+    # 3. 💡 [신규 추가] 신입 채용 자금 지원 및 파산 방어 로직
     new_added = 0
+    rejected_due_to_funds = 0
+    
     for t_name, t_dna in market_templates.items():
-        versioned_name = f"{t_name}_{version_tag}"
-        existing_templates[versioned_name] = t_dna
-        new_added += 1
+        # 국고에 2,000만 원 이상 남아있는지 팩트 체크
+        if current_treasury >= 20000000:
+            current_treasury -= 20000000 # 국고에서 2,000만 원 즉시 차감
+            versioned_name = f"{t_name}_{version_tag}"
+            existing_templates[versioned_name] = t_dna
+            new_added += 1
+        else:
+            rejected_due_to_funds += 1 # 자금 부족으로 채용 거절 (동결)
+            
+    # 💡 변경된 국고 잔액을 config(관제탑)에 즉각 반영
+    config[treasury_key] = current_treasury
 
-    # 4. 최대 보유 한도 방어 (서버 터짐 방지를 위해 가장 오래된 것부터 삭제해 최대 50개 유지)
+    # 4. 최대 보유 한도 방어 (서버 터짐 방지를 위해 최대 50개 유지)
     if len(existing_templates) > 50:
-        sorted_keys = sorted(existing_templates.keys()) # 이름에 날짜가 있어 정렬 가능
+        sorted_keys = sorted(existing_templates.keys())
         excess = len(existing_templates) - 50
         for k in sorted_keys[:excess]:
             del existing_templates[k]
@@ -392,12 +404,19 @@ def hunt_supernovas(market):
     config[multi_key] = existing_templates
     save_config(config)
     
-    # 텔레그램 리포트 내용도 다중 템플릿에 맞게 수정
+    # 텔레그램 리포트 내용 수정 (자금 순환 및 파산 경고 포함)
     report_msg = f"🚀 <b>[{market} 템플릿 세포 분열 완료]</b>\n"
-    report_msg += f"💡 기존의 승리 DNA를 보존한 채, 새로운 {new_added}개의 변이 유전자({version_tag})가 관제탑에 추가되었습니다.\n"
+    if new_added > 0:
+        report_msg += f"💡 신규 변이 유전자 {new_added}개가 각각 2,000만 원의 초기 시드를 배정받아 관제탑에 투입되었습니다.\n"
+    report_msg += f"🏦 잔여 국고: {current_treasury:,.0f}원\n"
     report_msg += f"🧪 <b>[현재 관제탑 보유 템플릿 수: 총 {len(existing_templates)}개]</b>\n"
+    
+    # 파산 방어망 작동 시 텔레그램 긴급 알림
+    if rejected_due_to_funds > 0:
+        report_msg += f"\n🚨 <b>[시스템 경고]</b> 국고 자금 부족으로 {rejected_due_to_funds}개의 신규 로직 채용이 동결되었습니다.\n"
+        
     send_telegram_msg(report_msg)
-    print(f"✅ [{market}] 다차원 DNA 템플릿 누적 갱신 완료!")
+    print(f"✅ [{market}] 다차원 DNA 템플릿 누적 갱신 및 국고 반영 완료!")
 
 # ==========================================
 # 🚀 [V101.0 신규 엔진] 초신성 실시간 멀티스레드 스나이퍼
