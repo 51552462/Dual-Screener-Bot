@@ -787,7 +787,7 @@ def send_comprehensive_daily_report():
             send_telegram_msg(msg6); time.sleep(1)
 
             # ---------------------------------------------------------
-            # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버 (✅ 완벽 복원)
+            # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버
             # ---------------------------------------------------------
             msg7 = f"{market_icon} <b>[7/9] 섹터 순환매 궤적 및 스필오버</b>\n"
             rot_df = df_all[df_all['entry_date'] >= (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')]
@@ -811,7 +811,11 @@ def send_comprehensive_daily_report():
                     if current_sec not in streaks: streaks[current_sec] = []
                     streaks[current_sec].append(current_streak)
 
-                msg7 += f"🔥 <b>현재 주도 섹터:</b> {current_sec} ({current_streak}일째 체류 중)\n\n"
+                msg7 += f"🔥 <b>현재 주도 섹터:</b> {current_sec} ({current_streak}일째 체류 중)\n"
+                # 👇👇 [추가된 모니터링 로직] 👇👇
+                msg7 += f"🔮 <b>다음 예측 섹터:</b> {sys_config.get('PREDICTED_NEXT_SECTOR', '분석중')}\n"
+                msg7 += f"⚡ <b>베팅 어드밴티지:</b> {'🔥활성화(200%)' if sys_config.get('ROTATION_ADVANTAGE_ACTIVE') else '정상(100%)'}\n\n"
+                
                 msg7 += "▪️ <b>섹터별 자금 체류 시간(수명):</b>\n"
                 for s, lengths in streaks.items():
                     msg7 += f" - {s[:6]}: 평균 {sum(lengths)/len(lengths):.1f}일\n"
