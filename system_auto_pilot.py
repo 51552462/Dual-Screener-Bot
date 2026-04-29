@@ -630,18 +630,96 @@ def run_autonomous_analysis():
     else:
         report_lines.append(" ▪️ 표본 부족으로 순환매 자율 검증 스킵")
 
-    # ==========================================
-    # 🚀 최종 저장 및 발송 (단 1번만 실행)
-    # ==========================================
-    save_config(current_config)
-    send_telegram_report("\n".join(report_lines))
+    # ---------------------------------------------------------
+    # 👑 엔진 13: [V106.0 주차별 로직 일관성 추적 및 시계열 DNA 부검]
+    # ---------------------------------------------------------
+    report_lines.append("\n⏳ <b>[V106.0 주차별 일관성 추적 및 시계열 DNA 부검]</b>")
+    
+    try:
+        # 💡 [핵심 교정] VIX 동적 룩백에 의해 메인 df가 7일/15일로 잘렸을 경우를 대비하여,
+        # 4주치(30일) 청산 데이터를 DB에서 독립적으로 무조건 로드합니다.
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        df_closed_30d = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND exit_date >= '{thirty_days_ago}'", conn)
+        conn.close()
+
+        import re
+        def get_core_group(sig):
+            sig = str(sig).replace('💀[기각/관찰용] ', '')
+            sig = re.sub(r'^\[.*?\]\s*', '', sig)
+            return sig.split(' [')[0]
+
+        if not df_closed_30d.empty:
+            df_closed_30d['group'] = df_closed_30d['sig_type'].apply(get_core_group)
+            df_closed_30d['exit_date_dt'] = pd.to_datetime(df_closed_30d['exit_date'])
+            now_dt = datetime.now()
+            df_closed_30d['week_idx'] = (now_dt - df_closed_30d['exit_date_dt']).dt.days // 7
+            
+            group_weekly_pf = {}
+            
+            for group in df_closed_30d['group'].unique():
+                g_df = df_closed_30d[df_closed_30d['group'] == group]
+                weekly_pfs = {}
+                for w in range(4): # 0주차 ~ 3주차 (최근 1개월)
+                    w_df = g_df[g_df['week_idx'] == w]
+                    if len(w_df) >= 3: 
+                        w_wins = w_df[w_df['final_ret'] > 0]['final_ret'].sum()
+                        w_loses = abs(w_df[w_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1
+                        weekly_pfs[w] = w_wins / w_loses
+                    else:
+                        weekly_pfs[w] = None
+                group_weekly_pf[group] = weekly_pfs
+
+            consistent_good, consistent_bad, consistent_mid = [], [], []
+
+            for g, pfs in group_weekly_pf.items():
+                valid_pfs = [p for p in pfs.values() if p is not None]
+                if len(valid_pfs) >= 2: # 최소 2주 이상 활동 검증
+                    if all(p >= 1.2 for p in valid_pfs): consistent_good.append(g)      
+                    elif all(p <= 0.8 for p in valid_pfs): consistent_bad.append(g)     
+                    else: consistent_mid.append(g)                                      
+                    
+            report_lines.append(f"▪️ <b>장기 우상향(S급) 로직:</b> {', '.join(consistent_good) if consistent_good else '없음'}")
+            report_lines.append(f"▪️ <b>장기 우하향(폐급) 로직:</b> {', '.join(consistent_bad) if consistent_bad else '없음'}")
+
+            def extract_cohort_dna(group_list):
+                if not group_list: return "표본 없음"
+                tgt_df = df_closed_30d[df_closed_30d['group'].isin(group_list)]
+                if tgt_df.empty: return "표본 없음"
+                c = tgt_df['dyn_cpv'].mean()
+                t = tgt_df['dyn_tb'].mean()
+                e = tgt_df['v_energy'].mean()
+                return f"CPV {c:.2f} | 찐양봉 {t:.1f}배 | 응축 {e:.1f}"
+
+            report_lines.append(f"\n💡 <b>[우상향 로직 절대 공통 DNA]</b>\n ↳ {extract_cohort_dna(consistent_good)}")
+            report_lines.append(f"↔️ <b>[횡보/중간 로직 공통 DNA]</b>\n ↳ {extract_cohort_dna(consistent_mid)}")
+            report_lines.append(f"💀 <b>[우하향 로직 만성질환 DNA]</b>\n ↳ {extract_cohort_dna(consistent_bad)}")
+            
+            # 💡 [자율 진화] 장기 우상향 DNA를 MFE 황금 타점으로 강제 흡수 (엔진 8과 시너지)
+            if consistent_good:
+                best_df = df_closed_30d[df_closed_30d['group'].isin(consistent_good)]
+                current_config["DNA_SUPERNOVA_MFE_WEIGHTED"] = {
+                    "cpv": round(best_df['dyn_cpv'].mean(), 3),
+                    "tb": round(best_df['dyn_tb'].mean(), 3),
+                    "bbe": round(best_df['v_energy'].mean(), 3),
+                    "last_updated": datetime.now().strftime('%Y-%m-%d')
+                }
+                report_lines.append("✅ <b>조치:</b> 장기 우상향 DNA를 시스템의 황금 타점(MFE 템플릿)으로 강제 동기화 완료.")
+        else:
+            report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
+    except Exception as e:
+        report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
 
     # ==========================================
-    # 🚀 최종 저장 및 발송 (단 1번만 실행)
+    # 🚀 최종 저장 및 발송 (중복 제거 완료)
     # ==========================================
     save_config(current_config)
     send_telegram_report("\n".join(report_lines))
     print("✅ 분석 완료! JSON 파일 덮어쓰기 및 텔레그램 발송 성공.")
+
+# ==========================================
+# 👑 엔진 11: [V100.0 주간 흐름(Flow) 총결산 마스터 리포트]
+# ==========================================
 
 # ==========================================
 # 👑 엔진 11: [V100.0 주간 흐름(Flow) 총결산 마스터 리포트]
