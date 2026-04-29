@@ -360,24 +360,24 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            # 변경 방식: 로컬 DB에서 즉시 로드 (안전하고 빠름)
-try:
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    # 로컬 DB에 저장된 KR_종목코드 테이블에서 데이터 호출 [cite: 84, 87]
-    df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
-    conn.close()
-    
-    if not df_raw.empty:
-        df_raw['Date'] = pd.to_datetime(df_raw['Date'])
-        df_raw.set_index('Date', inplace=True)
-        # DB에 이미 ffill() 처리가 되어 있으므로 추가 dropna는 최소화 
-        df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
+            # 👇👇 [수정된 DB 로드 블록: try-except 완벽 마감] 👇👇
+            try:
+                conn = sqlite3.connect(DB_PATH, timeout=30)
+                df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
+                conn.close()
+                
+                if not df_raw.empty:
+                    df_raw['Date'] = pd.to_datetime(df_raw['Date'])
+                    df_raw.set_index('Date', inplace=True)
+                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
                     
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
                 if is_valid: 
                     hit, sig_type, df, dbg = compute_inverse_1d(df_raw)
+                    
             except Exception:
-                pass 
+                pass  # 💡 이 줄이 빠져서 에러가 났습니다! 에러 시 패스하도록 닫아줍니다.
+            # 👆👆 [수정 완료] 👆👆
                 
             hit_rank = 0
             with console_lock:
