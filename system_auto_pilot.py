@@ -33,30 +33,38 @@ def send_telegram_report(message):
     except Exception as e: print(f"텔레그램 전송 실패: {e}")
 
 def load_or_create_config():
+    # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
     if not os.path.exists(CONFIG_PATH):
         default_config = {
             "ACTIVE_EXIT_MODE": "HYBRID",
             "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
-            "ACCOUNT_SIZE": 20000000,   # 💡 2,000만 원 (수정됨)
-            "RISK_PCT": 0.02            # 💡 고정 리스크 2% (손절 시 최대 40만 원 타격)
+            "ACCOUNT_SIZE": 20000000,         # 💡 각 로직별 기본 시드 2,000만 원
+            "RISK_PCT": 0.02,                 # 💡 고정 리스크 2%
+            "CENTRAL_TREASURY_KR": 300000000, # 🏦 [추가] 한국장 초기 국고 3억 원
+            "CENTRAL_TREASURY_US": 300000000  # 🏦 [추가] 미국장 초기 국고 3억 원
         }
         with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
         return default_config
-    with open(CONFIG_PATH, 'r') as f: return json.load(f)
-
-def save_config(config_data):
-    with open(CONFIG_PATH, 'w') as f: json.dump(config_data, f, indent=4)
-
-def calculate_metrics(df_subset):
-    """승률과 손익비(PF) 반환"""
-    if len(df_subset) == 0: return 0.0, 0.0
-    wins = df_subset[df_subset['final_ret'] > 0]
-    losses = df_subset[df_subset['final_ret'] <= 0]
-    win_rate = (len(wins) / len(df_subset)) * 100
-    gross_profit = wins['final_ret'].sum()
-    gross_loss = abs(losses['final_ret'].sum())
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 99.9
-    return win_rate, profit_factor
+        
+    # 2. 기존 파일이 있을 때 읽어오기
+    with open(CONFIG_PATH, 'r') as f: 
+        config = json.load(f)
+        
+    # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 3억씩 채워줍니다.
+    need_save = False
+    if "CENTRAL_TREASURY_KR" not in config:
+        config["CENTRAL_TREASURY_KR"] = 300000000  # 3억 원
+        need_save = True
+    if "CENTRAL_TREASURY_US" not in config:
+        config["CENTRAL_TREASURY_US"] = 300000000  # 3억 원
+        need_save = True
+        
+    # 변경 사항이 있으면 JSON 파일에 덮어쓰기
+    if need_save:
+        with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=4)
+        print("🏦 [국고 세팅 완료] 시스템에 한국 3억, 미국 3억의 초기 자본이 성공적으로 세팅되었습니다.")
+        
+    return config
 
 # ==========================================
 # 🚀 [메인 분석 엔진] 
