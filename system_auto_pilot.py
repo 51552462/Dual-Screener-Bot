@@ -443,29 +443,25 @@ def run_autonomous_analysis():
         report_lines.append("▪️ 알파 반감기 추적을 위한 최초 승격일을 오늘로 기록했습니다.")
 
     # ---------------------------------------------------------
-    # 👑 엔진 7: [V53.0 무차별 통합 리그 결산]
+    # 👑 엔진 7: [V103.0 통합 시스템 데스매치 결산 (자본주의 복리 배분)]
     # ---------------------------------------------------------
-    report_lines.append("\n⚔️ <b>[V53.0 통합 시스템 데스매치 결산]</b>")
+    report_lines.append("\n⚔️ <b>[V103.0 통합 시스템 데스매치 결산]</b>")
     
     # 1. 오리지널 vs 초신성 베이스라인 대결
     std_df = df[df['sig_type'].str.contains('STANDARD', na=False)]
     sn_df = df[df['sig_type'].str.contains('SUPERNOVA', na=False)]
     
-    # 2. ABC 평행우주별 '진짜 승자' 판독 (Out-of-Sample)
-    # 초신성 진영의 후보(B) 성적이 기존 오리지널 실전(A)을 이기고 있다면?
+    # 2. 평행우주 성적 판독 (Out-of-Sample)
     sn_b_ret = sn_df['cand_b_ret'].mean() if not sn_df.empty else -99
     std_a_ret = std_df['live_a_ret'].mean() if not std_df.empty else -99
     
     if sn_b_ret > std_a_ret:
         report_lines.append(f"🔥 <b>[시스템 추월 발생]</b> 초신성 후보군({sn_b_ret:+.2f}%)이 오리지널 실전({std_a_ret:+.2f}%)을 앞질렀습니다.")
-        # 조치: 초신성 진영의 비중을 대폭 상향하고 오리지널은 관찰 모드로 전환
-        current_config["WEIGHT_SUPERNOVA"] = 1.6
-        current_config["WEIGHT_STANDARD"] = 0.4
-        report_lines.append("🚀 <b>액션:</b> 다음 주 자본의 80%를 초신성 엔진에 우선 배정합니다.")
     else:
-        report_lines.append(f"🛡️ <b>[방어 성공]</b> 오리지널 실전 엔진이 초신성 도전군을 방어해냈습니다.")
-        current_config["WEIGHT_SUPERNOVA"] = 0.8
-        current_config["WEIGHT_STANDARD"] = 1.2
+        report_lines.append(f"🛡️ <b>[방어 성공]</b> 오리지널 실전 엔진({std_a_ret:+.2f}%)이 초신성 도전군({sn_b_ret:+.2f}%)을 방어해냈습니다.")
+        
+    # 💡 [핵심] 인위적인 WEIGHT(1.6 vs 0.4) 강제 배분 로직 완전 삭제
+    report_lines.append("✅ <b>알림:</b> 인위적 가중치(WEIGHT) 배분 로직이 삭제되었습니다. 개별 시드의 복리 성장이 곧 자본 배분입니다.")
 
     # ---------------------------------------------------------
     # 👑 엔진 8: [V55.0 초신성 실전 흐름 역추적 및 MFE 가중치 템플릿 진화]
