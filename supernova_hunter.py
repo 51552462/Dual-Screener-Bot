@@ -297,8 +297,37 @@ def hunt_supernovas(market):
             elif "Rank D" in rank_name: rank_counts["D"] += 1
         
     if not dna_list: return
-    
-    if not dna_list: return
+
+    # 👇👇 [수술 지점: V102.0 머신러닝을 위한 순도 100% 팩트 CSV 추출 파이프라인] 👇👇
+    try:
+        csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+        csv_data = []
+        
+        # data_miner.py가 정확히 읽을 수 있도록 한글 컬럼명 1:1 완벽 매핑
+        for d in dna_list:
+            csv_data.append({
+                '종목코드': d.get('code', '000000'),
+                '시장': market,
+                '랭크': d['rank_name'],
+                '[D_Day_당일] 평균_CPV': round(d['cpv'], 4),
+                '[D_Day_당일] 평균_진짜양봉(TB)': round(d['tb'], 4),
+                '[D_Day_당일] 평균_응축에너지(BBE)': round(d['bbe'], 4),
+                '[D_Day_당일] 진모멘텀(TML)': round(d['tml'], 4),
+                '[D_Day_당일] 평균_시장강도(RS)': round(d['rs'], 4)
+            })
+
+        df_csv = pd.DataFrame(csv_data)
+        
+        # 한국장(KR)이 먼저 돌고 미국장(US)이 돌기 때문에, 파일이 있으면 아래에 이어붙임(Append)
+        if os.path.exists(csv_path):
+            df_csv.to_csv(csv_path, mode='a', header=False, index=False, encoding='utf-8-sig')
+        else:
+            df_csv.to_csv(csv_path, index=False, encoding='utf-8-sig')
+            
+        print(f"💾 [{market}] {len(csv_data)}개의 D-Day 표본 데이터가 K-Means 마이닝용 CSV에 성공적으로 적재되었습니다.")
+    except Exception as e:
+        print(f"⚠️ CSV 추출 파이프라인 에러: {e}")
+    # 👆👆 [수술 지점 완료] 👆👆
     
     # 👇👇 [기존 단일 평균(Centroid) 멍청한 로직 완전 삭제 후 교체] 👇👇
     # 👑 1. 랭크별로 DNA 1차 분류
@@ -528,28 +557,42 @@ def execute_supernova_live_scan(market):
             
     print(f"✅ [{market}] 멀티스레드 스나이퍼 쾌속 스캔 및 DB 기록 완료!")
         except: pass
-# 👇👇 [기존 run_miner_scheduler 함수 덮어쓰기] 👇👇
+# 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
 def run_miner_scheduler():
-    """1주일에 한 번 과거 데이터를 마이닝하여 템플릿을 갱신하는 봇"""
+    """1주일에 한 번 과거 데이터를 마이닝하여 템플릿 갱신 및 CSV 추출을 수행하는 봇"""
     tz_kr = pytz.timezone('Asia/Seoul')
-    import data_miner  # 💡 [추가] 마이닝 엔진 호출 준비
     
     while True:
         try:
             now = datetime.now(tz_kr)
             # 매주 월요일 17:00 템플릿 갱신
             if now.weekday() == 0 and now.hour == 17 and now.minute == 0:
+                
+                # 💡 [V102.0 데이터 클리닝] 마이닝 시작 전, 지난주의 오래된 CSV 찌꺼기 삭제
+                csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+                    print("🗑️ [데이터 클리닝] 지난주 머신러닝용 CSV 데이터를 성공적으로 포맷했습니다.")
+
                 hunt_supernovas('KR')
                 hunt_supernovas('US')
                 
-                # 💡 [추가] 역추적이 끝나면 즉시 K-Means 클러스터링 가동
-                print("🔄 [스케줄러] 타임머신 완료. K-Means 클러스터 마이닝으로 자동 이관합니다...")
-                data_miner.run_cluster_mining()
+                # 💡 [V100.1 핵심 픽스] data_miner 파일 방어막 구축
+                try:
+                    import data_miner
+                    print("🔄 [스케줄러] 타임머신 완료. K-Means 클러스터 마이닝으로 자동 이관합니다...")
+                    data_miner.run_cluster_mining()
+                except ModuleNotFoundError:
+                    print("🚨 [경고] 'data_miner.py' 파일을 찾을 수 없어 ML 마이닝을 건너뜁니다.")
+                except Exception as e:
+                    print(f"🚨 [에러] 마이닝 실행 중 오류 발생: {e}")
                 
                 time.sleep(65) 
             time.sleep(30)
         except Exception as e:
+            print(f"⚠️ 마이너 스케줄러 루프 에러: {e}")
             time.sleep(60)
+# 👆👆 [덮어쓰기 완료] 👆👆
 
 def run_live_sniper_scheduler():
     """매일 4번 지정된 시간에 실시간 시장을 스캔하고 쏘는 봇"""
