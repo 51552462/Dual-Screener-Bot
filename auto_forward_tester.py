@@ -314,16 +314,46 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) 
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
+            account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
+            
             if risk_distance > 0:
-                # 👇👇 [V102.1 버그 픽스] 켈리 베팅 풀미수/신용 폭발 방어 (Position Cap) 👇👇
-                # 💡 종목당 최대 투입 금액 한도 설정 (기본 25% 제한)
-                max_invest_limit = account_size * sys_config.get("MAX_POSITION_PCT", 0.25)
+                # 👇👇 [V102.8 버그 픽스] 그룹별 실시간 복리 시드 & 예수금(가용 자산) 브레이크 엔진 👇👇
+                import re
                 
-                # 1. 실전 API로 넘어갈 '진짜 매수 수량(shares)'을 관제탑의 동적 켈리 리스크로 1차 산출
-                raw_shares = int((account_size * kelly_risk_pct) / risk_distance)
-                raw_invest = raw_shares * ep  
+                # 1. 꼬리표와 헤더를 떼어내고 '본질적인 시그널(그룹) 이름'만 완벽히 추출
+                # (예: "💀[기각] [SUPERNOVA] RANK_A [🔥주도주]" ➔ "RANK_A")
+                clean_sig = sig_type.replace('💀[기각/관찰용] ', '')
+                clean_sig = re.sub(r'^\[.*?\]\s*', '', clean_sig)
+                core_group_name = clean_sig.split(' [')[0]
                 
-                # 🛡️ 켈리 베팅 안전장치 (Cap) 가동
+                # 2. 해당 그룹(로직)이 지금까지 벌어들인 누적 수익금 계산 (실현 손익)
+                cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
+                realized_pnl = cursor.fetchone()[0]
+                if realized_pnl is None: realized_pnl = 0.0
+                
+                # 💡 [독립 복리 시드] 기본 2,000만 원 + 이 그룹이 스스로 번 돈
+                group_current_seed = account_size + realized_pnl
+                
+                # 3. 해당 그룹이 현재 시장에 묶어둔 투자금 계산 (미실현 락업)
+                cursor.execute("SELECT SUM(sim_kelly_invest) FROM forward_trades WHERE status = 'OPEN' AND sig_type LIKE ?", (f"%{core_group_name}%",))
+                locked_cash = cursor.fetchone()[0]
+                if locked_cash is None: locked_cash = 0.0
+                
+                # 💡 [잔여 현금] 예수금 브레이크
+                available_cash = group_current_seed - locked_cash
+                
+                if available_cash <= 0:
+                    # 예수금 부족 시 DB 저장 취소 (가짜 우상향 및 신용/미수 원천 차단)
+                    return False, f"💸 예수금 부족: [{core_group_name}] 엔진의 가용 자산이 없습니다 (시드: {group_current_seed:,.0f}원 / 묶인돈: {locked_cash:,.0f}원)"
+
+                # 4. 베팅 한도 설정 (그룹 시드의 최대 25% vs 남은 현금 중 작은 것)
+                max_invest_limit = min(group_current_seed * sys_config.get("MAX_POSITION_PCT", 0.25), available_cash)
+                
+                # 5. 실전 API로 넘어갈 '진짜 매수 수량(shares)' 산출 (켈리 비중 적용)
+                raw_shares = int((group_current_seed * kelly_risk_pct) / risk_distance)
+                raw_invest = raw_shares * ep
+                
+                # 🛡️ 켈리 베팅 안전장치 및 예수금 한도 캡(Cap) 가동
                 if raw_invest > max_invest_limit:
                     sim_kelly_invest = max_invest_limit
                     shares = int(max_invest_limit / ep)
@@ -331,18 +361,17 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     sim_kelly_invest = raw_invest
                     shares = raw_shares
                 
-                # 2. V39.0 딥 다이브 비교 엔진(고정 2% vs 켈리)을 위해 가상의 고정 투입금 산출
-                raw_fixed_shares = int((account_size * fixed_risk_pct) / risk_distance)
+                # V39.0 딥 다이브 비교를 위한 고정 2% 투입금도 동일한 그룹 시드 기반으로 보정
+                raw_fixed_shares = int((group_current_seed * fixed_risk_pct) / risk_distance)
                 raw_fixed_invest = raw_fixed_shares * ep
                 
-                # 🛡️ 고정 2% 베팅 안전장치 (Cap) 가동
                 if raw_fixed_invest > max_invest_limit:
                     invest_amount = max_invest_limit
                 else:
                     invest_amount = raw_fixed_invest
+                # 👆👆 [패치 완료] 👆👆
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
-            # 👆👆 [수정 끝] 👆👆
 
     except Exception as e:
         print(f"하이브리드 벡터 매칭 에러: {e}")
@@ -669,10 +698,8 @@ def send_comprehensive_daily_report():
         report_msg += "━━━━━━━━━━━━━━━━━━\n"
         
         # 👑 [2. 거시 경제 & VIX/Breadth 통제 팩트 체크]
-        # (관제탑이 무슨 근거로 켈리를 조율했는지 노출)
         report_msg += f"🧭 <b>[거시 국면 & 켈리 동적 조율]</b>\n"
         report_msg += f" ▪️ 동적 켈리 비중: <b>{kelly_risk:.2f}%</b> (현재 국면 성적 기반 산출)\n"
-        # DNA Drift 선제적 방어 여부 체크
         recent_dna_df = pd.read_sql("SELECT entry_cos_score FROM forward_trades ORDER BY id DESC LIMIT 10", conn)
         if not recent_dna_df.empty and recent_dna_df['entry_cos_score'].mean() < 0.65:
             report_msg += f" 🚨 <b>[DNA 변위 감지]</b> 대장주 일치율 급감({recent_dna_df['entry_cos_score'].mean()*100:.1f}%) ➔ 선제적 방어 모드(CHOP) 개입\n"
@@ -687,41 +714,44 @@ def send_comprehensive_daily_report():
             market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
             report_msg += f"\n{market_icon} <b>[{market} 시스템 정밀 해부 현황]</b>\n"
             
-            # 👑 [3. 시그널 장부 및 "편대 vs 정찰대" 분리 추적]
-            cursor = conn.execute("SELECT sig_type, COUNT(*), SUM(sim_kelly_invest) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY sig_type", (market,))
-            open_data = {row[0]: {'cnt': row[1], 'invest': row[2] or 0.0} for row in cursor.fetchall()}
+            # 👇👇 [수정] 3. 생존자 리더보드 부분 삽입 (기존 복잡한 청산 부검 교체) 👇👇
+            report_msg += f"🏆 <b>[로직별 복리 생존 리더보드]</b>\n"
+            df_all = pd.read_sql(f"SELECT sig_type, final_ret, sim_kelly_invest, status FROM forward_trades WHERE market='{market}'", conn)
             
-            cursor = conn.execute("SELECT sig_type, final_ret, ((sim_kelly_invest * final_ret) / 100), exit_type FROM forward_trades WHERE market=? AND exit_date=?", (market, today_str))
-            today_exits = cursor.fetchall()
+            import re
+            def get_core_group(sig):
+                sig = str(sig).replace('💀[기각/관찰용] ', '')
+                sig = re.sub(r'^\[.*?\]\s*', '', sig)
+                return sig.split(' [')[0]
+
+            if not df_all.empty:
+                df_all['group'] = df_all['sig_type'].apply(get_core_group)
+                leaderboard = []
+                for group in df_all['group'].unique():
+                    g_df = df_all[df_all['group'] == group]
+                    g_closed = g_df[g_df['status'].str.contains('CLOSED', na=False)]
+                    g_open = g_df[g_df['status'] == 'OPEN']
+                    pnl = (g_closed['sim_kelly_invest'] * g_closed['final_ret'] / 100.0).sum()
+                    wr = (len(g_closed[g_closed['final_ret'] > 0]) / len(g_closed)) * 100 if len(g_closed) > 0 else 0
+                    leaderboard.append({'group': group, 'balance': base_seed + pnl, 'wr': wr, 'open_cnt': len(g_open)})
+                
+                leaderboard = sorted(leaderboard, key=lambda x: x['balance'], reverse=True)
+                for i, entry in enumerate(leaderboard): 
+                    medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "🏃"
+                    if entry['balance'] < base_seed * 0.8: medal = "📉"
+                    if entry['balance'] < base_seed * 0.5: medal = "💀"
+                    report_msg += f" {medal} <b>{i+1}위: {entry['group']}</b>\n"
+                    report_msg += f"    ↳ 자산: <b>{entry['balance']:,.0f}원</b> (승률 {entry['wr']:.1f}% | 보유 {entry['open_cnt']})\n"
+            else:
+                report_msg += " ↳ 매매 데이터 없음.\n"
+            # 👆👆 [수정 끝] 👆👆
             
-            report_msg += f"📦 <b>[시그널별 보유 현황 & 청산 부검]</b>\n"
-            all_sigs = set(list(open_data.keys()) + [r[0] for r in today_exits])
-            
-            trend_fleet, recon_fleet = 0, 0 # 주도주 편대 vs 차기섹터 정찰대 카운트
-            
-            if all_sigs:
-                for sig in sorted(all_sigs):
-                    if "🔥주도주" in str(sig): trend_fleet += open_data.get(sig, {}).get('cnt', 0)
-                    if "🛡️차기섹터" in str(sig): recon_fleet += open_data.get(sig, {}).get('cnt', 0)
-                    
-                    c_open = open_data.get(sig, {'cnt': 0, 'invest': 0.0})
-                    sig_exits = [r for r in today_exits if r[0] == sig]
-                    clean_sig = str(sig).split(']')[0] + "]" if "]" in str(sig) else str(sig)[:15]
-                    weight_pct = (c_open['invest'] / current_seed) * 100 if current_seed > 0 else 0
-                    
-                    report_msg += f" ↳ <b>{clean_sig}</b> (보유 {c_open['cnt']} | 비중 {weight_pct:.1f}%)\n"
-                    if sig_exits:
-                        c_pnl_pct, c_pnl_amt = sum([r[1] for r in sig_exits]), sum([r[2] for r in sig_exits])
-                        exit_reasons = {}
-                        for r in sig_exits:
-                            reason = str(r[3]).replace('STAT_', '').replace('HYBRID_', '')
-                            exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
-                        reason_str = ", ".join([f"{k}({v})" for k, v in exit_reasons.items()])
-                        report_msg += f"    - 당일청산: {len(sig_exits)}건 (<b>{c_pnl_pct:+.2f}% / {c_pnl_amt:+,.0f}원</b>)\n"
-                        report_msg += f"    - 사형집행: {reason_str}\n"
-            else: report_msg += " ↳ 보유 종목 없음.\n"
-            
-            report_msg += f" 🎯 <b>[섹터 포트폴리오 다중화 현황]</b> 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
+            # 👇👇 [복구] 기존의 4~6번 로직(포트폴리오, 티어, 순환매, 메타최적화) 100% 원상 복구 👇👇
+            cursor = conn.execute("SELECT sig_type, COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY sig_type", (market,))
+            open_counts = cursor.fetchall()
+            trend_fleet = sum(cnt for sig, cnt in open_counts if "🔥주도주" in str(sig))
+            recon_fleet = sum(cnt for sig, cnt in open_counts if "🛡️차기섹터" in str(sig))
+            report_msg += f"\n 🎯 <b>[섹터 포트폴리오 다중화 현황]</b> 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
 
             # 👑 [4. 티어 검증 & 데스콤보(Death Combo) & 4차원 DNA]
             df_m = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%' ORDER BY exit_date DESC", conn)
@@ -777,12 +807,10 @@ def send_comprehensive_daily_report():
             # 👑 [6. 메타 최적화 (알파 반감기 및 오토파일럿 부검)]
             report_msg += f"\n⚙️ <b>[메타 최적화 (오토파일럿 팩트 체크)]</b>\n"
             
-            # 초신성 컷오프
             cos_cutoff = sys_config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
             ml_cutoff = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
             report_msg += f" ▪️ 초신성 자율 허들: 코사인 <b>{cos_cutoff*100:.0f}%</b> | ML박스 <b>{ml_cutoff*100:.0f}%</b>\n"
             
-            # 알파 반감기(노화) 디테일 부검
             promo_date_str = sys_config.get("LIVE_A_PROMOTION_DATE", today_str)
             days_alive = (datetime.now(tz_kr) - datetime.strptime(promo_date_str, '%Y-%m-%d').replace(tzinfo=tz_kr)).days
             report_msg += f" ▪️ 알파(룰) 수명: <b>{days_alive}일차</b>\n"
@@ -790,12 +818,11 @@ def send_comprehensive_daily_report():
             decay_df = df_m[df_m['entry_date'] >= promo_date_str]
             if len(decay_df) >= 8:
                 half = len(decay_df) // 2
-                e_df, l_df = decay_df.iloc[half:], decay_df.iloc[:half] # 내림차순이므로 뒤집음
+                e_df, l_df = decay_df.iloc[half:], decay_df.iloc[:half] 
                 e_pf = e_df[e_df['final_ret']>0]['final_ret'].sum() / (abs(e_df[e_df['final_ret']<=0]['final_ret'].sum())+0.1) if len(e_df)>0 else 0
                 l_pf = l_df[l_df['final_ret']>0]['final_ret'].sum() / (abs(l_df[l_df['final_ret']<=0]['final_ret'].sum())+0.1) if len(l_df)>0 else 0
                 report_msg += f"    ↳ 초기 PF: {e_pf:.2f} ➔ 최근 PF: {l_pf:.2f} {'(⚠️ 노화 진행 중)' if l_pf < e_pf*0.7 else '(✅ 엣지 유지)'}\n"
 
-            # 그랜드 데스매치
             results = conn.execute(f"SELECT AVG(live_a_ret), AVG(cand_b_ret), AVG(champ_c_ret), AVG(sim_stat_ret), AVG(sim_tech_ret) FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'").fetchone()
             if results and any(v is not None for v in results):
                 lb = [("실전(A)", results[0] or 0), ("후보(B)", results[1] or 0), ("챔피언(C)", results[2] or 0), ("통계", results[3] or 0), ("기술", results[4] or 0)]
