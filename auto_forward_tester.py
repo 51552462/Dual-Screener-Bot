@@ -596,113 +596,149 @@ def track_daily_positions(market):
     conn.close()
 
 # ==========================================
-# 3. 매일 16:00 일일 종합 리포트 텔레그램 (섹터 흐름 추가)
+# 3. 매일 16:00 일일 종합 정밀 리포트 텔레그램 (초정밀 계좌 & 로직 추적)
 # ==========================================
 def send_comprehensive_daily_report():
-    """V41.0: 가상매매 일일 가동 현황 및 청산 로직 작동 통계 등 딥 다이브 데이터 보강"""
+    """V71.0: 2천만원 시드 기반의 전체 자산 변화, 시그널별 투입 비중 및 딥다이브 완전체 리포트"""
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
     
-    regime = sys_config.get("LAST_ANALYSED_REGIME", "CHOP")
+    regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
     kelly_risk = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) * 100
-    report_msg = f"🛰️ <b>[관제탑 일일 가상매매 종합 리포트]</b>\n📅 {today_str} | 국면: {regime} | 켈리: {kelly_risk:.2f}%\n"
-    report_msg += "━━━━━━━━━━━━━━━━━━\n"
+    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000) # 💡 기준 시드머니 (2천만 원)
 
     try:
         conn = sqlite3.connect(DB_PATH, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
         
+        # 👑 [핵심 1] 전체 가상매매 장부의 누적 실현 손익 계산 (시드머니 변화 추적)
+        cursor = conn.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100) FROM forward_trades WHERE status LIKE 'CLOSED%'")
+        total_realized_pnl = cursor.fetchone()[0]
+        if total_realized_pnl is None: total_realized_pnl = 0.0
+        
+        current_seed = base_seed + total_realized_pnl # 매일 변화하는 총 자산
+
+        report_msg = f"🛰️ <b>[관제탑 가상매매 초정밀 장부 브리핑]</b>\n📅 {today_str} | 국면: {regime} | 켈리: {kelly_risk:.2f}%\n"
+        report_msg += "━━━━━━━━━━━━━━━━━━\n"
+        report_msg += f"🏦 <b>[통합 가상 계좌 현황]</b>\n"
+        report_msg += f" ▪️ 원금(Seed): {base_seed:,.0f} 원\n"
+        report_msg += f" ▪️ 누적 손익: {total_realized_pnl:+,.0f} 원\n"
+        report_msg += f" ▪️ <b>현재 총 자산: {current_seed:,.0f} 원</b>\n"
+        
         for market in ['KR', 'US']:
             market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
-            report_msg += f"\n{market_icon} <b>[{market} MARKET INTELLIGENCE]</b>\n"
+            report_msg += f"\n{market_icon} <b>[{market} 시스템 정밀 추적 현황]</b>\n"
             
-            # 1. 💡 [추가] 오늘 가상매매 가동 현황 (신규 편입 및 청산 추적)
-            cursor = conn.execute("SELECT COUNT(*) FROM forward_trades WHERE market=? AND entry_date=?", (market, today_str))
-            today_entries = cursor.fetchone()[0]
-
-            cursor = conn.execute("SELECT COUNT(*), SUM(final_ret) FROM forward_trades WHERE market=? AND exit_date=?", (market, today_str))
-            today_exit_data = cursor.fetchone()
-            today_exits = today_exit_data[0]
-            today_pnl = today_exit_data[1] if today_exit_data[1] else 0.0
-
-            report_msg += f"🎯 <b>오늘의 매매:</b> 신규 진입 {today_entries}건 / 청산 {today_exits}건 (당일 실현손익 {today_pnl:.2f}%)\n"
-
-            # 2. 포트폴리오 스냅샷 (승률 및 티어별 점유율)
-            cursor = conn.execute("SELECT COUNT(*), SUM(CASE WHEN final_ret > 0 THEN 1 ELSE 0 END) FROM forward_trades WHERE market=? AND status LIKE 'CLOSED%'", (market,))
-            total, wins = cursor.fetchone()
-            wr = round((wins / total) * 100, 1) if total > 0 else 0
-            report_msg += f"📈 <b>누적 실전 승률: {wr}%</b> (총 {total}건 검증)\n"
+            # ------------------------------------------------
+            # 👑 [핵심 2] 시그널별 독립 운용 장부 (투입 금액 및 비중)
+            # ------------------------------------------------
+            report_msg += f"📦 <b>[시그널별 독립 운용 장부]</b>\n"
             
-            cursor = conn.execute("SELECT tier, COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY tier", (market,))
-            t_counts = {row[0]: row[1] for row in cursor.fetchall()}
-            active_cnt = sum(t_counts.values())
-            report_msg += f"📦 <b>현재 운용 비중: {active_cnt}/40개 종목</b> (가동률 {(active_cnt/40)*100:.0f}%)\n"
+            # (1) 현재 보유 중인 종목수 & 켈리 기반 실제 투입 금액
+            cursor = conn.execute("SELECT sig_type, COUNT(*), SUM(sim_kelly_invest) FROM forward_trades WHERE market=? AND status='OPEN' GROUP BY sig_type", (market,))
+            open_data = {row[0]: {'cnt': row[1], 'invest': row[2] or 0.0} for row in cursor.fetchall()}
             
-            # 👇👇 [여기에 삽입] ⚔️ 그랜드 데스매치 통합 순위표 👇👇
-            report_msg += f"\n🏆 <b>[가상매매 평행우주 통합 성적표]</b>\n"
+            # (2) 오늘 청산된 종목들의 원금 대비 실제 손익금(원) 산출
+            cursor = conn.execute("SELECT sig_type, final_ret, ((sim_kelly_invest * final_ret) / 100), exit_type FROM forward_trades WHERE market=? AND exit_date=?", (market, today_str))
+            today_exits = cursor.fetchall()
             
-            # DB에서 해당 시장의 모든 청산 데이터의 평균 수익률 산출
-            results = conn.execute(f"""
-                SELECT 
-                    AVG(live_a_ret) as A, AVG(cand_b_ret) as B, AVG(champ_c_ret) as C,
-                    AVG(sim_stat_ret) as STAT, AVG(sim_tech_ret) as TECH
-                FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'
-            """).fetchone()
+            all_sigs = set(list(open_data.keys()) + [r[0] for r in today_exits])
+            
+            if all_sigs:
+                for sig in sorted(all_sigs):
+                    c_open = open_data.get(sig, {'cnt': 0, 'invest': 0.0})
+                    sig_exits = [r for r in today_exits if r[0] == sig]
+                    
+                    # 태그 이름 깔끔하게 압축
+                    clean_sig = str(sig).split(']')[0] + "]" if "]" in str(sig) else str(sig)[:15]
+                    
+                    # 현재 내 총 자산 대비 해당 로직에 투입된 비중(%)
+                    weight_pct = (c_open['invest'] / current_seed) * 100 if current_seed > 0 else 0
+                    
+                    report_msg += f" ↳ <b>{clean_sig}</b>\n"
+                    report_msg += f"    - 보유: {c_open['cnt']}종목 (투입: {c_open['invest']:,.0f}원 / 비중 <b>{weight_pct:.1f}%</b>)\n"
+                    
+                    if sig_exits:
+                        c_pnl_pct = sum([r[1] for r in sig_exits])
+                        c_pnl_amt = sum([r[2] for r in sig_exits]) # 원화 단위 실제 수익금
+                        
+                        exit_reasons = {}
+                        for r in sig_exits:
+                            reason = str(r[3]).replace('STAT_', '').replace('HYBRID_', '')
+                            exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
+                        reason_str = ", ".join([f"{k}({v})" for k, v in exit_reasons.items()])
+                        
+                        report_msg += f"    - 당일 청산: {len(sig_exits)}건 (수익 <b>{c_pnl_pct:+.2f}% / {c_pnl_amt:+,.0f}원</b>)\n"
+                        report_msg += f"    - 청산 엔진: {reason_str}\n"
+            else:
+                report_msg += " ↳ 현재 작동 중인 로직 및 보유 종목이 없습니다.\n"
 
-            if results and any(v is not None for v in results):
-                leaderboard = [
-                    ("실전(Live A)", results[0] or 0),
-                    ("후보(Cand B)", results[1] or 0),
-                    ("챔피언(Champ C)", results[2] or 0),
-                    ("통계모드(Stat)", results[3] or 0),
-                    ("기술모드(Tech)", results[4] or 0)
-                ]
-                # 수익률이 높은 순서대로 정렬
-                leaderboard.sort(key=lambda x: x[1], reverse=True)
-                
-                for i, (name, ret) in enumerate(leaderboard):
-                    medal = "🥇" if i==0 else ("🥈" if i==1 else "🥉" if i==2 else "▫️")
-                    report_msg += f"{medal} {name}: {ret:+.2f}%\n"
-            # 👆👆 [삽입 끝] 👆👆
-
-            # 3. 💡 [추가] 최근 7일 청산 사유 통계 (관제탑 로직 정상 작동 여부 팩트 체크)
-            cursor = conn.execute("SELECT exit_type, COUNT(*) FROM forward_trades WHERE market=? AND exit_date >= date('now', '-7 days') AND status LIKE 'CLOSED%' GROUP BY exit_type", (market,))
-            exit_reasons = cursor.fetchall()
-            if exit_reasons:
-                reason_str = ", ".join([f"{r[0].replace('STAT_', '').replace('HYBRID_', '')}({r[1]}건)" for r in exit_reasons if r[0]])
-                report_msg += f"⚙️ <b>최근 작동 로직:</b> {reason_str}\n"
+            # ------------------------------------------------
+            # 👑 [핵심 3] 오토파일럿 자율 튜닝 수치 (Fact Check)
+            # ------------------------------------------------
+            report_msg += f"\n⚙️ <b>[자율 튜닝(Auto-Tuning) 현재 설정값]</b>\n"
+            cos_cutoff = sys_config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
+            ml_cutoff = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+            w_sn, w_std = sys_config.get("WEIGHT_SUPERNOVA", 1.0), sys_config.get("WEIGHT_STANDARD", 1.0)
             
-            # 4. 7D DNA & DTW 분석 (대박주와 참사주의 특징)
-            df_m = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%' ORDER BY exit_date DESC LIMIT 30", conn)
+            report_msg += f" ▪️ 초신성 타점 허들: 코사인 <b>{cos_cutoff*100:.0f}%</b> | ML박스 <b>{ml_cutoff*100:.0f}%</b>\n"
+            report_msg += f" ▪️ 엔진별 자본 배분: 오리지널(<b>{w_std}x</b>) vs 초신성(<b>{w_sn}x</b>)\n"
+
+            # ------------------------------------------------
+            # 4. 딥 다이브 (대박 vs 참사 DNA 4차원 정밀 부검)
+            # ------------------------------------------------
+            report_msg += f"\n🔬 <b>[대박/참사 DNA 정밀 부검]</b>\n"
+            df_m = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%' ORDER BY exit_date DESC LIMIT 50", conn)
+            
             if not df_m.empty:
-                winners = df_m[df_m['final_ret'] > 5.0]
-                losers = df_m[df_m['final_ret'] < -3.0]
+                winners = df_m[df_m['final_ret'] >= 7.0] 
+                losers = df_m[df_m['final_ret'] <= -3.0] 
                 
                 if not winners.empty:
-                    aw_rs = winners['dyn_rs'].mean()
-                    report_msg += f"✅ <b>대박 DNA:</b> RS 상위 {(10-aw_rs)*11.1:.1f}% 중심 매수세 유입\n"
+                    w_cpv, w_tb, w_bbe = winners['dyn_cpv'].mean(), winners['dyn_tb'].mean(), winners['v_energy'].mean()
+                    report_msg += f" ✅ <b>대박 DNA (표본 {len(winners)}):</b> 윗꼬리 {w_cpv:.2f} | 찐양봉 {w_tb:.1f}배 | 응축 {w_bbe:.1f}\n"
                 if not losers.empty:
-                    al_cpv = losers['dyn_cpv'].mean()
-                    report_msg += f"💀 <b>참사 DNA:</b> 윗꼬리(CPV) 상위 {(10-al_cpv)*11.1:.1f}% 함정 주의\n"
+                    l_cpv, l_tb = losers['dyn_cpv'].mean(), losers['dyn_tb'].mean()
+                    report_msg += f" 💀 <b>참사 DNA (표본 {len(losers)}):</b> 윗꼬리 {l_cpv:.2f} | 찐양봉 {l_tb:.1f}배 미만\n"
+            else:
+                report_msg += " ↳ 정밀 부검을 위한 최근 청산 표본이 부족합니다.\n"
 
-            # 5. 주도 섹터 및 순환매 흐름
-            report_msg += f"🔥 <b>주도 섹터:</b> "
-            query = f"SELECT sector, COUNT(*) as cnt FROM forward_trades WHERE entry_date >= date('now', '-7 days') AND market='{market}' GROUP BY sector ORDER BY cnt DESC LIMIT 2"
-            sectors = [f"{r[0]}({r[1]})" for r in conn.execute(query).fetchall()]
-            report_msg += ", ".join(sectors) if sectors else "포착 중"
-            report_msg += "\n"
+            # ------------------------------------------------
+            # 5. 세력 흐름(Flow) 태그 추적 현황
+            # ------------------------------------------------
+            report_msg += f"\n🏷️ <b>[세력 흐름(Flow) 태그]</b>\n"
+            if not df_m.empty:
+                tag_stats = {}
+                for _, row in df_m.iterrows():
+                    if pd.isna(row['flow_tags']): continue
+                    for tag in str(row['flow_tags']).split():
+                        if tag not in tag_stats: tag_stats[tag] = {'win': 0, 'total': 0}
+                        tag_stats[tag]['total'] += 1
+                        if row['final_ret'] > 0: tag_stats[tag]['win'] += 1
+                        
+                if tag_stats:
+                    for tag, stats in sorted(tag_stats.items(), key=lambda x: x[1]['total'], reverse=True)[:3]: 
+                        wr = (stats['win'] / stats['total']) * 100
+                        report_msg += f" ▪️ {tag} ➔ 승률 <b>{wr:.1f}%</b> (출현 {stats['total']}회)\n"
+                else:
+                    report_msg += " ↳ 부여된 흐름 태그가 없습니다.\n"
 
-            # 6. 한미 스필오버(전이) 팩트 체크 (KR 섹션 전용)
-            if market == 'KR':
-                report_msg += "🌐 <b>한미 전이:</b> 미국 테크 ➔ 한국 반도체 (D+1 추적 중)\n"
+            # ------------------------------------------------
+            # 6. 그랜드 데스매치 순위표
+            # ------------------------------------------------
+            results = conn.execute(f"SELECT AVG(live_a_ret), AVG(cand_b_ret), AVG(champ_c_ret) FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'").fetchone()
+            if results and any(v is not None for v in results):
+                leaderboard = [("Live 실전", results[0] or 0), ("Cand 후보", results[1] or 0), ("Champ 챔피언", results[2] or 0)]
+                leaderboard.sort(key=lambda x: x[1], reverse=True)
+                report_msg += f"\n🏆 <b>[그랜드 데스매치 1위]</b>: {leaderboard[0][0]} (누적 {leaderboard[0][1]:+.2f}%)\n"
 
         conn.close()
         
     except Exception as e:
         report_msg += f"\n⚠️ 리포트 생성 중 에러: {e}"
 
-    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>관제탑이 24시간 백그라운드에서 추세/통계 기반 슬리피지 청산을 자동 집행 중입니다.</i>"
+    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>본 리포트는 2천만 원 시드 기반의 켈리 베팅 시뮬레이션 자금 궤적을 100% 노출합니다.</i>"
     send_telegram_msg(report_msg)
 # ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
