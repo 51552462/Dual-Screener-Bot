@@ -9,7 +9,7 @@ import pytz
 import sqlite3
 import json
 
-TELEGRAM_TOKEN = "7988939051:AAG4FqMzzz12vd7Crzt8DVPWiL3fMHM8tEc"
+TELEGRAM_TOKEN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
 TELEGRAM_CHAT_ID = "6838834566"
 
 # 💡 [방향성 2번] 전문적인 DB 시스템 (CSV 폐기)
