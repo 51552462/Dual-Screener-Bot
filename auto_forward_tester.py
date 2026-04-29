@@ -304,14 +304,31 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
             if risk_distance > 0:
-                # 👇👇 [V43.0 핵심] 판단과 실행의 완전 동기화 👇👇
-                # 1. 실전 API로 넘어갈 '진짜 매수 수량(shares)'을 관제탑의 동적 켈리 리스크로 산출
-                shares = int((account_size * kelly_risk_pct) / risk_distance)
-                sim_kelly_invest = shares * ep  # 켈리 기반 실제 투입 금액
+                # 👇👇 [V102.1 버그 픽스] 켈리 베팅 풀미수/신용 폭발 방어 (Position Cap) 👇👇
+                # 💡 종목당 최대 투입 금액 한도 설정 (기본 25% 제한)
+                max_invest_limit = account_size * sys_config.get("MAX_POSITION_PCT", 0.25)
                 
-                # 2. V39.0 딥 다이브 비교 엔진(고정 2% vs 켈리)을 위해 가상의 고정 투입금 유지
-                fixed_shares = int((account_size * fixed_risk_pct) / risk_distance)
-                invest_amount = fixed_shares * ep  
+                # 1. 실전 API로 넘어갈 '진짜 매수 수량(shares)'을 관제탑의 동적 켈리 리스크로 1차 산출
+                raw_shares = int((account_size * kelly_risk_pct) / risk_distance)
+                raw_invest = raw_shares * ep  
+                
+                # 🛡️ 켈리 베팅 안전장치 (Cap) 가동
+                if raw_invest > max_invest_limit:
+                    sim_kelly_invest = max_invest_limit
+                    shares = int(max_invest_limit / ep)
+                else:
+                    sim_kelly_invest = raw_invest
+                    shares = raw_shares
+                
+                # 2. V39.0 딥 다이브 비교 엔진(고정 2% vs 켈리)을 위해 가상의 고정 투입금 산출
+                raw_fixed_shares = int((account_size * fixed_risk_pct) / risk_distance)
+                raw_fixed_invest = raw_fixed_shares * ep
+                
+                # 🛡️ 고정 2% 베팅 안전장치 (Cap) 가동
+                if raw_fixed_invest > max_invest_limit:
+                    invest_amount = max_invest_limit
+                else:
+                    invest_amount = raw_fixed_invest
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
             # 👆👆 [수정 끝] 👆👆
