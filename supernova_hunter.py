@@ -569,17 +569,38 @@ def run_live_sniper_scheduler():
             time.sleep(60)
 
 # ==========================================
-# 🕒 [메인 래퍼 함수] main.py 연동 및 동시 가동
+# 🕒 [메인 래퍼 함수] main.py 연동 및 동시 가동 (V100.1 무중단 재가동 패치)
 # ==========================================
 def run_scheduler():
-    """main.py에서 단일 엔진으로 호출했을 때 마이너와 스나이퍼를 동시에 가동시키는 래퍼 함수"""
+    """main.py에서 호출 시 기존 템플릿을 확인하고, 무중단으로 스나이퍼를 가동시키는 래퍼 함수"""
     import threading
     
-    print("🚀 [초기화] 즉시 1회 타임머신 스캔을 시작하여 최신 템플릿을 만듭니다...")
-    hunt_supernovas('KR')
-    hunt_supernovas('US')
-    
-    # 1. 템플릿 갱신 마이너는 백그라운드 스레드로 분리하여 1주일마다 실행
+    # 💡 [핵심 수술] 관제탑(JSON)을 열어서 기존에 쌓아둔 템플릿이 있는지 먼저 팩트 체크합니다.
+    config = load_config()
+    kr_templates = config.get("DNA_SUPERNOVA_KR_MULTI", {})
+    us_templates = config.get("DNA_SUPERNOVA_US_MULTI", {})
+    ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {})
+
+    # 만약 기존 데이터가 텅 비어있는 '진짜 최초 실행'일 때만 초기화를 돌립니다.
+    if not kr_templates or not us_templates or not ml_templates:
+        print("🚀 [최초 가동] 기존 템플릿이 없습니다. 즉시 1회 타임머신 스캔을 시작하여 기초 템플릿을 생성합니다...")
+        if not kr_templates: hunt_supernovas('KR')
+        if not us_templates: hunt_supernovas('US')
+        
+        # ML 박스 데이터 마이닝도 1회 강제 실행
+        try:
+            import data_miner
+            print("🔄 [최초 가동] K-Means 클러스터 마이닝 1회 자동 실행...")
+            data_miner.run_cluster_mining()
+        except Exception as e:
+            print(f"⚠️ 마이닝 초기화 에러: {e}")
+            
+    # 💡 이미 쌓아둔 데이터가 있다면? 무거운 스캔을 건너뛰고 1초 만에 감시 모드로 복귀!
+    else:
+        print(f"✅ [초기화 스킵] 기존에 보존된 템플릿(KR: {len(kr_templates)}개, US: {len(us_templates)}개, ML: {len(ml_templates)}개)을 성공적으로 로드했습니다.")
+        print("⚡ 타임머신 스캔을 건너뛰고 즉시 [실시간 스나이퍼 모드]로 복귀합니다.")
+
+    # 1. 템플릿 갱신 마이너는 백그라운드 스레드로 분리하여 '매주 월요일 17시'에만 조용히 실행되게 놔둡니다.
     t_miner = threading.Thread(target=run_miner_scheduler, daemon=True)
     t_miner.start()
     
