@@ -371,43 +371,38 @@ def hunt_supernovas(market):
     print(f"✅ [{market}] 다차원 DNA 템플릿 누적 갱신 완료!")
 
 # ==========================================
-# 🚀 [신규 엔진] 초신성 실시간 스나이퍼 (절대 수치 기반 코사인 매칭)
+# 🚀 [V101.0 신규 엔진] 초신성 실시간 멀티스레드 스나이퍼
 # ==========================================
 def execute_supernova_live_scan(market):
-    print(f"\n🦅 [{market}] 초신성 스나이퍼 스캔 가동 (절대 수치 코사인 매칭)...")
+    print(f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 (15배속 비동기 병렬 스캔)...")
     
-    # 💡 [핵심] 대표님의 하드코딩 수치를 기반으로 한 '완벽한 타점(Ideal Vector)' 정의
-    # 순서: [CPV, TB, BBE]
+    # 1. 템플릿 및 기준값 로드
     ideal_templates = {}
-    
-    # 👇👇 [수술 2] 관제탑에서 살아남은 모든 생존 템플릿 로드 👇👇
     config = load_config()
     multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
     surviving_templates = config.get(multi_key, {})
     
-    # JSON에 저장된 딕셔너리를 코사인 계산을 위한 3차원 Numpy Array로 변환
     for t_name, t_dna in surviving_templates.items():
         ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
     
     if market == 'KR':
-        # Rank A: c_0 = cpv(0.5~1.0), tb(8.7~14.9), bbe(12.3~42.0)
         ideal_templates['RANK_A_장기매집'] = np.array([0.75, 11.8, 27.15])
-        # Rank B: c_0 = cpv(0.5~1.0), bbe(14.8~39.9) / tb는 A와 C의 중간 10.0 가정
         ideal_templates['RANK_B_중기스윙'] = np.array([0.75, 10.0, 27.35])
-        # Rank C: c_0 = bbe(9.6~29.8) / cpv 0.6, tb 8.0 가정
         ideal_templates['RANK_C_단기테마'] = np.array([0.60, 8.0, 19.70])
-        # Rank D: c_0 = bbe(16.6~32.3) / cpv 0.6, tb 8.0 가정
         ideal_templates['RANK_D_초단기밈'] = np.array([0.60, 8.0, 24.45])
     elif market == 'US':
-        # US: q3 = cpv(0.3~0.8), tb(5.6~12.0), bbe(9.0~16.6)
         ideal_templates['US_MEME_슈팅'] = np.array([0.55, 8.8, 12.80])
 
-    # 💡 [V55.0 관제탑 연동] 만약 실전 MFE 가중치로 진화한 템플릿이 있다면 추가 로드
-    config = load_config()
     mfe_weighted = config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
     if mfe_weighted:
         ideal_templates['MFE_진화형_황금타점'] = np.array([mfe_weighted['cpv'], mfe_weighted['tb'], mfe_weighted.get('bbe', 20.0)])
 
+    # 관제탑 컷오프 수치 로드
+    dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50) 
+    dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50) 
+    live_clusters = config.get('LIVE_CLUSTER_TEMPLATES', {})
+
+    # 대상 종목 및 현재 보유 현황 로드
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
     tickers = stock_list['Code'].tolist()
     
@@ -423,23 +418,24 @@ def execute_supernova_live_scan(market):
         conn.close()
     except: open_positions = set()
 
-    for code in tickers:
+    # 💡 [핵심 1] 단일 스레드 병목 탈출을 위한 "개별 종목 연산 작업(Worker)" 분리
+    def process_live_ticker(code):
         if code in open_positions or code in scanned_today_cache[market]:
-            continue
+            return None
             
         try:
+            # 병목의 원인인 API 호출을 각 스레드가 동시에 분산해서 처리
             df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d')) if market == 'KR' else yf.download(code, period="2mo", progress=False)
-            if df.empty or len(df) < 20: continue
+            if df.empty or len(df) < 20: return None
             
             c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
             current_close = c[-1]
             
-            # 잡주 필터링 (동전주, 소외주 원천 차단)
-            if market == 'KR' and current_close < 1000: continue 
-            if market == 'US' and current_close < 1.0: continue  
-            if np.mean(v[-5:]) < 50000: continue                 
+            if market == 'KR' and current_close < 1000: return None 
+            if market == 'US' and current_close < 1.0: return None  
+            if np.mean(v[-5:]) < 50000: return None                 
             
-            # 현재 종목의 DNA 벡터 추출 (RS 제외, 순수 캔들/수급 에너지 3차원 대조)
+            # DNA 벡터 3차원 추출
             v_ma20 = pd.Series(v).rolling(20).mean().values
             cpv = np.where(h != l, (c - o) / (h - l), 0.5)[-1]
             vol_mult = (v[-1] / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
@@ -449,8 +445,7 @@ def execute_supernova_live_scan(market):
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
             
-            # 👇👇 [여기로 통째로 덮어쓰기] 👇👇
-            # 1. 코사인 유사도 결과값 계산
+            # 1. 코사인 유사도 연산
             best_sim = 0.0
             best_pattern_name = "UNKNOWN"
             current_vec_3d = np.nan_to_num(np.array([cpv, tb, bbe]))
@@ -461,14 +456,12 @@ def execute_supernova_live_scan(market):
                     best_sim = sim
                     best_pattern_name = t_name
                     
-            dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50) # 코사인용 자율 허들
             is_pass_cosine = best_sim >= dynamic_cos_cutoff
             
-            # 2. ML 클러스터 바운딩 박스 결과값 계산 (50%부터 시작)
+            # 2. ML 클러스터 바운딩 박스 연산
             is_pass_ml_box = False
             ml_match_count = 0 
             ml_pattern_name = "UNKNOWN"
-            live_clusters = config.get('LIVE_CLUSTER_TEMPLATES', {})
             
             for c_name, bounds in live_clusters.items():
                 ml_match_count = 0
@@ -477,14 +470,13 @@ def execute_supernova_live_scan(market):
                 if bounds.get('bbe_min', -99) <= bbe <= bounds.get('bbe_max', 999): ml_match_count += 1
                 
                 ml_score = ml_match_count / 3.0 
-                dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50) # ML용 자율 허들
                 
                 if ml_score >= dynamic_ml_cutoff:
                     is_pass_ml_box = True
                     ml_pattern_name = c_name
                     break
 
-            # 3. 독립적 진입 실행 (태그와 점수 완벽 분리)
+            # 합격한 종목만 선별하여 데이터 반환 (DB 저장은 여기서 하지 않음 - 락 방어)
             if is_pass_ml_box or is_pass_cosine:
                 if is_pass_ml_box:
                     final_sig = f"[SUPERNOVA_MLBOX] 🤖{ml_pattern_name}"
@@ -495,18 +487,46 @@ def execute_supernova_live_scan(market):
                     final_score = best_sim * 100
                     msg_type = f"🦅 코사인 컷오프 통과 (기준:{dynamic_cos_cutoff*100:.0f}%)"
                 
-                is_success, msg = aft.try_add_virtual_position(
-                    market=market, code=code, 
-                    name=stock_list[stock_list['Code']==code]['Name'].values[0],
-                    sig_type=final_sig, 
-                    score=final_score, ep=current_close,
-                    facts={'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe},
-                    trade_source="SUPERNOVA" 
-                )
-                
-                if is_success:
-                    scanned_today_cache[market].add(code)
-                    send_telegram_msg(f"<b>{msg_type}</b>\n{code} / {final_sig}\n일치율: {final_score:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다.")
+                return {
+                    'code': code,
+                    'name': stock_list[stock_list['Code']==code]['Name'].values[0],
+                    'final_sig': final_sig,
+                    'final_score': final_score,
+                    'current_close': current_close,
+                    'facts': {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe},
+                    'msg_type': msg_type
+                }
+            return None
+        except: return None
+
+    # 💡 [핵심 2] ThreadPoolExecutor를 이용한 15배속 동시 타격 (병목 돌파)
+    valid_targets = []
+    import concurrent.futures
+    
+    # 15개의 작업자(Thread)가 2500개 종목을 동시에 나눠서 다운로드하고 분석합니다.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        for result in executor.map(process_live_ticker, tickers):
+            if result:
+                valid_targets.append(result)
+
+    # 💡 [핵심 3] 발굴된 종목 장부 기록 (DB 락 방지를 위해 메인 스레드에서 순차적 기록)
+    for target in valid_targets:
+        is_success, msg = aft.try_add_virtual_position(
+            market=market, 
+            code=target['code'], 
+            name=target['name'],
+            sig_type=target['final_sig'], 
+            score=target['final_score'], 
+            ep=target['current_close'],
+            facts=target['facts'],
+            trade_source="SUPERNOVA" 
+        )
+        
+        if is_success:
+            scanned_today_cache[market].add(target['code'])
+            send_telegram_msg(f"<b>{target['msg_type']}</b>\n{target['code']} / {target['final_sig']}\n일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다.")
+            
+    print(f"✅ [{market}] 멀티스레드 스나이퍼 쾌속 스캔 및 DB 기록 완료!")
         except: pass
 # 👇👇 [기존 run_miner_scheduler 함수 덮어쓰기] 👇👇
 def run_miner_scheduler():
