@@ -983,27 +983,16 @@ def run_deep_dive_analysis(market='KR'):
                 report_msg += "⚠️ 순환매 추적을 위한 표본 데이터가 부족합니다.\n"
         except Exception as e:
             report_msg += f"⚠️ 순환매 추적 에러: {e}\n"
-        send_telegram_msg(report_msg)
-        print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
-        
-    except Exception as e:
-        # 👇👇 이렇게 덮어쓰세요 👇👇
-        err_msg = f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n{e}"
-        print(err_msg)
-        send_telegram_msg(err_msg)
-
-
-# ---------------------------------------------------------
+            
+        # ---------------------------------------------------------
         # 👑 엔진 9: [V39.0 자금 관리 시뮬레이션: 고정 리스크 vs 켈리 리스크]
         # ---------------------------------------------------------
         if 'invest_amount' in df.columns and 'sim_kelly_invest' in df.columns:
             report_msg += "\n⚖️ <b>[V39.0 자금 관리 평행우주 대결 (누적 실현 손익)]</b>\n"
             
-            # 고정 2% 룰의 누적 손익 (투자금 * 수익률)
             df['fixed_profit'] = df['invest_amount'] * (df['final_ret'] / 100)
             total_fixed_profit = df['fixed_profit'].sum()
             
-            # 동적 켈리 룰의 누적 손익 (시뮬레이션 투자금 * 수익률)
             df['kelly_profit'] = df['sim_kelly_invest'] * (df['final_ret'] / 100)
             total_kelly_profit = df['kelly_profit'].sum()
             
@@ -1014,6 +1003,15 @@ def run_deep_dive_analysis(market='KR'):
                 report_msg += "🏆 <b>결론: 동적 켈리가 승리했습니다.</b> 상승장에서 비중을 싣고 하락장에서 방어한 전략이 누적 자본 증식에 훨씬 유리함을 데이터로 증명했습니다.\n"
             else:
                 report_msg += "🛡️ <b>결론: 고정 리스크가 유리했습니다.</b> 켈리 베팅이 과도한 리스크를 지거나 휩소에 당했습니다. 켈리 승수를 하향 조정해야 합니다.\n"
+
+        # 💡 [핵심 교정] 엔진 9번의 텍스트가 모두 report_msg에 담긴 후 최종 발송하도록 순서 교정
+        send_telegram_msg(report_msg)
+        print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
+        
+    except Exception as e:
+        err_msg = f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n{e}"
+        print(err_msg)
+        send_telegram_msg(err_msg)
 
 
 
