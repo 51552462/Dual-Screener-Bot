@@ -314,8 +314,17 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) 
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
-            account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
+            # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 로직 👇👇
+            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
+            is_rotation_prebuy = (sector == predicted_sector)
             
+            if is_rotation_prebuy:
+                sig_type += " #순환매_선취매" # 장부 기록용 태그 박제
+                # 관제탑이 주말 데스매치를 통해 우위를 증명(1.5배)했다면 켈리 비중 2배 뻥튀기
+                if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
+                    kelly_risk_pct *= 2.0 
+            # 👆👆 [수정 완료] 👆👆
+
             if risk_distance > 0:
                 # 👇👇 [V102.8 버그 픽스] 그룹별 실시간 복리 시드 & 예수금(가용 자산) 브레이크 엔진 👇👇
                 import re
