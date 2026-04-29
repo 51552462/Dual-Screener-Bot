@@ -462,12 +462,34 @@ def execute_supernova_live_scan(market):
             
             if market == 'KR' and current_close < 1000: return None 
             if market == 'US' and current_close < 1.0: return None  
-            if np.mean(v[-5:]) < 50000: return None                 
+            if np.mean(v[-5:]) < 50000: return None            
             
             # DNA 벡터 3차원 추출
             v_ma20 = pd.Series(v).rolling(20).mean().values
             cpv = np.where(h != l, (c - o) / (h - l), 0.5)[-1]
-            vol_mult = (v[-1] / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
+            
+            # 👇👇 [V102.2 버그 픽스] 장중 시간대별 거래량 동적 외삽법(Extrapolation) 엔진 👇👇
+            tz_market = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
+            now_mkt = datetime.now(tz_market)
+            
+            # 개장 시간 세팅 (한국장 09:00, 미국장 09:30)
+            open_h = 9
+            open_m = 0 if market == 'KR' else 30
+            
+            # 장 시작 후 몇 분이나 지났는지 계산
+            elapsed_mins = (now_mkt.hour - open_h) * 60 + (now_mkt.minute - open_m)
+            
+            # 정규장 총 시간은 390분 (6.5시간). 에러 방지를 위해 1~390분 사이로 강력한 캡(Cap) 씌우기
+            elapsed_mins = max(1, min(390, elapsed_mins))
+            
+            # 💡 핵심: 현재 거래량을 남은 시간 비율만큼 뻥튀기하여 '오늘 마감 예상 거래량' 산출
+            # (예: 오전 9시 30분이라면 30분 경과 -> 390/30 = 13배 보정)
+            est_daily_volume = v[-1] * (390.0 / elapsed_mins)
+            
+            # 기존의 날것(v[-1]) 대신 보정된 예상 거래량(est_daily_volume)을 20일 평균과 대조!
+            vol_mult = (est_daily_volume / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
+            # 👆👆 [외삽법 패치 완료] 👆👆
+            
             tb = vol_mult / max(cpv, 0.01) if cpv > 0 else vol_mult / 0.01
             bb_std = pd.Series(c).rolling(20).std().values[-1]
             bb_mid = pd.Series(c).rolling(20).mean().values[-1]
