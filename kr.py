@@ -379,23 +379,24 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            # 변경 방식: DB 연동을 통한 데이터 무결성 확보
-try:
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
-    conn.close()
-    
-    if not df_raw.empty:
-        df_raw['Date'] = pd.to_datetime(df_raw['Date'])
-        df_raw.set_index('Date', inplace=True)
-        # 이평선 왜곡 방지를 위해 dropna() 대신 원본 데이터 구조 유지 
-        df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
+            # 👇👇 [수정된 DB 로드 블록: try-except 완벽 마감] 👇👇
+            try:
+                conn = sqlite3.connect(DB_PATH, timeout=30)
+                df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
+                conn.close()
+                
+                if not df_raw.empty:
+                    df_raw['Date'] = pd.to_datetime(df_raw['Date'])
+                    df_raw.set_index('Date', inplace=True)
+                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
                     
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
                 if is_valid: 
                     hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
+                    
             except Exception:
-                pass 
+                pass  # 💡 마찬가지로 에러 발생 시 부드럽게 넘어가도록 닫아줍니다.
+            # 👆👆 [수정 완료] 👆👆 
 
             hit_rank = 0
             with console_lock:
