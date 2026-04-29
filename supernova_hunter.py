@@ -556,7 +556,6 @@ def execute_supernova_live_scan(market):
             send_telegram_msg(f"<b>{target['msg_type']}</b>\n{target['code']} / {target['final_sig']}\n일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다.")
             
     print(f"✅ [{market}] 멀티스레드 스나이퍼 쾌속 스캔 및 DB 기록 완료!")
-        except: pass
 # 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
 def run_miner_scheduler():
     """1주일에 한 번 과거 데이터를 마이닝하여 템플릿 갱신 및 CSV 추출을 수행하는 봇"""
