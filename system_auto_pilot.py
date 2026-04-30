@@ -182,6 +182,13 @@ def run_autonomous_analysis():
         w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
     # 👆👆 [V45.0 엔진 끝] 👆👆
 
+    # 👇👇 [신규 추가] DNA 변위 감지 시 오버드라이브 전면 차단 👇👇
+        current_config["OVERDRIVE_ALLOWED"] = False 
+        report_lines.append("🛑 <b>[오버드라이브 킬스위치 가동]</b> DNA 변위로 인해 모든 오버드라이브를 강제 차단합니다.")
+    else:
+        current_config["OVERDRIVE_ALLOWED"] = True # 정상 시 허용
+        # 👆👆 [신규 추가 끝] 👆👆
+
     # ---------------------------------------------------------
     # 👑 엔진 1.8: [V32.0 국면별 독립 기억소(Regime Memory) 로드]
     # ---------------------------------------------------------
@@ -717,6 +724,22 @@ def run_autonomous_analysis():
             report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
     except Exception as e:
         report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
+
+    # 👇👇 [신규 추가] 국고 ↔ S급 챔피언 보너스 자본 투입 연동 👇👇
+                bonus_amount = 10000000 # 1,000만 원 특별 투입
+                for top_logic in consistent_good:
+                    mkt_prefix = best_df[best_df['group'] == top_logic]['market'].iloc[0]
+                    t_key = f"CENTRAL_TREASURY_{mkt_prefix}"
+                    
+                    # 국고에 1,000만 원 이상 여유가 있을 때만 집행
+                    if current_config.get(t_key, 0) >= bonus_amount:
+                        current_config[t_key] -= bonus_amount
+                        
+                        # 로직별 보너스 시드 장부에 누적 기록
+                        bonus_key = f"BONUS_SEED_{top_logic}"
+                        current_config[bonus_key] = current_config.get(bonus_key, 0) + bonus_amount
+                        report_lines.append(f"💰 <b>[자본 스노우볼링]</b> 4주 연속 우상향 증명! S급 로직 '{top_logic}' 장부에 국고 보너스 1,000만 원 특별 투입 완료.")
+                # 👆👆 [신규 추가 끝] 👆👆
 
     # 👇👇 [신규 추가] 엔진 14: R&D 샌드박스 역추적 및 CSV 머신러닝 시너지 연동 👇👇
     try:
