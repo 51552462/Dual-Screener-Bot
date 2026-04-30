@@ -718,6 +718,57 @@ def run_autonomous_analysis():
     except Exception as e:
         report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
 
+    # 👇👇 [신규 추가] 엔진 14: R&D 샌드박스 역추적 및 CSV 머신러닝 시너지 연동 👇👇
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        rnd_df = pd.read_sql("SELECT * FROM forward_trades WHERE sig_type = '[R&D_평균볼륨군]' AND status LIKE 'CLOSED%'", conn)
+        conn.close()
+        
+        if len(rnd_df) >= 5:
+            # Winner: MFE 10% 이상 & 최종 수익 마감 / Loser: MAE 손절(수익률 0 이하)
+            rnd_winners = rnd_df[(rnd_df['mfe'] >= 10.0) & (rnd_df['final_ret'] > 0)]
+            rnd_losers = rnd_df[rnd_df['final_ret'] <= 0]
+            
+            if len(rnd_winners) > 0 and len(rnd_losers) > 0:
+                w_cpv, l_cpv = rnd_winners['dyn_cpv'].mean(), rnd_losers['dyn_cpv'].mean()
+                w_tb, l_tb = rnd_winners['dyn_tb'].mean(), rnd_losers['dyn_tb'].mean()
+                w_bbe, l_bbe = rnd_winners['v_energy'].mean(), rnd_losers['v_energy'].mean()
+                
+                # 텔레그램 리포트 최하단에 분리 출력
+                rnd_report = "\n🧪 <b>[R&D 실험실 역추적 결과: 40~70점대 평균볼륨군]</b>\n"
+                rnd_report += f"▪️ 표본수: 승리(Winner) {len(rnd_winners)}개 vs 패배(Loser) {len(rnd_losers)}개\n"
+                rnd_report += f"💡 <b>[돌연변이 공통점 DNA 차집합]</b>\n"
+                
+                if w_bbe > l_bbe: rnd_report += f" ↳ 승리 종목은 패배 종목보다 '응축 에너지(BBE)'가 평균 {w_bbe/l_bbe:.1f}배 높음.\n"
+                if w_tb > l_tb: rnd_report += f" ↳ 승리 종목은 패배 종목보다 '진짜양봉(TB)'이 평균 {w_tb/l_tb:.1f}배 강력함.\n"
+                rnd_report += f" ↳ (평균 수치 대조) Winner [CPV: {w_cpv:.2f} | BBE: {w_bbe:.1f}] vs Loser [CPV: {l_cpv:.2f} | BBE: {l_bbe:.1f}]\n"
+                
+                # 👑 CSV 파이프라인 연동 (초신성과 동일한 양식으로 마이닝 데이터 적재)
+                csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+                csv_data = []
+                for _, r in rnd_winners.iterrows():
+                    csv_data.append({
+                        '종목코드': str(r['code']).zfill(6) if r['market'] == 'KR' else str(r['code']),
+                        '시장': r['market'],
+                        '랭크': 'R&D_MUTANT',
+                        '[D_Day_당일] 평균_CPV': round(r['dyn_cpv'], 4),
+                        '[D_Day_당일] 평균_진짜양봉(TB)': round(r['dyn_tb'], 4),
+                        '[D_Day_당일] 평균_응축에너지(BBE)': round(r['v_energy'], 4),
+                        '[D_Day_당일] 진모멘텀(TML)': 0.0, # R&D에는 없으므로 0 대체
+                        '[D_Day_당일] 평균_시장강도(RS)': round(r['v_rs'], 4) if pd.notna(r['v_rs']) else 0.0
+                    })
+                
+                if csv_data:
+                    df_csv = pd.DataFrame(csv_data)
+                    # 데이터 누락 없이 안전하게 Append 모드('a')로 추가
+                    df_csv.to_csv(csv_path, mode='a', header=False, index=False, encoding='utf-8-sig')
+                    rnd_report += f"💾 <b>[마이닝 연동]</b> {len(csv_data)}개의 R&D 돌연변이 DNA가 K-Means 학습용 CSV에 추가 적재되었습니다."
+                
+                report_lines.append(rnd_report)
+    except Exception as e:
+        report_lines.append(f"\n⚠️ R&D 실험실 에러: {e}")
+    # 👆👆 [신규 추가 끝] 👆👆
+
     # ==========================================
     # 🚀 최종 저장 및 발송 (중복 제거 완료)
     # ==========================================
