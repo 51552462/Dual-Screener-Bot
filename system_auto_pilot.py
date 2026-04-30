@@ -128,7 +128,7 @@ def run_autonomous_analysis():
 
         w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
         
-        # 3. VIX 동적 한계선 기반 룩백 설정 (이전 패치된 보고 로직 유지)
+        # 3. VIX 기반 동적 룩백 설정 결합 내부 수정
         if vix_last >= vix_bear_limit:
             dyn_lookback = 7
             regime = "Bear (극단적 공포장)"
@@ -139,7 +139,8 @@ def run_autonomous_analysis():
             vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 평균 이상 경계 (Chop)"
         else:
             dyn_lookback = 45
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 평균 미만 평온 (Bull)"
+            regime = "Bull (상승장)"
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 정상 범주 내 (Bull)"
             
     except Exception as e:
         print(f"거시 지표 로드 에러: {e}")
@@ -440,7 +441,9 @@ def run_autonomous_analysis():
             
             # 🚨 [알파 붕괴 판정] 손익비가 초기 대비 30% 이상 날아갔거나 1.0 미만일 때
             if late_pf < early_pf * 0.7 or late_pf < 1.0:
-                report_lines.append("🚨 <b>[알파 반감기 도달]</b> 룰의 수명이 다했습니다. 선제적 파라미터 폐기를 집행합니다.")
+                # 관제탑에서 기존 TP 로드 후 75% 수준으로 자율 하향 조율
+                old_tp = current_config.get("DYNAMIC_MFE_TP", 10.0)
+                new_tp = max(5.0, old_tp * 0.75)
                 
                 # 🔬 [노화 원인 정밀 부검]
                 late_losers = late_phase[late_phase['final_ret'] <= 0]
@@ -459,8 +462,8 @@ def run_autonomous_analysis():
                     
                 # 🛡️ 메타-최적화: 14일을 기다리지 않고 즉각 베이스라인으로 강제 초기화
                 current_config["DYNAMIC_MAE_SL"] = -5.0
-                current_config["DYNAMIC_MFE_TP"] = 10.0
-                report_lines.append("💡 조치: 다음 앙상블이 나올 때까지 가장 보수적인 안전 모드로 회귀합니다.")
+                current_config["DYNAMIC_MFE_TP"] = round(new_tp, 1)
+                report_lines.append(f"🚨 <b>[노화 발생]</b> 최근 {len(decay_df)}개 종목 추적 완료. 시장 변동성 축소로 인해 익절선(TP)을 기존 {old_tp:.1f}%에서 {new_tp:.1f}%로 자율 하향 조율함.")
             else:
                 report_lines.append("✅ <b>[알파 엣지 유지 중]</b> 현재 파라미터가 시장에서 여전히 강력하게 작동 중입니다.")
         else:
@@ -578,6 +581,33 @@ def run_autonomous_analysis():
                 report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
         else:
             report_lines.append(f"▪️ [{tag_key} 타점]: 현재 커트라인 {curr_val*100:.0f}% (표본 데이터 수집 중)")
+
+    # 👇👇 [신규 추가] 오버드라이브 허들 자율 튜닝 및 투명성 보고 👇👇
+    # 청산 사유에 '오버드라이브 실패'나 '방어 손절'이 포함된 데이터 추출
+    od_fails = df[(df['exit_reason'].str.contains('오버드라이브 실패', na=False)) | (df['exit_reason'].str.contains('방어 손절', na=False))]
+    
+    # 실패 사례가 누적(예: 5건 이상)되었다면 허들 상향
+    if len(od_fails) >= 5:
+        old_energy = current_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
+        # 에너지 허들을 1.5배 상향 조정하되 최대 상한선(예: 50.0) 설정
+        new_energy = min(50.0, old_energy * 1.5) 
+        
+        if old_energy != new_energy: # 값이 변경되었을 때만 업데이트 및 리포팅
+            current_config["OVERDRIVE_ENERGY_HURDLE"] = round(new_energy, 1)
+            report_lines.append(f"⚙️ <b>[오버드라이브 튜닝]</b> 추세 추종 실패 누적 감지 ➔ 오버드라이브 가동 요구 에너지(v_energy) 허들을 {old_energy:.1f}에서 {new_energy:.1f}으로 1.5배 상향 (깐깐하게 적용)")
+    # 👆👆 [신규 추가 끝] 👆👆
+
+    # ---------------------------------------------------------
+    # ⚙️ 엔진 9.5: [오버드라이브 허들 자율 튜닝부]
+    # ---------------------------------------------------------
+    od_fails = df[(df['exit_reason'].str.contains('오버드라이브 실패', na=False)) | (df['exit_reason'].str.contains('방어 손절', na=False))]
+    if len(od_fails) >= 5: # 실패가 5건 이상 누적 시
+        old_energy = current_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
+        new_energy = min(50.0, old_energy * 1.5) # 1.5배 상향하되 한도(50.0) 설정
+        
+        if old_energy != new_energy:
+            current_config["OVERDRIVE_ENERGY_HURDLE"] = round(new_energy, 1)
+            report_lines.append(f"\n⚙️ <b>[오버드라이브 튜닝]</b> 추세 추종 실패 누적 감지 ➔ 오버드라이브 가동 요구 에너지(v_energy) 허들을 {old_energy:.1f}에서 {new_energy:.1f}으로 1.5배 상향 (깐깐하게 적용)")
 
     # ---------------------------------------------------------
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
