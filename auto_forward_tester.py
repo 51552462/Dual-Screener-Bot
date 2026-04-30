@@ -839,12 +839,15 @@ def send_comprehensive_daily_report():
             # ---------------------------------------------------------
             # 📑 결과지 2: 생존자 리더보드 (프로듀스 101)
             # ---------------------------------------------------------
-            import re
+           import re
             def get_core_group(sig):
                 sig = str(sig).replace('💀[기각/관찰용] ', '')
+                # 👇👇 [수정] STANDARD 진영의 듀얼 트랙(ORIGINAL vs MLBOX)은 그룹을 강제 분리합니다 👇👇
+                if "STANDARD_ORIGINAL" in sig: return "STANDARD_ORIGINAL"
+                if "STANDARD_MLBOX" in sig: return "STANDARD_MLBOX"
+                
                 sig = re.sub(r'^\[.*?\]\s*', '', sig)
                 return sig.split(' [')[0]
-
             msg2 = f"{market_icon} <b>[2/9] 로직별 복리 생존 리더보드</b>\n"
             if not df_all.empty:
                 df_all_copy = df_all.copy()
@@ -887,6 +890,17 @@ def send_comprehensive_daily_report():
             
             msg4 = f"{market_icon} <b>[4/9] 섹터 포트폴리오 다중화 현황</b>\n"
             msg4 += f"🎯 편대 현황: 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
+            
+            # 👇👇 [신규 추가] 오버드라이브 청산 종목 당일 브리핑 👇👇
+            today_overdrive_closed = df_closed[(df_closed['exit_date'] == today_str) & (df_closed['exit_reason'].str.contains('오버드라이브', na=False))]
+            if not today_overdrive_closed.empty:
+                msg4 += f"\n🏎️ <b>[🔥오늘의 오버드라이브 청산 부검]</b>\n"
+                for _, row in today_overdrive_closed.iterrows():
+                    # 예시: "🔥오버드라이브_추세끝단_청산 (+25.3%)" 형태로 출력
+                    msg4 += f" ↳ {row['name']}: {row['exit_reason']} ({row['final_ret']:+.1f}%)\n"
+            # 👆👆 [신규 추가 끝] 👆👆
+
+
             send_telegram_msg(msg4); time.sleep(1)
 
             # ---------------------------------------------------------
