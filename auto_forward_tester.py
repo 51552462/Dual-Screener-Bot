@@ -1007,7 +1007,7 @@ def send_comprehensive_daily_report():
         except Exception as e:
             send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
 
-    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템에 내장된 거시통제/순환매/데스콤보/반감기 로직을 100% 해부하여 보고합니다.</i>"
+    report_msg = "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템에 내장된 거시통제/순환매/데스콤보/반감기 로직을 100% 해부하여 보고합니다.</i>"
     send_telegram_msg(report_msg)
 # ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
