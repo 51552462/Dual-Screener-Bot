@@ -106,6 +106,42 @@ def run_cluster_mining():
         print(f" ↳ CPV 범위: {template_range['cpv_min']} ~ {template_range['cpv_max']}")
         print(f" ↳ BBE 범위: {template_range['bbe_min']} ~ {template_range['bbe_max']}")
 
+    # 👇👇 [신규 추가] STANDARD 오리지널 CSV 듀얼 트랙 클러스터링 👇👇
+    STD_CSV_PATH = 'Standard_Flow_Master.csv'
+    std_templates = {}
+    try:
+        std_df = pd.read_csv(STD_CSV_PATH)
+        std_clean_df = std_df.dropna(subset=target_features).copy()
+        
+        if len(std_clean_df) >= 10:
+            print(f"✅ STANDARD 듀얼트랙용 표본 {len(std_clean_df)}개 확보. K-Means 마이닝 시작...")
+            X_std = std_clean_df[target_features].values
+            scaler_std = StandardScaler()
+            X_std_scaled = scaler_std.fit_transform(X_std)
+            
+            kmeans_std = KMeans(n_clusters=3, random_state=42, n_init=10)
+            std_clean_df['Cluster'] = kmeans_std.fit_predict(X_std_scaled)
+            
+            for i in range(3):
+                cluster_data = std_clean_df[std_clean_df['Cluster'] == i]
+                if len(cluster_data) == 0: continue
+                
+                template_range = {
+                    'cpv_min': round(cluster_data['[D_Day_당일] 평균_CPV'].quantile(0.10), 2),
+                    'cpv_max': round(cluster_data['[D_Day_당일] 평균_CPV'].quantile(0.90), 2),
+                    'tb_min': round(cluster_data['[D_Day_당일] 평균_진짜양봉(TB)'].quantile(0.10), 1),
+                    'tb_max': round(cluster_data['[D_Day_당일] 평균_진짜양봉(TB)'].quantile(0.90), 1),
+                    'bbe_min': round(cluster_data['[D_Day_당일] 평균_응축에너지(BBE)'].quantile(0.10), 1),
+                    'bbe_max': round(cluster_data['[D_Day_당일] 평균_응축에너지(BBE)'].quantile(0.90), 1)
+                }
+                
+                std_templates[f"STD_CLUSTER_{i+1}"] = template_range
+    except FileNotFoundError:
+        print("⚠️ STANDARD CSV 파일이 아직 생성되지 않았습니다. 대기합니다.")
+    except Exception as e:
+        print(f"⚠️ STANDARD 마이닝 에러: {e}")
+    # 👆👆 [신규 추가 끝] 👆👆
+
     # =====================================================================
     # 4. JSON 관제탑에 마이닝된 템플릿 업데이트
     # =====================================================================
