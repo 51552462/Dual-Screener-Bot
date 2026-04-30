@@ -339,9 +339,15 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                 cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
                 realized_pnl = cursor.fetchone()[0]
                 if realized_pnl is None: realized_pnl = 0.0
+
                 
-                # 💡 [독립 복리 시드] 기본 2,000만 원 + 이 그룹이 스스로 번 돈
-                group_current_seed = account_size + realized_pnl
+            
+                # 👇👇 [신규 추가] 관제탑이 하달한 S급 챔피언 특별 보너스 투입금 로드 👇👇
+                bonus_seed = sys_config.get(f"BONUS_SEED_{core_group_name}", 0)
+                
+                # 💡 [독립 복리 시드] 기본 2,000만 원 + 그룹 스스로 번 돈 + 국고 보너스 합산
+                group_current_seed = account_size + realized_pnl + bonus_seed
+                # 👆👆 [신규 추가 끝] 👆👆
                 
                 # 3. 해당 그룹이 현재 시장에 묶어둔 투자금 계산 (미실현 락업)
                 cursor.execute("SELECT SUM(sim_kelly_invest) FROM forward_trades WHERE status = 'OPEN' AND sig_type LIKE ?", (f"%{core_group_name}%",))
@@ -519,6 +525,28 @@ def track_daily_positions(market):
             
             is_tech_exit = (c < cur_zlema) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
 
+            # 👇👇 [신규 추가] 순환매 대장 섹터 전용 Wide(20일선) 추세 이탈 감지 👇👇
+            is_tech_exit_wide = (c < float(df['ema20'].iloc[-1])) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
+            
+            is_overdrive_allowed = sys_config.get("OVERDRIVE_ALLOWED", True)
+            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
+            od_hurdle = sys_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
+            
+            is_overdrive_on = False
+            is_tech_exit = is_tech_exit_strict # 기본값은 타이트 청산
+            exit_rsn_prefix = "기술적 추세 이탈"
+            
+            # 💡 [시너지 1&2] 킬스위치가 꺼져있고(True) 에너지가 충족되면 오버드라이브 발동!
+            if is_overdrive_allowed and r.get('v_energy', 0) >= od_hurdle and high_ret_pct >= dyn_mfe_tp:
+                is_overdrive_on = True
+                if r['sector'] == predicted_sector:
+                    is_tech_exit = is_tech_exit_wide # 대장 섹터: 20일선까지 버팀 (Widen)
+                    exit_rsn_prefix = "🔥오버드라이브(대장주_Wide)_추세끝단_청산"
+                else:
+                    is_tech_exit = is_tech_exit_strict # 타 섹터: 기존대로 타이트 청산
+                    exit_rsn_prefix = "🔥오버드라이브(타이트)_추세끝단_청산"
+            # 👆👆 [신규 추가 끝] 👆👆
+
             # 3. 🎯 관제탑 네임스페이스 매핑 및 JSON 지시사항 수신
             sys_config = load_system_config()
             active_mode = sys_config.get("ACTIVE_EXIT_MODE", "HYBRID")
@@ -541,6 +569,36 @@ def track_daily_positions(market):
             
             # 수학적 손절가(SL) 산출: 진입가 - (관제탑 승수 * 진입변동성)
             sl_price = ep - (opt_sl_atr * entry_atr)
+
+            # 👇👇 [추가된 2-1 지점: 오버드라이브 판독 및 순환매 추세선 자율 연장] 👇👇
+            is_tech_exit_strict = is_tech_exit # 위에서 계산된 기본 타이트 청산값 보존
+            
+            # 20일선 기준의 Wide(관대함) 추세 이탈 감지
+            is_tech_exit_wide = (c < float(df['ema20'].iloc[-1])) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
+            
+            # JSON에서 킬스위치 및 대장 섹터 로드
+            is_overdrive_allowed = sys_config.get("OVERDRIVE_ALLOWED", True)
+            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
+            od_hurdle = sys_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
+            
+            is_overdrive_on = False
+            exit_rsn_prefix = "기술적 추세 이탈"
+            
+            # 현재 종목의 수익률 계산 (기존 4번 아레나에 있던 변수를 여기서 미리 계산하여 활용)
+            current_ret_pct_temp = ((c - ep) / ep) * 100
+            high_ret_pct_temp = ((h - ep) / ep) * 100
+            dyn_mfe_tp_temp = sys_config.get(f"{ns_prefix}_LIVE_PARAMS", sys_config).get("DYNAMIC_MFE_TP", 10.0)
+
+            # 💡 [시너지 1&2] 킬스위치가 꺼져있고(True) 에너지가 충족되며, MFE 익절선에 도달/돌파했을 때 오버드라이브 발동!
+            if is_overdrive_allowed and r.get('v_energy', 0) >= od_hurdle and high_ret_pct_temp >= dyn_mfe_tp_temp:
+                is_overdrive_on = True
+                if r['sector'] == predicted_sector:
+                    is_tech_exit = is_tech_exit_wide # 대장 섹터: 20일선까지 버팀 (Widen)
+                    exit_rsn_prefix = "🔥오버드라이브(대장주_Wide)_추세끝단_청산"
+                else:
+                    is_tech_exit = is_tech_exit_strict # 타 섹터: 기존대로 타이트 청산
+                    exit_rsn_prefix = "🔥오버드라이브(타이트)_추세끝단_청산"
+            # 👆👆 [추가 완료] 👆👆
 
             # 4. ⚔️ 청산 아레나: MFE/MAE 및 관제탑 모드에 따른 수학적 사형 집행
             do_exit, exit_rsn, actual_exit_type = False, "", "HOLD"
