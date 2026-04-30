@@ -92,42 +92,54 @@ def run_autonomous_analysis():
         spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
         spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
         
-        # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
-        # 1.0보다 낮으면 대형주만 오르는 '취약한 장세', 높으면 낙수효과가 있는 '건강한 장세'
-        breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
+        # 💡 [핵심 교체] 시장 폭(Breadth) 시계열 배열 생성 및 120일 동적 밴드(상하위 10%) 추출
+        breadth_series = (rsp_c / spy_c) / (rsp_c.rolling(50).mean() / spy_c.rolling(50).mean())
+        breadth_current = breadth_series.iloc[-1]
+        
+        # 120일 기준 상/하위 10% 커트라인 (과거 고정값 0.97, 1.03 대체)
+        breadth_lower_limit = breadth_series.rolling(120).quantile(0.10).iloc[-1]
+        breadth_upper_limit = breadth_series.rolling(120).quantile(0.90).iloc[-1]
 
-        # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
-        if spy_last > spy_ema200 and vix_last < 18:
+        # 💡 [핵심 교체] VIX 120일 평균 및 표준편차 연산 (Z-Score 동적 밴드)
+        vix_120_mean = vix_c.rolling(120).mean().iloc[-1]
+        vix_120_std = vix_c.rolling(120).std().iloc[-1]
+        
+        # 공포장(Bear) 기준: 평균보다 1.5 표준편차 이상 폭등했을 때 (과거 고정값 28 대체)
+        vix_bear_limit = vix_120_mean + (1.5 * vix_120_std)
+
+        # 1. 기본 국면 및 비중 설정 (동적 VIX 기준)
+        # 평온장(Bull) 기준: 현재 VIX가 120일 평균 미만일 때 (과거 고정값 18 대체)
+        if spy_last > spy_ema200 and vix_last < vix_120_mean:
             regime = "Bull (상승장)"
             base_w1, base_w4 = 1.2, 0.8
         else:
             regime = "Bear/Chop (하락/횡보)"
             base_w1, base_w4 = 0.5, 1.5
 
-        # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
+        # 2. 🚨 시장 폭(Breadth) 하위/상위 10% 동적 밴드 이탈 시 비중 패널티/보너스
         breadth_status = "건강 (Broad)"
-        if breadth_ratio < 0.97: 
+        if breadth_current < breadth_lower_limit: 
             breadth_status = "취약 (Narrow/쏠림)"
             base_w1 *= 0.5  # 공격(S1) 비중 반토막 (함정 방어)
             base_w4 *= 1.2  # 방어/눌림(S4) 비중 강화
-        elif breadth_ratio > 1.03: 
+        elif breadth_current > breadth_upper_limit: 
             breadth_status = "강력 (확산)"
             base_w1 *= 1.2  # 공격(S1) 비중 추가 확대
 
         w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
         
-        # 3. VIX 기반 동적 룩백 설정 결합
-        if vix_last >= 28.0:
+        # 3. VIX 동적 한계선 기반 룩백 설정 (이전 패치된 보고 로직 유지)
+        if vix_last >= vix_bear_limit:
             dyn_lookback = 7
             regime = "Bear (극단적 공포장)"
             w_s1, w_s4 = 0.0, 2.0
-            vix_status = f"VIX 폭발({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 7일"
-        elif vix_last >= 18.0:
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 1.5 STD 이탈 급등 (Bear)"
+        elif vix_last >= vix_120_mean:
             dyn_lookback = 15
-            vix_status = f"VIX 경계({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 15일"
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 평균 이상 경계 (Chop)"
         else:
             dyn_lookback = 45
-            vix_status = f"VIX 평온({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 45일"
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 평균 미만 평온 (Bull)"
             
     except Exception as e:
         print(f"거시 지표 로드 에러: {e}")
