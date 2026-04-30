@@ -767,7 +767,7 @@ def scan_market_1d():
             if not info: continue
             name, code = info['name'], info['code']
 
-            # 👇👇 [V107.6 미국장 시계열 붕괴 방어 및 정렬 엔진] 👇👇
+            # 👇👇 [기존 코드 지우고 여기서부터] 👇👇
             try:
                 if df_batch is not None:
                     if len(chunk) == 1: 
@@ -786,8 +786,7 @@ def scan_market_1d():
                 else:
                     # 💡 [핵심 픽스 2 이식] batch 다운로드가 실패했을 때만 fallback_dict를 쓰도록 else 처리
                     df_ticker = fallback_dict.get(tk)
-                else:
-                    df_ticker = fallback_dict.get(tk)
+
                 if df_ticker is None or df_ticker.empty: continue
 
                 # 1. 계산에 필요한 컬럼만 추출 후 결측치 제거
@@ -805,6 +804,7 @@ def scan_market_1d():
                 
                 # 5. 판다스 내부에서 날짜순(오름차순)으로 강력 정렬 (가장 중요)
                 df_ticker.sort_index(inplace=True)
+            # 👆👆 [여기까지 통째로 덮어쓰기 하십시오] 👆👆
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
