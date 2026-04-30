@@ -765,6 +765,7 @@ def scan_market_1d():
             if not info: continue
             name, code = info['name'], info['code']
 
+            # 👇👇 [V107.6 미국장 시계열 붕괴 방어 및 정렬 엔진] 👇👇
             try:
                 if df_batch is not None:
                     if len(chunk) == 1: df_ticker = df_batch.copy()
@@ -775,14 +776,25 @@ def scan_market_1d():
                     df_ticker = fallback_dict.get(tk)
                 if df_ticker is None or df_ticker.empty: continue
 
+                # 1. 계산에 필요한 컬럼만 추출 후 결측치 제거
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
+                
+                # 2. 타임존 제거 (비교를 위해 통일)
+                if df_ticker.index.tzinfo is not None: 
+                    df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
+                
+                # 3. 중복 날짜 제거 (최신 데이터 유지)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
+
+                # 4. 모든 데이터를 계산 가능한 실수형(float)으로 강제 변환
+                df_ticker = df_ticker.astype(float)
+                
+                # 5. 판다스 내부에서 날짜순(오름차순)으로 강력 정렬 (가장 중요)
+                df_ticker.sort_index(inplace=True)
 
                 if len(df_ticker) >= 500:
                     tracker['analyzed'] += 1
                     
-                    # 💡 [핵심] 나스닥 종목이면 QQQ, 그 외는 SPY 적용 및 VIX(공포지수) 전달
                     market_type = info['market']
                     target_idx = qqq_idx if market_type == 'NASDAQ' else spy_idx
                     hit, sig_type, df, dbg = compute_nulrim_1d(df_ticker, target_idx, vix_idx)
@@ -807,13 +819,11 @@ def scan_market_1d():
                         if main_chart_path and promo_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
                             
-                            # 💡 [버그 픽스] 섹터 추출을 장부 기록보다 '먼저' 실행하도록 위로 끌어올림!
                             try:
                                 sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                             except:
                                 sector_info = "유망 섹터 포착"
                             
-                            # 1️⃣ 본캐용 캡션
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
                                 f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
@@ -830,32 +840,26 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 💡 [오토 포워드 장부 기록] - 미국장 전용
                             try:
                                 import auto_forward_tester as aft
-                                market_type = 'US' if 'US' in dbg.get('sig_type', '') else 'KR' # 파일에 맞게 자동 인식
+                                market_type = 'US' if 'US' in dbg.get('sig_type', '') else 'KR'
                                 entry_facts = {
                                     'v_rs': dbg.get('v_rs', 0),
                                     'v_cpv': dbg.get('v_cpv', 0),
                                     'v_yang': dbg.get('v_yang', 0),
                                     'v_energy': dbg.get('v_energy', 0),
-                                    # 👇 미국장은 시총 데이터와 텐배거/DNA 로직이 없으므로 무조건 0으로 처리 (에러 방지)
                                     'marcap_eok': 0,       
                                     'score_marcap': 0,     
                                     'freq_count': dbg.get('freq_count', 0),
-                                    
                                     'dyn_rs': dbg.get('dyn_rs_score', 0),
                                     'dyn_cpv': dbg.get('dyn_cpv_score', 0),
                                     'dyn_tb': dbg.get('dyn_tb_score', 0),
-                                    
-                                    # 👇 미국장에도 있는 데스콤보만 살리고 나머지는 0
                                     'is_tenbagger': 0, 
                                     'is_top_dna': 0,   
                                     'is_worst_dna': 0, 
                                     'is_death_combo': 1 if dbg.get('is_death_combo') else 0
                                 }
                                 
-                                # 1. 오리지널 로직 장부 기록 (STANDARD 진영)
                                 success, fwd_msg = aft.try_add_virtual_position(
                                     market=market_type, code=code, name=name,
                                     sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
@@ -864,12 +868,11 @@ def scan_market_1d():
                                 )
                                 print(f"   ↳ [오리지널 장부]: {fwd_msg}")
                                 
-                                # 2. 초신성 공통점 매칭 합격 시 추가 진입 (SUPERNOVA 진영 선취매)
                                 sn_score = dbg.get('sn_score', 0.0)
-                                if sn_score >= 50.0: # 💡 폭등 6개월 전 DNA와 85% 이상 일치 시
+                                if sn_score >= 50.0:
                                     _, sn_msg = aft.try_add_virtual_position(
                                         market=market_type, code=code, name=name,
-                                        sig_type=dbg.get('sig_type', ''), score=max(dbg.get('score', 0), 50.0), # 점수 보정
+                                        sig_type=dbg.get('sig_type', ''), score=max(dbg.get('score', 0), 50.0), 
                                         ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
                                         trade_source="SUPERNOVA"
                                     )
@@ -877,9 +880,7 @@ def scan_market_1d():
                                     
                             except Exception as e:
                                 print(f"   ↳ [포워드 장부 에러]: {e}")
-                            # 👆👆 [듀얼 리그 진입 끝] 👆👆
 
-                            # 💡 4. 홍보용 캡션을 만들고 전송합니다.
                             promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
                                 f"🏢 종목: {name} ({code})\n"
@@ -893,7 +894,9 @@ def scan_market_1d():
                 err_name = name if 'name' in locals() else tk
                 err_text = f"⚠️ Worker 구동 중 에러 발생 [{err_name}]: {e}"
                 print(err_text)
-                q_main.put((None, f"🚨 <b>[미국장 검색기 워커 에러]</b>\n{err_text}"))
+                # 불필요한 텔레그램 에러 메시지 전송은 주석 처리하여 깔끔하게 만듭니다.
+                # q_main.put((None, f"🚨 <b>[미국장 검색기 워커 에러]</b>\n{err_text}"))
+            # 👆👆 [수정 완료] 👆👆
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
