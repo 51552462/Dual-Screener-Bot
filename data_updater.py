@@ -98,17 +98,8 @@ def update_single_ticker(row, country):
         local_conn.execute("PRAGMA journal_mode=WAL;")       # 동시 읽기/쓰기 허용
         local_conn.execute("PRAGMA synchronous=NORMAL;")     # WAL 모드 최적화 (속도 향상)
         
-        # 👇👇 [V102.6 버그 픽스] Replace(DROP) 폭파 방지 및 무정지 Append 엔진 👇👇
-        try:
-            # 1. 뼈대(테이블)는 살려두고 기존 데이터 알맹이만 조용히 삭제 (DB Lock 방지)
-            local_conn.execute(f'DELETE FROM "{table_name}"')
-        except sqlite3.OperationalError:
-            # 처음 수집하는 종목이라 테이블이 아예 없다면 조용히 패스
-            pass
-        
-        # 2. Append 모드로 알맹이만 안전하게 주입 (다른 봇들이 0.1초도 멈추지 않음)
-        df.to_sql(table_name, local_conn, if_exists='append', index=False)
-        # 👆👆 [패치 완료] 👆👆
+        # 🛡️ [V107.0] 스나이퍼 간섭 방지 무중단 덮어쓰기 실행
+        save_data_safely(df, table_name, local_conn)
 
         local_conn.close()
         return True
