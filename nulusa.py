@@ -376,14 +376,18 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     # =========================================================================
     # 👑 [비선형 의사결정 나무 (Decision Tree) 필터] - 선형 덧셈의 오류 차단
     # =========================================================================
-    tree_fatal_cpv = SYS_CONFIG.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
+    # 💡 [버그 픽스] 글로벌 0.85 하드코딩 삭제! 각 전략방(Namespace)에 맞는 자율 학습치 로드
+    live_params = SYS_CONFIG.get(f"{ns_prefix}_LIVE_PARAMS", SYS_CONFIG)
+    tree_fatal_cpv = live_params.get("TREE_FATAL_CPV", 0.95) # 기본 허들을 0.95로 넓혀서 정상 종목 억울한 기각 방지
+    
     is_tree_rejected = False
     tree_reason = ""
 
-    # [Node 1]: CPV가 한계치를 넘으면 RS 점수가 아무리 높아도 무조건 기각 (Death Combo)
+    # [Node 1]: 꽉 찬 양봉(월가 설거지 패턴) 한계치 초과 시 기각 (Death Combo)
     if cur_cpv > tree_fatal_cpv:
         is_tree_rejected = True
-        tree_reason = f"악성 매물 캔들 한계치 초과 (CPV {cur_cpv:.2f} > {tree_fatal_cpv})"
+        # 💡 [텍스트 교정] "악성 매물"은 윗꼬리를 뜻하므로 잘못된 텍스트. "가짜 펌핑(꽉 찬 양봉)"으로 용어 교정
+        tree_reason = f"월가 가짜 펌핑(꽉 찬 양봉) 한계치 초과 (CPV {cur_cpv:.2f} > {tree_fatal_cpv})"
         
     # [Node 2]: VIX가 25 이상(공포장)인데, 모멘텀(RS)이 0 이하면 기각 (약한 놈부터 죽음)
     elif cur_vix >= 25.0 and cur_rs < 0:
