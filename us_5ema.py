@@ -686,7 +686,6 @@ def scan_market_1d():
             name, code = info['name'], info['code']
 
             try:
-                try:
                 if df_batch is not None:
                     if len(chunk) == 1: 
                         df_ticker = df_batch.copy()
