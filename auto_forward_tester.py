@@ -396,6 +396,30 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
+    # 👇👇 [핵심 추가] R&D 샌드박스 역추적 엔진: 실전 진입과 별개로 무조건 격리 장부 생성 👇👇
+    if trade_source != "R&D" and "기각" not in sig_type:
+        if score >= 80:
+            rnd_sig = "[R&D_엘리트군]"
+        elif score >= 40:
+            rnd_sig = "[R&D_평균볼륨군]"
+        else:
+            rnd_sig = "[R&D_바닥역발상군]"
+            
+        cursor.execute('''
+            INSERT INTO forward_trades 
+            (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            today_str, market, code_str, name, sector, rnd_sig, tier_label, score,
+            facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
+            facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
+            ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
+            round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
+            round(entry_atr, 4), 
+            0, 0 # 💡 [R&D 완전 격리] 예수금 연산 및 실전 투입 금액(invest_amount, shares)을 0으로 강제 세팅
+        ))
+    # 👆👆 [R&D 추가 로직 끝] 👆👆
+
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     cursor.execute('''
         INSERT INTO forward_trades 
@@ -697,7 +721,7 @@ def send_comprehensive_daily_report():
             conn.execute("PRAGMA journal_mode=WAL;")
             
             # [사전 데이터 로드]
-            df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}'", conn)
+            df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND sig_type NOT LIKE '%[R&D_%'", conn)
             df_closed = df_all[df_all['status'].str.contains('CLOSED', na=False)]
             df_open = df_all[df_all['status'] == 'OPEN']
             
