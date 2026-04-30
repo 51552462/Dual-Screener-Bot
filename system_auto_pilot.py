@@ -792,6 +792,41 @@ def run_autonomous_analysis():
         report_lines.append(f"\n⚠️ R&D 실험실 에러: {e}")
     # 👆👆 [신규 추가 끝] 👆👆
 
+        # 👇👇 [신규 추가] 엔진 16: STANDARD 오리지널 대박주 CSV 마이닝 파이프라인 👇👇
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        # ORIGINAL 진영의 청산된 종목만 로드
+        std_df = pd.read_sql("SELECT * FROM forward_trades WHERE sig_type LIKE '%[STANDARD_ORIGINAL]%' AND status LIKE 'CLOSED%'", conn)
+        conn.close()
+        
+        # 조건: 실전에서 MFE 10% 이상 찍어본 진짜 대박주만 핀셋 추출
+        std_winners = std_df[(std_df['mfe'] >= 10.0) & (std_df['final_ret'] > 0)]
+        
+        if len(std_winners) > 0:
+            csv_path_std = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Standard_Flow_Master.csv')
+            csv_data_std = []
+            
+            for _, r in std_winners.iterrows():
+                csv_data_std.append({
+                    '종목코드': str(r['code']).zfill(6) if r['market'] == 'KR' else str(r['code']),
+                    '시장': r['market'],
+                    '랭크': 'STANDARD_WINNER',
+                    '[D_Day_당일] 평균_CPV': round(r['dyn_cpv'], 4),
+                    '[D_Day_당일] 평균_진짜양봉(TB)': round(r['dyn_tb'], 4),
+                    '[D_Day_당일] 평균_응축에너지(BBE)': round(r['v_energy'], 4),
+                    '[D_Day_당일] 진모멘텀(TML)': 0.0,
+                    '[D_Day_당일] 평균_시장강도(RS)': round(r['v_rs'], 4) if pd.notna(r['v_rs']) else 0.0
+                })
+            
+            df_csv_std = pd.DataFrame(csv_data_std)
+            write_header = not os.path.exists(csv_path_std)
+            df_csv_std.to_csv(csv_path_std, mode='a', header=write_header, index=False, encoding='utf-8-sig')
+            
+            report_lines.append(f"💾 <b>[오리지널 마이닝 연동]</b> {len(csv_data_std)}개의 STANDARD 대박주 DNA가 듀얼 트랙 진화를 위해 ML 파이프라인에 전송되었습니다.")
+    except Exception as e:
+        report_lines.append(f"\n⚠️ STANDARD 마이닝 파이프라인 에러: {e}")
+    # 👆👆 [신규 추가 끝] 👆👆
+
     # ==========================================
     # 🚀 최종 저장 및 발송 (중복 제거 완료)
     # ==========================================
