@@ -379,23 +379,37 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            # 👇👇 [수정된 DB 로드 블록: try-except 완벽 마감] 👇👇
+            # 👇👇 [V107.5 시계열 붕괴 방어 및 정렬 엔진] 👇👇
             try:
                 conn = sqlite3.connect(DB_PATH, timeout=30)
-                df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
+                # 1. DB에서 꺼낼 때부터 과거->현재 순서(ASC)로 강제 정렬해서 가져옵니다.
+                df_raw = pd.read_sql(f"SELECT * FROM KR_{code} ORDER BY Date ASC", conn)
                 conn.close()
                 
                 if not df_raw.empty:
                     df_raw['Date'] = pd.to_datetime(df_raw['Date'])
                     df_raw.set_index('Date', inplace=True)
-                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    
+                    # 2. 혹시 모를 중복 날짜 발생 시 최신 데이터만 남기고 제거
+                    df_raw = df_raw[~df_raw.index.duplicated(keep='last')]
+                    
+                    # 3. 모든 데이터를 계산 가능한 실수형(float)으로 강제 변환
+                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
+                    
+                    # 4. 판다스 내부에서도 한 번 더 날짜순(오름차순) 강력 정렬
+                    df_raw.sort_index(inplace=True)
                     
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-                if is_valid: 
-                    hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
+                
+                if is_valid:
+                    # 💡 주의: 3번 파일은 compute_bobgeureut(df_raw) / 4번 파일은 compute_bobgeureut 입니다.
+                    # 파일에 맞게 아래 함수 이름을 유지하세요.
+                    hit, sig_type, df, dbg = compute_inverse_1d(df_raw) 
                     
-            except Exception:
-                pass  # 💡 마찬가지로 에러 발생 시 부드럽게 넘어가도록 닫아줍니다.
+            except Exception as e:
+                # 에러 발생 시 조용히 넘어가지 않고 터미널에 띄워줍니다.
+                # print(f"⚠️ [{name}] 데이터 분석 에러: {e}")
+                pass
             # 👆👆 [수정 완료] 👆👆 
 
             hit_rank = 0
