@@ -426,6 +426,8 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
                   f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
+    tier_stat = ""
+
     if (hit_s4 or hit_s2) and cur_rs <= -1000:
         tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f})입니다. 평소엔 승률이 낮아 패스해야 하지만..."
 
