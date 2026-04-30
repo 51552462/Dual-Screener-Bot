@@ -333,6 +333,8 @@ def compute_us_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close
         action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
                   f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
+    tier_stat = ""
+
     if total_score >= 80:
         tier_stat = f"총점 {total_score:.1f}점(1티어). 수학적으로 방어력이 입증되었으므로 메인 비중 진입 권장."
 
