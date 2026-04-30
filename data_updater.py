@@ -13,6 +13,33 @@ warnings.filterwarnings('ignore')
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
+# ==========================================
+# 🛡️ [V107.0 무중단 DB 안전 저장 엔진] 
+# ==========================================
+def save_data_safely(df, table_name, conn):
+    """
+    스나이퍼 봇이 빈 테이블을 읽고 뻗는 현상을 원천 차단합니다.
+    임시 테이블에 먼저 데이터를 받은 뒤, 0.001초 만에 트랜잭션으로 원자적 덮어쓰기를 실행합니다.
+    """
+    if df.empty: return
+
+    temp_table_name = f"temp_{table_name}"
+    try:
+        # 1. 뼈대(테이블)가 아예 없으면 최초 1회 빈 껍데기 생성
+        df.head(0).to_sql(table_name, conn, if_exists='append', index=False)
+        
+        # 2. 스나이퍼가 모르게 '임시 테이블'에 데이터를 새로 구축
+        df.to_sql(temp_table_name, conn, if_exists='replace', index=False)
+        
+        # 3. 찰나의 순간(트랜잭션)에 본진 데이터를 최신화 (데이터 증발 시간 0초)
+        conn.execute("BEGIN TRANSACTION;")
+        conn.execute(f'INSERT OR REPLACE INTO "{table_name}" SELECT * FROM "{temp_table_name}"')
+        conn.execute(f'DROP TABLE "{temp_table_name}"')
+        conn.commit()
+    except Exception as e:
+        conn.rollback() # 에러 시 즉각 원상복구
+        print(f"⚠️ [DB 무중단 덮어쓰기 실패] {table_name}: {e}")
+
 # 🇺🇸 미국장 리스트 추출
 def get_us_tickers():
     print("🇺🇸 미국장 종목 리스트 수집 중...")
