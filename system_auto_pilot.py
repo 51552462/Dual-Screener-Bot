@@ -190,17 +190,17 @@ def run_autonomous_analysis():
     except: pass
 
     # 국면 판독 결과 강제 보정 (지수보다 DNA 우선)
-    if dna_drift_warning and "Bull" in regime:
-        regime = "Chop (DNA 변위로 인한 선제적 방어)"
-        w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
-    # 👆👆 [V45.0 엔진 끝] 👆👆
-
-    # 👇👇 [신규 추가] DNA 변위 감지 시 오버드라이브 전면 차단 👇👇
+    # 👇👇 [수정] 논리 구조 완벽 개선 👇👇
+    if dna_drift_warning:
         current_config["OVERDRIVE_ALLOWED"] = False 
-        report_lines.append("🛑 <b>[오버드라이브 킬스위치 가동]</b> DNA 변위로 인해 모든 오버드라이브를 강제 차단합니다.")
+        report_lines.append("🛑 <b>[오버드라이브 킬스위치 가동]</b> DNA 변위 감지로 인해 모든 오버드라이브를 강제 차단합니다.")
+        
+        if "Bull" in regime:
+            regime = "Chop (DNA 변위로 인한 선제적 방어)"
+            w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
     else:
         current_config["OVERDRIVE_ALLOWED"] = True # 정상 시 허용
-        # 👆👆 [신규 추가 끝] 👆👆
+    # 👆👆 [수정 완료] 👆👆
 
     # ---------------------------------------------------------
     # 👑 엔진 1.8: [V32.0 국면별 독립 기억소(Regime Memory) 로드]
@@ -582,21 +582,6 @@ def run_autonomous_analysis():
         else:
             report_lines.append(f"▪️ [{tag_key} 타점]: 현재 커트라인 {curr_val*100:.0f}% (표본 데이터 수집 중)")
 
-    # 👇👇 [신규 추가] 오버드라이브 허들 자율 튜닝 및 투명성 보고 👇👇
-    # 청산 사유에 '오버드라이브 실패'나 '방어 손절'이 포함된 데이터 추출
-    od_fails = df[(df['exit_reason'].str.contains('오버드라이브 실패', na=False)) | (df['exit_reason'].str.contains('방어 손절', na=False))]
-    
-    # 실패 사례가 누적(예: 5건 이상)되었다면 허들 상향
-    if len(od_fails) >= 5:
-        old_energy = current_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
-        # 에너지 허들을 1.5배 상향 조정하되 최대 상한선(예: 50.0) 설정
-        new_energy = min(50.0, old_energy * 1.5) 
-        
-        if old_energy != new_energy: # 값이 변경되었을 때만 업데이트 및 리포팅
-            current_config["OVERDRIVE_ENERGY_HURDLE"] = round(new_energy, 1)
-            report_lines.append(f"⚙️ <b>[오버드라이브 튜닝]</b> 추세 추종 실패 누적 감지 ➔ 오버드라이브 가동 요구 에너지(v_energy) 허들을 {old_energy:.1f}에서 {new_energy:.1f}으로 1.5배 상향 (깐깐하게 적용)")
-    # 👆👆 [신규 추가 끝] 👆👆
-
     # ---------------------------------------------------------
     # ⚙️ 엔진 9.5: [오버드라이브 허들 자율 튜닝부]
     # ---------------------------------------------------------
@@ -762,26 +747,24 @@ def run_autonomous_analysis():
                     "last_updated": datetime.now().strftime('%Y-%m-%d')
                 }
                 report_lines.append("✅ <b>조치:</b> 장기 우상향 DNA를 시스템의 황금 타점(MFE 템플릿)으로 강제 동기화 완료.")
-        else:
-            report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
-    except Exception as e:
-        report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
 
-    # 👇👇 [신규 추가] 국고 ↔ S급 챔피언 보너스 자본 투입 연동 👇👇
+                # 👇👇 [수정] 바깥에 겉돌던 코드를 정확히 이 위치(best_df가 정의된 직후)로 옮기세요! 👇👇
                 bonus_amount = 10000000 # 1,000만 원 특별 투입
                 for top_logic in consistent_good:
                     mkt_prefix = best_df[best_df['group'] == top_logic]['market'].iloc[0]
                     t_key = f"CENTRAL_TREASURY_{mkt_prefix}"
                     
-                    # 국고에 1,000만 원 이상 여유가 있을 때만 집행
                     if current_config.get(t_key, 0) >= bonus_amount:
                         current_config[t_key] -= bonus_amount
-                        
-                        # 로직별 보너스 시드 장부에 누적 기록
                         bonus_key = f"BONUS_SEED_{top_logic}"
                         current_config[bonus_key] = current_config.get(bonus_key, 0) + bonus_amount
                         report_lines.append(f"💰 <b>[자본 스노우볼링]</b> 4주 연속 우상향 증명! S급 로직 '{top_logic}' 장부에 국고 보너스 1,000만 원 특별 투입 완료.")
-                # 👆👆 [신규 추가 끝] 👆👆
+                # 👆👆 [위치 이동 완료] 👆👆
+        else:
+            report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
+    except Exception as e:
+        report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
+
 
     # 👇👇 [신규 추가] 엔진 14: R&D 샌드박스 역추적 및 CSV 머신러닝 시너지 연동 👇👇
     try:
