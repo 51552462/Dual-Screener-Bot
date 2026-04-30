@@ -439,6 +439,50 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
         round(entry_atr, 4), invest_amount, shares # 💡 V38.0 ATR 및 투입 금액/수량 기록
     ))
+
+    # 👇👇 [수정 지점: 여기서부터 복사해서 넣으세요] 👇👇
+    # STANDARD 듀얼 트랙: MLBOX 통과 시 쌍둥이 복제 편입
+    if trade_source == "STANDARD":
+        # 1. 원본은 ORIGINAL로 네이밍 교체 (방금 위에서 넣은 기본 종목의 이름을 덮어씀)
+        cursor.execute("UPDATE forward_trades SET sig_type = REPLACE(sig_type, '[STANDARD]', '[STANDARD_ORIGINAL]') WHERE id = (SELECT MAX(id) FROM forward_trades WHERE code=?)", (code_str,))
+        
+        # 2. 관제탑에서 STANDARD 전용 ML 템플릿 로드
+        std_clusters = sys_config.get('LIVE_STANDARD_CLUSTER_TEMPLATES', {})
+        dyn_ml_cutoff = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+        
+        is_std_ml_pass = False
+        ml_pattern_name = ""
+        
+        # 3. DNA 바운딩 박스 판독
+        for c_name, bounds in std_clusters.items():
+            ml_match_count = 0
+            if bounds.get('cpv_min', -99) <= facts.get('dyn_cpv', 0) <= bounds.get('cpv_max', 99): ml_match_count += 1
+            if bounds.get('tb_min', -99) <= facts.get('dyn_tb', 0) <= bounds.get('tb_max', 999): ml_match_count += 1
+            if bounds.get('bbe_min', -99) <= facts.get('v_energy', 0) <= bounds.get('bbe_max', 999): ml_match_count += 1
+            
+            score = ml_match_count / 3.0
+            if score >= dyn_ml_cutoff:
+                is_std_ml_pass = True
+                ml_pattern_name = c_name
+                break
+                
+        # 4. MLBOX 통과 시, 동일한 팩트로 '두 번째 실전 포지션' 동시 생성 (자본 경쟁용)
+        if is_std_ml_pass:
+            clone_sig = f"[STANDARD_MLBOX_V1] 🤖{ml_pattern_name} {track_tag}"
+            
+            cursor.execute('''
+                INSERT INTO forward_trades 
+                (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                today_str, market, code_str, name, sector, clone_sig, tier_label, score,
+                facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
+                facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
+                ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
+                round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
+                round(entry_atr, 4), invest_amount, shares # 💡 복제본도 똑같이 예수금 할당받아 경쟁
+            ))
+    # 👆👆 [수정 지점 끝] 👆👆
     conn.commit()
     conn.close()
     
