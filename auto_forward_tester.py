@@ -111,6 +111,38 @@ def load_system_config():
     except: pass
     return {}
 
+# 💡 [시스템 연결] 관제탑 설정 로드 함수 추가 (init_forward_db 밑에 추가)
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+def load_system_config():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {}
+
+# 👇👇 [신규 추가] 야후 파이낸스 API 무한 호출(IP Ban) 방어용 글로벌 캐시 엔진 👇👇
+_GLOBAL_BREADTH_CACHE = 1.0
+_LAST_BREADTH_FETCH_TIME = 0.0
+
+def get_cached_market_breadth():
+    """10분에 딱 한 번만 API를 호출하여 메모리에 저장하고, 이후엔 저장된 값을 즉시 반환합니다."""
+    global _GLOBAL_BREADTH_CACHE, _LAST_BREADTH_FETCH_TIME
+    current_time = time.time()
+    
+    # 600초(10분)가 지났을 때만 야후 파이낸스 API 1회 갱신
+    if current_time - _LAST_BREADTH_FETCH_TIME > 600:
+        try:
+            b_df = yf.download("RSP SPY", period="5d", interval="1d", progress=False)
+            if not b_df.empty:
+                _GLOBAL_BREADTH_CACHE = (b_df['Close']['RSP'].iloc[-1] / b_df['Close']['SPY'].iloc[-1]) / \
+                                        (b_df['Close']['RSP'].mean() / b_df['Close']['SPY'].mean())
+            _LAST_BREADTH_FETCH_TIME = current_time
+        except Exception as e:
+            print(f"⚠️ 시장 폭(Breadth) 캐시 갱신 에러 (기존 값 유지): {e}")
+            
+    return _GLOBAL_BREADTH_CACHE
+# 👆👆 [캐시 엔진 완료] 👆👆
+
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
@@ -407,17 +439,11 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         print(f"하이브리드 벡터 매칭 에러: {e}")
     # 👆👆 [try 블록 완전 종료] 👆👆
 
-    # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
-    cur_breadth = 1.0
-    try:
-        b_df = yf.download("RSP SPY", period="5d", interval="1d", progress=False)
-        if not b_df.empty:
-            cur_breadth = (b_df['Close']['RSP'].iloc[-1] / b_df['Close']['SPY'].iloc[-1]) / \
-                          (b_df['Close']['RSP'].mean() / b_df['Close']['SPY'].mean())
-    except: pass
-    # 👆👆 [추가 끝] 👆👆
+    # 👇👇 [수정] V24.0 진입 시점의 시장 폭(Breadth) API 차단 방어 (글로벌 캐시 로드) 👇👇
+    cur_breadth = get_cached_market_breadth()
+    # 👆👆 [수정 끝] 👆👆
 
-   # 👇👇 [핵심 복구] R&D 샌드박스 역추적 엔진: 실전 진입과 별개로 무조건 격리 장부 생성 👇👇
+    # 👇👇 [핵심 추가] R&D 샌드박스 역추적 엔진: 실전 진입과 별개로 무조건 격리 장부 생성 👇👇
     # 검색기에서 넘어온 종목이 R&D 본인이 아니며, 기각된 종목이 아닐 경우에만 장부 복제
     if trade_source != "R&D" and "기각" not in sig_type:
         
