@@ -14,15 +14,14 @@ warnings.filterwarnings('ignore')
 # ==========================================
 # 💡 [환경 설정]
 # ==========================================
-TELEGRAM_TOKEN_MAIN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
+TELEGRAM_TOKEN_MAIN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
 TELEGRAM_CHAT_ID    = "6838834566"
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 
 LOOKBACK_DAYS = 14
 SMOOTHING_ALPHA = 0.3 
-# 👇👇 [핵심 삭제] 재부팅 시마다 14일이 초기화되는 하드코딩 삭제 👇👇
-# START_DATE = datetime.now() + timedelta(days=LOOKBACK_DAYS)
+WARMUP_DAYS = 14
 
 # ==========================================
 # 💡 [유틸리티 함수]
@@ -33,57 +32,68 @@ def send_telegram_report(message):
     try: requests.post(url, json=payload, timeout=10)
     except Exception as e: print(f"텔레그램 전송 실패: {e}")
 
-
-
-# 👇👇 [신규 추가] 원자적 저장 엔진 👇👇
-def save_config(config_data):
-    """[V110.0] JSON 원자적 저장(Atomic Save) 엔진: 에러 시 데이터 증발 원천 차단"""
-    temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-    except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
-# 👆👆 [추가 완료] 👆👆
-
 def load_or_create_config():
     # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
     if not os.path.exists(CONFIG_PATH):
         default_config = {
             "ACTIVE_EXIT_MODE": "HYBRID",
             "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
-            "ACCOUNT_SIZE": 20000000,         
-            "RISK_PCT": 0.02,                 
-            "CENTRAL_TREASURY_KR": 600000000, 
-            "CENTRAL_TREASURY_US": 600000000  
+            "ACCOUNT_SIZE": 20000000,         # 💡 각 로직별 기본 시드 2,000만 원
+            "RISK_PCT": 0.02,                 # 💡 고정 리스크 2%
+            "CENTRAL_TREASURY_KR": 300000000, # 🏦 [추가] 한국장 초기 국고 3억 원
+            "CENTRAL_TREASURY_US": 300000000, # 🏦 [추가] 미국장 초기 국고 3억 원
+            "GLOBAL_CIRCUIT_BREAKER": "OFF",
+            "ARCHIVED_TEMPLATES": {},
+            "ANTI_PATTERNS": [],
+            "INCUBATOR_TEMPLATES": {}
         }
-        save_config(default_config) # 💡 [버그 픽스] open('w') 대신 안전한 원자적 저장 호출
+        with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
         return default_config
         
     # 2. 기존 파일이 있을 때 읽어오기
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f: 
+    with open(CONFIG_PATH, 'r') as f: 
         config = json.load(f)
         
-    # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 6억씩 채워줍니다.
+    # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 3억씩 채워줍니다.
     need_save = False
     if "CENTRAL_TREASURY_KR" not in config:
-        config["CENTRAL_TREASURY_KR"] = 600000000  # 6억 원
+        config["CENTRAL_TREASURY_KR"] = 300000000  # 3억 원
         need_save = True
     if "CENTRAL_TREASURY_US" not in config:
-        config["CENTRAL_TREASURY_US"] = 600000000  # 6억 원
+        config["CENTRAL_TREASURY_US"] = 300000000  # 3억 원
+        need_save = True
+    if "GLOBAL_CIRCUIT_BREAKER" not in config:
+        config["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
+        need_save = True
+    if "ARCHIVED_TEMPLATES" not in config or not isinstance(config.get("ARCHIVED_TEMPLATES"), dict):
+        config["ARCHIVED_TEMPLATES"] = {}
+        need_save = True
+    if "ANTI_PATTERNS" not in config or not isinstance(config.get("ANTI_PATTERNS"), list):
+        config["ANTI_PATTERNS"] = []
+        need_save = True
+    if "INCUBATOR_TEMPLATES" not in config or not isinstance(config.get("INCUBATOR_TEMPLATES"), dict):
+        config["INCUBATOR_TEMPLATES"] = {}
         need_save = True
         
-    # 변경 사항이 있으면 JSON 파일에 원자적 덮어쓰기
+    # 변경 사항이 있으면 JSON 파일에 덮어쓰기
     if need_save:
-        save_config(config) # 💡 [버그 픽스] open('w') 대신 안전한 원자적 저장 호출
-        print("🏦 [국고 세팅 완료] 시스템에 한국 6억, 미국 6억의 초기 자본이 성공적으로 세팅되었습니다.")
+        with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=4)
+        print("🏦 [국고 세팅 완료] 시스템에 한국 3억, 미국 3억의 초기 자본이 성공적으로 세팅되었습니다.")
         
     return config
+
+def get_first_entry_date():
+    """forward_trades 장부의 최초 진입일(MIN(entry_date))을 조회한다."""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        row = conn.execute("SELECT MIN(entry_date) FROM forward_trades").fetchone()
+        conn.close()
+        if row and row[0]:
+            return datetime.strptime(row[0], '%Y-%m-%d').date()
+    except Exception as e:
+        print(f"최초 거래일 조회 에러: {e}")
+    return None
 
 # ==========================================
 # 🚀 [메인 분석 엔진] 
@@ -111,55 +121,42 @@ def run_autonomous_analysis():
         spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
         spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
         
-        # 💡 [핵심 교체] 시장 폭(Breadth) 시계열 배열 생성 및 120일 동적 밴드(상하위 10%) 추출
-        breadth_series = (rsp_c / spy_c) / (rsp_c.rolling(50).mean() / spy_c.rolling(50).mean())
-        breadth_current = breadth_series.iloc[-1]
-        
-        # 120일 기준 상/하위 10% 커트라인 (과거 고정값 0.97, 1.03 대체)
-        breadth_lower_limit = breadth_series.rolling(120).quantile(0.10).iloc[-1]
-        breadth_upper_limit = breadth_series.rolling(120).quantile(0.90).iloc[-1]
+        # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
+        # 1.0보다 낮으면 대형주만 오르는 '취약한 장세', 높으면 낙수효과가 있는 '건강한 장세'
+        breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
 
-        # 💡 [핵심 교체] VIX 120일 평균 및 표준편차 연산 (Z-Score 동적 밴드)
-        vix_120_mean = vix_c.rolling(120).mean().iloc[-1]
-        vix_120_std = vix_c.rolling(120).std().iloc[-1]
-        
-        # 현재 VIX의 Z-Score 산출 (최근 120일 대비 얼마나 비정상적으로 튀었는가?)
-        current_vix_zscore = (vix_last - vix_120_mean) / vix_120_std if vix_120_std > 0 else 0
-        
-        # 1. 기본 국면 및 비중 설정 (동적 VIX Z-Score 기준)
-        # 평온장(Bull) 기준: 현재 VIX가 120일 평균 미만일 때 (Z-Score < 0)
-        if spy_last > spy_ema200 and current_vix_zscore < 0:
+        # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
+        if spy_last > spy_ema200 and vix_last < 18:
             regime = "Bull (상승장)"
             base_w1, base_w4 = 1.2, 0.8
         else:
             regime = "Bear/Chop (하락/횡보)"
             base_w1, base_w4 = 0.5, 1.5
 
-        # 2. 🚨 시장 폭(Breadth) 하위/상위 10% 동적 밴드 이탈 시 비중 패널티/보너스
+        # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
         breadth_status = "건강 (Broad)"
-        if breadth_current < breadth_lower_limit: 
+        if breadth_ratio < 0.97: 
             breadth_status = "취약 (Narrow/쏠림)"
             base_w1 *= 0.5  # 공격(S1) 비중 반토막 (함정 방어)
             base_w4 *= 1.2  # 방어/눌림(S4) 비중 강화
-        elif breadth_current > breadth_upper_limit: 
+        elif breadth_ratio > 1.03: 
             breadth_status = "강력 (확산)"
             base_w1 *= 1.2  # 공격(S1) 비중 추가 확대
 
         w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
         
-        # 3. VIX 기반 동적 룩백 설정 (하드코딩 삭제 및 Z-Score 적용)
-        if current_vix_zscore >= 1.5:  # 과거 28.0 하드코딩 대체 (1.5 표준편차 이상 폭등)
+        # 3. VIX 기반 동적 룩백 설정 결합
+        if vix_last >= 28.0:
             dyn_lookback = 7
             regime = "Bear (극단적 공포장)"
             w_s1, w_s4 = 0.0, 2.0
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 Z-Score {current_vix_zscore:.2f} 급등 (Bear)"
-        elif current_vix_zscore >= 0.0: # 평균 이상
+            vix_status = f"VIX 폭발({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 7일"
+        elif vix_last >= 18.0:
             dyn_lookback = 15
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 Z-Score {current_vix_zscore:.2f} 경계 (Chop)"
+            vix_status = f"VIX 경계({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 15일"
         else:
             dyn_lookback = 45
-            regime = "Bull (상승장)"
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 Z-Score {current_vix_zscore:.2f} 안정 (Bull)"
+            vix_status = f"VIX 평온({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 45일"
             
     except Exception as e:
         print(f"거시 지표 로드 에러: {e}")
@@ -187,6 +184,28 @@ def run_autonomous_analysis():
     report_lines.append(f"<b>[1. 동적 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime}\n▪️ <b>동적 룩백: {vix_status}</b>\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
 
     # ---------------------------------------------------------
+    # 👑 엔진 1.6: 미국장 고MFE 섹터 기반 글로벌 스필오버 저장
+    # ---------------------------------------------------------
+    report_lines.append("<b>[1.6 글로벌 스필오버 자동 연동]</b>")
+    try:
+        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        us_hot_df = df[
+            (df['market'] == 'US') &
+            (df['status'].str.contains('CLOSED', na=False)) &
+            (df['entry_date'] >= seven_days_ago) &
+            (df['mfe'] >= 15.0)
+        ] if all(col in df.columns for col in ['market', 'status', 'entry_date', 'mfe', 'sector']) else pd.DataFrame()
+
+        if not us_hot_df.empty:
+            top_us_sector = us_hot_df.groupby('sector').size().sort_values(ascending=False).index[0]
+            current_config["US_SPILLOVER_SECTOR"] = str(top_us_sector)
+            report_lines.append(f"▪️ 최근 7일 미국장 고MFE(15%+) 주도 섹터 저장: <b>{top_us_sector}</b>")
+        else:
+            report_lines.append("▪️ 최근 7일 미국장 고MFE 섹터 표본 부족으로 기존 스필오버 섹터 유지")
+    except Exception as e:
+        report_lines.append(f"▪️ 글로벌 스필오버 저장 에러: {e}")
+
+    # ---------------------------------------------------------
     # 🛡️ 엔진 1.7.5: [V45.0 DNA 변위(Drift) 감지 선제적 방어막]
     # ---------------------------------------------------------
     report_lines.append("\n<b>[1.7.5 DNA 변위 기반 선제적 국면 검증]</b>")
@@ -209,17 +228,10 @@ def run_autonomous_analysis():
     except: pass
 
     # 국면 판독 결과 강제 보정 (지수보다 DNA 우선)
-    # 👇👇 [수정] 논리 구조 완벽 개선 👇👇
-    if dna_drift_warning:
-        current_config["OVERDRIVE_ALLOWED"] = False 
-        report_lines.append("🛑 <b>[오버드라이브 킬스위치 가동]</b> DNA 변위 감지로 인해 모든 오버드라이브를 강제 차단합니다.")
-        
-        if "Bull" in regime:
-            regime = "Chop (DNA 변위로 인한 선제적 방어)"
-            w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
-    else:
-        current_config["OVERDRIVE_ALLOWED"] = True # 정상 시 허용
-    # 👆👆 [수정 완료] 👆👆
+    if dna_drift_warning and "Bull" in regime:
+        regime = "Chop (DNA 변위로 인한 선제적 방어)"
+        w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
+    # 👆👆 [V45.0 엔진 끝] 👆👆
 
     # ---------------------------------------------------------
     # 👑 엔진 1.8: [V32.0 국면별 독립 기억소(Regime Memory) 로드]
@@ -285,6 +297,26 @@ def run_autonomous_analysis():
     if 'is_death_combo' in df.columns:
         dc_wr, dc_pf = calculate_metrics(df[df['is_death_combo'] == 1])
         report_lines.append(f"▪️ 데스콤보 타점: 승률 {dc_wr:.1f}% (낮을수록 정상 방어 중)\n")
+
+    # ---------------------------------------------------------
+    # 👑 엔진 2.5: [R&D 실험실] 돌연변이 승자 에너지 기반 오버드라이브 허들 동기화
+    # ---------------------------------------------------------
+    report_lines.append("<b>[2.5 R&D 돌연변이 에너지 ➔ 오버드라이브 허들 연동]</b>")
+    try:
+        rnd_pool = df.sort_values('exit_date').tail(60) if 'exit_date' in df.columns else df.tail(60)
+        rnd_winners = rnd_pool[rnd_pool['final_ret'] > 0] if 'final_ret' in rnd_pool.columns else pd.DataFrame()
+        if not rnd_winners.empty and 'v_energy' in rnd_winners.columns:
+            avg_rnd_energy = float(rnd_winners['v_energy'].dropna().mean())
+            if not np.isnan(avg_rnd_energy):
+                current_config["DYNAMIC_OD_HURDLE"] = round(avg_rnd_energy, 2)
+                report_lines.append(f"▪️ R&D 승리 돌연변이 평균 응축 에너지: {avg_rnd_energy:.2f}")
+                report_lines.append(f"✅ <b>동기화:</b> DYNAMIC_OD_HURDLE = {current_config['DYNAMIC_OD_HURDLE']}")
+            else:
+                report_lines.append("▪️ R&D 승자 에너지 계산 불가(결측)로 기존 OD 허들 유지")
+        else:
+            report_lines.append("▪️ R&D 승자 표본 부족으로 기존 OD 허들 유지")
+    except Exception as e:
+        report_lines.append(f"▪️ R&D 허들 동기화 에러: {e}")
 
     # ---------------------------------------------------------
     # 👑 엔진 3: 날것(Raw) 파라미터 스무딩 (베이지안 업데이트)
@@ -402,11 +434,22 @@ def run_autonomous_analysis():
         if 'sim_stat_ret' in ns_df.columns:
             st_df = ns_df[ns_df['sim_stat_status'].str.contains('CLOSED', na=False)]
             te_df = ns_df[ns_df['sim_tech_status'].str.contains('CLOSED', na=False)]
-            s_pf = (st_df[st_df['sim_stat_ret']>0]['sim_stat_ret'].sum()) / abs(st_df[st_df['sim_stat_ret']<=0]['sim_stat_ret'].sum() + 0.1) if len(st_df)>0 else 0
-            t_pf = (te_df[te_df['sim_tech_ret']>0]['sim_tech_ret'].sum()) / abs(te_df[te_df['sim_tech_ret']<=0]['sim_tech_ret'].sum() + 0.1) if len(te_df)>0 else 0
+            s_pf = (st_df[st_df['sim_stat_ret']>0]['sim_stat_ret'].sum()) / (abs(st_df[st_df['sim_stat_ret']<=0]['sim_stat_ret'].sum()) + 0.1) if len(st_df)>0 else 0
+            t_pf = (te_df[te_df['sim_tech_ret']>0]['sim_tech_ret'].sum()) / (abs(te_df[te_df['sim_tech_ret']<=0]['sim_tech_ret'].sum()) + 0.1) if len(te_df)>0 else 0
             winner = "TECH" if t_pf > s_pf * 1.1 else "STAT"
             current_config[f"{target_ns}_ACTIVE_EXIT_MODE"] = winner
             report_lines.append(f"▪️ 청산 결투: {winner} 모드가 우세함")
+
+        # --- [엔진 5.5: 생존 호흡(bars_held) 기반 TIME_STOP 동기화] ---
+        if 'bars_held' in ns_df.columns and 'entry_date' in ns_df.columns and 'final_ret' in ns_df.columns:
+            thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            breath_df = ns_df[(ns_df['entry_date'] >= thirty_days_ago) & (ns_df['final_ret'] > 0)].copy()
+            breath_df = breath_df[breath_df['bars_held'].notna()]
+            if not breath_df.empty:
+                avg_bars = float(breath_df['bars_held'].mean())
+                sync_time_stop = max(3, int(round(avg_bars * 1.2)))
+                current_config[f"{target_ns}_TIME_STOP"] = sync_time_stop
+                report_lines.append(f"▪️ 생존 호흡 동기화: bars_held 평균 {avg_bars:.1f}일 ➔ TIME_STOP {sync_time_stop}일")
 
         # --- [엔진 6: 독립 OOS 진검승부 및 챔피언 승격] ---
         train_df = ns_df[ns_df['entry_date'] < oos_barrier]
@@ -424,6 +467,30 @@ def run_autonomous_analysis():
         if results:
             win_k = max(results, key=results.get)
             report_lines.append(f"▪️ OOS 성적(복리): LIVE({results.get('live_a_ret',0):.2f}%) B({results.get('cand_b_ret',0):.2f}%) C({results.get('champ_c_ret',0):.2f}%)")
+
+            # 챔피언이 이미 존재하면 최근 14일 실전 MAE/MFE로 스무딩 업데이트
+            champ_key = f"{target_ns}_CHAMPION_PARAMS"
+            champ_params = current_config.get(champ_key, {})
+            if isinstance(champ_params, dict) and champ_params:
+                recent_14 = test_df.sort_values('entry_date').tail(14).copy() if 'entry_date' in test_df.columns else test_df.tail(14).copy()
+                if not recent_14.empty and all(col in recent_14.columns for col in ['entry_price', 'min_low', 'max_high']):
+                    recent_14 = recent_14[recent_14['entry_price'] > 0]
+                    if not recent_14.empty:
+                        recent_14['mae_pct'] = (recent_14['min_low'] - recent_14['entry_price']) / recent_14['entry_price'] * 100.0
+                        recent_14['mfe_pct'] = (recent_14['max_high'] - recent_14['entry_price']) / recent_14['entry_price'] * 100.0
+
+                        new_mae = float(recent_14['mae_pct'].mean())
+                        new_mfe = float(recent_14['mfe_pct'].mean())
+                        old_mae = float(champ_params.get("DYNAMIC_MAE_SL", new_mae))
+                        old_mfe = float(champ_params.get("DYNAMIC_MFE_TP", new_mfe))
+
+                        champ_params["DYNAMIC_MAE_SL"] = round((old_mae * (1 - SMOOTHING_ALPHA)) + (new_mae * SMOOTHING_ALPHA), 2)
+                        champ_params["DYNAMIC_MFE_TP"] = round((old_mfe * (1 - SMOOTHING_ALPHA)) + (new_mfe * SMOOTHING_ALPHA), 2)
+                        current_config[champ_key] = champ_params
+                        report_lines.append(
+                            f"▪️ 챔피언 스무딩(14일): MAE {old_mae:.2f}%➔{champ_params['DYNAMIC_MAE_SL']:.2f}% | "
+                            f"MFE {old_mfe:.2f}%➔{champ_params['DYNAMIC_MFE_TP']:.2f}%"
+                        )
             
             if win_k == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
                 current_config[f"{target_ns}_CHAMPION_PARAMS"] = current_config.get(f"{target_ns}_LIVE_PARAMS", {})
@@ -460,6 +527,7 @@ def run_autonomous_analysis():
             
             # 🚨 [알파 붕괴 판정] 손익비가 초기 대비 30% 이상 날아갔거나 1.0 미만일 때
             if late_pf < early_pf * 0.7 or late_pf < 1.0:
+                report_lines.append("🚨 <b>[알파 반감기 도달]</b> 룰의 수명이 다했습니다. 선제적 파라미터 폐기를 집행합니다.")
                 
                 # 🔬 [노화 원인 정밀 부검]
                 late_losers = late_phase[late_phase['final_ret'] <= 0]
@@ -476,37 +544,34 @@ def run_autonomous_analysis():
                         
                     report_lines.append(f"💡 <b>[노화 원인 분석]</b>: {cause}")
                     
-                # 👇👇 [핵심 진화] DB 크래시 방어: 장부상 데이터(min_low, entry_price)로 MAE 직접 산출 👇👇
-                recent_20 = decay_df.tail(20)
-                
-                if not recent_20.empty:
-                    # 1. new_tp: 최근 20개 종목 MFE의 75백분위수 (상위 25% 타점)
-                    # DB에 mfe_pct 컬럼이 없으므로 max_high와 entry_price로 직접 산출
-                    recent_mfe_series = ((recent_20['max_high'] - recent_20['entry_price']) / recent_20['entry_price']) * 100
-                    raw_new_tp = np.percentile(recent_mfe_series.dropna(), 75) if len(recent_mfe_series) > 0 else 10.0
-                    
-                    # 2. new_sl: 최근 20개 중 '패배 종목'의 MAE 평균값 * 0.8
-                    recent_losers = recent_20[recent_20['final_ret'] <= 0]
-                    if not recent_losers.empty:
-                        # 💡 [버그 픽스] KeyError 방지를 위해 min_low와 entry_price 수식으로 MAE 직접 도출
-                        loser_mae_avg = (((recent_losers['min_low'] - recent_losers['entry_price']) / recent_losers['entry_price']) * 100).mean()
-                        raw_new_sl = loser_mae_avg * 0.8
+                # 🧠 자율 MAE 역추적: 최근 20개 패배 종목의 실제 MAE 평균으로 손절선 재설정
+                try:
+                    conn = sqlite3.connect(DB_PATH, timeout=60)
+                    conn.execute("PRAGMA journal_mode=WAL;")
+                    recent_loss_df = pd.read_sql("""
+                        SELECT entry_price, min_low
+                        FROM forward_trades
+                        WHERE status LIKE 'CLOSED%'
+                          AND final_ret <= 0
+                          AND entry_price > 0
+                          AND min_low IS NOT NULL
+                        ORDER BY exit_date DESC, id DESC
+                        LIMIT 20
+                    """, conn)
+                    conn.close()
+
+                    if not recent_loss_df.empty:
+                        recent_loss_df['real_mae_pct'] = (
+                            (recent_loss_df['min_low'] - recent_loss_df['entry_price'])
+                            / recent_loss_df['entry_price'] * 100.0
+                        )
+                        adaptive_sl = round(recent_loss_df['real_mae_pct'].mean(), 2)
+                        current_config["DYNAMIC_MAE_SL"] = adaptive_sl
+                        report_lines.append(f"💡 조치: 최근 20개 패배 종목의 실제 MAE 평균({adaptive_sl}%)으로 손절선을 자율 세팅했습니다.")
                     else:
-                        raw_new_sl = -3.5 # 패배 종목이 아예 없을 경우의 Fail-safe
-                    
-                    # 3. 지나치게 파격적인 수치가 들어오지 못하도록 최소한의 안전 바운딩
-                    new_sl = round(max(-10.0, min(-2.0, raw_new_sl)), 1) 
-                    new_tp = round(max(3.0, min(20.0, raw_new_tp)), 1)   
-                else:
-                    new_sl, new_tp = -3.5, 10.0 # 데이터가 아예 없을 경우의 Fail-safe
-                
-                current_config["DYNAMIC_MAE_SL"] = new_sl
-                current_config["DYNAMIC_MFE_TP"] = new_tp
-                
-                report_lines.append(f"🚨 <b>[노화 발생 및 엣지 자율 튜닝]</b> 최근 20개 종목의 장중 실전 데이터를 역추적했습니다.")
-                report_lines.append(f" ↳ 시스템 익절선(TP): <b>MFE 상위 25% 타점인 {new_tp:.1f}%</b>로 세팅 완료.")
-                report_lines.append(f" ↳ 시스템 손절선(SL): <b>패배 종목 평균 MAE의 80%인 {new_sl:.1f}%</b>로 세팅 완료.")
-                # 👆👆 [진화 및 덮어쓰기 완료] 👆👆
+                        report_lines.append("💡 조치: 최근 패배 표본이 부족하여 기존 손절선을 유지합니다.")
+                except Exception as e:
+                    report_lines.append(f"⚠️ MAE 역추적 계산 에러: {e}")
             else:
                 report_lines.append("✅ <b>[알파 엣지 유지 중]</b> 현재 파라미터가 시장에서 여전히 강력하게 작동 중입니다.")
         else:
@@ -626,21 +691,12 @@ def run_autonomous_analysis():
             report_lines.append(f"▪️ [{tag_key} 타점]: 현재 커트라인 {curr_val*100:.0f}% (표본 데이터 수집 중)")
 
     # ---------------------------------------------------------
-    # ⚙️ 엔진 9.5: [오버드라이브 허들 자율 튜닝부]
-    # ---------------------------------------------------------
-    od_fails = df[(df['exit_reason'].str.contains('오버드라이브 실패', na=False)) | (df['exit_reason'].str.contains('방어 손절', na=False))]
-    if len(od_fails) >= 5: # 실패가 5건 이상 누적 시
-        old_energy = current_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
-        new_energy = min(50.0, old_energy * 1.5) # 1.5배 상향하되 한도(50.0) 설정
-        
-        if old_energy != new_energy:
-            current_config["OVERDRIVE_ENERGY_HURDLE"] = round(new_energy, 1)
-            report_lines.append(f"\n⚙️ <b>[오버드라이브 튜닝]</b> 추세 추종 실패 누적 감지 ➔ 오버드라이브 가동 요구 에너지(v_energy) 허들을 {old_energy:.1f}에서 {new_energy:.1f}으로 1.5배 상향 (깐깐하게 적용)")
-
-    # ---------------------------------------------------------
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
     # ---------------------------------------------------------
     report_lines.append("\n💀 <b>[V60.0 진화론 도태 심판 및 국고 환수]</b>")
+    anti_patterns = current_config.get("ANTI_PATTERNS", [])
+    if not isinstance(anti_patterns, list):
+        anti_patterns = []
     
     sn_all_closed = df[(df['sig_type'].str.contains('SUPERNOVA_초입', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
     
@@ -649,6 +705,8 @@ def run_autonomous_analysis():
         if multi_key not in current_config: continue
         
         market_templates = current_config[multi_key]
+        archive_root = current_config.setdefault("ARCHIVED_TEMPLATES", {})
+        market_archive = archive_root.setdefault(mkt, {})
         treasury_key = f"CENTRAL_TREASURY_{mkt}"
         current_treasury = current_config.get(treasury_key, 0)
         culled_list = []
@@ -663,7 +721,29 @@ def run_autonomous_analysis():
                 
                 # 🚨 [사형 선고 및 자금 회수]
                 if t_wr < 0.35 or t_pf < 1.0:
-                    del market_templates[template_name]
+                    # 도태 유전자는 삭제하지 않고 냉동 보관소로 이동
+                    archived_payload = market_templates.pop(template_name)
+                    market_archive[template_name] = {
+                        "template_data": archived_payload,
+                        "archived_at": datetime.now().strftime('%Y-%m-%d'),
+                        "market": mkt,
+                        "wr": round(t_wr, 4),
+                        "pf": round(t_pf, 4),
+                        "sample_size": int(len(t_trades))
+                    }
+
+                    # 안티 패턴 면역 체계: 도태(승률 35% 미만) 템플릿 DNA 축적
+                    if t_wr < 0.35 and isinstance(archived_payload, dict):
+                        anti_patterns.append({
+                            "source": "CULLED_TEMPLATE",
+                            "template": template_name,
+                            "market": mkt,
+                            "cpv": float(archived_payload.get("cpv", 0.0)),
+                            "tb": float(archived_payload.get("tb", 0.0)),
+                            "bbe": float(archived_payload.get("bbe", 0.0)),
+                            "rs": float(archived_payload.get("rs", 0.0)),
+                            "recorded_at": datetime.now().strftime('%Y-%m-%d')
+                        })
                     
                     # 💡 [신규 추가] 해당 로직의 최종 잔고 역산 및 국고 반환
                     total_pnl = (t_trades['sim_kelly_invest'] * t_trades['final_ret'] / 100).sum()
@@ -675,6 +755,7 @@ def run_autonomous_analysis():
                     culled_list.append(f"{template_name} (회수금: {final_balance:,.0f}원)")
         
         current_config[multi_key] = market_templates
+        current_config["ARCHIVED_TEMPLATES"] = archive_root
         current_config[treasury_key] = current_treasury # 업데이트된 국고 저장
         
         if culled_list:
@@ -683,49 +764,29 @@ def run_autonomous_analysis():
                 report_lines.append(f"  ❌ {c_name}")
             report_lines.append(f"💰 {mkt} 국고 총액: {current_treasury:,.0f}원")
 
-    # ---------------------------------------------------------
-    # 👑 엔진 11.5: [V104.5 마르코프 체인 기반 다음 순환매 섹터 예측 및 저장]
-    # ---------------------------------------------------------
-    report_lines.append("\n🔮 <b>[V104.5 마르코프 체인 기반 순환매 예측 및 저장]</b>")
-    
+    # 최근 1개월 치명적 참사주(-10% 이하) 평균 DNA를 안티 패턴에 축적
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        # 최근 60일치 포착 데이터 로드
-        rot_df = pd.read_sql("SELECT entry_date, sector FROM forward_trades WHERE entry_date >= date('now', '-60 days') ORDER BY entry_date ASC", conn)
-        conn.close()
-
-        if not rot_df.empty:
-            # 일자별 1위 대장 섹터 산출
-            daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
-            
-            transitions = {}
-            current_sec = None
-            
-            # 마르코프 체인 연산 (A ➔ B 자금 이동 궤적 추적)
-            for date, sec in daily_dom.items():
-                if current_sec is not None and current_sec != sec:
-                    t_key = f"{current_sec}➔{sec}"
-                    transitions[t_key] = transitions.get(t_key, 0) + 1
-                current_sec = sec
-                
-            if transitions:
-                # 가장 빈번하게 발생한 이동 경로(1위) 추출
-                top_transition = max(transitions.items(), key=lambda x: x[1])
-                top_path = top_transition[0] # 예: "헬스케어➔반도체"
-                predicted_sector = top_path.split('➔')[1]
-                
-                # 👇👇 [핵심 누락 복구] 예측된 도착지 섹터를 관제탑 JSON에 실제 저장 👇👇
-                current_config["PREDICTED_NEXT_SECTOR"] = predicted_sector
-                # 👆👆 [저장 완료] 👆👆
-                
-                report_lines.append(f"▪️ <b>최빈 자금 이동 궤적:</b> {top_path} ({top_transition[1]}회 관측)")
-                report_lines.append(f"🎯 <b>조치:</b> 다음 주도 섹터를 <b>'{predicted_sector}'</b>(으)로 예측하여 관제탑(JSON)에 각인 완료.")
-            else:
-                report_lines.append("▪️ 뚜렷한 자금 이동 궤적이 없어 예측을 보류합니다.")
-        else:
-            report_lines.append("▪️ 순환매 추적을 위한 데이터가 부족합니다.")
+        one_month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        fatal_df = df[
+            (df['status'].str.contains('CLOSED', na=False)) &
+            (df['entry_date'] >= one_month_ago) &
+            (df['final_ret'] <= -10.0)
+        ] if all(col in df.columns for col in ['status', 'entry_date', 'final_ret']) else pd.DataFrame()
+        if not fatal_df.empty:
+            anti_patterns.append({
+                "source": "FATAL_LOSERS_30D",
+                "cpv": round(float(fatal_df['dyn_cpv'].mean()), 4) if 'dyn_cpv' in fatal_df.columns else 0.0,
+                "tb": round(float(fatal_df['dyn_tb'].mean()), 4) if 'dyn_tb' in fatal_df.columns else 0.0,
+                "bbe": round(float(fatal_df['v_energy'].mean()), 4) if 'v_energy' in fatal_df.columns else 0.0,
+                "rs": round(float(fatal_df['dyn_rs'].mean()), 4) if 'dyn_rs' in fatal_df.columns else 0.0,
+                "sample_size": int(len(fatal_df)),
+                "recorded_at": datetime.now().strftime('%Y-%m-%d')
+            })
     except Exception as e:
-        report_lines.append(f"▪️ 순환매 예측 에러: {e}")
+        report_lines.append(f"▪️ 안티 패턴(참사주) 축적 에러: {e}")
+
+    # 최신 패턴 위주로 중복/폭주 방지
+    current_config["ANTI_PATTERNS"] = anti_patterns[-200:]
 
     # ---------------------------------------------------------
     # 👑 엔진 12: [V105.0 순환매 예측 로직 자율 검증 및 가중치 부여]
@@ -760,6 +821,50 @@ def run_autonomous_analysis():
         report_lines.append(" ▪️ 표본 부족으로 순환매 자율 검증 스킵")
 
     # ---------------------------------------------------------
+    # 🔮 엔진 12.5: transitions 1위 기반 다음 섹터 예측 저장
+    # ---------------------------------------------------------
+    report_lines.append("\n🔮 <b>[V105.1 transitions 기반 다음 섹터 예측 저장]</b>")
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+        flow_df = pd.read_sql("""
+            SELECT entry_date, sector
+            FROM forward_trades
+            WHERE entry_date >= ?
+            ORDER BY entry_date ASC
+        """, conn, params=(sixty_days_ago,))
+        conn.close()
+
+        if not flow_df.empty:
+            daily_dom = flow_df.groupby('entry_date')['sector'].agg(
+                lambda x: x.mode().iloc[0] if not x.mode().empty else None
+            ).dropna()
+
+            transitions = {}
+            prev_sector = None
+            for sec in daily_dom.tolist():
+                if prev_sector is not None and prev_sector != sec:
+                    key = (prev_sector, sec)
+                    transitions[key] = transitions.get(key, 0) + 1
+                prev_sector = sec
+
+            if transitions:
+                top_transition = max(transitions.items(), key=lambda kv: kv[1])[0]
+                predicted_next_sector = top_transition[1]
+                current_config["PREDICTED_NEXT_SECTOR"] = predicted_next_sector
+                report_lines.append(
+                    f"▪️ transitions 1위: {top_transition[0]} ➔ {top_transition[1]} | "
+                    f"다음 예측 섹터 저장: <b>{predicted_next_sector}</b>"
+                )
+            else:
+                report_lines.append("▪️ 유의미한 섹터 전이 패턴이 없어 기존 예측값을 유지합니다.")
+        else:
+            report_lines.append("▪️ 순환매 예측 저장용 표본 데이터가 부족합니다.")
+    except Exception as e:
+        report_lines.append(f"⚠️ transitions 예측 저장 에러: {e}")
+
+    # ---------------------------------------------------------
     # 👑 엔진 13: [V106.0 주차별 로직 일관성 추적 및 시계열 DNA 부검]
     # ---------------------------------------------------------
     report_lines.append("\n⏳ <b>[V106.0 주차별 일관성 추적 및 시계열 DNA 부검]</b>")
@@ -769,12 +874,7 @@ def run_autonomous_analysis():
         # 4주치(30일) 청산 데이터를 DB에서 독립적으로 무조건 로드합니다.
         conn = sqlite3.connect(DB_PATH, timeout=60)
         thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        
-        # 👇👇 [치명적 버그 픽스] 장부 오염 방지: R&D 가상 데이터가 S급 챔피언으로 둔갑해 국고를 축내는 현상 원천 차단 👇👇
-        query = f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type NOT LIKE '%[R&D_%' AND exit_date >= '{thirty_days_ago}'"
-        df_closed_30d = pd.read_sql(query, conn)
-        # 👆👆 [픽스 완료] 👆👆
-        
+        df_closed_30d = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND exit_date >= '{thirty_days_ago}'", conn)
         conn.close()
 
         import re
@@ -839,119 +939,79 @@ def run_autonomous_analysis():
                     "last_updated": datetime.now().strftime('%Y-%m-%d')
                 }
                 report_lines.append("✅ <b>조치:</b> 장기 우상향 DNA를 시스템의 황금 타점(MFE 템플릿)으로 강제 동기화 완료.")
-
-                # 👇👇 [핵심 복구] S급 로직 자본 스노우볼링 (국고 1,000만 원 포상금 지급) 👇👇
-                bonus_amount = 10000000 # 1,000만 원 특별 투입
-                for top_logic in consistent_good:
-                    # 1. 해당 챔피언 로직이 소속된 국가(KR or US) 파악
-                    mkt_prefix = best_df[best_df['group'] == top_logic]['market'].iloc[0]
-                    t_key = f"CENTRAL_TREASURY_{mkt_prefix}"
-                    
-                    # 2. 해당 국가의 국고에 포상금을 줄 돈이 남아있는지 팩트 체크
-                    if current_config.get(t_key, 0) >= bonus_amount:
-                        # 3. 국고에서 1,000만 원 차감 (마이너스)
-                        current_config[t_key] -= bonus_amount
-                        
-                        # 4. 해당 로직의 개별 복리 시드 계좌에 1,000만 원 입금 (플러스)
-                        bonus_key = f"BONUS_SEED_{top_logic}"
-                        current_config[bonus_key] = current_config.get(bonus_key, 0) + bonus_amount
-                        
-                        report_lines.append(f"💰 <b>[자본 스노우볼링]</b> 4주 연속 우상향 증명! S급 로직 '{top_logic}' 장부에 {mkt_prefix} 국고 보너스 1,000만 원 투입 완료.")
-                # 👆👆 [복구 완료] 👆👆
         else:
             report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
     except Exception as e:
         report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
 
-
-    # 👇👇 [신규 추가] 엔진 14: R&D 샌드박스 역추적 및 CSV 머신러닝 시너지 연동 👇👇
+    # ---------------------------------------------------------
+    # 👑 엔진 14: 인큐베이터 진화 심판 및 정규직 승격
+    # ---------------------------------------------------------
+    report_lines.append("\n🧪 <b>[V110.0 인큐베이터 진화 심판]</b>")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        rnd_df = pd.read_sql("SELECT * FROM forward_trades WHERE sig_type = '[R&D_평균볼륨군]' AND status LIKE 'CLOSED%'", conn)
-        conn.close()
-        
-        if len(rnd_df) >= 5:
-            # Winner: MFE 10% 이상 & 최종 수익 마감 / Loser: MAE 손절(수익률 0 이하)
-            rnd_winners = rnd_df[(rnd_df['mfe'] >= 10.0) & (rnd_df['final_ret'] > 0)]
-            rnd_losers = rnd_df[rnd_df['final_ret'] <= 0]
-            
-            if len(rnd_winners) > 0 and len(rnd_losers) > 0:
-                w_cpv, l_cpv = rnd_winners['dyn_cpv'].mean(), rnd_losers['dyn_cpv'].mean()
-                w_tb, l_tb = rnd_winners['dyn_tb'].mean(), rnd_losers['dyn_tb'].mean()
-                w_bbe, l_bbe = rnd_winners['v_energy'].mean(), rnd_losers['v_energy'].mean()
-                
-                # 텔레그램 리포트 최하단에 분리 출력
-                rnd_report = "\n🧪 <b>[R&D 실험실 역추적 결과: 40~70점대 평균볼륨군]</b>\n"
-                rnd_report += f"▪️ 표본수: 승리(Winner) {len(rnd_winners)}개 vs 패배(Loser) {len(rnd_losers)}개\n"
-                rnd_report += f"💡 <b>[돌연변이 공통점 DNA 차집합]</b>\n"
-                
-                if w_bbe > l_bbe: rnd_report += f" ↳ 승리 종목은 패배 종목보다 '응축 에너지(BBE)'가 평균 {w_bbe/l_bbe:.1f}배 높음.\n"
-                if w_tb > l_tb: rnd_report += f" ↳ 승리 종목은 패배 종목보다 '진짜양봉(TB)'이 평균 {w_tb/l_tb:.1f}배 강력함.\n"
-                rnd_report += f" ↳ (평균 수치 대조) Winner [CPV: {w_cpv:.2f} | BBE: {w_bbe:.1f}] vs Loser [CPV: {l_cpv:.2f} | BBE: {l_bbe:.1f}]\n"
-                
-                # 👑 CSV 파이프라인 연동 (초신성과 동일한 양식으로 마이닝 데이터 적재)
-                csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
-                csv_data = []
-                for _, r in rnd_winners.iterrows():
-                    csv_data.append({
-                        '종목코드': str(r['code']).zfill(6) if r['market'] == 'KR' else str(r['code']),
-                        '시장': r['market'],
-                        '랭크': 'R&D_MUTANT',
-                        '[D_Day_당일] 평균_CPV': round(r['dyn_cpv'], 4),
-                        '[D_Day_당일] 평균_진짜양봉(TB)': round(r['dyn_tb'], 4),
-                        '[D_Day_당일] 평균_응축에너지(BBE)': round(r['v_energy'], 4),
-                        '[D_Day_당일] 진모멘텀(TML)': 0.0, # R&D에는 없으므로 0 대체
-                        '[D_Day_당일] 평균_시장강도(RS)': round(r['v_rs'], 4) if pd.notna(r['v_rs']) else 0.0
-                    })
-                
-                # 👇👇 [핵심 진화] 헤더 누락 방지 및 파일 생성 로직 교정 👇👇
-                if csv_data:
-                    df_csv = pd.DataFrame(csv_data)
-                    # 파일이 없을 때만 헤더를 True로 써서 컬럼명이 꼬이는 것을 완벽히 방지
-                    write_header = not os.path.exists(csv_path)
-                    df_csv.to_csv(csv_path, mode='a', header=write_header, index=False, encoding='utf-8-sig')
-                    rnd_report += f"\n💾 <b>[마이닝 연동]</b> {len(csv_data)}개의 R&D 돌연변이 DNA가 K-Means 학습용 CSV에 추가 적재되었습니다."
-                # 👆👆 [수정 완료] 👆👆
-                
-                report_lines.append(rnd_report)
-    except Exception as e:
-        report_lines.append(f"\n⚠️ R&D 실험실 에러: {e}")
-    # 👆👆 [신규 추가 끝] 👆👆
+        incubator_templates = current_config.get("INCUBATOR_TEMPLATES", {})
+        if isinstance(incubator_templates, dict) and incubator_templates:
+            baseline_df = df[
+                df['sig_type'].str.contains('STANDARD', na=False) &
+                df['status'].str.contains('CLOSED', na=False)
+            ] if all(col in df.columns for col in ['sig_type', 'status', 'final_ret']) else pd.DataFrame()
 
-        # 👇👇 [신규 추가] 엔진 16: STANDARD 오리지널 대박주 CSV 마이닝 파이프라인 👇👇
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        # ORIGINAL 진영의 청산된 종목만 로드
-        std_df = pd.read_sql("SELECT * FROM forward_trades WHERE sig_type LIKE '%[STANDARD_ORIGINAL]%' AND status LIKE 'CLOSED%'", conn)
-        conn.close()
-        
-        # 조건: 실전에서 MFE 10% 이상 찍어본 진짜 대박주만 핀셋 추출
-        std_winners = std_df[(std_df['mfe'] >= 10.0) & (std_df['final_ret'] > 0)]
-        
-        if len(std_winners) > 0:
-            csv_path_std = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Standard_Flow_Master.csv')
-            csv_data_std = []
-            
-            for _, r in std_winners.iterrows():
-                csv_data_std.append({
-                    '종목코드': str(r['code']).zfill(6) if r['market'] == 'KR' else str(r['code']),
-                    '시장': r['market'],
-                    '랭크': 'STANDARD_WINNER',
-                    '[D_Day_당일] 평균_CPV': round(r['dyn_cpv'], 4),
-                    '[D_Day_당일] 평균_진짜양봉(TB)': round(r['dyn_tb'], 4),
-                    '[D_Day_당일] 평균_응축에너지(BBE)': round(r['v_energy'], 4),
-                    '[D_Day_당일] 진모멘텀(TML)': 0.0,
-                    '[D_Day_당일] 평균_시장강도(RS)': round(r['v_rs'], 4) if pd.notna(r['v_rs']) else 0.0
-                })
-            
-            df_csv_std = pd.DataFrame(csv_data_std)
-            write_header = not os.path.exists(csv_path_std)
-            df_csv_std.to_csv(csv_path_std, mode='a', header=write_header, index=False, encoding='utf-8-sig')
-            
-            report_lines.append(f"💾 <b>[오리지널 마이닝 연동]</b> {len(csv_data_std)}개의 STANDARD 대박주 DNA가 듀얼 트랙 진화를 위해 ML 파이프라인에 전송되었습니다.")
+            if not baseline_df.empty:
+                b_wr = len(baseline_df[baseline_df['final_ret'] > 0]) / len(baseline_df)
+                b_pf = baseline_df[baseline_df['final_ret'] > 0]['final_ret'].sum() / (abs(baseline_df[baseline_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+            else:
+                b_wr, b_pf = 0.0, 0.0
+
+            promoted_name = None
+            remove_keys = []
+            for m_name, m_tpl in incubator_templates.items():
+                tag = f"[INCUBATOR_{m_name}]"
+                m_df = df[df['sig_type'].str.contains(tag, regex=False, na=False)] if 'sig_type' in df.columns else pd.DataFrame()
+                if m_df.empty:
+                    remove_keys.append(m_name)
+                    continue
+
+                oldest = pd.to_datetime(m_df['entry_date']).min() if 'entry_date' in m_df.columns else pd.Timestamp.now()
+                age_days = (datetime.now() - oldest.to_pydatetime()).days
+                m_closed = m_df[m_df['status'].str.contains('CLOSED', na=False)] if 'status' in m_df.columns else pd.DataFrame()
+                if age_days < 30 or m_closed.empty:
+                    report_lines.append(f"▪️ {m_name}: 생존 {age_days}일차 (심판 대기)")
+                    continue
+
+                m_wr = len(m_closed[m_closed['final_ret'] > 0]) / len(m_closed)
+                m_pf = m_closed[m_closed['final_ret'] > 0]['final_ret'].sum() / (abs(m_closed[m_closed['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+                report_lines.append(f"▪️ {m_name}: 승률 {m_wr*100:.1f}% | PF {m_pf:.2f}")
+
+                if m_pf >= 1.5 and m_wr >= 0.55 and m_pf > b_pf and m_wr > b_wr:
+                    promoted_name = m_name
+                else:
+                    remove_keys.append(m_name)
+
+            if promoted_name is not None:
+                promoted_tpl = incubator_templates.get(promoted_name, {})
+                current_config["DNA_ALPHA_NEW_EVOLUTION_V1"] = {
+                    "cpv": float(promoted_tpl.get("cpv", 0.0)),
+                    "tb": float(promoted_tpl.get("tb", 0.0)),
+                    "bbe": float(promoted_tpl.get("bbe", 0.0)),
+                    "rs": float(promoted_tpl.get("rs", 0.0)),
+                    "vcp": 1.0,
+                    "vol": 1.0,
+                    "ma": 0.0,
+                    "shape": [0.5] * 20
+                }
+                current_config["NEW_EVOLUTION_NAME"] = "NEW_EVOLUTION_V1"
+                current_config["NEW_EVOLUTION_ACTIVE"] = True
+                remove_keys.append(promoted_name)
+                report_lines.append(f"🏆 <b>승격:</b> {promoted_name} ➔ [NEW_EVOLUTION_V1] 정규직 배치 완료")
+
+            for k in set(remove_keys):
+                incubator_templates.pop(k, None)
+            current_config["INCUBATOR_TEMPLATES"] = incubator_templates
+            report_lines.append(f"🗑️ 인큐베이터 정리 완료 (잔존 {len(incubator_templates)}개)")
+        else:
+            report_lines.append("▪️ 심판할 인큐베이터 템플릿이 없습니다.")
     except Exception as e:
-        report_lines.append(f"\n⚠️ STANDARD 마이닝 파이프라인 에러: {e}")
-    # 👆👆 [신규 추가 끝] 👆👆
+        report_lines.append(f"⚠️ 인큐베이터 진화 심판 에러: {e}")
 
     # ==========================================
     # 🚀 최종 저장 및 발송 (중복 제거 완료)
@@ -1086,71 +1146,30 @@ def send_weekly_flow_master_report():
 # ==========================================
 def system_main_loop():
     tz = pytz.timezone('Asia/Seoul')
-    print(f"🕒 [완전 자율 오토파일럿 V12.0] 영구 가동 대기 중... (DB 팩트 기반 14일 누적 검증 모드)")
+    print("🕒 [완전 자율 오토파일럿 V12.0] 대기 중... (기준: 장부 최초 거래일 + 14일)")
     
     while True:
         try:
             now = datetime.now(tz)
-            
-            # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
-            if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
-                
-                # 👇👇 [핵심 진화] 재부팅 리셋 방어: DB 최초 거래일 기준으로 14일 경과 여부 엄격 판독 👇👇
-                is_ready = False
-                first_trade_date = None
-                try:
-                    conn = sqlite3.connect(DB_PATH, timeout=60)
-                    cursor = conn.cursor()
-                    # forward_trades 테이블에서 실전 거래가 시작된 가장 오래된 날짜(MIN) 조회
-                    cursor.execute("SELECT MIN(entry_date) FROM forward_trades")
-                    first_trade_date = cursor.fetchone()[0]
-                    conn.close()
-                    
-                    if first_trade_date:
-                        first_dt = datetime.strptime(first_trade_date, '%Y-%m-%d').replace(tzinfo=tz)
-                        if (now - first_dt).days >= LOOKBACK_DAYS:
-                            is_ready = True
-                except Exception as e:
-                    pass # 테이블이 없거나 에러 발생 시 False 유지 (안전 차단)
-                    
-                if is_ready:
+            first_entry_date = get_first_entry_date()
+            if first_entry_date is None:
+                time.sleep(30)
+                continue
+
+            if (now.date() - first_entry_date).days >= WARMUP_DAYS:
+                # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
+                if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
                     print("🚀 주말 관제탑 자율 튜닝(뇌수술)을 시작합니다...")
                     run_autonomous_analysis()
-                else:
-                    first_str = first_trade_date if first_trade_date else "데이터 없음"
-                    print(f"⏳ [데이터 누적 대기 중] 최초 거래일({first_str})로부터 아직 {LOOKBACK_DAYS}일이 지나지 않아 튜닝을 스킵합니다.")
-                # 👆👆 [진화 완료] 👆👆
-                
-                time.sleep(60) 
-                
-            # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
-            elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
-                # 👇👇 리포트 발송도 동일하게 DB 검증 통과 시에만 발송 👇👇
-                is_ready = False
-                try:
-                    conn = sqlite3.connect(DB_PATH, timeout=60)
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT MIN(entry_date) FROM forward_trades")
-                    first_trade_date = cursor.fetchone()[0]
-                    conn.close()
+                    time.sleep(60) 
                     
-                    if first_trade_date:
-                        first_dt = datetime.strptime(first_trade_date, '%Y-%m-%d').replace(tzinfo=tz)
-                        if (now - first_dt).days >= LOOKBACK_DAYS:
-                            is_ready = True
-                except: pass
-                
-                if is_ready:
+                # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
                     print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
                     send_weekly_flow_master_report()
-                else:
-                    print("⏳ [데이터 누적 대기 중] 총결산 리포트 발송 스킵.")
-                # 👆👆 [진화 완료] 👆👆
-                
-                time.sleep(60)
-                
+                    time.sleep(60)
+                    
             time.sleep(30)
-            
         except Exception as e:
             err_msg = f"🚨 <b>[오토파일럿 뇌수술 에러]</b> 주말 자율 학습 중 에러 발생:\n{e}"
             print(err_msg)
