@@ -18,8 +18,19 @@ def load_or_create_config():
         return json.load(f)
 
 def save_config(config_data):
-    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-        json.dump(config_data, f, indent=4, ensure_ascii=False)
+    """[V110.0] JSON 원자적 저장(Atomic Save) 엔진: 에러 시 데이터 증발 원천 차단"""
+    temp_path = f"{CONFIG_PATH}.temp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno()) # OS 레벨에서 디스크 쓰기 강제 완료 (안전장치)
+        # 100% 기록이 완료된 경우에만 원본 파일을 찰나의 순간에 덮어쓰기
+        os.replace(temp_path, CONFIG_PATH) 
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
 
 def run_cluster_mining():
     print("🚀 [V65.0 초신성 CSV 데이터 마이닝 및 클러스터링 가동]")
