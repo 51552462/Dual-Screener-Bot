@@ -402,12 +402,15 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
-    # 👇👇 [핵심 추가] R&D 샌드박스 역추적 엔진: 실전 진입과 별개로 무조건 격리 장부 생성 👇👇
+   # 👇👇 [핵심 복구] R&D 샌드박스 역추적 엔진: 실전 진입과 별개로 무조건 격리 장부 생성 👇👇
+    # 검색기에서 넘어온 종목이 R&D 본인이 아니며, 기각된 종목이 아닐 경우에만 장부 복제
     if trade_source != "R&D" and "기각" not in sig_type:
+        
+        # 💡 [요청 사항 완벽 반영] 점수대별 R&D 태그 세분화 (40~70점대: 평균볼륨군)
         if score >= 80:
             rnd_sig = "[R&D_엘리트군]"
         elif score >= 40:
-            rnd_sig = "[R&D_평균볼륨군]"
+            rnd_sig = "[R&D_평균볼륨군]" # 👈 40~70점대 격리 이름표
         else:
             rnd_sig = "[R&D_바닥역발상군]"
             
@@ -422,9 +425,9 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
             round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
             round(entry_atr, 4), 
-            0, 0 # 💡 [R&D 완전 격리] 예수금 연산 및 실전 투입 금액(invest_amount, shares)을 0으로 강제 세팅
+            0, 0 # 💡 [R&D 완전 격리 핵심] 예수금 연산 및 실전 투입 금액(invest_amount, shares)을 무조건 0으로 강제 세팅하여 복리 시드 영향 원천 차단
         ))
-    # 👆👆 [R&D 추가 로직 끝] 👆👆
+    # 👆👆 [R&D 샌드박스 누락 복구 완료] 👆👆
 
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     cursor.execute('''
