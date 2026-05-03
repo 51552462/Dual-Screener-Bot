@@ -40,8 +40,8 @@ def load_or_create_config():
             "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
             "ACCOUNT_SIZE": 20000000,         # 💡 각 로직별 기본 시드 2,000만 원
             "RISK_PCT": 0.02,                 # 💡 고정 리스크 2%
-            "CENTRAL_TREASURY_KR": 300000000, # 🏦 [추가] 한국장 초기 국고 3억 원
-            "CENTRAL_TREASURY_US": 300000000  # 🏦 [추가] 미국장 초기 국고 3억 원
+            "CENTRAL_TREASURY_KR": 600000000, # 🏦 [수정] 한국장 초기 국고 6억 원
+            "CENTRAL_TREASURY_US": 600000000  # 🏦 [수정] 미국장 초기 국고 6억 원
         }
         with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
         return default_config
@@ -50,19 +50,19 @@ def load_or_create_config():
     with open(CONFIG_PATH, 'r') as f: 
         config = json.load(f)
         
-    # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 3억씩 채워줍니다.
+    # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 6억씩 채워줍니다.
     need_save = False
     if "CENTRAL_TREASURY_KR" not in config:
-        config["CENTRAL_TREASURY_KR"] = 300000000  # 3억 원
+        config["CENTRAL_TREASURY_KR"] = 600000000  # 6억 원
         need_save = True
     if "CENTRAL_TREASURY_US" not in config:
-        config["CENTRAL_TREASURY_US"] = 300000000  # 3억 원
+        config["CENTRAL_TREASURY_US"] = 600000000  # 6억 원
         need_save = True
         
     # 변경 사항이 있으면 JSON 파일에 덮어쓰기
     if need_save:
         with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=4)
-        print("🏦 [국고 세팅 완료] 시스템에 한국 3억, 미국 3억의 초기 자본이 성공적으로 세팅되었습니다.")
+        print("🏦 [국고 세팅 완료] 시스템에 한국 6억, 미국 6억의 초기 자본이 성공적으로 세팅되었습니다.")
         
     return config
 
