@@ -19,7 +19,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 def save_data_safely(df, table_name, conn):
     """
     스나이퍼 봇이 빈 테이블을 읽고 뻗는 현상을 원천 차단합니다.
-    임시 테이블에 먼저 데이터를 받은 뒤, 0.001초 만에 트랜잭션으로 원자적 덮어쓰기를 실행합니다.
+    임시 테이블에 먼저 데이터를 받은 뒤, 트랜잭션으로 원자적 덮어쓰기를 실행합니다.
     """
     if df.empty: return
 
@@ -32,10 +32,11 @@ def save_data_safely(df, table_name, conn):
         df.to_sql(temp_table_name, conn, if_exists='replace', index=False)
         
         # 3. 찰나의 순간(트랜잭션)에 본진 데이터를 최신화 (데이터 증발 시간 0초)
-        conn.execute("BEGIN TRANSACTION;")
+        # 👇👇 [치명적 버그 픽스] Python sqlite3 암시적 트랜잭션 충돌 방지를 위해 BEGIN TRANSACTION 강제 호출 삭제 👇👇
         conn.execute(f'INSERT OR REPLACE INTO "{table_name}" SELECT * FROM "{temp_table_name}"')
         conn.execute(f'DROP TABLE "{temp_table_name}"')
         conn.commit()
+        # 👆👆 [픽스 완료] 👆👆
     except Exception as e:
         conn.rollback() # 에러 시 즉각 원상복구
         print(f"⚠️ [DB 무중단 덮어쓰기 실패] {table_name}: {e}")
