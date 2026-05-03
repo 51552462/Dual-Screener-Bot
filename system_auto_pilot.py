@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # ==========================================
 # 💡 [환경 설정]
 # ==========================================
-TELEGRAM_TOKEN_MAIN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
+TELEGRAM_TOKEN_MAIN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
 TELEGRAM_CHAT_ID    = "6838834566"
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
