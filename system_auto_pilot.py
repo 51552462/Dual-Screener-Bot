@@ -663,6 +663,50 @@ def run_autonomous_analysis():
             report_lines.append(f"💰 {mkt} 국고 총액: {current_treasury:,.0f}원")
 
     # ---------------------------------------------------------
+    # 👑 엔진 11.5: [V104.5 마르코프 체인 기반 다음 순환매 섹터 예측 및 저장]
+    # ---------------------------------------------------------
+    report_lines.append("\n🔮 <b>[V104.5 마르코프 체인 기반 순환매 예측 및 저장]</b>")
+    
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        # 최근 60일치 포착 데이터 로드
+        rot_df = pd.read_sql("SELECT entry_date, sector FROM forward_trades WHERE entry_date >= date('now', '-60 days') ORDER BY entry_date ASC", conn)
+        conn.close()
+
+        if not rot_df.empty:
+            # 일자별 1위 대장 섹터 산출
+            daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
+            
+            transitions = {}
+            current_sec = None
+            
+            # 마르코프 체인 연산 (A ➔ B 자금 이동 궤적 추적)
+            for date, sec in daily_dom.items():
+                if current_sec is not None and current_sec != sec:
+                    t_key = f"{current_sec}➔{sec}"
+                    transitions[t_key] = transitions.get(t_key, 0) + 1
+                current_sec = sec
+                
+            if transitions:
+                # 가장 빈번하게 발생한 이동 경로(1위) 추출
+                top_transition = max(transitions.items(), key=lambda x: x[1])
+                top_path = top_transition[0] # 예: "헬스케어➔반도체"
+                predicted_sector = top_path.split('➔')[1]
+                
+                # 👇👇 [핵심 누락 복구] 예측된 도착지 섹터를 관제탑 JSON에 실제 저장 👇👇
+                current_config["PREDICTED_NEXT_SECTOR"] = predicted_sector
+                # 👆👆 [저장 완료] 👆👆
+                
+                report_lines.append(f"▪️ <b>최빈 자금 이동 궤적:</b> {top_path} ({top_transition[1]}회 관측)")
+                report_lines.append(f"🎯 <b>조치:</b> 다음 주도 섹터를 <b>'{predicted_sector}'</b>(으)로 예측하여 관제탑(JSON)에 각인 완료.")
+            else:
+                report_lines.append("▪️ 뚜렷한 자금 이동 궤적이 없어 예측을 보류합니다.")
+        else:
+            report_lines.append("▪️ 순환매 추적을 위한 데이터가 부족합니다.")
+    except Exception as e:
+        report_lines.append(f"▪️ 순환매 예측 에러: {e}")
+
+    # ---------------------------------------------------------
     # 👑 엔진 12: [V105.0 순환매 예측 로직 자율 검증 및 가중치 부여]
     # ---------------------------------------------------------
     report_lines.append("\n🔄 <b>[V105.0 순환매 예측 로직 자율 검증]</b>")
