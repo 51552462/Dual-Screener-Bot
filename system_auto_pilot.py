@@ -457,18 +457,20 @@ def run_autonomous_analysis():
                         
                     report_lines.append(f"💡 <b>[노화 원인 분석]</b>: {cause}")
                     
-                # 👇👇 [핵심 진화] 꼼수 산수 삭제, 최근 20개 표본 '진짜 시장 데이터' 역추적 자율 튜닝 👇👇
+                # 👇👇 [핵심 진화] DB 크래시 방어: 장부상 데이터(min_low, entry_price)로 MAE 직접 산출 👇👇
                 recent_20 = decay_df.tail(20)
                 
                 if not recent_20.empty:
                     # 1. new_tp: 최근 20개 종목 MFE의 75백분위수 (상위 25% 타점)
-                    recent_mfe_series = ((recent_20['max_high'] - recent_20['entry_price']) / recent_20['entry_price'] * 100)
+                    # DB에 mfe_pct 컬럼이 없으므로 max_high와 entry_price로 직접 산출
+                    recent_mfe_series = ((recent_20['max_high'] - recent_20['entry_price']) / recent_20['entry_price']) * 100
                     raw_new_tp = np.percentile(recent_mfe_series.dropna(), 75) if len(recent_mfe_series) > 0 else 10.0
                     
                     # 2. new_sl: 최근 20개 중 '패배 종목'의 MAE 평균값 * 0.8
                     recent_losers = recent_20[recent_20['final_ret'] <= 0]
                     if not recent_losers.empty:
-                        loser_mae_avg = ((recent_losers['min_low'] - recent_losers['entry_price']) / recent_losers['entry_price'] * 100).mean()
+                        # 💡 [버그 픽스] KeyError 방지를 위해 min_low와 entry_price 수식으로 MAE 직접 도출
+                        loser_mae_avg = (((recent_losers['min_low'] - recent_losers['entry_price']) / recent_losers['entry_price']) * 100).mean()
                         raw_new_sl = loser_mae_avg * 0.8
                     else:
                         raw_new_sl = -3.5 # 패배 종목이 아예 없을 경우의 Fail-safe
