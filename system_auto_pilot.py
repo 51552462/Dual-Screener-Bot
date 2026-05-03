@@ -33,22 +33,40 @@ def send_telegram_report(message):
     try: requests.post(url, json=payload, timeout=10)
     except Exception as e: print(f"텔레그램 전송 실패: {e}")
 
+
+
+# 👇👇 [신규 추가] 원자적 저장 엔진 👇👇
+def save_config(config_data):
+    """[V110.0] JSON 원자적 저장(Atomic Save) 엔진: 에러 시 데이터 증발 원천 차단"""
+    temp_path = f"{CONFIG_PATH}.temp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+# 👆👆 [추가 완료] 👆👆
+
 def load_or_create_config():
     # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
     if not os.path.exists(CONFIG_PATH):
         default_config = {
             "ACTIVE_EXIT_MODE": "HYBRID",
             "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
-            "ACCOUNT_SIZE": 20000000,         # 💡 각 로직별 기본 시드 2,000만 원
-            "RISK_PCT": 0.02,                 # 💡 고정 리스크 2%
-            "CENTRAL_TREASURY_KR": 600000000, # 🏦 [수정] 한국장 초기 국고 6억 원
-            "CENTRAL_TREASURY_US": 600000000  # 🏦 [수정] 미국장 초기 국고 6억 원
+            "ACCOUNT_SIZE": 20000000,         
+            "RISK_PCT": 0.02,                 
+            "CENTRAL_TREASURY_KR": 600000000, 
+            "CENTRAL_TREASURY_US": 600000000  
         }
-        with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
+        save_config(default_config) # 💡 [버그 픽스] open('w') 대신 안전한 원자적 저장 호출
         return default_config
         
     # 2. 기존 파일이 있을 때 읽어오기
-    with open(CONFIG_PATH, 'r') as f: 
+    with open(CONFIG_PATH, 'r', encoding='utf-8') as f: 
         config = json.load(f)
         
     # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 6억씩 채워줍니다.
@@ -60,9 +78,9 @@ def load_or_create_config():
         config["CENTRAL_TREASURY_US"] = 600000000  # 6억 원
         need_save = True
         
-    # 변경 사항이 있으면 JSON 파일에 덮어쓰기
+    # 변경 사항이 있으면 JSON 파일에 원자적 덮어쓰기
     if need_save:
-        with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=4)
+        save_config(config) # 💡 [버그 픽스] open('w') 대신 안전한 원자적 저장 호출
         print("🏦 [국고 세팅 완료] 시스템에 한국 6억, 미국 6억의 초기 자본이 성공적으로 세팅되었습니다.")
         
     return config
