@@ -761,18 +761,24 @@ def run_autonomous_analysis():
                 }
                 report_lines.append("✅ <b>조치:</b> 장기 우상향 DNA를 시스템의 황금 타점(MFE 템플릿)으로 강제 동기화 완료.")
 
-                # 👇👇 [수정] 바깥에 겉돌던 코드를 정확히 이 위치(best_df가 정의된 직후)로 옮기세요! 👇👇
+                # 👇👇 [핵심 복구] S급 로직 자본 스노우볼링 (국고 1,000만 원 포상금 지급) 👇👇
                 bonus_amount = 10000000 # 1,000만 원 특별 투입
                 for top_logic in consistent_good:
+                    # 1. 해당 챔피언 로직이 소속된 국가(KR or US) 파악
                     mkt_prefix = best_df[best_df['group'] == top_logic]['market'].iloc[0]
                     t_key = f"CENTRAL_TREASURY_{mkt_prefix}"
                     
+                    # 2. 해당 국가의 국고에 포상금을 줄 돈이 남아있는지 팩트 체크
                     if current_config.get(t_key, 0) >= bonus_amount:
+                        # 3. 국고에서 1,000만 원 차감 (마이너스)
                         current_config[t_key] -= bonus_amount
+                        
+                        # 4. 해당 로직의 개별 복리 시드 계좌에 1,000만 원 입금 (플러스)
                         bonus_key = f"BONUS_SEED_{top_logic}"
                         current_config[bonus_key] = current_config.get(bonus_key, 0) + bonus_amount
-                        report_lines.append(f"💰 <b>[자본 스노우볼링]</b> 4주 연속 우상향 증명! S급 로직 '{top_logic}' 장부에 국고 보너스 1,000만 원 특별 투입 완료.")
-                # 👆👆 [위치 이동 완료] 👆👆
+                        
+                        report_lines.append(f"💰 <b>[자본 스노우볼링]</b> 4주 연속 우상향 증명! S급 로직 '{top_logic}' 장부에 {mkt_prefix} 국고 보너스 1,000만 원 투입 완료.")
+                # 👆👆 [복구 완료] 👆👆
         else:
             report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
     except Exception as e:
