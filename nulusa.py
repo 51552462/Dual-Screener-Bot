@@ -405,11 +405,11 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     # 👑 [종목 맞춤형 동적 청산 전략 (관제탑 지시 기반)]
     # =========================================================================
     if cur_cpv >= 0.30:
-        cpv_stat = f"예쁜 꽉 찬 양봉 (CPV {cur_cpv:.2f})"
+        cpv_stat = f"📉 <b>[월가 설거지 패턴 경고]</b> 꽉 찬 예쁜 양봉(CPV {cur_cpv:.2f}). 개인을 유혹하는 가짜 반등일 확률이 높습니다. <b>진입 후 4일 내 ZLEMA 이탈 시 즉각 칼손절</b> 하십시오."
     elif cur_cpv <= 0.24:
-        cpv_stat = f"지저분한 꼬리 캔들 (CPV {cur_cpv:.2f})"
+        cpv_stat = f"📈 <b>[슈퍼 트렌드 숏스퀴즈 패턴]</b> 지저분한 꼬리 캔들(CPV {cur_cpv:.2f}). 세력의 악성 매물 소화 궤적입니다. <b>단기데드 전까지 약 3~4주(평균 16.58일) 끝까지 홀딩</b>하여 수익을 극대화 하십시오."
     else:
-        cpv_stat = f"표준적인 캔들 (CPV {cur_cpv:.2f})"
+        cpv_stat = f"📊 표준적인 캔들 (CPV {cur_cpv:.2f}). 시스템 기본 청산 룰을 따르십시오."
 
     # 👇 타점에 따른 동적 네임스페이스 분리 (S1, S2, S4)
     if hit_s1: ns_prefix = "US_NULRIM_S1"
@@ -431,9 +431,11 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
                   f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손절 차단하십시오.")
 
     tier_stat = ""
-
-    if (hit_s4 or hit_s2) and cur_rs <= -1000:
-        tier_stat = f"💡 [특급 로또 타점] 현재 완벽한 소외주(RS {cur_rs:.1f})입니다. 평소엔 승률이 낮아 패스해야 하지만..."
+    if total_score < 80.0:
+        if cur_rs > 500 and cur_cpv <= 0.3:
+            tier_stat = f"💎 <b>[특급 모멘텀 예외]</b> 총점은 낮으나 RS({cur_rs:.1f})가 압도적이고 꼬리가 길어 텐배거 가능성이 있습니다. 비중 10% 미만 소액 진입."
+        elif cur_rs <= -1000:
+            tier_stat = f"💡 <b>[완벽한 소외주 바닥 밈(Meme) 타점]</b> RS {cur_rs:.1f}의 극단적 소외주입니다. 로또성 돌발 펌핑을 노리고 비중 10% 미만 소액 진입."
 
     regime_msg = f"🚨 <b>[관제탑 자본통제]: 현재 국면 판단에 따라 진입 비중을 {regime_weight}배로 강제 제한합니다.</b>"
     exit_strategy = f"[{cpv_stat}]\n{action}\n\n{tier_stat}\n{regime_msg}"
@@ -545,10 +547,26 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         # 3. 1주당 손실 예상 금액 (리스크 폭)
         risk_per_share = cur_atr * opt_sl_atr
         
-        # 4. KNN 도플갱어 매칭 결과에 따른 비중 승수 조작
+        # 4. 비중 승수(Multiplier) 완벽 조작: VIX, 티어, 밈 예외, 도플갱어 팩트 결합
         final_weight = regime_weight
+        
+        # [팩트 1] VIX(공포지수) 기반 비중 조절 (최중요)
+        if cur_vix >= 30: final_weight *= 1.5
+        elif cur_vix >= 20: final_weight *= 1.2
+        
+        # [팩트 2] 1티어 뱃지 가중치 (80점 이상)
+        if total_score >= 80.0: final_weight *= 1.5
+        
+        # [팩트 3] 하위권(80점 미만) 밈/예외 주식 비중 강제 축소 (소액 로또화)
+        if total_score < 80.0:
+            if (cur_rs > 500 and cur_cpv <= 0.3) or (cur_rs <= -1000):
+                final_weight *= 0.1 # 특급 예외는 비중 10% 미만으로 극단적 축소
+            else:
+                final_weight *= 0.3 # 일반 하위권도 비중 30% 수준으로 강력 방어
+                
+        # [팩트 4] KNN 도플갱어 매칭 결과
         if "ALPHA" in match_result and match_similarity >= 80.0:
-            final_weight *= 1.5  # 대장주 패턴이면 비중 1.5배 확대
+            final_weight *= 1.5  # 대장주 패턴이면 비중 1.5배 추가 확대
         elif "TRAP" in match_result and match_similarity >= 80.0:
             final_weight *= 0.0  # 참사 패턴이면 매수 금지 (0배)
             
@@ -570,14 +588,23 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         pass
     # =========================================================================
 
-    # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직]
+    # 💡 [V9.0 VIX(공포지수) 기반 비중 조절 로직 텍스트]
     vix_strategy = ""
     if cur_vix >= 30:
-        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 43%, 평균수익 40.6% 터지는 초거대 대박 구간! 진입 비중 1.5배 상향 및 적극 매수."
+        vix_strategy = f"🌋 [극단적 공포장 | VIX {cur_vix:.1f}] 승률 40~43%, 평균수익 20~22%, 손익비 3.8~5.1 폭발 구간! 진입 비중 1.5배 상향."
     elif cur_vix >= 20:
-        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 손익비 3.16 상승 구간! 진입 비중 1.2배 상향."
+        vix_strategy = f"🌪️ [조정장 | VIX {cur_vix:.1f}] 손익비 3.38 (수익폭 2배 점프) 구간! 진입 비중 1.2배 상향."
     else:
-        vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 매매."
+        vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 승률 29.6%, 손익비 2.32 수준. 시스템 기본 비중(1배) 매매."
+
+    # 💡 [V9.0 1티어 뱃지 시스템 확립]
+    if total_score >= 80.0:
+        badge_str = "🔥 [1티어 뱃지] 최우선 매매 대상 (승률 30.1% 검증 완료)"
+    elif is_tree_rejected:
+        badge_str = "💀 [비선형 필터 기각] 매수 절대 금지"
+    else:
+        badge_str = "⚠️ [일반/하위 티어] 승률 저하 구간 (비중 축소 권장)"
+        
     # =========================================================================
     # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (미국장 백분위 랭크 추가)
     # =========================================================================
