@@ -4,12 +4,13 @@ import numpy as np
 import FinanceDataReader as fdr
 import yfinance as yf
 import os, time, requests
+import random
 from datetime import datetime, timedelta
 import pytz
 import sqlite3
 import json
 
-TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
+TELEGRAM_TOKEN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
 TELEGRAM_CHAT_ID = "6838834566"
 
 # 💡 [방향성 2번] 전문적인 DB 시스템 (CSV 폐기)
@@ -111,37 +112,70 @@ def load_system_config():
     except: pass
     return {}
 
-# 💡 [시스템 연결] 관제탑 설정 로드 함수 추가 (init_forward_db 밑에 추가)
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-def load_system_config():
+def save_system_config(config):
     try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, 'r') as f: return json.load(f)
-    except: pass
-    return {}
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"⚠️ system_config 저장 실패: {e}")
 
-# 👇👇 [신규 추가] 야후 파이낸스 API 무한 호출(IP Ban) 방어용 글로벌 캐시 엔진 👇👇
-_GLOBAL_BREADTH_CACHE = 1.0
-_LAST_BREADTH_FETCH_TIME = 0.0
+def evaluate_evolved_alpha_formula(df, formula):
+    """JSON에 저장된 진화 수식을 실시간으로 계산한다."""
+    if df.empty:
+        return None
+    try:
+        O = df['Open']
+        H = df['High']
+        L = df['Low']
+        C = df['Close']
+        V = df['Volume']
 
-def get_cached_market_breadth():
-    """10분에 딱 한 번만 API를 호출하여 메모리에 저장하고, 이후엔 저장된 값을 즉시 반환합니다."""
-    global _GLOBAL_BREADTH_CACHE, _LAST_BREADTH_FETCH_TIME
-    current_time = time.time()
-    
-    # 600초(10분)가 지났을 때만 야후 파이낸스 API 1회 갱신
-    if current_time - _LAST_BREADTH_FETCH_TIME > 600:
-        try:
-            b_df = yf.download("RSP SPY", period="5d", interval="1d", progress=False)
-            if not b_df.empty:
-                _GLOBAL_BREADTH_CACHE = (b_df['Close']['RSP'].iloc[-1] / b_df['Close']['SPY'].iloc[-1]) / \
-                                        (b_df['Close']['RSP'].mean() / b_df['Close']['SPY'].mean())
-            _LAST_BREADTH_FETCH_TIME = current_time
-        except Exception as e:
-            print(f"⚠️ 시장 폭(Breadth) 캐시 갱신 에러 (기존 값 유지): {e}")
-            
-    return _GLOBAL_BREADTH_CACHE
-# 👆👆 [캐시 엔진 완료] 👆👆
+        def add(a, b): return a + b
+        def sub(a, b): return a - b
+        def mul(a, b): return a * b
+        def div(a, b):
+            safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
+            return a / safe_b
+        def rolling_mean(x, w): return x.rolling(int(w)).mean()
+        def rolling_std(x, w): return x.rolling(int(w)).std()
+
+        env = {
+            'O': O, 'H': H, 'L': L, 'C': C, 'V': V,
+            'add': add, 'sub': sub, 'mul': mul, 'div': div,
+            'rolling_mean': rolling_mean, 'rolling_std': rolling_std
+        }
+        out = eval(str(formula), {"__builtins__": {}}, env)
+        if isinstance(out, pd.Series):
+            return float(out.replace([np.inf, -np.inf], np.nan).iloc[-1])
+    except Exception:
+        return None
+    return None
+
+def generate_mutant_strategies():
+    """장 마감 후 인큐베이터용 무작위 돌연변이 전략 3개를 생성한다."""
+    sys_config = load_system_config()
+    base_cpv = float(sys_config.get("DYNAMIC_TRAP_LIMIT", 0.75))
+    base_tb = 10.0
+    base_bbe = float(sys_config.get("DYNAMIC_OD_HURDLE", 20.0))
+    base_rs = float(sys_config.get("KR_S1_RS_CUTOFF", 165.0))
+
+    mutants = {}
+    for i in range(1, 4):
+        m_name = f"MUTANT_{i}"
+        mutants[m_name] = {
+            "cpv": round(random.uniform(max(-1.5, base_cpv - 1.0), base_cpv + 1.0), 3),
+            "tb": round(random.uniform(max(0.5, base_tb - 6.0), base_tb + 10.0), 3),
+            "bbe": round(random.uniform(max(2.0, base_bbe * 0.5), base_bbe * 1.5), 3),
+            "rs": round(random.uniform(max(-500.0, base_rs - 250.0), base_rs + 250.0), 3),
+            "cos_cutoff": round(random.uniform(0.72, 0.90), 3),
+            "created_at": datetime.now().strftime('%Y-%m-%d'),
+            "status": "INCUBATING"
+        }
+
+    sys_config["INCUBATOR_TEMPLATES"] = mutants
+    sys_config["INCUBATOR_LAST_GEN_DATE"] = datetime.now().strftime('%Y-%m-%d')
+    save_system_config(sys_config)
+    send_telegram_msg("🧪 [인큐베이터] 금일 돌연변이 전략 3종(MUTANT_1~3) 생성 및 임시 저장 완료")
 
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
@@ -149,6 +183,11 @@ def get_cached_market_breadth():
 def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sector="유망섹터", trade_source="STANDARD"):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
+
+    # 계좌 통합 서킷 브레이커가 켜지면 신규 진입 전면 차단
+    pre_sys_config = load_system_config()
+    if pre_sys_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") == "ON":
+        return False, "🚫 글로벌 서킷 브레이커 ON: 블랙스완 방어 모드로 신규 진입이 차단되었습니다."
     
     # 💡 [V13.0 가상매매] 10점 단위 정밀 버킷 생성 (예: 85점 -> 80점대)
     score_bucket = int(score // 10) * 10
@@ -209,9 +248,11 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     # 👇👇 [수정] V34.0 DTW 투트랙 + V35.0 동적 커트라인 자율 매칭 👇👇
     max_alpha_cos, min_alpha_dtw = 0.0, 99.0
     max_trap_cos, min_trap_dtw = 0.0, 99.0
+    is_rotation_prebuy = False
+    incubator_match_name = None
     
     # 💡 [버그 픽스] 안전 변수 초기화 (에러 시 DB 엉킴 원천 방지)
-    entry_atr, invest_amount, shares, sim_kelly_invest = 0.0, 0, 0, 0
+    entry_atr, invest_amount, shares, sim_kelly_invest, cur_regime = 0.0, 0, 0, 0, "UNKNOWN"
     
     try:
         sys_config = load_system_config()
@@ -313,11 +354,76 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     elif "DNA_ALPHA" in k:
                         max_alpha_cos = max(max_alpha_cos, cos_score)
                         min_alpha_dtw = min(min_alpha_dtw, dtw_dist)
+
+            # 인큐베이터 돌연변이 로직 섀도우 페이퍼 트레이딩 매칭
+            incubator_templates = sys_config.get("INCUBATOR_TEMPLATES", {})
+            if isinstance(incubator_templates, dict):
+                for m_name, m_tpl in incubator_templates.items():
+                    if not isinstance(m_tpl, dict):
+                        continue
+                    m_vec = np.array([
+                        float(m_tpl.get("cpv", 0.0)),
+                        float(m_tpl.get("tb", 0.0)),
+                        float(m_tpl.get("bbe", 0.0)),
+                        float(m_tpl.get("rs", 0.0))
+                    ], dtype=float)
+                    cur_mut_vec = np.array([cpv, tb, bbe, z_rs], dtype=float)
+                    m_cos = cosine_sim(cur_mut_vec, m_vec)
+                    if m_cos >= float(m_tpl.get("cos_cutoff", 0.80)):
+                        incubator_match_name = m_name
+                        break
+
+            # 진화 알파 팩터 게이트: 임계치 미달 시 진입 차단
+            evolved_factors = sys_config.get("EVOLVED_ALPHA_FACTORS", {})
+            if isinstance(evolved_factors, dict) and evolved_factors:
+                alpha_vals = []
+                for _, formula in evolved_factors.items():
+                    v = evaluate_evolved_alpha_formula(hist_df, formula)
+                    if v is not None and np.isfinite(v):
+                        alpha_vals.append(v)
+                if alpha_vals:
+                    evolved_threshold = float(sys_config.get("EVOLVED_ALPHA_THRESHOLD", 0.0))
+                    if max(alpha_vals) <= evolved_threshold:
+                        return False, (
+                            f"🧬 진화 알파 게이트 미충족: max={max(alpha_vals):.4f} "
+                            f"<= threshold={evolved_threshold:.4f}"
+                        )
             
+            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
+            is_rotation_prebuy = (sector == predicted_sector)
+            spillover_sector = str(sys_config.get("US_SPILLOVER_SECTOR", "NONE"))
+
+            def is_spillover_related(us_sector, kr_sector):
+                us = str(us_sector).lower()
+                kr = str(kr_sector).lower()
+                logical_links = [
+                    (['테크', '기술', 'it', 'software', 'semiconductor', 'ai'], ['반도체', 'it', '기술', '소프트웨어', '테크', 'ai']),
+                    (['health', '헬스', '바이오', 'pharma'], ['바이오', '제약', '의료', '헬스']),
+                    (['energy', '에너지', 'oil', 'gas'], ['에너지', '화학', '정유', '2차전지']),
+                    (['consumer', '소비', 'retail'], ['유통', '식품', '화장품', '의류', '소비'])
+                ]
+                for us_keys, kr_keys in logical_links:
+                    if any(k in us for k in us_keys) and any(k in kr for k in kr_keys):
+                        return True
+                return False
+
+            is_spillover_prebuy = (market == 'KR') and is_spillover_related(spillover_sector, sector)
+
             # 💡 [V35.0] 관제탑이 하달한 동적 커트라인 로드 (하드코딩 삭제)
             dyn_cos_limit = sys_config.get("DYNAMIC_ALPHA_LIMIT", 0.75) # 자율 코사인 합격선
+            dyn_ml_cutoff = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50) # ML 박스 컷오프
             dyn_trap_limit = sys_config.get("DYNAMIC_TRAP_LIMIT", 0.75) # 자율 참사주 방어선
             dyn_dtw_limit = sys_config.get("DYNAMIC_DTW_LIMIT", 2.5)    # 자율 궤적 허용 거리
+
+            # 순환매 예측 섹터 선취매는 컷오프를 15% 완화
+            if is_rotation_prebuy:
+                dyn_cos_limit *= 0.85
+                dyn_ml_cutoff *= 0.85
+
+            # 글로벌 스필오버 선취매는 컷오프를 10% 완화
+            if is_spillover_prebuy:
+                dyn_cos_limit *= 0.90
+                dyn_ml_cutoff *= 0.90
 
             # 🛡️ 페일세이프 (내부수급과 궤적이 모두 자율 방어선을 넘었을 때만 기각)
             if max_trap_cos >= dyn_trap_limit and min_trap_dtw <= dyn_dtw_limit:
@@ -328,8 +434,31 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     track_tag = "(참사 방어막 터치 - 관찰 표본)"
             
             # 🚀 슈퍼 부스트
-            if max_alpha_cos >= dyn_cos_limit and min_alpha_dtw <= dyn_dtw_limit:
+            cutoff_passed = (max_alpha_cos >= dyn_cos_limit) and (max_alpha_cos >= dyn_ml_cutoff) and (min_alpha_dtw <= dyn_dtw_limit)
+            if cutoff_passed:
                 sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
+                if is_rotation_prebuy:
+                    sig_type += " [순환매 컷오프 특권 패스]"
+                if is_spillover_prebuy:
+                    sig_type += " [🌐스필오버 선취매]"
+
+            # 안티 패턴(오답노트) 면역 체계: 유사도 0.85 이상이면 신규 진입 차단
+            if incubator_match_name is None:
+                anti_patterns = sys_config.get("ANTI_PATTERNS", [])
+                if isinstance(anti_patterns, list) and anti_patterns:
+                    cur_pattern_vec = np.array([cpv, tb, bbe / safe_vol, z_rs], dtype=float)
+                    for ap in anti_patterns:
+                        if not isinstance(ap, dict):
+                            continue
+                        anti_vec = np.array([
+                            float(ap.get("cpv", 0.0)),
+                            float(ap.get("tb", 0.0)),
+                            float(ap.get("bbe", 0.0)),
+                            float(ap.get("rs", 0.0))
+                        ], dtype=float)
+                        ap_cos = cosine_sim(cur_pattern_vec, anti_vec)
+                        if ap_cos >= 0.85:
+                            return False, "💀안티패턴(면역) 차단: 과거 치명적 실패 DNA와 고유사도(0.85+)로 진입 금지"
 
             # 👇👇 [들여쓰기 픽스 완료] 리스크 패리티 연산은 반드시 try 블록 안에 있어야 합니다 👇👇
             hist_df['prev_c'] = hist_df['Close'].shift(1)
@@ -337,22 +466,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             hist_df['atr'] = hist_df['tr'].ewm(span=14, adjust=False).mean()
             entry_atr = float(hist_df['atr'].iloc[-1])
 
-            # 👇👇 [핵심 픽스] 신규 진입 시드 계산용 네임스페이스 동적 파싱 (MASTER_S1 하드코딩 제거) 👇👇
-            ns_prefix = f"{market}_MASTER_S1" # 기본값
-            
-            if "SUPERNOVA" in sig_type:
-                # 초신성은 오리지널과 완전히 분리된 전용 파라미터 방을 사용합니다.
-                ns_prefix = f"{market}_SUPERNOVA_MASTER"
-            else:
-                # 기존 오리지널 로직 분류 유지
-                if "S4" in sig_type: ns_prefix = f"{market}_MASTER_S4"
-                if "눌림" in sig_type: ns_prefix = f"{market}_NULRIM_S4" if "S4" in sig_type else f"{market}_NULRIM_S1" 
-                if "5선" in sig_type: ns_prefix = f"{market}_5EMA_S1" 
-                
-            # 본인 출신 성분에 맞는 뇌(JSON)에서 정확한 ATR_SL(관제탑 승수) 로드
-            opt_sl_atr = sys_config.get(f"{ns_prefix}_ATR_SL", 2.0)
-            # 👆👆 [수정 완료] 👆👆
-            
+            opt_sl_atr = sys_config.get(f"{market}_MASTER_S1_ATR_SL", 2.0)
             sl_price = ep - (opt_sl_atr * entry_atr)
             risk_distance = ep - sl_price
 
@@ -362,15 +476,23 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
             # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 로직 👇👇
-            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
-            is_rotation_prebuy = (sector == predicted_sector)
-            
             if is_rotation_prebuy:
                 sig_type += " #순환매_선취매" # 장부 기록용 태그 박제
                 # 관제탑이 주말 데스매치를 통해 우위를 증명(1.5배)했다면 켈리 비중 2배 뻥튀기
                 if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
                     kelly_risk_pct *= 2.0 
+
+            # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배
+            if is_spillover_prebuy:
+                kelly_risk_pct *= 1.5
             # 👆👆 [수정 완료] 👆👆
+
+            # 인큐베이터 섀도우 모드: 시드 영향 완전 차단 및 독립 시그널 태깅
+            if incubator_match_name is not None:
+                sig_type = f"[INCUBATOR_{incubator_match_name}]"
+                invest_amount = 0
+                shares = 0
+                sim_kelly_invest = 0
 
             if risk_distance > 0:
                 # 👇👇 [V102.8 버그 픽스] 그룹별 실시간 복리 시드 & 예수금(가용 자산) 브레이크 엔진 👇👇
@@ -386,15 +508,17 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                 cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
                 realized_pnl = cursor.fetchone()[0]
                 if realized_pnl is None: realized_pnl = 0.0
+                
+                # 💡 [독립 복리 시드] 기본 2,000만 원 + 이 그룹이 스스로 번 돈
+                group_current_seed = account_size + realized_pnl
 
-                
-            
-                # 👇👇 [신규 추가] 관제탑이 하달한 S급 챔피언 특별 보너스 투입금 로드 👇👇
-                bonus_seed = sys_config.get(f"BONUS_SEED_{core_group_name}", 0)
-                
-                # 💡 [독립 복리 시드] 기본 2,000만 원 + 그룹 스스로 번 돈 + 국고 보너스 합산
-                group_current_seed = account_size + realized_pnl + bonus_seed
-                # 👆👆 [신규 추가 끝] 👆👆
+                # [AUM 스케일링 브레이크] 시드가 커진 그룹의 소형주 슬리피지 진입 차단
+                marcap_eok = float(facts.get('marcap_eok', 0) or 0)
+                if group_current_seed > 50000000 and marcap_eok < 1000:
+                    return False, (
+                        f"🛑 시드 비대화로 인한 소형주 슬리피지 방어: "
+                        f"[{core_group_name}] 시드 {group_current_seed:,.0f}원 / 시총 {marcap_eok:,.0f}억"
+                    )
                 
                 # 3. 해당 그룹이 현재 시장에 묶어둔 투자금 계산 (미실현 락업)
                 cursor.execute("SELECT SUM(sim_kelly_invest) FROM forward_trades WHERE status = 'OPEN' AND sig_type LIKE ?", (f"%{core_group_name}%",))
@@ -432,6 +556,8 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                 else:
                     invest_amount = raw_fixed_invest
                 # 👆👆 [패치 완료] 👆👆
+                if incubator_match_name is not None:
+                    invest_amount, shares, sim_kelly_invest = 0, 0, 0
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
 
@@ -439,94 +565,29 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         print(f"하이브리드 벡터 매칭 에러: {e}")
     # 👆👆 [try 블록 완전 종료] 👆👆
 
-    # 👇👇 [수정] V24.0 진입 시점의 시장 폭(Breadth) API 차단 방어 (글로벌 캐시 로드) 👇👇
-    cur_breadth = get_cached_market_breadth()
-    # 👆👆 [수정 끝] 👆👆
-
-    # 👇👇 [핵심 추가] R&D 샌드박스 역추적 엔진: 실전 진입과 별개로 무조건 격리 장부 생성 👇👇
-    # 검색기에서 넘어온 종목이 R&D 본인이 아니며, 기각된 종목이 아닐 경우에만 장부 복제
-    if trade_source != "R&D" and "기각" not in sig_type:
-        
-        # 💡 [요청 사항 완벽 반영] 점수대별 R&D 태그 세분화 (40~70점대: 평균볼륨군)
-        if score >= 80:
-            rnd_sig = "[R&D_엘리트군]"
-        elif score >= 40:
-            rnd_sig = "[R&D_평균볼륨군]" # 👈 40~70점대 격리 이름표
-        else:
-            rnd_sig = "[R&D_바닥역발상군]"
-            
-        cursor.execute('''
-            INSERT INTO forward_trades 
-            (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            today_str, market, code_str, name, sector, rnd_sig, tier_label, score,
-            facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
-            facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
-            ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
-            round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
-            round(entry_atr, 4), 
-            0, 0 # 💡 [R&D 완전 격리 핵심] 예수금 연산 및 실전 투입 금액(invest_amount, shares)을 무조건 0으로 강제 세팅하여 복리 시드 영향 원천 차단
-        ))
-    # 👆👆 [R&D 샌드박스 누락 복구 완료] 👆👆
+    # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
+    cur_breadth = 1.0
+    try:
+        b_df = yf.download("RSP SPY", period="5d", interval="1d", progress=False)
+        if not b_df.empty:
+            cur_breadth = (b_df['Close']['RSP'].iloc[-1] / b_df['Close']['SPY'].iloc[-1]) / \
+                          (b_df['Close']['RSP'].mean() / b_df['Close']['SPY'].mean())
+    except: pass
+    # 👆👆 [추가 끝] 👆👆
 
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     cursor.execute('''
         INSERT INTO forward_trades 
-        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares, entry_regime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         today_str, market, code_str, name, sector, sig_type, tier_label, score,
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
         ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
         round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
-        round(entry_atr, 4), invest_amount, shares # 💡 V38.0 ATR 및 투입 금액/수량 기록
+        round(entry_atr, 4), invest_amount, shares, cur_regime # 💡 V38.0 ATR 및 투입 금액/수량 기록
     ))
-
-    # 👇👇 [수정 지점: 여기서부터 복사해서 넣으세요] 👇👇
-    # STANDARD 듀얼 트랙: MLBOX 통과 시 쌍둥이 복제 편입
-    if trade_source == "STANDARD":
-        # 1. 원본은 ORIGINAL로 네이밍 교체 (방금 위에서 넣은 기본 종목의 이름을 덮어씀)
-        cursor.execute("UPDATE forward_trades SET sig_type = REPLACE(sig_type, '[STANDARD]', '[STANDARD_ORIGINAL]') WHERE id = (SELECT MAX(id) FROM forward_trades WHERE code=?)", (code_str,))
-        
-        # 2. 관제탑에서 STANDARD 전용 ML 템플릿 로드
-        std_clusters = sys_config.get('LIVE_STANDARD_CLUSTER_TEMPLATES', {})
-        dyn_ml_cutoff = sys_config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
-        
-        is_std_ml_pass = False
-        ml_pattern_name = ""
-        
-        # 3. DNA 바운딩 박스 판독
-        for c_name, bounds in std_clusters.items():
-            ml_match_count = 0
-            if bounds.get('cpv_min', -99) <= facts.get('dyn_cpv', 0) <= bounds.get('cpv_max', 99): ml_match_count += 1
-            if bounds.get('tb_min', -99) <= facts.get('dyn_tb', 0) <= bounds.get('tb_max', 999): ml_match_count += 1
-            if bounds.get('bbe_min', -99) <= facts.get('v_energy', 0) <= bounds.get('bbe_max', 999): ml_match_count += 1
-            
-            score = ml_match_count / 3.0
-            if score >= dyn_ml_cutoff:
-                is_std_ml_pass = True
-                ml_pattern_name = c_name
-                break
-                
-        # 4. MLBOX 통과 시, 동일한 팩트로 '두 번째 실전 포지션' 동시 생성 (자본 경쟁용)
-        if is_std_ml_pass:
-            clone_sig = f"[STANDARD_MLBOX_V1] 🤖{ml_pattern_name} {track_tag}"
-            
-            cursor.execute('''
-                INSERT INTO forward_trades 
-                (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                today_str, market, code_str, name, sector, clone_sig, tier_label, score,
-                facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
-                facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
-                ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
-                round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
-                round(entry_atr, 4), invest_amount, shares # 💡 복제본도 똑같이 예수금 할당받아 경쟁
-            ))
-    # 👆👆 [수정 지점 끝] 👆👆
     conn.commit()
     conn.close()
     
@@ -548,6 +609,9 @@ def track_daily_positions(market):
         return
 
     print(f"\n🔍 [포워드 테스팅] {market} 시장 {len(df_active)}개 종목 추적 중...")
+    sys_config = load_system_config()
+    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
+    total_open_loss_amount = 0.0
     
     # 👇👇 [V102.3 버그 픽스] 주말 및 공휴일 유령 카운팅(Double Counting) 원천 차단 👇👇
     tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
@@ -583,6 +647,20 @@ def track_daily_positions(market):
                 
             c, o, h, l, v = float(df['Close'].iloc[-1]), float(df['Open'].iloc[-1]), float(df['High'].iloc[-1]), float(df['Low'].iloc[-1]), float(df['Volume'].iloc[-1])
             
+            # 장중 수익률 3총사: 이후 모든 판독 로직보다 먼저 계산해 NameError 방지
+            current_ret_pct = ((c - ep) / ep) * 100        # 종가 기준 수익률
+            low_ret_pct = ((l - ep) / ep) * 100            # 장중 최저 수익률 (손절 터치 감시용)
+            high_ret_pct = ((h - ep) / ep) * 100           # 장중 최고 수익률 (익절 터치 감시용)
+
+            # 계좌 통합 서킷 브레이커용 당일 보유 손실 총합(손실만 누적)
+            position_notional = float(r.get('sim_kelly_invest', 0) or 0)
+            if position_notional <= 0:
+                fallback_notional = float(r.get('invest_amount', 0) or 0)
+                position_notional = fallback_notional if fallback_notional > 0 else float(ep)
+            position_pnl = position_notional * (current_ret_pct / 100.0)
+            if position_pnl < 0:
+                total_open_loss_amount += position_pnl
+            
             new_max = max(r['max_high'], h)
             new_min = min(r['min_low'], l)
             new_bars = r['bars_held'] + 1
@@ -613,28 +691,6 @@ def track_daily_positions(market):
             
             is_tech_exit = (c < cur_zlema) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
 
-            # 👇👇 [신규 추가] 순환매 대장 섹터 전용 Wide(20일선) 추세 이탈 감지 👇👇
-            is_tech_exit_wide = (c < float(df['ema20'].iloc[-1])) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
-            
-            is_overdrive_allowed = sys_config.get("OVERDRIVE_ALLOWED", True)
-            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
-            od_hurdle = sys_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
-            
-            is_overdrive_on = False
-            is_tech_exit = is_tech_exit_strict # 기본값은 타이트 청산
-            exit_rsn_prefix = "기술적 추세 이탈"
-            
-            # 💡 [시너지 1&2] 킬스위치가 꺼져있고(True) 에너지가 충족되면 오버드라이브 발동!
-            if is_overdrive_allowed and r.get('v_energy', 0) >= od_hurdle and high_ret_pct >= dyn_mfe_tp:
-                is_overdrive_on = True
-                if r['sector'] == predicted_sector:
-                    is_tech_exit = is_tech_exit_wide # 대장 섹터: 20일선까지 버팀 (Widen)
-                    exit_rsn_prefix = "🔥오버드라이브(대장주_Wide)_추세끝단_청산"
-                else:
-                    is_tech_exit = is_tech_exit_strict # 타 섹터: 기존대로 타이트 청산
-                    exit_rsn_prefix = "🔥오버드라이브(타이트)_추세끝단_청산"
-            # 👆👆 [신규 추가 끝] 👆👆
-
             # 3. 🎯 관제탑 네임스페이스 매핑 및 JSON 지시사항 수신
             sys_config = load_system_config()
             active_mode = sys_config.get("ACTIVE_EXIT_MODE", "HYBRID")
@@ -658,43 +714,8 @@ def track_daily_positions(market):
             # 수학적 손절가(SL) 산출: 진입가 - (관제탑 승수 * 진입변동성)
             sl_price = ep - (opt_sl_atr * entry_atr)
 
-            # 👇👇 [추가된 2-1 지점: 오버드라이브 판독 및 순환매 추세선 자율 연장] 👇👇
-            is_tech_exit_strict = is_tech_exit # 위에서 계산된 기본 타이트 청산값 보존
-            
-            # 20일선 기준의 Wide(관대함) 추세 이탈 감지
-            is_tech_exit_wide = (c < float(df['ema20'].iloc[-1])) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
-            
-            # JSON에서 킬스위치 및 대장 섹터 로드
-            is_overdrive_allowed = sys_config.get("OVERDRIVE_ALLOWED", True)
-            predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
-            od_hurdle = sys_config.get("OVERDRIVE_ENERGY_HURDLE", 20.0)
-            
-            is_overdrive_on = False
-            exit_rsn_prefix = "기술적 추세 이탈"
-            
-            # 현재 종목의 수익률 계산 (기존 4번 아레나에 있던 변수를 여기서 미리 계산하여 활용)
-            current_ret_pct_temp = ((c - ep) / ep) * 100
-            high_ret_pct_temp = ((h - ep) / ep) * 100
-            dyn_mfe_tp_temp = sys_config.get(f"{ns_prefix}_LIVE_PARAMS", sys_config).get("DYNAMIC_MFE_TP", 10.0)
-
-            # 💡 [시너지 1&2] 킬스위치가 꺼져있고(True) 에너지가 충족되며, MFE 익절선에 도달/돌파했을 때 오버드라이브 발동!
-            if is_overdrive_allowed and r.get('v_energy', 0) >= od_hurdle and high_ret_pct_temp >= dyn_mfe_tp_temp:
-                is_overdrive_on = True
-                if r['sector'] == predicted_sector:
-                    is_tech_exit = is_tech_exit_wide # 대장 섹터: 20일선까지 버팀 (Widen)
-                    exit_rsn_prefix = "🔥오버드라이브(대장주_Wide)_추세끝단_청산"
-                else:
-                    is_tech_exit = is_tech_exit_strict # 타 섹터: 기존대로 타이트 청산
-                    exit_rsn_prefix = "🔥오버드라이브(타이트)_추세끝단_청산"
-            # 👆👆 [추가 완료] 👆👆
-
             # 4. ⚔️ 청산 아레나: MFE/MAE 및 관제탑 모드에 따른 수학적 사형 집행
             do_exit, exit_rsn, actual_exit_type = False, "", "HOLD"
-            
-            # 👇👇 [수정] V42.0 장중 틱(Intraday) 모사 엔진 (낙관적 편향 제거) 👇👇
-            current_ret_pct = ((c - ep) / ep) * 100        # 종가 기준 수익률
-            low_ret_pct = ((l - ep) / ep) * 100            # 장중 최저 수익률 (손절 터치 감시용)
-            high_ret_pct = ((h - ep) / ep) * 100           # 장중 최고 수익률 (익절 터치 감시용)
             
             # 💡 [V51.0 핵심] 내 전략(Namespace) 방에 할당된 독립 파라미터 뇌(Brain) 꺼내오기
             ns_live_params = sys_config.get(f"{ns_prefix}_LIVE_PARAMS", sys_config)
@@ -724,15 +745,10 @@ def track_daily_positions(market):
             # 💡 [팩트] 관제탑이 내 전략방(ns_prefix) 맞춤형으로 깎아둔 실전 한계점 로드
             dyn_mae_sl = ns_live_params.get("DYNAMIC_MAE_SL", -3.5)
             dyn_mfe_tp = ns_live_params.get("DYNAMIC_MFE_TP", 10.0)
-
-            # 👇👇 [핵심 추가] 스마트 방어 버퍼: 주도주 편대 소속이면 MAE 손절선을 2.0 ATR 기반으로 동적 확장 👇👇
-            if "[🔥주도주" in r['sig_type']:
-                # entry_atr 2배수만큼의 하락폭(%)을 계산하여 음수(-)로 손절 밴드 재설정
-                smart_mae_limit = -((2.0 * entry_atr) / ep) * 100
-                
-                # 기존 설정된 손절선보다 더 넓은 관용을 베풀어야 할 때만 확장 (최소 방어선 유지)
-                dyn_mae_sl = min(dyn_mae_sl, smart_mae_limit)
-            # 👆👆 [스마트 버퍼 완료] 👆👆
+            od_hurdle = float(sys_config.get("DYNAMIC_OD_HURDLE", 20.0))
+            is_overdrive_on = float(r.get('v_energy', 0) or 0) >= od_hurdle
+            if is_overdrive_on:
+                dyn_mfe_tp *= 1.10
 
             if r.get('sim_stat_status', 'OPEN') == 'OPEN':
                 if low_ret_pct <= dyn_mae_sl: # 장중 손절 터치
@@ -768,49 +784,33 @@ def track_daily_positions(market):
             # 1순위: MFE/MAE 절대 한계점 도달 시 무조건 청산 
             actual_exit_price = c # 기본 청산가는 종가로 세팅
             
-            # 👇👇 [추가 2] 스마트 방어 버퍼: 주도주 편대 소속이면 MAE 손절선을 2.0 ATR까지 넓혀줌 👇👇
-            if "[🔥주도주 편대]" in r['sig_type']:
-                smart_mae_limit = ((ep - (2.0 * entry_atr)) - ep) / ep * 100
-                # 기존 dyn_mae_sl보다 더 넓게(마이너스로 더 깊게) 관용을 베풂
-                dyn_mae_sl = min(dyn_mae_sl, smart_mae_limit)
-            # 👆👆 [스마트 버퍼 완료] 👆👆
-            
             # 💡 [핵심 교정] 종가가 아닌 '저가(l)'와 '고가(h)'로 실전과 똑같이 슬리피지 청산
             if low_ret_pct <= dyn_mae_sl:
-                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl:.1f}%)", "STAT_MAE"
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl}%)", "STAT_MAE"
                 actual_exit_price = ep * (1 + (dyn_mae_sl / 100.0)) # 손절선에서 털린 가격
-            
-            # 👇👇 [치명적 버그 픽스] 오버드라이브 발동 시 기계적 MFE 익절 무시(Bypass) 👇👇
-            elif high_ret_pct >= dyn_mfe_tp and not is_overdrive_on:
-                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp:.1f}%)", "STAT_MFE"
+            elif high_ret_pct >= dyn_mfe_tp:
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
                 actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0)) # 익절선에서 팔린 가격
-            # 👆👆 [버그 픽스 완료] 👆👆
             
-            # 2순위: 한계점 내부에서 움직일 경우 (또는 오버드라이브 작동 시), 국면 모드에 따른 추세/시간 청산
+            # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산
             if not do_exit:
-                # 💡 [핵심 교정] 오버드라이브가 켜졌다면 타임스탑을 무시하고 오로지 추세(TECH) 끝단에서만 청산
-                if is_overdrive_on:
-                    if is_tech_exit:
-                        do_exit, exit_rsn, actual_exit_type = True, exit_rsn_prefix, "OVERDRIVE_TECH"
-                        actual_exit_price = c # 오버드라이브 추세 이탈 청산은 종가 기준
-                else:
-                    if active_mode == "TECH":
-                        if is_tech_exit: 
-                            do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
-                    elif active_mode == "STAT":
-                        if new_bars >= opt_time_stop: 
-                            do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT_TIME"
-                        elif l <= sl_price: 
-                            do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "STAT_ATR"
-                            actual_exit_price = sl_price
-                    else: # HYBRID
-                        if new_bars >= opt_time_stop: 
-                            do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID_TIME"
-                        elif l <= sl_price: 
-                            do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "HYBRID_ATR"
-                            actual_exit_price = sl_price
-                        elif is_tech_exit: 
-                            do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
+                if active_mode == "TECH":
+                    if is_tech_exit: 
+                        do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
+                elif active_mode == "STAT":
+                    if new_bars >= opt_time_stop: 
+                        do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT_TIME"
+                    elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
+                        do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "STAT_ATR"
+                        actual_exit_price = sl_price
+                else: # HYBRID
+                    if new_bars >= opt_time_stop: 
+                        do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID_TIME"
+                    elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
+                        do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "HYBRID_ATR"
+                        actual_exit_price = sl_price
+                    elif is_tech_exit: 
+                        do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
 
 
             # 5. DB 업데이트 실행 (청산 시)
@@ -873,6 +873,23 @@ def track_daily_positions(market):
     conn.commit()
     conn.close()
 
+    # 블랙스완 붕괴 감지 시 전역 서킷 브레이커 ON
+    if base_seed > 0:
+        loss_ratio = total_open_loss_amount / float(base_seed)
+        if loss_ratio <= -0.05:
+            latest_config = load_system_config()
+            if latest_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") != "ON":
+                latest_config["GLOBAL_CIRCUIT_BREAKER"] = "ON"
+                save_system_config(latest_config)
+                send_telegram_msg(
+                    f"🚨 <b>[GLOBAL CIRCUIT BREAKER 발동]</b>\n"
+                    f"시장: {market}\n"
+                    f"당일 보유 손실 합계: {total_open_loss_amount:,.0f}원\n"
+                    f"기준 시드: {base_seed:,.0f}원\n"
+                    f"손실률: {loss_ratio*100:.2f}%\n"
+                    f"조치: 신규 진입 전면 차단(현금 관망) 모드로 전환"
+                )
+
 def send_comprehensive_daily_report():
     """[V104.1] 국가별 9분할 정밀 리포트 (순환매 및 스필오버 복원 완료)"""
     tz_kr = pytz.timezone('Asia/Seoul')
@@ -892,7 +909,7 @@ def send_comprehensive_daily_report():
             conn.execute("PRAGMA journal_mode=WAL;")
             
             # [사전 데이터 로드]
-            df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND sig_type NOT LIKE '%[R&D_%'", conn)
+            df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}'", conn)
             df_closed = df_all[df_all['status'].str.contains('CLOSED', na=False)]
             df_open = df_all[df_all['status'] == 'OPEN']
             
@@ -906,15 +923,11 @@ def send_comprehensive_daily_report():
             send_telegram_msg(msg1); time.sleep(1)
 
             # ---------------------------------------------------------
-            # 📑 결과지 2: 생존자 리더보드 (프로듀스 101) & 당일 청산 부검
+            # 📑 결과지 2: 생존자 리더보드 (프로듀스 101)
             # ---------------------------------------------------------
-            import re # 👈 이 줄과 아래 def의 시작 간격을 '정확히 스페이스 12칸'으로 맞춰주세요!
+            import re
             def get_core_group(sig):
                 sig = str(sig).replace('💀[기각/관찰용] ', '')
-                # 👇👇 [수정] STANDARD 진영의 듀얼 트랙(ORIGINAL vs MLBOX)은 그룹을 강제 분리합니다 👇👇
-                if "STANDARD_ORIGINAL" in sig: return "STANDARD_ORIGINAL"
-                if "STANDARD_MLBOX" in sig: return "STANDARD_MLBOX"
-                
                 sig = re.sub(r'^\[.*?\]\s*', '', sig)
                 return sig.split(' [')[0]
 
@@ -936,21 +949,7 @@ def send_comprehensive_daily_report():
                     if e['bal'] < base_seed * 0.8: m = "📉"
                     if e['bal'] < base_seed * 0.5: m = "💀"
                     msg2 += f"{m} <b>{e['g']}</b>: {e['bal']:,.0f}원 (승률 {e['wr']:.0f}%)\n"
-
-                # 👇👇 [치명적 누락 복구 지점] 증발했던 당일 청산 사유 부검 리포트 복원 👇👇
-                today_closed = df_closed[df_closed['exit_date'] == today_str]
-                if not today_closed.empty:
-                    msg2 += "\n📋 <b>[오늘의 청산 부검 리포트]</b>\n"
-                    for _, row in today_closed.iterrows():
-                        icon = "🔴" if row['final_ret'] < 0 else ("🔥" if "오버드라이브" in str(row['exit_reason']) else "🟢")
-                        clean_sig = get_core_group(row['sig_type'])
-                        msg2 += f"{icon} [{clean_sig}] {row['name']} ({row['final_ret']:+.2f}%)\n"
-                        msg2 += f"   ↳ <b>사유:</b> {row['exit_reason']}\n"
-                # 👆👆 [복구 완료] 👆👆
-
-            else: 
-                msg2 += " ↳ 매매 데이터 없음\n"
-                
+            else: msg2 += " ↳ 매매 데이터 없음\n"
             send_telegram_msg(msg2); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -974,17 +973,6 @@ def send_comprehensive_daily_report():
             
             msg4 = f"{market_icon} <b>[4/9] 섹터 포트폴리오 다중화 현황</b>\n"
             msg4 += f"🎯 편대 현황: 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
-            
-            # 👇👇 [신규 추가] 오버드라이브 청산 종목 당일 브리핑 👇👇
-            today_overdrive_closed = df_closed[(df_closed['exit_date'] == today_str) & (df_closed['exit_reason'].str.contains('오버드라이브', na=False))]
-            if not today_overdrive_closed.empty:
-                msg4 += f"\n🏎️ <b>[🔥오늘의 오버드라이브 청산 부검]</b>\n"
-                for _, row in today_overdrive_closed.iterrows():
-                    # 예시: "🔥오버드라이브_추세끝단_청산 (+25.3%)" 형태로 출력
-                    msg4 += f" ↳ {row['name']}: {row['exit_reason']} ({row['final_ret']:+.1f}%)\n"
-            # 👆👆 [신규 추가 끝] 👆👆
-
-
             send_telegram_msg(msg4); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -1091,8 +1079,68 @@ def send_comprehensive_daily_report():
         except Exception as e:
             send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
 
-    report_msg = "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템에 내장된 거시통제/순환매/데스콤보/반감기 로직을 100% 해부하여 보고합니다.</i>"
+    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템에 내장된 거시통제/순환매/데스콤보/반감기 로직을 100% 해부하여 보고합니다.</i>"
     send_telegram_msg(report_msg)
+
+def send_group_practitioner_reports():
+    """활성 시그널 그룹별 실무자 개별 일일 리포트를 발송한다."""
+    tz_kr = pytz.timezone('Asia/Seoul')
+    today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
+    sys_config = load_system_config()
+    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
+
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        df_all = pd.read_sql("SELECT * FROM forward_trades", conn)
+        conn.close()
+
+        if df_all.empty:
+            return
+
+        import re
+        def get_core_group(sig):
+            sig = str(sig).replace('💀[기각/관찰용] ', '')
+            sig = re.sub(r'^\[.*?\]\s*', '', sig)
+            return sig.split(' [')[0]
+
+        df_all = df_all.copy()
+        df_all['group'] = df_all['sig_type'].apply(get_core_group)
+        df_open = df_all[df_all['status'] == 'OPEN']
+        active_groups = sorted([g for g in df_open['group'].dropna().unique() if str(g).strip()])
+
+        for group in active_groups:
+            g_all = df_all[df_all['group'] == group]
+            g_closed = g_all[g_all['status'].str.contains('CLOSED', na=False)]
+            g_today_closed = g_closed[g_closed['exit_date'] == today_str] if 'exit_date' in g_closed.columns else g_closed.iloc[0:0]
+
+            win_cnt = len(g_today_closed[g_today_closed['final_ret'] > 0]) if 'final_ret' in g_today_closed.columns else 0
+            loss_cnt = len(g_today_closed[g_today_closed['final_ret'] <= 0]) if 'final_ret' in g_today_closed.columns else 0
+
+            if 'sim_kelly_invest' in g_closed.columns and 'final_ret' in g_closed.columns:
+                cum_pnl = (g_closed['sim_kelly_invest'] * g_closed['final_ret'] / 100.0).sum()
+            else:
+                cum_pnl = 0.0
+            compound_seed = base_seed + cum_pnl
+
+            msg = f"🧑‍💼 <b>[실무자 개별 리포트] {group}</b>\n"
+            msg += f"📅 오늘 성적: <b>{win_cnt}승 {loss_cnt}패</b>\n"
+            msg += f"💰 현재 누적 복리 시드: <b>{compound_seed:,.0f}원</b>\n"
+
+            if not g_today_closed.empty:
+                msg += "📌 오늘 청산 종목:\n"
+                for _, row in g_today_closed.iterrows():
+                    name = row.get('name', '-')
+                    reason = row.get('exit_reason', '사유 미기록')
+                    ret = row.get('final_ret', 0.0)
+                    msg += f" - {name} ({ret:+.2f}%) / {reason}\n"
+            else:
+                msg += "📌 오늘 청산 종목: 없음\n"
+
+            send_telegram_msg(msg)
+            time.sleep(1.5)
+    except Exception as e:
+        send_telegram_msg(f"⚠️ 실무자 개별 리포트 발송 에러: {e}")
 # ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
 # ==========================================
@@ -1343,90 +1391,6 @@ def run_deep_dive_analysis(market='KR'):
         print(err_msg)
         send_telegram_msg(err_msg)
 
-# ==========================================
-# 3. [추가] 30명 실무자 개별 상세 일일 보고 엔진
-# ==========================================
-def send_worker_daily_reports(market):
-    """[V108.0] 실무자(로직)들의 개별 일일 청산 및 시드 현황 상세 보고"""
-    print(f"📊 [{market}] 실무자 개별 일일 리포트 발송 준비 중...")
-    tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
-    today_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
-    
-    sys_config = load_system_config()
-    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
-    
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        
-        # 💡 [팩트] R&D 제외, 해당 시장의 모든 매매 내역 로드
-        df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND sig_type NOT LIKE '%[R&D_%'", conn)
-        conn.close()
-        
-        if df_all.empty: return
-        
-        import re
-        def get_core_group(sig):
-            sig = str(sig).replace('💀[기각/관찰용] ', '')
-            if "STANDARD_ORIGINAL" in sig: return "STANDARD_ORIGINAL"
-            if "STANDARD_MLBOX" in sig: return "STANDARD_MLBOX"
-            sig = re.sub(r'^\[.*?\]\s*', '', sig)
-            return sig.split(' [')[0]
-
-        df_all['group'] = df_all['sig_type'].apply(get_core_group)
-        groups = df_all['group'].unique()
-        
-        sent_count = 0
-        for group in groups:
-            g_df = df_all[df_all['group'] == group]
-            
-            # 💡 [로직별 독립 복리 시드 계산]
-            g_closed = g_df[g_df['status'].str.contains('CLOSED', na=False)]
-            realized_pnl = (g_closed['sim_kelly_invest'] * g_closed['final_ret'] / 100.0).sum() if not g_closed.empty else 0.0
-            bonus_seed = sys_config.get(f"BONUS_SEED_{group}", 0)
-            current_seed = base_seed + realized_pnl + bonus_seed
-            
-            # 오늘 청산 내역 및 오버나잇 보유 현황
-            today_closed = g_closed[g_closed['exit_date'] == today_str]
-            open_positions = g_df[g_df['status'] == 'OPEN']
-            
-            # 🛡️ 스팸 방어: 과거 기록만 있고, "오늘 청산도 없고 보유 종목도 0개인" 유령 로직은 발송 스킵
-            if today_closed.empty and open_positions.empty:
-                continue
-            
-            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
-            msg = f"{market_icon} <b>[{group}] 실무자 일일 결산</b>\n"
-            msg += "━━━━━━━━━━━━━━━━━━\n"
-            msg += f"💰 <b>현재 배정된 시드:</b> {current_seed:,.0f} 원\n"
-            msg += f"📊 <b>누적 실현 손익:</b> {realized_pnl:+,.0f} 원\n"
-            
-            if not today_closed.empty:
-                wins = len(today_closed[today_closed['final_ret'] > 0])
-                loses = len(today_closed[today_closed['final_ret'] <= 0])
-                msg += f"\n🎯 <b>[오늘의 성적]:</b> {wins}승 {loses}패\n"
-                
-                # 💡 [당일 청산 사유 정밀 부검 내역]
-                for _, row in today_closed.iterrows():
-                    icon = "🔴" if row['final_ret'] < 0 else ("🔥" if "오버드라이브" in str(row['exit_reason']) else "🟢")
-                    mae_pct = ((row['min_low'] - row['entry_price']) / row['entry_price']) * 100
-                    
-                    msg += f"{icon} <b>{row['name']}</b> ({row['final_ret']:+.2f}%)\n"
-                    msg += f" ↳ <b>사유:</b> {row['exit_reason']}\n"
-                    msg += f" ↳ 투입: {row['sim_kelly_invest']:,.0f}원 | <b>MFE {row['mfe']:.1f}%</b> | MAE {mae_pct:.1f}%\n"
-            else:
-                msg += f"\n🎯 <b>[오늘의 성적]:</b> 청산 내역 없음\n"
-                
-            msg += f"\n📦 <b>현재 오버나잇(보유) 종목:</b> {len(open_positions)}개"
-            
-            send_telegram_msg(msg)
-            sent_count += 1
-            time.sleep(1.5) # 🚨 초당 1건 제한(Telegram Rate Limit)을 피하기 위한 1.5초 딜레이
-            
-        print(f"✅ [{market}] 총 {sent_count}명의 활성 실무자 개별 리포트 발송 완료!")
-            
-    except Exception as e:
-        print(f"⚠️ {market} 실무자 개별 보고 에러: {e}")
-
 
 
 # ==========================================
@@ -1446,20 +1410,20 @@ def run_daily_scheduler():
             if now.hour == 15 and now.minute == 40:
                 print("🚀 한국장 종가 추적 및 청산 업데이트 시작...")
                 track_daily_positions('KR')
-                send_worker_daily_reports('KR')  # 👉 [추가된 부분] 한국장 실무자 개별 보고 발송
                 time.sleep(60) # 중복 실행 방지
                 
             # 2. 일일 종합 리포트 발송 (16:00)
             elif now.hour == 16 and now.minute == 0:
                 print("🚀 16:00 통합 지능 리포트 발송 시작...")
                 send_comprehensive_daily_report() 
+                send_group_practitioner_reports()
+                generate_mutant_strategies()
                 time.sleep(60)
                 
             # 3. 미국장 마감 직후 (한국시간 오전 06:10) -> 종가 확인 및 청산 실행
             elif now.hour == 6 and now.minute == 10:
                 print("🚀 미국장 종가 추적 및 청산 업데이트 시작...")
                 track_daily_positions('US')
-                send_worker_daily_reports('US')  # 👉 [추가된 부분] 미국장 실무자 개별 보고 발송
                 time.sleep(60)
 
             time.sleep(10) # 10초마다 시간 확인
