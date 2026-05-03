@@ -878,11 +878,14 @@ def run_autonomous_analysis():
                         '[D_Day_당일] 평균_시장강도(RS)': round(r['v_rs'], 4) if pd.notna(r['v_rs']) else 0.0
                     })
                 
+                # 👇👇 [핵심 진화] 헤더 누락 방지 및 파일 생성 로직 교정 👇👇
                 if csv_data:
                     df_csv = pd.DataFrame(csv_data)
-                    # 데이터 누락 없이 안전하게 Append 모드('a')로 추가
-                    df_csv.to_csv(csv_path, mode='a', header=False, index=False, encoding='utf-8-sig')
-                    rnd_report += f"💾 <b>[마이닝 연동]</b> {len(csv_data)}개의 R&D 돌연변이 DNA가 K-Means 학습용 CSV에 추가 적재되었습니다."
+                    # 파일이 없을 때만 헤더를 True로 써서 컬럼명이 꼬이는 것을 완벽히 방지
+                    write_header = not os.path.exists(csv_path)
+                    df_csv.to_csv(csv_path, mode='a', header=write_header, index=False, encoding='utf-8-sig')
+                    rnd_report += f"\n💾 <b>[마이닝 연동]</b> {len(csv_data)}개의 R&D 돌연변이 DNA가 K-Means 학습용 CSV에 추가 적재되었습니다."
+                # 👆👆 [수정 완료] 👆👆
                 
                 report_lines.append(rnd_report)
     except Exception as e:
