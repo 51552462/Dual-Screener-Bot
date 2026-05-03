@@ -625,12 +625,8 @@ def run_miner_scheduler():
             # 매주 월요일 17:00 템플릿 갱신
             if now.weekday() == 0 and now.hour == 17 and now.minute == 0:
                 
-                # 💡 [V102.0 데이터 클리닝] 마이닝 시작 전, 지난주의 오래된 CSV 찌꺼기 삭제
-                csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
-                if os.path.exists(csv_path):
-                    os.remove(csv_path)
-                    print("🗑️ [데이터 클리닝] 지난주 머신러닝용 CSV 데이터를 성공적으로 포맷했습니다.")
-
+                # 💡 [버그 픽스] 여기서 CSV를 미리 삭제하면 주말에 모아둔 R&D 데이터가 날아갑니다. (삭제 로직 하단으로 이동)
+                
                 hunt_supernovas('KR')
                 hunt_supernovas('US')
                 
@@ -639,6 +635,14 @@ def run_miner_scheduler():
                     import data_miner
                     print("🔄 [스케줄러] 타임머신 완료. K-Means 클러스터 마이닝으로 자동 이관합니다...")
                     data_miner.run_cluster_mining()
+                    
+                    # 👇👇 [핵심 진화] 마이닝이 '완전히 끝난 후'에 CSV를 비워주어야 다음 주말 R&D 데이터가 안전하게 담깁니다 👇👇
+                    csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+                    if os.path.exists(csv_path):
+                        os.remove(csv_path)
+                        print("🗑️ [데이터 클리닝] 머신러닝 학습이 완료되어 CSV 데이터를 성공적으로 포맷했습니다 (다음 주 준비 완료).")
+                    # 👆👆 [수정 완료] 👆👆
+                    
                 except ModuleNotFoundError:
                     print("🚨 [경고] 'data_miner.py' 파일을 찾을 수 없어 ML 마이닝을 건너뜁니다.")
                 except Exception as e:
@@ -649,7 +653,6 @@ def run_miner_scheduler():
         except Exception as e:
             print(f"⚠️ 마이너 스케줄러 루프 에러: {e}")
             time.sleep(60)
-# 👆👆 [덮어쓰기 완료] 👆👆
 
 def run_live_sniper_scheduler():
     """매일 4번 지정된 시간에 실시간 시장을 스캔하고 쏘는 봇"""
