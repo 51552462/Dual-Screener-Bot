@@ -147,8 +147,13 @@ def run_cluster_mining():
     # =====================================================================
     config = load_or_create_config()
     config['LIVE_CLUSTER_TEMPLATES'] = mined_templates
+    
+    # 👇👇 [치명적 버그 픽스] STANDARD 오리지널 마이닝 템플릿 JSON 누락 복구 👇👇
+    config['LIVE_STANDARD_CLUSTER_TEMPLATES'] = std_templates
+    # 👆👆 [복구 완료] 👆👆
+    
     save_config(config)
-    print("\n✅ 마이닝 완료! 3개의 클러스터 템플릿(Min-Max)이 관제탑 JSON에 저장되었습니다.")
+    print("\n✅ 마이닝 완료! 초신성 및 STANDARD 듀얼 트랙 클러스터 템플릿(Min-Max)이 관제탑 JSON에 성공적으로 저장되었습니다.")
 
 if __name__ == "__main__":
     run_cluster_mining()
