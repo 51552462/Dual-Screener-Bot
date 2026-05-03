@@ -17,23 +17,24 @@ def load_or_create_config():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+# 👇👇 [추가] JSON 원자적 저장(Atomic Save) 엔진 👇👇
 def save_config(config_data):
-    """[V110.0] JSON 원자적 저장(Atomic Save) 엔진: 에러 시 데이터 증발 원천 차단"""
+    """[V110.0] JSON 원자적 저장: 에러 시 데이터 증발 원천 차단"""
     temp_path = f"{CONFIG_PATH}.temp"
     try:
         with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=4, ensure_ascii=False)
             f.flush()
-            os.fsync(f.fileno()) # OS 레벨에서 디스크 쓰기 강제 완료 (안전장치)
-        # 100% 기록이 완료된 경우에만 원본 파일을 찰나의 순간에 덮어쓰기
+            os.fsync(f.fileno())
         os.replace(temp_path, CONFIG_PATH) 
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
         print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+# 👆👆 [원자적 저장 완료] 👆👆
 
 def run_cluster_mining():
-    print("🚀 [V65.0 초신성 CSV 데이터 마이닝 및 클러스터링 가동]")
+    print("🚀 [V112.0 초신성 CSV 순도 100% 정밀 마이닝 및 클러스터링 가동]")
     
     try:
         df = pd.read_csv(CSV_PATH)
@@ -50,11 +51,29 @@ def run_cluster_mining():
         '[D_Day_당일] 평균_시장강도(RS)'
     ]
     
-    # 누락된 데이터가 있는 행은 안전하게 제거
+    # 1차: 누락된 데이터가 있는 행은 안전하게 제거
     clean_df = df.dropna(subset=target_features).copy()
     
+    # 👇👇 [치명적 버그 픽스] K-Means 가동 전 '승리자(Winner) 데이터 정제' 파이프라인 추가 👇👇
+    initial_count = len(clean_df)
+    
+    # 만약 기존 CSV에 '최대수익률(MFE)' 같은 컬럼이 존재한다면 최우선으로 수익 필터링
+    if '최대수익률(MFE)' in clean_df.columns:
+        clean_df = clean_df[clean_df['최대수익률(MFE)'] >= 5.0]
+    # '결과' 컬럼이 있다면 승리(Win)만 필터링
+    elif '결과' in clean_df.columns:
+        clean_df = clean_df[clean_df['결과'].str.contains('Win|성공', case=False, na=False)]
+    else:
+        # CSV 구조상 결과 컬럼이 없을 경우, 논리적으로 절대 폭발할 수 없는 최악의 쓰레기 데이터만 강제 커트
+        # 예: 윗꼬리가 너무 심하거나(CPV < 0.2), 응축 에너지(BBE)가 바닥인 종목들
+        clean_df = clean_df[(clean_df['[D_Day_당일] 평균_CPV'] >= 0.3) & (clean_df['[D_Day_당일] 평균_응축에너지(BBE)'] >= 3.0)]
+
+    filtered_count = len(clean_df)
+    print(f"🔬 [데이터 정제 완료] 초기 표본 {initial_count}개 ➔ 자해 로직(쓰레기 데이터) {initial_count - filtered_count}개 필터링 ➔ 찐 대박주 {filtered_count}개 압축 완료.")
+    # 👆👆 [승리자 필터링 완료] 👆👆
+
     if len(clean_df) < 10:
-        print("⚠️ 데이터가 너무 적습니다 (최소 10개 필요). 마이닝을 중단합니다.")
+        print("⚠️ 찐 대박주 데이터가 너무 적습니다 (최소 10개 필요). 오버피팅(과최적화) 방지를 위해 이번 마이닝을 중단합니다.")
         return
 
     print(f"✅ 총 {len(clean_df)}개의 완벽한 폭발 전야(D-Day) 표본을 확보했습니다.")
