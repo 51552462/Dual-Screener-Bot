@@ -7,7 +7,20 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import requests
-import google.generativeai as genai
+
+# 👇👇 [수정] 대표님이 쓰시는 안전한 .env 방식 및 신형 구글 SDK 임포트 👇👇
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
+
+load_dotenv() 
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+# 👆👆 [적용 완료] 👆👆
 
 # ==========================================
 # 💡 [환경 설정 및 API 연결]
@@ -15,8 +28,7 @@ import google.generativeai as genai
 TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
 TELEGRAM_CHAT_ID = "6838834566"
 
-# 🔑 대표님의 구글 Gemini API 키를 여기에 입력하십시오.
-GEMINI_API_KEY = "여기에_GEMINI_API_KEY를_입력하세요" 
+# (이하 DB_PATH 등 시스템 경로 설정 코드는 그대로 유지...)
 
 # 시스템 전역 경로 매핑 (기존 시스템과 100% 호환)
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
@@ -126,13 +138,17 @@ def run_ai_auditor():
     """
 
     try:
-        # Gemini 1.5 Pro (또는 Flash) 모델 호출
-        model = genai.GenerativeModel('gemini-1.5-pro-latest')
-        response = model.generate_content(prompt)
+        # 👇👇 [수정] 대표님 코드 구조에 맞춘 신형 API(client.models) 호출 방식 대입 👇👇
+        ai_res = client.models.generate_content(
+            model='gemini-2.5-flash', # 대표님이 사용하시는 최신 속도형 모델 적용
+            contents=prompt
+        )
         
         # 텔레그램 직보
-        send_telegram_alert(response.text)
+        ai_text = ai_res.text.strip() if ai_res.text else "⚠️ 분석 리포트를 생성하지 못했습니다."
+        send_telegram_alert(ai_text)
         print("✅ [AI 최고 감시자] 텔레그램 직보 완료.")
+        # 👆👆 [적용 완료] 👆👆
         
     except Exception as e:
         err_msg = f"🚨 <b>[AI 감시자 에러]</b> Gemini API 통신 또는 분석 중 오류 발생:\n{e}"
