@@ -305,14 +305,14 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             hist_df['atr'] = hist_df['tr'].ewm(span=14, adjust=False).mean()
             entry_atr = float(hist_df['atr'].iloc[-1])
 
-            # 👇👇 [핵심 픽스] 신규 진입 시드 계산용 네임스페이스 동적 파싱 (하드코딩 제거) 👇👇
+            # 👇👇 [핵심 픽스] 신규 진입 시드 계산용 네임스페이스 동적 파싱 (MASTER_S1 하드코딩 제거) 👇👇
             ns_prefix = f"{market}_MASTER_S1" # 기본값
             
             if "SUPERNOVA" in sig_type:
-                # 초신성은 오리지널과 완전히 분리된 전용 파라미터 방을 사용
+                # 초신성은 오리지널과 완전히 분리된 전용 파라미터 방을 사용합니다.
                 ns_prefix = f"{market}_SUPERNOVA_MASTER"
             else:
-                # 기존 오리지널 로직 분류에 맞게 파싱
+                # 기존 오리지널 로직 분류 유지
                 if "S4" in sig_type: ns_prefix = f"{market}_MASTER_S4"
                 if "눌림" in sig_type: ns_prefix = f"{market}_NULRIM_S4" if "S4" in sig_type else f"{market}_NULRIM_S1" 
                 if "5선" in sig_type: ns_prefix = f"{market}_5EMA_S1" 
