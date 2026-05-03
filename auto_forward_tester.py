@@ -728,19 +728,12 @@ def track_daily_positions(market):
             if low_ret_pct <= dyn_mae_sl:
                 do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl:.1f}%)", "STAT_MAE"
                 actual_exit_price = ep * (1 + (dyn_mae_sl / 100.0)) # 손절선에서 털린 가격
-            elif high_ret_pct >= dyn_mfe_tp:
-                
-                # 👇👇 [추가 1] 오버드라이브 바이패스 로직 👇👇
-                current_vol_ratio = new_up_vol / (new_down_vol + 1)
-                
-                if current_vol_ratio >= 1.5 or r.get('v_energy', 0) >= od_hurdle:
-                    is_overdrive_on = True
-                    # 강제 익절을 무시(Bypass)하고 청산 권한을 2순위인 '추세 이탈'로 위임함
-                    pass
-                else:
-                    do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp:.1f}%)", "STAT_MFE"
-                    actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0)) # 익절선에서 팔린 가격
-                # 👆👆 [바이패스 완료] 👆👆
+            
+            # 👇👇 [치명적 버그 픽스] 오버드라이브 발동 시 기계적 MFE 익절 무시(Bypass) 👇👇
+            elif high_ret_pct >= dyn_mfe_tp and not is_overdrive_on:
+                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp:.1f}%)", "STAT_MFE"
+                actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0)) # 익절선에서 팔린 가격
+            # 👆👆 [버그 픽스 완료] 👆👆
             
             # 2순위: 한계점 내부에서 움직일 경우 (또는 오버드라이브 작동 시), 국면 모드에 따른 추세/시간 청산
             if not do_exit:
