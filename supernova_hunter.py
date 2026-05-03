@@ -28,9 +28,26 @@ def send_telegram_msg(text):
     except: pass
 
 def load_config():
+    config = {}
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r') as f: return json.load(f)
-    return {}
+        with open(CONFIG_PATH, 'r') as f: 
+            config = json.load(f)
+            
+    # 👇👇 [긴급 수혈 버그 픽스] 국고 데이터가 깡통이면 6억 원 즉시 장전 👇👇
+    need_save = False
+    if "CENTRAL_TREASURY_KR" not in config:
+        config["CENTRAL_TREASURY_KR"] = 600000000
+        need_save = True
+    if "CENTRAL_TREASURY_US" not in config:
+        config["CENTRAL_TREASURY_US"] = 600000000
+        need_save = True
+        
+    if need_save:
+        with open(CONFIG_PATH, 'w') as f: 
+            json.dump(config, f, indent=4)
+    # 👆👆 [픽스 완료] 👆👆
+    
+    return config
 
 def save_config(data):
     with open(CONFIG_PATH, 'w') as f: json.dump(data, f, indent=4)
