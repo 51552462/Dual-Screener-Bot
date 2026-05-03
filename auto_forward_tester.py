@@ -837,7 +837,7 @@ def send_comprehensive_daily_report():
             send_telegram_msg(msg1); time.sleep(1)
 
             # ---------------------------------------------------------
-            # 📑 결과지 2: 생존자 리더보드 (프로듀스 101)
+            # 📑 결과지 2: 생존자 리더보드 (프로듀스 101) & 당일 청산 부검
             # ---------------------------------------------------------
             import re # 👈 이 줄과 아래 def의 시작 간격을 '정확히 스페이스 12칸'으로 맞춰주세요!
             def get_core_group(sig):
@@ -848,6 +848,7 @@ def send_comprehensive_daily_report():
                 
                 sig = re.sub(r'^\[.*?\]\s*', '', sig)
                 return sig.split(' [')[0]
+
             msg2 = f"{market_icon} <b>[2/9] 로직별 복리 생존 리더보드</b>\n"
             if not df_all.empty:
                 df_all_copy = df_all.copy()
@@ -866,7 +867,21 @@ def send_comprehensive_daily_report():
                     if e['bal'] < base_seed * 0.8: m = "📉"
                     if e['bal'] < base_seed * 0.5: m = "💀"
                     msg2 += f"{m} <b>{e['g']}</b>: {e['bal']:,.0f}원 (승률 {e['wr']:.0f}%)\n"
-            else: msg2 += " ↳ 매매 데이터 없음\n"
+
+                # 👇👇 [치명적 누락 복구 지점] 증발했던 당일 청산 사유 부검 리포트 복원 👇👇
+                today_closed = df_closed[df_closed['exit_date'] == today_str]
+                if not today_closed.empty:
+                    msg2 += "\n📋 <b>[오늘의 청산 부검 리포트]</b>\n"
+                    for _, row in today_closed.iterrows():
+                        icon = "🔴" if row['final_ret'] < 0 else ("🔥" if "오버드라이브" in str(row['exit_reason']) else "🟢")
+                        clean_sig = get_core_group(row['sig_type'])
+                        msg2 += f"{icon} [{clean_sig}] {row['name']} ({row['final_ret']:+.2f}%)\n"
+                        msg2 += f"   ↳ <b>사유:</b> {row['exit_reason']}\n"
+                # 👆👆 [복구 완료] 👆👆
+
+            else: 
+                msg2 += " ↳ 매매 데이터 없음\n"
+                
             send_telegram_msg(msg2); time.sleep(1)
 
             # ---------------------------------------------------------
