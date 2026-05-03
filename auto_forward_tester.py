@@ -1274,6 +1274,90 @@ def run_deep_dive_analysis(market='KR'):
         print(err_msg)
         send_telegram_msg(err_msg)
 
+# ==========================================
+# 3. [추가] 30명 실무자 개별 상세 일일 보고 엔진
+# ==========================================
+def send_worker_daily_reports(market):
+    """[V108.0] 실무자(로직)들의 개별 일일 청산 및 시드 현황 상세 보고"""
+    print(f"📊 [{market}] 실무자 개별 일일 리포트 발송 준비 중...")
+    tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
+    today_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
+    
+    sys_config = load_system_config()
+    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
+    
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        
+        # 💡 [팩트] R&D 제외, 해당 시장의 모든 매매 내역 로드
+        df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND sig_type NOT LIKE '%[R&D_%'", conn)
+        conn.close()
+        
+        if df_all.empty: return
+        
+        import re
+        def get_core_group(sig):
+            sig = str(sig).replace('💀[기각/관찰용] ', '')
+            if "STANDARD_ORIGINAL" in sig: return "STANDARD_ORIGINAL"
+            if "STANDARD_MLBOX" in sig: return "STANDARD_MLBOX"
+            sig = re.sub(r'^\[.*?\]\s*', '', sig)
+            return sig.split(' [')[0]
+
+        df_all['group'] = df_all['sig_type'].apply(get_core_group)
+        groups = df_all['group'].unique()
+        
+        sent_count = 0
+        for group in groups:
+            g_df = df_all[df_all['group'] == group]
+            
+            # 💡 [로직별 독립 복리 시드 계산]
+            g_closed = g_df[g_df['status'].str.contains('CLOSED', na=False)]
+            realized_pnl = (g_closed['sim_kelly_invest'] * g_closed['final_ret'] / 100.0).sum() if not g_closed.empty else 0.0
+            bonus_seed = sys_config.get(f"BONUS_SEED_{group}", 0)
+            current_seed = base_seed + realized_pnl + bonus_seed
+            
+            # 오늘 청산 내역 및 오버나잇 보유 현황
+            today_closed = g_closed[g_closed['exit_date'] == today_str]
+            open_positions = g_df[g_df['status'] == 'OPEN']
+            
+            # 🛡️ 스팸 방어: 과거 기록만 있고, "오늘 청산도 없고 보유 종목도 0개인" 유령 로직은 발송 스킵
+            if today_closed.empty and open_positions.empty:
+                continue
+            
+            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
+            msg = f"{market_icon} <b>[{group}] 실무자 일일 결산</b>\n"
+            msg += "━━━━━━━━━━━━━━━━━━\n"
+            msg += f"💰 <b>현재 배정된 시드:</b> {current_seed:,.0f} 원\n"
+            msg += f"📊 <b>누적 실현 손익:</b> {realized_pnl:+,.0f} 원\n"
+            
+            if not today_closed.empty:
+                wins = len(today_closed[today_closed['final_ret'] > 0])
+                loses = len(today_closed[today_closed['final_ret'] <= 0])
+                msg += f"\n🎯 <b>[오늘의 성적]:</b> {wins}승 {loses}패\n"
+                
+                # 💡 [당일 청산 사유 정밀 부검 내역]
+                for _, row in today_closed.iterrows():
+                    icon = "🔴" if row['final_ret'] < 0 else ("🔥" if "오버드라이브" in str(row['exit_reason']) else "🟢")
+                    mae_pct = ((row['min_low'] - row['entry_price']) / row['entry_price']) * 100
+                    
+                    msg += f"{icon} <b>{row['name']}</b> ({row['final_ret']:+.2f}%)\n"
+                    msg += f" ↳ <b>사유:</b> {row['exit_reason']}\n"
+                    msg += f" ↳ 투입: {row['sim_kelly_invest']:,.0f}원 | <b>MFE {row['mfe']:.1f}%</b> | MAE {mae_pct:.1f}%\n"
+            else:
+                msg += f"\n🎯 <b>[오늘의 성적]:</b> 청산 내역 없음\n"
+                
+            msg += f"\n📦 <b>현재 오버나잇(보유) 종목:</b> {len(open_positions)}개"
+            
+            send_telegram_msg(msg)
+            sent_count += 1
+            time.sleep(1.5) # 🚨 초당 1건 제한(Telegram Rate Limit)을 피하기 위한 1.5초 딜레이
+            
+        print(f"✅ [{market}] 총 {sent_count}명의 활성 실무자 개별 리포트 발송 완료!")
+            
+    except Exception as e:
+        print(f"⚠️ {market} 실무자 개별 보고 에러: {e}")
+
 
 
 # ==========================================
@@ -1293,6 +1377,7 @@ def run_daily_scheduler():
             if now.hour == 15 and now.minute == 40:
                 print("🚀 한국장 종가 추적 및 청산 업데이트 시작...")
                 track_daily_positions('KR')
+                send_worker_daily_reports('KR')  # 👉 [추가된 부분] 한국장 실무자 개별 보고 발송
                 time.sleep(60) # 중복 실행 방지
                 
             # 2. 일일 종합 리포트 발송 (16:00)
@@ -1305,6 +1390,7 @@ def run_daily_scheduler():
             elif now.hour == 6 and now.minute == 10:
                 print("🚀 미국장 종가 추적 및 청산 업데이트 시작...")
                 track_daily_positions('US')
+                send_worker_daily_reports('US')  # 👉 [추가된 부분] 미국장 실무자 개별 보고 발송
                 time.sleep(60)
 
             time.sleep(10) # 10초마다 시간 확인
