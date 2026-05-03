@@ -50,7 +50,18 @@ def load_config():
     return config
 
 def save_config(data):
-    with open(CONFIG_PATH, 'w') as f: json.dump(data, f, indent=4)
+    """[V110.0] JSON 원자적 저장(Atomic Save) 엔진: 에러 시 데이터 증발 원천 차단"""
+    temp_path = f"{CONFIG_PATH}.temp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
 
 # ==========================================
 # 💡 [전체 상장 종목 리스트 수집기]
