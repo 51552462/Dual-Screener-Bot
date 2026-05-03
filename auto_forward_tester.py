@@ -680,13 +680,23 @@ def track_daily_positions(market):
                     conn.execute(f"UPDATE forward_trades SET {key}_ret=? WHERE id=?", (current_ret_pct, r['id']))
 
             # [V17.0 청산 평행우주 대결 (STAT vs TECH)]
+            # 💡 [팩트] 관제탑이 내 전략방(ns_prefix) 맞춤형으로 깎아둔 실전 한계점 로드
             dyn_mae_sl = ns_live_params.get("DYNAMIC_MAE_SL", -3.5)
             dyn_mfe_tp = ns_live_params.get("DYNAMIC_MFE_TP", 10.0)
 
+            # 👇👇 [핵심 추가] 스마트 방어 버퍼: 주도주 편대 소속이면 MAE 손절선을 2.0 ATR 기반으로 동적 확장 👇👇
+            if "[🔥주도주" in r['sig_type']:
+                # entry_atr 2배수만큼의 하락폭(%)을 계산하여 음수(-)로 손절 밴드 재설정
+                smart_mae_limit = -((2.0 * entry_atr) / ep) * 100
+                
+                # 기존 설정된 손절선보다 더 넓은 관용을 베풀어야 할 때만 확장 (최소 방어선 유지)
+                dyn_mae_sl = min(dyn_mae_sl, smart_mae_limit)
+            # 👆👆 [스마트 버퍼 완료] 👆👆
+
             if r.get('sim_stat_status', 'OPEN') == 'OPEN':
-                if low_ret_pct <= dyn_mae_sl:
+                if low_ret_pct <= dyn_mae_sl: # 장중 손절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
-                elif high_ret_pct >= dyn_mfe_tp:
+                elif high_ret_pct >= dyn_mfe_tp: # 장중 익절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
                 else:
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=? WHERE id=?", (current_ret_pct, r['id']))
