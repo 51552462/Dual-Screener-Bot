@@ -748,7 +748,12 @@ def run_autonomous_analysis():
         # 4주치(30일) 청산 데이터를 DB에서 독립적으로 무조건 로드합니다.
         conn = sqlite3.connect(DB_PATH, timeout=60)
         thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        df_closed_30d = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND exit_date >= '{thirty_days_ago}'", conn)
+        
+        # 👇👇 [치명적 버그 픽스] 장부 오염 방지: R&D 가상 데이터가 S급 챔피언으로 둔갑해 국고를 축내는 현상 원천 차단 👇👇
+        query = f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type NOT LIKE '%[R&D_%' AND exit_date >= '{thirty_days_ago}'"
+        df_closed_30d = pd.read_sql(query, conn)
+        # 👆👆 [픽스 완료] 👆👆
+        
         conn.close()
 
         import re
