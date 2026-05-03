@@ -305,7 +305,22 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             hist_df['atr'] = hist_df['tr'].ewm(span=14, adjust=False).mean()
             entry_atr = float(hist_df['atr'].iloc[-1])
 
-            opt_sl_atr = sys_config.get(f"{market}_MASTER_S1_ATR_SL", 2.0)
+            # 👇👇 [핵심 픽스] 신규 진입 시드 계산용 네임스페이스 동적 파싱 (하드코딩 제거) 👇👇
+            ns_prefix = f"{market}_MASTER_S1" # 기본값
+            
+            if "SUPERNOVA" in sig_type:
+                # 초신성은 오리지널과 완전히 분리된 전용 파라미터 방을 사용
+                ns_prefix = f"{market}_SUPERNOVA_MASTER"
+            else:
+                # 기존 오리지널 로직 분류에 맞게 파싱
+                if "S4" in sig_type: ns_prefix = f"{market}_MASTER_S4"
+                if "눌림" in sig_type: ns_prefix = f"{market}_NULRIM_S4" if "S4" in sig_type else f"{market}_NULRIM_S1" 
+                if "5선" in sig_type: ns_prefix = f"{market}_5EMA_S1" 
+                
+            # 본인 출신 성분에 맞는 뇌(JSON)에서 정확한 ATR_SL(관제탑 승수) 로드
+            opt_sl_atr = sys_config.get(f"{ns_prefix}_ATR_SL", 2.0)
+            # 👆👆 [수정 완료] 👆👆
+            
             sl_price = ep - (opt_sl_atr * entry_atr)
             risk_distance = ep - sl_price
 
