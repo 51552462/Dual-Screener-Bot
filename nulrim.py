@@ -76,8 +76,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
 # 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
-TELEGRAM_TOKEN_MAIN  = "7764404352:AAHcj7FNpVB1h2BfQ1wtLkh1UJCES2LQK_s"
-TELEGRAM_TOKEN_PROMO = "7996581031:AAHbZ3wZcsWgXk3xITTzBntI5YzlC6unhI0"
+TELEGRAM_TOKEN_MAIN  = "8781642737:AAGnJcNZDjT_CtA1rr25b7Zv3LsssxPtxSo"
+TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
 TELEGRAM_CHAT_ID     = "6838834566"
 SEND_TELEGRAM        = True
 
