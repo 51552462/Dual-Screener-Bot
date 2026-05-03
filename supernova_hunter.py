@@ -5,6 +5,7 @@ import numpy as np
 import yfinance as yf
 import FinanceDataReader as fdr
 import concurrent.futures
+import random
 from datetime import datetime, timedelta
 import pytz
 import warnings
@@ -18,7 +19,7 @@ scanned_today_cache = {'KR': set(), 'US': set()}
 # 💡 [환경 설정 및 텔레그램 세팅]
 # ==========================================
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
+TELEGRAM_TOKEN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
 TELEGRAM_CHAT_ID = "6838834566"
 
 def send_telegram_msg(text):
@@ -28,40 +29,150 @@ def send_telegram_msg(text):
     except: pass
 
 def load_config():
-    config = {}
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r') as f: 
-            config = json.load(f)
-            
-    # 👇👇 [긴급 수혈 버그 픽스] 국고 데이터가 깡통이면 6억 원 즉시 장전 👇👇
-    need_save = False
-    if "CENTRAL_TREASURY_KR" not in config:
-        config["CENTRAL_TREASURY_KR"] = 600000000
-        need_save = True
-    if "CENTRAL_TREASURY_US" not in config:
-        config["CENTRAL_TREASURY_US"] = 600000000
-        need_save = True
-        
-    if need_save:
-        with open(CONFIG_PATH, 'w') as f: 
-            json.dump(config, f, indent=4)
-    # 👆👆 [픽스 완료] 👆👆
-    
-    return config
+        with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    return {}
 
 def save_config(data):
-    """[V110.0] JSON 원자적 저장(Atomic Save) 엔진: 에러 시 데이터 증발 원천 차단"""
-    temp_path = f"{CONFIG_PATH}.temp"
+    with open(CONFIG_PATH, 'w') as f: json.dump(data, f, indent=4)
+
+def generate_random_alpha_formula():
+    """O/H/L/C/V와 연산자를 조합해 깊이 3~5의 랜덤 수식을 생성."""
+    windows = [5, 10, 20, 30, 60]
+    terminals = ['O', 'H', 'L', 'C', 'V']
+    depth = random.randint(3, 5)
+
+    def build_expr(d):
+        if d <= 1:
+            return random.choice(terminals)
+
+        op = random.choice(['add', 'sub', 'mul', 'div', 'rolling_mean', 'rolling_std'])
+        if op in ('rolling_mean', 'rolling_std'):
+            return f"{op}({build_expr(d-1)}, {random.choice(windows)})"
+        left = build_expr(d - 1)
+        right = build_expr(max(1, d - 2))
+        return f"{op}({left}, {right})"
+
+    return build_expr(depth)
+
+def evaluate_alpha_formula(df, formula):
+    """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환."""
+    if df.empty:
+        return None
+
+    O = df['Open']
+    H = df['High']
+    L = df['Low']
+    C = df['Close']
+    V = df['Volume']
+
+    def add(a, b): return a + b
+    def sub(a, b): return a - b
+    def mul(a, b): return a * b
+    def div(a, b):
+        safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
+        return a / safe_b
+    def rolling_mean(x, w): return x.rolling(int(w)).mean()
+    def rolling_std(x, w): return x.rolling(int(w)).std()
+
+    env = {
+        'O': O, 'H': H, 'L': L, 'C': C, 'V': V,
+        'add': add, 'sub': sub, 'mul': mul, 'div': div,
+        'rolling_mean': rolling_mean, 'rolling_std': rolling_std
+    }
+
     try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
+        result = eval(formula, {"__builtins__": {}}, env)
+        if isinstance(result, pd.Series):
+            return result.replace([np.inf, -np.inf], np.nan)
+    except Exception:
+        return None
+    return None
+
+def evolve_alpha_factors():
+    """무작위 수식 1000개를 평가해 IC 상위 3개를 저장."""
+    print("🧠 [알파 인큐베이터] 무작위 수식 진화 평가 시작...")
+    stock_pool = []
+    try:
+        kr_codes = get_krx_list()['Code'].tolist()[:30]
+        us_codes = get_us_list()['Code'].tolist()[:30]
+        stock_pool = [('KR', c) for c in kr_codes] + [('US', c) for c in us_codes]
     except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+        print(f"⚠️ 종목 풀 구성 실패: {e}")
+        return
+
+    start_date = (datetime.now() - timedelta(days=500)).strftime('%Y-%m-%d')
+
+    def fetch_df(item):
+        mkt, code = item
+        try:
+            df = fdr.DataReader(code, start_date) if mkt == 'KR' else yf.download(code, start=start_date, progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
+            if df.empty or len(df) < 120:
+                return None
+            need_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            if not all(c in df.columns for c in need_cols):
+                return None
+            return df[need_cols].dropna().tail(300).copy()
+        except Exception:
+            return None
+
+    sample_dfs = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        for res in executor.map(fetch_df, stock_pool):
+            if res is not None:
+                sample_dfs.append(res)
+
+    if not sample_dfs:
+        print("⚠️ 알파 진화용 샘플 데이터가 없습니다.")
+        return
+
+    scored = []
+    for _ in range(1000):
+        formula = generate_random_alpha_formula()
+        all_x, all_y = [], []
+        for df in sample_dfs:
+            alpha = evaluate_alpha_formula(df, formula)
+            if alpha is None:
+                continue
+            future_ret_5d = (df['Close'].shift(-5) - df['Close']) / df['Close']
+            pair = pd.concat([alpha.rename('alpha'), future_ret_5d.rename('ret5')], axis=1).dropna()
+            if len(pair) < 30:
+                continue
+            all_x.append(pair['alpha'])
+            all_y.append(pair['ret5'])
+
+        if not all_x:
+            continue
+        x = pd.concat(all_x, ignore_index=True)
+        y = pd.concat(all_y, ignore_index=True)
+        if len(x) < 200:
+            continue
+
+        ic = x.corr(y, method='spearman')
+        if pd.notna(ic):
+            scored.append((formula, float(ic)))
+
+    if not scored:
+        print("⚠️ 유효한 알파 수식이 없어 저장을 건너뜁니다.")
+        return
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top3 = scored[:3]
+
+    config = load_config()
+    config["EVOLVED_ALPHA_FACTORS"] = {
+        f"ALPHA_{i+1}": top3[i][0] for i in range(len(top3))
+    }
+    config["EVOLVED_ALPHA_THRESHOLD"] = float(np.mean([ic for _, ic in top3]) * 0.5)
+    save_config(config)
+
+    msg = "🧬 <b>[알파 진화 완료]</b>\n"
+    for i, (formula, ic) in enumerate(top3, 1):
+        msg += f"▪️ ALPHA_{i} (IC {ic:.4f}): <code>{formula}</code>\n"
+    send_telegram_msg(msg)
+    print("✅ EVOLVED_ALPHA_FACTORS 저장 완료")
 
 # ==========================================
 # 💡 [전체 상장 종목 리스트 수집기]
@@ -206,7 +317,7 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
                 c_0 = (16.6<=bbe[dday_idx]<=32.3) and (13.7<=tml[dday_idx]<=269.0) and (-1491.9<=rs[dday_idx]<=680.1) and (109.8<=trd_val_eok[dday_idx]<=1419.5)
                 if not (c_30 and c_7 and c_0): return None
                 
-            final_rs = rs[-1]
+            final_rs = rs[dday_idx]
 
         elif market == 'US':
             spy_c = benchmarks['SPY'][benchmarks['SPY'].index <= target_date].tail(150)['Close'].values
@@ -226,7 +337,7 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
             q3 = (0.3 <= cpv[dday_idx] <= 0.8) and (5.6 <= tb[dday_idx] <= 12.0) and (9.0 <= bbe[dday_idx] <= 16.6) and (0.0 <= tml[dday_idx] <= 247.2) and (-804.4 <= rs_spy[dday_idx] <= 1323.4) and (-1338.8 <= rs_qqq[dday_idx] <= 761.9) and (0.0 <= spread_10_20[dday_idx] <= 75.8)
 
             if not (q1 and q2 and q3): return None
-            final_rs = rs_spy[-1]
+            final_rs = rs_spy[dday_idx]
 
         # 형상 압축 및 반환
         c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
@@ -636,24 +747,24 @@ def run_miner_scheduler():
             # 매주 월요일 17:00 템플릿 갱신
             if now.weekday() == 0 and now.hour == 17 and now.minute == 0:
                 
-                # 💡 [버그 픽스] 여기서 CSV를 미리 삭제하면 주말에 모아둔 R&D 데이터가 날아갑니다. (삭제 로직 하단으로 이동)
-                
+                # 💡 [V102.0 데이터 클리닝] 마이닝 시작 전, 지난주의 오래된 CSV 찌꺼기 삭제
+                csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+                standard_csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Standard_Flow_Master.csv')
+                if os.path.exists(standard_csv_path):
+                    os.remove(standard_csv_path)
+                    print("🗑️ [데이터 클리닝] 지난주 머신러닝용 CSV 데이터를 성공적으로 포맷했습니다.")
+
                 hunt_supernovas('KR')
                 hunt_supernovas('US')
+                evolve_alpha_factors()
                 
                 # 💡 [V100.1 핵심 픽스] data_miner 파일 방어막 구축
                 try:
                     import data_miner
                     print("🔄 [스케줄러] 타임머신 완료. K-Means 클러스터 마이닝으로 자동 이관합니다...")
                     data_miner.run_cluster_mining()
-                    
-                    # 👇👇 [핵심 진화] 마이닝이 '완전히 끝난 후'에 CSV를 비워주어야 다음 주말 R&D 데이터가 안전하게 담깁니다 👇👇
-                    csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
-                    if os.path.exists(csv_path):
-                        os.remove(csv_path)
-                        print("🗑️ [데이터 클리닝] 머신러닝 학습이 완료되어 CSV 데이터를 성공적으로 포맷했습니다 (다음 주 준비 완료).")
-                    # 👆👆 [수정 완료] 👆👆
-                    
                 except ModuleNotFoundError:
                     print("🚨 [경고] 'data_miner.py' 파일을 찾을 수 없어 ML 마이닝을 건너뜁니다.")
                 except Exception as e:
@@ -664,6 +775,7 @@ def run_miner_scheduler():
         except Exception as e:
             print(f"⚠️ 마이너 스케줄러 루프 에러: {e}")
             time.sleep(60)
+# 👆👆 [덮어쓰기 완료] 👆👆
 
 def run_live_sniper_scheduler():
     """매일 4번 지정된 시간에 실시간 시장을 스캔하고 쏘는 봇"""
