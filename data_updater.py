@@ -13,33 +13,33 @@ warnings.filterwarnings('ignore')
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# ==========================================
-# 🛡️ [V107.0 무중단 DB 안전 저장 엔진] 
-# ==========================================
-def save_data_safely(df, table_name, conn):
-    """
-    스나이퍼 봇이 빈 테이블을 읽고 뻗는 현상을 원천 차단합니다.
-    임시 테이블에 먼저 데이터를 받은 뒤, 트랜잭션으로 원자적 덮어쓰기를 실행합니다.
-    """
-    if df.empty: return
+def save_data_safely(conn, table_name, df):
+    """테이블 본체를 유지한 채 데이터만 원자적으로 교체한다."""
+    temp_table = f"{table_name}__tmp_new"
+    backup_table = f"{table_name}__tmp_old"
 
-    temp_table_name = f"temp_{table_name}"
+    # 신규 데이터를 임시 테이블에 먼저 준비
+    df.to_sql(temp_table, conn, if_exists='replace', index=False)
+
     try:
-        # 1. 뼈대(테이블)가 아예 없으면 최초 1회 빈 껍데기 생성
-        df.head(0).to_sql(table_name, conn, if_exists='append', index=False)
-        
-        # 2. 스나이퍼가 모르게 '임시 테이블'에 데이터를 새로 구축
-        df.to_sql(temp_table_name, conn, if_exists='replace', index=False)
-        
-        # 3. 찰나의 순간(트랜잭션)에 본진 데이터를 최신화 (데이터 증발 시간 0초)
-        # 👇👇 [치명적 버그 픽스] Python sqlite3 암시적 트랜잭션 충돌 방지를 위해 BEGIN TRANSACTION 강제 호출 삭제 👇👇
-        conn.execute(f'INSERT OR REPLACE INTO "{table_name}" SELECT * FROM "{temp_table_name}"')
-        conn.execute(f'DROP TABLE "{temp_table_name}"')
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(f'DROP TABLE IF EXISTS "{backup_table}"')
+
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        ).fetchone() is not None
+
+        if table_exists:
+            conn.execute(f'ALTER TABLE "{table_name}" RENAME TO "{backup_table}"')
+
+        conn.execute(f'ALTER TABLE "{temp_table}" RENAME TO "{table_name}"')
+        conn.execute(f'DROP TABLE IF EXISTS "{backup_table}"')
         conn.commit()
-        # 👆👆 [픽스 완료] 👆👆
-    except Exception as e:
-        conn.rollback() # 에러 시 즉각 원상복구
-        print(f"⚠️ [DB 무중단 덮어쓰기 실패] {table_name}: {e}")
+    except Exception:
+        conn.rollback()
+        conn.execute(f'DROP TABLE IF EXISTS "{temp_table}"')
+        raise
 
 # 🇺🇸 미국장 리스트 추출
 def get_us_tickers():
@@ -99,8 +99,17 @@ def update_single_ticker(row, country):
         local_conn.execute("PRAGMA journal_mode=WAL;")       # 동시 읽기/쓰기 허용
         local_conn.execute("PRAGMA synchronous=NORMAL;")     # WAL 모드 최적화 (속도 향상)
         
-        # 🛡️ [V107.0] 스나이퍼 간섭 방지 무중단 덮어쓰기 실행
-        save_data_safely(df, table_name, local_conn)
+        # 👇👇 [V102.6 버그 픽스] Replace(DROP) 폭파 방지 및 무정지 Append 엔진 👇👇
+        try:
+            # 1. 뼈대(테이블)는 살려두고 기존 데이터 알맹이만 조용히 삭제 (DB Lock 방지)
+            local_conn.execute(f'DELETE FROM "{table_name}"')
+        except sqlite3.OperationalError:
+            # 처음 수집하는 종목이라 테이블이 아예 없다면 조용히 패스
+            pass
+        
+        # 2. Append 모드로 알맹이만 안전하게 주입 (다른 봇들이 0.1초도 멈추지 않음)
+        df.to_sql(table_name, local_conn, if_exists='append', index=False)
+        # 👆👆 [패치 완료] 👆👆
 
         local_conn.close()
         return True
@@ -125,19 +134,15 @@ def run_daily_db_update():
                 df_temp.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
                 df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
                 
-                # 👇👇 [V102.6] 지수 데이터 역시 무정지 Append 적용 👇👇
-                try: bm_conn.execute(f'DELETE FROM "{tbl}"')
-                except: pass
-                df_temp.to_sql(tbl, bm_conn, if_exists='append', index=False)
+                # 👇👇 [V102.6] 지수 데이터도 안전한 원자 교체 방식으로 저장 👇👇
+                save_data_safely(bm_conn, tbl, df_temp)
         
         for tk, tbl in zip(['069500', '229200'], ['KR_KOSPI_IDX', 'KR_KOSDAQ_IDX']):
             df_temp = fdr.DataReader(tk, (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')).reset_index()
             df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
             
-            # 👇👇 [V102.6] 한국 지수 데이터 무정지 Append 적용 👇👇
-            try: bm_conn.execute(f'DELETE FROM "{tbl}"')
-            except: pass
-            df_temp.to_sql(tbl, bm_conn, if_exists='append', index=False)
+            # 👇👇 [V102.6] 한국 지수 데이터도 안전한 원자 교체 방식으로 저장 👇👇
+            save_data_safely(bm_conn, tbl, df_temp)
             
         bm_conn.close()
         print("✅ 벤치마크 지수 DB 저장 완료!")
@@ -147,7 +152,7 @@ def run_daily_db_update():
     # 1/2 미국장 (스레드 실행부 conn 제거)
     print("\n⏳ [1/2] 미국장 데이터 갱신 중... (야후 파이낸스 접속)")
     us_success = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(update_single_ticker, row, 'US'): row['Symbol'] for _, row in us_list.iterrows()}
         import sys
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -158,7 +163,7 @@ def run_daily_db_update():
     # 2/2 한국장 (스레드 실행부 conn 제거)
     print("\n\n⏳ [2/2] 한국장 데이터 갱신 중... (KRX 접속)")
     kr_success = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(update_single_ticker, row, 'KR'): row['Code'] for _, row in kr_list.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             if future.result(): kr_success += 1
