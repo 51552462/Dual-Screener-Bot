@@ -104,12 +104,12 @@ def run_autonomous_analysis():
         vix_120_mean = vix_c.rolling(120).mean().iloc[-1]
         vix_120_std = vix_c.rolling(120).std().iloc[-1]
         
-        # 공포장(Bear) 기준: 평균보다 1.5 표준편차 이상 폭등했을 때 (과거 고정값 28 대체)
-        vix_bear_limit = vix_120_mean + (1.5 * vix_120_std)
-
-        # 1. 기본 국면 및 비중 설정 (동적 VIX 기준)
-        # 평온장(Bull) 기준: 현재 VIX가 120일 평균 미만일 때 (과거 고정값 18 대체)
-        if spy_last > spy_ema200 and vix_last < vix_120_mean:
+        # 현재 VIX의 Z-Score 산출 (최근 120일 대비 얼마나 비정상적으로 튀었는가?)
+        current_vix_zscore = (vix_last - vix_120_mean) / vix_120_std if vix_120_std > 0 else 0
+        
+        # 1. 기본 국면 및 비중 설정 (동적 VIX Z-Score 기준)
+        # 평온장(Bull) 기준: 현재 VIX가 120일 평균 미만일 때 (Z-Score < 0)
+        if spy_last > spy_ema200 and current_vix_zscore < 0:
             regime = "Bull (상승장)"
             base_w1, base_w4 = 1.2, 0.8
         else:
@@ -128,19 +128,19 @@ def run_autonomous_analysis():
 
         w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
         
-        # 3. VIX 기반 동적 룩백 설정 결합 내부 수정
-        if vix_last >= vix_bear_limit:
+        # 3. VIX 기반 동적 룩백 설정 (하드코딩 삭제 및 Z-Score 적용)
+        if current_vix_zscore >= 1.5:  # 과거 28.0 하드코딩 대체 (1.5 표준편차 이상 폭등)
             dyn_lookback = 7
             regime = "Bear (극단적 공포장)"
             w_s1, w_s4 = 0.0, 2.0
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 1.5 STD 이탈 급등 (Bear)"
-        elif vix_last >= vix_120_mean:
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 Z-Score {current_vix_zscore:.2f} 급등 (Bear)"
+        elif current_vix_zscore >= 0.0: # 평균 이상
             dyn_lookback = 15
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 평균 이상 경계 (Chop)"
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 Z-Score {current_vix_zscore:.2f} 경계 (Chop)"
         else:
             dyn_lookback = 45
             regime = "Bull (상승장)"
-            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 현재({vix_last:.1f}) ➔ 정상 범주 내 (Bull)"
+            vix_status = f"VIX 판독: 120일 평균({vix_120_mean:.1f}) 대비 Z-Score {current_vix_zscore:.2f} 안정 (Bull)"
             
     except Exception as e:
         print(f"거시 지표 로드 에러: {e}")
@@ -441,9 +441,6 @@ def run_autonomous_analysis():
             
             # 🚨 [알파 붕괴 판정] 손익비가 초기 대비 30% 이상 날아갔거나 1.0 미만일 때
             if late_pf < early_pf * 0.7 or late_pf < 1.0:
-                # 관제탑에서 기존 TP 로드 후 75% 수준으로 자율 하향 조율
-                old_tp = current_config.get("DYNAMIC_MFE_TP", 10.0)
-                new_tp = max(5.0, old_tp * 0.75)
                 
                 # 🔬 [노화 원인 정밀 부검]
                 late_losers = late_phase[late_phase['final_ret'] <= 0]
@@ -460,10 +457,26 @@ def run_autonomous_analysis():
                         
                     report_lines.append(f"💡 <b>[노화 원인 분석]</b>: {cause}")
                     
-                # 🛡️ 메타-최적화: 14일을 기다리지 않고 즉각 베이스라인으로 강제 초기화
-                current_config["DYNAMIC_MAE_SL"] = -5.0
-                current_config["DYNAMIC_MFE_TP"] = round(new_tp, 1)
-                report_lines.append(f"🚨 <b>[노화 발생]</b> 최근 {len(decay_df)}개 종목 추적 완료. 시장 변동성 축소로 인해 익절선(TP)을 기존 {old_tp:.1f}%에서 {new_tp:.1f}%로 자율 하향 조율함.")
+                # 👇👇 [수정] -5.0 강제 리셋(하드코딩) 삭제, 최근 20개 종목 MFE/MAE 평균 자율 튜닝 👇👇
+                recent_20 = decay_df.tail(20)
+                
+                if not recent_20.empty:
+                    # 장중 MAE/MFE 실시간 역추적 계산
+                    recent_mae = ((recent_20['min_low'] - recent_20['entry_price']) / recent_20['entry_price'] * 100).mean()
+                    recent_mfe = ((recent_20['max_high'] - recent_20['entry_price']) / recent_20['entry_price'] * 100).mean()
+                    
+                    # 지나치게 파격적인 수치가 들어오지 못하도록 최소한의 안전 바운딩
+                    new_sl = round(max(-10.0, min(-2.0, recent_mae)), 1) 
+                    new_tp = round(max(3.0, min(20.0, recent_mfe)), 1)   
+                else:
+                    new_sl, new_tp = -3.5, 10.0 # 데이터가 아예 없을 경우의 Fail-safe
+                
+                current_config["DYNAMIC_MAE_SL"] = new_sl
+                current_config["DYNAMIC_MFE_TP"] = new_tp
+                
+                report_lines.append(f"🚨 <b>[노화 발생 및 엣지 자율 튜닝]</b> 최근 20개 종목의 장중 데이터를 역추적했습니다.")
+                report_lines.append(f" ↳ 시스템 익절선(TP): <b>{new_tp:.1f}%</b> / 손절선(SL): <b>{new_sl:.1f}%</b> 로 자율 리셋 완료.")
+                # 👆👆 [수정 완료] 👆👆
             else:
                 report_lines.append("✅ <b>[알파 엣지 유지 중]</b> 현재 파라미터가 시장에서 여전히 강력하게 작동 중입니다.")
         else:
