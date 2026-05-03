@@ -24,9 +24,9 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # ==========================================
 # 🤖 2. 텔레그램 봇 토큰 (3개로 완벽 분리)
 # ==========================================
-KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
-US_TOKEN = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
-NEW_TOKEN = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
+KR_TOKEN = "8781642737:AAGnJcNZDjT_CtA1rr25b7Zv3LsssxPtxSo"
+US_TOKEN = "8557663212:AAGYJR67qAqkrR3fQw2cjDbCtUrxCAehv0E"
+NEW_TOKEN = "8752142269:AAHj-fZfTQvM9oQQJ3_o-nJupaW8bb7FiXc"
 
 # 💡 봇 내부 트래픽 통제용 락 (무분별한 API 호출 방어)
 ai_request_lock = threading.Lock()
