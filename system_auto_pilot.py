@@ -21,7 +21,8 @@ CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener
 
 LOOKBACK_DAYS = 14
 SMOOTHING_ALPHA = 0.3 
-START_DATE = datetime.now() + timedelta(days=LOOKBACK_DAYS)
+# 👇👇 [핵심 삭제] 재부팅 시마다 14일이 초기화되는 하드코딩 삭제 👇👇
+# START_DATE = datetime.now() + timedelta(days=LOOKBACK_DAYS)
 
 # ==========================================
 # 💡 [유틸리티 함수]
@@ -1067,25 +1068,71 @@ def send_weekly_flow_master_report():
 # ==========================================
 def system_main_loop():
     tz = pytz.timezone('Asia/Seoul')
-    print(f"🕒 [완전 자율 오토파일럿 V12.0] 대기 중... (첫 조율: {START_DATE.strftime('%Y-%m-%d')})")
+    print(f"🕒 [완전 자율 오토파일럿 V12.0] 영구 가동 대기 중... (DB 팩트 기반 14일 누적 검증 모드)")
     
     while True:
         try:
             now = datetime.now(tz)
-            if now > START_DATE.replace(tzinfo=tz):
-                # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
-                if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+            
+            # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
+            if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+                
+                # 👇👇 [핵심 진화] 재부팅 리셋 방어: DB 최초 거래일 기준으로 14일 경과 여부 엄격 판독 👇👇
+                is_ready = False
+                first_trade_date = None
+                try:
+                    conn = sqlite3.connect(DB_PATH, timeout=60)
+                    cursor = conn.cursor()
+                    # forward_trades 테이블에서 실전 거래가 시작된 가장 오래된 날짜(MIN) 조회
+                    cursor.execute("SELECT MIN(entry_date) FROM forward_trades")
+                    first_trade_date = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    if first_trade_date:
+                        first_dt = datetime.strptime(first_trade_date, '%Y-%m-%d').replace(tzinfo=tz)
+                        if (now - first_dt).days >= LOOKBACK_DAYS:
+                            is_ready = True
+                except Exception as e:
+                    pass # 테이블이 없거나 에러 발생 시 False 유지 (안전 차단)
+                    
+                if is_ready:
                     print("🚀 주말 관제탑 자율 튜닝(뇌수술)을 시작합니다...")
                     run_autonomous_analysis()
-                    time.sleep(60) 
+                else:
+                    first_str = first_trade_date if first_trade_date else "데이터 없음"
+                    print(f"⏳ [데이터 누적 대기 중] 최초 거래일({first_str})로부터 아직 {LOOKBACK_DAYS}일이 지나지 않아 튜닝을 스킵합니다.")
+                # 👆👆 [진화 완료] 👆👆
+                
+                time.sleep(60) 
+                
+            # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
+            elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
+                # 👇👇 리포트 발송도 동일하게 DB 검증 통과 시에만 발송 👇👇
+                is_ready = False
+                try:
+                    conn = sqlite3.connect(DB_PATH, timeout=60)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT MIN(entry_date) FROM forward_trades")
+                    first_trade_date = cursor.fetchone()[0]
+                    conn.close()
                     
-                # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
-                elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
+                    if first_trade_date:
+                        first_dt = datetime.strptime(first_trade_date, '%Y-%m-%d').replace(tzinfo=tz)
+                        if (now - first_dt).days >= LOOKBACK_DAYS:
+                            is_ready = True
+                except: pass
+                
+                if is_ready:
                     print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
                     send_weekly_flow_master_report()
-                    time.sleep(60)
-                    
+                else:
+                    print("⏳ [데이터 누적 대기 중] 총결산 리포트 발송 스킵.")
+                # 👆👆 [진화 완료] 👆👆
+                
+                time.sleep(60)
+                
             time.sleep(30)
+            
         except Exception as e:
             err_msg = f"🚨 <b>[오토파일럿 뇌수술 에러]</b> 주말 자율 학습 중 에러 발생:\n{e}"
             print(err_msg)
