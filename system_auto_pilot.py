@@ -457,26 +457,35 @@ def run_autonomous_analysis():
                         
                     report_lines.append(f"💡 <b>[노화 원인 분석]</b>: {cause}")
                     
-                # 👇👇 [수정] -5.0 강제 리셋(하드코딩) 삭제, 최근 20개 종목 MFE/MAE 평균 자율 튜닝 👇👇
+                # 👇👇 [핵심 진화] 꼼수 산수 삭제, 최근 20개 표본 '진짜 시장 데이터' 역추적 자율 튜닝 👇👇
                 recent_20 = decay_df.tail(20)
                 
                 if not recent_20.empty:
-                    # 장중 MAE/MFE 실시간 역추적 계산
-                    recent_mae = ((recent_20['min_low'] - recent_20['entry_price']) / recent_20['entry_price'] * 100).mean()
-                    recent_mfe = ((recent_20['max_high'] - recent_20['entry_price']) / recent_20['entry_price'] * 100).mean()
+                    # 1. new_tp: 최근 20개 종목 MFE의 75백분위수 (상위 25% 타점)
+                    recent_mfe_series = ((recent_20['max_high'] - recent_20['entry_price']) / recent_20['entry_price'] * 100)
+                    raw_new_tp = np.percentile(recent_mfe_series.dropna(), 75) if len(recent_mfe_series) > 0 else 10.0
                     
-                    # 지나치게 파격적인 수치가 들어오지 못하도록 최소한의 안전 바운딩
-                    new_sl = round(max(-10.0, min(-2.0, recent_mae)), 1) 
-                    new_tp = round(max(3.0, min(20.0, recent_mfe)), 1)   
+                    # 2. new_sl: 최근 20개 중 '패배 종목'의 MAE 평균값 * 0.8
+                    recent_losers = recent_20[recent_20['final_ret'] <= 0]
+                    if not recent_losers.empty:
+                        loser_mae_avg = ((recent_losers['min_low'] - recent_losers['entry_price']) / recent_losers['entry_price'] * 100).mean()
+                        raw_new_sl = loser_mae_avg * 0.8
+                    else:
+                        raw_new_sl = -3.5 # 패배 종목이 아예 없을 경우의 Fail-safe
+                    
+                    # 3. 지나치게 파격적인 수치가 들어오지 못하도록 최소한의 안전 바운딩
+                    new_sl = round(max(-10.0, min(-2.0, raw_new_sl)), 1) 
+                    new_tp = round(max(3.0, min(20.0, raw_new_tp)), 1)   
                 else:
                     new_sl, new_tp = -3.5, 10.0 # 데이터가 아예 없을 경우의 Fail-safe
                 
                 current_config["DYNAMIC_MAE_SL"] = new_sl
                 current_config["DYNAMIC_MFE_TP"] = new_tp
                 
-                report_lines.append(f"🚨 <b>[노화 발생 및 엣지 자율 튜닝]</b> 최근 20개 종목의 장중 데이터를 역추적했습니다.")
-                report_lines.append(f" ↳ 시스템 익절선(TP): <b>{new_tp:.1f}%</b> / 손절선(SL): <b>{new_sl:.1f}%</b> 로 자율 리셋 완료.")
-                # 👆👆 [수정 완료] 👆👆
+                report_lines.append(f"🚨 <b>[노화 발생 및 엣지 자율 튜닝]</b> 최근 20개 종목의 장중 실전 데이터를 역추적했습니다.")
+                report_lines.append(f" ↳ 시스템 익절선(TP): <b>MFE 상위 25% 타점인 {new_tp:.1f}%</b>로 세팅 완료.")
+                report_lines.append(f" ↳ 시스템 손절선(SL): <b>패배 종목 평균 MAE의 80%인 {new_sl:.1f}%</b>로 세팅 완료.")
+                # 👆👆 [진화 및 덮어쓰기 완료] 👆👆
             else:
                 report_lines.append("✅ <b>[알파 엣지 유지 중]</b> 현재 파라미터가 시장에서 여전히 강력하게 작동 중입니다.")
         else:
