@@ -1138,7 +1138,7 @@ def send_group_practitioner_reports():
                 msg += "📌 오늘 청산 종목: 없음\n"
 
             send_telegram_msg(msg)
-            time.sleep(1.5)
+            time.sleep(3.5)
     except Exception as e:
         send_telegram_msg(f"⚠️ 실무자 개별 리포트 발송 에러: {e}")
 # ==========================================
