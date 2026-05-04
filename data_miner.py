@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 # =====================================================================
 # 1. 환경 설정 및 데이터 로드
 # =====================================================================
-CSV_PATH = 'Supernova_Flow_Tracking_Master.csv'
+CSV_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 
 def load_or_create_config():
