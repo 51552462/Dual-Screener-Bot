@@ -1,5 +1,5 @@
 # supernova_hunter.py (V53.2 글로벌 초신성 역추적 & 텔레그램 보고 엔진)
-import os, time, json, sqlite3
+import os, time, json, sqlite3, ast
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -34,7 +34,17 @@ def load_config():
     return {}
 
 def save_config(data):
-    with open(CONFIG_PATH, 'w') as f: json.dump(data, f, indent=4)
+    temp_path = f"{CONFIG_PATH}.temp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
 
 def generate_random_alpha_formula():
     """O/H/L/C/V와 연산자를 조합해 깊이 3~5의 랜덤 수식을 생성."""
@@ -89,8 +99,62 @@ def evaluate_alpha_formula(df, formula):
         return None
     return None
 
+
+def _mutate_alpha_formula_ast(formula: str) -> str:
+    """엘리트 수식 AST 소변형(윈도·O/H/L/C/V·동 arity 연산자만 교체). unparse 불가 시 None."""
+    windows = (5, 10, 20, 30, 60)
+    terms = ('O', 'H', 'L', 'C', 'V')
+    binops = ('add', 'sub', 'mul', 'div')
+    rolls = ('rolling_mean', 'rolling_std')
+    try:
+        tree = ast.parse(formula.strip(), mode='eval')
+    except Exception:
+        return None
+
+    class _M(ast.NodeTransformer):
+        def visit_Num(self, node):
+            if isinstance(node.n, int) and node.n in windows:
+                return ast.copy_location(ast.Num(n=random.choice(windows)), node)
+            return node
+
+        def visit_Constant(self, node):
+            if isinstance(node.value, int) and node.value in windows:
+                return ast.copy_location(ast.Constant(value=random.choice(windows)), node)
+            return node
+
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Load) and node.id in terms:
+                return ast.copy_location(ast.Name(id=random.choice(terms), ctx=ast.Load()), node)
+            return node
+
+        def visit_Call(self, node):
+            self.generic_visit(node)
+            if isinstance(node.func, ast.Name):
+                fn = node.func.id
+                if fn in binops:
+                    neo = random.choice(binops)
+                    return ast.copy_location(
+                        ast.Call(func=ast.Name(id=neo, ctx=ast.Load()), args=node.args, keywords=[]), node
+                    )
+                if fn in rolls and len(node.args) >= 2:
+                    neo = random.choice(rolls)
+                    return ast.copy_location(
+                        ast.Call(func=ast.Name(id=neo, ctx=ast.Load()), args=node.args, keywords=[]), node
+                    )
+            return node
+
+    tree2 = _M().visit(tree)
+    ast.fix_missing_locations(tree2)
+    try:
+        if isinstance(tree2, ast.Expression):
+            return ast.unparse(tree2.body)
+        return ast.unparse(tree2)
+    except Exception:
+        return None
+
+
 def evolve_alpha_factors():
-    """무작위 수식 1000개를 평가해 IC 상위 3개를 저장."""
+    """무작위 수식 + (장부 실적 양호 시) 엘리트 보존·AST 변형 돌연변이로 IC 1위 고정 후, 1위 대비 |r|<0.85인 직교 알파만 채워 최대 3개 저장."""
     print("🧠 [알파 인큐베이터] 무작위 수식 진화 평가 시작...")
     stock_pool = []
     try:
@@ -128,13 +192,26 @@ def evolve_alpha_factors():
         print("⚠️ 알파 진화용 샘플 데이터가 없습니다.")
         return
 
-    scored = []
-    for _ in range(1000):
-        formula = generate_random_alpha_formula()
+    def _ic_spearman_for_formula(formula: str):
         all_x, all_y = [], []
         for df in sample_dfs:
             alpha = evaluate_alpha_formula(df, formula)
             if alpha is None:
+                continue
+            # AST 돌연변이 쓰레기 수식 방어: 상수 0·과도 NaN·무변동
+            a = pd.to_numeric(alpha, errors='coerce')
+            n_a = len(a)
+            if n_a == 0:
+                continue
+            if float(a.isna().sum()) / float(n_a) > 0.30:
+                continue
+            a_fin = a.dropna()
+            if len(a_fin) == 0:
+                continue
+            if (a_fin == 0).all():
+                continue
+            std_a = float(a_fin.std(ddof=0))
+            if not np.isfinite(std_a) or std_a < 1e-9:
                 continue
             future_ret_5d = (df['Close'].shift(-5) - df['Close']) / df['Close']
             pair = pd.concat([alpha.rename('alpha'), future_ret_5d.rename('ret5')], axis=1).dropna()
@@ -142,24 +219,132 @@ def evolve_alpha_factors():
                 continue
             all_x.append(pair['alpha'])
             all_y.append(pair['ret5'])
-
         if not all_x:
-            continue
+            return None
         x = pd.concat(all_x, ignore_index=True)
         y = pd.concat(all_y, ignore_index=True)
         if len(x) < 200:
-            continue
-
+            return None
         ic = x.corr(y, method='spearman')
         if pd.notna(ic):
-            scored.append((formula, float(ic)))
+            return float(ic)
+        return None
+
+    def _pearson_alpha_vs_first(first_formula: str, cand_formula: str):
+        """표본 종목별로 두 수식 알파를 동일 인덱스로 맞춘 뒤 이어붙여, 1위 대비 후보의 피어슨 상관을 계산."""
+        all_a, all_b = [], []
+        for df in sample_dfs:
+            ag = evaluate_alpha_formula(df, first_formula)
+            bg = evaluate_alpha_formula(df, cand_formula)
+            if ag is None or bg is None:
+                continue
+            a = pd.to_numeric(ag, errors='coerce')
+            b = pd.to_numeric(bg, errors='coerce')
+            pair = pd.concat([a.rename('_a'), b.rename('_b')], axis=1).dropna()
+            if len(pair) < 30:
+                continue
+            na = pair.iloc[:, 0]
+            nb = pair.iloc[:, 1]
+            n_a = len(na)
+            if n_a == 0 or float(na.isna().sum()) / float(n_a) > 0.30:
+                continue
+            if (na == 0).all() or (nb == 0).all():
+                continue
+            if float(na.std(ddof=0)) < 1e-9 or float(nb.std(ddof=0)) < 1e-9:
+                continue
+            all_a.append(na.reset_index(drop=True))
+            all_b.append(nb.reset_index(drop=True))
+        if not all_a:
+            return None
+        xa = pd.concat(all_a, ignore_index=True)
+        xb = pd.concat(all_b, ignore_index=True)
+        if len(xa) < 200:
+            return None
+        r = xa.corr(xb, method='pearson')
+        if pd.notna(r):
+            return float(r)
+        return None
+
+    def _forward_elite_gate():
+        """알파 융합 태그 청산 건이 장부에서 양호하면 기존 EVOLVED 알파 엘리트 보존."""
+        dbp = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+        if not os.path.exists(dbp):
+            return False
+        try:
+            conn = sqlite3.connect(dbp, timeout=30)
+            sub = pd.read_sql(
+                """SELECT final_ret FROM forward_trades
+                   WHERE status LIKE 'CLOSED%' AND sig_type LIKE '%알파 융합%'""",
+                conn,
+            )
+            conn.close()
+        except Exception:
+            return False
+        if sub is None or len(sub) < 5:
+            return False
+        wr = float((sub['final_ret'] > 0).mean())
+        mr = float(sub['final_ret'].mean())
+        return wr >= 0.48 and mr > 0.0
+
+    # // [수정 전] config["EVOLVED_ALPHA_FACTORS"] = { ALPHA_i: top3[i] } 무조건 덮어쓰기
+    # // [수정 후] 장부 실적 기반 엘리트 보존 + 일부 AST 변형으로 1000회 풀 구성
+    cfg_pre = load_config()
+    prev_factors = cfg_pre.get("EVOLVED_ALPHA_FACTORS")
+    if not isinstance(prev_factors, dict):
+        prev_factors = {}
+    elite_formulas = [str(v).strip() for v in prev_factors.values() if isinstance(v, str) and str(v).strip()]
+    use_elite = _forward_elite_gate() and bool(elite_formulas)
+    if use_elite:
+        print(f"🛡️ [엘리트주의] forward_trades 실적 양호 — 기존 알파 {len(elite_formulas)}개를 진화 풀에 보존·AST 변형 시드로 사용합니다.")
+
+    scored = []
+    seen = set()
+
+    def _push_formula(formula: str):
+        if formula in seen:
+            return
+        icv = _ic_spearman_for_formula(formula)
+        if icv is None:
+            return
+        seen.add(formula)
+        scored.append((formula, icv))
+
+    n_total = 1000
+    n_mut = 0
+    if use_elite:
+        n_mut = min(max(80, len(elite_formulas) * 35), n_total // 2)
+    n_rand = n_total - n_mut
+
+    if use_elite:
+        for ef in elite_formulas:
+            _push_formula(ef)
+
+    for _ in range(n_mut):
+        base = random.choice(elite_formulas)
+        mf = _mutate_alpha_formula_ast(base)
+        if not mf or mf == base:
+            mf = generate_random_alpha_formula()
+        _push_formula(mf)
+
+    for _ in range(n_rand):
+        _push_formula(generate_random_alpha_formula())
 
     if not scored:
-        print("⚠️ 유효한 알파 수식이 없어 저장을 건너뜁니다.")
+        print("⚠️ 유효한 알파 수식이 없어 저장을 건너뜁니다. (기존 EVOLVED_ALPHA_FACTORS 유지)")
         return
 
     scored.sort(key=lambda x: x[1], reverse=True)
-    top3 = scored[:3]
+    top3 = []
+    if scored:
+        top3.append(scored[0])
+        first_formula = scored[0][0]
+        for cand in scored[1:]:
+            if len(top3) >= 3:
+                break
+            pr = _pearson_alpha_vs_first(first_formula, cand[0])
+            if pr is not None and abs(pr) >= 0.85:
+                continue
+            top3.append(cand)
 
     config = load_config()
     config["EVOLVED_ALPHA_FACTORS"] = {
@@ -519,8 +704,50 @@ def hunt_supernovas(market):
     # 3. 💡 [신규 추가] 신입 채용 자금 지원 및 파산 방어 로직
     new_added = 0
     rejected_due_to_funds = 0
-    
+
+    # // [수정 후] ARCHIVED_TEMPLATES(cp v/tb/bbe) 코사인 교차검증 — 좀비 템플릿 무한 부활 차단
+    archived_root = config.get("ARCHIVED_TEMPLATES") or {}
+    if not isinstance(archived_root, dict):
+        archived_root = {}
+    market_archived = archived_root.get(market, {})
+    if not isinstance(market_archived, dict):
+        market_archived = {}
+    archived_vectors = []
+    for _aname, entry in market_archived.items():
+        if not isinstance(entry, dict):
+            continue
+        td = entry.get("template_data")
+        if not isinstance(td, dict):
+            continue
+        try:
+            archived_vectors.append(
+                [float(td.get("cpv", 0.0)), float(td.get("tb", 0.0)), float(td.get("bbe", 0.0))]
+            )
+        except (TypeError, ValueError):
+            continue
+
+    def _cosine_sim_archived_dna(a, b):
+        va = np.asarray(a, dtype=np.float64)
+        vb = np.asarray(b, dtype=np.float64)
+        na = np.linalg.norm(va)
+        nb = np.linalg.norm(vb)
+        if na < 1e-15 or nb < 1e-15:
+            return 0.0
+        return float(np.dot(va, vb) / (na * nb))
+
     for t_name, t_dna in market_templates.items():
+        # // [수정 전] 아카이브(도태 DNA)와의 유사도 검사 없이 바로 국고 차감·편입
+        # // [수정 후] 아카이브와 코사인 ≥95%면 편입하지 않음
+        new_vec = [float(t_dna.get("cpv", 0.0)), float(t_dna.get("tb", 0.0)), float(t_dna.get("bbe", 0.0))]
+        skip_zombie = False
+        for av in archived_vectors:
+            if _cosine_sim_archived_dna(new_vec, av) >= 0.95:
+                print(f"🚫 [안티 패턴 일치로 채용 거절] {market} {t_name} (ARCHIVED_TEMPLATES DNA 대비 cos≥0.95)")
+                skip_zombie = True
+                break
+        if skip_zombie:
+            continue
+
         # 국고에 2,000만 원 이상 남아있는지 팩트 체크
         if current_treasury >= 20000000:
             current_treasury -= 20000000 # 국고에서 2,000만 원 즉시 차감
@@ -583,6 +810,23 @@ def execute_supernova_live_scan(market):
     mfe_weighted = config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
     if mfe_weighted:
         ideal_templates['MFE_진화형_황금타점'] = np.array([mfe_weighted['cpv'], mfe_weighted['tb'], mfe_weighted.get('bbe', 20.0)])
+
+    # 인큐베이터 돌연변이 템플릿을 스나이퍼 이상형 풀에 편입 (3D cpv/tb/bbe, 코사인은 각 cos_cutoff 적용)
+    ideal_template_cutoffs = {}
+    incubator_cfg = config.get("INCUBATOR_TEMPLATES", {})
+    if isinstance(incubator_cfg, dict):
+        for iname, itpl in incubator_cfg.items():
+            if not isinstance(itpl, dict):
+                continue
+            try:
+                ideal_templates[f"INCUBATOR_{iname}"] = np.nan_to_num(np.array([
+                    float(itpl.get("cpv", 0.0)),
+                    float(itpl.get("tb", 0.0)),
+                    float(itpl.get("bbe", 0.0)),
+                ], dtype=float))
+                ideal_template_cutoffs[f"INCUBATOR_{iname}"] = float(itpl.get("cos_cutoff", 0.80))
+            except (TypeError, ValueError):
+                continue
 
     # 관제탑 컷오프 수치 로드
     dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50) 
@@ -654,9 +898,12 @@ def execute_supernova_live_scan(market):
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
             
-            # 1. 코사인 유사도 연산
+            # 1. 코사인 유사도 연산 (템플릿별 컷: 인큐베이터는 cos_cutoff, 그 외는 DYNAMIC_SUPERNOVA_CUTOFF)
             best_sim = 0.0
             best_pattern_name = "UNKNOWN"
+            best_pass_sim = 0.0
+            best_pass_name = "UNKNOWN"
+            is_pass_cosine = False
             current_vec_3d = np.nan_to_num(np.array([cpv, tb, bbe]))
             
             for t_name, base_vec in ideal_templates.items():
@@ -664,8 +911,12 @@ def execute_supernova_live_scan(market):
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name
-                    
-            is_pass_cosine = best_sim >= dynamic_cos_cutoff
+                t_cut = ideal_template_cutoffs.get(t_name, dynamic_cos_cutoff)
+                if sim >= t_cut:
+                    is_pass_cosine = True
+                    if sim > best_pass_sim:
+                        best_pass_sim = sim
+                        best_pass_name = t_name
             
             # 2. ML 클러스터 바운딩 박스 연산
             is_pass_ml_box = False
@@ -692,17 +943,23 @@ def execute_supernova_live_scan(market):
                     final_score = ml_score * 100
                     msg_type = f"🤖 ML 클러스터 통과 (기준:{dynamic_ml_cutoff*100:.0f}%)"
                 else:
-                    final_sig = f"[SUPERNOVA_COSINE] {best_pattern_name}"
-                    final_score = best_sim * 100
-                    msg_type = f"🦅 코사인 컷오프 통과 (기준:{dynamic_cos_cutoff*100:.0f}%)"
+                    _cos_label = best_pass_name if best_pass_name != "UNKNOWN" else best_pattern_name
+                    _cos_sim = best_pass_sim if best_pass_name != "UNKNOWN" else best_sim
+                    final_sig = f"[SUPERNOVA_COSINE] {_cos_label}"
+                    final_score = _cos_sim * 100
+                    _cut_used = ideal_template_cutoffs.get(_cos_label, dynamic_cos_cutoff)
+                    msg_type = f"🦅 코사인 컷오프 통과 (기준:{float(_cut_used)*100:.0f}%)"
                 
+                fdict = {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe}
+                if (not is_pass_ml_box) and str(best_pass_name).startswith("INCUBATOR_"):
+                    fdict["incubator_sniper_key"] = str(best_pass_name)[len("INCUBATOR_"):]
                 return {
                     'code': code,
                     'name': stock_list[stock_list['Code']==code]['Name'].values[0],
                     'final_sig': final_sig,
                     'final_score': final_score,
                     'current_close': current_close,
-                    'facts': {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe},
+                    'facts': fdict,
                     'msg_type': msg_type
                 }
             return None
@@ -747,14 +1004,15 @@ def run_miner_scheduler():
             # 매주 월요일 17:00 템플릿 갱신
             if now.weekday() == 0 and now.hour == 17 and now.minute == 0:
                 
-                # 💡 [V102.0 데이터 클리닝] 마이닝 시작 전, 지난주의 오래된 CSV 찌꺼기 삭제
-                csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
-                if os.path.exists(csv_path):
-                    os.remove(csv_path)
-                standard_csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Standard_Flow_Master.csv')
-                if os.path.exists(standard_csv_path):
-                    os.remove(standard_csv_path)
-                    print("🗑️ [데이터 클리닝] 지난주 머신러닝용 CSV 데이터를 성공적으로 포맷했습니다.")
+                # // [수정 전] 매주 CSV os.remove → 실전 피드백 없이 과거 표본만 반복 학습되는 루프 유발
+                # csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+                # if os.path.exists(csv_path):
+                #     os.remove(csv_path)
+                # standard_csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Standard_Flow_Master.csv')
+                # if os.path.exists(standard_csv_path):
+                #     os.remove(standard_csv_path)
+                #     print("🗑️ [데이터 클리닝] 지난주 머신러닝용 CSV 데이터를 성공적으로 포맷했습니다.")
+                # // [수정 후] CSV 보존 + data_miner에서 forward_trades DNA 병합으로 실전 수익 피드백 반영
 
                 hunt_supernovas('KR')
                 hunt_supernovas('US')
