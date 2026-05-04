@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 import yfinance as yf
+import FinanceDataReader as fdr
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -32,6 +33,20 @@ def send_telegram_report(message):
     try: requests.post(url, json=payload, timeout=10)
     except Exception as e: print(f"텔레그램 전송 실패: {e}")
 
+def save_config(config_data):
+    """JSON 원자적 저장: .temp + flush/fsync + os.replace (race condition 방지)."""
+    temp_path = f"{CONFIG_PATH}.temp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+
 def load_or_create_config():
     # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
     if not os.path.exists(CONFIG_PATH):
@@ -47,7 +62,7 @@ def load_or_create_config():
             "ANTI_PATTERNS": [],
             "INCUBATOR_TEMPLATES": {}
         }
-        with open(CONFIG_PATH, 'w') as f: json.dump(default_config, f, indent=4)
+        save_config(default_config)
         return default_config
         
     # 2. 기존 파일이 있을 때 읽어오기
@@ -77,7 +92,7 @@ def load_or_create_config():
         
     # 변경 사항이 있으면 JSON 파일에 덮어쓰기
     if need_save:
-        with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=4)
+        save_config(config)
         print("🏦 [국고 세팅 완료] 시스템에 한국 3억, 미국 3억의 초기 자본이 성공적으로 세팅되었습니다.")
         
     return config
@@ -94,6 +109,73 @@ def get_first_entry_date():
     except Exception as e:
         print(f"최초 거래일 조회 에러: {e}")
     return None
+
+
+def _mean_entry_shape_incubator_winners(promoted_name: str):
+    """인큐베이터 승격 대상 로직의 forward_trades 승리 청산 건 entry_date 시점 종가로 20차원 shape 평균 역추적 (try_add와 동일 정규화·20분할)."""
+    tag_sub = f"[INCUBATOR_{promoted_name}]"
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        wins = pd.read_sql(
+            """SELECT market, code, entry_date FROM forward_trades
+               WHERE sig_type LIKE ? AND status LIKE 'CLOSED%' AND final_ret > 0""",
+            conn,
+            params=(f"%{tag_sub}%",),
+        )
+        conn.close()
+    except Exception:
+        return None
+    if wins is None or wins.empty:
+        return None
+    shapes = []
+    for _, row in wins.iterrows():
+        mkt = str(row.get("market") or "KR").upper()
+        code = str(row.get("code") or "").strip()
+        entry_d = row.get("entry_date")
+        if not code or entry_d is None or (isinstance(entry_d, float) and pd.isna(entry_d)):
+            continue
+        try:
+            end_dt = pd.Timestamp(str(entry_d))
+            end_str = end_dt.strftime("%Y-%m-%d")
+        except Exception:
+            continue
+        st_dt = (end_dt - pd.Timedelta(days=450)).strftime("%Y-%m-%d")
+        try:
+            if mkt == "KR":
+                hist = fdr.DataReader(code, st_dt, end_str)
+            else:
+                hist = yf.download(
+                    code,
+                    start=st_dt,
+                    end=(end_dt + pd.Timedelta(days=2)).strftime("%Y-%m-%d"),
+                    progress=False,
+                )
+                if isinstance(hist.columns, pd.MultiIndex):
+                    hist.columns = hist.columns.droplevel(1)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            hist = hist.sort_index()
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            hist = hist.loc[: pd.Timestamp(end_str)]
+            c = hist["Close"].astype(float).values
+            if len(c) < 60:
+                continue
+            c = c[-300:]
+            if len(c) < 60:
+                continue
+            c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
+            new_shape = np.mean(np.array_split(c_norm, 20), axis=1)
+            if new_shape.size != 20:
+                continue
+            shapes.append(np.nan_to_num(new_shape.astype(float)))
+        except Exception:
+            continue
+    if not shapes:
+        return None
+    stacked = np.vstack(shapes)
+    return [round(float(x), 6) for x in np.mean(stacked, axis=0)]
+
 
 # ==========================================
 # 🚀 [메인 분석 엔진] 
@@ -500,7 +582,9 @@ def run_autonomous_analysis():
             elif win_k == 'champ_c_ret' and results['champ_c_ret'] > results.get('live_a_ret', 0) * 1.05:
                 current_config[f"{target_ns}_LIVE_PARAMS"] = current_config.get(f"{target_ns}_CHAMPION_PARAMS", {})
                 report_lines.append("♻️ <b>[챔피언 귀환]</b> C가 복귀합니다.")
-                
+
+        save_config(current_config)
+
     # ---------------------------------------------------------
     # 👑 엔진 6.5: [V30.0 알파 반감기(Alpha Decay) 및 노화 부검 엔진]
     # ---------------------------------------------------------
@@ -525,6 +609,47 @@ def run_autonomous_analysis():
             
             report_lines.append(f"▪️ 현재 룰 생존 기간: <b>{days_alive}일차</b> (표본 {len(decay_df)}개)")
             report_lines.append(f"▪️ 승격 초기 PF: {early_pf:.2f} ➔ 최근(노화) PF: {late_pf:.2f}")
+
+            # 진행성 노화(사형 직전): late/early 비율만큼 DYNAMIC_KELLY_RISK 패널티 (하한 0.2%)
+            base_kelly = float(current_config.get("DYNAMIC_KELLY_RISK", 0.01))
+            kelly_floor = 0.002
+            touched_ns_kelly = False
+            ns_kelly_vals = []
+
+            if 'namespace' in decay_df.columns:
+                for tns in decay_df['namespace'].dropna().unique():
+                    nd = decay_df[decay_df['namespace'] == tns]
+                    if len(nd) < 8:
+                        continue
+                    h = len(nd) // 2
+                    eph, lph = nd.iloc[:h], nd.iloc[h:]
+                    _, epf_n = calculate_metrics(eph)
+                    _, lpf_n = calculate_metrics(lph)
+                    if epf_n <= 1e-9:
+                        continue
+                    if lpf_n < epf_n and not (lpf_n < epf_n * 0.7 or lpf_n < 1.0):
+                        ratio_n = max(1e-9, lpf_n / epf_n)
+                        k_prev = float(current_config.get(f"{tns}_DYNAMIC_KELLY_RISK", base_kelly))
+                        k_new = max(kelly_floor, k_prev * ratio_n)
+                        current_config[f"{tns}_DYNAMIC_KELLY_RISK"] = round(k_new, 4)
+                        ns_kelly_vals.append(k_new)
+                        touched_ns_kelly = True
+                        report_lines.append(
+                            f"⚙️ <b>[{tns} 알파 노화 선제 축소]</b> DYNAMIC_KELLY_RISK {k_prev*100:.2f}% → {k_new*100:.2f}% "
+                            f"(late/early PF ×{ratio_n:.2f}, 하한 {kelly_floor*100:.1f}%)"
+                        )
+                if touched_ns_kelly and ns_kelly_vals:
+                    current_config["DYNAMIC_KELLY_RISK"] = round(min(base_kelly, min(ns_kelly_vals)), 4)
+
+            if not touched_ns_kelly:
+                if late_pf < early_pf and not (late_pf < early_pf * 0.7 or late_pf < 1.0):
+                    ratio_g = max(1e-9, late_pf / max(early_pf, 1e-9))
+                    k_new_g = max(kelly_floor, base_kelly * ratio_g)
+                    current_config["DYNAMIC_KELLY_RISK"] = round(k_new_g, 4)
+                    report_lines.append(
+                        f"⚙️ <b>[알파 노화 선제 축소]</b> DYNAMIC_KELLY_RISK {base_kelly*100:.2f}% → {k_new_g*100:.2f}% "
+                        f"(late/early PF ×{ratio_g:.2f}, 하한 {kelly_floor*100:.1f}%)"
+                    )
             
             # 🚨 [알파 붕괴 판정] 손익비가 초기 대비 30% 이상 날아갔거나 1.0 미만일 때
             if late_pf < early_pf * 0.7 or late_pf < 1.0:
@@ -983,13 +1108,19 @@ def run_autonomous_analysis():
                 m_pf = m_closed[m_closed['final_ret'] > 0]['final_ret'].sum() / (abs(m_closed[m_closed['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
                 report_lines.append(f"▪️ {m_name}: 승률 {m_wr*100:.1f}% | PF {m_pf:.2f}")
 
-                if m_pf >= 1.5 and m_wr >= 0.55 and m_pf > b_pf and m_wr > b_wr:
+                if m_pf >= 1.5 and m_wr >= 0.55 and m_pf > b_pf and m_wr > b_wr and len(m_closed) >= 15:
                     promoted_name = m_name
                 else:
                     remove_keys.append(m_name)
 
             if promoted_name is not None:
                 promoted_tpl = incubator_templates.get(promoted_name, {})
+                # // [수정 전] "shape": [0.5] * 20  (평선 하드코딩)
+                # // [수정 후] 승격 로직의 forward_trades 승리 청산 종목 진입일 종가 궤적 shape 평균
+                evolved_shape = _mean_entry_shape_incubator_winners(promoted_name)
+                if evolved_shape is None:
+                    _tpl_sh = promoted_tpl.get("shape")
+                    evolved_shape = _tpl_sh if isinstance(_tpl_sh, list) and len(_tpl_sh) == 20 else [0.5] * 20
                 current_config["DNA_ALPHA_NEW_EVOLUTION_V1"] = {
                     "cpv": float(promoted_tpl.get("cpv", 0.0)),
                     "tb": float(promoted_tpl.get("tb", 0.0)),
@@ -998,7 +1129,8 @@ def run_autonomous_analysis():
                     "vcp": 1.0,
                     "vol": 1.0,
                     "ma": 0.0,
-                    "shape": [0.5] * 20
+                    "shape": evolved_shape,
+                    "passed_synthetic_sandbox": True
                 }
                 current_config["NEW_EVOLUTION_NAME"] = "NEW_EVOLUTION_V1"
                 current_config["NEW_EVOLUTION_ACTIVE"] = True
@@ -1044,6 +1176,7 @@ def send_weekly_flow_master_report():
         conn.execute("PRAGMA journal_mode=WAL;")
         
         report_msg = f"🗺️ <b>[V100.0 퀀트 팩토리 주간 흐름(Flow) 총결산]</b>\n📅 기간: {week_ago} ~ {today_str}\n"
+        report_msg += "<i>※ 일자별 실현·MVP·섹터 궤적: sig_type에 INCUBATOR 포함 건 제외(본계좌만).</i>\n"
         report_msg += "━━━━━━━━━━━━━━━━━━\n"
 
         for market in ['KR', 'US']:
@@ -1062,6 +1195,7 @@ def send_weekly_flow_master_report():
                        COUNT(*) as total
                 FROM forward_trades 
                 WHERE market=? AND exit_date >= ? AND status LIKE 'CLOSED%'
+                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
                 GROUP BY exit_date ORDER BY exit_date ASC
             """, (market, week_ago))
             
@@ -1090,6 +1224,7 @@ def send_weekly_flow_master_report():
                 SELECT entry_date, sector 
                 FROM forward_trades 
                 WHERE market=? AND entry_date >= ? 
+                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
                 ORDER BY entry_date ASC
             """, (market, week_ago))
             
@@ -1113,6 +1248,7 @@ def send_weekly_flow_master_report():
                 SELECT sig_type, SUM((sim_kelly_invest * final_ret) / 100) as profit, COUNT(*) 
                 FROM forward_trades 
                 WHERE market=? AND exit_date >= ? AND status LIKE 'CLOSED%'
+                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
                 GROUP BY sig_type ORDER BY profit DESC LIMIT 3
             """, (market, week_ago))
             
