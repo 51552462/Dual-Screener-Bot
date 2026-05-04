@@ -85,6 +85,11 @@ def update_single_ticker(row, country):
         # 👇👇 [수정] V26.0 시계열 왜곡 방지 및 횡단면 동기화 👇👇
         # 1. 거래량 결측치는 명백한 거래 없음이므로 0으로 채움
         df['Volume'] = df['Volume'].fillna(0)
+        # 거래정지 착시: 최근 3거래일 종가 동일 + 거래량 0이면 ffill 금지(가짜 응축 방지)
+        tail3 = df.tail(3)
+        if len(tail3) >= 3 and tail3['Close'].notna().all():
+            if tail3['Close'].nunique() == 1 and (tail3['Volume'].astype(float) <= 0).all():
+                return False
         # 2. 가격 결측치는 거래 정지 상태이므로 이전 종가로 채움 (Forward Fill)
         # 3. 데이터 맨 앞부분의 무의미한 결측치만 최종 제거
         df = df.ffill().dropna()
