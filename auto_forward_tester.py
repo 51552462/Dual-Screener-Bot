@@ -148,11 +148,17 @@ def get_cached_market_breadth():
     return float(_BREADTH_CACHE_VAL)
 
 def save_system_config(config):
+    temp_path = f"{CONFIG_PATH}.temp"
     try:
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(config, f, indent=4)
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
     except Exception as e:
-        print(f"⚠️ system_config 저장 실패: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
 
 def evaluate_evolved_alpha_formula(df, formula):
     """JSON에 저장된 진화 수식을 실시간으로 계산한다."""
@@ -217,6 +223,32 @@ def _gaussian_gene_mutate(base, pct=0.15):
     delta = float(np.clip(np.random.normal(0.0, sigma), -pct, pct))
     return float(base) * (1.0 + delta)
 
+
+def _merge_incubator_templates(existing_incubator, mutants, max_entries=50):
+    """INCUBATOR_TEMPLATES 덮어쓰기 방지: 병합 후 created_at 가장 오래된 항목부터 삭제해 최대 max_entries개 유지."""
+    merged = {}
+    if isinstance(existing_incubator, dict):
+        for k, v in existing_incubator.items():
+            merged[k] = dict(v) if isinstance(v, dict) else v
+    if isinstance(mutants, dict):
+        for k, v in mutants.items():
+            merged[k] = dict(v) if isinstance(v, dict) else v
+    if len(merged) <= max_entries:
+        return merged
+    ranked = []
+    for k, v in merged.items():
+        if isinstance(v, dict):
+            ca = str(v.get("created_at") or "")[:10] or "1970-01-01"
+        else:
+            ca = "1970-01-01"
+        ranked.append((ca, k))
+    ranked.sort(key=lambda x: (x[0], x[1]))
+    n_drop = len(merged) - max_entries
+    for _, k in ranked[:n_drop]:
+        merged.pop(k, None)
+    return merged
+
+
 def generate_mutant_strategies():
     """장 마감 후 인큐베이터용 돌연변이 3종: 부모(S급 DNA) 상속 + 가우시안 미세 변이."""
     sys_config = load_system_config()
@@ -236,7 +268,10 @@ def generate_mutant_strategies():
             "status": "INCUBATING"
         }
 
-    sys_config["INCUBATOR_TEMPLATES"] = mutants
+    existing_incubator = sys_config.get("INCUBATOR_TEMPLATES", {})
+    if not isinstance(existing_incubator, dict):
+        existing_incubator = {}
+    sys_config["INCUBATOR_TEMPLATES"] = _merge_incubator_templates(existing_incubator, mutants, max_entries=50)
     sys_config["INCUBATOR_LAST_GEN_DATE"] = datetime.now().strftime('%Y-%m-%d')
     save_system_config(sys_config)
     send_telegram_msg("🧪 [인큐베이터] 금일 돌연변이 전략 3종(MUTANT_1~3) 생성 및 임시 저장 완료")
@@ -437,6 +472,10 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     if m_cos >= float(m_tpl.get("cos_cutoff", 0.80)):
                         incubator_match_name = m_name
                         break
+            if incubator_match_name is None and isinstance(incubator_templates, dict) and isinstance(facts, dict):
+                sk = facts.get("incubator_sniper_key")
+                if sk and sk in incubator_templates:
+                    incubator_match_name = sk
 
             # 진화 알파 팩터: 차단기가 아니라 코사인에 가산되는 알파 보너스(0~0.15)
             evolved_factors = sys_config.get("EVOLVED_ALPHA_FACTORS", {})
@@ -542,7 +581,13 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
 
             account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
             fixed_risk_pct = 0.02 
-            kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) 
+            kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01)
+            w_s1 = float(sys_config.get("WEIGHT_S1", 1.0) or 1.0)
+            w_s4 = float(sys_config.get("WEIGHT_S4", 1.0) or 1.0)
+            if "S1" in sig_type or "SUPERNOVA" in sig_type:
+                kelly_risk_pct *= w_s1
+            if "S4" in sig_type or "눌림" in sig_type:
+                kelly_risk_pct *= w_s4
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
             
             # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 로직 👇👇
@@ -645,6 +690,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
+    ep = ep * 1.005
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     cursor.execute('''
         INSERT INTO forward_trades 
@@ -838,7 +884,10 @@ def track_daily_positions(market):
                 if low_ret_pct <= dyn_mae_sl: # 장중 손절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
                 elif high_ret_pct >= dyn_mfe_tp: # 장중 익절 터치
-                    conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
+                    if c >= l + (h - l) * 0.7:
+                        conn.execute("UPDATE forward_trades SET sim_stat_ret=? WHERE id=?", (current_ret_pct, r['id']))
+                    else:
+                        conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
                 else:
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=? WHERE id=?", (current_ret_pct, r['id']))
 
@@ -861,7 +910,10 @@ def track_daily_positions(market):
                     if low_ret_pct <= dyn_mae_sl:
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
                     elif high_ret_pct >= dyn_mfe_tp:
-                        conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
+                        if c >= l + (h - l) * 0.7:
+                            conn.execute("UPDATE forward_trades SET sim_breadth_ret=? WHERE id=?", (current_ret_pct, r['id']))
+                        else:
+                            conn.execute("UPDATE forward_trades SET sim_breadth_ret=?, sim_breadth_status='CLOSED_WIN' WHERE id=?", (dyn_mfe_tp, r['id']))
                     else:
                         conn.execute("UPDATE forward_trades SET sim_breadth_ret=? WHERE id=?", (current_ret_pct, r['id']))
 
@@ -873,23 +925,36 @@ def track_daily_positions(market):
                 do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl}%)", "STAT_MAE"
                 actual_exit_price = ep * (1 + (dyn_mae_sl / 100.0)) # 손절선에서 털린 가격
             elif high_ret_pct >= dyn_mfe_tp:
-                do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
-                actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0)) # 익절선에서 팔린 가격
+                if c >= l + (h - l) * 0.7:
+                    pass
+                else:
+                    do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
+                    actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0))
             
+            # RL 프록시(Q-Value 근사): 2순위 타임스탑 직전에 홀딩 엣지가 높으면 opt_time_stop만 +2일 연장(1순위 MAE/MFE 불변)
+            try:
+                _ots = int(round(float(opt_time_stop)))
+            except (TypeError, ValueError):
+                _ots = 10
+            opt_time_stop_effective = max(1, _ots)
+            holding_edge_score = (current_ret_pct / max(1, int(new_bars))) * (float(r.get('v_energy') or 1) / 10.0)
+            if holding_edge_score > 1.5:
+                opt_time_stop_effective = opt_time_stop_effective + 2
+
             # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산
             if not do_exit:
                 if active_mode == "TECH":
                     if is_tech_exit: 
                         do_exit, exit_rsn, actual_exit_type = True, "기술적 추세 이탈 (ZLEMA/데드)", "TECH"
                 elif active_mode == "STAT":
-                    if new_bars >= opt_time_stop: 
-                        do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop}일)", "STAT_TIME"
+                    if new_bars >= opt_time_stop_effective and current_ret_pct < 3.0:
+                        do_exit, exit_rsn, actual_exit_type = True, f"통계적 유통기한 만료 ({opt_time_stop_effective}일)", "STAT_TIME"
                     elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
                         do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "STAT_ATR"
                         actual_exit_price = sl_price
                 else: # HYBRID
-                    if new_bars >= opt_time_stop: 
-                        do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop}일)", "HYBRID_TIME"
+                    if new_bars >= opt_time_stop_effective and current_ret_pct < 3.0:
+                        do_exit, exit_rsn, actual_exit_type = True, f"하이브리드 타임스탑 ({opt_time_stop_effective}일)", "HYBRID_TIME"
                     elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
                         do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "HYBRID_ATR"
                         actual_exit_price = sl_price
@@ -992,10 +1057,13 @@ def send_comprehensive_daily_report():
             conn = sqlite3.connect(DB_PATH, timeout=60)
             conn.execute("PRAGMA journal_mode=WAL;")
             
-            # [사전 데이터 로드]
+            # [사전 데이터 로드] — INCUBATOR 섀도우는 본계좌 누적 손익·리더보드 등에서 제외
             df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}'", conn)
-            df_closed = df_all[df_all['status'].str.contains('CLOSED', na=False)]
-            df_open = df_all[df_all['status'] == 'OPEN']
+            _sig_s = df_all['sig_type'].astype(str)
+            _real_only = ~_sig_s.str.contains('INCUBATOR', na=False)
+            df_real = df_all.loc[_real_only].copy()
+            df_closed = df_real[df_real['status'].str.contains('CLOSED', na=False)]
+            df_open = df_real[df_real['status'] == 'OPEN']
             
             # ---------------------------------------------------------
             # 📑 결과지 1: 거시 국면 & 국고 현황
@@ -1004,6 +1072,7 @@ def send_comprehensive_daily_report():
             msg1 += f"📅 {today_str} | 국면: <b>{regime}</b>\n"
             msg1 += f"🏦 <b>{market} 국고 잔여금:</b> {treasury_balance:,.0f} 원\n"
             msg1 += f"⚖️ 동적 켈리 비중: {kelly_risk:.2f}%\n"
+            msg1 += "<i>※ 아래 누적 손익·리더보드·순환·DNA 통계는 [INCUBATOR_] 섀도우 제외.</i>\n"
             send_telegram_msg(msg1); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -1016,8 +1085,8 @@ def send_comprehensive_daily_report():
                 return sig.split(' [')[0]
 
             msg2 = f"{market_icon} <b>[2/9] 로직별 복리 생존 리더보드</b>\n"
-            if not df_all.empty:
-                df_all_copy = df_all.copy()
+            if not df_real.empty:
+                df_all_copy = df_real.copy()
                 df_all_copy['group'] = df_all_copy['sig_type'].apply(get_core_group)
                 leaderboard = []
                 for group in df_all_copy['group'].unique():
@@ -1042,7 +1111,7 @@ def send_comprehensive_daily_report():
             kelly_pnl = (df_closed['sim_kelly_invest'] * df_closed['final_ret'] / 100).sum() if not df_closed.empty else 0
             fixed_pnl = (df_closed['invest_amount'] * df_closed['final_ret'] / 100).sum() if not df_closed.empty else 0
             
-            msg3 = f"{market_icon} <b>[3/9] 통합 자금 관리 진검승부</b>\n"
+            msg3 = f"{market_icon} <b>[3/9] 통합 자금 관리 진검승부</b> <i>(본계좌만)</i>\n"
             msg3 += f"💰 누적 켈리 수익: <b>{kelly_pnl:+,.0f} 원</b>\n"
             msg3 += f"🛡️ 누적 고정 수익: {fixed_pnl:+,.0f} 원\n"
             msg3 += f"💡 자금관리 우위: {'동적 켈리' if kelly_pnl > fixed_pnl else '고정 리스크 2%'}\n"
@@ -1086,7 +1155,7 @@ def send_comprehensive_daily_report():
             # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버
             # ---------------------------------------------------------
             msg7 = f"{market_icon} <b>[7/9] 섹터 순환매 궤적 및 스필오버</b>\n"
-            rot_df = df_all[df_all['entry_date'] >= (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')]
+            rot_df = df_real[df_real['entry_date'] >= (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')]
             
             if not rot_df.empty:
                 daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
@@ -1139,7 +1208,7 @@ def send_comprehensive_daily_report():
             msg8 += f"🦅 커트라인 방어막: 코사인 {cos_limit*100:.0f}% | ML박스 {ml_limit*100:.0f}%\n"
             msg8 += f"⏳ 오토파일럿 수명: <b>{days_alive}일차</b>\n"
             
-            recent_dna = df_all.sort_values('id', ascending=False).head(10)
+            recent_dna = df_real.sort_values('id', ascending=False).head(10)
             if not recent_dna.empty and recent_dna['entry_cos_score'].mean() < 0.65:
                 msg8 += f"🚨 <b>[DNA 변위 감지]</b> 대장주 일치율 급감 ➔ 방어 개입 중\n"
             send_telegram_msg(msg8); time.sleep(1)
@@ -1162,9 +1231,6 @@ def send_comprehensive_daily_report():
             conn.close()
         except Exception as e:
             send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
-
-    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템에 내장된 거시통제/순환매/데스콤보/반감기 로직을 100% 해부하여 보고합니다.</i>"
-    send_telegram_msg(report_msg)
 
 def send_group_practitioner_reports():
     """활성 시그널 그룹별 실무자 개별 일일 리포트를 발송한다."""
@@ -1270,6 +1336,32 @@ def run_deep_dive_analysis(market='KR'):
             winners = t_df[t_df['final_ret'] > 5.0]
             sideways = t_df[(t_df['final_ret'] >= -3.0) & (t_df['final_ret'] <= 5.0)]
             losers = t_df[t_df['final_ret'] < -3.0]
+
+            if t <= 50 and len(winners) >= 3:
+                _dna_cols = ('dyn_cpv', 'dyn_tb', 'v_energy', 'dyn_rs')
+                if all(c in winners.columns for c in _dna_cols):
+                    ud_name = f"{market}_UNDERDOG_{t}점"
+                    try:
+                        deep_cfg = load_system_config()
+                        inc_map = deep_cfg.get("INCUBATOR_TEMPLATES", {})
+                        if not isinstance(inc_map, dict):
+                            inc_map = {}
+                        else:
+                            inc_map = dict(inc_map)
+                        inc_map[ud_name] = {
+                            "cpv": round(float(winners['dyn_cpv'].mean()), 4),
+                            "tb": round(float(winners['dyn_tb'].mean()), 4),
+                            "bbe": round(float(winners['v_energy'].mean()), 4),
+                            "rs": round(float(winners['dyn_rs'].mean()), 4),
+                            "cos_cutoff": 0.75,
+                            "created_at": datetime.now().strftime('%Y-%m-%d'),
+                            "status": "INCUBATING",
+                        }
+                        deep_cfg["INCUBATOR_TEMPLATES"] = inc_map
+                        save_system_config(deep_cfg)
+                        report_msg += f"🧬 [자율 진화] {t}점대 대박주 DNA가 인큐베이터({ud_name})에 신규 등재되었습니다.\n"
+                    except Exception as _e:
+                        report_msg += f"⚠️ 인큐베이터 DNA 주입 실패({ud_name}): {_e}\n"
 
             # DNA 추출 함수
             def get_dna(sub_df):
