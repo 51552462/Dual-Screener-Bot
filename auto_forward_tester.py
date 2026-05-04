@@ -112,6 +112,41 @@ def load_system_config():
     except: pass
     return {}
 
+# system_auto_pilot.run_autonomous_analysis와 동일 정의: RSP/SPY, 50일 롤링 평균 대비 현재 비율 (0.97 미만 = 쏠림)
+_BREADTH_CACHE_DAY = None
+_BREADTH_CACHE_VAL = 1.0
+
+def get_cached_market_breadth():
+    """시장 폭(Breadth). 당일 1회만 yfinance 호출하여 스케줄/루프 비용 절감."""
+    global _BREADTH_CACHE_DAY, _BREADTH_CACHE_VAL
+    tz = pytz.timezone('America/New_York')
+    day_key = datetime.now(tz).strftime('%Y-%m-%d')
+    if _BREADTH_CACHE_DAY == day_key:
+        return float(_BREADTH_CACHE_VAL)
+    v = 1.0
+    try:
+        df_idx = yf.download("SPY RSP", period="6mo", interval="1d", group_by="ticker", progress=False)
+        if not df_idx.empty:
+            if isinstance(df_idx.columns, pd.MultiIndex) and 'SPY' in df_idx.columns.get_level_values(0):
+                spy_c = df_idx['SPY']['Close'].dropna()
+                rsp_c = df_idx['RSP']['Close'].dropna()
+            else:
+                raise ValueError("breadth_multiindex_expected")
+            common = spy_c.index.intersection(rsp_c.index)
+            spy_c = spy_c.reindex(common).ffill()
+            rsp_c = rsp_c.reindex(common).ffill()
+            if len(common) >= 50:
+                v = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (
+                    rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1]
+                )
+            elif len(common) >= 5:
+                v = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.mean() / spy_c.mean())
+    except Exception:
+        pass
+    _BREADTH_CACHE_DAY = day_key
+    _BREADTH_CACHE_VAL = float(v) if np.isfinite(v) else 1.0
+    return float(_BREADTH_CACHE_VAL)
+
 def save_system_config(config):
     try:
         with open(CONFIG_PATH, 'w') as f:
@@ -151,23 +186,52 @@ def evaluate_evolved_alpha_formula(df, formula):
         return None
     return None
 
+def _resolve_incubator_parent_genes(sys_config):
+    """S급 부모: DNA_SUPERNOVA_MFE_WEIGHTED → DNA_ALPHA* 챔피언 벡터 → 관제탑 스칼라 폴백."""
+    sn = sys_config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
+    if isinstance(sn, dict) and any(k in sn for k in ("cpv", "tb", "bbe")):
+        return (
+            float(sn.get("cpv", 0.75)),
+            float(sn.get("tb", 10.0)),
+            float(sn.get("bbe", 20.0)),
+            float(sys_config.get("KR_S1_RS_CUTOFF", 165.0)),
+        )
+    for k, v in sys_config.items():
+        if isinstance(v, dict) and "DNA_ALPHA" in k and "shape" in v:
+            return (
+                float(v.get("cpv", 0.75)),
+                float(v.get("tb", 10.0)),
+                float(v.get("bbe", 20.0)),
+                float(v.get("rs", sys_config.get("KR_S1_RS_CUTOFF", 165.0))),
+            )
+    return (
+        float(sys_config.get("DYNAMIC_TRAP_LIMIT", 0.75)),
+        10.0,
+        float(sys_config.get("DYNAMIC_OD_HURDLE", 20.0)),
+        float(sys_config.get("KR_S1_RS_CUTOFF", 165.0)),
+    )
+
+def _gaussian_gene_mutate(base, pct=0.15):
+    """부모 대비 ±pct(기본 15%) 이내 가우시안 미세 변이."""
+    sigma = pct / 2.5
+    delta = float(np.clip(np.random.normal(0.0, sigma), -pct, pct))
+    return float(base) * (1.0 + delta)
+
 def generate_mutant_strategies():
-    """장 마감 후 인큐베이터용 무작위 돌연변이 전략 3개를 생성한다."""
+    """장 마감 후 인큐베이터용 돌연변이 3종: 부모(S급 DNA) 상속 + 가우시안 미세 변이."""
     sys_config = load_system_config()
-    base_cpv = float(sys_config.get("DYNAMIC_TRAP_LIMIT", 0.75))
-    base_tb = 10.0
-    base_bbe = float(sys_config.get("DYNAMIC_OD_HURDLE", 20.0))
-    base_rs = float(sys_config.get("KR_S1_RS_CUTOFF", 165.0))
+    base_cpv, base_tb, base_bbe, base_rs = _resolve_incubator_parent_genes(sys_config)
+    cos_parent = float(sys_config.get("DYNAMIC_ALPHA_LIMIT", 0.78))
 
     mutants = {}
     for i in range(1, 4):
         m_name = f"MUTANT_{i}"
         mutants[m_name] = {
-            "cpv": round(random.uniform(max(-1.5, base_cpv - 1.0), base_cpv + 1.0), 3),
-            "tb": round(random.uniform(max(0.5, base_tb - 6.0), base_tb + 10.0), 3),
-            "bbe": round(random.uniform(max(2.0, base_bbe * 0.5), base_bbe * 1.5), 3),
-            "rs": round(random.uniform(max(-500.0, base_rs - 250.0), base_rs + 250.0), 3),
-            "cos_cutoff": round(random.uniform(0.72, 0.90), 3),
+            "cpv": round(_gaussian_gene_mutate(base_cpv), 3),
+            "tb": round(max(0.5, _gaussian_gene_mutate(base_tb)), 3),
+            "bbe": round(max(2.0, _gaussian_gene_mutate(base_bbe)), 3),
+            "rs": round(_gaussian_gene_mutate(base_rs), 3),
+            "cos_cutoff": round(float(np.clip(_gaussian_gene_mutate(cos_parent), 0.55, 0.95)), 3),
             "created_at": datetime.now().strftime('%Y-%m-%d'),
             "status": "INCUBATING"
         }
@@ -247,6 +311,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
 
     # 👇👇 [수정] V34.0 DTW 투트랙 + V35.0 동적 커트라인 자율 매칭 👇👇
     max_alpha_cos, min_alpha_dtw = 0.0, 99.0
+    alpha_bonus_score = 0.0
     max_trap_cos, min_trap_dtw = 0.0, 99.0
     is_rotation_prebuy = False
     incubator_match_name = None
@@ -373,7 +438,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                         incubator_match_name = m_name
                         break
 
-            # 진화 알파 팩터 게이트: 임계치 미달 시 진입 차단
+            # 진화 알파 팩터: 차단기가 아니라 코사인에 가산되는 알파 보너스(0~0.15)
             evolved_factors = sys_config.get("EVOLVED_ALPHA_FACTORS", {})
             if isinstance(evolved_factors, dict) and evolved_factors:
                 alpha_vals = []
@@ -382,12 +447,12 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     if v is not None and np.isfinite(v):
                         alpha_vals.append(v)
                 if alpha_vals:
+                    mv = max(alpha_vals)
                     evolved_threshold = float(sys_config.get("EVOLVED_ALPHA_THRESHOLD", 0.0))
-                    if max(alpha_vals) <= evolved_threshold:
-                        return False, (
-                            f"🧬 진화 알파 게이트 미충족: max={max(alpha_vals):.4f} "
-                            f"<= threshold={evolved_threshold:.4f}"
-                        )
+                    if mv > evolved_threshold:
+                        denom = max(abs(evolved_threshold), abs(mv) * 1e-9, 1e-12)
+                        rel_excess = (mv - evolved_threshold) / denom
+                        alpha_bonus_score = float(min(0.15, rel_excess * 0.15))
             
             predicted_sector = sys_config.get("PREDICTED_NEXT_SECTOR", "NONE")
             is_rotation_prebuy = (sector == predicted_sector)
@@ -425,6 +490,9 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                 dyn_cos_limit *= 0.90
                 dyn_ml_cutoff *= 0.90
 
+            # 코사인 + 알파 보너스 하이브리드 (상한 1.0)
+            max_alpha_cos_effective = min(1.0, max_alpha_cos + alpha_bonus_score)
+
             # 🛡️ 페일세이프 (내부수급과 궤적이 모두 자율 방어선을 넘었을 때만 기각)
             if max_trap_cos >= dyn_trap_limit and min_trap_dtw <= dyn_dtw_limit:
                 if max_trap_cos > max_alpha_cos:
@@ -433,14 +501,16 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     sig_type = f"💀[기각/관찰용] {sig_type}"
                     track_tag = "(참사 방어막 터치 - 관찰 표본)"
             
-            # 🚀 슈퍼 부스트
-            cutoff_passed = (max_alpha_cos >= dyn_cos_limit) and (max_alpha_cos >= dyn_ml_cutoff) and (min_alpha_dtw <= dyn_dtw_limit)
+            # 🚀 슈퍼 부스트 (코사인 + 알파 보너스 융합으로 합격 판정)
+            cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and (max_alpha_cos_effective >= dyn_ml_cutoff) and (min_alpha_dtw <= dyn_dtw_limit)
             if cutoff_passed:
-                sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
+                sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos_effective*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
                 if is_rotation_prebuy:
                     sig_type += " [순환매 컷오프 특권 패스]"
                 if is_spillover_prebuy:
                     sig_type += " [🌐스필오버 선취매]"
+                if alpha_bonus_score > 0:
+                    sig_type += " [🧬알파 융합 합격]"
 
             # 안티 패턴(오답노트) 면역 체계: 유사도 0.85 이상이면 신규 진입 차단
             if incubator_match_name is None:
@@ -585,7 +655,7 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
         ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
-        round(max_alpha_cos, 3), round(min_alpha_dtw, 3), 
+        round(min(1.0, max_alpha_cos + alpha_bonus_score), 3), round(min_alpha_dtw, 3), 
         round(entry_atr, 4), invest_amount, shares, cur_regime # 💡 V38.0 ATR 및 투입 금액/수량 기록
     ))
     conn.commit()
@@ -636,6 +706,14 @@ def track_daily_positions(market):
         print(f"⚠️ 벤치마크 로드 에러: {e}")
         idx_close = pd.Series(dtype=float)
     # 👆👆 [패치 완료] 👆👆
+
+    cur_breadth_mkt = get_cached_market_breadth()
+    breadth_collapse = cur_breadth_mkt < 0.97
+    if breadth_collapse:
+        print(
+            f"🛡️ [포워드] 시장 폭 붕괴 연동 (breadth={cur_breadth_mkt:.3f} < 0.97): "
+            f"기보유 청산 — MAE 손절·타임스탑 0.5배 비상 조임"
+        )
 
     for _, r in df_active.iterrows():
         code = r['code']
@@ -710,6 +788,8 @@ def track_daily_positions(market):
             
             opt_time_stop = sys_config.get(f"{ns_prefix}_TIME_STOP", 10)
             opt_sl_atr    = sys_config.get(f"{ns_prefix}_ATR_SL", 2.0)
+            if breadth_collapse:
+                opt_time_stop = max(1, int(round(float(opt_time_stop) * 0.5)))
             
             # 수학적 손절가(SL) 산출: 진입가 - (관제탑 승수 * 진입변동성)
             sl_price = ep - (opt_sl_atr * entry_atr)
@@ -733,7 +813,9 @@ def track_daily_positions(market):
             # 모든 평행우주(A, B, C)에 대해 장중 저가(Low) 기준으로 손절 여부 판독
             for key, params in abc_sets.items():
                 if not params: continue
-                sl_limit = params.get("DYNAMIC_MAE_SL", -3.5)
+                sl_limit = float(params.get("DYNAMIC_MAE_SL", -3.5))
+                if breadth_collapse:
+                    sl_limit *= 0.5
                 
                 # 장중 저가가 손절선을 건드렸다면 해당 평행우주는 'CLOSED_LOSS'
                 if low_ret_pct <= sl_limit:
@@ -743,7 +825,9 @@ def track_daily_positions(market):
 
             # [V17.0 청산 평행우주 대결 (STAT vs TECH)]
             # 💡 [팩트] 관제탑이 내 전략방(ns_prefix) 맞춤형으로 깎아둔 실전 한계점 로드
-            dyn_mae_sl = ns_live_params.get("DYNAMIC_MAE_SL", -3.5)
+            dyn_mae_sl = float(ns_live_params.get("DYNAMIC_MAE_SL", -3.5))
+            if breadth_collapse:
+                dyn_mae_sl *= 0.5
             dyn_mfe_tp = ns_live_params.get("DYNAMIC_MFE_TP", 10.0)
             od_hurdle = float(sys_config.get("DYNAMIC_OD_HURDLE", 20.0))
             is_overdrive_on = float(r.get('v_energy', 0) or 0) >= od_hurdle
