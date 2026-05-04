@@ -301,6 +301,10 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
     if not (hit_s1 or hit_s2 or hit_s4): 
         return False, "", df, {}
 
+    if hit_s1: ns_prefix = "US_NULRIM_S1"
+    elif hit_s2: ns_prefix = "US_NULRIM_S2"
+    else: ns_prefix = "US_NULRIM_S4"
+
     # =========================================================================
     # 👑 [3단계] S1, S2, S4 스코어링 매핑 (미국장 V9.0 팩트 대입)
     # =========================================================================
@@ -410,11 +414,6 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         cpv_stat = f"📈 <b>[슈퍼 트렌드 숏스퀴즈 패턴]</b> 지저분한 꼬리 캔들(CPV {cur_cpv:.2f}). 세력의 악성 매물 소화 궤적입니다. <b>단기데드 전까지 약 3~4주(평균 16.58일) 끝까지 홀딩</b>하여 수익을 극대화 하십시오."
     else:
         cpv_stat = f"📊 표준적인 캔들 (CPV {cur_cpv:.2f}). 시스템 기본 청산 룰을 따르십시오."
-
-    # 👇 타점에 따른 동적 네임스페이스 분리 (S1, S2, S4)
-    if hit_s1: ns_prefix = "US_NULRIM_S1"
-    elif hit_s2: ns_prefix = "US_NULRIM_S2"
-    else: ns_prefix = "US_NULRIM_S4"
 
     active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
     opt_time_stop    = SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10)
