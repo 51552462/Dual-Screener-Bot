@@ -19,7 +19,7 @@ scanned_today_cache = {'KR': set(), 'US': set()}
 # 💡 [환경 설정 및 텔레그램 세팅]
 # ==========================================
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-TELEGRAM_TOKEN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
+TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
 TELEGRAM_CHAT_ID = "6838834566"
 
 def send_telegram_msg(text):
