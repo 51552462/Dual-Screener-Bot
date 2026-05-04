@@ -123,6 +123,7 @@ def run_autonomous_analysis():
         
         # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
         # 1.0보다 낮으면 대형주만 오르는 '취약한 장세', 높으면 낙수효과가 있는 '건강한 장세'
+        # (시너지) auto_forward_tester.get_cached_market_breadth() 동일 정의·0.97 기준으로 포워드 청산 비상 조임과 연동
         breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
 
         # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
