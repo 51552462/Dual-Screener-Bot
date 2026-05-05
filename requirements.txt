@@ -1,11 +1,8 @@
-pytz
-numpy
+ccxt
 pandas
+numpy
+requests
 mplfinance
 matplotlib
-requests
-urllib3
-yfinance
-finance-datareader
-beautifulsoup4
-git+https://github.com/rongardF/tvdatafeed.git
+google-genai
+python-dotenv

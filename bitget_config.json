@@ -1,0 +1,19 @@
+{
+  "exchange": "bitget",
+  "default_quote": "USDT",
+  "timeframes": ["1d", "4h", "2h", "1h"],
+  "ohlcv_limit": 500,
+  "universe": {
+    "spot": {
+      "enabled": true,
+      "min_quote_volume_usdt": 3000000
+    },
+    "linear": {
+      "enabled": true,
+      "min_quote_volume_usdt": 5000000
+    }
+  },
+  "parallel": {
+    "max_workers_per_market_type": 8
+  }
+}
