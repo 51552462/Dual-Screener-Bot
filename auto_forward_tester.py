@@ -303,6 +303,12 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     if cursor.fetchone():
         conn.close()
         return False, "중복 보유 중"
+
+    cursor.execute("SELECT COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN'", (market,))
+    current_open_count = cursor.fetchone()[0] or 0
+    if current_open_count >= 20:
+        conn.close()
+        return False, f"🚨 시장 쿼터 초과: {market}장 최대 보유 한도(20개)에 도달하여 신규 진입을 차단합니다."
         
     # 2. 👑 [V23.0 포트폴리오 다중화: 주도섹터 폭격(2) + 차기섹터 정찰(2)]
     tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
@@ -541,7 +547,8 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
                     track_tag = "(참사 방어막 터치 - 관찰 표본)"
             
             # 🚀 슈퍼 부스트 (코사인 + 알파 보너스 융합으로 합격 판정)
-            cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and (max_alpha_cos_effective >= dyn_ml_cutoff) and (min_alpha_dtw <= dyn_dtw_limit)
+            # 💡 [100년 영속 진화 로직 적용: Cos-DTW Gate Decoupling]
+            cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and (min_alpha_dtw <= dyn_dtw_limit)
             if cutoff_passed:
                 sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos_effective*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
                 if is_rotation_prebuy:
@@ -589,6 +596,30 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
             if "S4" in sig_type or "눌림" in sig_type:
                 kelly_risk_pct *= w_s4
             cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
+
+            # 💡 [100년 영속 진화 로직 적용: Namespace Thompson Kelly Sampler]
+            # try_add 시점에 시그널 네임스페이스를 추론해 [NS]_BETA_PARAMS 기반으로 켈리 배율을 동적 샘플링한다.
+            ns_prefix = f"{market}_MASTER_S1"
+            if "SUPERNOVA" in sig_type:
+                ns_prefix = f"{market}_SUPERNOVA_MASTER"
+            else:
+                if "S4" in sig_type:
+                    ns_prefix = f"{market}_MASTER_S4"
+                if "눌림" in sig_type:
+                    ns_prefix = f"{market}_NULRIM_S4" if "S4" in sig_type else f"{market}_NULRIM_S1"
+                if "5선" in sig_type:
+                    ns_prefix = f"{market}_5EMA_S1"
+            try:
+                beta_pack = sys_config.get(f"{ns_prefix}_BETA_PARAMS", {})
+                alpha = float(beta_pack.get("alpha", 0))
+                beta = float(beta_pack.get("beta", 0))
+                ts_sample = float(np.random.beta(alpha + 1.0, beta + 1.0))
+                # 💡 [100년 영속 진화 로직 적용: Thompson Multiplier Re-Scaling]
+                # 0.5(중립 승률)를 1.0배 기준점으로 재스케일링해 우수 전략의 비중 증폭을 허용
+                ts_mult = float(np.clip(ts_sample / 0.5, 0.20, 1.80))
+                kelly_risk_pct *= ts_mult
+            except Exception:
+                pass
             
             # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 로직 👇👇
             if is_rotation_prebuy:
@@ -694,15 +725,15 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     cursor.execute('''
         INSERT INTO forward_trades 
-        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares, entry_regime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares, sim_kelly_invest, entry_regime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         today_str, market, code_str, name, sector, sig_type, tier_label, score,
         facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
         facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
         ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
         round(min(1.0, max_alpha_cos + alpha_bonus_score), 3), round(min_alpha_dtw, 3), 
-        round(entry_atr, 4), invest_amount, shares, cur_regime # 💡 V38.0 ATR 및 투입 금액/수량 기록
+        round(entry_atr, 4), invest_amount, shares, sim_kelly_invest, cur_regime # 💡 V38.0 ATR 및 투입 금액/수량 기록
     ))
     conn.commit()
     conn.close()
@@ -960,6 +991,11 @@ def track_daily_positions(market):
                         actual_exit_price = sl_price
                     elif is_tech_exit: 
                         do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
+
+            # 3순위: 장기 거래정지/좀비 종목 강제 청소 (유통기한 2배 초과 시 원금 회수 가정)
+            if not do_exit and new_bars >= opt_time_stop_effective * 2:
+                do_exit, exit_rsn, actual_exit_type = True, "장기 거래정지/좀비종목 강제청소", "ZOMBIE_FORCE_CLOSE"
+                actual_exit_price = ep
 
 
             # 5. DB 업데이트 실행 (청산 시)
@@ -1242,7 +1278,7 @@ def send_group_practitioner_reports():
     try:
         conn = sqlite3.connect(DB_PATH, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
-        df_all = pd.read_sql("SELECT * FROM forward_trades", conn)
+        df_all = pd.read_sql("SELECT * FROM forward_trades WHERE IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'", conn)
         conn.close()
 
         if df_all.empty:
@@ -1256,11 +1292,17 @@ def send_group_practitioner_reports():
 
         df_all = df_all.copy()
         df_all['group'] = df_all['sig_type'].apply(get_core_group)
+        df_all['mkt_group'] = df_all['market'].astype(str) + "_" + df_all['group'].astype(str)
         df_open = df_all[df_all['status'] == 'OPEN']
-        active_groups = sorted([g for g in df_open['group'].dropna().unique() if str(g).strip()])
+        active_groups = sorted([g for g in df_open['mkt_group'].dropna().unique() if str(g).strip()])
 
-        for group in active_groups:
-            g_all = df_all[df_all['group'] == group]
+        for mkt_group in active_groups:
+            g_all = df_all[df_all['mkt_group'] == mkt_group]
+            if "_" in mkt_group:
+                market, group = mkt_group.split("_", 1)
+            else:
+                market, group = "KR", mkt_group
+            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
             g_closed = g_all[g_all['status'].str.contains('CLOSED', na=False)]
             g_today_closed = g_closed[g_closed['exit_date'] == today_str] if 'exit_date' in g_closed.columns else g_closed.iloc[0:0]
 
@@ -1273,7 +1315,7 @@ def send_group_practitioner_reports():
                 cum_pnl = 0.0
             compound_seed = base_seed + cum_pnl
 
-            msg = f"🧑‍💼 <b>[실무자 개별 리포트] {group}</b>\n"
+            msg = f"{market_icon} <b>[{market} 실무자 리포트]</b> {group}\n"
             msg += f"📅 오늘 성적: <b>{win_cnt}승 {loss_cnt}패</b>\n"
             msg += f"💰 현재 누적 복리 시드: <b>{compound_seed:,.0f}원</b>\n"
 
@@ -1593,6 +1635,8 @@ def run_daily_scheduler():
                 print("🚀 16:00 통합 지능 리포트 발송 시작...")
                 send_comprehensive_daily_report() 
                 send_group_practitioner_reports()
+                run_deep_dive_analysis('KR')
+                run_deep_dive_analysis('US')
                 generate_mutant_strategies()
                 time.sleep(60)
                 
