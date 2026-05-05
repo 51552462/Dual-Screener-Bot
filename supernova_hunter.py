@@ -154,8 +154,57 @@ def _mutate_alpha_formula_ast(formula: str) -> str:
         return None
 
 
+def _crossover_alpha_formula_ast(formula1: str, formula2: str) -> str:
+    """💡 [V_NEXT 진화 로직 적용] 두 수식 AST 서브트리를 교차 교환해 자식 수식을 생성. 실패 시 None."""
+    try:
+        t1 = ast.parse(str(formula1).strip(), mode='eval')
+        t2 = ast.parse(str(formula2).strip(), mode='eval')
+    except Exception:
+        return None
+
+    def _collect_swappable_nodes(tree):
+        nodes = []
+        for n in ast.walk(tree):
+            # 안전한 연산 의미를 보존하기 위해 Call/BinOp/Name만 교차 대상으로 허용
+            if isinstance(n, (ast.Call, ast.BinOp, ast.Name)):
+                nodes.append(n)
+        return nodes
+
+    try:
+        pool1 = _collect_swappable_nodes(t1)
+        pool2 = _collect_swappable_nodes(t2)
+        if not pool1 or not pool2:
+            return None
+        n1 = random.choice(pool1)
+        n2 = random.choice(pool2)
+        if type(n1) is not type(n2):
+            return None
+        n2_clone = ast.copy_location(ast.fix_missing_locations(ast.parse(ast.unparse(n2), mode='eval').body), n1)
+    except Exception:
+        return None
+
+    class _Swap(ast.NodeTransformer):
+        def __init__(self, target_node, replacement_node):
+            self.target_node = target_node
+            self.replacement_node = replacement_node
+
+        def generic_visit(self, node):
+            if node is self.target_node:
+                return self.replacement_node
+            return super().generic_visit(node)
+
+    try:
+        child_tree = _Swap(n1, n2_clone).visit(t1)
+        ast.fix_missing_locations(child_tree)
+        if isinstance(child_tree, ast.Expression):
+            return ast.unparse(child_tree.body)
+        return ast.unparse(child_tree)
+    except Exception:
+        return None
+
+
 def evolve_alpha_factors():
-    """무작위 수식 + (장부 실적 양호 시) 엘리트 보존·AST 변형 돌연변이로 IC 1위 고정 후, 1위 대비 |r|<0.85인 직교 알파만 채워 최대 3개 저장."""
+    """무작위 + 엘리트 보존 + 돌연변이 + 교차(Crossover)로 IC 상위 직교 알파 최대 3개 저장."""
     print("🧠 [알파 인큐베이터] 무작위 수식 진화 평가 시작...")
     stock_pool = []
     try:
@@ -268,6 +317,60 @@ def evolve_alpha_factors():
             return float(r)
         return None
 
+    # 💡 [100년 영속 진화 로직 적용: Orthogonal Alpha Gram-Schmidt Gate]
+    def _alpha_vector_for_formula(formula: str):
+        """수식별 알파 시계열을 표본 전체에서 이어붙인 벡터를 생성. 실패 시 None."""
+        all_s = []
+        for _df in sample_dfs:
+            _a = evaluate_alpha_formula(_df, formula)
+            if _a is None:
+                continue
+            _s = pd.to_numeric(_a, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
+            if len(_s) < 30:
+                continue
+            # 💡 [100년 영속 진화 로직 적용: Orthogonal Alpha Time-Index Integrity]
+            # 날짜 인덱스를 절대 버리지 않고 유지해, 동일한 날짜끼리만 정렬·집계합니다.
+            all_s.append(_s.sort_index())
+        if not all_s:
+            return None
+
+        # 종목별 알파 시계열을 날짜 축으로 정렬한 뒤, 날짜별 평균 알파로 대표 벡터 생성
+        alpha_by_date = pd.concat(all_s, axis=1).mean(axis=1, skipna=True).dropna().astype(float)
+        if len(alpha_by_date) < 200:
+            return None
+        return alpha_by_date
+
+    # 💡 [100년 영속 진화 로직 적용: Orthogonal Alpha Gram-Schmidt Gate]
+    def _is_orthogonal_candidate(selected_formulas, cand_formula: str):
+        """
+        기존 선택군 + 후보의 상관행렬식(det)을 검사.
+        det가 0에 가까우면 다중공선성(선형 종속)으로 판정해 후보를 폐기.
+        """
+        pool = list(selected_formulas) + [cand_formula]
+        series_map = {}
+        for f in pool:
+            v = _alpha_vector_for_formula(f)
+            if v is None:
+                return False
+            series_map[f] = v
+
+        # 💡 [100년 영속 진화 로직 적용: Orthogonal Alpha Time-Index Integrity]
+        # 후보군 시계열을 날짜 인덱스 기준으로 교집합 병합해 동시점 상관행렬만 계산
+        mat_cols = [series_map[f].rename(f) for f in pool]
+        mat_df = pd.concat(mat_cols, axis=1).dropna()
+        if len(mat_df) < 200:
+            return False
+
+        try:
+            corr = mat_df.corr(method='pearson').values
+            det = float(np.linalg.det(corr))
+            if not np.isfinite(det):
+                return False
+            # 3x3 기준 det가 매우 작으면 사실상 선형 종속(비직교)으로 간주
+            return det > 0.05
+        except Exception:
+            return False
+
     def _forward_elite_gate():
         """알파 융합 태그 청산 건이 장부에서 양호하면 기존 EVOLVED 알파 엘리트 보존."""
         dbp = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
@@ -314,9 +417,12 @@ def evolve_alpha_factors():
 
     n_total = 1000
     n_mut = 0
+    n_cross = 0
     if use_elite:
         n_mut = min(max(80, len(elite_formulas) * 35), n_total // 2)
-    n_rand = n_total - n_mut
+        # 💡 [V_NEXT 진화 로직 적용] 엘리트 기반 교차 자식 생성 슬롯 확보 (최대 20%)
+        n_cross = min(max(40, len(elite_formulas) * 15), n_total // 5)
+    n_rand = max(0, n_total - n_mut - n_cross)
 
     if use_elite:
         for ef in elite_formulas:
@@ -329,6 +435,20 @@ def evolve_alpha_factors():
             mf = generate_random_alpha_formula()
         _push_formula(mf)
 
+    # 💡 [V_NEXT 진화 로직 적용] 엘리트 간 AST 교차(Crossover)로 자식 수식 생성
+    for _ in range(n_cross):
+        try:
+            if len(elite_formulas) < 2:
+                break
+            p1, p2 = random.sample(elite_formulas, 2)
+            cf = _crossover_alpha_formula_ast(p1, p2)
+            if not cf or cf in (p1, p2):
+                # 교차 실패 시 돌연변이로 안전 폴백
+                cf = _mutate_alpha_formula_ast(random.choice([p1, p2])) or generate_random_alpha_formula()
+            _push_formula(cf)
+        except Exception:
+            _push_formula(generate_random_alpha_formula())
+
     for _ in range(n_rand):
         _push_formula(generate_random_alpha_formula())
 
@@ -339,13 +459,19 @@ def evolve_alpha_factors():
     scored.sort(key=lambda x: x[1], reverse=True)
     top3 = []
     if scored:
+        # 💡 [100년 영속 진화 로직 적용: Orthogonal Alpha Gram-Schmidt Gate]
         top3.append(scored[0])
-        first_formula = scored[0][0]
         for cand in scored[1:]:
             if len(top3) >= 3:
                 break
+            # 1차 관문: 기존 1위 대비 과상관 후보 제거
+            first_formula = top3[0][0]
             pr = _pearson_alpha_vs_first(first_formula, cand[0])
             if pr is not None and abs(pr) >= 0.85:
+                continue
+            # 2차 관문: 선택군 전체 상관행렬식(det)으로 다중공선성 제거
+            selected_formulas = [f for f, _ in top3]
+            if not _is_orthogonal_candidate(selected_formulas, cand[0]):
                 continue
             top3.append(cand)
 
@@ -469,41 +595,29 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
             idx_ret = ((idx_c[dday_idx] - idx_20) / idx_20) * 100 if idx_20 > 0 else 0.0001
             rs = np.full(len(c), (stock_ret / (idx_ret if idx_ret != 0 else 0.0001)) * 100)
 
-            # 💡 [한국장 공통 3단계 기만술]
-            q1_aligned = is_aligned_112.iloc[t30_idx]
-            q1_all_up = hist_df['ALL_UP'].iloc[max(0, t30_idx-5):t30_idx+1].sum() <= 1
-            pass_q1 = (not q1_aligned) and q1_all_up
-            
-            q2_cpv = cpv[t7_idx]
-            pass_q2 = (-0.2 <= q2_cpv <= 0.0) 
-            
-            q3_tml = tml[dday_idx]
-            q3_vol_surge = trd_val_eok[dday_idx] > np.mean(trd_val_eok[max(0, dday_idx-20):dday_idx]) * 1.5
-            pass_q3 = (q3_tml >= 10.0) and q3_vol_surge
-            
-            if not (pass_q1 and pass_q2 and pass_q3): return None
-
-            # 💡 [한국장 랭크별 세부 로직 범위 100% 하드코딩 필터링]
+            # 💡 [100년 영속 진화 로직 적용: Wide-Net Rank Gate KR]
+            # 한국장 하드코딩 소수점 필터를 제거하고 Rank A~D 구조만 유지한 느슨한 논리 허들로 완화
             if "Rank A" in rank_name:
-                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (45.4<=tb[t30_idx]<=69.9) and (5.5<=bbe[t30_idx]<=14.7) and (5.4<=tml[t30_idx]<=48.9) and (0.8<=trd_val_eok[t30_idx]<=22.2)
-                c_7 = (-0.0<=cpv[t7_idx]<=0.2) and (45.7<=tb[t7_idx]<=78.6) and (0.0<=tml[t7_idx]<=59.4) and (0.0<=spread_112_224[t7_idx]<=8.8)
-                c_0 = (0.5<=cpv[dday_idx]<=1.0) and (8.7<=tb[dday_idx]<=14.9) and (12.3<=bbe[dday_idx]<=42.0) and (9.7<=tml[dday_idx]<=272.0) and (38.8<=trd_val_eok[dday_idx]<=599.8)
-                if not (c_30 and c_7 and c_0): return None
+                c_30 = (cpv[t30_idx] > 0.0) and (bbe[t30_idx] > 3.0)
+                c_7 = (cpv[t7_idx] > 0.0) and (tb[t7_idx] > 2.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (tb[dday_idx] > 2.0) and (bbe[dday_idx] > 3.0)
             elif "Rank B" in rank_name:
-                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (49.0<=tb[t30_idx]<=69.0) and (5.4<=bbe[t30_idx]<=11.4) and (37.0<=rs[t30_idx]<=359.0) and (1.0<=trd_val_eok[t30_idx]<=12.5)
-                c_7 = (-0.0<=cpv[t7_idx]<=0.2) and (56.5<=tb[t7_idx]<=103.8) and (0.0<=spread_112_224[t7_idx]<=1.4)
-                c_0 = (0.5<=cpv[dday_idx]<=1.0) and (14.8<=bbe[dday_idx]<=39.9) and (20.6<=tml[dday_idx]<=310.4) and (0.0<=spread_10_20[dday_idx]<=75.0) and (40.5<=trd_val_eok[dday_idx]<=461.5)
-                if not (c_30 and c_7 and c_0): return None
+                c_30 = (cpv[t30_idx] > 0.0) and (tb[t30_idx] > 2.0)
+                c_7 = (cpv[t7_idx] > 0.0) and (bbe[t7_idx] > 3.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (bbe[dday_idx] > 3.0)
             elif "Rank C" in rank_name:
-                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (48.2<=tb[t30_idx]<=75.8) and (5.1<=bbe[t30_idx]<=10.1) and (3.0<=trd_val_eok[t30_idx]<=23.5)
-                c_7 = (-360.2<=rs[t7_idx]<=151.2) and (4.5<=tml[t7_idx]<=72.7) and (23.8<=spread_10_20[t7_idx]<=62.0)
-                c_0 = (9.6<=bbe[dday_idx]<=29.8) and (39.5<=tml[dday_idx]<=387.1) and (0.0<=spread_112_224[dday_idx]<=33.9) and (54.0<=trd_val_eok[dday_idx]<=213.0)
-                if not (c_30 and c_7 and c_0): return None
+                c_30 = (tb[t30_idx] > 2.0) and (bbe[t30_idx] > 3.0)
+                c_7 = (cpv[t7_idx] > 0.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (tb[dday_idx] > 2.0)
             elif "Rank D" in rank_name:
-                c_30 = (-0.1<=cpv[t30_idx]<=0.0) and (5.3<=bbe[t30_idx]<=8.3) and (-130.5<=rs[t30_idx]<=164.0) and (0.0<=spread_10_20[t30_idx]<=1.9)
-                c_7 = (36.1<=tb[t7_idx]<=90.4) and (0.0<=tml[t7_idx]<=30.1) and (7.2<=trd_val_eok[t7_idx]<=79.2)
-                c_0 = (16.6<=bbe[dday_idx]<=32.3) and (13.7<=tml[dday_idx]<=269.0) and (-1491.9<=rs[dday_idx]<=680.1) and (109.8<=trd_val_eok[dday_idx]<=1419.5)
-                if not (c_30 and c_7 and c_0): return None
+                c_30 = (bbe[t30_idx] > 3.0)
+                c_7 = (tb[t7_idx] > 2.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (bbe[dday_idx] > 3.0)
+            else:
+                c_30 = (cpv[t30_idx] > 0.0) and (bbe[t30_idx] > 3.0)
+                c_7 = (cpv[t7_idx] > 0.0) and (tb[t7_idx] > 2.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (tb[dday_idx] > 2.0) and (bbe[dday_idx] > 3.0)
+            if not (c_30 and c_7 and c_0): return None
                 
             final_rs = rs[dday_idx]
 
@@ -519,12 +633,29 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
             rs_spy = np.full(len(c), (stock_ret / (spy_ret if spy_ret != 0 else 0.0001)) * 100)
             rs_qqq = np.full(len(c), (stock_ret / (qqq_ret if qqq_ret != 0 else 0.0001)) * 100)
 
-            # 💡 [미국장 3단계 밀집 구간 100% 하드코딩 필터링]
-            q1 = (-0.0 <= cpv[t30_idx] <= 0.1) and (3.2 <= bbe[t30_idx] <= 6.6) and (-339.2 <= rs_spy[t30_idx] <= 539.6) and (-108.3 <= rs_qqq[t30_idx] <= 510.7) and (0.0 <= tml[t30_idx] <= 48.9)
-            q2 = (0.1 <= cpv[t7_idx] <= 0.2) and (30.8 <= tb[t7_idx] <= 50.9) and (3.1 <= bbe[t7_idx] <= 8.2) and (-626.6 <= rs_qqq[t7_idx] <= 182.3)
-            q3 = (0.3 <= cpv[dday_idx] <= 0.8) and (5.6 <= tb[dday_idx] <= 12.0) and (9.0 <= bbe[dday_idx] <= 16.6) and (0.0 <= tml[dday_idx] <= 247.2) and (-804.4 <= rs_spy[dday_idx] <= 1323.4) and (-1338.8 <= rs_qqq[dday_idx] <= 761.9) and (0.0 <= spread_10_20[dday_idx] <= 75.8)
-
-            if not (q1 and q2 and q3): return None
+            # 💡 [100년 영속 진화 로직 적용: Wide-Net Rank Gate US]
+            # 미국장도 단일 q1/q2/q3 하드코딩을 제거하고 Rank A~D 분기 기반 최소 허들로 완화
+            if "Rank A" in rank_name:
+                c_30 = (cpv[t30_idx] > 0.0) and (bbe[t30_idx] > 3.0)
+                c_7 = (cpv[t7_idx] > 0.0) and (tb[t7_idx] > 2.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (tb[dday_idx] > 2.0) and (bbe[dday_idx] > 3.0)
+            elif "Rank B" in rank_name:
+                c_30 = (cpv[t30_idx] > 0.0) and (tb[t30_idx] > 2.0)
+                c_7 = (cpv[t7_idx] > 0.0) and (bbe[t7_idx] > 3.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (bbe[dday_idx] > 3.0)
+            elif "Rank C" in rank_name:
+                c_30 = (tb[t30_idx] > 2.0) and (bbe[t30_idx] > 3.0)
+                c_7 = (cpv[t7_idx] > 0.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (tb[dday_idx] > 2.0)
+            elif "Rank D" in rank_name:
+                c_30 = (bbe[t30_idx] > 3.0)
+                c_7 = (tb[t7_idx] > 2.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (bbe[dday_idx] > 3.0)
+            else:
+                c_30 = (cpv[t30_idx] > 0.0) and (bbe[t30_idx] > 3.0)
+                c_7 = (cpv[t7_idx] > 0.0) and (tb[t7_idx] > 2.0)
+                c_0 = (cpv[dday_idx] > 0.0) and (tb[dday_idx] > 2.0) and (bbe[dday_idx] > 3.0)
+            if not (c_30 and c_7 and c_0): return None
             final_rs = rs_spy[dday_idx]
 
         # 형상 압축 및 반환
@@ -814,6 +945,11 @@ def execute_supernova_live_scan(market):
         ideal_templates['RANK_C_단기테마'] = np.array([0.60, 8.0, 19.70])
         ideal_templates['RANK_D_초단기밈'] = np.array([0.60, 8.0, 24.45])
     elif market == 'US':
+        # 💡 [100년 영속 진화 로직 적용: US Rank Template Symmetry]
+        ideal_templates['US_RANK_A_장기매집'] = np.array([0.70, 10.5, 25.0])
+        ideal_templates['US_RANK_B_중기스윙'] = np.array([0.66, 9.2, 21.5])
+        ideal_templates['US_RANK_C_단기테마'] = np.array([0.60, 8.1, 17.0])
+        ideal_templates['US_RANK_D_초단기밈'] = np.array([0.55, 7.5, 13.5])
         ideal_templates['US_MEME_슈팅'] = np.array([0.55, 8.8, 12.80])
 
     mfe_weighted = config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
