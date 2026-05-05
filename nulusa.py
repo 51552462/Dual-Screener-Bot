@@ -14,6 +14,7 @@ import yfinance as yf
 import FinanceDataReader as fdr
 import logging
 import json
+import sqlite3
 
 # 💡 [자율 관제탑 연결] 조율된 파라미터 수신
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
@@ -169,16 +170,29 @@ def generate_ai_report(code: str, company_name: str):
     return fb_main, ""
 
 def get_us_ticker_list():
+    """us_master.py와 동일 목록 로직 + 시장별 부분 실패·컬럼명 변경 대응."""
     try:
-        # 💡 각 종목이 어느 시장 소속인지 'Market' 컬럼을 생성하여 합칩니다.
-        df_nasdaq = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
-        df_nyse = fdr.StockListing('NYSE').assign(Market='NYSE')
-        df_amex = fdr.StockListing('AMEX').assign(Market='AMEX')
-        df = pd.concat([df_nasdaq, df_nyse, df_amex])
+        frames = []
+        for mkt in ('NASDAQ', 'NYSE', 'AMEX'):
+            try:
+                frames.append(fdr.StockListing(mkt).assign(Market=mkt))
+            except Exception:
+                continue
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
+        sym_col = next((c for c in ('Symbol', 'symbol', 'Ticker', 'ticker', 'Code', 'code') if c in df.columns), None)
+        if sym_col is None:
+            return pd.DataFrame()
+        if sym_col != 'Symbol':
+            df = df.rename(columns={sym_col: 'Symbol'})
+        if 'Name' not in df.columns and 'name' in df.columns:
+            df = df.rename(columns={'name': 'Name'})
+        df['Symbol'] = df['Symbol'].astype(str).str.replace('.', '-', regex=False)
         df = df[df['Symbol'].str.isalpha()]
-        df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
         return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
-    except: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 MIN_PRICE_USD = 3.0               
 MIN_MONEY_USD = 5_000_000         
@@ -797,46 +811,45 @@ def scan_market_1d():
             if not info: continue
             name, code = info['name'], info['code']
 
-            # 👇👇 [기존 코드 지우고 여기서부터] 👇👇
             try:
-                if df_batch is not None:
-                    if len(chunk) == 1: 
+                df_ticker = None
+                if df_batch is not None and not df_batch.empty:
+                    if len(chunk) == 1:
                         df_ticker = df_batch.copy()
-                    else: 
-                        # 💡 [핵심 픽스 1 이식] yfinance 최신/구버전 완벽 호환 무적 방어 로직
+                    else:
                         if isinstance(df_batch.columns, pd.MultiIndex):
                             if tk in df_batch.columns.get_level_values(0):
                                 df_ticker = df_batch[tk].copy()
                             elif tk in df_batch.columns.get_level_values(1):
                                 df_ticker = df_batch.xs(tk, level=1, axis=1).copy()
                             else:
-                                continue
+                                try:
+                                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
+                                    if df_s is not None and not df_s.empty:
+                                        df_ticker = df_s
+                                except Exception:
+                                    df_ticker = None
                         else:
-                            df_ticker = df_batch.copy()
+                            try:
+                                df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
+                                if df_s is not None and not df_s.empty:
+                                    df_ticker = df_s
+                            except Exception:
+                                df_ticker = None
                 else:
-                    # 💡 [핵심 픽스 2 이식] batch 다운로드가 실패했을 때만 fallback_dict를 쓰도록 else 처리
                     df_ticker = fallback_dict.get(tk)
 
-                if df_ticker is None or df_ticker.empty: continue
+                if df_ticker is None or df_ticker.empty:
+                    continue
 
-                # 1. 계산에 필요한 컬럼만 추출 후 결측치 제거
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                
-                # 2. 타임존 제거 (비교를 위해 통일)
-                if df_ticker.index.tzinfo is not None: 
+                if df_ticker.index.tzinfo is not None:
                     df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
-                
-                # 3. 중복 날짜 제거 (최신 데이터 유지)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
-                # 4. 모든 데이터를 계산 가능한 실수형(float)으로 강제 변환
-                df_ticker = df_ticker.astype(float)
-                
-                # 5. 판다스 내부에서 날짜순(오름차순)으로 강력 정렬 (가장 중요)
-                df_ticker.sort_index(inplace=True)
-            # 👆👆 [여기까지 통째로 덮어쓰기 하십시오] 👆👆
-
                 if len(df_ticker) >= 500:
+                    df_ticker = df_ticker.astype(float)
+                    df_ticker.sort_index(inplace=True)
                     tracker['analyzed'] += 1
                     
                     market_type = info['market']
