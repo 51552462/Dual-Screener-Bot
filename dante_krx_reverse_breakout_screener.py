@@ -19,6 +19,22 @@ import os
 # data_updater.py와 동일한 DB 경로 설정 [cite: 82]
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
+def get_safe_data(code, start_date):
+    """ema5.py와 동일: 로컬 DB + 오늘 봉 보강, 실패 시 FinanceDataReader 단독."""
+    table_name = f"KR_{code}"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
+        conn.close()
+        df_db.index = pd.to_datetime(df_db.index)
+        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
+        if not df_live.empty:
+            df_combined = pd.concat([df_db, df_live])
+            return df_combined[~df_combined.index.duplicated(keep='last')]
+        return df_db
+    except Exception:
+        return fdr.DataReader(code, start_date)
+
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -143,15 +159,18 @@ def generate_kr_ai_report(code: str, company_name: str):
 
 def get_krx_list_kind():
     try:
-        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10).text), header=0)[0]
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", headers=headers, verify=False, timeout=10).text), header=0)[0]
         df_ks['Market'] = 'KOSPI'
-        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10).text), header=0)[0]
+        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", headers=headers, verify=False, timeout=10).text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
-        return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
-    except: return pd.DataFrame()
+        junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
+        return df[~df['Name'].str.contains(junk_pattern, regex=True)][['Code', 'Name', 'Market']].dropna()
+    except Exception:
+        return pd.DataFrame()
 
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
@@ -360,35 +379,22 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            # 👇👇 [V107.5 시계열 붕괴 방어 및 정렬 엔진] 👇👇
+            # 👇👇 [V107.5 + ema5.py 동일 하이브리드 로더] 👇👇
             try:
-                conn = sqlite3.connect(DB_PATH, timeout=30)
-                # 1. DB에서 꺼낼 때부터 과거->현재 순서(ASC)로 강제 정렬해서 가져옵니다.
-                df_raw = pd.read_sql(f"SELECT * FROM KR_{code} ORDER BY Date ASC", conn)
-                conn.close()
-                
-                if not df_raw.empty:
-                    df_raw['Date'] = pd.to_datetime(df_raw['Date'])
-                    df_raw.set_index('Date', inplace=True)
-                    
-                    # 2. 혹시 모를 중복 날짜 발생 시 최신 데이터만 남기고 제거
+                df_raw = get_safe_data(code, start_date)
+
+                if df_raw is not None and not df_raw.empty:
+                    df_raw.index = pd.to_datetime(df_raw.index)
                     df_raw = df_raw[~df_raw.index.duplicated(keep='last')]
-                    
-                    # 3. 모든 데이터를 계산 가능한 실수형(float)으로 강제 변환
                     df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
-                    
-                    # 4. 판다스 내부에서도 한 번 더 날짜순(오름차순) 강력 정렬
                     df_raw.sort_index(inplace=True)
-                    
+
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-                
+
                 if is_valid:
-                    # 💡 주의: 3번 파일은 compute_inverse_1d / 4번 파일은 compute_bobgeureut 입니다.
-                    # 파일에 맞게 아래 함수 이름을 유지하세요.
-                    hit, sig_type, df, dbg = compute_inverse_1d(df_raw) 
-                    
+                    hit, sig_type, df, dbg = compute_inverse_1d(df_raw)
+
             except Exception as e:
-                # 에러 발생 시 조용히 넘어가지 않고 터미널에 띄워줍니다.
                 # print(f"⚠️ [{name}] 데이터 분석 에러: {e}")
                 pass
             # 👆👆 [수정 완료] 👆👆
@@ -452,8 +458,8 @@ def scan_market_1d():
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                     )
                     q_promo.put((promo_chart_path, promo_caption))
-           
-            print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+
+                    print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             pass
 
@@ -481,4 +487,5 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    run_scheduler()
+    # run_scheduler()
+    scan_market_1d()
