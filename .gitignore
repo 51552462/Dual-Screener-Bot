@@ -2,3 +2,13 @@ market_data.sqlite
 system_config.json
 Supernova_Flow_Tracking_Master.csv
 __pycache__/
+# --- Bitget Crypto System Data ---
+# 매매 기록 및 캔들 데이터 (Ledger)
+bitget_market_data.sqlite
+
+# 실시간 잔고, 국고, 학습된 DNA (Vault & Brain)
+bitget_system_config.json
+
+# 알림 중복 방지 로그 및 차트 (Logs & Assets)
+sent_log_bitget.txt
+charts/
