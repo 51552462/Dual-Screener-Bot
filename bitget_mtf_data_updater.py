@@ -3,10 +3,17 @@ import os
 import sqlite3
 import gc
 import time
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-import ccxt
+try:
+    import ccxt
+except ModuleNotFoundError:
+    # 서버에 ccxt가 빠진 경우 최소 복구: 현재 파이썬 환경에 즉시 설치 재시도
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "ccxt"])
+    import ccxt
 import pandas as pd
 
 
