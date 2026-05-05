@@ -24,9 +24,9 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # ==========================================
 # 🤖 2. 텔레그램 봇 토큰 (3개로 완벽 분리)
 # ==========================================
-KR_TOKEN = "8781642737:AAGnJcNZDjT_CtA1rr25b7Zv3LsssxPtxSo"
-US_TOKEN = "8557663212:AAGYJR67qAqkrR3fQw2cjDbCtUrxCAehv0E"
-NEW_TOKEN = "8752142269:AAHj-fZfTQvM9oQQJ3_o-nJupaW8bb7FiXc"
+KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
+US_TOKEN = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
+NEW_TOKEN = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
 
 # 💡 봇 내부 트래픽 통제용 락 (무분별한 API 호출 방어)
 ai_request_lock = threading.Lock()
@@ -39,7 +39,7 @@ def listen_and_reply(token, market_name):
         try:
             url = f"https://api.telegram.org/bot{token}/getUpdates"
             params = {"offset": last_update_id + 1, "timeout": 10}
-            res = requests.get(url, params=params, timeout=15).json()
+            res = requests.get(url, params=params, timeout=45).json()
             
             if res.get("ok"):
                 for item in res.get("result", []):
@@ -97,8 +97,6 @@ def listen_and_reply(token, market_name):
                                 
         except Exception as e:
             time.sleep(2)
-        
-        time.sleep(1.5)
 
 # 💡 3개의 텔레그램 방을 각각 독립된 스레드에서 동시 실행
 threading.Thread(target=listen_and_reply, args=(KR_TOKEN, "한국장"), daemon=True).start()
