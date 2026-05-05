@@ -13,13 +13,14 @@ from io import StringIO
 import requests
 warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
+from yf_download_flatten import flatten_yf_download_df
 scanned_today_cache = {'KR': set(), 'US': set()}
 
 # ==========================================
 # 💡 [환경 설정 및 텔레그램 세팅]
 # ==========================================
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
+TELEGRAM_TOKEN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
 TELEGRAM_CHAT_ID = "6838834566"
 
 def send_telegram_msg(text):
@@ -170,9 +171,11 @@ def evolve_alpha_factors():
     def fetch_df(item):
         mkt, code = item
         try:
-            df = fdr.DataReader(code, start_date) if mkt == 'KR' else yf.download(code, start=start_date, progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
+            if mkt == 'KR':
+                df = fdr.DataReader(code, start_date)
+            else:
+                df = yf.download(code, start=start_date, progress=False)
+                df = flatten_yf_download_df(df)
             if df.empty or len(df) < 120:
                 return None
             need_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -549,7 +552,9 @@ def hunt_supernovas(market):
     try:
         if market == 'US':
             spy_df = yf.download('SPY', start=start_date, progress=False)
+            spy_df = flatten_yf_download_df(spy_df)
             qqq_df = yf.download('QQQ', start=start_date, progress=False)
+            qqq_df = flatten_yf_download_df(qqq_df)
             spy_df.index = pd.to_datetime(spy_df.index).tz_localize(None)
             qqq_df.index = pd.to_datetime(qqq_df.index).tz_localize(None)
             benchmarks = {'SPY': spy_df, 'QQQ': qqq_df}
@@ -568,7 +573,11 @@ def hunt_supernovas(market):
     
     def process_ticker(code):
         try:
-            df = fdr.DataReader(code, start_date) if market == 'KR' else yf.download(code, start=start_date, progress=False)
+            if market == 'KR':
+                df = fdr.DataReader(code, start_date)
+            else:
+                df = yf.download(code, start=start_date, progress=False)
+                df = flatten_yf_download_df(df)
             if df.empty or len(df) < 130: return None
             df.index = pd.to_datetime(df.index).tz_localize(None)
             
@@ -811,8 +820,28 @@ def execute_supernova_live_scan(market):
     if mfe_weighted:
         ideal_templates['MFE_진화형_황금타점'] = np.array([mfe_weighted['cpv'], mfe_weighted['tb'], mfe_weighted.get('bbe', 20.0)])
 
-    # 인큐베이터 돌연변이 템플릿을 스나이퍼 이상형 풀에 편입 (3D cpv/tb/bbe, 코사인은 각 cos_cutoff 적용)
+    # 관제탑 컷오프(정규직/인큐베이터 기본 밸브에 사용)
+    dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
+    dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+
+    # DNA_ALPHA_ / NEW_EVOLUTION_ 정규직 승격 템플릿 — 이상형 3D + 스나이퍼 cos_cutoff 밸브
     ideal_template_cutoffs = {}
+    for _k, _v in config.items():
+        if not (_k.startswith("DNA_ALPHA_") or _k.startswith("NEW_EVOLUTION_")):
+            continue
+        if not isinstance(_v, dict):
+            continue
+        try:
+            ideal_templates[_k] = np.nan_to_num(np.array([
+                float(_v.get("cpv", 0.0)),
+                float(_v.get("tb", 0.0)),
+                float(_v.get("bbe", 0.0)),
+            ], dtype=float))
+            ideal_template_cutoffs[_k] = float(_v.get("cos_cutoff", dynamic_cos_cutoff))
+        except (TypeError, ValueError):
+            continue
+
+    # 인큐베이터 돌연변이 템플릿을 스나이퍼 이상형 풀에 편입 (3D cpv/tb/bbe, 코사인은 각 cos_cutoff 적용)
     incubator_cfg = config.get("INCUBATOR_TEMPLATES", {})
     if isinstance(incubator_cfg, dict):
         for iname, itpl in incubator_cfg.items():
@@ -828,9 +857,6 @@ def execute_supernova_live_scan(market):
             except (TypeError, ValueError):
                 continue
 
-    # 관제탑 컷오프 수치 로드
-    dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50) 
-    dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50) 
     live_clusters = config.get('LIVE_CLUSTER_TEMPLATES', {})
 
     # 대상 종목 및 현재 보유 현황 로드
@@ -856,8 +882,23 @@ def execute_supernova_live_scan(market):
             
         try:
             # 병목의 원인인 API 호출을 각 스레드가 동시에 분산해서 처리
-            df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d')) if market == 'KR' else yf.download(code, period="2mo", progress=False)
+            if market == 'KR':
+                df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d'))
+            else:
+                df = yf.download(code, period="2mo", progress=False)
+                df = flatten_yf_download_df(df)
             if df.empty or len(df) < 20: return None
+
+            # 관제탑 EVOLVED_ALPHA_FACTORS → 실시간 알파 (ML N차원 바운딩 박스용)
+            current_alphas = {}
+            _evolved = config.get("EVOLVED_ALPHA_FACTORS")
+            if isinstance(_evolved, dict):
+                for _slot_key, _formula in _evolved.items():
+                    if not isinstance(_formula, str) or not str(_formula).strip():
+                        continue
+                    _ser = evaluate_alpha_formula(df, _formula.strip())
+                    if _ser is not None and len(_ser) > 0:
+                        current_alphas[_slot_key] = _ser
             
             c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
             current_close = c[-1]
@@ -924,12 +965,37 @@ def execute_supernova_live_scan(market):
             ml_pattern_name = "UNKNOWN"
             
             for c_name, bounds in live_clusters.items():
+                if not isinstance(bounds, dict):
+                    continue
                 ml_match_count = 0
+                total_dims = 3
                 if bounds.get('cpv_min', -99) <= cpv <= bounds.get('cpv_max', 99): ml_match_count += 1
                 if bounds.get('tb_min', -99) <= tb <= bounds.get('tb_max', 999): ml_match_count += 1
                 if bounds.get('bbe_min', -99) <= bbe <= bounds.get('bbe_max', 999): ml_match_count += 1
-                
-                ml_score = ml_match_count / 3.0 
+                for slot_key in current_alphas:
+                    akmin = f'alpha_{slot_key}_min'
+                    akmax = f'alpha_{slot_key}_max'
+                    if akmin not in bounds or akmax not in bounds:
+                        continue
+                    try:
+                        lo = float(bounds[akmin])
+                        hi = float(bounds[akmax])
+                    except (TypeError, ValueError):
+                        continue
+                    _ser = current_alphas[slot_key]
+                    try:
+                        aval = float(_ser.iloc[-1])
+                    except Exception:
+                        try:
+                            aval = float(_ser.values[-1])
+                        except Exception:
+                            continue
+                    if np.isnan(aval):
+                        continue
+                    total_dims += 1
+                    if lo <= aval <= hi:
+                        ml_match_count += 1
+                ml_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
                 
                 if ml_score >= dynamic_ml_cutoff:
                     is_pass_ml_box = True
