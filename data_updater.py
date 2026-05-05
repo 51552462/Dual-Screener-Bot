@@ -9,6 +9,8 @@ from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
+from yf_download_flatten import flatten_yf_download_df
+
 # 💡 [핵심 픽스] Ubuntu 서버 환경에 맞춘 정확한 DB 절대 경로 세팅
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -68,7 +70,7 @@ def update_single_ticker(row, country):
         try:
             df = yf.download(sym, period="3y", interval="1d", progress=False)
             if df.empty: return False
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+            df = flatten_yf_download_df(df)
         except: return False
     else: # KR
         sym = row['Code']
@@ -135,7 +137,7 @@ def run_daily_db_update():
         idx_us = yf.download("SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False)
         for tk, tbl in zip(['SPY', 'QQQ', '^VIX'], ['US_SPY', 'US_QQQ', 'US_VIX']):
             if tk in idx_us.columns.levels[0]:
-                df_temp = idx_us[tk].dropna().reset_index()
+                df_temp = flatten_yf_download_df(idx_us[tk].copy()).dropna().reset_index()
                 df_temp.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
                 df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
                 
