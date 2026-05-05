@@ -1,12 +1,20 @@
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+try:
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+except ModuleNotFoundError:
+    # 서버 런타임에서 sklearn 누락 시 즉시 복구
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "scikit-learn"])
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
 
 from bitget_supernova_hunter import extract_dna_from_df
 
