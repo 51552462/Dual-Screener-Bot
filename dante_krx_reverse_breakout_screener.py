@@ -1,4 +1,4 @@
-# Dante_KRX_Reverse_Breakout_1D_AI_Pro.py
+# Dante_KRX_Bowl_1D_AI_Pro.py
 import os, re, time, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
@@ -18,22 +18,6 @@ import os
 
 # data_updater.py와 동일한 DB 경로 설정 [cite: 82]
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
-
-def get_safe_data(code, start_date):
-    """ema5.py와 동일: 로컬 DB + 오늘 봉 보강, 실패 시 FinanceDataReader 단독."""
-    table_name = f"KR_{code}"
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
-        conn.close()
-        df_db.index = pd.to_datetime(df_db.index)
-        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
-        if not df_live.empty:
-            df_combined = pd.concat([df_db, df_live])
-            return df_combined[~df_combined.index.duplicated(keep='last')]
-        return df_db
-    except Exception:
-        return fdr.DataReader(code, start_date)
 
 from google import genai
 from google.genai import types
@@ -96,18 +80,18 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 및 스팸 방지를 위해 안전하게 교체)
-def generate_kr_ai_report(code: str, company_name: str):
+# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 파싱 제거
+def generate_ai_report(code: str, company_name: str):
     import re, time
+    import yfinance as yf
     
-    # 1. 팩트 데이터 추출 시도
+    # 1. 팩트 데이터 추출
     try:
         if code.isdigit(): # 한국장
             res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
             soup = BeautifulSoup(res.text, 'html.parser')
             sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
         else: # 미국장
-            import yfinance as yf
             tk = yf.Ticker(code)
             sector = tk.info.get('sector', '글로벌 산업')
             sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
@@ -115,10 +99,10 @@ def generate_kr_ai_report(code: str, company_name: str):
     except:
         sector_kr = '유망 섹터'
 
-    # 비상용 기본 멘트 (AI 뻗었을 때)
+    # 비상용 기본 멘트
     fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
 
-    # 3. 구글 AI 호출 (속도 제한 방어 4초 쿨타임)
+    # 2. 구글 AI 호출
     for attempt in range(3):
         try:
             time.sleep(4) 
@@ -144,17 +128,15 @@ def generate_kr_ai_report(code: str, company_name: str):
                 
             report = response.text.replace('*', '').strip() 
             
-            # 본캐 부분만 딱 잘라내기
             m_part = re.search(r'\[본캐\](.*)', report, re.DOTALL)
 
             if not m_part: 
                 raise ValueError("파싱오류")
 
-            return m_part.group(1).strip(), "" # 해시태그는 빈문자열 리턴
+            return m_part.group(1).strip(), ""
         except:
             pass 
             
-    # AI 3번 다 실패 시 기본값 리턴
     return fb_main, ""
 
 def get_krx_list_kind():
@@ -169,8 +151,23 @@ def get_krx_list_kind():
         df = df.rename(columns={'회사명': 'Name'})
         junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
         return df[~df['Name'].str.contains(junk_pattern, regex=True)][['Code', 'Name', 'Market']].dropna()
+    except: return pd.DataFrame()
+
+# ema5.py와 동일: DB 없거나 부족할 때 FinanceDataReader로 우회
+def get_safe_data(code, start_date):
+    table_name = f"KR_{code}"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
+        conn.close()
+        df_db.index = pd.to_datetime(df_db.index)
+        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
+        if not df_live.empty:
+            df_combined = pd.concat([df_db, df_live])
+            return df_combined[~df_combined.index.duplicated(keep='last')]
+        return df_db
     except Exception:
-        return pd.DataFrame()
+        return fdr.DataReader(code, start_date)
 
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
@@ -190,80 +187,97 @@ def calculate_trust_score(c, e60, signal_arr):
             if valid: score += 2 
     return max(1, min(10, score)) 
 
-def compute_inverse_1d(df_raw: pd.DataFrame):
+def compute_bobgeureut(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
-    df['AvgVol3'] = df['Volume'].shift(1).rolling(3, min_periods=1).mean()
-    
     c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
-    ema112, ema224, ema448, ema60 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values, df['EMA60'].values
-    av3 = df['AvgVol3'].values
-
-    moneyOk = (c * v) >= 100_000_000
-    priceOk = c >= 1000
-    condBearAlign = (ema112 < ema224) & (ema224 < ema448)
-    condHold112 = c > ema112
-
-    condCrossEvent = np.zeros(len(c), dtype=bool)
-    for i in range(1, 9):
-        shifted_c = np.roll(c, i)
-        shifted_c[:i] = np.inf
-        shifted_ema112 = np.roll(ema112, i)
-        condCrossEvent |= (shifted_c < shifted_ema112)
-
-    isAccBull = c > o
-    rng = h - l
-    with np.errstate(divide='ignore', invalid='ignore'):
-        closePos = np.where(rng > 0, (c - l) / rng, 0)
     
-    valMa20 = pd.Series(c*v).rolling(20, min_periods=1).mean().values
-    isAccCandle = isAccBull & ((c*v) >= (1.6 * valMa20)) & (closePos >= 0.68)
-    condHasAcc = pd.Series(isAccCandle).rolling(window=20, min_periods=1).sum().values > 0
+    ma20 = pd.Series(c).rolling(20, min_periods=1).mean().values
+    stddev = pd.Series(c).rolling(20, min_periods=1).std(ddof=1).values
+    bbUpper = ma20 + (stddev * 2)
 
-    with np.errstate(invalid='ignore'):
-        condVolSpike = v >= (np.nan_to_num(av3, nan=1.0) * 3)
+    tenkan = (pd.Series(h).rolling(9, min_periods=1).max() + pd.Series(l).rolling(9, min_periods=1).min()) / 2
+    kijun = (pd.Series(h).rolling(26, min_periods=1).max() + pd.Series(l).rolling(26, min_periods=1).min()) / 2
+    spanA = (tenkan + kijun) / 2
+    spanB = (pd.Series(h).rolling(52, min_periods=1).max() + pd.Series(l).rolling(52, min_periods=1).min()) / 2
+    senkou1 = np.roll(spanA, 25); senkou1[:25] = np.nan
+    senkou2 = np.roll(spanB, 25); senkou2[:25] = np.nan
+    cloudTop = np.fmax(senkou1, senkou2)
 
-    signalBase = priceOk & moneyOk & condBearAlign & condHold112 & condCrossEvent & condHasAcc & condVolSpike & (c > o)
+    mean120 = pd.Series(c).rolling(120, min_periods=1).mean().values
+    std120 = pd.Series(c).rolling(120, min_periods=1).std(ddof=1).values
+    mean120_s = np.roll(mean120, 5); mean120_s[:5] = np.nan
+    std120_s = np.roll(std120, 5); std120_s[:5] = np.nan
+    with np.errstate(divide='ignore', invalid='ignore'): condBox6m = (std120_s / mean120_s) < 0.20
+
+    mean60 = pd.Series(c).rolling(60, min_periods=1).mean().values
+    std60 = pd.Series(c).rolling(60, min_periods=1).std(ddof=1).values
+    mean60_s = np.roll(mean60, 5); mean60_s[:5] = np.nan
+    std60_s = np.roll(std60, 5); std60_s[:5] = np.nan
+    with np.errstate(divide='ignore', invalid='ignore'): condBox3m = (std60_s / mean60_s) < 0.20
+
+    isCat2 = condBox6m
+    isCat1 = (~condBox6m) & condBox3m
+    hasBox = isCat1 | isCat2
+
+    ema10, ema20, ema30, ema60, ema112, ema224 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values, df['EMA112'].values, df['EMA224'].values
+    condPrice = c >= 1000
+    isBullish = c > o
+    prev_c = np.roll(c, 1); prev_c[0] = np.inf
+    prev_ema224 = np.roll(ema224, 1); prev_ema224[0] = 0
+    condEma = (c > ema224) & (prev_c < prev_ema224 * 1.05)
+    condCloud = (c > cloudTop) & (~np.isnan(cloudTop))
+    condBb = c >= bbUpper * 0.98
+    volAvg = pd.Series(v).rolling(20, min_periods=1).mean().values
+    condVol = v > volAvg * 2.0
+    condNotOverheated = c <= ema224 * 1.15
+    
+    v_1 = np.roll(v, 1); v_1[0] = 0
+    v_2 = np.roll(v, 2); v_2[:2] = 0
+    v_3 = np.roll(v, 3); v_3[:3] = 0
+    avgVol3 = (v_1 + v_2 + v_3) / 3
+    condVolSpike = v >= (avgVol3 * 5)
+
+    signalBase = condPrice & isBullish & condEma & condCloud & condBb & condVol & condNotOverheated & hasBox & condVolSpike
     if not signalBase[-1]: return False, "", df, {}
 
-    condBullAlign = (ema112 > ema224) & (ema224 > ema448)
-    
-    # ⭐️ 3봉 내 15% 상승 실패 시 누적, 성공 시 리셋 로직 ⭐️
-    p_counts = np.zeros(len(c), dtype=int)
-    current_p_count = 0
+    signalCat2 = signalBase & isCat2
+    signalCat1 = signalBase & isCat1
+    isAligned = (ema10 > ema20) & (ema20 > ema30) & (ema30 > ema60) & (ema60 > ema112) & (ema112 > ema224)
+
+    if (signalCat2 & isAligned)[-1] or (signalCat1 & isAligned)[-1]: sig_type = "B (J 강조)"
+    else: sig_type = "B (일반)"
+
+    # ⭐️ 밥그릇 Cat2(바닥권) 타점 기준: 3봉 내 15% 상승 실패 시 누적, 성공 시 리셋 로직 ⭐️
+    cat2_counts = np.zeros(len(c), dtype=int)
+    current_cat2_count = 0
     wait_idx = -1
 
     for i in range(len(c)):
-        # 추세가 완전히 우상향(정배열)으로 바뀌면 카운트 초기화
-        if condBullAlign[i]: 
-            current_p_count = 0
-            wait_idx = -1
-
         if wait_idx != -1:
             # 타점 발생 후 3봉 이내에 고가가 15% 이상 상승했는지 체크
             if i <= wait_idx + 3:
                 if h[i] >= c[wait_idx] * 1.15: # 15% 달성 시 리셋 (시세 분출 완료)
-                    current_p_count = 0
+                    current_cat2_count = 0
                     wait_idx = -1
-            
-            # 3봉이 지났는데도 15% 도달을 못했으면 누적 유지 (에너지 응축 중)
+         
+            # 3봉이 지났는데도 15% 도달을 못했으면 누적 유지 (세력의 가격 통제 및 매집 지속)
             if i == wait_idx + 3 and wait_idx != -1:
                 wait_idx = -1
 
-        # 타점 발생 시 카운트 올리고 대기열에 올림
-        if signalBase[i]:
-            current_p_count += 1
+        # Cat2 타점 발생 시 카운트 올리고 대기열에 등록
+        if signalCat2[i]:
+            current_cat2_count += 1
             wait_idx = i
             
-        p_counts[i] = current_p_count
+        cat2_counts[i] = current_cat2_count
 
-    sig_type = "P (연속)" if p_counts[-1] > 1 else "P (신규)"
     trust_score = calculate_trust_score(c, ema60, signalBase)
-    
-    # 💡 p_count(누적 횟수)를 텔레그램으로 넘겨줌
-    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "p_count": int(p_counts[-1])}
+
+    # 💡 cat2_count(누적 횟수)를 텔레그램으로 넘겨줌
+    return True, sig_type, df, {"sig_type": sig_type, "last_close": float(c[-1]), "score": trust_score, "cat2_count": int(cat2_counts[-1])}
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
@@ -300,18 +314,18 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             diff_pct = (diff / prev_c) * 100 if prev_c != 0 else 0
             sign = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
             
-            # 💡 홍보용 vs 본캐용 테마 분기처리
+            # 💡 홍보용 vs 본캐용 분기
             if is_promo:
                 theme = get_daily_theme()
                 bg_color, grid_color, text_main = theme['bg'], theme['grid'], theme['text']
                 color_up, color_down = theme['up'], theme['down']
-                text_sub = text_main # 홍보용은 서브 텍스트도 진하게
-                custom_figsize = (9, 9) # 인스타/쓰레드 최적화 1:1 비율
+                text_sub = text_main
+                custom_figsize = (9, 9) 
             else:
                 bg_color, grid_color, text_main, text_sub = '#131722', '#2A2E39', '#FFFFFF', '#8A91A5'
                 color_up, color_down = '#FF3B69', '#00B4D8'
                 custom_figsize = (11, 6.5) if show_volume else (9, 9)
-
+            
             color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
 
             signal_marker = pd.Series(np.nan, index=df_cut.index)
@@ -333,6 +347,10 @@ def save_chart(df: pd.DataFrame, code: str, name: str, rank: int, dbg: dict, sho
             right_text1 = f"{sign} {abs(diff_pct):.2f}%" if is_promo else f"Close: {c:,.0f} ({sign} {abs(diff_pct):.2f}%)"
             fig.text(0.95, title_y, right_text1, fontsize=22 if is_promo else 18, fontweight='bold', color=color_diff, ha='right')
 
+            if not is_promo:
+                right_text2 = f"Vol: {v:,}  | O: {o:,.0f}  H: {h:,.0f}  L: {l:,.0f}"
+                fig.text(0.95, sub_y, right_text2, fontsize=12, color=text_sub, ha='right')
+                
             fig.text(0.05, 0.03, "Proprietary Algorithmic Signal", fontsize=10, color=text_sub, ha='left', style='italic')
 
             fig.savefig(path, dpi=250 if is_promo else 200, bbox_inches='tight', facecolor=bg_color)
@@ -348,7 +366,7 @@ def scan_market_1d():
     today_str = datetime.now(kr_tz).strftime('%Y-%m-%d')
     
     # 💡 3. 당일 중복 발송용 영구 파일 로드
-    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_p.txt")
+    log_file = os.path.join(TOP_FOLDER, "sent_log_kr_b.txt")
     
     if today_str != last_run_date:
         sent_today.clear()
@@ -364,7 +382,7 @@ def scan_market_1d():
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
 
-    print(f"\n⚡ [일봉 전용] 한국장 3번(역매공파) 스캔 시작! (당일 중복 차단 🛡️)")
+    print(f"\n⚡ [일봉 전용] 한국장 4번(밥그릇) 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
     console_lock = threading.Lock()
@@ -379,7 +397,7 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            # 👇👇 [V107.5 + ema5.py 동일 하이브리드 로더] 👇👇
+            # 👇👇 [V107.5 시계열 붕괴 방어 및 정렬 엔진] ema5.py 동일 하이브리드 로더 👇👇
             try:
                 df_raw = get_safe_data(code, start_date)
 
@@ -392,20 +410,20 @@ def scan_market_1d():
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
 
                 if is_valid:
-                    hit, sig_type, df, dbg = compute_inverse_1d(df_raw)
+                    hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
 
             except Exception as e:
                 # print(f"⚠️ [{name}] 데이터 분석 에러: {e}")
                 pass
-            # 👆👆 [수정 완료] 👆👆
-                
+            # 👆👆 [수정 완료] 👆👆 
+
             hit_rank = 0
             with console_lock:
                 tracker['scanned'] += 1
                 if is_valid: tracker['analyzed'] += 1 
                 if tracker['scanned'] % 100 == 0 or tracker['scanned'] == len(stock_list):
                     print(f"   진행중... {tracker['scanned']}/{len(stock_list)} (정상분석: {tracker['analyzed']}개, 당일 신규 포착: {tracker['hits']}개)")
-
+                
                 if hit:
                     if code in sent_today:
                         hit = False 
@@ -420,14 +438,15 @@ def scan_market_1d():
                         except: pass
                     
             if hit:
-                # 1️⃣ 본캐용 / 홍보용 차트 생성
+                # 💡 본캐용 차트 및 홍보용 차트 각각 생성
                 main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                 
-                if main_chart_path and promo_chart_path:
-                    ai_main, _ = generate_kr_ai_report(code, name) 
+                if main_chart_path and threads_chart_path:
+                    # 💡 안전해진 AI 로직으로 팩트 호출
+                    ai_main, _ = generate_ai_report(code, name)
                     
-                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
+                    # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 유지)
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: {dbg.get('recommend', '스윙, 중장기 / 종가배팅')}\n\n"
@@ -443,45 +462,45 @@ def scan_market_1d():
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
-                    q_main.put((main_chart_path, main_caption)) 
+                    q_main.put((main_chart_path, main_caption))
 
-                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
+                    # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 압축!)
                     try:
                         sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
                     except:
                         sector_info = "유망 섹터 포착"
-
+                        
+                    # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만!
                     promo_caption = (
                         f"📈 [알고리즘 차트 포착]\n\n"
                         f"🏢 종목: {name} ({code})\n"
                         f"🏷️ 섹터: {sector_info}\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
                     )
-                    q_promo.put((promo_chart_path, promo_caption))
+                    q_promo.put((threads_chart_path, promo_caption))
 
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             pass
 
-    # 💡 일꾼(스레드) 가동 및 대기
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+    # 💡 5. 일꾼(스레드) 가동 및 대기
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
         
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         q_main.join()
         q_promo.join()
-
-    print(f"\n✅ [한국장 3번 역매공파 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
-
-# ⭐️ 3번 스케줄러 세팅 (10:00, 12:30, 15:00) ⭐️
+        
+    print(f"\n✅ [한국장 4번 밥그릇 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
-    print("🕒 [3번 검색기] 10:10 / 12:30 / 14:30 대기 중...")
+    print("🕒 [4번 검색기] 10:20 / 13:00 / 15:00 대기 중...")
     while True:
         now_kr = datetime.now(kr_tz)
-        if (now_kr.hour == 10 and now_kr.minute == 10) or (now_kr.hour == 12 and now_kr.minute == 30) or (now_kr.hour == 14 and now_kr.minute == 30):
-            print(f"🚀 [3번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
+        if (now_kr.hour == 10 and now_kr.minute == 20) or (now_kr.hour == 13 and now_kr.minute == 0) or (now_kr.hour == 15 and now_kr.minute == 0):
+            print(f"🚀 [4번 스캔 시작] {now_kr.strftime('%Y-%m-%d %H:%M:%S')}")
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
