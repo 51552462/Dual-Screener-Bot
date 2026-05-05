@@ -12,10 +12,12 @@ import FinanceDataReader as fdr
 import warnings
 warnings.filterwarnings('ignore')
 
+from yf_download_flatten import flatten_yf_download_df, yf_close_series
+
 # ==========================================
 # 💡 [환경 설정]
 # ==========================================
-TELEGRAM_TOKEN_MAIN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
+TELEGRAM_TOKEN_MAIN = "7988939051:AAH18gmMs9syze2g4zo7Xd2stMdyREg66rI"
 TELEGRAM_CHAT_ID    = "6838834566"
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
@@ -57,6 +59,8 @@ def load_or_create_config():
             "RISK_PCT": 0.02,                 # 💡 고정 리스크 2%
             "CENTRAL_TREASURY_KR": 300000000, # 🏦 [추가] 한국장 초기 국고 3억 원
             "CENTRAL_TREASURY_US": 300000000, # 🏦 [추가] 미국장 초기 국고 3억 원
+            "TAIL_RISK_FUND_KR": 0.0,
+            "TAIL_RISK_FUND_US": 0.0,
             "GLOBAL_CIRCUIT_BREAKER": "OFF",
             "ARCHIVED_TEMPLATES": {},
             "ANTI_PATTERNS": [],
@@ -76,6 +80,12 @@ def load_or_create_config():
         need_save = True
     if "CENTRAL_TREASURY_US" not in config:
         config["CENTRAL_TREASURY_US"] = 300000000  # 3억 원
+        need_save = True
+    if "TAIL_RISK_FUND_KR" not in config:
+        config["TAIL_RISK_FUND_KR"] = 0.0
+        need_save = True
+    if "TAIL_RISK_FUND_US" not in config:
+        config["TAIL_RISK_FUND_US"] = 0.0
         need_save = True
     if "GLOBAL_CIRCUIT_BREAKER" not in config:
         config["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
@@ -151,8 +161,7 @@ def _mean_entry_shape_incubator_winners(promoted_name: str):
                     end=(end_dt + pd.Timedelta(days=2)).strftime("%Y-%m-%d"),
                     progress=False,
                 )
-                if isinstance(hist.columns, pd.MultiIndex):
-                    hist.columns = hist.columns.droplevel(1)
+                hist = flatten_yf_download_df(hist)
             if hist is None or hist.empty or "Close" not in hist.columns:
                 continue
             hist = hist.sort_index()
@@ -190,22 +199,32 @@ def run_autonomous_analysis():
     vix_status = "데이터 없음"
     regime = "분석 중"
     w_s1, w_s4 = 1.0, 1.0 
+    vix_last = 0.0
     
     try:
         # 💡 [V24.0] SPY(시총비중), ^VIX(공포), RSP(동일비중) 데이터 동시 로드
         df_idx = yf.download("SPY ^VIX RSP", period="1y", interval="1d", group_by="ticker", progress=False)
-        
-        # 데이터 추출 (멀티인덱스 대응)
-        spy_c = df_idx['SPY']['Close'].dropna() if 'SPY' in df_idx.columns.levels[0] else df_idx['Close']['SPY'].dropna()
-        vix_c = df_idx['^VIX']['Close'].dropna() if '^VIX' in df_idx.columns.levels[0] else df_idx['Close']['^VIX'].dropna()
-        rsp_c = df_idx['RSP']['Close'].dropna() if 'RSP' in df_idx.columns.levels[0] else df_idx['Close']['RSP'].dropna()
+
+        def _bench_close(panel, sym):
+            s = yf_close_series(panel, sym)
+            if not getattr(s, "empty", True):
+                return s.dropna()
+            try:
+                if sym in panel.columns.levels[0]:
+                    return panel[sym]['Close'].dropna()
+                return panel['Close'][sym].dropna()
+            except Exception:
+                return pd.Series(dtype=float)
+
+        spy_c = _bench_close(df_idx, 'SPY')
+        vix_c = _bench_close(df_idx, '^VIX')
+        rsp_c = _bench_close(df_idx, 'RSP')
         
         spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
         spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
         
         # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
         # 1.0보다 낮으면 대형주만 오르는 '취약한 장세', 높으면 낙수효과가 있는 '건강한 장세'
-        # (시너지) auto_forward_tester.get_cached_market_breadth() 동일 정의·0.97 기준으로 포워드 청산 비상 조임과 연동
         breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
 
         # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
@@ -257,14 +276,75 @@ def run_autonomous_analysis():
         return
 
     if len(df) < 10:
-        send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n거시 국면 전환으로 룩백이 {dyn_lookback}일로 조정되었으나, 해당 기간 내 청산 표본이 10건 미만입니다. 이번 주 조율을 스킵합니다.")
+        # 표본 부족이어도 관제탑 핵심 키는 갱신해 UNKNOWN 뇌사 상태를 방지
+        current_config = load_or_create_config()
+        # 💡 [100년 영속 진화 로직 적용: Tail Risk Convexity Treasury Shield]
+        try:
+            for _mkt in ["KR", "US"]:
+                t_key = f"CENTRAL_TREASURY_{_mkt}"
+                f_key = f"TAIL_RISK_FUND_{_mkt}"
+                treasury = float(current_config.get(t_key, 0.0) or 0.0)
+                fund = float(current_config.get(f_key, 0.0) or 0.0)
+                # 💡 [100년 영속 진화 로직 적용: Tail Fund Target Cap Guard]
+                target_fund = max(0.0, treasury * 0.015)
+                transfer = max(0.0, target_fund - fund)
+                transfer = min(transfer, treasury)
+                treasury -= transfer
+                fund += transfer
+                if float(vix_last) >= 35.0 and fund > 0:
+                    treasury += fund * 30.0
+                    fund = 0.0
+                current_config[t_key] = round(max(0.0, treasury), 2)
+                current_config[f_key] = round(max(0.0, fund), 2)
+        except Exception:
+            pass
+        regime_key = "BULL" if "Bull" in regime else ("BEAR" if "극단적" in regime else "CHOP")
+        optimal_risk = 0.01
+        current_config["CURRENT_REGIME_KEY"] = regime_key
+        current_config["DYNAMIC_KELLY_RISK"] = round(optimal_risk, 4)
+        save_config(current_config)
+        send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n거시 국면 전환으로 룩백이 {dyn_lookback}일로 조정되었으나, 해당 기간 내 청산 표본이 10건 미만입니다. 기본 관제탑 키(CURRENT_REGIME_KEY/DYNAMIC_KELLY_RISK=1.00%)만 선반영하고 이번 주 조율을 스킵합니다.")
         return
 
     current_config = load_or_create_config()
+    # 💡 [100년 영속 진화 로직 적용: Tail Risk Convexity Treasury Shield]
+    try:
+        for _mkt in ["KR", "US"]:
+            t_key = f"CENTRAL_TREASURY_{_mkt}"
+            f_key = f"TAIL_RISK_FUND_{_mkt}"
+            treasury = float(current_config.get(t_key, 0.0) or 0.0)
+            fund = float(current_config.get(f_key, 0.0) or 0.0)
+            # 💡 [100년 영속 진화 로직 적용: Tail Fund Target Cap Guard]
+            target_fund = max(0.0, treasury * 0.015)
+            transfer = max(0.0, target_fund - fund)
+            transfer = min(transfer, treasury)
+            treasury -= transfer
+            fund += transfer
+            # VIX 공황장: 테일 리스크 펀드 30배 수익 시뮬레이션 후 국고 복원, 펀드 리셋
+            if float(vix_last) >= 35.0 and fund > 0:
+                payoff = fund * 30.0
+                treasury += payoff
+                report_tail = f"▪️ {_mkt} 테일리스크 펀드 발동: {fund:,.0f}원 ×30 => {payoff:,.0f}원 국고 복원"
+                fund = 0.0
+            else:
+                report_tail = f"▪️ {_mkt} 테일리스크 적립: {transfer:,.0f}원 (누적 {fund:,.0f}원 / 목표 {target_fund:,.0f}원)"
+            current_config[t_key] = round(max(0.0, treasury), 2)
+            current_config[f_key] = round(max(0.0, fund), 2)
+            # report_lines 선언 전이라 임시 변수로 보관
+            if _mkt == "KR":
+                _tail_msg_kr = report_tail
+            else:
+                _tail_msg_us = report_tail
+    except Exception:
+        _tail_msg_kr, _tail_msg_us = None, None
     current_config["WEIGHT_S1"], current_config["WEIGHT_S4"] = w_s1, w_s4
     
     report_lines = [f"<b>📊 [System B 자율 조율 리포트]</b>\n"]
     report_lines.append(f"<b>[1. 동적 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime}\n▪️ <b>동적 룩백: {vix_status}</b>\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
+    if '_tail_msg_kr' in locals() and _tail_msg_kr:
+        report_lines.append(_tail_msg_kr)
+    if '_tail_msg_us' in locals() and _tail_msg_us:
+        report_lines.append(_tail_msg_us)
 
     # ---------------------------------------------------------
     # 👑 엔진 1.6: 미국장 고MFE 섹터 기반 글로벌 스필오버 저장
@@ -445,12 +525,32 @@ def run_autonomous_analysis():
     report_lines.append(f"\n🧠 <b>[V51.0 다중 뇌(Multi-Brain) 분할 최적화 가동]</b>\n발견된 독립 전략 방: {', '.join(unique_namespaces)}")
     oos_barrier = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
 
+    # 💡 [V_NEXT 진화 로직 적용] 네임스페이스별 톰슨 샘플링 리스크를 수집해 글로벌 켈리에 합성
+    ns_sampled_risks = []
+
     for target_ns in unique_namespaces:
         ns_df = df[df['namespace'] == target_ns].copy()
         if len(ns_df) < 5: continue # 해당 전략의 표본 부족 시 스킵
         
         report_lines.append(f"\n=========================================")
         report_lines.append(f"🧬 <b>[{target_ns} 전용 뇌수술 진행]</b> (표본: {len(ns_df)}개)")
+
+        # 💡 [100년 영속 진화 로직 적용: Namespace Thompson Beta Params Harvest]
+        try:
+            cut_30 = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            ns_recent_30 = ns_df[ns_df['entry_date'] >= cut_30] if 'entry_date' in ns_df.columns else ns_df
+            wins_30 = int((ns_recent_30['final_ret'] > 0).sum()) if 'final_ret' in ns_recent_30.columns else 0
+            losses_30 = int((ns_recent_30['final_ret'] <= 0).sum()) if 'final_ret' in ns_recent_30.columns else 0
+            current_config[f"{target_ns}_BETA_PARAMS"] = {
+                "alpha": wins_30,
+                "beta": losses_30,
+                "updated_at": datetime.now().strftime('%Y-%m-%d')
+            }
+            report_lines.append(
+                f"▪️ TS 베타 파라미터 저장: {target_ns} -> α={wins_30}, β={losses_30} (최근 30일)"
+            )
+        except Exception as _beta_e:
+            report_lines.append(f"▪️ TS 베타 파라미터 저장 스킵: {_beta_e}")
         
         # --- [엔진 4: 독립 앙상블 생성] ---
         def get_period_stats(train_days):
@@ -546,6 +646,35 @@ def run_autonomous_analysis():
         results = {}
         for col in ['live_a_ret', 'cand_b_ret', 'champ_c_ret']:
             if col in test_df.columns: results[col] = get_eq(test_df[col])
+
+        # 💡 [V_NEXT 진화 로직 적용] Thompson Sampling 기반 전략별 리스크 가중치 산출
+        def _ts_risk_from_returns(ret_series, base_kelly):
+            try:
+                rs = pd.to_numeric(ret_series, errors='coerce').dropna()
+                if len(rs) < 3:
+                    return None
+                wins = int((rs > 0).sum())
+                losses = int((rs <= 0).sum())
+                # 승리/패배 횟수를 베타 분포 파라미터로 사용 (0 방지용 최소 1)
+                alpha = max(1, wins)
+                beta = max(1, losses)
+                ts_sample = float(np.random.beta(alpha, beta))
+                win_sum = float(rs[rs > 0].sum())
+                loss_sum = abs(float(rs[rs <= 0].sum()))
+                pf = float(win_sum / (loss_sum + 0.1))
+                pf_weight = float(np.clip(pf / 1.5, 0.5, 1.8))
+                risk = float(np.clip(base_kelly * ts_sample * pf_weight, 0.002, 0.030))
+                wr = float(wins / max(1, wins + losses))
+                return {
+                    "risk": risk,
+                    "alpha": alpha,
+                    "beta": beta,
+                    "sample": ts_sample,
+                    "pf": pf,
+                    "wr": wr
+                }
+            except Exception:
+                return None
         
         if results:
             win_k = max(results, key=results.get)
@@ -567,12 +696,20 @@ def run_autonomous_analysis():
                         old_mae = float(champ_params.get("DYNAMIC_MAE_SL", new_mae))
                         old_mfe = float(champ_params.get("DYNAMIC_MFE_TP", new_mfe))
 
-                        champ_params["DYNAMIC_MAE_SL"] = round((old_mae * (1 - SMOOTHING_ALPHA)) + (new_mae * SMOOTHING_ALPHA), 2)
-                        champ_params["DYNAMIC_MFE_TP"] = round((old_mfe * (1 - SMOOTHING_ALPHA)) + (new_mfe * SMOOTHING_ALPHA), 2)
+                        # 💡 [100년 영속 진화 로직 적용: EWC 기반 동적 스무딩]
+                        # 과거 누적 표본이 많을수록 새 표본 영향력을 낮춘다. (alpha = new / (old + new), cap=0.4)
+                        obs_key = f"{target_ns}_CHAMPION_OBS_COUNT"
+                        old_obs = int(current_config.get(obs_key, 0) or 0)
+                        new_obs = int(len(recent_14))
+                        alpha_smooth = float(min(0.4, (new_obs / max(1, (old_obs + new_obs)))))
+                        champ_params["DYNAMIC_MAE_SL"] = round((old_mae * (1 - alpha_smooth)) + (new_mae * alpha_smooth), 2)
+                        champ_params["DYNAMIC_MFE_TP"] = round((old_mfe * (1 - alpha_smooth)) + (new_mfe * alpha_smooth), 2)
+                        current_config[obs_key] = int(old_obs + new_obs)
                         current_config[champ_key] = champ_params
                         report_lines.append(
                             f"▪️ 챔피언 스무딩(14일): MAE {old_mae:.2f}%➔{champ_params['DYNAMIC_MAE_SL']:.2f}% | "
-                            f"MFE {old_mfe:.2f}%➔{champ_params['DYNAMIC_MFE_TP']:.2f}%"
+                            f"MFE {old_mfe:.2f}%➔{champ_params['DYNAMIC_MFE_TP']:.2f}% | "
+                            f"α_smooth {alpha_smooth:.3f} (old={old_obs}, new={new_obs})"
                         )
             
             if win_k == 'cand_b_ret' and results['cand_b_ret'] > results.get('live_a_ret', 0) * 1.05:
@@ -583,7 +720,36 @@ def run_autonomous_analysis():
                 current_config[f"{target_ns}_LIVE_PARAMS"] = current_config.get(f"{target_ns}_CHAMPION_PARAMS", {})
                 report_lines.append("♻️ <b>[챔피언 귀환]</b> C가 복귀합니다.")
 
+            # 💡 [V_NEXT 진화 로직 적용] 승격 결과 이후 선택 전략 기준 Thompson 리스크 반영
+            base_kelly_ns = float(current_config.get(f"{target_ns}_DYNAMIC_KELLY_RISK", current_config.get("DYNAMIC_KELLY_RISK", 0.01)))
+            pick_col = win_k if win_k in ['live_a_ret', 'cand_b_ret', 'champ_c_ret'] else 'live_a_ret'
+            ts_ret_series = test_df[pick_col] if pick_col in test_df.columns else (ns_df[pick_col] if pick_col in ns_df.columns else pd.Series(dtype=float))
+            ts_pack = _ts_risk_from_returns(ts_ret_series, base_kelly_ns)
+            if ts_pack is not None:
+                current_config[f"{target_ns}_DYNAMIC_KELLY_RISK"] = round(ts_pack["risk"], 4)
+                ns_sampled_risks.append(ts_pack["risk"])
+                report_lines.append(
+                    f"🎯 <b>[TS 자본 배분]</b> {target_ns} {pick_col}: "
+                    f"Beta({ts_pack['alpha']},{ts_pack['beta']}) 샘플 {ts_pack['sample']:.3f} | "
+                    f"승률 {ts_pack['wr']*100:.1f}% | PF {ts_pack['pf']:.2f} ➔ Kelly {ts_pack['risk']*100:.2f}%"
+                )
+            else:
+                report_lines.append(f"▪️ {target_ns} TS 표본 부족으로 기존 Kelly 유지")
+
         save_config(current_config)
+
+    # 💡 [V_NEXT 진화 로직 적용] 네임스페이스 TS 리스크를 글로벌 Kelly에 합성(중앙값 사용)
+    if ns_sampled_risks:
+        try:
+            global_prev = float(current_config.get("DYNAMIC_KELLY_RISK", 0.01))
+            global_ts = float(np.clip(np.median(ns_sampled_risks), 0.002, 0.030))
+            current_config["DYNAMIC_KELLY_RISK"] = round(global_ts, 4)
+            report_lines.append(
+                f"\n🎛️ <b>[TS 글로벌 합성]</b> 네임스페이스 중앙값 Kelly {global_prev*100:.2f}% ➔ {global_ts*100:.2f}%"
+            )
+            save_config(current_config)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------
     # 👑 엔진 6.5: [V30.0 알파 반감기(Alpha Decay) 및 노화 부검 엔진]
@@ -615,6 +781,58 @@ def run_autonomous_analysis():
             kelly_floor = 0.002
             touched_ns_kelly = False
             ns_kelly_vals = []
+
+            # 💡 [V_NEXT 진화 로직 적용] 예측적 알파 반감기 방어: bars_held 분산 급증 + breadth 급락으로 PF<1.0 위험 근사
+            try:
+                recent20 = decay_df.sort_values('entry_date').tail(20).copy() if 'entry_date' in decay_df.columns else decay_df.tail(20).copy()
+                prev20 = decay_df.sort_values('entry_date').iloc[-40:-20].copy() if ('entry_date' in decay_df.columns and len(decay_df) >= 40) else decay_df.iloc[0:0].copy()
+
+                # 1) 체류기간 변동성(분산) 급증 시그널
+                var_recent = float(pd.to_numeric(recent20.get('bars_held', pd.Series(dtype=float)), errors='coerce').dropna().var(ddof=0)) if not recent20.empty else 0.0
+                var_base = float(pd.to_numeric(prev20.get('bars_held', pd.Series(dtype=float)), errors='coerce').dropna().var(ddof=0)) if not prev20.empty else var_recent
+                if not np.isfinite(var_recent):
+                    var_recent = 0.0
+                if not np.isfinite(var_base) or var_base <= 0:
+                    var_base = max(1e-6, var_recent)
+                var_ratio = var_recent / max(1e-6, var_base)
+                var_signal = float(np.clip((var_ratio - 1.5) / 2.5, 0.0, 1.0))
+
+                # 2) 시장 폭(Breadth) 급락 시그널 (entry_breadth 시계열 + 거시 breadth_ratio 보조)
+                breadth_signal = 0.0
+                breadth_macro_signal = 0.0
+                if 'entry_breadth' in recent20.columns and not recent20.empty:
+                    b_now = float(pd.to_numeric(recent20['entry_breadth'], errors='coerce').dropna().mean())
+                    b_ref = float(pd.to_numeric(prev20['entry_breadth'], errors='coerce').dropna().mean()) if ('entry_breadth' in prev20.columns and not prev20.empty) else 1.0
+                    if not np.isfinite(b_now):
+                        b_now = 1.0
+                    if not np.isfinite(b_ref) or b_ref <= 0:
+                        b_ref = 1.0
+                    breadth_drop = max(0.0, b_ref - b_now)
+                    breadth_signal = float(np.clip(breadth_drop / 0.08, 0.0, 1.0))
+                try:
+                    if 'breadth_ratio' in locals() and np.isfinite(float(breadth_ratio)):
+                        breadth_macro_signal = float(np.clip((1.0 - float(breadth_ratio)) / 0.08, 0.0, 1.0))
+                except Exception:
+                    breadth_macro_signal = 0.0
+
+                # 3) 다음 10개 거래에서 PF<1.0 붕괴 확률 근사
+                pf_break_risk_prob = float(np.clip(
+                    (0.55 * var_signal) + (0.35 * breadth_signal) + (0.10 * breadth_macro_signal),
+                    0.0, 1.0
+                ))
+                report_lines.append(
+                    f"▪️ [예측 반감기] PF<1.0 붕괴확률(다음10트레이드) ≈ {pf_break_risk_prob*100:.1f}% "
+                    f"(bars분산배율 x{var_ratio:.2f}, breadth_sig {breadth_signal:.2f})"
+                )
+
+                if pf_break_risk_prob > 0.50:
+                    current_config["DYNAMIC_KELLY_RISK"] = round(kelly_floor, 4)
+                    report_lines.append(
+                        f"🛡️ <b>[선제 방어 발동]</b> 붕괴확률 {pf_break_risk_prob*100:.1f}% > 50% "
+                        f"➔ DYNAMIC_KELLY_RISK를 최소치 {kelly_floor*100:.1f}%로 긴급 축소"
+                    )
+            except Exception as _pred_e:
+                report_lines.append(f"▪️ 예측 반감기 계산 스킵(안전우회): {_pred_e}")
 
             if 'namespace' in decay_df.columns:
                 for tns in decay_df['namespace'].dropna().unique():
@@ -814,7 +1032,12 @@ def run_autonomous_analysis():
             else:
                 report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
         else:
-            report_lines.append(f"▪️ [{tag_key} 타점]: 현재 커트라인 {curr_val*100:.0f}% (표본 데이터 수집 중)")
+            # 💡 [100년 영속 진화 로직 적용: Cutoff Death-Spiral Relief Valve]
+            current_config[config_key] = round(max(0.40, curr_val - 0.02), 2)
+            report_lines.append(
+                f"▪️ [{tag_key} 타점]: 표본 기아 완화로 커트라인 {curr_val*100:.0f}% ➔ "
+                f"{current_config[config_key]*100:.0f}% (표본 데이터 수집 중)"
+            )
 
     # ---------------------------------------------------------
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
@@ -969,19 +1192,49 @@ def run_autonomous_analysis():
 
             transitions = {}
             prev_sector = None
-            for sec in daily_dom.tolist():
+            sec_path = [str(s).strip() for s in daily_dom.tolist() if str(s).strip()]
+            for sec in sec_path:
                 if prev_sector is not None and prev_sector != sec:
                     key = (prev_sector, sec)
                     transitions[key] = transitions.get(key, 0) + 1
                 prev_sector = sec
 
-            if transitions:
-                top_transition = max(transitions.items(), key=lambda kv: kv[1])[0]
-                predicted_next_sector = top_transition[1]
+            if transitions and sec_path:
+                # 💡 [V_NEXT 진화 로직 적용] 전이 카운트로 Markov 전이확률행렬 M 구성 후 2-step(M^2) 예측
+                states = sorted({a for a, _ in transitions.keys()} | {b for _, b in transitions.keys()} | set(sec_path))
+                s2i = {s: i for i, s in enumerate(states)}
+                M = np.zeros((len(states), len(states)), dtype=float)
+
+                for (a, b), cnt in transitions.items():
+                    ia, ib = s2i.get(a), s2i.get(b)
+                    if ia is None or ib is None:
+                        continue
+                    M[ia, ib] += float(cnt)
+
+                for i in range(len(states)):
+                    row_sum = float(M[i].sum())
+                    if row_sum > 0:
+                        M[i] = M[i] / row_sum
+
+                today_state = sec_path[-1]
+                i0 = s2i.get(today_state)
+                predicted_next_sector = None
+                if i0 is not None:
+                    M2 = np.matmul(M, M)
+                    row2 = M2[i0]
+                    if np.isfinite(row2).any() and float(np.nansum(row2)) > 0:
+                        j = int(np.nanargmax(row2))
+                        predicted_next_sector = states[j]
+
+                # 2-step 정보가 희박하면 1-step 최다 전이로 안전 폴백
+                if not predicted_next_sector:
+                    top_transition = max(transitions.items(), key=lambda kv: kv[1])[0]
+                    predicted_next_sector = top_transition[1]
+
                 current_config["PREDICTED_NEXT_SECTOR"] = predicted_next_sector
                 report_lines.append(
-                    f"▪️ transitions 1위: {top_transition[0]} ➔ {top_transition[1]} | "
-                    f"다음 예측 섹터 저장: <b>{predicted_next_sector}</b>"
+                    f"▪️ Markov 2-Step 예측: {today_state} -> {predicted_next_sector} "
+                    f"(상태 {len(states)}개, 전이 {len(transitions)}쌍)"
                 )
             else:
                 report_lines.append("▪️ 유의미한 섹터 전이 패턴이 없어 기존 예측값을 유지합니다.")
@@ -1106,9 +1359,31 @@ def run_autonomous_analysis():
 
                 m_wr = len(m_closed[m_closed['final_ret'] > 0]) / len(m_closed)
                 m_pf = m_closed[m_closed['final_ret'] > 0]['final_ret'].sum() / (abs(m_closed[m_closed['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
-                report_lines.append(f"▪️ {m_name}: 승률 {m_wr*100:.1f}% | PF {m_pf:.2f}")
 
-                if m_pf >= 1.5 and m_wr >= 0.55 and m_pf > b_pf and m_wr > b_wr and len(m_closed) >= 15:
+                # 💡 [100년 영속 진화 로직 적용: Synthetic Sandbox BlackSwan Gate]
+                # 종가 -15% 충격 + 변동성 2배(수익률 스케일링) 가상 스트레스 테스트
+                passed_synthetic_sandbox = False
+                synthetic_pf = 0.0
+                try:
+                    synthetic_df = m_closed.copy()
+                    # 💡 [100년 영속 진화 로직 적용: Synthetic Sandbox Severity Rebalance]
+                    # 기존 (ret-15)*2는 과도한 학살을 유발하므로, 공황 쇼크(-15%) 후 변동성 2배를 ret*2-15로 완화 적용
+                    synthetic_df['synthetic_ret'] = (pd.to_numeric(synthetic_df['final_ret'], errors='coerce') * 2.0) - 15.0
+                    synthetic_df = synthetic_df.dropna(subset=['synthetic_ret'])
+                    if not synthetic_df.empty:
+                        syn_wins = synthetic_df[synthetic_df['synthetic_ret'] > 0]['synthetic_ret'].sum()
+                        syn_loses = abs(synthetic_df[synthetic_df['synthetic_ret'] <= 0]['synthetic_ret'].sum()) + 0.1
+                        synthetic_pf = float(syn_wins / syn_loses)
+                        passed_synthetic_sandbox = synthetic_pf >= 1.0
+                except Exception:
+                    passed_synthetic_sandbox = False
+                report_lines.append(
+                    f"▪️ {m_name}: 승률 {m_wr*100:.1f}% | PF {m_pf:.2f} | Synthetic PF {synthetic_pf:.2f} "
+                    f"({'통과' if passed_synthetic_sandbox else '탈락'})"
+                )
+
+                # 💡 [100년 영속 진화 로직 적용: Incubator Sample Threshold Relaxation]
+                if m_pf >= 1.5 and m_wr >= 0.55 and m_pf > b_pf and m_wr > b_wr and len(m_closed) >= 7 and passed_synthetic_sandbox:
                     promoted_name = m_name
                 else:
                     remove_keys.append(m_name)
