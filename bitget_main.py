@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 import os
+import importlib
 from datetime import datetime
 import pytz
 
@@ -41,11 +42,20 @@ sys.stderr = error_tracker
 # ==========================================
 # 👑 코인 시스템 모듈 임포트 (주말 차단기 없음)
 # ==========================================
-import bitget_mtf_data_updater as updater
-import bitget_master_scanner as scanner
-import bitget_forward_tester as forward_tester
-import bitget_supernova_hunter as sniper
-import bitget_data_miner as miner
+def _safe_import(module_name):
+    try:
+        return importlib.import_module(module_name)
+    except Exception as e:
+        print(f"⚠️ 모듈 로드 실패: {module_name} -> {e}")
+        return None
+
+
+updater = _safe_import("bitget_mtf_data_updater")
+scanner = _safe_import("bitget_master_scanner")
+forward_tester = _safe_import("bitget_forward_tester")
+sniper = _safe_import("bitget_supernova_hunter")
+miner = _safe_import("bitget_data_miner")
+auto_pilot = _safe_import("bitget_system_auto_pilot")
 
 # ==========================================
 # 📊 실시간 생존 확인 및 종합 보고서 (모니터)
@@ -86,11 +96,11 @@ if __name__ == "__main__":
     print("🚀 비트겟(Bitget) 24/7 멀티 타임프레임 컨트롤 타워 가동 시작...")
 
     bot_targets = {
-        "💠 [엔진] MTF 데이터 업데이터": updater.run_mtf_update, # 스케줄러 내장 가정
-        "🪙 [스캔] 마스터 스캐너": scanner.run_scheduler,
-        "💠 [엔진] 가상 장부 & 관제탑": forward_tester.run_daily_scheduler,
-        "🦅 [스캔] 초신성 실시간 스나이퍼": sniper.run_live_sniper_scheduler,
-        "🧪 [마이닝] K-Means 데이터 마이너": miner.run_cluster_mining # 1회성 또는 스케줄러
+        "💠 [엔진] MTF 데이터 업데이터": getattr(updater, "run_mtf_update", None),
+        "🪙 [스캔] 마스터 스캐너": getattr(scanner, "run_mtf_scheduler", None),
+        "💠 [엔진] 가상 장부 & 관제탑": getattr(auto_pilot, "system_main_loop", None),
+        "🦅 [스캔] 초신성 실시간 스나이퍼": getattr(sniper, "run_live_sniper_scheduler", None),
+        "🧪 [마이닝] K-Means 데이터 마이너": getattr(miner, "run_cluster_mining", None),  # 1회성 또는 스케줄러
     }
 
     active_threads = {}
