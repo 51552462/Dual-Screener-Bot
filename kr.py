@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
 from bs4 import BeautifulSoup
-from io import StringIO
 import FinanceDataReader as fdr
 import matplotlib.font_manager as fm
 import sqlite3  # DB 접속용
@@ -140,30 +139,28 @@ def generate_ai_report(code: str, company_name: str):
     return fb_main, ""
 
 def get_krx_list_kind():
+    """KRX 전 종목 리스트: FinanceDataReader 단일 소스(KIND 크롤링 제거)."""
     try:
-        with requests.Session() as sess:
-            resp_ks = None
-            resp_kq = None
-            for wait_s in (0.6, 1.2, 2.0):
-                try:
-                    resp_ks = sess.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10)
-                    resp_kq = sess.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10)
-                    if resp_ks.ok and resp_kq.ok:
-                        break
-                except Exception:
-                    pass
-                time.sleep(wait_s)
-            if resp_ks is None or resp_kq is None or (not resp_ks.ok) or (not resp_kq.ok):
-                return pd.DataFrame()
-        df_ks = pd.read_html(StringIO(resp_ks.text), header=0)[0]
-        df_ks['Market'] = 'KOSPI'
-        df_kq = pd.read_html(StringIO(resp_kq.text), header=0)[0]
-        df_kq['Market'] = 'KOSDAQ'
-        df = pd.concat([df_ks, df_kq])
-        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
-        df = df.rename(columns={'회사명': 'Name'})
-        return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
-    except: return pd.DataFrame()
+        try:
+            df = fdr.StockListing('KRX')
+        except Exception:
+            df = pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
+        if df is None or len(df) < 300:
+            return pd.DataFrame()
+        df = df.copy()
+        if 'Symbol' in df.columns and 'Code' not in df.columns:
+            df['Code'] = df['Symbol']
+        if '종목코드' in df.columns and 'Code' not in df.columns:
+            df['Code'] = df['종목코드']
+        if '회사명' in df.columns and 'Name' not in df.columns:
+            df = df.rename(columns={'회사명': 'Name'})
+        if '종목명' in df.columns and 'Name' not in df.columns:
+            df = df.rename(columns={'종목명': 'Name'})
+        df['Code'] = df['Code'].astype(str).str.strip().str.zfill(6)
+        df = df[~df['Name'].astype(str).str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)]
+        return df[['Code', 'Name', 'Market']].dropna(subset=['Code', 'Name', 'Market'])
+    except Exception:
+        return pd.DataFrame()
 
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
