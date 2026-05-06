@@ -36,8 +36,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
 # 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
-TELEGRAM_TOKEN_MAIN  = "8781642737:AAGnJcNZDjT_CtA1rr25b7Zv3LsssxPtxSo"
-TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
+TELEGRAM_TOKEN_MAIN  = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
+TELEGRAM_TOKEN_PROMO = "7996581031:AAFou3HWYhIXzRtlW4ildx8tOitcQBVubPg"
 TELEGRAM_CHAT_ID     = "6838834566"
 SEND_TELEGRAM        = True
 
@@ -141,33 +141,29 @@ def generate_ai_report(code: str, company_name: str):
 
 def get_krx_list_kind():
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", headers=headers, verify=False, timeout=10).text), header=0)[0]
+        with requests.Session() as sess:
+            resp_ks = None
+            resp_kq = None
+            for wait_s in (0.6, 1.2, 2.0):
+                try:
+                    resp_ks = sess.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", verify=False, timeout=10)
+                    resp_kq = sess.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", verify=False, timeout=10)
+                    if resp_ks.ok and resp_kq.ok:
+                        break
+                except Exception:
+                    pass
+                time.sleep(wait_s)
+            if resp_ks is None or resp_kq is None or (not resp_ks.ok) or (not resp_kq.ok):
+                return pd.DataFrame()
+        df_ks = pd.read_html(StringIO(resp_ks.text), header=0)[0]
         df_ks['Market'] = 'KOSPI'
-        df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", headers=headers, verify=False, timeout=10).text), header=0)[0]
+        df_kq = pd.read_html(StringIO(resp_kq.text), header=0)[0]
         df_kq['Market'] = 'KOSDAQ'
         df = pd.concat([df_ks, df_kq])
         df['Code'] = df['종목코드'].astype(str).str.zfill(6)
         df = df.rename(columns={'회사명': 'Name'})
-        junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
-        return df[~df['Name'].str.contains(junk_pattern, regex=True)][['Code', 'Name', 'Market']].dropna()
+        return df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)][['Code', 'Name', 'Market']].dropna()
     except: return pd.DataFrame()
-
-# ema5.py와 동일: DB 없거나 부족할 때 FinanceDataReader로 우회
-def get_safe_data(code, start_date):
-    table_name = f"KR_{code}"
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
-        conn.close()
-        df_db.index = pd.to_datetime(df_db.index)
-        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
-        if not df_live.empty:
-            df_combined = pd.concat([df_db, df_live])
-            return df_combined[~df_combined.index.duplicated(keep='last')]
-        return df_db
-    except Exception:
-        return fdr.DataReader(code, start_date)
 
 def calculate_trust_score(c, e60, signal_arr):
     score = 5 
@@ -397,24 +393,23 @@ def scan_market_1d():
             is_valid = False
             hit, sig_type, df, dbg = False, "", None, {}
             
-            # 👇👇 [V107.5 시계열 붕괴 방어 및 정렬 엔진] ema5.py 동일 하이브리드 로더 👇👇
+            # 👇👇 [수정된 DB 로드 블록: try-except 완벽 마감] 👇👇
             try:
-                df_raw = get_safe_data(code, start_date)
-
-                if df_raw is not None and not df_raw.empty:
-                    df_raw.index = pd.to_datetime(df_raw.index)
-                    df_raw = df_raw[~df_raw.index.duplicated(keep='last')]
-                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
-                    df_raw.sort_index(inplace=True)
-
+                conn = sqlite3.connect(DB_PATH, timeout=30)
+                df_raw = pd.read_sql(f"SELECT * FROM KR_{code}", conn)
+                conn.close()
+                
+                if not df_raw.empty:
+                    df_raw['Date'] = pd.to_datetime(df_raw['Date'])
+                    df_raw.set_index('Date', inplace=True)
+                    df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
-
-                if is_valid:
+                if is_valid: 
                     hit, sig_type, df, dbg = compute_bobgeureut(df_raw)
-
-            except Exception as e:
-                # print(f"⚠️ [{name}] 데이터 분석 에러: {e}")
-                pass
+                    
+            except Exception:
+                pass  # 💡 마찬가지로 에러 발생 시 부드럽게 넘어가도록 닫아줍니다.
             # 👆👆 [수정 완료] 👆👆 
 
             hit_rank = 0
@@ -506,5 +501,4 @@ def run_scheduler():
         else: time.sleep(10)
 
 if __name__ == "__main__":
-    # run_scheduler()
-    scan_market_1d()
+    run_scheduler()
