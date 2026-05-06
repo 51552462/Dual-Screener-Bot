@@ -177,68 +177,32 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 3. 잡주 필터 및 시가총액 (FDR KRX 단일 소스, KIND 크롤링 제거)
+# 💡 3. 잡주 필터 및 시가총액 (FDR → krx_list_cache.csv → sqlite KR_* 3단계 생존)
 def get_krx_list_kind():
-    CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
-    LISTING_CACHE_FILE = os.path.join(TOP_FOLDER, 'krx_listing_fdr_cache.csv')
-    junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
+    from krx_list_survival import collect_krx_list_survival
 
-    def _finalize(out_df):
-        out_df = out_df.copy()
-        out_df['Marcap'] = pd.to_numeric(out_df['Marcap'], errors='coerce').fillna(0)
-        return out_df[['Code', 'Name', 'Market', 'Marcap']].dropna(subset=['Code', 'Name', 'Market'])
-
-    def _normalize_fdr_listing(raw):
-        if raw is None or len(raw) < 300:
-            raise ValueError("FDR KRX 리스팅 불충분")
-        d = raw.copy()
-        if 'Symbol' in d.columns and 'Code' not in d.columns:
-            d['Code'] = d['Symbol']
-        if '종목코드' in d.columns and 'Code' not in d.columns:
-            d['Code'] = d['종목코드']
-        if '회사명' in d.columns and 'Name' not in d.columns:
-            d = d.rename(columns={'회사명': 'Name'})
-        if '종목명' in d.columns and 'Name' not in d.columns:
-            d = d.rename(columns={'종목명': 'Name'})
-        if not all(c in d.columns for c in ('Code', 'Name', 'Market')):
-            raise ValueError("필수 컬럼 누락")
-        d['Code'] = d['Code'].astype(str).str.strip().str.zfill(6)
-        if 'Marcap' not in d.columns:
-            if 'MarketCap' in d.columns:
-                d['Marcap'] = d['MarketCap']
-            elif '시가총액' in d.columns:
-                d['Marcap'] = d['시가총액']
-            else:
-                d['Marcap'] = 0
-        if d['Marcap'].dtype == object:
-            d['Marcap'] = d['Marcap'].astype(str).str.replace(',', '', regex=False)
-        d['Marcap'] = pd.to_numeric(d['Marcap'], errors='coerce').fillna(0)
-        fd = d[~d['Name'].astype(str).str.contains(junk_pattern, regex=True)].copy()
-        if len(fd) > 1000:
-            fd.to_csv(LISTING_CACHE_FILE, index=False)
-            fd[['Code', 'Marcap']].drop_duplicates('Code').to_csv(CACHE_FILE, index=False)
-            print("✅ KRX 리스팅(FDR) 라이브 로드 및 캐시 백업 완료!")
-        return _finalize(fd)
+    CACHE_FILE = os.path.join(TOP_FOLDER, "marcap_cache.csv")
+    LISTING_CACHE_FILE = os.path.join(TOP_FOLDER, "krx_listing_fdr_cache.csv")
 
     try:
-        try:
-            raw = fdr.StockListing('KRX')
-        except Exception:
-            raw = pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
-        return _normalize_fdr_listing(raw)
-    except Exception as e:
-        print(f"⚠️ FDR 리스팅 실패({e}). 로컬 스냅샷 캐시로 복구 시도...")
-        try:
-            if os.path.exists(LISTING_CACHE_FILE):
-                snap = pd.read_csv(LISTING_CACHE_FILE)
-                snap['Code'] = snap['Code'].astype(str).str.strip().str.zfill(6)
-                if 'Marcap' not in snap.columns:
-                    snap['Marcap'] = 0
-                return _finalize(snap)
-        except Exception as ce:
-            print(f"🚨 스냅샷 캐시 손상: {ce}")
-        print("🚨 리스트 수집 실패: 캐시 없음 또는 비어 있음")
-        return pd.DataFrame()
+        df, src = collect_krx_list_survival(
+            db_path=DB_PATH,
+            legacy_cache_paths=(LISTING_CACHE_FILE,),
+            fdr_module=fdr,
+        )
+    except Exception:
+        df = pd.DataFrame()
+        src = "fail"
+
+    try:
+        if df is not None and len(df) > 1000 and src == "live":
+            df.to_csv(LISTING_CACHE_FILE, index=False)
+            df[["Code", "Marcap"]].drop_duplicates("Code").to_csv(CACHE_FILE, index=False)
+            print("✅ KRX 리스팅(FDR) 라이브 로드 및 캐시 백업 완료!")
+    except Exception:
+        pass
+
+    return df if df is not None else pd.DataFrame()
 
 # 💡 보조 함수 1: 1~10점 스케일링 함수 (방향성 완벽 지원)
 def scale_score(val, best, worst):
