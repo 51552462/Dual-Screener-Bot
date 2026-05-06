@@ -141,26 +141,16 @@ def generate_kr_ai_report(code: str, company_name: str):
     return fb_main, ""
 
 def get_krx_list_kind():
-    """KRX 전 종목 리스트: FinanceDataReader 단일 소스(KIND 크롤링 제거)."""
+    """KRX 전 종목 리스트: FDR → CSV 캐시 → sqlite 테이블명 역추출 3단계 생존."""
+    from krx_list_survival import collect_krx_list_survival
+
     try:
-        try:
-            df = fdr.StockListing('KRX')
-        except Exception:
-            df = pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
-        if df is None or len(df) < 300:
+        df, _src = collect_krx_list_survival(db_path=DB_PATH, fdr_module=fdr)
+        if df is None or df.empty:
             return pd.DataFrame()
-        df = df.copy()
-        if 'Symbol' in df.columns and 'Code' not in df.columns:
-            df['Code'] = df['Symbol']
-        if '종목코드' in df.columns and 'Code' not in df.columns:
-            df['Code'] = df['종목코드']
-        if '회사명' in df.columns and 'Name' not in df.columns:
-            df = df.rename(columns={'회사명': 'Name'})
-        if '종목명' in df.columns and 'Name' not in df.columns:
-            df = df.rename(columns={'종목명': 'Name'})
-        df['Code'] = df['Code'].astype(str).str.strip().str.zfill(6)
-        df = df[~df['Name'].astype(str).str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)]
-        return df[['Code', 'Name', 'Market']].dropna(subset=['Code', 'Name', 'Market'])
+        return df[["Code", "Name", "Market"]].dropna(
+            subset=["Code", "Name", "Market"]
+        )
     except Exception:
         return pd.DataFrame()
 
