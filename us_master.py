@@ -76,7 +76,7 @@ warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 # 💡 1. 듀얼 텔레그램 봇 세팅
-TELEGRAM_TOKEN_MAIN  = "8557663212:AAGYJR67qAqkrR3fQw2cjDbCtUrxCAehv0E"
+TELEGRAM_TOKEN_MAIN  = "8752142269:AAHj-fZfTQvM9oQQJ3_o-nJupaW8bb7FiXc"
 TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
 TELEGRAM_CHAT_ID     = "6838834566"
 SEND_TELEGRAM        = True
