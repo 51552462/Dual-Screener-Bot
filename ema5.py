@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import requests
 import warnings, urllib3
 from bs4 import BeautifulSoup
-from io import StringIO
 import FinanceDataReader as fdr
 import random
 import matplotlib.font_manager as fm
@@ -36,21 +35,20 @@ DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot
 def get_safe_data(code, start_date):
     table_name = f"KR_{code}"
     try:
-        # 1. 내 컴퓨터(DB)에서 과거 데이터 광속 로드
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
         df_db.index = pd.to_datetime(df_db.index)
+    except Exception:
+        return fdr.DataReader(code, start_date)
 
-        # 2. 오늘 실시간 캔들 딱 1개만 가져오기
+    try:
         df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
-        
         if not df_live.empty:
             df_combined = pd.concat([df_db, df_live])
             return df_combined[~df_combined.index.duplicated(keep='last')]
         return df_db
-    except:
-        # DB가 없거나 에러 시 즉시 기존 방식으로 우회 (절대 멈추지 않음)
-        return fdr.DataReader(code, start_date)
+    except Exception:
+        return df_db
 
 # 💡 [Next Level 2] 동적 백분위 스코어링 함수
 def get_dynamic_score(series_data, higher_is_better=True, window=252):
@@ -155,96 +153,67 @@ def generate_ai_report(code: str, company_name: str):
             
     return fb_main, ""
 
-# 💡 3. 잡주 필터 및 시가총액 병합 (캐싱 방어막 100% 보장형)
+# 💡 3. 잡주 필터 및 시가총액 (FDR KRX 단일 소스, KIND 크롤링 제거)
 def get_krx_list_kind():
+    CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
+    LISTING_CACHE_FILE = os.path.join(TOP_FOLDER, 'krx_listing_fdr_cache.csv')
+    junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
+
+    def _finalize(out_df):
+        out_df = out_df.copy()
+        out_df['Marcap'] = pd.to_numeric(out_df['Marcap'], errors='coerce').fillna(0)
+        return out_df[['Code', 'Name', 'Market', 'Marcap']].dropna(subset=['Code', 'Name', 'Market'])
+
+    def _normalize_fdr_listing(raw):
+        if raw is None or len(raw) < 300:
+            raise ValueError("FDR KRX 리스팅 불충분")
+        d = raw.copy()
+        if 'Symbol' in d.columns and 'Code' not in d.columns:
+            d['Code'] = d['Symbol']
+        if '종목코드' in d.columns and 'Code' not in d.columns:
+            d['Code'] = d['종목코드']
+        if '회사명' in d.columns and 'Name' not in d.columns:
+            d = d.rename(columns={'회사명': 'Name'})
+        if '종목명' in d.columns and 'Name' not in d.columns:
+            d = d.rename(columns={'종목명': 'Name'})
+        if not all(c in d.columns for c in ('Code', 'Name', 'Market')):
+            raise ValueError("필수 컬럼 누락")
+        d['Code'] = d['Code'].astype(str).str.strip().str.zfill(6)
+        if 'Marcap' not in d.columns:
+            if 'MarketCap' in d.columns:
+                d['Marcap'] = d['MarketCap']
+            elif '시가총액' in d.columns:
+                d['Marcap'] = d['시가총액']
+            else:
+                d['Marcap'] = 0
+        if d['Marcap'].dtype == object:
+            d['Marcap'] = d['Marcap'].astype(str).str.replace(',', '', regex=False)
+        d['Marcap'] = pd.to_numeric(d['Marcap'], errors='coerce').fillna(0)
+        fd = d[~d['Name'].astype(str).str.contains(junk_pattern, regex=True)].copy()
+        if len(fd) > 1000:
+            fd.to_csv(LISTING_CACHE_FILE, index=False)
+            fd[['Code', 'Marcap']].drop_duplicates('Code').to_csv(CACHE_FILE, index=False)
+            print("✅ KRX 리스팅(FDR) 라이브 로드 및 캐시 백업 완료!")
+        return _finalize(fd)
+
     try:
-        # 💡 [방어 1] User-Agent 헤더를 추가하여 KRX 봇 차단 완벽 회피
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-
-        # 소켓 핸들 고갈(Too many open files) 방지: 세션 재사용 + 짧은 재시도
-        with requests.Session() as sess:
-            resp_ks = None
-            resp_kq = None
-            for wait_s in (0.6, 1.2, 2.0):
-                try:
-                    resp_ks = sess.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", headers=headers, verify=False, timeout=10)
-                    resp_kq = sess.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", headers=headers, verify=False, timeout=10)
-                    if resp_ks.ok and resp_kq.ok:
-                        break
-                except Exception:
-                    pass
-                time.sleep(wait_s)
-            if resp_ks is None or resp_kq is None or (not resp_ks.ok) or (not resp_kq.ok):
-                return pd.DataFrame()
-
-        df_ks = pd.read_html(StringIO(resp_ks.text), header=0)[0]
-        df_ks['Market'] = 'KOSPI'
-        df_kq = pd.read_html(StringIO(resp_kq.text), header=0)[0]
-        df_kq['Market'] = 'KOSDAQ'
-        df = pd.concat([df_ks, df_kq])
-        df['Code'] = df['종목코드'].astype(str).str.zfill(6)
-        df = df.rename(columns={'회사명': 'Name'})
-        
-        junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
-        filtered_df = df[~df['Name'].str.contains(junk_pattern, regex=True)].copy()
-        
-        # 💡 [캐시 파일 경로 세팅]
-        CACHE_FILE = os.path.join(TOP_FOLDER, 'marcap_cache.csv')
-        
         try:
-            # 💡 [방어 2] KRX 서버 차단 시 KOSPI/KOSDAQ 분할 우회 로드
-            try:
-                fdr_df = fdr.StockListing('KRX')
-            except Exception as e:
-                print(f"💡 KRX 메인 서버 지연. KOSPI/KOSDAQ 우회 로드 가동: {e}")
-                df_k = fdr.StockListing('KOSPI')
-                df_q = fdr.StockListing('KOSDAQ')
-                fdr_df = pd.concat([df_k, df_q])
-            
-            if not any(col in fdr_df.columns for col in ['Marcap', 'MarketCap', '시가총액']):
-                fdr_df = fdr.StockListing('KRX-MARCAP')
-                
-            rename_map = {}
-            if 'Symbol' in fdr_df.columns: rename_map['Symbol'] = 'Code'
-            if '종목코드' in fdr_df.columns: rename_map['종목코드'] = 'Code'
-            if 'MarketCap' in fdr_df.columns: rename_map['MarketCap'] = 'Marcap'
-            if '시가총액' in fdr_df.columns: rename_map['시가총액'] = 'Marcap'
-            
-            if rename_map: fdr_df = fdr_df.rename(columns=rename_map)
-            
-            if 'Marcap' not in fdr_df.columns:
-                raise ValueError("FinanceDataReader에서 시가총액을 찾을 수 없습니다.")
-                
-            fdr_df = fdr_df[['Code', 'Marcap']].copy()
-            fdr_df['Code'] = fdr_df['Code'].astype(str).str.strip().str.zfill(6)
-            
-            if fdr_df['Marcap'].dtype == object:
-                fdr_df['Marcap'] = fdr_df['Marcap'].astype(str).str.replace(',', '')
-            
-            fdr_df['Marcap'] = pd.to_numeric(fdr_df['Marcap'], errors='coerce').fillna(0)
-            
-            if len(fdr_df) > 1000:
-                fdr_df.to_csv(CACHE_FILE, index=False)
-                print("✅ 시가총액(Marcap) 라이브 로드 및 백업 완료!")
-            else:
-                raise ValueError("API가 빈 껍데기를 반환함")
-                
-        except Exception as e:
-            print(f"⚠️ 라이브 시총 로드 실패({e}). 안전 백업(Cache) 데이터로 복구합니다!")
-            if os.path.exists(CACHE_FILE):
-                fdr_df = pd.read_csv(CACHE_FILE)
-                fdr_df['Code'] = fdr_df['Code'].astype(str).str.zfill(6)
-            else:
-                print("🚨 백업 파일도 없습니다. 전 종목 시가총액이 0으로 계산됩니다.")
-                fdr_df = pd.DataFrame(columns=['Code', 'Marcap'])
-
-        filtered_df = filtered_df.merge(fdr_df, on='Code', how='left')
-        filtered_df['Marcap'] = filtered_df['Marcap'].fillna(0)
-            
-        return filtered_df[['Code', 'Name', 'Market', 'Marcap']].dropna()
-        
-    except Exception as outer_e: 
-        print(f"🚨 리스트 수집 치명적 에러: {outer_e}")
+            raw = fdr.StockListing('KRX')
+        except Exception:
+            raw = pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
+        return _normalize_fdr_listing(raw)
+    except Exception as e:
+        print(f"⚠️ FDR 리스팅 실패({e}). 로컬 스냅샷 캐시로 복구 시도...")
+        try:
+            if os.path.exists(LISTING_CACHE_FILE):
+                snap = pd.read_csv(LISTING_CACHE_FILE)
+                snap['Code'] = snap['Code'].astype(str).str.strip().str.zfill(6)
+                if 'Marcap' not in snap.columns:
+                    snap['Marcap'] = 0
+                return _finalize(snap)
+        except Exception as ce:
+            print(f"🚨 스냅샷 캐시 손상: {ce}")
+        print("🚨 리스트 수집 실패: 캐시 없음 또는 비어 있음")
         return pd.DataFrame()
         
 def telegram_sender_daemon(target_queue, token):
