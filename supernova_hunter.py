@@ -492,14 +492,24 @@ def evolve_alpha_factors():
 # 💡 [전체 상장 종목 리스트 수집기]
 # ==========================================
 def get_krx_list():
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    df_ks = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=stockMkt", headers=headers, verify=False).text), header=0)[0]
-    df_kq = pd.read_html(StringIO(requests.get("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13&marketType=kosdaqMkt", headers=headers, verify=False).text), header=0)[0]
-    df = pd.concat([df_ks, df_kq])
-    df['Code'] = df['종목코드'].astype(str).str.zfill(6)
-    df = df.rename(columns={'회사명': 'Name'})
-    junk_pattern = '스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권'
-    return df[~df['Name'].str.contains(junk_pattern, regex=True)][['Code', 'Name']].drop_duplicates('Code')
+    """FDR → 캐시 CSV → sqlite KR_* 테이블명 역추출 (KIND HTTP 의존 제거)."""
+    from krx_list_survival import DEFAULT_DB_PATH, collect_krx_list_survival
+
+    junk_pattern = (
+        r"스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권"
+    )
+    try:
+        df, _src = collect_krx_list_survival(
+            db_path=DEFAULT_DB_PATH,
+            junk_pattern=junk_pattern,
+            fdr_module=fdr,
+        )
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["Code", "Name"])
+        out = df[["Code", "Name"]].drop_duplicates("Code")
+        return out
+    except Exception:
+        return pd.DataFrame(columns=["Code", "Name"])
 
 def get_us_list():
     try:
