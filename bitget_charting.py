@@ -34,7 +34,7 @@ def get_daily_theme():
     return themes[theme_idx]
 
 
-def save_chart(df: pd.DataFrame, symbol: str, rank: int, show_volume=False, is_promo=False):
+def save_chart(df: pd.DataFrame, symbol: str, rank: int, show_volume=False, is_promo=False, side="LONG"):
     with chart_lock:
         try:
             plt.rcParams["font.family"] = "Malgun Gothic"
@@ -69,8 +69,23 @@ def save_chart(df: pd.DataFrame, symbol: str, rank: int, show_volume=False, is_p
             color_diff = color_up if diff > 0 else (color_down if diff < 0 else text_sub)
             signal_marker = pd.Series(np.nan, index=df_cut.index)
             y_offset = (df_cut["High"].max() - df_cut["Low"].min()) * 0.04
-            signal_marker.iloc[-1] = df_cut["Low"].iloc[-1] - y_offset
-            ap = mpf.make_addplot(signal_marker, type="scatter", markersize=400 if is_promo else 300, marker="^", color="#FFD700", alpha=1.0)
+            side_u = str(side or "LONG").upper()
+            if side_u == "SHORT":
+                signal_marker.iloc[-1] = df_cut["High"].iloc[-1] + y_offset
+                marker_style = "v"
+                marker_color = "#EF5350"
+            else:
+                signal_marker.iloc[-1] = df_cut["Low"].iloc[-1] - y_offset
+                marker_style = "^"
+                marker_color = "#FFD700"
+            ap = mpf.make_addplot(
+                signal_marker,
+                type="scatter",
+                markersize=400 if is_promo else 300,
+                marker=marker_style,
+                color=marker_color,
+                alpha=1.0,
+            )
 
             mc = mpf.make_marketcolors(up=color_up, down=color_down, edge="inherit", wick="inherit", volume="inherit")
             style = mpf.make_mpf_style(
