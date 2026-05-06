@@ -54,13 +54,19 @@ def get_us_tickers():
     df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
     return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
 
-# 🇰🇷 한국장 리스트 추출
+# 🇰🇷 한국장 리스트 추출 (FDR → krx_list_cache.csv → sqlite KR_* 3단계 생존)
 def get_kr_tickers():
+    from krx_list_survival import collect_krx_list_survival
+
     print("🇰🇷 한국장 종목 리스트 수집 중...")
-    df = fdr.StockListing('KRX')
-    df['Code'] = df['Code'].astype(str).str.zfill(6)
-    filtered_df = df[~df['Name'].str.contains('스팩|ETN|ETF|우$|홀딩스|리츠', regex=True)].copy()
-    return filtered_df[['Code', 'Name', 'Market']].dropna()
+    junk = r"스팩|ETN|ETF|우$|홀딩스|리츠"
+    try:
+        df, _src = collect_krx_list_survival(db_path=DB_PATH, junk_pattern=junk, fdr_module=fdr)
+    except Exception:
+        df = pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Code", "Name", "Market"])
+    return df[["Code", "Name", "Market"]].dropna()
 
 # 개별 종목 데이터 다운로드 및 DB 저장 엔진 (💡 인자에서 conn 제거)
 def update_single_ticker(row, country): 
