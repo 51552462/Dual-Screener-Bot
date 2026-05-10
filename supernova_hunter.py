@@ -47,6 +47,58 @@ def save_config(data):
             os.remove(temp_path)
         print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
 
+def _approx_dyn_rs_vs_benchmark(stock_df, idx_close_sr):
+    """장부 dyn_rs와 유사하게, 최근 21거래일 구간 종가 수익률 / 동일 구간 벤치 수익률 × 100."""
+    if idx_close_sr is None or stock_df is None or stock_df.empty or len(stock_df) < 21:
+        return np.nan
+    try:
+        s = stock_df["Close"].astype(float)
+        ix = idx_close_sr.reindex(stock_df.index).ffill().bfill()
+        m = pd.concat([s, ix.rename("__ix")], axis=1).dropna()
+        if len(m) < 21:
+            return np.nan
+        t = m.tail(21)
+        c0, c1 = float(t["Close"].iloc[0]), float(t["Close"].iloc[-1])
+        i0, i1 = float(t["__ix"].iloc[0]), float(t["__ix"].iloc[-1])
+        if c0 <= 0 or i0 <= 0:
+            return np.nan
+        cr = (c1 - c0) / c0 * 100.0
+        ir = (i1 - i0) / i0 * 100.0
+        return float((cr / max(abs(ir), 1e-4)) * 100.0)
+    except Exception:
+        return np.nan
+
+def _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_val):
+    """toxic_graveyard_analyzer가 저장한 TOXIC_PATTERN_* 초입체박스 안에 들어오면 진입 차단."""
+    rules = config.get("TOXIC_ML_ANTIPATTERNS")
+    if not isinstance(rules, dict) or not rules:
+        return False
+    feats = {"dyn_cpv": float(cpv), "dyn_tb": float(tb), "v_energy": float(bbe)}
+    try:
+        feats["dyn_rs"] = float(dyn_rs_val)
+    except (TypeError, ValueError):
+        feats["dyn_rs"] = np.nan
+    for rname, bounds in rules.items():
+        if not str(rname).startswith("TOXIC_PATTERN_") or not isinstance(bounds, dict):
+            continue
+        if not bounds:
+            continue
+        inside = True
+        for fname, val in feats.items():
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                continue
+            kmin = f"{fname}_min"
+            kmax = f"{fname}_max"
+            if kmin in bounds and val < float(bounds[kmin]):
+                inside = False
+                break
+            if kmax in bounds and val > float(bounds[kmax]):
+                inside = False
+                break
+        if inside:
+            return True
+    return False
+
 def generate_random_alpha_formula():
     """O/H/L/C/V와 연산자를 조합해 깊이 3~5의 랜덤 수식을 생성."""
     windows = [5, 10, 20, 30, 60]
@@ -1025,6 +1077,21 @@ def execute_supernova_live_scan(market):
         conn.close()
     except: open_positions = set()
 
+    benchmark_close_sr = None
+    if market == 'KR':
+        try:
+            _kd = fdr.DataReader('KOSPI', (datetime.now() - timedelta(days=120)).strftime('%Y-%m-%d'))
+            benchmark_close_sr = _kd['Close'] if _kd is not None and not _kd.empty else None
+        except Exception:
+            benchmark_close_sr = None
+    else:
+        try:
+            _spy = yf.download('SPY', period='3mo', progress=False)
+            _spy = flatten_yf_download_df(_spy)
+            benchmark_close_sr = _spy['Close'] if _spy is not None and not _spy.empty else None
+        except Exception:
+            benchmark_close_sr = None
+
     # 💡 [핵심 1] 단일 스레드 병목 탈출을 위한 "개별 종목 연산 작업(Worker)" 분리
     def process_live_ticker(code):
         if code in open_positions or code in scanned_today_cache[market]:
@@ -1088,7 +1155,11 @@ def execute_supernova_live_scan(market):
             bb_mid = pd.Series(c).rolling(20).mean().values[-1]
             bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
-            
+
+            dyn_rs_live = _approx_dyn_rs_vs_benchmark(df, benchmark_close_sr)
+            if _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_live):
+                return None
+
             # 1. 코사인 유사도 연산 (템플릿별 컷: 인큐베이터는 cos_cutoff, 그 외는 DYNAMIC_SUPERNOVA_CUTOFF)
             best_sim = 0.0
             best_pattern_name = "UNKNOWN"
@@ -1174,6 +1245,52 @@ def execute_supernova_live_scan(market):
 
             # 합격한 종목만 선별하여 데이터 반환 (DB 저장은 여기서 하지 않음 - 락 방어)
             if is_pass_ml_box or is_pass_cosine:
+                fdict = {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe}
+
+                # 💡 [방어막 작동] 오답노트(블랙박스) 독성 패턴 검사
+                anti_patterns = config.get('ANTI_PATTERNS', {})
+                if not isinstance(anti_patterns, dict):
+                    anti_patterns = {}
+                _ml_toxic = config.get('TOXIC_ML_ANTIPATTERNS')
+                if isinstance(_ml_toxic, dict):
+                    anti_patterns = {**anti_patterns, **_ml_toxic}
+                is_toxic = False
+                for t_name, bounds in anti_patterns.items():
+                    if not isinstance(bounds, dict):
+                        continue
+                    match_flags = []
+                    if 'dyn_cpv_max' in bounds:
+                        match_flags.append(cpv <= bounds['dyn_cpv_max'])
+                    if 'dyn_cpv_min' in bounds:
+                        match_flags.append(cpv > bounds['dyn_cpv_min'])
+                    if 'dyn_tb_max' in bounds:
+                        match_flags.append(tb <= bounds['dyn_tb_max'])
+                    if 'dyn_tb_min' in bounds:
+                        match_flags.append(tb > bounds['dyn_tb_min'])
+                    if 'v_energy_max' in bounds:
+                        match_flags.append(bbe <= bounds['v_energy_max'])
+                    if 'v_energy_min' in bounds:
+                        match_flags.append(bbe > bounds['v_energy_min'])
+                    if 'dyn_rs_max' in bounds and not (isinstance(dyn_rs_live, float) and np.isnan(dyn_rs_live)):
+                        match_flags.append(float(dyn_rs_live) <= float(bounds['dyn_rs_max']))
+                    if 'dyn_rs_min' in bounds and not (isinstance(dyn_rs_live, float) and np.isnan(dyn_rs_live)):
+                        match_flags.append(float(dyn_rs_live) > float(bounds['dyn_rs_min']))
+                    if match_flags and all(match_flags):
+                        is_toxic = True
+                        break
+
+                if is_toxic:
+                    return {
+                        'code': code,
+                        'name': stock_list[stock_list['Code']==code]['Name'].values[0],
+                        'final_sig': f"💀[기각/관찰용] TOXIC_TRAP",
+                        'final_score': 0,
+                        'current_close': current_close,
+                        'facts': fdict,
+                        'msg_type': f"💀 독성 오답노트 패턴 감지 (매수 차단)",
+                        'trade_source': "TOXIC_TRAP",
+                    }
+
                 if is_underdog:
                     final_sig = f"[UNDERDOG_MLBOX] 🧟{ml_pattern_name}"
                     final_score = ml_score * 100
@@ -1189,10 +1306,25 @@ def execute_supernova_live_scan(market):
                     final_score = _cos_sim * 100
                     _cut_used = ideal_template_cutoffs.get(_cos_label, dynamic_cos_cutoff)
                     msg_type = f"🦅 코사인 컷오프 통과 (기준:{float(_cut_used)*100:.0f}%)"
-                
-                fdict = {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe}
+
                 if (not is_pass_ml_box) and str(best_pass_name).startswith("INCUBATOR_"):
                     fdict["incubator_sniper_key"] = str(best_pass_name)[len("INCUBATOR_"):]
+                # 💡 [신경망 통합] 스마트 머니 레이더 교차 검증
+                _radar_wrap = config.get('SMART_MONEY_RADAR') or {}
+                smart_radar = _radar_wrap.get('picks', {}) if isinstance(_radar_wrap, dict) else {}
+                smart_info = smart_radar.get(code)
+                if smart_info is None:
+                    smart_info = smart_radar.get(str(code))
+                if isinstance(smart_info, dict):
+                    estimated_avg = smart_info.get('avg_price')
+                    try:
+                        estimated_avg_f = float(estimated_avg)
+                    except (TypeError, ValueError):
+                        estimated_avg_f = 0.0
+                    # 현재가가 세력 평단가 부근(-3% ~ +3%)이라면 확인 도장(Confirm Seal) 부여
+                    if estimated_avg_f > 0 and abs(current_close - estimated_avg_f) / estimated_avg_f <= 0.03:
+                        msg_type = f"🕵️ [세력 매집 포착] 평단가({estimated_avg_f:,.0f}원) 근접! | " + msg_type
+                        final_sig = final_sig.replace("]", "_SMART]")
                 return {
                     'code': code,
                     'name': stock_list[stock_list['Code']==code]['Name'].values[0],
@@ -1218,6 +1350,8 @@ def execute_supernova_live_scan(market):
 
     # 💡 [핵심 3] 발굴된 종목 장부 기록 (DB 락 방지를 위해 메인 스레드에서 순차적 기록)
     for target in valid_targets:
+        if 'TOXIC_TRAP' in str(target.get('final_sig', '')):
+            continue
         # 1. 메인 타점 사격 (초신성 or 언더독)
         is_success, msg = aft.try_add_virtual_position(
             market=market, 
@@ -1267,6 +1401,13 @@ def run_miner_scheduler():
                     import data_miner
                     print("🔄 [스케줄러] 타임머신 완료. K-Means 클러스터 마이닝으로 자동 이관합니다...")
                     data_miner.run_cluster_mining()
+                    # 💡 [핵심 추가] 언더독(0~60점) 마이닝 공장 자동 가동
+                    try:
+                        import underdog_miner
+                        print("🔄 [스케줄러] 언더독 마이닝 공장 가동 중...")
+                        underdog_miner.run_underdog_mining()
+                    except Exception as e:
+                        print(f"🚨 [에러] 언더독 마이닝 실행 중 오류: {e}")
                 except ModuleNotFoundError:
                     print("🚨 [경고] 'data_miner.py' 파일을 찾을 수 없어 ML 마이닝을 건너뜁니다.")
                 except Exception as e:

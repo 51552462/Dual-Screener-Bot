@@ -1607,6 +1607,67 @@ def system_main_loop():
                     print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
                     send_weekly_flow_master_report()
                     time.sleep(60)
+
+                # 3. 토요일 오전 10시 10분: 새 뇌(Config) 기반 과거 폭락장 타임머신 검증 자동 실행
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 10:
+                    try:
+                        import time_machine_backtester
+                        print("🚀 [오토파일럿] 새 파라미터 기반 과거 폭락장 검증(타임머신) 시작...")
+                        # 시총 상위 종목들로 1회 자동 검증 실행
+                        time_machine_backtester.run_time_machine_backtest("COVID-19 코로나 폭락장", ['005930', '000660', '035420'])
+                    except Exception as e:
+                        print(f"⚠️ 백테스터 자동 실행 실패: {e}")
+                    time.sleep(60)
+
+                # 💡 매일 16시 10분: 스마트 머니(다크풀/기관) 레이더 자동 가동
+                elif now.hour == 16 and now.minute == 10:
+                    try:
+                        import smart_money_tracker
+                        print("🔄 [오토파일럿] 스마트 머니 레이더 자동 가동 중...")
+                        smart_money_tracker.run_smart_money_tracker()
+                    except Exception as e:
+                        print(f"⚠️ 스마트 머니 레이더 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 4. 매일 16시 30분: 스마트 머니(수급 다이버전스) 트래커 자동 가동
+                elif now.hour == 16 and now.minute == 30:
+                    try:
+                        import smart_money_tracker
+                        print("🔄 [오토파일럿] 스마트 머니 트래커 자동 가동 중...")
+                        smart_money_tracker.run_smart_money_tracker()
+                    except Exception as e:
+                        print(f"⚠️ 스마트 머니 트래커 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 6. 매일 18시 30분: 센티먼트(뉴스 심리) 마이닝 공장 가동
+                elif now.hour == 18 and now.minute == 30:
+                    try:
+                        import sentiment_miner
+                        print("🧠 [오토파일럿] 센티먼트 마이닝 자동 가동 중...")
+                        sentiment_miner.run_sentiment_mining()
+                    except Exception as e:
+                        print(f"⚠️ 센티먼트 수집 실패: {e}")
+                    time.sleep(60)
+
+                # 💡 매주 일요일 새벽 02시 00분: 오답노트 블랙박스 부검(Graveyard ML) 자동 가동
+                elif now.weekday() == 6 and now.hour == 2 and now.minute == 0:
+                    try:
+                        import toxic_graveyard_analyzer
+                        print("💀 [오토파일럿] 참사주 독성 패턴 부검소 자동 가동 중...")
+                        toxic_graveyard_analyzer.run_graveyard_autopsy()
+                    except Exception as e:
+                        print(f"⚠️ 독성 부검소 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 7. 매일 19시 정각: 독성 패턴(Decision Tree) 부검소 자동 가동
+                elif now.hour == 19 and now.minute == 0:
+                    try:
+                        import toxic_graveyard_analyzer
+                        print("💀 [오토파일럿] 블랙박스 독성 패턴 부검 가동...")
+                        toxic_graveyard_analyzer.run_graveyard_autopsy()
+                    except Exception as e:
+                        print(f"⚠️ 독성 부검 실행 실패: {e}")
+                    time.sleep(60)
                     
             time.sleep(30)
         except Exception as e:

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from bitget_forward_tester import try_add_virtual_position
+from bitget_forward_tester import compute_evolved_alpha_bonus_score, try_add_virtual_position
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -329,7 +329,6 @@ def execute_supernova_live_scan(market_type, timeframe):
     cfg = load_config()
     dynamic_cos_cutoff = float(cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50))
     dynamic_dtw_cutoff = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
-    evolved = cfg.get("EVOLVED_ALPHA_FACTORS", {})
 
     templates = {}
     rank_templates = cfg.get("LIVE_CLUSTER_TEMPLATES", {})
@@ -391,16 +390,11 @@ def execute_supernova_live_scan(market_type, timeframe):
                     best_dtw = dtw
                     best_name = t_name
 
-            alpha_bonus = 0.0
-            if isinstance(evolved, dict):
-                vals = []
-                for _, formula in evolved.items():
-                    ser = evaluate_alpha_formula(df.tail(300), str(formula))
-                    if ser is not None and len(ser.dropna()) > 0:
-                        vals.append(float(pd.to_numeric(ser, errors="coerce").dropna().iloc[-1]))
-                if vals:
-                    alpha_bonus = min(0.15, max(0.0, (max(vals) - float(cfg.get("EVOLVED_ALPHA_THRESHOLD", 0.0))) * 0.05))
-
+            ev_df = df[["Open", "High", "Low", "Close", "Volume"]].tail(300).copy()
+            for col in ev_df.columns:
+                ev_df[col] = pd.to_numeric(ev_df[col], errors="coerce")
+            ev_df = ev_df.dropna(subset=("Open", "High", "Low", "Close", "Volume"), how="any")
+            alpha_bonus = compute_evolved_alpha_bonus_score(cfg, ev_df)
             eff_cos = min(1.0, best_cos + alpha_bonus)
             if eff_cos < dynamic_cos_cutoff or best_dtw > dynamic_dtw_cutoff:
                 return None
@@ -413,6 +407,8 @@ def execute_supernova_live_scan(market_type, timeframe):
                 "dyn_rs": 0.0,
                 "dyn_cpv": 0.0,
                 "dyn_tb": 0.0,
+                "sn_score": float(best_cos),
+                "dtw_score": float(best_dtw if np.isfinite(best_dtw) else 999.0),
             }
             return {
                 "symbol": symbol,

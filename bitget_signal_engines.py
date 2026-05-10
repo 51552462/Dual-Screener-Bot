@@ -116,16 +116,36 @@ def _core_factors(df: pd.DataFrame):
 
 
 def _rs(df: pd.DataFrame, idx_close: pd.Series):
-    c = df["Close"].values
-    idx = idx_close.reindex(df.index).ffill()
+    """
+    벤치마크(BTC) 대비 상대강도. 하락장 역행: idx_ret<0 이고 stock_ret>0 이면
+    auto_forward_tester(V46)와 동일하게 defiance_premium = abs(idx_ret)*1.5 를
+    초과수익(excess_return)에 가산한 뒤 |idx_ret| 로 스케일한 RS 로 대체한다.
+    """
+    c = np.asarray(df["Close"].values, dtype=float)
+    idx_s = idx_close.reindex(df.index).ffill()
+    idx = np.asarray(idx_s.values, dtype=float)
     c_20 = pd.Series(c).shift(20).values
-    idx_20 = idx.shift(20).values
+    idx_20 = np.asarray(idx_s.shift(20).values, dtype=float)
+    eps = 1e-12
+    pos_floor = 0.0001
+
     with np.errstate(divide="ignore", invalid="ignore"):
-        stock_ret = np.where(c_20 > 0, (c - c_20) / c_20, 0.0)
-        idx_ret = np.where(idx_20 > 0, (idx.values - idx_20) / idx_20, 0.0001)
-        idx_ret = np.where(idx_ret == 0, 0.0001, idx_ret)
-        rs = (stock_ret / idx_ret) * 100
-    return np.nan_to_num(rs, nan=0.0)
+        stock_ret = np.where(c_20 > eps, (c - c_20) / c_20, 0.0)
+        idx_ret = np.where(idx_20 > eps, (idx - idx_20) / idx_20, pos_floor)
+
+        denom_legacy = np.where(np.abs(idx_ret) < eps, pos_floor, idx_ret)
+        legacy_rs = (stock_ret / denom_legacy) * 100.0
+
+        defiance = (idx_ret < -eps) & (stock_ret > eps)
+        excess_return = stock_ret - idx_ret
+        defiance_premium = np.where(defiance, np.abs(idx_ret) * 1.5, 0.0)
+        boosted_excess = excess_return + defiance_premium
+        denom_mag = np.maximum(np.abs(idx_ret), eps)
+        rs_defiance = (boosted_excess / denom_mag) * 100.0
+
+        rs = np.where(defiance, rs_defiance, legacy_rs)
+
+    return np.nan_to_num(rs, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def _tree_reject(cur_cpv: float):
@@ -187,17 +207,20 @@ def _calc_dtw(s, t):
     return float(dtw[n, m])
 
 
-def _cosine(a, b):
+def _cosine(a, b, dim: int = 7):
+    """주식 DNA 템플릿(7D)과 동일 길이로 정렬 후 코사인. 짧은 쪽은 0 패딩(초신성 차원 고정)."""
+    d = max(7, int(dim))
     va = np.asarray(a, dtype=float).reshape(-1)
     vb = np.asarray(b, dtype=float).reshape(-1)
-    if va.size == 0 or vb.size == 0:
-        return 0.0
-    # 템플릿/현재 벡터 차원이 다를 수 있으므로 공통 길이로 동적 슬라이싱
-    common_dim = int(min(va.size, vb.size))
-    if common_dim <= 0:
-        return 0.0
-    va = np.nan_to_num(va[:common_dim], nan=0.0, posinf=0.0, neginf=0.0)
-    vb = np.nan_to_num(vb[:common_dim], nan=0.0, posinf=0.0, neginf=0.0)
+
+    def _pad_norm(x: np.ndarray) -> np.ndarray:
+        x = np.nan_to_num(np.asarray(x[:d], dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+        if x.size < d:
+            x = np.pad(x, (0, d - x.size))
+        return x
+
+    va = _pad_norm(va)
+    vb = _pad_norm(vb)
     na = np.linalg.norm(va)
     nb = np.linalg.norm(vb)
     if na <= 1e-12 or nb <= 1e-12:
@@ -205,12 +228,152 @@ def _cosine(a, b):
     return float(np.dot(va, vb) / (na * nb))
 
 
-def _doppelganger_adjustment(cur_cpv, cur_tb, cur_bbe, cur_rs, close_arr):
+def _auto_forward_style_7d_vector(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[np.ndarray, Dict[str, float]]:
+    """
+    auto_forward_tester try_add 내 7D 연산과 동일한 스칼라 벡터.
+    순서: [cpv, tb, bbe/safe_vol, z_rs, vcp_ratio, vol_flow, ma_conv]
+    (템플릿 키: cpv, tb, bbe, rs, vcp, vol, ma — rs 슬롯은 z_rs)
+    """
+    empty_meta = {
+        "agg_cpv": 0.0,
+        "agg_tb": 0.0,
+        "agg_bbe": 0.0,
+        "bbe_scaled": 0.0,
+        "z_rs": 0.0,
+        "vcp_ratio": 0.0,
+        "vol_flow": 0.0,
+        "ma_conv": 0.0,
+        "safe_vol": 1.0,
+    }
+    if df is None or len(df) < 60:
+        return np.zeros(7, dtype=float), empty_meta
+
+    c = df["Close"].values.astype(float)
+    o = df["Open"].values.astype(float)
+    h = df["High"].values.astype(float)
+    l = df["Low"].values.astype(float)
+    v = df["Volume"].values.astype(float)
+
+    idx_s = idx_close.reindex(df.index).ffill()
+    idx_c = np.asarray(idx_s.values, dtype=float)
+    if idx_c.shape[0] != c.shape[0]:
+        idx_c = c.astype(float).copy()
+    elif not (np.isfinite(idx_c[0]) and np.isfinite(idx_c[-1]) and abs(float(idx_c[0])) > 1e-15):
+        idx_c = c.astype(float).copy()
+
+    cpv = float(np.nanmean(np.where(h != l, (c - o) / (h - l), 0.5)))
+    v_ma20 = pd.Series(v).rolling(20).mean().values
+    tb = float(
+        np.nanmean(
+            np.where(
+                h != l,
+                (v / np.maximum(v_ma20, 1e-12)) / np.maximum((c - o) / (h - l), 0.01),
+                1.0,
+            )
+        )
+    )
+
+    bb_std = pd.Series(c).rolling(20).std().values
+    bb_mid_roll = pd.Series(c).rolling(20).mean().values
+    bbe_arr = np.where((bb_std > 0) & np.isfinite(bb_mid_roll), 1.0 / ((4 * bb_std) / bb_mid_roll), 0.0)
+    bbe = float(np.nanmax(bbe_arr[-20:])) if len(bbe_arr) >= 20 else float(np.nanmax(bbe_arr))
+
+    rs_slope = ((c[-1] - c[0]) / (c[0] + 1e-12)) * 100.0
+
+    prev_c = np.roll(c, 1)
+    prev_c[0] = c[0]
+    tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
+    mean_tr = float(np.nanmean(tr))
+    vcp_ratio = float(np.mean(tr[-20:]) / mean_tr) if mean_tr > 0 else 1.0
+
+    vol_flow = float(np.sum(np.where(c > o, v, 0.0)) / (np.sum(np.where(c < o, v, 0.0)) + 1.0))
+
+    emas = [float(pd.Series(c).ewm(span=n, adjust=False).mean().iloc[-1]) for n in [10, 20, 60, 112, 224]]
+    emin, emax = min(emas), max(emas)
+    ma_conv = float((emax - emin) / (emin + 1e-12) * 100.0)
+
+    idx_rs = ((idx_c[-1] - idx_c[0]) / (idx_c[0] + 1e-12)) * 100.0
+    idx_vol = float(pd.Series(idx_c).pct_change().std() * 100.0 * np.sqrt(252))
+    safe_vol = idx_vol if idx_vol > 0.1 else 1.0
+
+    excess_return = rs_slope - idx_rs
+    defiance_premium = 0.0
+    if idx_rs < 0 and excess_return > 0:
+        defiance_premium = abs(idx_rs) * 1.5
+    z_rs = float((excess_return + defiance_premium) / safe_vol)
+
+    bbe_scaled = bbe / safe_vol
+    vec = np.nan_to_num(
+        np.array([cpv, tb, bbe_scaled, z_rs, vcp_ratio, vol_flow, ma_conv], dtype=float),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    meta = {
+        "agg_cpv": cpv,
+        "agg_tb": tb,
+        "agg_bbe": bbe,
+        "bbe_scaled": float(bbe_scaled),
+        "z_rs": float(z_rs),
+        "vcp_ratio": float(vcp_ratio),
+        "vol_flow": float(vol_flow),
+        "ma_conv": float(ma_conv),
+        "safe_vol": float(safe_vol),
+    }
+    return vec, meta
+
+
+def _dbg_merge_7d(dbg: Dict, df: pd.DataFrame, idx_close: pd.Series) -> Dict:
+    vec7, meta7 = _auto_forward_style_7d_vector(df, idx_close)
+    out = dict(dbg)
+    out.update(meta7)
+    out["vcp_ratio"] = float(meta7["vcp_ratio"])
+    out["vol_flow"] = float(meta7["vol_flow"])
+    out["ma_conv"] = float(meta7["ma_conv"])
+    out["current_vec"] = [float(x) for x in vec7]
+    return out
+
+
+def _dna_template_to_vec7(dna: dict) -> np.ndarray:
+    """주식 템플릿 키(cpv,tb,bbe,rs,vcp,vol,ma) 또는 vec 리스트 → 길이 7 벡터."""
+    if isinstance(dna.get("vec"), (list, tuple)) and len(dna.get("vec")) > 0:
+        raw = list(dna.get("vec"))
+        vals = [float(x) for x in raw[:7]]
+        while len(vals) < 7:
+            vals.append(0.0)
+        return np.array(vals[:7], dtype=float)
+    vcp_extra = float(
+        dna.get("vcp", dna.get("vcp_ratio", 0.0)) or 0.0
+    )
+    vol_extra = float(dna.get("vol", dna.get("vol_flow", 0.0)) or 0.0)
+    ma_extra = float(dna.get("ma", dna.get("ma_conv", 0.0)) or 0.0)
+    return np.array(
+        [
+            float(dna.get("cpv", 0.0)),
+            float(dna.get("tb", 0.0)),
+            float(dna.get("bbe", 0.0)),
+            float(dna.get("rs", 0.0)),
+            vcp_extra,
+            vol_extra,
+            ma_extra,
+        ],
+        dtype=float,
+    )
+
+
+def _doppelganger_adjustment(current_vec_7: np.ndarray, close_arr):
     cur_shape = _calc_shape20(close_arr)
     if cur_shape is None:
         return 0.0, "", 0.0, 999.0
 
-    current_vec = np.array([cur_cpv, cur_tb, cur_bbe, cur_rs], dtype=float)
+    current_vec = np.nan_to_num(
+        np.asarray(current_vec_7, dtype=float).reshape(-1)[:7], nan=0.0, posinf=0.0, neginf=0.0
+    )
+    if current_vec.size < 7:
+        current_vec = np.pad(current_vec, (0, 7 - current_vec.size))
+    else:
+        current_vec = current_vec[:7]
+
     best_name = ""
     best_cos = 0.0
     best_dtw = 999.0
@@ -222,13 +385,7 @@ def _doppelganger_adjustment(cur_cpv, cur_tb, cur_bbe, cur_rs, close_arr):
         for kind, dna in (("ALPHA", a), ("TRAP", t)):
             if not isinstance(dna, dict):
                 continue
-            if isinstance(dna.get("vec"), (list, tuple)) and len(dna.get("vec")) >= 3:
-                dvec = np.array(dna.get("vec"), dtype=float).reshape(-1)
-            else:
-                dvec_vals = [float(dna.get("cpv", 0.0)), float(dna.get("tb", 0.0)), float(dna.get("bbe", 0.0))]
-                if "rs" in dna:
-                    dvec_vals.append(float(dna.get("rs", 0.0)))
-                dvec = np.array(dvec_vals, dtype=float).reshape(-1)
+            dvec = _dna_template_to_vec7(dna)
             dshape = dna.get("shape")
             if not isinstance(dshape, list) or len(dshape) != 20:
                 continue
@@ -385,7 +542,8 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
     freq_count = int(recent_hits)
     total_score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
 
-    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(cur_cpv, cur_tb, cur_bbe, cur_rs, c)
+    vec7, meta7 = _auto_forward_style_7d_vector(df, idx_close)
+    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, c)
     total_score = float(np.clip(total_score + dd_adj, 0.0, 100.0))
 
     rej, reason = _tree_reject(float(cur_cpv))
@@ -409,6 +567,9 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
         f"▪️ 진짜양봉(TB): {cur_tb:.3f}\n"
         f"▪️ 응축에너지(BBE): {cur_bbe:.3f}\n"
         f"▪️ 시장상대강도(RS): {cur_rs:.3f}\n"
+        f"▪️ 7D 수렴도(vcp_ratio): {meta7['vcp_ratio']:.4f}\n"
+        f"▪️ 7D 거래량흐름(vol_flow): {meta7['vol_flow']:.4f}\n"
+        f"▪️ 7D 이평밀집(ma_conv): {meta7['ma_conv']:.3f}% | z_rs: {meta7['z_rs']:.4f}\n"
     )
     if dd_msg:
         v11_comment += f"{dd_msg}\n"
@@ -436,6 +597,16 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        "vcp_ratio": float(meta7["vcp_ratio"]),
+        "vol_flow": float(meta7["vol_flow"]),
+        "ma_conv": float(meta7["ma_conv"]),
+        "agg_cpv": float(meta7["agg_cpv"]),
+        "agg_tb": float(meta7["agg_tb"]),
+        "agg_bbe": float(meta7["agg_bbe"]),
+        "z_rs": float(meta7["z_rs"]),
+        "bbe_scaled": float(meta7["bbe_scaled"]),
+        "safe_vol": float(meta7["safe_vol"]),
+        "current_vec": [float(x) for x in vec7],
     }
 
 
@@ -509,7 +680,8 @@ def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
     freq_count = int(recent_hits)
     total_score = (score_rs * 10 + score_marcap * 9 + score_cpv * 8 + score_bbe * 7 + score_tb * 6) / 400 * 100
 
-    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(cur_cpv, cur_tb, cur_bbe, cur_rs, c)
+    vec7, meta7 = _auto_forward_style_7d_vector(df, idx_close)
+    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, c)
     total_score = float(np.clip(total_score + dd_adj, 0.0, 100.0))
 
     rej, reason = _tree_reject(float(cur_cpv))
@@ -539,6 +711,9 @@ def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
         f"▪️ 진짜양봉(TB): {cur_tb:.3f}\n"
         f"▪️ 응축에너지(BBE): {cur_bbe:.3f}\n"
         f"▪️ 시장상대강도(RS): {cur_rs:.3f}\n"
+        f"▪️ 7D 수렴도(vcp_ratio): {meta7['vcp_ratio']:.4f}\n"
+        f"▪️ 7D 거래량흐름(vol_flow): {meta7['vol_flow']:.4f}\n"
+        f"▪️ 7D 이평밀집(ma_conv): {meta7['ma_conv']:.3f}% | z_rs: {meta7['z_rs']:.4f}\n"
     )
     if dd_msg:
         v11_comment += f"{dd_msg}\n"
@@ -565,6 +740,16 @@ def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        "vcp_ratio": float(meta7["vcp_ratio"]),
+        "vol_flow": float(meta7["vol_flow"]),
+        "ma_conv": float(meta7["ma_conv"]),
+        "agg_cpv": float(meta7["agg_cpv"]),
+        "agg_tb": float(meta7["agg_tb"]),
+        "agg_bbe": float(meta7["agg_bbe"]),
+        "z_rs": float(meta7["z_rs"]),
+        "bbe_scaled": float(meta7["bbe_scaled"]),
+        "safe_vol": float(meta7["safe_vol"]),
+        "current_vec": [float(x) for x in vec7],
     }
 
 
@@ -611,7 +796,8 @@ def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: s
     freq_count = int(recent_hits)
     total_score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
 
-    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(cur_cpv, cur_tb, cur_bbe, cur_rs, c)
+    vec7, meta7 = _auto_forward_style_7d_vector(df, idx_close)
+    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, c)
     total_score = float(np.clip(total_score + dd_adj, 0.0, 100.0))
     rej, reason = _tree_reject(float(cur_cpv))
     if rej:
@@ -632,6 +818,9 @@ def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: s
         f"▪️ 진짜양봉(TB): {cur_tb:.3f}\n"
         f"▪️ 응축에너지(BBE): {cur_bbe:.3f}\n"
         f"▪️ 시장상대강도(RS): {cur_rs:.3f}\n"
+        f"▪️ 7D 수렴도(vcp_ratio): {meta7['vcp_ratio']:.4f}\n"
+        f"▪️ 7D 거래량흐름(vol_flow): {meta7['vol_flow']:.4f}\n"
+        f"▪️ 7D 이평밀집(ma_conv): {meta7['ma_conv']:.3f}% | z_rs: {meta7['z_rs']:.4f}\n"
     )
     if dd_msg:
         v11_comment += f"{dd_msg}\n"
@@ -658,6 +847,16 @@ def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: s
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        "vcp_ratio": float(meta7["vcp_ratio"]),
+        "vol_flow": float(meta7["vol_flow"]),
+        "ma_conv": float(meta7["ma_conv"]),
+        "agg_cpv": float(meta7["agg_cpv"]),
+        "agg_tb": float(meta7["agg_tb"]),
+        "agg_bbe": float(meta7["agg_bbe"]),
+        "z_rs": float(meta7["z_rs"]),
+        "bbe_scaled": float(meta7["bbe_scaled"]),
+        "safe_vol": float(meta7["safe_vol"]),
+        "current_vec": [float(x) for x in vec7],
     }
 
 
@@ -724,6 +923,7 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
         "entry2": bool(entry2.iloc[-1]),
         "entry3": bool(entry3.iloc[-1]),
     }
+    dbg = _dbg_merge_7d(dbg, out, idx_close)
     return True, sig_type, out, dbg
 
 
@@ -787,6 +987,7 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
         "v11_comment": v11_comment,
         "entry2": bool(entry2.iloc[-1]),
     }
+    dbg = _dbg_merge_7d(dbg, out, idx_close)
     return True, sig_type, out, dbg
 
 
@@ -967,6 +1168,7 @@ def _practitioner_signal(df_raw: pd.DataFrame, idx_close: pd.Series, rule_key: s
         "dyn_tb_score": cur_tb,
         "v11_comment": v11_comment,
     }
+    dbg = _dbg_merge_7d(dbg, df, idx_close)
     return True, sig_type, df, dbg
 
 

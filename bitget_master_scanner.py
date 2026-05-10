@@ -411,6 +411,8 @@ def run_scan():
                         "dyn_tb": dbg.get("dyn_tb_score", 0.0),
                         "sn_score": dbg.get("sn_score", 0.0),
                         "dtw_score": dbg.get("dtw_score", 0.0),
+                        "trade_value_24h": float(dbg.get("trade_value_24h", 0.0) or 0.0),
+                        "marcap_eok": float(dbg.get("marcap_eok", 0.0) or 0.0),
                     }
                     sig_for_db = sig_type if str(engine_name).startswith("SUPERNOVA_") else f"[STANDARD][{engine_name}] {sig_type}"
                     time.sleep(0.04)  # DB/API 연속 호출 완화

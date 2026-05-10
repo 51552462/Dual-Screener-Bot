@@ -1405,6 +1405,8 @@ def run_deep_dive_analysis(market='KR'):
         # ---------------------------------------------------------
         # 👑 [V19.0 구간별 Micro-DNA 정밀 분석 엔진]
         # ---------------------------------------------------------
+        tier_performance_stats = [] # 💡 점수대별 성적 비교를 위한 저장소
+
         for t in range(10, 100, 10):
             tier_label = f"{t}점대"
             t_df = df[df['tier'] == tier_label]
@@ -1418,6 +1420,9 @@ def run_deep_dive_analysis(market='KR'):
             gross_profit = t_df[t_df['final_ret'] > 0]['final_ret'].sum()
             gross_loss = abs(t_df[t_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1
             t_pf = gross_profit / gross_loss
+
+            # 💡 통계 저장소에 추가
+            tier_performance_stats.append({'tier': tier_label, 'wr': t_wr, 'pf': t_pf, 'count': len(t_df)})
 
             report_msg += f"▪️ 성적: 승률 {t_wr:.1f}% | PF {t_pf:.2f}\n"
 
@@ -1466,6 +1471,17 @@ def run_deep_dive_analysis(market='KR'):
                 if winners['v_energy'].mean() > losers['v_energy'].mean() + 1.0:
                     report_msg += f" 💡 통찰: {tier_label}는 에너지가 높을 때만 날아갑니다. 에너지 낮은 종목은 거르십시오.\n"
             report_msg += "\n"
+
+        # 👇👇 [추가] 수집된 점수대별 통계를 바탕으로 최우수 티어 요약 결론 도출 👇👇
+        if tier_performance_stats:
+            # 승률 1위, PF 1위 추출
+            best_wr_tier = sorted(tier_performance_stats, key=lambda x: x['wr'], reverse=True)[0]
+            best_pf_tier = sorted(tier_performance_stats, key=lambda x: x['pf'], reverse=True)[0]
+
+            report_msg += f"🏆 <b>[점수 구간별 최우수 성적표 요약]</b>\n"
+            report_msg += f" 🥇 최고 승률 구간: <b>{best_wr_tier['tier']}</b> (승률 {best_wr_tier['wr']:.1f}% / 표본 {best_wr_tier['count']}개)\n"
+            report_msg += f" 💎 최고 손익비 구간: <b>{best_pf_tier['tier']}</b> (PF {best_pf_tier['pf']:.2f} / 표본 {best_pf_tier['count']}개)\n\n"
+        # 👆👆 [추가 끝] 👆👆
 
         # ---------------------------------------------------------
         # 👑 [V20.0 거시적(Macro) 전체 그룹 통합 DNA 교차 분석]

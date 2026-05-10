@@ -16,6 +16,9 @@ CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
 TELEGRAM_TOKEN = os.environ.get("BITGET_TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
 
+# 동시 오픈 포지션 상한(기본): 연쇄 청산(붓다빔) 리스크 완충. `BITGET_MAX_OPEN_POSITIONS` in bitget_system_config.json 로 변경.
+_DEFAULT_BITGET_MAX_OPEN_POSITIONS = 20
+
 
 def send_telegram_msg(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -80,6 +83,10 @@ def init_forward_db():
             dyn_rs REAL DEFAULT 0.0,
             dyn_cpv REAL DEFAULT 0.0,
             dyn_tb REAL DEFAULT 0.0,
+            is_tenbagger INTEGER DEFAULT 0,
+            is_top_dna INTEGER DEFAULT 0,
+            is_worst_dna INTEGER DEFAULT 0,
+            is_death_combo INTEGER DEFAULT 0,
             entry_price REAL,
             position_side TEXT DEFAULT 'LONG',
             entry_atr REAL,
@@ -146,6 +153,10 @@ def init_forward_db():
     _ensure_col(cur, "entry_high", "REAL DEFAULT 0.0")
     _ensure_col(cur, "entry_cos_score", "REAL DEFAULT 0.0")
     _ensure_col(cur, "entry_dtw_score", "REAL DEFAULT 0.0")
+    _ensure_col(cur, "is_tenbagger", "INTEGER DEFAULT 0")
+    _ensure_col(cur, "is_top_dna", "INTEGER DEFAULT 0")
+    _ensure_col(cur, "is_worst_dna", "INTEGER DEFAULT 0")
+    _ensure_col(cur, "is_death_combo", "INTEGER DEFAULT 0")
 
     # 실전 체결/리더보드 동기화 로그
     cur.execute(
@@ -199,6 +210,10 @@ def init_forward_db():
                 dyn_rs,
                 dyn_cpv,
                 dyn_tb,
+                is_tenbagger,
+                is_top_dna,
+                is_worst_dna,
+                is_death_combo,
                 entry_price,
                 v_cpv,
                 v_yang,
@@ -459,6 +474,45 @@ def _extract_core_group(sig_type: str) -> str:
     return clean_sig.split(" [")[0].strip()
 
 
+def _thompson_ns_prefix(tf: str, sig_type: str) -> str:
+    """
+    auto_forward_tester 의 Namespace Thompson Kelly 와 동일 규칙.
+    코인 장부는 단일 마켓이므로 KR/US 대신 타임프레임을 접두로 쓴다
+    (bitget_system_config.json 예: 4H_MASTER_S1_BETA_PARAMS).
+    """
+    tfu = str(tf).upper()
+    sig = str(sig_type)
+    ns_prefix = f"{tfu}_MASTER_S1"
+    if "SUPERNOVA" in sig.upper():
+        ns_prefix = f"{tfu}_SUPERNOVA_MASTER"
+    else:
+        if "S4" in sig:
+            ns_prefix = f"{tfu}_MASTER_S4"
+        if "눌림" in sig:
+            ns_prefix = f"{tfu}_NULRIM_S4" if "S4" in sig else f"{tfu}_NULRIM_S1"
+        if "5선" in sig or "5EMA" in sig.upper():
+            ns_prefix = f"{tfu}_5EMA_S1"
+    return ns_prefix
+
+
+def _apply_thompson_kelly_multiplier(cfg: dict, tf: str, sig_type: str, kelly_risk_pct: float) -> float:
+    """
+    [NS]_BETA_PARAMS 의 alpha, beta 로 Thompson 샘플 → 켈리 동적 배분 (주식 동형).
+    """
+    ns_prefix = _thompson_ns_prefix(tf, sig_type)
+    try:
+        beta_pack = cfg.get(f"{ns_prefix}_BETA_PARAMS", {})
+        if not isinstance(beta_pack, dict):
+            beta_pack = {}
+        alpha = float(beta_pack.get("alpha", 0))
+        beta_v = float(beta_pack.get("beta", 0))
+        ts_sample = float(np.random.beta(alpha + 1.0, beta_v + 1.0))
+        ts_mult = float(np.clip(ts_sample / 0.5, 0.20, 1.80))
+        return float(kelly_risk_pct * ts_mult)
+    except Exception:
+        return float(kelly_risk_pct)
+
+
 def _table_name(market_type: str, symbol: str, timeframe: str) -> str:
     prefix = "SPOT" if market_type == "spot" else "FUT"
     return f"BITGET_{prefix}_{symbol}_{timeframe}"
@@ -577,6 +631,94 @@ def _calc_atr14(df):
     return float(x["atr"].iloc[-1]) if len(x) else 0.0
 
 
+def evaluate_evolved_alpha_formula(df, formula):
+    """`auto_forward_tester`와 동일: JSON(AST) 진화 수식을 OHLCV 행렬로 즉석 평가."""
+    if df is None or df.empty:
+        return None
+    try:
+        O = df["Open"]
+        H = df["High"]
+        L = df["Low"]
+        C = df["Close"]
+        V = df["Volume"]
+
+        def add(a, b):
+            return a + b
+
+        def sub(a, b):
+            return a - b
+
+        def mul(a, b):
+            return a * b
+
+        def div(a, b):
+            safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
+            return a / safe_b
+
+        def rolling_mean(x, w):
+            return x.rolling(int(w)).mean()
+
+        def rolling_std(x, w):
+            return x.rolling(int(w)).std()
+
+        env = {
+            "O": O,
+            "H": H,
+            "L": L,
+            "C": C,
+            "V": V,
+            "add": add,
+            "sub": sub,
+            "mul": mul,
+            "div": div,
+            "rolling_mean": rolling_mean,
+            "rolling_std": rolling_std,
+        }
+        out = eval(str(formula), {"__builtins__": {}}, env)
+        if isinstance(out, pd.Series):
+            return float(out.replace([np.inf, -np.inf], np.nan).iloc[-1])
+    except Exception:
+        return None
+    return None
+
+
+def compute_evolved_alpha_bonus_score(sys_config: dict, hist_df: pd.DataFrame) -> float:
+    """
+    관제탑 EVOLVED_ALPHA_FACTORS → 주식 `try_add_virtual_position`과 동일 배율의 알파 가산점(상한 0.15).
+    """
+    evolved_factors = sys_config.get("EVOLVED_ALPHA_FACTORS") if isinstance(sys_config, dict) else None
+    if not isinstance(evolved_factors, dict) or not evolved_factors:
+        evolved_factors = sys_config.get("BITGET_EVOLVED_ALPHA_FACTORS") if isinstance(sys_config, dict) else None
+    if not isinstance(evolved_factors, dict) or not evolved_factors:
+        return 0.0
+    alpha_vals = []
+    for _, formula in evolved_factors.items():
+        v = evaluate_evolved_alpha_formula(hist_df, formula)
+        if v is not None and np.isfinite(v):
+            alpha_vals.append(v)
+    if not alpha_vals:
+        return 0.0
+    mv = max(alpha_vals)
+    evolved_threshold = float(sys_config.get("EVOLVED_ALPHA_THRESHOLD", sys_config.get("BITGET_EVOLVED_ALPHA_THRESHOLD", 0.0)))
+    if mv <= evolved_threshold:
+        return 0.0
+    denom = max(abs(evolved_threshold), abs(mv) * 1e-9, 1e-12)
+    rel_excess = (mv - evolved_threshold) / denom
+    return float(min(0.15, rel_excess * 0.15))
+
+
+def _facts_cos_scalar_01(facts: dict, score_arg) -> float:
+    """facts / score에서 템플릿 코사인(또는 이에 해당하는 동적 점수)을 0~1 스케일로 통일."""
+    facts = facts or {}
+    for k in ("sn_score", "entry_cos_score", "cos_score"):
+        if facts.get(k) is None:
+            continue
+        x = float(facts[k])
+        return float(np.clip(x / 100.0 if x > 1.0 else x, -1.0, 1.0))
+    s = float(score_arg or 0.0)
+    return float(np.clip(s / 100.0 if s > 1.0 else s, 0.0, 1.0))
+
+
 def try_add_virtual_position(
     market_type,
     symbol,
@@ -590,6 +732,8 @@ def try_add_virtual_position(
 ):
     init_forward_db()
     cfg = load_system_config()
+    if str(cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper() == "ON":
+        return False, "🚫 글로벌 서킷 브레이커 ON: 계좌 통합 동결 — 신규 진입 차단."
     tf = str(timeframe).upper()
     market_type = str(market_type).lower()
     symbol = str(symbol)
@@ -618,6 +762,17 @@ def try_add_virtual_position(
         conn.close()
         return False, "중복 보유 중"
 
+    try:
+        _q = cfg.get("BITGET_MAX_OPEN_POSITIONS", _DEFAULT_BITGET_MAX_OPEN_POSITIONS)
+        max_open_quota = max(1, int(float(_q)))
+    except (TypeError, ValueError):
+        max_open_quota = _DEFAULT_BITGET_MAX_OPEN_POSITIONS
+    cur.execute("SELECT COUNT(*) FROM bitget_forward_trades WHERE status='OPEN'")
+    _open_quota_n = cur.fetchone()[0] or 0
+    if int(_open_quota_n) >= max_open_quota:
+        conn.close()
+        return False, "🚨 시장 쿼터 초과"
+
     blocked, sim = _is_blocked_by_anti_patterns(cfg, facts, threshold=0.85)
     if blocked:
         conn.close()
@@ -627,6 +782,40 @@ def try_add_virtual_position(
     if hist_df is None or len(hist_df) < 60:
         conn.close()
         return False, "ATR 계산용 히스토리 부족"
+
+    evaluate_df = hist_df.copy()
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        evaluate_df[col] = pd.to_numeric(evaluate_df[col], errors="coerce")
+    evaluate_df = evaluate_df.dropna(subset=("Open", "High", "Low", "Close", "Volume"), how="any")
+    alpha_bonus_score = compute_evolved_alpha_bonus_score(cfg, evaluate_df)
+
+    max_alpha_cos = _facts_cos_scalar_01(facts or {}, score)
+    max_alpha_cos_effective = min(1.0, float(max_alpha_cos) + float(alpha_bonus_score))
+
+    dyn_cos_limit = float(cfg.get("DYNAMIC_ALPHA_LIMIT", cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.75)))
+    dyn_dtw_limit = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
+    raw_dtw = None if not facts else facts.get("dtw_score")
+    if raw_dtw is None or (isinstance(raw_dtw, str) and raw_dtw.strip() == ""):
+        dtw_ok = True
+    else:
+        try:
+            fd = float(raw_dtw)
+            dtw_ok = fd <= dyn_dtw_limit
+        except (TypeError, ValueError):
+            dtw_ok = True
+
+    cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and dtw_ok
+
+    sig_type_row = sig_type
+    if cutoff_passed and alpha_bonus_score > 0:
+        sig_type_row = f"{sig_type_row} [🧬알파 융합 AST]"
+
+    if not is_incubator_shadow and not cutoff_passed:
+        conn.close()
+        return False, (
+            f"시계열 게이트: AST 융합 Cos_eff={max_alpha_cos_effective:.3f} (기준≥{dyn_cos_limit}) 또는 "
+            f"DTW 조건 불만족(DTW cutoff≤{dyn_dtw_limit})"
+        )
 
     entry_atr = _calc_atr14(hist_df)
     atr_sl_mult = float(cfg.get("ATR_SL_MULT", 2.0))
@@ -658,6 +847,9 @@ def try_add_virtual_position(
     tf_weight = _tf_weight(tf, cfg)
     kelly_risk_pct *= tf_weight
 
+    # 💡 [Namespace Thompson Kelly Sampler] auto_forward_tester 와 동일: [TF]_*_BETA_PARAMS 로 자본 동적 배분
+    kelly_risk_pct = _apply_thompson_kelly_multiplier(cfg, tf, sig_type, float(kelly_risk_pct))
+
     core_group = _extract_core_group(sig_type)
     account_size = float(cfg.get("ACCOUNT_SIZE_USDT", 100000))
     max_position_pct = float(cfg.get("MAX_POSITION_PCT", 0.25))
@@ -668,6 +860,29 @@ def try_add_virtual_position(
     )
     realized_pnl = float(cur.fetchone()[0] or 0.0)
     group_current_seed = account_size + realized_pnl
+
+    # 주식 auto_forward_tester AUM 스케일링 브레이크 이식 — USDT 규모: 대형 복리시드 + 소액 거래대금 = 슬리피지 차단
+    if not is_incubator_shadow:
+        fv = facts or {}
+        seed_slip_thr = float(cfg.get("SEED_SLIPPAGE_GUARD_USDT", 50000.0))
+        min_tv24_usdt = float(cfg.get("MIN_TRADE_VALUE_24H_SLIP_USDT", 5_000_000.0))
+        has_liq = "trade_value_24h" in fv or "marcap_eok" in fv
+        if group_current_seed > seed_slip_thr and has_liq:
+            if fv.get("trade_value_24h") is not None and str(fv.get("trade_value_24h")).strip() != "":
+                try:
+                    tv24_usdt = float(fv["trade_value_24h"])
+                except (TypeError, ValueError):
+                    tv24_usdt = 0.0
+            else:
+                tv24_usdt = float(fv.get("marcap_eok", 0) or 0) * 100_000_000.0
+            if tv24_usdt < min_tv24_usdt:
+                conn.close()
+                return False, (
+                    f"🛑 시드 비대화 슬리피지 방어: [{core_group}] 복리시드 "
+                    f"{group_current_seed:,.0f} USDT > {seed_slip_thr:,.0f} USDT 인데 "
+                    f"24h 거래대금 {tv24_usdt:,.0f} USDT < {min_tv24_usdt:,.0f} USDT "
+                    f"(trade_value_24h·marcap_eok 기준 소형 종목 차단)"
+                )
 
     cur.execute(
         "SELECT SUM(margin_used) FROM bitget_forward_trades WHERE status='OPEN' AND sig_type LIKE ?",
@@ -720,9 +935,7 @@ def try_add_virtual_position(
     _ = fixed_notional
 
     now = datetime.utcnow().strftime("%Y-%m-%d")
-    entry_cos_score = float(
-        facts.get("sn_score", facts.get("entry_cos_score", facts.get("cos_score", 0.0))) or 0.0
-    )
+    entry_cos_score = float(max_alpha_cos_effective * 100.0)
     entry_dtw_score = float(facts.get("dtw_score", facts.get("entry_dtw_score", 0.0)) or 0.0)
     cur.execute(
         """
@@ -738,7 +951,7 @@ def try_add_virtual_position(
             market_type,
             symbol,
             tf,
-            sig_type,
+            sig_type_row,
             tier_label,
             float(score),
             float(facts.get("dyn_rs", 0)),
@@ -800,28 +1013,212 @@ def _get_latest_bar(conn, market_type, symbol, timeframe):
     }
 
 
+def _floating_pnl_usdt_open_row(conn, r) -> float:
+    """OPEN 한 줄 기준 현재 평가 USDT 손익(주식 sim_kelly_invest·수익률 곱 패턴과 동일). 양수/음수 반환."""
+    latest = _get_latest_bar(conn, r["market_type"], r["symbol"], r["timeframe"])
+    if latest is None:
+        return 0.0
+    ep = float(r["entry_price"] or 0.0)
+    if ep <= 0:
+        return 0.0
+    c = float(latest["close"])
+    pos_side = str(r.get("position_side", "LONG")).upper()
+    if pos_side == "SHORT":
+        current_ret_pct = ((ep - c) / ep) * 100.0
+    else:
+        current_ret_pct = ((c - ep) / ep) * 100.0
+    notion = float(r.get("sim_kelly_invest", 0.0) or 0.0)
+    if notion <= 0.0:
+        margin_used = float(r.get("margin_used", 0.0) or 0.0)
+        lev = float(r.get("leverage", 1.0) or 1.0)
+        mkt = str(r.get("market_type", "")).lower()
+        if margin_used > 0 and mkt == "futures" and lev > 0:
+            notion = margin_used * lev
+        else:
+            notion = margin_used
+    return float(notion) * (current_ret_pct / 100.0)
+
+
+def _aggregate_global_open_loss_usdt(conn) -> tuple[float, int]:
+    """
+    status=OPEN 인 전 종목 미실현 손익 중 손실분만 합산 (양수 포지션 PnL은 제외 → 주식 total_open_loss_amount 와 동일).
+    반환: (total_open_loss_amount, open_count).
+    """
+    df_open = pd.read_sql(
+        "SELECT * FROM bitget_forward_trades WHERE status='OPEN'",
+        conn,
+    )
+    total_open_loss_amount = 0.0
+    for _, row in df_open.iterrows():
+        pnl = _floating_pnl_usdt_open_row(conn, row)
+        if pnl < 0:
+            total_open_loss_amount += pnl
+    return total_open_loss_amount, len(df_open)
+
+
+def _finalize_global_circuit_breaker_track(conn, cfg):
+    """OPEN 전역 미실현 손실 기준 글로벌 서킷 ON + 커밋.(주식 track_daily_positions 패턴)"""
+    base_seed = float(cfg.get("ACCOUNT_SIZE_USDT", 100000.0) or 0.0)
+    total_open_loss_amount, n_open_global = _aggregate_global_open_loss_usdt(conn)
+    conn.commit()
+    if base_seed > 0:
+        loss_ratio = total_open_loss_amount / base_seed
+        if loss_ratio <= -0.05:
+            latest_config = load_system_config()
+            if str(latest_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper() != "ON":
+                latest_config["GLOBAL_CIRCUIT_BREAKER"] = "ON"
+                latest_config["GLOBAL_CIRCUIT_BREAKER_TRIGGERED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+                latest_config["GLOBAL_CIRCUIT_BREAKER_LAST_LOSS_RATIO"] = round(float(loss_ratio), 6)
+                save_system_config(latest_config)
+                send_telegram_msg(
+                    f"🚨 <b>[GLOBAL CIRCUIT BREAKER — Bitget]</b>\n"
+                    f"▪ 미실현 손실 합(OPEN만): <b>{total_open_loss_amount:,.2f} USDT</b>\n"
+                    f"▪ 기준 시드(ACCOUNT_SIZE_USDT): <b>{base_seed:,.2f} USDT</b>\n"
+                    f"▪ 손실/시드: <b>{loss_ratio * 100:.2f}%</b> (한계 ≤-5.0%)\n"
+                    f"▪ 현재 OPEN 수: <b>{n_open_global}</b>\n"
+                    f"조치: <code>GLOBAL_CIRCUIT_BREAKER=ON</code> — 신규 진입 전면 차단."
+                )
+
+
+def _days_since_entry_date(entry_date_val):
+    try:
+        if entry_date_val is None:
+            return None
+        s = str(entry_date_val).strip()[:10]
+        if len(s) < 10:
+            return None
+        ed = datetime.strptime(s, "%Y-%m-%d").date()
+        return (datetime.utcnow().date() - ed).days
+    except Exception:
+        return None
+
+
+def _force_close_zombie_delist_or_halt(conn, r):
+    """
+    DB/캔들 단절이 14일+ 지속되면 상장폐지·장기 거래정지로 간주하고 좀비 포지션 강제 청산 + 국고 환입.
+    """
+    ret = -100.0
+    exit_rsn = "상폐/거래정지 강제청산"
+    exit_type = "DELIST_OR_HALT"
+    exit_d = datetime.utcnow().strftime("%Y-%m-%d")
+    ep = float(r.get("entry_price") or 0.0)
+    new_max = float(r.get("max_high") or ep)
+    new_min = float(r.get("min_low") or ep)
+    new_bars = int(r.get("bars_held") or 0)
+    new_up = float(r.get("up_vol_sum") or 0.0)
+    new_down = float(r.get("down_vol_sum") or 0.0)
+    eb = float(r.get("entry_breadth") or 1.0)
+    flow_tags = "#상폐_거래정지_좀비해제"
+    neg = float(ret)
+    update_sql = """
+        UPDATE bitget_forward_trades
+        SET status='CLOSED_LOSS', exit_date=?, exit_reason=?, final_ret=?, mfe=?,
+            max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?,
+            exit_type=?,
+            sim_stat_ret=?, sim_stat_status='CLOSED_LOSS',
+            sim_tech_ret=?, sim_tech_status='CLOSED_LOSS',
+            sim_breadth_ret=?, sim_breadth_status='CLOSED_LOSS',
+            entry_breadth=?,
+            live_a_ret=?, live_a_status='CLOSED_LOSS',
+            cand_b_ret=?, cand_b_status='CLOSED_LOSS',
+            champ_c_ret=?, champ_c_status='CLOSED_LOSS',
+            flow_tags=?
+        WHERE id=?
+    """
+    params = (
+        exit_d,
+        exit_rsn,
+        ret,
+        0.0,
+        new_max,
+        new_min,
+        new_bars,
+        new_up,
+        new_down,
+        exit_type,
+        neg,
+        neg,
+        neg,
+        eb,
+        neg,
+        neg,
+        neg,
+        flow_tags,
+        int(r["id"]),
+    )
+    max_retry = 5
+    for attempt in range(max_retry):
+        try:
+            conn.execute(update_sql, params)
+            break
+        except sqlite3.OperationalError as e:
+            em = str(e).lower()
+            if "database is locked" in em:
+                if attempt >= max_retry - 1:
+                    raise
+                wait_s = 0.5 * (2 ** attempt)
+                print(
+                    f"⏳ [DB LOCK 재시도] 좀비청산 {r['symbol']} #{attempt + 1}/{max_retry} wait={wait_s:.2f}s"
+                )
+                time.sleep(wait_s)
+                continue
+            raise
+
+    treasury_key = "TREASURY_SPOT_USDT" if r["market_type"] == "spot" else "TREASURY_FUTURES_USDT"
+    cur_cfg = load_system_config()
+    before = float(cur_cfg.get(treasury_key, 0.0))
+    margin_used = float(r.get("margin_used", 0.0) or 0.0)
+    pnl = float(r.get("sim_kelly_invest", 0.0) or 0.0) * (ret / 100.0)
+    cur_cfg[treasury_key] = max(0.0, before + margin_used + pnl)
+    save_system_config(cur_cfg)
+
+    send_telegram_msg(
+        f"☠️ <b>[좀비 해제]</b> {str(r['market_type']).upper()} <code>{r['symbol']}</code> #{r['timeframe']}\n"
+        f"▪ {exit_rsn} (진입 후 14일+ 데이터 단절)\n"
+        f"▪ final_ret <b>{ret}%</b> · 국고 환입 반영 ({treasury_key})"
+    )
+
+
 def track_daily_positions(market_type):
     init_forward_db()
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
+    cfg = load_system_config()
     df_active = pd.read_sql(
         "SELECT * FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",
         conn,
         params=(str(market_type).lower(),),
     )
     if df_active.empty:
-        conn.close()
+        print(f"\n🔍 [포워드 테스팅] {market_type} OPEN 0건 — 글로브 손실/서킷만 점검")
+        try:
+            _finalize_global_circuit_breaker_track(conn, cfg)
+        finally:
+            conn.close()
         return
 
-    cfg = load_system_config()
     breadth_now = _calc_market_breadth(conn)
+    # 주식 auto_forward_tester: breadth < 0.97 → MAE 손절·타임스탑 0.5배 비상 조임
+    breadth_collapse_tightening = breadth_now < 0.97
+    if breadth_collapse_tightening:
+        print(
+            f"🛡️ [포워드 Bitget] 시장 폭 붕괴 연동 (breadth={breadth_now:.3f} < 0.97): "
+            f"기보유 MAE 손절선·타임스탑 0.5배 타이트닝"
+        )
+
     print(f"\n🔍 [포워드 테스팅] {market_type} {len(df_active)}개 포지션 추적 중...")
 
     for _, r in df_active.iterrows():
         try:
+            days_in_pos = _days_since_entry_date(r.get("entry_date"))
             latest = _get_latest_bar(conn, r["market_type"], r["symbol"], r["timeframe"])
-            if latest is None:
+            hist_df = latest.get("hist_df") if latest is not None else None
+            data_insufficient = latest is None or hist_df is None or len(hist_df) < 20
+            if data_insufficient:
+                if days_in_pos is not None and days_in_pos >= 14:
+                    _force_close_zombie_delist_or_halt(conn, r)
                 continue
+
             c = latest["close"]
             o = latest["open"]
             h = latest["high"]
@@ -844,13 +1241,18 @@ def track_daily_positions(market_type):
             new_up_vol = float(r["up_vol_sum"]) + (v if c > o else 0.0)
             new_down_vol = float(r["down_vol_sum"]) + (v if c < o else 0.0)
 
-            hist = latest["hist_df"]
-            if hist is None or len(hist) < 20:
-                continue
+            hist = hist_df
             cur_atr = _calc_atr14(hist)
-            entry_atr = float(r["entry_atr"] or 0.0)
-            if entry_atr <= 0:
-                entry_atr = cur_atr
+            # 주식 forward_trades와 동형: 백필 시 entry_atr을 DB에 박제 — 캔들마다 cur_atr로 손절선이 밀리는 고무줄 버그 방지
+            entry_atr = r.get("entry_atr", 0.0)
+            if entry_atr == 0.0 or pd.isna(entry_atr):
+                entry_atr = float(cur_atr)
+                conn.execute(
+                    "UPDATE bitget_forward_trades SET entry_atr=? WHERE id=?",
+                    (round(entry_atr, 6), int(r["id"])),
+                )
+            else:
+                entry_atr = float(entry_atr)
 
             hist["ema10"] = hist["Close"].ewm(span=10, adjust=False).mean()
             hist["ema20"] = hist["Close"].ewm(span=20, adjust=False).mean()
@@ -869,19 +1271,24 @@ def track_daily_positions(market_type):
             is_tech_exit_short = (c > cur_zlema) or (ema10_now > ema20_now and ema10_prev <= ema20_prev)
             is_tech_exit = is_tech_exit_short if pos_side == "SHORT" else is_tech_exit_long
 
+            entry_breadth = float(r.get("entry_breadth", 1.0) or 1.0)
+            breadth_delta = breadth_now - entry_breadth
+            breadth_collapse = breadth_now < 0.95 and breadth_delta < -0.03
+
             ns_prefix = f"{str(r['timeframe']).upper()}_LIVE_PARAMS"
             live_params = cfg.get(ns_prefix, {"DYNAMIC_MAE_SL": -3.5, "DYNAMIC_MFE_TP": 10.0})
             dyn_mae_sl = float(live_params.get("DYNAMIC_MAE_SL", -3.5))
             dyn_mfe_tp = float(live_params.get("DYNAMIC_MFE_TP", 10.0))
             opt_time_stop = int(cfg.get(f"{str(r['timeframe']).upper()}_TIME_STOP", 10))
+            # 주식 패턴: 시장폭 붕괴(<0.97) 또는 포지션 단위 폭 급변 → MAE·타임스탑 절반
+            if breadth_collapse_tightening or breadth_collapse:
+                dyn_mae_sl *= 0.5
+                opt_time_stop = max(1, int(round(float(opt_time_stop) * 0.5)))
             opt_sl_atr = float(r["atr_sl_mult"] or cfg.get("ATR_SL_MULT", 2.0))
             if pos_side == "SHORT":
                 sl_price = ep + (opt_sl_atr * entry_atr)
             else:
                 sl_price = ep - (opt_sl_atr * entry_atr)
-            entry_breadth = float(r.get("entry_breadth", 1.0) or 1.0)
-            breadth_delta = breadth_now - entry_breadth
-            breadth_collapse = breadth_now < 0.95 and breadth_delta < -0.03
 
             do_exit = False
             exit_rsn = ""
@@ -1016,6 +1423,27 @@ def track_daily_positions(market_type):
                     tags.append("#건전한조정_매집우위")
                 elif vol_ratio < 0.8:
                     tags.append("#음봉대량거래_세력이탈")
+
+                # 🧟 [핵심 추가] 언더독(0~60점대) 전용 정밀 부검 꼬리표 부착
+                if float(r.get("total_score", 100)) <= 60.0:
+                    _rs = float(r.get("dyn_rs", 0) or r.get("v_rs", 0))
+                    _eng = float(r.get("v_energy", 0) or 0)
+                    _cpv = float(r.get("dyn_cpv", 0) or r.get("v_cpv", 0))
+
+                    if ret > 0 or mfe >= 10.0:  # 수익으로 마감했거나 장중 10% 이상 대시세를 준 경우
+                        if _rs < 0:
+                            tags.append("#저득점_역배열_반등성공")
+                        elif _rs > 30:
+                            tags.append("#저득점_이격과다_추가폭발")
+
+                        if _eng > 15.0:
+                            tags.append("#저득점_수급깡패_성공")
+                    else:  # 손실 마감 (참사주)
+                        if _cpv > 0.75:
+                            tags.append("#저득점_윗꼬리_참사")
+                        elif vol_ratio < 0.6:
+                            tags.append("#저득점_투매_수급붕괴")
+
                 flow_tags = " ".join(tags)
 
                 update_sql = """
@@ -1143,8 +1571,10 @@ def track_daily_positions(market_type):
                 print(f"🚨 [청산 추적 에러] unknown_symbol: {e}")
             continue
 
-    conn.commit()
-    conn.close()
+    try:
+        _finalize_global_circuit_breaker_track(conn, cfg)
+    finally:
+        conn.close()
 
 
 def _pf(series):

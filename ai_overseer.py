@@ -1,6 +1,7 @@
 # ai_overseer.py
 import os
 import time
+import random
 import json
 import sqlite3
 import pandas as pd
@@ -42,6 +43,32 @@ def send_telegram_alert(text):
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
         print(f"텔레그램 발송 실패: {e}")
+
+def safe_generate_content(client, *, model, contents, max_retries=5):
+    """429 에러 발생 시 지수 백오프(Exponential Backoff)를 적용하여 안전하게 재시도하는 함수"""
+    for attempt in range(max_retries):
+        try:
+            # 💡 [핵심] API 호출 전 기본적으로 3.5초를 쉬어서 1분에 17회 이상 호출되지 않도록 강제 속도 조절
+            time.sleep(3.5)
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+            )
+            return response
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+                # 구글이 차단하면 튕기지 않고 대기함 (시도 횟수에 따라 대기 시간 증가)
+                wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)  # 예: 10초, 20초, 40초...
+                send_telegram_alert(f"⏳ [API 속도 조절 중] 구글 제한에 걸려 {wait_time:.1f}초 대기 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                # 429가 아닌 진짜 에러는 그냥 뱉어냄
+                raise e
+
+    # 5번 다 실패하면 그때 포기
+    send_telegram_alert("🚨 [API 감시자 에러] 5회 재시도에도 불구하고 API 통신에 실패했습니다.")
+    return None
 
 def gather_daily_system_facts():
     """시스템의 3대 장부(DB, JSON, CSV)에서 오늘 하루의 '팩트'만 무결성으로 추출합니다."""
@@ -137,10 +164,13 @@ def run_ai_auditor():
 
     try:
         # 👇👇 [수정] 대표님 코드 구조에 맞춘 신형 API(client.models) 호출 방식 대입 👇👇
-        ai_res = client.models.generate_content(
+        ai_res = safe_generate_content(
+            client,
             model='gemini-2.5-flash', # 대표님이 사용하시는 최신 속도형 모델 적용
-            contents=prompt
+            contents=prompt,
         )
+        if ai_res is None:
+            return
         
         # 텔레그램 직보
         ai_text = ai_res.text.strip() if ai_res.text else "⚠️ 분석 리포트를 생성하지 못했습니다."
