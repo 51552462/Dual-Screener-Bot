@@ -1113,6 +1113,57 @@ def send_comprehensive_daily_report():
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
+
+    # 🛰️ [신경망 통합] 위성 데이터 수집 로직
+    satellite_brief = "\n🛰️ <b>[팩토리 위성망 통합 첩보]</b>\n"
+    try:
+        _radar = (sys_config.get('SMART_MONEY_RADAR') or {})
+        smart_picks = _radar.get('picks', {}) if isinstance(_radar, dict) else {}
+        if not isinstance(smart_picks, dict):
+            smart_picks = {}
+        _anti = sys_config.get('ANTI_PATTERNS', [])
+        if isinstance(_anti, list):
+            anti_n = len(_anti)
+        elif isinstance(_anti, dict):
+            anti_n = len(_anti)
+        else:
+            anti_n = 0
+        satellite_brief += f" ▪️ 🕵️ 스마트머니: {len(smart_picks)}개 종목 매집 포착\n"
+        satellite_brief += f" ▪️ 💀 오답노트: {anti_n}개의 독성 패턴 방어 중\n"
+    except Exception:
+        satellite_brief += " ▪️ 🕵️ 스마트머니: (조회 실패)\n ▪️ 💀 오답노트: (조회 실패)\n"
+
+    try:
+        alt_db = os.path.join(os.path.dirname(DB_PATH), 'alt_data.sqlite')
+        if os.path.exists(alt_db):
+            conn_alt = sqlite3.connect(f"file:{alt_db}?mode=ro", uri=True, check_same_thread=False)
+            try:
+                row = conn_alt.execute(
+                    "SELECT usd_krw, us_10y_yield, vix_index FROM macro_daily ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+                if row:
+                    satellite_brief += f" ▪️ 💹 매크로: 환율 {row[0]}원 / 국채 {row[1]}% / VIX {row[2]}\n"
+            finally:
+                conn_alt.close()
+    except Exception:
+        pass
+
+    try:
+        news_db = os.path.join(os.path.dirname(DB_PATH), 'news_data.sqlite')
+        if os.path.exists(news_db):
+            conn_news = sqlite3.connect(f"file:{news_db}?mode=ro", uri=True, check_same_thread=False)
+            try:
+                row = conn_news.execute(
+                    "SELECT top_keyword_1, top_keyword_2, top_keyword_3, sentiment_score FROM daily_sentiment ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+                if row:
+                    satellite_brief += f" ▪️ 🧠 센티먼트: {row[0]}, {row[1]}, {row[2]} (온도 {row[3]}점)\n"
+            finally:
+                conn_news.close()
+    except Exception:
+        pass
+
+    satellite_brief += "--------------------------------------\n"
     
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
@@ -1138,6 +1189,8 @@ def send_comprehensive_daily_report():
             # 📑 결과지 1: 거시 국면 & 국고 현황
             # ---------------------------------------------------------
             msg1 = f"{market_icon} <b>[1/9] 거시 국면 및 국고(Treasury) 현황</b>\n"
+            if market == 'KR':
+                msg1 = "━━━━━━━━━━━━━━━━━━━━\n" + f"📢 <b>[일일 통합 성과 리포트]</b>\n" + satellite_brief + msg1
             msg1 += f"📅 {today_str} | 국면: <b>{regime}</b>\n"
             msg1 += f"🏦 <b>{market} 국고 잔여금:</b> {treasury_balance:,.0f} 원\n"
             msg1 += f"⚖️ 동적 켈리 비중: {kelly_risk:.2f}%\n"
