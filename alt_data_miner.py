@@ -2,6 +2,7 @@ import sqlite3
 import pandas as pd
 import yfinance as yf
 import os
+import random
 from datetime import datetime
 import time
 
@@ -42,10 +43,13 @@ def run_alternative_data_mining():
     
     today_str = datetime.now().strftime('%Y-%m-%d')
     
-    # 안정적인 글로벌 벤치마크 데이터 수집
+    # 안정적인 글로벌 벤치마크 데이터 수집 (연속 yfinance 호출 사이 스텔스 지터)
     usd_krw = fetch_yfinance_data("KRW=X")    # 원/달러 환율
+    time.sleep(random.uniform(0.3, 0.7))
     us_10y = fetch_yfinance_data("^TNX")      # 미국 10년물 국채 금리
+    time.sleep(random.uniform(0.3, 0.7))
     vix = fetch_yfinance_data("^VIX")         # VIX (공포 지수)
+    time.sleep(random.uniform(0.3, 0.7))
     dxy = fetch_yfinance_data("DX-Y.NYB")     # 달러 인덱스
     
     # 크롤링이 필요한 심화 데이터는 초기값 0.0으로 세팅 (추후 기능 확장 시 업데이트)

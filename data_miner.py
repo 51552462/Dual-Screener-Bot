@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import time
+import random
 import sqlite3
 from datetime import datetime, timedelta
 from sklearn.mixture import GaussianMixture
@@ -253,24 +255,59 @@ def _merge_forward_winner_dna_into_df(df: pd.DataFrame, target_features: list) -
     print(f"📈 [실전 DNA 병합] forward_trades 양(+) 청산 {len(winner_rows)}건 추가 (exit_date >= {cutoff}, TML=OHLCV 역산)")
     return pd.concat([df, winner_rows], ignore_index=True)
 
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
+    return {}
+
+
 def load_or_create_config():
     if not os.path.exists(CONFIG_PATH):
         return {}
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return load_config()
 
-def save_config(config_data):
+
+def save_config(config_data, max_retries=5):
+    """
+    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
+    """
     temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-    except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+    for attempt in range(max_retries):
+        try:
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_PATH)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+            return False
+    return False
 
 def run_cluster_mining():
     print("🚀 [V65.0 초신성 CSV 데이터 마이닝 및 클러스터링 가동]")

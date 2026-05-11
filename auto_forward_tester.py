@@ -5,6 +5,7 @@ import FinanceDataReader as fdr
 import yfinance as yf
 import os, time, requests
 import random
+import re
 from datetime import datetime, timedelta
 import pytz
 import sqlite3
@@ -15,6 +16,155 @@ TELEGRAM_CHAT_ID = "6838834566"
 
 # 💡 [방향성 2번] 전문적인 DB 시스템 (CSV 폐기)
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+
+
+def _strategy_colosseum_brief(db_path):
+    """
+    가상매매 `forward_trades` 청산 건을 로직명(sig_type 코어)별로 집계해 텔레그램용 랭킹 문자열 생성.
+    DB는 읽기 전용 URI로만 접근. 실패 시 빈 문자열.
+    """
+    try:
+        uri_path = db_path.replace("\\", "/")
+        conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
+        try:
+            df = pd.read_sql(
+                "SELECT sig_type, final_ret FROM forward_trades "
+                "WHERE status LIKE 'CLOSED%' AND final_ret IS NOT NULL",
+                conn,
+            )
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+
+    if df is None or df.empty:
+        return (
+            '\n⚔️ <b>[전략 콜로세움: 실무자 전투 랭킹]</b>\n'
+            "<i>청산 완료 데이터가 없습니다.</i>\n"
+        )
+
+    def _core_group(sig):
+        clean_sig = re.sub(r"\[.*?\]", "", str(sig)).strip()
+        return clean_sig if clean_sig else str(sig).replace("[", "").replace("]", "").strip()
+
+    df = df.copy()
+    df["_sig"] = df["sig_type"].astype(str)
+    df = df.loc[~df["_sig"].str.contains("INCUBATOR", na=False)].copy()
+    df["logic"] = df["sig_type"].apply(_core_group)
+    df = df.loc[df["logic"].str.len() > 0].copy()
+
+    rows = []
+    for logic, g in df.groupby("logic"):
+        fr = pd.to_numeric(g["final_ret"], errors="coerce").dropna()
+        if fr.empty:
+            continue
+        n = int(len(fr))
+        wins = int((fr > 0).sum())
+        sum_ret = float(fr.sum())
+        wr = (wins / n * 100.0) if n else 0.0
+        disp = str(logic).strip()
+        if len(disp) > 120:
+            disp = disp[:117] + "..."
+        rows.append({"logic": disp, "n": n, "wins": wins, "wr": wr, "sum_ret": sum_ret})
+
+    if not rows:
+        return (
+            '\n⚔️ <b>[전략 콜로세움: 실무자 전투 랭킹]</b>\n'
+            "<i>집계 가능한 청산 건이 없습니다.</i>\n"
+        )
+
+    rows_desc = sorted(rows, key=lambda x: x["sum_ret"], reverse=True)
+    top3 = rows_desc[:3]
+    rows_asc = sorted(rows, key=lambda x: x["sum_ret"])
+    bottom2 = rows_asc[:2]
+
+    def _esc(s):
+        t = str(s)
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    lines = ['\n⚔️ <b>[전략 콜로세움: 실무자 전투 랭킹]</b>\n']
+    lines.append("🏆 <b>[TOP 3 에이스 로직]</b>\n")
+    medals = ["🥇", "🥈", "🥉"]
+    for i, r in enumerate(top3):
+        m = medals[i] if i < len(medals) else "🏅"
+        lg = _esc(r["logic"])
+        lines.append(
+            f" {m} {lg}: 승률 {r['wr']:.1f}% / 누적 수익 {r['sum_ret']:+.2f}% (거래 {r['n']}건)\n"
+        )
+
+    lines.append("\n💀 <b>[도태 경고 (하위 로직)]</b>\n")
+    for r in bottom2:
+        lg = _esc(r["logic"])
+        lines.append(
+            f" 🔻 {lg}: 승률 {r['wr']:.1f}% / 누적 수익 {r['sum_ret']:+.2f}% (거래 {r['n']}건)\n"
+        )
+
+    return "".join(lines)
+
+
+def _shadow_performance_brief(sys_config):
+    """SHADOW_PERFORMANCE → 텔레그램 [그림자 장부] 섹션."""
+    try:
+        def esc(s):
+            t = str(s)
+            return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        sp = sys_config.get("SHADOW_PERFORMANCE")
+        if not isinstance(sp, dict):
+            return ""
+        blocked = sp.get("blocked") or {}
+        by_reason = blocked.get("by_reason") or {}
+        raw_counts = blocked.get("reason_event_counts") or {}
+        lines = ['\n🛡️ <b>[그림자 장부: 위성 기여도 평가]</b>\n']
+        updated = sp.get("updated_at")
+        if updated:
+            lines.append(f"<i>최종 산출: {esc(updated)}</i>\n")
+
+        reason_lines = [
+            ("TOXIC_ANTI_PATTERN", "📉 <b>오답노트 방어력</b>"),
+            ("TOXIC_ML_TREE", "🧬 <b>ML 독성 트리 방어력</b>"),
+            ("DOOMSDAY_DEFCON", "🚨 <b>둠스데이 방어력</b>"),
+        ]
+        for rk, title in reason_lines:
+            br = by_reason.get(rk) or {}
+            try:
+                ntot = int(raw_counts.get(rk, 0))
+            except (TypeError, ValueError):
+                ntot = 0
+            if ntot == 0 and not br:
+                continue
+            if rk == "DOOMSDAY_DEFCON":
+                nskip = int(br.get("n_skipped_no_price", 0) or 0)
+                lines.append(
+                    f"{title}: <b>{ntot}</b>건 차단 기록"
+                    f" (참고가 없음·거시 차단 {nskip}건)\n"
+                )
+                continue
+            ne = int(br.get("n_evaluated_price", 0) or 0)
+            se = float(br.get("sum_signed_defense_pct", 0.0) or 0.0)
+            lines.append(
+                f"{title}: <b>{ntot}</b>건 차단 / 가격평가 {ne}건 / 순방어지표 <b>{se:+.1f}%</b>\n"
+            )
+
+        sm = sp.get("smart_money_buff") or {}
+        wt = sm.get("win_rate_tagged")
+        wu = sm.get("win_rate_untagged")
+        dlt = sm.get("delta_pct_pts")
+        if wt is not None and wu is not None:
+            dp = float(dlt) if dlt is not None else float(wt) - float(wu)
+            lines.append(
+                f"🔥 <b>스마트머니 버프</b>: 태그 종목 승률 <b>{float(wt):.0f}%</b> "
+                f"(일반 <b>{float(wu):.0f}%</b>, 우위 <b>{dp:+.0f}%p</b>)\n"
+            )
+        else:
+            lines.append(
+                "🔥 <b>스마트머니 버프</b>: <i>표본 부족 (가상매매·청산 매칭 필요)</i>\n"
+            )
+
+        return "".join(lines)
+    except Exception:
+        return ""
+
 
 def send_telegram_msg(text):
     try:
@@ -100,17 +250,76 @@ def init_forward_db():
     except: pass
     # 👆👆 [추가 끝] 👆👆
 
+    try:
+        import shadow_tracking
+
+        shadow_tracking.init_shadow_tables(cursor)
+    except Exception as e:
+        print(f"⚠️ 그림자 장부 스키마 초기화 스킵: {e}")
+
     conn.commit()
     conn.close()
 
 # 💡 [시스템 연결] 관제탑 설정 로드 함수 추가 (init_forward_db 밑에 추가)
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-def load_system_config():
-    try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, 'r') as f: return json.load(f)
-    except: pass
+
+
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
     return {}
+
+
+def save_config(config, max_retries=5):
+    """
+    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
+    """
+    temp_path = f"{CONFIG_PATH}.temp"
+    for attempt in range(max_retries):
+        try:
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_PATH)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+            return False
+    return False
+
+
+def load_system_config():
+    return load_config()
+
+
+def save_system_config(config):
+    return save_config(config)
+
 
 # system_auto_pilot.run_autonomous_analysis와 동일 정의: RSP/SPY, 50일 롤링 평균 대비 현재 비율 (0.97 미만 = 쏠림)
 _BREADTH_CACHE_DAY = None
@@ -146,19 +355,6 @@ def get_cached_market_breadth():
     _BREADTH_CACHE_DAY = day_key
     _BREADTH_CACHE_VAL = float(v) if np.isfinite(v) else 1.0
     return float(_BREADTH_CACHE_VAL)
-
-def save_system_config(config):
-    temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-    except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
 
 def evaluate_evolved_alpha_formula(df, formula):
     """JSON에 저장된 진화 수식을 실시간으로 계산한다."""
@@ -279,7 +475,18 @@ def generate_mutant_strategies():
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
-def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sector="유망섹터", trade_source="STANDARD"):
+def try_add_virtual_position(
+    market,
+    code,
+    name,
+    sig_type,
+    score,
+    ep,
+    facts,
+    sector="유망섹터",
+    trade_source="STANDARD",
+    satellite_tags=None,
+):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
 
@@ -740,6 +947,16 @@ def try_add_virtual_position(market, code, name, sig_type, score, ep, facts, sec
         round(min(1.0, max_alpha_cos + alpha_bonus_score), 3), round(min_alpha_dtw, 3), 
         round(entry_atr, 4), invest_amount, shares, sim_kelly_invest, cur_regime # 💡 V38.0 ATR 및 투입 금액/수량 기록
     ))
+    if satellite_tags is not None:
+        try:
+            import shadow_tracking
+
+            logged_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+            shadow_tracking.insert_virtual_trade_row(
+                cursor, market, code_str, name, ep, sig_type, str(satellite_tags), logged_at
+            )
+        except Exception:
+            pass
     conn.commit()
     conn.close()
     
@@ -1114,6 +1331,30 @@ def send_comprehensive_daily_report():
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
 
+    # 둠스데이·블랙홀 첩보 (위성 브리핑과 시너지 판단에 공통 사용)
+    _dd = sys_config.get("DOOMSDAY_DEFCON") or {}
+    defcon_level = 5
+    if isinstance(_dd, dict):
+        try:
+            defcon_level = int(_dd.get("level", 5))
+        except (TypeError, ValueError):
+            defcon_level = 5
+    _bh = sys_config.get("BLACKHOLE_TOXIC_COUNT", 0)
+    blackhole_count = 0
+    if isinstance(_bh, dict):
+        try:
+            blackhole_count = int(_bh.get("count", 0) or 0)
+        except (TypeError, ValueError):
+            blackhole_count = 0
+    else:
+        try:
+            blackhole_count = int(_bh or 0)
+        except (TypeError, ValueError):
+            blackhole_count = 0
+
+    smart_money_count = 0
+    toxic_count = 0
+
     # 🛰️ [신경망 통합] 위성 데이터 수집 로직
     satellite_brief = "\n🛰️ <b>[팩토리 위성망 통합 첩보]</b>\n"
     try:
@@ -1121,6 +1362,7 @@ def send_comprehensive_daily_report():
         smart_picks = _radar.get('picks', {}) if isinstance(_radar, dict) else {}
         if not isinstance(smart_picks, dict):
             smart_picks = {}
+        smart_money_count = len(smart_picks)
         _anti = sys_config.get('ANTI_PATTERNS', [])
         if isinstance(_anti, list):
             anti_n = len(_anti)
@@ -1128,7 +1370,8 @@ def send_comprehensive_daily_report():
             anti_n = len(_anti)
         else:
             anti_n = 0
-        satellite_brief += f" ▪️ 🕵️ 스마트머니: {len(smart_picks)}개 종목 매집 포착\n"
+        toxic_count = anti_n
+        satellite_brief += f" ▪️ 🕵️ 스마트머니: {smart_money_count}개 종목 매집 포착\n"
         satellite_brief += f" ▪️ 💀 오답노트: {anti_n}개의 독성 패턴 방어 중\n"
     except Exception:
         satellite_brief += " ▪️ 🕵️ 스마트머니: (조회 실패)\n ▪️ 💀 오답노트: (조회 실패)\n"
@@ -1163,8 +1406,48 @@ def send_comprehensive_daily_report():
     except Exception:
         pass
 
+    # 🧠 AI 관제탑 시너지 판단 엔진 (위성·거시 지표 종합)
+    strategy_insight = "\n💡 <b>[AI 관제탑 전략 브리핑]</b>\n"
+    if defcon_level <= 2:
+        strategy_insight += (
+            "🚨 <b>[폭풍 전야]</b> 거시경제(채권/원자재) 붕괴 시그널이 감지되었습니다. "
+            "스나이퍼 신규 매수를 전면 중단하고, 현금 비중을 극대화하십시오.\n"
+        )
+    elif defcon_level >= 4 and smart_money_count >= 5:
+        strategy_insight += (
+            "🚀 <b>[골디락스 공격]</b> 거시경제가 안정적이며 세력 수급이 강합니다. "
+            "공격적인 롱(Long) 포지션 베팅을 권장합니다.\n"
+        )
+    elif toxic_count >= 100 or blackhole_count >= 10:
+        strategy_insight += (
+            "🕳️ <b>[숏 타격 기회]</b> 시장 내부에 독성 참사주가 무더기로 쌓이고 있습니다. "
+            "인버스(숏) 베팅을 통한 시장 중립(Market Neutral) 방어망을 가동하십시오.\n"
+        )
+    else:
+        strategy_insight += (
+            "⚖️ <b>[관망 및 선별]</b> 시장 방향성이 혼조세입니다. 스나이퍼의 타점 기준을 엄격하게 높이고, "
+            "확실한 개별주 장세에만 짧게 대응하십시오.\n"
+        )
+
+    ranking_brief = ""
+    try:
+        ranking_brief = _strategy_colosseum_brief(DB_PATH)
+    except Exception:
+        ranking_brief = ""
+
+    shadow_brief = ""
+    try:
+        shadow_brief = _shadow_performance_brief(sys_config)
+    except Exception:
+        shadow_brief = ""
+
+    satellite_brief += strategy_insight
+    if ranking_brief:
+        satellite_brief += ranking_brief
+    if shadow_brief:
+        satellite_brief += shadow_brief
     satellite_brief += "--------------------------------------\n"
-    
+
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
     kelly_risk = sys_config.get("DYNAMIC_KELLY_RISK", 0.01) * 100

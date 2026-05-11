@@ -1,5 +1,5 @@
 # Dante_US_Nulrim_1D_AI_Pro_DualBot.py
-import os, re, time, threading, queue, concurrent.futures
+import os, re, time, random, threading, queue, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
@@ -19,12 +19,29 @@ import sqlite3
 # 💡 [자율 관제탑 연결] 조율된 파라미터 수신
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 
+
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
+    return {}
+
+
 def load_system_config():
-    try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, 'r') as f: return json.load(f)
-    except: pass
-    return {} # 에러 시 빈 데이터 반환 (하드코딩된 기본값으로 자동 우회)
+    return load_config()
 
 SYS_CONFIG = load_system_config()
 

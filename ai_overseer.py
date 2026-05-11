@@ -36,6 +36,27 @@ DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 CSV_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
 
+
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
+    return {}
+
+
 def send_telegram_alert(text):
     """최고 감시자의 경고 및 분석 리포트를 텔레그램으로 전송합니다."""
     try:
@@ -116,16 +137,15 @@ def gather_daily_system_facts():
     # 2. 관제탑 JSON (system_config.json) 스캔
     try:
         if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                report_data["config_status"] = {
-                    "regime": config.get("CURRENT_REGIME_KEY", "UNKNOWN"),
-                    "kelly_risk": config.get("DYNAMIC_KELLY_RISK", 0),
-                    "treasury_kr": config.get("CENTRAL_TREASURY_KR", 0),
-                    "treasury_us": config.get("CENTRAL_TREASURY_US", 0),
-                    "supernova_cutoff": config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0),
-                    "predicted_sector": config.get("PREDICTED_NEXT_SECTOR", "UNKNOWN")
-                }
+            config = load_config()
+            report_data["config_status"] = {
+                "regime": config.get("CURRENT_REGIME_KEY", "UNKNOWN"),
+                "kelly_risk": config.get("DYNAMIC_KELLY_RISK", 0),
+                "treasury_kr": config.get("CENTRAL_TREASURY_KR", 0),
+                "treasury_us": config.get("CENTRAL_TREASURY_US", 0),
+                "supernova_cutoff": config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0),
+                "predicted_sector": config.get("PREDICTED_NEXT_SECTOR", "UNKNOWN")
+            }
     except Exception as e:
         report_data["config_error"] = str(e)
 

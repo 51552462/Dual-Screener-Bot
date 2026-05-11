@@ -2,8 +2,11 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import os
+import sys
 import json
-import time   # 👈 이 줄을 반드시 추가하십시오!
+import subprocess
+import time
+import random
 from datetime import datetime, timedelta
 import pytz
 import requests
@@ -35,19 +38,53 @@ def send_telegram_report(message):
     try: requests.post(url, json=payload, timeout=10)
     except Exception as e: print(f"텔레그램 전송 실패: {e}")
 
-def save_config(config_data):
-    """JSON 원자적 저장: .temp + flush/fsync + os.replace (race condition 방지)."""
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
+    return {}
+
+
+def save_config(config_data, max_retries=5):
+    """
+    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
+    """
     temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-    except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+    for attempt in range(max_retries):
+        try:
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_PATH)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+            return False
+    return False
 
 def load_or_create_config():
     # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
@@ -70,8 +107,7 @@ def load_or_create_config():
         return default_config
         
     # 2. 기존 파일이 있을 때 읽어오기
-    with open(CONFIG_PATH, 'r') as f: 
-        config = json.load(f)
+    config = load_config()
         
     # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 3억씩 채워줍니다.
     need_save = False
@@ -1619,6 +1655,46 @@ def system_main_loop():
                         print(f"⚠️ 백테스터 자동 실행 실패: {e}")
                     time.sleep(60)
 
+                # 🔬 매일 06시 00분: 미국 장 마감 직후 DNA 부검 (US 전용)
+                elif now.hour == 6 and now.minute == 0:
+                    try:
+                        import limit_up_forensics
+                        print("🔬 [오토파일럿] 글로벌 DNA — 미국 장 마감 부검 (US)...")
+                        limit_up_forensics.run_limit_up_forensics(markets=("US",))
+                    except Exception as e:
+                        print(f"⚠️ US DNA 부검 실패: {e}")
+                    time.sleep(60)
+
+                # 🚨 매일 오전 08시 00분: 거시경제 둠스데이 레이더 스캔 (개장 전 선제 방어)
+                elif now.hour == 8 and now.minute == 0:
+                    try:
+                        import macro_doomsday_bot
+                        print("🚨 [오토파일럿] 거시경제 둠스데이 레이더 스캔 중...")
+                        macro_doomsday_bot.run_doomsday_radar()
+                    except Exception as e:
+                        print(f"⚠️ 둠스데이 레이더 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 🔭 평일 09시 05분: 부검 Pioneer — 한국 장 개장 구간 스캔
+                elif now.weekday() < 5 and now.hour == 9 and now.minute == 5:
+                    try:
+                        import forensics_pioneer
+                        print("🔭 [오토파일럿] forensics_pioneer — KR 장 스캔...")
+                        forensics_pioneer.run_forensics_pioneer("KR")
+                    except Exception as e:
+                        print(f"⚠️ forensics_pioneer KR 실패: {e}")
+                    time.sleep(60)
+
+                # 🔭 매일 22시 35분: 부검 Pioneer — 미국 장 시간대 스캔
+                elif now.hour == 22 and now.minute == 35:
+                    try:
+                        import forensics_pioneer
+                        print("🔭 [오토파일럿] forensics_pioneer — US 장 스캔...")
+                        forensics_pioneer.run_forensics_pioneer("US")
+                    except Exception as e:
+                        print(f"⚠️ forensics_pioneer US 실패: {e}")
+                    time.sleep(60)
+
                 # 💡 매일 16시 10분: 스마트 머니(다크풀/기관) 레이더 자동 가동
                 elif now.hour == 16 and now.minute == 10:
                     try:
@@ -1629,6 +1705,16 @@ def system_main_loop():
                         print(f"⚠️ 스마트 머니 레이더 가동 실패: {e}")
                     time.sleep(60)
 
+                # 🔬 평일 16시 20분: 상한가 과거 30일 역추적 DNA (limit_up_forensics)
+                elif now.weekday() < 5 and now.hour == 16 and now.minute == 20:
+                    try:
+                        import limit_up_forensics
+                        print("🔬 [오토파일럿] 상한가 해부학 부검소(선취매 DNA) 가동...")
+                        limit_up_forensics.run_limit_up_forensics(markets=("KR",))
+                    except Exception as e:
+                        print(f"⚠️ 상한가 부검소 가동 실패: {e}")
+                    time.sleep(60)
+
                 # 4. 매일 16시 30분: 스마트 머니(수급 다이버전스) 트래커 자동 가동
                 elif now.hour == 16 and now.minute == 30:
                     try:
@@ -1637,6 +1723,16 @@ def system_main_loop():
                         smart_money_tracker.run_smart_money_tracker()
                     except Exception as e:
                         print(f"⚠️ 스마트 머니 트래커 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 5. 매일 17시 00분: 거시 둠스데이 레이더 (국채·원자재·신용)
+                elif now.hour == 17 and now.minute == 0:
+                    try:
+                        import macro_doomsday_bot
+                        print("🚨 [오토파일럿] 둠스데이 레이더 가동...")
+                        macro_doomsday_bot.run_doomsday_radar()
+                    except Exception as e:
+                        print(f"⚠️ 둠스데이 레이더 실패: {e}")
                     time.sleep(60)
 
                 # 6. 매일 18시 30분: 센티먼트(뉴스 심리) 마이닝 공장 가동
@@ -1667,6 +1763,64 @@ def system_main_loop():
                         toxic_graveyard_analyzer.run_graveyard_autopsy()
                     except Exception as e:
                         print(f"⚠️ 독성 부검 실행 실패: {e}")
+                    time.sleep(60)
+
+                # 🚨 매일 오전 08시 30분: 블랙홀 스캐너 가동 (둠스데이 직후 개장 전 숏 타겟 스캔)
+                elif now.hour == 8 and now.minute == 30:
+                    try:
+                        import blackhole_hunter
+                        print("🕳️ [오토파일럿] 블랙홀 스캐너(인버스 타점) 자동 가동 중...")
+                        blackhole_hunter.scan_blackhole_targets()
+                    except Exception as e:
+                        print(f"⚠️ 블랙홀 스캐너 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 🔬 매일 11시 50분 (오전장 상한가 부검)
+                elif now.hour == 11 and now.minute == 50:
+                    try:
+                        import limit_up_forensics
+                        limit_up_forensics.run_limit_up_forensics(markets=("KR",))
+                    except: pass
+                    time.sleep(60)
+
+                # 🔬 매일 15시 40분 (장 마감 직후 상한가 최종 부검)
+                elif now.hour == 15 and now.minute == 40:
+                    try:
+                        import limit_up_forensics
+                        limit_up_forensics.run_limit_up_forensics(markets=("KR",))
+                    except: pass
+                    time.sleep(60)
+
+                # 🌌 매주 토요일 새벽 00시 00분: 정신과 시간의 방 (합성 데이터 스트레스 테스트)
+                elif now.weekday() == 5 and now.hour == 0 and now.minute == 0:
+                    try:
+                        import synthetic_data_generator
+                        print("⏳ [오토파일럿] 정신과 시간의 방(가상 10만 차트 테스트) 자동 가동 중...")
+                        synthetic_data_generator.stress_test_mutants()
+                    except Exception as e:
+                        print(f"⚠️ 정신과 시간의 방 가동 실패: {e}")
+                    time.sleep(60)
+
+                # 🛡️ 매주 토요일 새벽 01시 00분: 그림자 장부 (위성 기여도/방어력 평가) 자동 가동
+                elif now.weekday() == 5 and now.hour == 1 and now.minute == 0:
+                    try:
+                        import shadow_performance_tracker
+                        print("🛡️ [오토파일럿] 그림자 장부(위성 성과 평가) 자동 부검 중...")
+
+                        if hasattr(shadow_performance_tracker, "run_shadow_performance_evaluation"):
+                            shadow_performance_tracker.run_shadow_performance_evaluation()
+                        elif hasattr(shadow_performance_tracker, "evaluate_shadow_performance"):
+                            shadow_performance_tracker.evaluate_shadow_performance()
+                        else:
+                            _root = os.path.dirname(os.path.abspath(__file__))
+                            _sp = os.path.join(_root, "shadow_performance_tracker.py")
+                            subprocess.run(
+                                [sys.executable, _sp],
+                                cwd=_root,
+                                check=False,
+                            )
+                    except Exception as e:
+                        print(f"⚠️ 그림자 장부 가동 실패: {e}")
                     time.sleep(60)
                     
             time.sleep(30)

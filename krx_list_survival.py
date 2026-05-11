@@ -7,6 +7,7 @@ import re
 import sqlite3
 import warnings
 import time
+import random
 
 import pandas as pd
 import requests
@@ -246,7 +247,9 @@ def collect_krx_list_survival(
 
             if live_raw is None or len(live_raw) < min_live_rows:
                 try:
+                    time.sleep(random.uniform(0.3, 0.7))
                     k1 = fdr.StockListing("KOSPI")
+                    time.sleep(random.uniform(0.3, 0.7))
                     k2 = fdr.StockListing("KOSDAQ")
                     live_raw = pd.concat([k1, k2], ignore_index=True)
                 except Exception:

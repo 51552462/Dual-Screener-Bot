@@ -1,10 +1,30 @@
 import sqlite3
+import time
+import random
 import requests
 from bs4 import BeautifulSoup
 from collections import Counter
 import re
 import os
 from datetime import datetime
+
+# 🛡️ 스텔스 위장 명찰 (다양한 OS와 브라우저)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+]
+
+
+def get_stealth_headers():
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Connection": "keep-alive",
+    }
+
 
 # 1. 완벽히 분리된 뉴스 센티먼트 데이터 댐 (독립 DB)
 NEWS_DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'news_data.sqlite')
@@ -30,10 +50,10 @@ def init_news_db():
 def fetch_naver_finance_news():
     """네이버 금융 많이 본 뉴스 제목을 크롤링합니다."""
     url = "https://finance.naver.com/news/news_list.naver?mode=RANK"
-    headers = {'User-Agent': 'Mozilla/5.0'}
 
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=get_stealth_headers(), timeout=15)
+        time.sleep(random.uniform(0.8, 2.1))
         soup = BeautifulSoup(response.content, 'html.parser')
 
         titles = []

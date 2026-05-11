@@ -1,29 +1,60 @@
 import os
 import json
+import time
+import random
 import FinanceDataReader as fdr
 from datetime import datetime, timedelta
 
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 
-def load_config():
-    if not os.path.exists(CONFIG_PATH): return {}
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f: return json.load(f)
 
-def save_config(config):
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
+    return {}
+
+
+def save_config(config, max_retries=5):
+    """
+    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
+    """
     temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-    except Exception as e:
-        if os.path.exists(temp_path):
+    for attempt in range(max_retries):
+        try:
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_PATH)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
             try:
-                os.remove(temp_path)
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
             except OSError:
                 pass
-        print(f"⚠️ JSON 저장 에러: {e}")
+            return False
+    return False
 
 def run_smart_money_tracker():
     print("🕵️ [스마트 머니 레이더] 기관/외인 은밀한 매집 패턴 스캔 중...")
@@ -31,6 +62,7 @@ def run_smart_money_tracker():
     try:
         # 코스피 시총 상위 100개 종목 추출 (수급 분석 유니버스)
         kospi = fdr.StockListing('KOSPI')
+        time.sleep(random.uniform(0.3, 0.7))
         codes = kospi['Code'].head(100).tolist()
     except Exception as e:
         print(f"🚨 종목 리스트 로드 실패: {e}")
@@ -47,6 +79,7 @@ def run_smart_money_tracker():
             # 최근 15일치 데이터 로드
             start_date = (datetime.now() - timedelta(days=25)).strftime('%Y-%m-%d')
             df = fdr.DataReader(code, start_date)
+            time.sleep(random.uniform(0.3, 0.7))
             if len(df) < 10: continue
             
             # [다이버전스 판별 로직]

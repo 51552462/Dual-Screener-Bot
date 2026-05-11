@@ -5,6 +5,7 @@ import numpy as np
 import yfinance as yf
 import FinanceDataReader as fdr
 import concurrent.futures
+import threading
 import random
 from datetime import datetime, timedelta
 import pytz
@@ -13,6 +14,7 @@ from io import StringIO
 import requests
 warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
+import shadow_tracking
 from yf_download_flatten import flatten_yf_download_df
 scanned_today_cache = {'KR': set(), 'US': set()}
 
@@ -29,23 +31,53 @@ def send_telegram_msg(text):
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except: pass
 
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r') as f: return json.load(f)
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
     return {}
 
-def save_config(data):
+
+def save_config(data, max_retries=5):
+    """
+    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
+    """
     temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-    except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        print(f"⚠️ JSON 관제탑 원자적 저장 실패: {e}")
+    for attempt in range(max_retries):
+        try:
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_PATH)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+            return False
+    return False
 
 def _approx_dyn_rs_vs_benchmark(stock_df, idx_close_sr):
     """장부 dyn_rs와 유사하게, 최근 21거래일 구간 종가 수익률 / 동일 구간 벤치 수익률 × 100."""
@@ -1093,7 +1125,43 @@ def execute_supernova_live_scan(market):
             benchmark_close_sr = None
 
     # 💡 [핵심 1] 단일 스레드 병목 탈출을 위한 "개별 종목 연산 작업(Worker)" 분리
+    _doomsday_halt_lock = threading.Lock()
+    _doomsday_halt_notified = [False]
+
     def process_live_ticker(code):
+        # 🚨 [최상위 방어막] 매크로 둠스데이 레이더 확인
+        _dd = config.get('DOOMSDAY_DEFCON') or {}
+        defcon = _dd.get('level', 5) if isinstance(_dd, dict) else 5
+        try:
+            defcon = int(defcon)
+        except (TypeError, ValueError):
+            defcon = 5
+        if defcon <= 2:
+            with _doomsday_halt_lock:
+                if not _doomsday_halt_notified[0]:
+                    _doomsday_halt_notified[0] = True
+                    try:
+                        try:
+                            _halt_name = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
+                        except Exception:
+                            _halt_name = str(code)
+                        shadow_tracking.record_blocked_trade(
+                            code, _halt_name, "DOOMSDAY_DEFCON", 0.0
+                        )
+                    except Exception:
+                        pass
+                    return {
+                        'code': code,
+                        'name': "SYSTEM_HALT",
+                        'final_sig': "🛑[둠스데이 차단] 거시경제 발작 감지",
+                        'final_score': 0,
+                        'current_close': 0,
+                        'facts': {},
+                        'msg_type': "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단.",
+                        'trade_source': "DOOMSDAY_HALT",
+                    }
+            return None
+
         if code in open_positions or code in scanned_today_cache[market]:
             return None
             
@@ -1158,6 +1226,16 @@ def execute_supernova_live_scan(market):
 
             dyn_rs_live = _approx_dyn_rs_vs_benchmark(df, benchmark_close_sr)
             if _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_live):
+                try:
+                    try:
+                        _bn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
+                    except Exception:
+                        _bn = str(code)
+                    shadow_tracking.record_blocked_trade(
+                        code, _bn, "TOXIC_ML_TREE", float(current_close)
+                    )
+                except Exception:
+                    pass
                 return None
 
             # 1. 코사인 유사도 연산 (템플릿별 컷: 인큐베이터는 cos_cutoff, 그 외는 DYNAMIC_SUPERNOVA_CUTOFF)
@@ -1280,6 +1358,16 @@ def execute_supernova_live_scan(market):
                         break
 
                 if is_toxic:
+                    try:
+                        try:
+                            _tn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
+                        except Exception:
+                            _tn = str(code)
+                        shadow_tracking.record_blocked_trade(
+                            code, _tn, "TOXIC_ANTI_PATTERN", float(current_close)
+                        )
+                    except Exception:
+                        pass
                     return {
                         'code': code,
                         'name': stock_list[stock_list['Code']==code]['Name'].values[0],
@@ -1350,18 +1438,25 @@ def execute_supernova_live_scan(market):
 
     # 💡 [핵심 3] 발굴된 종목 장부 기록 (DB 락 방지를 위해 메인 스레드에서 순차적 기록)
     for target in valid_targets:
+        if target.get('name') == 'SYSTEM_HALT' or '둠스데이 차단' in str(target.get('final_sig', '')):
+            send_telegram_msg(
+                "<b>🛑[둠스데이 차단] 거시경제 발작 감지</b>\n"
+                "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단."
+            )
+            continue
         if 'TOXIC_TRAP' in str(target.get('final_sig', '')):
             continue
         # 1. 메인 타점 사격 (초신성 or 언더독)
         is_success, msg = aft.try_add_virtual_position(
-            market=market, 
-            code=target['code'], 
+            market=market,
+            code=target['code'],
             name=target['name'],
-            sig_type=target['final_sig'], 
-            score=target['final_score'], 
+            sig_type=target['final_sig'],
+            score=target['final_score'],
             ep=target['current_close'],
             facts=target['facts'],
-            trade_source=target.get('trade_source', "SUPERNOVA") 
+            trade_source=target.get('trade_source', "SUPERNOVA"),
+            satellite_tags=shadow_tracking.build_satellite_tags(config),
         )
         
         # 야수(BEAST) 로직은 일반 초신성(SUPERNOVA)일 때만 더블 탭 사격 (언더독은 스킵)

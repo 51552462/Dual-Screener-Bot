@@ -4,6 +4,8 @@ import FinanceDataReader as fdr
 import pandas as pd
 import sqlite3
 import os
+import time
+import random
 import concurrent.futures
 from datetime import datetime
 import warnings
@@ -46,11 +48,12 @@ def save_data_safely(conn, table_name, df):
 # 🇺🇸 미국장 리스트 추출
 def get_us_tickers():
     print("🇺🇸 미국장 종목 리스트 수집 중...")
-    df = pd.concat([
-        fdr.StockListing('NASDAQ').assign(Market='NASDAQ'),
-        fdr.StockListing('NYSE').assign(Market='NYSE'),
-        fdr.StockListing('AMEX').assign(Market='AMEX')
-    ])
+    nas = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
+    time.sleep(random.uniform(0.3, 0.7))
+    nyse = fdr.StockListing('NYSE').assign(Market='NYSE')
+    time.sleep(random.uniform(0.3, 0.7))
+    amex = fdr.StockListing('AMEX').assign(Market='AMEX')
+    df = pd.concat([nas, nyse, amex])
     df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
     return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
 
@@ -163,6 +166,7 @@ def run_daily_db_update():
         bm_conn.execute("PRAGMA journal_mode=WAL;")
         
         idx_us = yf.download("SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False)
+        time.sleep(random.uniform(0.3, 0.7))
         for tk, tbl in zip(['SPY', 'QQQ', '^VIX'], ['US_SPY', 'US_QQQ', 'US_VIX']):
             if tk in idx_us.columns.levels[0]:
                 df_temp = flatten_yf_download_df(idx_us[tk].copy()).dropna().reset_index()
@@ -178,7 +182,8 @@ def run_daily_db_update():
             
             # 👇👇 [V102.6] 한국 지수 데이터도 안전한 원자 교체 방식으로 저장 👇👇
             save_data_safely(bm_conn, tbl, df_temp)
-            
+            time.sleep(random.uniform(0.3, 0.7))
+
         bm_conn.close()
         print("✅ 벤치마크 지수 DB 저장 완료!")
     except Exception as e:

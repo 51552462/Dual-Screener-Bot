@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import random
 import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
@@ -10,13 +12,32 @@ warnings.filterwarnings('ignore')
 # 1. 팩토리 뇌(Config) 읽기 전용 경로
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 
+def load_config(max_retries=5):
+    """
+    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    for attempt in range(max_retries):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(0.05, 0.2))
+            else:
+                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
+                return {}
+    return {}
+
+
 def load_factory_brain_readonly():
     """메인 시스템의 뇌를 읽기 전용으로 복제해 옵니다."""
     if not os.path.exists(CONFIG_PATH):
         print("🚨 관제탑 파일을 찾을 수 없습니다.")
         return {}
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return load_config()
 
 # 2. 극한의 스트레스 테스트 기간 세팅 (블랙스완)
 CRASH_PERIODS = {
@@ -75,6 +96,7 @@ def run_time_machine_backtest(target_period_name, stock_list):
             
         try:
             df = fdr.DataReader(code, fetch_start, end_dt)
+            time.sleep(random.uniform(0.3, 0.7))
             if len(df) < 30: continue
             
             df = calculate_dna_factors(df)
@@ -165,7 +187,8 @@ if __name__ == "__main__":
     print("증권사 API 연결 및 테스트 종목(코스피 우량주) 준비 중...")
     try:
         kospi = fdr.StockListing('KOSPI')
-        test_universe = kospi['Code'].tolist()[:100] 
+        time.sleep(random.uniform(0.3, 0.7))
+        test_universe = kospi['Code'].tolist()[:100]
     except:
         test_universe = ['005930', '000660', '035420', '051910', '005380'] # 실패 시 삼성전자 등 하드코딩
         
