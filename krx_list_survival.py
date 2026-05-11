@@ -185,7 +185,8 @@ def _fetch_from_naver_finance() -> pd.DataFrame:
                 if not page_has_data:
                     break
             except Exception:
-                break
+                time.sleep(1.0) # 일시적인 네트워크 오류 시 대기
+                continue
 
             # 과도한 요청 방지(데드락/차단 확률도 함께 낮춤)
             time.sleep(0.2)

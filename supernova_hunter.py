@@ -40,7 +40,18 @@ if genai is not None and GEMINI_API_KEY:
 def send_telegram_msg(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        # 텔레그램은 1회 전송 시 4096자 제한이 있음. 방대한 리포트를 안전하게 4000자씩 분할 전송
+        max_len = 4000
+        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+        
+        for chunk in chunks:
+            # 1차 시도: HTML 모드로 예쁘게 전송
+            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
+            # 2차 시도: 주식 이름에 &, <, > 등이 섞여 HTML 문법 에러(400)가 나면 일반 텍스트로 재전송
+            if res.status_code == 400:
+                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
+            import time
+            time.sleep(0.5) # 분할 전송 시 순서가 꼬이거나 API 도배 차단되는 것 방지
     except: pass
 
 
@@ -197,10 +208,26 @@ def generate_random_alpha_formula():
     return build_expr(depth)
 
 def evaluate_alpha_formula(df, formula):
-    """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환."""
-    if df.empty:
+    """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환. (AST 샌드박스 검증 추가)"""
+    if df is None or getattr(df, 'empty', True):
         return None
 
+    # 1. 샌드박스 검증: 허용된 변수/함수만 있는지, 트리가 너무 깊지 않은지 AST 사전 검사
+    ALLOWED_NAMES = {'O', 'H', 'L', 'C', 'V', 'add', 'sub', 'mul', 'div', 'rolling_mean', 'rolling_std'}
+    try:
+        formula_str = str(formula).strip()
+        tree = ast.parse(formula_str, mode='eval')
+        node_count = 0
+        for node in ast.walk(tree):
+            node_count += 1
+            if node_count > 150:  # 무한 루프나 비정상적으로 깊은 수식(메모리 폭발) 사전 차단
+                return None
+            if isinstance(node, ast.Name) and node.id not in ALLOWED_NAMES:
+                return None
+    except Exception:
+        return None
+
+    # 2. 기존 환경 변수 셋업 (원본 100% 유지)
     O = df['Open']
     H = df['High']
     L = df['Low']
@@ -211,7 +238,7 @@ def evaluate_alpha_formula(df, formula):
     def sub(a, b): return a - b
     def mul(a, b): return a * b
     def div(a, b):
-        safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
+        safe_b = b.replace(0, float('nan')) if hasattr(b, 'replace') else (float('nan') if b == 0 else b)
         return a / safe_b
     def rolling_mean(x, w): return x.rolling(int(w)).mean()
     def rolling_std(x, w): return x.rolling(int(w)).std()
@@ -222,12 +249,16 @@ def evaluate_alpha_formula(df, formula):
         'rolling_mean': rolling_mean, 'rolling_std': rolling_std
     }
 
+    # 3. 안전이 검증된 수식만 eval() 실행
     try:
-        result = eval(formula, {"__builtins__": {}}, env)
+        import numpy as np
+        import pandas as pd
+        result = eval(formula_str, {"__builtins__": {}}, env)
         if isinstance(result, pd.Series):
             return result.replace([np.inf, -np.inf], np.nan)
     except Exception:
         return None
+
     return None
 
 

@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+import bitget_shadow_tracking
 import bitget_signal_engines as bse
 from bitget_ai_report import generate_ai_report
 from bitget_charting import save_chart
@@ -209,7 +210,8 @@ def _supernova_hit(df: pd.DataFrame, symbol: str, tf: str):
 
     cur_vec = np.array([cpv, tb, bbe], dtype=float)
     c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
-    cur_shape = np.mean(np.array_split(c_norm[-200:] if len(c_norm) >= 200 else c_norm, 20), axis=1)
+    target_arr = c_norm[-200:] if len(c_norm) >= 200 else c_norm
+    cur_shape = np.array([np.mean(x) for x in np.array_split(target_arr, 20)])
 
     # 1) ML BOX 매칭
     ml_cutoff = float(cfg.get("DYNAMIC_ML_BOX_CUTOFF", 0.50))
@@ -297,7 +299,7 @@ def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int
     try:
         time.sleep(0.03)  # DB burst 완화
         df = _load_table(conn, tbl)
-        if df is None or len(df) < 500:
+        if df is None or len(df) < 240:
             return []
         symbol = "_".join(tbl.split("_")[2:-1])
         hits = []
@@ -427,6 +429,21 @@ def run_scan():
                         side=dbg.get("side", "LONG"),
                         entry_high=dbg.get("entry_high", float(dbg.get("last_close", last_close))),
                     )
+                    if not ok:
+                        rsn = str(db_msg)
+                        if ("ANTI_PATTERNS" in rsn) or ("TOXIC" in rsn) or ("DOOMSDAY" in rsn):
+                            try:
+                                bitget_shadow_tracking.record_blocked_trade(
+                                    symbol=symbol,
+                                    reason=rsn,
+                                    entry_price=float(dbg.get("last_close", last_close) or 0.0),
+                                    market_type=market_type,
+                                    name=symbol,
+                                    position_side=str(dbg.get("side", "LONG")).upper(),
+                                    timeframe=tf,
+                                )
+                            except Exception:
+                                pass
                     if ok:
                         try:
                             order_side = str(dbg.get("side", "LONG")).upper()
@@ -442,6 +459,8 @@ def run_scan():
                                 side=order_side,
                                 amount=order_amount,
                                 leverage=order_lev,
+                                market_type=market_type,
+                                strategy_key=str(engine_name or ""),
                             )
                             vt_id = _lookup_virtual_trade_id(
                                 market_type=market_type,

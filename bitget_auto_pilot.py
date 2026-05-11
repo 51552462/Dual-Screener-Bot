@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
+from bitget_logger import setup_logging, get_logger
+from bitget_config_hub import load_config as hub_load_config, save_config_atomic as hub_save_config_atomic
+from bitget_schedule_lock import acquire as schedule_acquire
 
 from bitget_forward_tester import (
     generate_mutant_strategies,
@@ -25,22 +28,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
+setup_logging()
+logger = get_logger("bitget.auto_pilot")
 
 
 def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return hub_load_config()
 
 
 def save_config_atomic(cfg):
-    temp_path = f"{CONFIG_PATH}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(temp_path, CONFIG_PATH)
+    hub_save_config_atomic(cfg)
 
 
 def _ensure_defaults(cfg):
@@ -811,18 +808,136 @@ def send_weekly_flow_master_report():
     send_telegram_msg(report_msg)
 
 
+def _report_flag_sent_today(cfg, day_key: str) -> bool:
+    flags = cfg.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
+    if not isinstance(flags, dict):
+        return False
+    node = flags.get(day_key, {})
+    return bool(isinstance(node, dict) and node.get("sent"))
+
+
+def _mark_report_flag(day_key: str, reason: str) -> None:
+    cfg = load_config()
+    flags = cfg.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
+    if not isinstance(flags, dict):
+        flags = {}
+    flags[day_key] = {
+        "sent": True,
+        "sent_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "reason": reason,
+    }
+    sorted_days = sorted(flags.keys(), reverse=True)
+    cfg["AUTO_PILOT_DAILY_REPORT_FLAG"] = {k: flags[k] for k in sorted_days[:14]}
+    save_config_atomic(cfg)
+
+
+def _safe_call_ai_modules_for_report():
+    """
+    AI 서버 이슈로 스케줄러 전체가 멈추지 않도록 bitget_ai_overseer 호출 보호.
+    """
+    try:
+        import bitget_ai_overseer
+        if hasattr(bitget_ai_overseer, "run_ai_auditor"):
+            bitget_ai_overseer.run_ai_auditor()
+    except Exception as e:
+        print(f"⚠️ [세이프티 넷] bitget_ai_overseer 호출 실패(무시): {e}")
+
+
+def _safe_run_satellite(lock_key: str, lock_sec: int, module_name: str, func_name: str, *args, **kwargs):
+    try:
+        if not schedule_acquire(lock_key, lock_sec):
+            return
+        mod = __import__(module_name)
+        fn = getattr(mod, func_name, None)
+        if callable(fn):
+            fn(*args, **kwargs)
+    except Exception as e:
+        print(f"⚠️ [세이프티 넷] {module_name}.{func_name} 호출 실패(무시): {e}")
+
+
 def system_main_loop():
     print("🕒 [Bitget Auto Pilot] loop started")
     print(" - 매일 00:00 UTC: 딥다이브 + 켈리조절 + 돌연변이 + 인큐베이터 심판")
     print(" - 매주 월요일 00:00 UTC (= 월 09:00 KST): 주간(Flow) 마스터 리포트 텔레그램")
     print(" - 주의: 자율 뇌수술(run_autonomous_analysis)은 과최적화 방지를 위해 하루 1회만 실행")
     last_daily_key = ""
+    satellite_flags = {}
+    oms_cold_recon_done = False
+    oms_last_recon_mono = 0.0
     while True:
         try:
             now = datetime.now(timezone.utc)
-            if now.hour == 0 and now.minute == 0:
-                daily_key = now.strftime("%Y-%m-%d")
-                if daily_key != last_daily_key:
+            daily_key = now.strftime("%Y-%m-%d")
+            hm_key = now.strftime("%Y-%m-%d %H:%M")
+            hour = now.hour
+            minute = now.minute
+
+            # 코인 위성 자동 가동 스케줄 (통신망 연결)
+            if hour % 2 == 0 and minute == 10 and satellite_flags.get("sentiment") != hm_key:
+                _safe_run_satellite("satellite::sentiment", 7200, "bitget_sentiment_miner", "run_sentiment_mining")
+                satellite_flags["sentiment"] = hm_key
+            if hour % 2 == 0 and minute == 12 and satellite_flags.get("altdata") != hm_key:
+                _safe_run_satellite("satellite::altdata", 7200, "bitget_alt_data_miner", "run_alternative_data_mining")
+                satellite_flags["altdata"] = hm_key
+            if hour % 3 == 0 and minute == 18 and satellite_flags.get("blackhole") != hm_key:
+                _safe_run_satellite("satellite::blackhole", 10800, "bitget_blackhole_hunter", "scan_blackhole_targets")
+                satellite_flags["blackhole"] = hm_key
+            if hour % 6 == 0 and minute == 15 and satellite_flags.get("shadow_perf") != hm_key:
+                _safe_run_satellite("satellite::shadow_perf", 21600, "bitget_shadow_performance_tracker", "run_shadow_performance_evaluation")
+                satellite_flags["shadow_perf"] = hm_key
+            if hour == 0 and minute == 15 and satellite_flags.get("underdog") != hm_key:
+                _safe_run_satellite("satellite::underdog", 86400, "bitget_underdog_miner", "run_underdog_mining")
+                satellite_flags["underdog"] = hm_key
+            if hour == 0 and minute == 20 and satellite_flags.get("pump_forensics") != hm_key:
+                _safe_run_satellite("satellite::pump_forensics", 86400, "bitget_pump_forensics", "run_pump_forensics")
+                satellite_flags["pump_forensics"] = hm_key
+            if hour == 0 and minute == 25 and satellite_flags.get("forensics_pioneer") != hm_key:
+                _safe_run_satellite("satellite::forensics_pioneer", 86400, "bitget_forensics_pioneer", "run_forensics_pioneer")
+                satellite_flags["forensics_pioneer"] = hm_key
+            if now.weekday() == 5 and hour == 1 and minute == 5 and satellite_flags.get("synthetic_lab") != hm_key:
+                _safe_run_satellite("satellite::synthetic_lab", 86400, "bitget_synthetic_data_generator", "stress_test_mutants")
+                satellite_flags["synthetic_lab"] = hm_key
+            if now.weekday() == 6 and hour == 1 and minute == 30 and satellite_flags.get("time_machine") != hm_key:
+                _safe_run_satellite("satellite::time_machine", 86400, "bitget_time_machine_backtester", "run_time_machine_backtest", "FTX_COLLAPSE_2022", 3.0)
+                satellite_flags["time_machine"] = hm_key
+
+            # OMS 체결대사: 재기동 직후 1회 + 이후 최소 1시간 간격 (fetch_my_trades · 포지션 · 미체결 주문 · 유령 OPEN 제거)
+            try:
+                import bitget_oms
+
+                mono_now = time.monotonic()
+                if not oms_cold_recon_done:
+                    try:
+                        bitget_oms.run_scheduled_reconciliation()
+                    except Exception as e:
+                        print(f"⚠️ [OMS] cold reconciliation: {e}")
+                    oms_cold_recon_done = True
+                    oms_last_recon_mono = mono_now
+                elif (mono_now - oms_last_recon_mono) >= 3600.0 and schedule_acquire("oms::hourly_recon", 3500):
+                    try:
+                        bitget_oms.run_scheduled_reconciliation()
+                    except Exception as e:
+                        print(f"⚠️ [OMS] hourly reconciliation: {e}")
+                    oms_last_recon_mono = mono_now
+            except Exception as e:
+                print(f"⚠️ [OMS] loader: {e}")
+
+            # 💡 [버그 픽스] 정각 분 단위 체크를 삭제하고, 날짜가 바뀌었을 때 단 1회 실행하도록 견고하게 수정
+            if daily_key != last_daily_key:
+                # 프로그램 켜자마자 바로 실행되는 것을 막기 위해 last_daily_key 초기화만 수행
+                if last_daily_key == "":
+                    last_daily_key = daily_key
+                else:
+                    cfg = load_config()
+                    if not _report_flag_sent_today(cfg, daily_key):
+                        _safe_call_ai_modules_for_report()
+                        _mark_report_flag(daily_key, "DAILY_0000_UTC")
+                    try:
+                        import bitget_macro_doomsday_bot
+                        if hasattr(bitget_macro_doomsday_bot, "run_doomsday_radar"):
+                            bitget_macro_doomsday_bot.run_doomsday_radar()
+                    except Exception as e:
+                        print(f"⚠️ [세이프티 넷] bitget_macro_doomsday_bot 호출 실패(무시): {e}")
                     _run_daily_evolution_batch()
                     if now.weekday() == 0:
                         send_weekly_flow_master_report()

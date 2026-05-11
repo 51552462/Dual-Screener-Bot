@@ -123,44 +123,49 @@ else:
         and "dyn_tb" in ud_df.columns
         and "v_energy" in ud_df.columns
     ):
+        # 3D 렌더링 폭파 방지용 썩은 데이터(NaN) 도려내기
+        ud_df = ud_df.dropna(subset=["dyn_cpv", "dyn_tb", "v_energy", "final_ret"])
+        
+        if ud_df.empty:
+            st.info("💡 유효한 3D 데이터가 확보되지 않아 차트 렌더링을 일시 생략합니다.")
+        else:
+            def classify_result(ret):
+                if ret >= 10:
+                    return "🔥 대박주 (10%+)"
+                if ret > 0:
+                    return "👍 일반수익"
+                if ret <= -5:
+                    return "💀 참사주 (-5% 이하)"
+                return "📉 일반손실"
 
-        def classify_result(ret):
-            if ret >= 10:
-                return "🔥 대박주 (10%+)"
-            if ret > 0:
-                return "👍 일반수익"
-            if ret <= -5:
-                return "💀 참사주 (-5% 이하)"
-            return "📉 일반손실"
+            ud_df["DNA_Class"] = ud_df["final_ret"].apply(classify_result)
 
-        ud_df["DNA_Class"] = ud_df["final_ret"].apply(classify_result)
+            hover_cfg = ["final_ret", "total_score", "sig_type"]
+            hover_cfg = [c for c in hover_cfg if c in ud_df.columns]
 
-        hover_cfg = ["final_ret", "total_score", "sig_type"]
-        hover_cfg = [c for c in hover_cfg if c in ud_df.columns]
+            scatter_kw = dict(
+                data_frame=ud_df,
+                x="dyn_cpv",
+                y="dyn_tb",
+                z="v_energy",
+                color="DNA_Class",
+                color_discrete_map={
+                    "🔥 대박주 (10%+)": "#00FF00",
+                    "👍 일반수익": "#008000",
+                    "💀 참사주 (-5% 이하)": "#FF0000",
+                    "📉 일반손실": "#808080",
+                },
+                title="X축: 윗꼬리 방어(CPV) | Y축: 진짜양봉(TB) | Z축: 응축에너지(BBE)",
+                opacity=0.8,
+            )
+            if "name" in ud_df.columns:
+                scatter_kw["hover_name"] = "name"
+            if hover_cfg:
+                scatter_kw["hover_data"] = hover_cfg
 
-        scatter_kw = dict(
-            data_frame=ud_df,
-            x="dyn_cpv",
-            y="dyn_tb",
-            z="v_energy",
-            color="DNA_Class",
-            color_discrete_map={
-                "🔥 대박주 (10%+)": "#00FF00",
-                "👍 일반수익": "#008000",
-                "💀 참사주 (-5% 이하)": "#FF0000",
-                "📉 일반손실": "#808080",
-            },
-            title="X축: 윗꼬리 방어(CPV) | Y축: 진짜양봉(TB) | Z축: 응축에너지(BBE)",
-            opacity=0.8,
-        )
-        if "name" in ud_df.columns:
-            scatter_kw["hover_name"] = "name"
-        if hover_cfg:
-            scatter_kw["hover_data"] = hover_cfg
+            fig_3d = px.scatter_3d(**scatter_kw)
 
-        fig_3d = px.scatter_3d(**scatter_kw)
-
-        fig_3d.update_layout(height=600, template="plotly_dark")
-        st.plotly_chart(fig_3d, use_container_width=True)
+            fig_3d.update_layout(height=600, template="plotly_dark")
+            st.plotly_chart(fig_3d, use_container_width=True)
     else:
         st.info("💡 아직 60점 이하 언더독 종목의 3D 분석에 필요한 충분한 데이터가 모이지 않았습니다.")

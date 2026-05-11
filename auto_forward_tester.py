@@ -6,6 +6,7 @@ import yfinance as yf
 import os, time, requests
 import random
 import re
+import threading
 from datetime import datetime, timedelta
 import pytz
 import sqlite3
@@ -27,8 +28,18 @@ def _strategy_colosseum_brief(db_path):
         uri_path = db_path.replace("\\", "/")
         conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
         try:
+            cols = pd.read_sql("PRAGMA table_info(forward_trades)", conn)
+            col_names = set(cols["name"].astype(str).tolist()) if cols is not None and not cols.empty else set()
+
+            # DB 스키마가 환경마다 다를 수 있어 존재 컬럼만 안전하게 조회
+            base_cols = ["sig_type", "final_ret", "code", "name"]
+            opt_cols = []
+            for c in ["market", "strategy_name", "exit_date"]:
+                if c in col_names:
+                    opt_cols.append(c)
+            sel = ", ".join(base_cols + opt_cols)
             df = pd.read_sql(
-                "SELECT sig_type, final_ret FROM forward_trades "
+                f"SELECT {sel} FROM forward_trades "
                 "WHERE status LIKE 'CLOSED%' AND final_ret IS NOT NULL",
                 conn,
             )
@@ -39,7 +50,7 @@ def _strategy_colosseum_brief(db_path):
 
     if df is None or df.empty:
         return (
-            '\n⚔️ <b>[전략 콜로세움: 실무자 전투 랭킹]</b>\n'
+            '\n⚔️ <b>[전략 콜로세움: 리그별 랭킹]</b>\n'
             "<i>청산 완료 데이터가 없습니다.</i>\n"
         )
 
@@ -52,10 +63,38 @@ def _strategy_colosseum_brief(db_path):
     df = df.loc[~df["_sig"].str.contains("INCUBATOR", na=False)].copy()
     df["logic"] = df["sig_type"].apply(_core_group)
     df = df.loc[df["logic"].str.len() > 0].copy()
+    df["code"] = df["code"].astype(str).str.strip() if "code" in df.columns else ""
+    df["name"] = df["name"].astype(str).str.strip() if "name" in df.columns else ""
+    if "strategy_name" not in df.columns:
+        df["strategy_name"] = ""
+    if "market" not in df.columns:
+        df["market"] = ""
+    df["final_ret"] = pd.to_numeric(df["final_ret"], errors="coerce")
+    df = df.dropna(subset=["final_ret"])
+
+    def _league_of_row(r):
+        sn = str(r.get("strategy_name", ""))
+        cd = str(r.get("code", "")).strip()
+        mk = str(r.get("market", "")).upper().strip()
+        lg = str(r.get("logic", ""))
+
+        if "us_" in sn.lower() or sn.upper().startswith("US"):
+            return "US"
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9\-.]{0,14}", cd):
+            return "US"
+        if re.fullmatch(r"\d{4,8}", cd):
+            return "KR"
+        if mk in ("US", "KR"):
+            return mk
+        if "US " in lg.upper() or lg.upper().startswith("US"):
+            return "US"
+        return "KR"
+
+    df["league"] = df.apply(_league_of_row, axis=1)
 
     rows = []
-    for logic, g in df.groupby("logic"):
-        fr = pd.to_numeric(g["final_ret"], errors="coerce").dropna()
+    for (league, logic), g in df.groupby(["league", "logic"]):
+        fr = g["final_ret"].dropna()
         if fr.empty:
             continue
         n = int(len(fr))
@@ -65,39 +104,90 @@ def _strategy_colosseum_brief(db_path):
         disp = str(logic).strip()
         if len(disp) > 120:
             disp = disp[:117] + "..."
-        rows.append({"logic": disp, "n": n, "wins": wins, "wr": wr, "sum_ret": sum_ret})
+        rows.append(
+            {"league": league, "logic": disp, "n": n, "wins": wins, "wr": wr, "sum_ret": sum_ret}
+        )
 
     if not rows:
         return (
-            '\n⚔️ <b>[전략 콜로세움: 실무자 전투 랭킹]</b>\n'
+            '\n⚔️ <b>[전략 콜로세움: 리그별 랭킹]</b>\n'
             "<i>집계 가능한 청산 건이 없습니다.</i>\n"
         )
-
-    rows_desc = sorted(rows, key=lambda x: x["sum_ret"], reverse=True)
-    top3 = rows_desc[:3]
-    rows_asc = sorted(rows, key=lambda x: x["sum_ret"])
-    bottom2 = rows_asc[:2]
 
     def _esc(s):
         t = str(s)
         return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    lines = ['\n⚔️ <b>[전략 콜로세움: 실무자 전투 랭킹]</b>\n']
-    lines.append("🏆 <b>[TOP 3 에이스 로직]</b>\n")
+    rows_df = pd.DataFrame(rows)
+    lines = ['\n⚔️ <b>[전략 콜로세움: 리그별 랭킹]</b>\n']
     medals = ["🥇", "🥈", "🥉"]
-    for i, r in enumerate(top3):
-        m = medals[i] if i < len(medals) else "🏅"
-        lg = _esc(r["logic"])
+
+    def _league_top_block(league):
+        part = rows_df.loc[rows_df["league"] == league].sort_values("sum_ret", ascending=False).head(3)
+        if part.empty:
+            return [], [f" <i>{'한국' if league == 'KR' else '미국'} 리그 데이터 없음</i>\n"]
+        out = []
+        top_rows_local = []
+        for i, (_, r) in enumerate(part.iterrows()):
+            m = medals[i] if i < len(medals) else "🏅"
+            lg = _esc(r["logic"])
+            out.append(
+                f" {m} {lg}: 승률 {r['wr']:.1f}% / 수익 {r['sum_ret']:+.2f}% (거래 {int(r['n'])}건)\n"
+            )
+            top_rows_local.append({"logic": str(r["logic"]), "sum_ret": float(r["sum_ret"])})
+        return top_rows_local, out
+
+    kr_top, kr_lines = _league_top_block("KR")
+    us_top, us_lines = _league_top_block("US")
+    lines.append("🇰🇷 <b>[한국 실무자 랭킹 TOP 3]</b>\n")
+    lines.extend(kr_lines)
+    lines.append("\n🇺🇸 <b>[미국 실무자 랭킹 TOP 3]</b>\n")
+    lines.extend(us_lines)
+
+    def _top3_hardcarry(league, logic):
+        if not logic:
+            return []
+        q = df.loc[(df["league"] == league) & (df["logic"] == logic)].copy()
+        if q.empty:
+            return []
+        q = q.sort_values("final_ret", ascending=False).head(3)
+        items = []
+        for _, rr in q.iterrows():
+            nm = str(rr.get("name", "")).strip()
+            cd = str(rr.get("code", "")).strip()
+            label = nm if nm and nm.lower() != "nan" else cd
+            items.append(f"{_esc(label)}({float(rr['final_ret']):+.1f}%)")
+        return items
+
+    kr_top_logic = kr_top[0]["logic"] if kr_top else ""
+    us_top_logic = us_top[0]["logic"] if us_top else ""
+    kr_carry = _top3_hardcarry("KR", kr_top_logic)
+    us_carry = _top3_hardcarry("US", us_top_logic)
+
+    lines.append("\n🔍 <b>[에이스 로직 심층 부검]</b>\n")
+    if kr_top_logic:
         lines.append(
-            f" {m} {lg}: 승률 {r['wr']:.1f}% / 누적 수익 {r['sum_ret']:+.2f}% (거래 {r['n']}건)\n"
+            f"📌 한국 { _esc(kr_top_logic) } 수익 기여 TOP 3: "
+            + (", ".join(kr_carry) if kr_carry else "표본 부족")
+            + "\n"
+        )
+    if us_top_logic:
+        lines.append(
+            f"📌 미국 { _esc(us_top_logic) } 수익 기여 TOP 3: "
+            + (", ".join(us_carry) if us_carry else "표본 부족")
+            + "\n"
         )
 
-    lines.append("\n💀 <b>[도태 경고 (하위 로직)]</b>\n")
-    for r in bottom2:
-        lg = _esc(r["logic"])
-        lines.append(
-            f" 🔻 {lg}: 승률 {r['wr']:.1f}% / 누적 수익 {r['sum_ret']:+.2f}% (거래 {r['n']}건)\n"
-        )
+    insight = "💡 AI 통찰: "
+    if kr_carry and us_carry:
+        insight += "양 리그 모두 상위 로직이 소수 하드캐리 종목에서 손익이 집중되는 구조입니다. 내일은 동일 테마 재출현 시 진입 우선순위를 상향하세요."
+    elif kr_carry:
+        insight += "한국 리그는 1위 로직의 하드캐리 종목 집중도가 높습니다. 장초반 동일 수급 테마 재현 여부를 우선 점검하세요."
+    elif us_carry:
+        insight += "미국 리그는 1위 로직의 하드캐리 종목 편중이 뚜렷합니다. 장중 뉴스/가이던스 모멘텀 종목 추종이 유리합니다."
+    else:
+        insight += "하드캐리 표본이 부족합니다. 거래 축적 후 집중 섹터를 재평가하세요."
+    lines.append(insight + "\n")
 
     return "".join(lines)
 
@@ -169,8 +259,18 @@ def _shadow_performance_brief(sys_config):
 def send_telegram_msg(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        # 💡 [버그 픽스] parse_mode="HTML" 추가로 태그 노출 방지 및 정상 포맷팅
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        # 텔레그램은 1회 전송 시 4096자 제한이 있음. 방대한 리포트를 안전하게 4000자씩 분할 전송
+        max_len = 4000
+        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+        
+        for chunk in chunks:
+            # 1차 시도: HTML 모드로 예쁘게 전송
+            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
+            # 2차 시도: 주식 이름에 &, <, > 등이 섞여 HTML 문법 에러(400)가 나면 일반 텍스트로 재전송
+            if res.status_code == 400:
+                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
+            import time
+            time.sleep(0.5) # 분할 전송 시 순서가 꼬이거나 API 도배 차단되는 것 방지
     except: pass
 
 def init_forward_db():
@@ -324,37 +424,40 @@ def save_system_config(config):
 # system_auto_pilot.run_autonomous_analysis와 동일 정의: RSP/SPY, 50일 롤링 평균 대비 현재 비율 (0.97 미만 = 쏠림)
 _BREADTH_CACHE_DAY = None
 _BREADTH_CACHE_VAL = 1.0
+_BREADTH_CACHE_LOCK = threading.Lock()
 
 def get_cached_market_breadth():
     """시장 폭(Breadth). 당일 1회만 yfinance 호출하여 스케줄/루프 비용 절감."""
-    global _BREADTH_CACHE_DAY, _BREADTH_CACHE_VAL
-    tz = pytz.timezone('America/New_York')
-    day_key = datetime.now(tz).strftime('%Y-%m-%d')
-    if _BREADTH_CACHE_DAY == day_key:
+    global _BREADTH_CACHE_DAY, _BREADTH_CACHE_VAL, _BREADTH_CACHE_LOCK
+
+    with _BREADTH_CACHE_LOCK:
+        tz = pytz.timezone('America/New_York')
+        day_key = datetime.now(tz).strftime('%Y-%m-%d')
+        if _BREADTH_CACHE_DAY == day_key:
+            return float(_BREADTH_CACHE_VAL)
+        v = 1.0
+        try:
+            df_idx = yf.download("SPY RSP", period="6mo", interval="1d", group_by="ticker", progress=False)
+            if not df_idx.empty:
+                if isinstance(df_idx.columns, pd.MultiIndex) and 'SPY' in df_idx.columns.get_level_values(0):
+                    spy_c = df_idx['SPY']['Close'].dropna()
+                    rsp_c = df_idx['RSP']['Close'].dropna()
+                else:
+                    raise ValueError("breadth_multiindex_expected")
+                common = spy_c.index.intersection(rsp_c.index)
+                spy_c = spy_c.reindex(common).ffill()
+                rsp_c = rsp_c.reindex(common).ffill()
+                if len(common) >= 50:
+                    v = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (
+                        rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1]
+                    )
+                elif len(common) >= 5:
+                    v = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.mean() / spy_c.mean())
+        except Exception:
+            pass
+        _BREADTH_CACHE_DAY = day_key
+        _BREADTH_CACHE_VAL = float(v) if np.isfinite(v) else 1.0
         return float(_BREADTH_CACHE_VAL)
-    v = 1.0
-    try:
-        df_idx = yf.download("SPY RSP", period="6mo", interval="1d", group_by="ticker", progress=False)
-        if not df_idx.empty:
-            if isinstance(df_idx.columns, pd.MultiIndex) and 'SPY' in df_idx.columns.get_level_values(0):
-                spy_c = df_idx['SPY']['Close'].dropna()
-                rsp_c = df_idx['RSP']['Close'].dropna()
-            else:
-                raise ValueError("breadth_multiindex_expected")
-            common = spy_c.index.intersection(rsp_c.index)
-            spy_c = spy_c.reindex(common).ffill()
-            rsp_c = rsp_c.reindex(common).ffill()
-            if len(common) >= 50:
-                v = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (
-                    rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1]
-                )
-            elif len(common) >= 5:
-                v = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.mean() / spy_c.mean())
-    except Exception:
-        pass
-    _BREADTH_CACHE_DAY = day_key
-    _BREADTH_CACHE_VAL = float(v) if np.isfinite(v) else 1.0
-    return float(_BREADTH_CACHE_VAL)
 
 def evaluate_evolved_alpha_formula(df, formula):
     """JSON에 저장된 진화 수식을 실시간으로 계산한다."""
@@ -551,9 +654,6 @@ def try_add_virtual_position(
             return False, f"🛡️ 섹터 쿼터 초과: [{sig_type}] 엔진이 이미 타 섹터 정찰대 2기를 모두 파견했습니다."
         track_tag = "[🛡️차기섹터 정찰]"
     # 👆👆 [패치 완료] 👆👆
-
-    # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
-    sig_type = f"[{trade_source}] {sig_type} {track_tag}"
 
     # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
     sig_type = f"[{trade_source}] {sig_type} {track_tag}"
@@ -868,7 +968,7 @@ def try_add_virtual_position(
 
                 # [AUM 스케일링 브레이크] 시드가 커진 그룹의 소형주 슬리피지 진입 차단
                 marcap_eok = float(facts.get('marcap_eok', 0) or 0)
-                if group_current_seed > 50000000 and marcap_eok < 1000:
+                if market == 'KR' and group_current_seed > 50000000 and marcap_eok < 1000:
                     return False, (
                         f"🛑 시드 비대화로 인한 소형주 슬리피지 방어: "
                         f"[{core_group_name}] 시드 {group_current_seed:,.0f}원 / 시총 {marcap_eok:,.0f}억"
@@ -1019,6 +1119,9 @@ def track_daily_positions(market):
         ep = r['entry_price']
         
         try:
+            if market == 'US':
+                import time, random
+                time.sleep(random.uniform(0.3, 0.7)) # 무호흡 연사로 인한 IP 차단 완벽 방어
             df = fdr.DataReader(code, start_date) if market == 'KR' else yf.download(code, start=start_date, progress=False)
             
             # 💡 [픽스 1] yfinance MultiIndex 에러 완벽 대응 (미국장 0승 0패 마비 해결)
@@ -1478,6 +1581,15 @@ def send_comprehensive_daily_report():
             msg1 += f"🏦 <b>{market} 국고 잔여금:</b> {treasury_balance:,.0f} 원\n"
             msg1 += f"⚖️ 동적 켈리 비중: {kelly_risk:.2f}%\n"
             msg1 += "<i>※ 아래 누적 손익·리더보드·순환·DNA 통계는 [INCUBATOR_] 섀도우 제외.</i>\n"
+            msg1 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if "UNKNOWN" in regime or kelly_risk <= 1.0:
+                msg1 += "현재 시장 방향성을 확신할 수 없거나 리스크가 커서, 투입 자본을 1%대로 최소화하고 방어 태세를 취하고 있습니다.\n"
+            elif "BULL" in regime:
+                msg1 += "뚜렷한 강세장이 확인되어, 시스템이 자본을 적극적으로 투입하며 공격 모드로 전환했습니다.\n"
+            elif "BEAR" in regime:
+                msg1 += "하락장 늪지대입니다. 휩소를 피하기 위해 현금을 쥐고 확실한 1티어 타점만 쏘고 있습니다.\n"
+            else:
+                msg1 += "시장 변동성에 맞춰 기계적으로 자본을 배분하고 있습니다.\n"
             send_telegram_msg(msg1); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -1533,6 +1645,15 @@ def send_comprehensive_daily_report():
             
             msg4 = f"{market_icon} <b>[4/9] 섹터 포트폴리오 다중화 현황</b>\n"
             msg4 += f"🎯 편대 현황: 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
+            msg4 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if trend_fleet == 0 and recon_fleet > 0:
+                msg4 += "시장이 혼탁하여 주력 부대는 대기시키고, 다음 먹거리를 찾기 위해 소수의 정찰병만 보냈습니다.\n"
+            elif trend_fleet > 0 and recon_fleet == 0:
+                msg4 += "시장에 확실한 주도 테마가 존재하여 해당 섹터에 화력을 집중하고 있습니다.\n"
+            elif trend_fleet == 0 and recon_fleet == 0:
+                msg4 += "모든 타점이 미달되어 현재 시장에 파견된 편대가 없습니다. 완벽한 현금 관망 중입니다.\n"
+            else:
+                msg4 += "주도 테마 추종과 다음 섹터 발굴을 동시에 진행하며 밸런스를 맞추고 있습니다.\n"
             send_telegram_msg(msg4); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -1556,6 +1677,15 @@ def send_comprehensive_daily_report():
             
             if not winners.empty: msg6 += f"✅ 대박 DNA: 윗꼬리 {winners['dyn_cpv'].mean():.2f} | 응축 {winners['v_energy'].mean():.1f}\n"
             if not losers.empty:  msg6 += f"❌ 참사 DNA: 윗꼬리 {losers['dyn_cpv'].mean():.2f} | 찐양봉 {losers['dyn_tb'].mean():.1f} 미만\n"
+            msg6 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if not winners.empty:
+                avg_eng = winners['v_energy'].mean()
+                if avg_eng >= 15.0:
+                    msg6 += f"최근 수익 난 종목들의 에너지({avg_eng:.1f})가 매우 높습니다. 변동성이 극도로 쪼그라들며 힘을 모은 종목 위주로 사냥하겠습니다.\n"
+                else:
+                    msg6 += f"수익 종목들의 에너지({avg_eng:.1f})가 낮습니다. 조용히 숨어있는 스텔스 매집주 위주로 사냥하겠습니다.\n"
+            else:
+                msg6 += "최근 대박주 표본이 없어 DNA 기준을 보수적으로 유지합니다.\n"
             send_telegram_msg(msg6); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -1624,6 +1754,13 @@ def send_comprehensive_daily_report():
             recent_dna = df_real.sort_values('id', ascending=False).head(10)
             if not recent_dna.empty and recent_dna['entry_cos_score'].mean() < 0.65:
                 msg8 += f"🚨 <b>[DNA 변위 감지]</b> 대장주 일치율 급감 ➔ 방어 개입 중\n"
+            msg8 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if not recent_dna.empty and recent_dna['entry_cos_score'].mean() < 0.65:
+                msg8 += "과거 승리 공식(DNA)과 최근 종목들의 일치율이 65% 미만입니다. 세력 패턴이 바뀌었다고 판단, 낡은 로직을 멈추고 뇌수술(방어) 중입니다.\n"
+            elif days_alive == 0:
+                msg8 += "시스템이 방금 낡은 뇌를 버리고 시장에 맞게 진화를 마쳤습니다. 오늘부터 새로운 로직으로 수명(0일차)을 리셋합니다.\n"
+            else:
+                msg8 += "현재 팩토리의 매매 로직이 시장 트렌드와 잘 맞물려 돌아가고 있습니다. 통계적 우위(Edge)가 살아있습니다.\n"
             send_telegram_msg(msg8); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -1669,8 +1806,11 @@ def send_group_practitioner_reports():
         df_all = df_all.copy()
         df_all['group'] = df_all['sig_type'].apply(get_core_group)
         df_all['mkt_group'] = df_all['market'].astype(str) + "_" + df_all['group'].astype(str)
-        df_open = df_all[df_all['status'] == 'OPEN']
-        active_groups = sorted([g for g in df_open['mkt_group'].dropna().unique() if str(g).strip()])
+        # 💡 현재 OPEN 종목이 없어도, 최근 청산 내역이 있는 실무자는 모두 보고서에 소환
+        recent_cutoff = (datetime.now(tz_kr) - timedelta(days=2)).strftime('%Y-%m-%d')
+        active_condition = (df_all['status'] == 'OPEN') | (df_all['exit_date'] >= recent_cutoff)
+        df_active = df_all[active_condition]
+        active_groups = sorted([g for g in df_active['mkt_group'].dropna().unique() if str(g).strip()])
 
         for mkt_group in active_groups:
             g_all = df_all[df_all['mkt_group'] == mkt_group]
@@ -1688,7 +1828,8 @@ def send_group_practitioner_reports():
             loss_cnt = len(g_today_closed[g_today_closed['final_ret'] <= 0]) if 'final_ret' in g_today_closed.columns else 0
 
             if 'sim_kelly_invest' in g_closed.columns and 'final_ret' in g_closed.columns:
-                valid_invest = g_closed['sim_kelly_invest'].replace(0, 400000)
+                # NaN(결측치)도 안전하게 기본 시드로 보정하여 복리 누락 방지
+                valid_invest = g_closed['sim_kelly_invest'].fillna(400000).replace(0, 400000)
                 cum_pnl = (valid_invest * g_closed['final_ret'] / 100.0).sum()
             else:
                 cum_pnl = 0.0
@@ -1905,7 +2046,7 @@ def run_deep_dive_analysis(market='KR'):
                     for d in combined_dates:
                         us_sec = us_daily.get(d, "휴장/없음")
                         kr_sec = kr_daily.get(d, "휴장/없음")
-                        report_msg += f" [{d[5:]}] 🇺🇸 {str(us_sec)[:6]} ➔ 🇰🇷 {str(kr_sec)[:6]}\n"
+                        report_msg += f" [{str(d)[5:]}] 🇺🇸 {str(us_sec)[:6]} ➔ 🇰🇷 {str(kr_sec)[:6]}\n"
 
                     report_msg += "\n💡 <b>[관제탑 통찰]</b>\n"
                     report_msg += "데이터가 장부에 축적됨에 따라, 미국장의 주도 섹터가 한국장에 D+1~D+2 시차를 두고 전이될 확률(Cross-Correlation)을 추적 중입니다. 이 통계적 신뢰도가 검증되면 한국장 검색기의 선취매 가중치 기준으로 즉시 활용됩니다.\n"

@@ -126,50 +126,54 @@ def mine_bitget_dna_templates():
 
 
 def evaluate_alpha_formula(df: pd.DataFrame, formula: str):
-    if df is None or df.empty:
+    """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환. (AST 샌드박스 검증 추가)"""
+    if df is None or getattr(df, 'empty', True):
         return None
-    o = df["Open"]
-    h = df["High"]
-    l = df["Low"]
-    c = df["Close"]
-    v = df["Volume"]
 
-    def add(a, b):
-        return a + b
+    # 1. 샌드박스 검증: 허용된 변수/함수만 있는지, 트리가 너무 깊지 않은지 AST 사전 검사
+    ALLOWED_NAMES = {'O', 'H', 'L', 'C', 'V', 'add', 'sub', 'mul', 'div', 'rolling_mean', 'rolling_std'}
+    try:
+        formula_str = str(formula).strip()
+        tree = ast.parse(formula_str, mode='eval')
+        node_count = 0
+        for node in ast.walk(tree):
+            node_count += 1
+            if node_count > 150:  # 무한 루프나 비정상적으로 깊은 수식(메모리 폭발) 사전 차단
+                return None
+            if isinstance(node, ast.Name) and node.id not in ALLOWED_NAMES:
+                return None
+    except Exception:
+        return None
 
-    def sub(a, b):
-        return a - b
+    # 2. 기존 환경 변수 셋업
+    O = df["Open"]
+    H = df["High"]
+    L = df["Low"]
+    C = df["Close"]
+    V = df["Volume"]
 
-    def mul(a, b):
-        return a * b
-
+    def add(a, b): return a + b
+    def sub(a, b): return a - b
+    def mul(a, b): return a * b
     def div(a, b):
+        import numpy as np
         safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
         return a / safe_b
-
-    def rolling_mean(x, w):
-        return x.rolling(int(w)).mean()
-
-    def rolling_std(x, w):
-        return x.rolling(int(w)).std()
+    def rolling_mean(x, w): return x.rolling(int(w)).mean()
+    def rolling_std(x, w): return x.rolling(int(w)).std()
 
     env = {
-        "O": o,
-        "H": h,
-        "L": l,
-        "C": c,
-        "V": v,
-        "add": add,
-        "sub": sub,
-        "mul": mul,
-        "div": div,
-        "rolling_mean": rolling_mean,
-        "rolling_std": rolling_std,
+        "O": O, "H": H, "L": L, "C": C, "V": V,
+        "add": add, "sub": sub, "mul": mul, "div": div,
+        "rolling_mean": rolling_mean, "rolling_std": rolling_std,
     }
+
+    # 3. 안전이 검증된 수식만 eval() 실행
     try:
-        result = eval(str(formula), {"__builtins__": {}}, env)
-        if isinstance(result, pd.Series):
-            return result.replace([np.inf, -np.inf], np.nan)
+        import numpy as np
+        out = eval(formula_str, {"__builtins__": {}}, env)
+        if isinstance(out, pd.Series):
+            return out.replace([np.inf, -np.inf], np.nan)
     except Exception:
         return None
     return None
@@ -523,16 +527,16 @@ def run_cluster_mining():
         if cdf.empty:
             continue
         mined[f"CLUSTER_{i+1}"] = {
-            "cpv_min": round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.10), 4),
-            "cpv_max": round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.90), 4),
-            "tb_min": round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.10), 4),
-            "tb_max": round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.90), 4),
-            "bbe_min": round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.10), 4),
-            "bbe_max": round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.90), 4),
-            "tml_min": round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.10), 4),
-            "tml_max": round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.90), 4),
-            "rs_min": round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.10), 4),
-            "rs_max": round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.90), 4),
+            "cpv_min": float(round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.10), 4)),
+            "cpv_max": float(round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.90), 4)),
+            "tb_min": float(round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.10), 4)),
+            "tb_max": float(round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.90), 4)),
+            "bbe_min": float(round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.10), 4)),
+            "bbe_max": float(round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.90), 4)),
+            "tml_min": float(round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.10), 4)),
+            "tml_max": float(round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.90), 4)),
+            "rs_min": float(round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.10), 4)),
+            "rs_max": float(round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.90), 4)),
             "sample_size": int(len(cdf)),
         }
 

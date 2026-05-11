@@ -31,8 +31,9 @@ NEWS_DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screene
 
 def init_news_db():
     """뉴스 센티먼트 전용 DB와 테이블을 생성합니다."""
-    conn = sqlite3.connect(NEWS_DB_PATH)
+    conn = sqlite3.connect(NEWS_DB_PATH, timeout=60)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_sentiment (
             date TEXT PRIMARY KEY,
@@ -112,8 +113,9 @@ def run_sentiment_mining():
         total_sentiment = round((pos_count / (pos_count + neg_count)) * 100, 1)
 
     try:
-        conn = sqlite3.connect(NEWS_DB_PATH)
+        conn = sqlite3.connect(NEWS_DB_PATH, timeout=60)
         cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute('''
             INSERT OR REPLACE INTO daily_sentiment
             (date, top_keyword_1, top_keyword_2, top_keyword_3, top_keyword_4, top_keyword_5, sentiment_score)

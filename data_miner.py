@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import ast
 import json
 import os
 import time
@@ -70,12 +71,26 @@ def _tml_at_entry_from_sqlite(conn, market, code, entry_date_str) -> float:
 
 
 def _evaluate_alpha_formula(df, formula):
-    """supernova_hunter.evaluate_alpha_formula와 동일 네임스페이스(순환 import 방지용 복제)."""
-    if df is None or df.empty:
+    """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환. (AST 샌드박스 검증 추가)"""
+    if df is None or getattr(df, 'empty', True):
         return None
-    need_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-    if not all(c in df.columns for c in need_cols):
+
+    # 1. 샌드박스 검증: 허용된 변수/함수만 있는지, 트리가 너무 깊지 않은지 AST 사전 검사
+    ALLOWED_NAMES = {'O', 'H', 'L', 'C', 'V', 'add', 'sub', 'mul', 'div', 'rolling_mean', 'rolling_std'}
+    try:
+        formula_str = str(formula).strip()
+        tree = ast.parse(formula_str, mode='eval')
+        node_count = 0
+        for node in ast.walk(tree):
+            node_count += 1
+            if node_count > 150:  # 무한 루프나 비정상적으로 깊은 수식(메모리 폭발) 사전 차단
+                return None
+            if isinstance(node, ast.Name) and node.id not in ALLOWED_NAMES:
+                return None
+    except Exception:
         return None
+
+    # 2. 기존 환경 변수 셋업 (원본 100% 유지)
     O = df['Open']
     H = df['High']
     L = df['Low']
@@ -92,7 +107,7 @@ def _evaluate_alpha_formula(df, formula):
         return a * b
 
     def div(a, b):
-        safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
+        safe_b = b.replace(0, float('nan')) if hasattr(b, 'replace') else (float('nan') if b == 0 else b)
         return a / safe_b
 
     def rolling_mean(x, w):
@@ -106,8 +121,12 @@ def _evaluate_alpha_formula(df, formula):
         'add': add, 'sub': sub, 'mul': mul, 'div': div,
         'rolling_mean': rolling_mean, 'rolling_std': rolling_std
     }
+
+    # 3. 안전이 검증된 수식만 eval() 실행
     try:
-        result = eval(str(formula).strip(), {"__builtins__": {}}, env)
+        import numpy as np
+        import pandas as pd
+        result = eval(formula_str, {"__builtins__": {}}, env)
         if isinstance(result, pd.Series):
             return result.replace([np.inf, -np.inf], np.nan)
     except Exception:

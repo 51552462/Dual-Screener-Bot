@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from bitget_funding_fetcher import fetch_funding_snapshot
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
@@ -20,16 +21,39 @@ TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
 _DEFAULT_BITGET_MAX_OPEN_POSITIONS = 20
 
 
+_FUNDING_SNAP_CACHE = {}
+
+
+def _cached_funding_snapshot(symbol: str):
+    k = str(symbol or "")
+    now = time.time()
+    ent = _FUNDING_SNAP_CACHE.get(k)
+    if ent:
+        ts0, snap0 = ent
+        if snap0 is not None and (now - ts0) < 55.0:
+            return snap0
+    snap = fetch_funding_snapshot(k)
+    _FUNDING_SNAP_CACHE[k] = (now, snap)
+    return snap
+
+
 def send_telegram_msg(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(
-            url,
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
+        # 텔레그램 4096자 제한 방어: 4000자씩 분할
+        max_len = 4000
+        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+        
+        for chunk in chunks:
+            # 1차 시도: HTML 모드
+            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
+            # 2차 시도: HTML 파싱 에러(400) 발생 시 일반 텍스트 모드로 재전송
+            if res.status_code == 400:
+                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
+            import time
+            time.sleep(0.5)
     except Exception:
         pass
 
@@ -149,6 +173,9 @@ def init_forward_db():
     _ensure_col(cur, "champ_c_ret", "REAL DEFAULT 0.0")
     _ensure_col(cur, "champ_c_status", "TEXT DEFAULT 'OPEN'")
     _ensure_col(cur, "flow_tags", "TEXT DEFAULT ''")
+    _ensure_col(cur, "funding_rate_last", "REAL DEFAULT 0.0")
+    _ensure_col(cur, "funding_next_settle_ts", "TEXT DEFAULT ''")
+    _ensure_col(cur, "funding_accum_usdt_est", "REAL DEFAULT 0.0")
     _ensure_col(cur, "position_side", "TEXT DEFAULT 'LONG'")
     _ensure_col(cur, "entry_high", "REAL DEFAULT 0.0")
     _ensure_col(cur, "entry_cos_score", "REAL DEFAULT 0.0")
@@ -157,6 +184,11 @@ def init_forward_db():
     _ensure_col(cur, "is_top_dna", "INTEGER DEFAULT 0")
     _ensure_col(cur, "is_worst_dna", "INTEGER DEFAULT 0")
     _ensure_col(cur, "is_death_combo", "INTEGER DEFAULT 0")
+    try:
+        import bitget_shadow_tracking
+        bitget_shadow_tracking.init_shadow_tables(cur)
+    except Exception as e:
+        print(f"⚠️ 그림자 장부 스키마 초기화 스킵: {e}")
 
     # 실전 체결/리더보드 동기화 로그
     cur.execute(
@@ -191,6 +223,7 @@ def init_forward_db():
         )
         """
     )
+    _ensure_col(cur, "client_order_id", "TEXT DEFAULT ''")
 
     cur.execute("DROP VIEW IF EXISTS forward_trades")
     try:
@@ -307,6 +340,7 @@ def log_real_execution(
     qty = float(amount or 0.0)
     notional = float(px * qty) if px > 0 and qty > 0 else 0.0
     prac_key = _extract_practitioner_key(sig_type)
+    client_oid = str(ex.get("client_order_id", "") or "")
     payload = json.dumps(ex, ensure_ascii=False)[:4000]
     bal_before = float(ex.get("balance_before", 0.0) or 0.0)
     bal_after = float(ex.get("balance_after", 0.0) or 0.0)
@@ -315,42 +349,35 @@ def log_real_execution(
 
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute(
-        """
+    insert_sql = """
         INSERT INTO bitget_real_execution (
             created_at, updated_at, market_type, symbol, timeframe, practitioner_key, engine_name, sig_type,
-            position_side, amount, leverage, entry_price, order_id, exec_status, exec_ok, is_dry_run,
+            position_side, amount, leverage, entry_price, order_id, client_order_id, exec_status, exec_ok, is_dry_run,
             notional_usdt, balance_before, balance_after, realized_pnl_usdt, realized_ret_pct, virtual_trade_id, exec_payload
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            now,
-            now,
-            str(market_type).lower(),
-            str(symbol),
-            str(timeframe).upper(),
-            str(prac_key),
-            str(engine_name),
-            str(sig_type),
-            str(side).upper(),
-            qty,
-            float(leverage or 1.0),
-            px,
-            order_id,
-            status,
-            exec_ok,
-            is_dry_run,
-            notional,
-            bal_before,
-            bal_after,
-            pnl_usdt,
-            ret_pct,
-            int(virtual_trade_id or 0),
-            payload,
-        ),
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    params = (
+        now, now, str(market_type).lower(), str(symbol), str(timeframe).upper(), str(prac_key),
+        str(engine_name), str(sig_type), str(side).upper(), qty, float(leverage or 1.0), px,
+        order_id, client_oid, status, exec_ok, is_dry_run, notional, bal_before, bal_after, pnl_usdt, ret_pct,
+        int(virtual_trade_id or 0), payload
     )
-    conn.commit()
+
+    max_retry = 5
+    for attempt in range(max_retry):
+        try:
+            conn.execute(insert_sql, params)
+            conn.commit()
+            break
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e).lower():
+                if attempt >= max_retry - 1:
+                    raise
+                import time
+                time.sleep(0.5 * (2 ** attempt))
+                continue
+            raise
     conn.close()
 
 
@@ -775,6 +802,19 @@ def try_add_virtual_position(
 
     blocked, sim = _is_blocked_by_anti_patterns(cfg, facts, threshold=0.85)
     if blocked:
+        try:
+            import bitget_shadow_tracking
+            bitget_shadow_tracking.record_blocked_trade(
+                symbol=symbol,
+                reason=f"TOXIC_ANTI_PATTERN(sim={sim:.3f})",
+                entry_price=float(entry_price),
+                market_type=market_type,
+                name=symbol,
+                position_side=position_side,
+                timeframe=tf,
+            )
+        except Exception:
+            pass
         conn.close()
         return False, f"ANTI_PATTERNS 차단: 참사 DNA 유사도 {sim:.3f} >= 0.850"
 
@@ -849,6 +889,17 @@ def try_add_virtual_position(
 
     # 💡 [Namespace Thompson Kelly Sampler] auto_forward_tester 와 동일: [TF]_*_BETA_PARAMS 로 자본 동적 배분
     kelly_risk_pct = _apply_thompson_kelly_multiplier(cfg, tf, sig_type, float(kelly_risk_pct))
+    sector = _coin_asset_group(symbol)
+    predicted_sector = str(cfg.get("PREDICTED_NEXT_SECTOR", "UNKNOWN"))
+    is_rotation_prebuy = (sector == predicted_sector)
+    sys_config = cfg
+
+    # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 코인 이식 👇👇
+    if is_rotation_prebuy:
+        sig_type_row += " #순환매_선취매"
+        # 관제탑이 주말 데스매치를 통해 우위를 증명했다면 켈리 비중 2배 뻥튀기
+        if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
+            kelly_risk_pct *= 2.0 
 
     core_group = _extract_core_group(sig_type)
     account_size = float(cfg.get("ACCOUNT_SIZE_USDT", 100000))
@@ -937,14 +988,26 @@ def try_add_virtual_position(
     now = datetime.utcnow().strftime("%Y-%m-%d")
     entry_cos_score = float(max_alpha_cos_effective * 100.0)
     entry_dtw_score = float(facts.get("dtw_score", facts.get("entry_dtw_score", 0.0)) or 0.0)
+    fr0 = 0.0
+    fts0 = ""
+    acc0 = 0.0
+    if str(market_type).lower() == "futures":
+        try:
+            _s = fetch_funding_snapshot(symbol)
+            if _s:
+                fr0 = float(_s.get("funding_rate") or 0.0)
+                fts0 = str(_s.get("next_funding_iso") or _s.get("next_funding_ts") or "").strip()
+        except Exception:
+            pass
     cur.execute(
         """
         INSERT INTO bitget_forward_trades
         (entry_date, market_type, symbol, timeframe, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb,
          entry_price, position_side, entry_atr, entry_high, atr_sl_mult, stop_price, leverage, tf_weight, sim_kelly_risk_pct, margin_used,
          sim_kelly_invest, quantity, entry_cos_score, entry_dtw_score, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, status,
-         sim_stat_status, sim_tech_status, sim_breadth_status, entry_breadth, live_a_status, cand_b_status, champ_c_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         sim_stat_status, sim_tech_status, sim_breadth_status, entry_breadth, live_a_status, cand_b_status, champ_c_status,
+         funding_rate_last, funding_next_settle_ts, funding_accum_usdt_est)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -985,8 +1048,35 @@ def try_add_virtual_position(
             "OPEN",
             "OPEN",
             "OPEN",
+            fr0,
+            fts0,
+            acc0,
         ),
     )
+    satellite_tags = None
+    try:
+        import bitget_shadow_tracking
+        satellite_tags = bitget_shadow_tracking.build_satellite_tags(cfg)
+    except Exception:
+        satellite_tags = None
+    if satellite_tags is not None:
+        try:
+            import bitget_shadow_tracking
+            logged_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            bitget_shadow_tracking.insert_virtual_trade_row(
+                cur,
+                market_type,
+                symbol,
+                symbol,
+                float(entry_price),
+                sig_type_row,
+                str(satellite_tags),
+                logged_at,
+                position_side=position_side,
+                timeframe=tf,
+            )
+        except Exception:
+            pass
     conn.commit()
     # DB INSERT/COMMIT 성공 이후에만 국고 차감 저장 (자금 증발 방지)
     cfg[treasury_key] = max(0.0, treasury_balance - margin_used)
@@ -1225,6 +1315,8 @@ def track_daily_positions(market_type):
             l = latest["low"]
             v = latest["vol"]
             ep = float(r["entry_price"])
+            if ep <= 0:
+                continue
             pos_side = str(r.get("position_side", "LONG")).upper()
             if pos_side == "SHORT":
                 current_ret_pct = ((ep - c) / ep) * 100.0
@@ -1240,6 +1332,33 @@ def track_daily_positions(market_type):
             new_bars = int(r["bars_held"]) + 1
             new_up_vol = float(r["up_vol_sum"]) + (v if c > o else 0.0)
             new_down_vol = float(r["down_vol_sum"]) + (v if c < o else 0.0)
+
+            is_futures_row = str(r["market_type"]).lower() == "futures"
+            snap = _cached_funding_snapshot(str(r["symbol"])) if is_futures_row else None
+            notion_open = float(r.get("sim_kelly_invest", 0.0) or 0.0)
+            if notion_open <= 0:
+                mu_o = float(r.get("margin_used", 0.0) or 0.0)
+                lev_o = float(r.get("leverage", 1.0) or 1.0)
+                if mu_o > 0 and is_futures_row and lev_o > 0:
+                    notion_open = mu_o * lev_o
+                else:
+                    notion_open = mu_o
+            period_h_fund = float(cfg.get("FUNDING_INTERVAL_HOURS_DEFAULT", 8.0))
+            tf_hours_fund_map = {"1H": 1.0, "2H": 2.0, "4H": 4.0, "1D": 24.0}
+            tf_hours_fund = float(tf_hours_fund_map.get(str(r["timeframe"]).upper(), 4.0))
+            rate_used = float(snap.get("funding_rate") or 0.0) if snap else float(r.get("funding_rate_last", 0) or 0)
+            prev_accum = float(r.get("funding_accum_usdt_est", 0) or 0)
+            accum_fund = prev_accum
+            fts_store = str(r.get("funding_next_settle_ts", "") or "")
+            if snap:
+                fts_store = str(snap.get("next_funding_iso") or snap.get("next_funding_ts") or "").strip()
+                rate_used = float(snap.get("funding_rate") or 0.0)
+            fr_row = rate_used
+            if is_futures_row and period_h_fund > 1e-9 and notion_open > 0:
+                if pos_side == "LONG":
+                    accum_fund = prev_accum - notion_open * rate_used * (tf_hours_fund / period_h_fund)
+                else:
+                    accum_fund = prev_accum + notion_open * rate_used * (tf_hours_fund / period_h_fund)
 
             hist = hist_df
             cur_atr = _calc_atr14(hist)
@@ -1313,10 +1432,23 @@ def track_daily_positions(market_type):
                 tf_u = str(r["timeframe"]).upper()
                 funding_stop_bars_map = {"1H": 24, "2H": 18, "4H": 12, "1D": 5}
                 funding_stop_bars = int(funding_stop_bars_map.get(tf_u, 12))
-                is_futures = str(r["market_type"]).lower() == "futures"
-                if is_futures and new_bars >= funding_stop_bars and current_ret_pct < 1.5:
+                is_futures = is_futures_row
+                bleed_max_profit = float(cfg.get("FUNDING_BLEED_MAX_ROE_PCT", 1.5))
+                th_fb = float(cfg.get("FUNDING_BLEED_RATE_THRESHOLD", 0.0003))
+                funding_bleed = False
+                if is_futures and snap is not None and new_bars >= funding_stop_bars and current_ret_pct < bleed_max_profit:
+                    rate_api = float(snap.get("funding_rate") or 0.0)
+                    if pos_side == "LONG" and rate_api > th_fb:
+                        funding_bleed = True
+                    elif pos_side == "SHORT" and rate_api < -th_fb:
+                        funding_bleed = True
+                if funding_bleed:
                     do_exit = True
-                    exit_rsn = f"펀딩비 출혈 방어 타임스탑 ({tf_u} {funding_stop_bars} bars)"
+                    exit_rsn = (
+                        f"펀딩비(API) 불리 출혈 방어 rate={float(snap.get('funding_rate') or 0):.6f} "
+                        f"next={str(snap.get('next_funding_iso') or snap.get('next_funding_ts') or '').strip()} "
+                        f"({tf_u} ≥{funding_stop_bars} bars)"
+                    )
                     actual_exit_type = "FUNDING_BLEED_STOP"
                 elif new_bars >= opt_time_stop and current_ret_pct < 3.0:
                     do_exit = True
@@ -1379,6 +1511,12 @@ def track_daily_positions(market_type):
                         do_exit = True
                         actual_exit_type = "SHORT_TRAIL_TP_75"
                         exit_rsn = "숏 트레일링 익절: EMA75 상향 돌파 (Pine)"
+
+            # 🚨 [코인 생태계 특화] 레버리지 감안 강제 청산 (ROE -100% 이하 도달 시)
+            leverage = float(r.get("leverage", 1.0) or 1.0)
+            if leverage > 0 and (current_ret_pct * leverage) <= -100.0:
+                do_exit, exit_rsn, actual_exit_type = True, f"레버리지({leverage}x) 한도 초과 강제청산", "LIQUIDATION"
+                actual_exit_price = ep * (1.0 + (100.0 / leverage / 100.0)) if pos_side == "SHORT" else ep * (1.0 - (100.0 / leverage / 100.0))
 
             # 장기 좀비 청소
             if not do_exit and new_bars >= max(20, opt_time_stop * 2):
@@ -1506,7 +1644,9 @@ def track_daily_positions(market_type):
                 cur_cfg = load_system_config()
                 before = float(cur_cfg.get(treasury_key, 0.0))
                 margin_used = float(r.get("margin_used", 0.0) or 0.0)
-                pnl = float(r.get("sim_kelly_invest", 0.0) or 0.0) * (ret / 100.0)
+                raw_pnl = float(r.get("sim_kelly_invest", 0.0) or 0.0) * (ret / 100.0)
+                # 💡 [레버리지 강제청산 방어] 잃을 수 있는 최대 금액은 투입한 증거금(margin_used)으로 철저히 제한
+                pnl = max(-margin_used, raw_pnl)
                 cur_cfg[treasury_key] = max(0.0, before + margin_used + pnl)
                 save_system_config(cur_cfg)
 
@@ -1521,7 +1661,8 @@ def track_daily_positions(market_type):
                     SET max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?,
                         sim_stat_ret=?, sim_stat_status=?, sim_tech_ret=?, sim_tech_status=?,
                         sim_breadth_ret=?, sim_breadth_status=?, entry_breadth=?,
-                        live_a_ret=?, live_a_status=?, cand_b_ret=?, cand_b_status=?, champ_c_ret=?, champ_c_status=?
+                        live_a_ret=?, live_a_status=?, cand_b_ret=?, cand_b_status=?, champ_c_ret=?, champ_c_status=?,
+                        funding_rate_last=?, funding_next_settle_ts=?, funding_accum_usdt_est=?
                     WHERE id=?
                 """
                 update_params = (
@@ -1543,6 +1684,9 @@ def track_daily_positions(market_type):
                     cand_b_status,
                     champ_c_ret,
                     champ_c_status,
+                    fr_row,
+                    fts_store,
+                    accum_fund,
                     int(r["id"]),
                 )
 
@@ -1802,24 +1946,19 @@ def send_group_practitioner_reports():
             df["final_ret"] = pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0)
             df["mfe"] = pd.to_numeric(df["mfe"], errors="coerce").fillna(0.0)
             df["total_score"] = pd.to_numeric(df["total_score"], errors="coerce").fillna(0.0)
-            if len(df) >= 30:
-                df["practitioner_id"] = (
-                    (pd.qcut(df["total_score"].rank(method="first"), q=30, labels=False, duplicates="drop").fillna(0).astype(int)) + 1
-                )
-            else:
-                # 표본이 적어도 30명 체계를 유지하기 위해 순환 배정
-                df["practitioner_id"] = [(i % 30) + 1 for i in range(len(df))]
+            # 💡 [버그 픽스] 임의의 점수 등분이 아닌, 실제 실무자(Engine) 명찰을 기준으로 그룹화
+            def _get_prac_key(sig):
+                import re
+                m = re.search(r"(PRACT_\d{2})", str(sig), re.IGNORECASE)
+                return m.group(1).upper() if m else "UNKNOWN"
+            
+            df["practitioner_key"] = df["sig_type"].apply(_get_prac_key)
+            prac_keys = sorted([k for k in df["practitioner_key"].unique() if k != "UNKNOWN"])
 
             icon = "🟢" if market_type == "spot" else "🟠"
-            for pid in range(1, 31):
-                g = df[df["practitioner_id"] == pid].copy()
-                if g.empty:
-                    msg = (
-                        f"{icon} <b>[{market_type.upper()} 실무자 {pid:02d}]</b>\n"
-                        "▪️ 표본 부족: 현재 배정된 청산 데이터 없음"
-                    )
-                    send_telegram_msg(msg)
-                    continue
+            for p_key in prac_keys:
+                g = df[df["practitioner_key"] == p_key].copy()
+                if g.empty: continue
                 wins = int((g["final_ret"] > 0).sum())
                 total = int(len(g))
                 wr = (wins / total) * 100.0 if total > 0 else 0.0
@@ -1828,7 +1967,7 @@ def send_group_practitioner_reports():
                 avg_mfe = float(g["mfe"].mean()) if total > 0 else 0.0
                 top_row = g.sort_values("final_ret", ascending=False).iloc[0]
                 # 동일 실무자 키의 실전 로그를 병합해 "입실력 vs 실전실력" 비교
-                prac_key = f"PRACT_{pid:02d}"
+                prac_key = str(p_key)
                 real_df = pd.read_sql(
                     """
                     SELECT realized_ret_pct, virtual_final_ret, notional_usdt, exec_ok, is_dry_run
@@ -1851,7 +1990,7 @@ def send_group_practitioner_reports():
                     real_samples = int(len(real_df))
 
                 msg = (
-                    f"{icon} <b>[{market_type.upper()} 실무자 {pid:02d}]</b>\n"
+                    f"{icon} <b>[{market_type.upper()} 실무자 {prac_key}]</b>\n"
                     f"▪️ 성적: 승률 {wr:.1f}% | PF {pf:.2f}\n"
                     f"▪️ 평균: RET {avg_ret:+.2f}% | MFE {avg_mfe:+.2f}% | 표본 {total}\n"
                     f"▪️ 실전: RET {real_ret:+.2f}% | 노셔널 {real_notion:,.1f} USDT | 체결 {real_samples}\n"
@@ -2182,6 +2321,13 @@ def send_comprehensive_daily_report():
             msg1 += f"🏦 <b>{market_type.upper()} 국고 잔여금:</b> {treasury:,.2f} USDT\n"
             msg1 += f"⚖️ 동적 켈리 비중: {kelly_risk:.2f}%\n"
             msg1 += "<i>※ 아래 누적 손익·리더보드·순환·DNA 통계는 [INCUBATOR_] 섀도우 제외.</i>\n"
+            msg1 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if "UNKNOWN" in regime or "CHOP" in regime:
+                msg1 += "현재 코인 시장의 뚜렷한 방향성이 없어 휩소 방어를 위해 투입 자본을 통제하고 있습니다.\n"
+            elif "BULL" in regime:
+                msg1 += "비트코인 장기 이평선(EMA200) 돌파 및 알트코인 수급 확산이 확인되어 공격적인 롱(Long) 베팅을 진행 중입니다.\n"
+            elif "BEAR" in regime:
+                msg1 += "하락장 늪지대입니다. 숏(Short) 포지션 위주로 대응하거나 현금 비중을 높이고 있습니다.\n"
             send_telegram_msg(msg1)
             time.sleep(1)
 
@@ -2274,6 +2420,15 @@ def send_comprehensive_daily_report():
             recon_fleet = sum(1 for s in open_sigs if ("S4" in s or "S6" in s or "S7" in s))
             msg4 = f"{m_icon} <b>[4/9] 섹터 포트폴리오 다중화 현황</b>\n"
             msg4 += f"🎯 편대 현황: 주도주 폭격편대 {trend_fleet}기 | 차기섹터 정찰대 {recon_fleet}기\n"
+            msg4 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if trend_fleet == 0 and recon_fleet > 0:
+                msg4 += "주도 코인이 불명확하여, 바닥 탈출(S4/S6) 및 역추세 타점 위주로 소액 정찰 중입니다.\n"
+            elif trend_fleet > 0 and recon_fleet == 0:
+                msg4 += "시장에 확실한 주도 추세가 존재하여, 돌파(S1) 타점에 화력을 집중하고 있습니다.\n"
+            elif trend_fleet == 0 and recon_fleet == 0:
+                msg4 += "모든 타점 기준 미달로 완벽한 현금 관망 중입니다.\n"
+            else:
+                msg4 += "추세 추종(롱)과 역추세/바닥(숏/스윙)을 동시에 파견하며 포트폴리오 밸런스를 맞추고 있습니다.\n"
             send_telegram_msg(msg4)
             time.sleep(1)
 
@@ -2346,10 +2501,18 @@ def send_comprehensive_daily_report():
             msg8 += f"🦅 커트라인 방어막: 코사인 {cos_limit*100:.0f}% | ML박스 {ml_limit*100:.0f}%\n"
             msg8 += f"⏳ 오토파일럿 수명: <b>{days_alive}일차</b>\n"
             recent_dna = df_real.sort_values("id", ascending=False).head(10)
+            mean_b = np.nan
             if not recent_dna.empty and "entry_breadth" in recent_dna.columns:
                 mean_b = pd.to_numeric(recent_dna["entry_breadth"], errors="coerce").dropna().mean()
                 if pd.notna(mean_b) and mean_b < 0.98:
                     msg8 += "🚨 <b>[DNA 변위 감지]</b> 대장주 일치율 급감 ➔ 방어 개입 중\n"
+            msg8 += "\n🗣️ <b>[관제탑 시선]</b> "
+            if pd.notna(mean_b) and mean_b < 0.98:
+                msg8 += "알트코인 수급이 말라죽고 비트코인 쏠림(Breadth 붕괴) 현상이 심화되어, 기존 알트 로직을 멈추고 방어 모드에 개입했습니다.\n"
+            elif days_alive == 0:
+                msg8 += "시스템이 방금 코인 시장의 새로운 메타에 맞춰 뇌수술(진화)을 마쳤습니다. 수명(0일차)을 리셋합니다.\n"
+            else:
+                msg8 += "현재 팩토리의 매매 로직이 코인 시장 트렌드와 잘 맞물려 돌아가며 통계적 우위를 점하고 있습니다.\n"
             send_telegram_msg(msg8)
             time.sleep(1)
 

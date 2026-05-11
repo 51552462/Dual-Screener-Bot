@@ -541,19 +541,18 @@ def run_autonomous_analysis():
         m = row['market']
         st = str(row['sig_type']) 
         
-        # 👇👇 [수정] 오리지널, 야수(BEAST), 언더독(UD) 뇌 완벽 분리 👇👇
-        if "SUPERNOVA_BEAST" in st:
-            return f"{m}_SUPERNOVA_BEAST_MASTER"
-        elif "UNDERDOG" in st:
-            return f"{m}_UNDERDOG_MASTER"
-        elif "SUPERNOVA" in st: 
-            return f"{m}_SUPERNOVA_MASTER"
-            
+        # 👇👇 [수정] 9대 퀀트 팩토리 모든 실무자 독립 뇌 완벽 분리 👇👇
+        if "SUPERNOVA_BEAST" in st: return f"{m}_SUPERNOVA_BEAST_MASTER"
+        elif "UNDERDOG" in st: return f"{m}_UNDERDOG_MASTER"
+        elif "SUPERNOVA" in st: return f"{m}_SUPERNOVA_MASTER"
+        elif "역매공파" in st or "역배열" in st: return f"{m}_REVERSE_MASTER"
+        elif "밥그릇" in st: return f"{m}_BOWL_MASTER"
+        elif "눌림" in st: return f"{m}_NULRIM_S4" if "S4" in st else f"{m}_NULRIM_S1"
+        elif "5선" in st: return f"{m}_5EMA_S1"
+        
         ns = f"{m}_MASTER_S1" # 기본값 
         if "S4" in st: ns = f"{m}_MASTER_S4" 
-        if "눌림" in st: ns = f"{m}_NULRIM_S4" if "S4" in st else f"{m}_NULRIM_S1" 
-        if "5선" in st: ns = f"{m}_5EMA_S1" 
-        return ns 
+        return ns
 
     if 'market' in df.columns and 'sig_type' in df.columns:
         df['namespace'] = df.apply(map_namespace, axis=1)
@@ -617,10 +616,13 @@ def run_autonomous_analysis():
             
             opt_alpha, opt_trap, opt_dtw = 0.75, 0.75, 2.5
             is_drought = len(p_df[p_df['entry_date'] >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')]) == 0
-            if 'entry_cos_score' in p_df.columns and len(win_s) >= 3:
-                opt_alpha = np.percentile(win_s['entry_cos_score'].dropna(), 15)
+            valid_win_cos = win_s['entry_cos_score'].dropna() if 'entry_cos_score' in win_s.columns else pd.Series(dtype=float)
+            valid_lose_cos = lose_s['entry_cos_score'].dropna() if 'entry_cos_score' in lose_s.columns else pd.Series(dtype=float)
+            
+            if len(valid_win_cos) >= 3:
+                opt_alpha = np.percentile(valid_win_cos, 15)
                 opt_dtw = np.percentile(win_s['entry_dtw_score'].dropna(), 85)
-                if len(lose_s) >= 3: opt_trap = np.percentile(lose_s['entry_cos_score'].dropna(), 50)
+                if len(valid_lose_cos) >= 3: opt_trap = np.percentile(valid_lose_cos, 50)
             elif is_drought:
                 opt_alpha, opt_dtw, opt_trap = 0.60, 3.5, 0.85
 
@@ -1103,11 +1105,11 @@ def run_autonomous_analysis():
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
     # ---------------------------------------------------------
     report_lines.append("\n💀 <b>[V60.0 진화론 도태 심판 및 국고 환수]</b>")
-    anti_patterns = current_config.get("ANTI_PATTERNS", [])
-    if not isinstance(anti_patterns, list):
-        anti_patterns = []
+    anti_patterns = current_config.get("ANTI_PATTERNS", {})
+    if not isinstance(anti_patterns, dict):
+        anti_patterns = {}
     
-    sn_all_closed = df[(df['sig_type'].str.contains('SUPERNOVA_초입', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+    sn_all_closed = df[(df['sig_type'].str.contains('SUPERNOVA', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
     
     for mkt in ['KR', 'US']:
         multi_key = f"DNA_SUPERNOVA_{mkt}_MULTI"
@@ -1143,7 +1145,8 @@ def run_autonomous_analysis():
 
                     # 안티 패턴 면역 체계: 도태(승률 35% 미만) 템플릿 DNA 축적
                     if t_wr < 0.35 and isinstance(archived_payload, dict):
-                        anti_patterns.append({
+                        anti_key = f"CULLED_{template_name}_{datetime.now().strftime('%y%m%d%H%M')}"
+                        anti_patterns[anti_key] = {
                             "source": "CULLED_TEMPLATE",
                             "template": template_name,
                             "market": mkt,
@@ -1152,7 +1155,7 @@ def run_autonomous_analysis():
                             "bbe": float(archived_payload.get("bbe", 0.0)),
                             "rs": float(archived_payload.get("rs", 0.0)),
                             "recorded_at": datetime.now().strftime('%Y-%m-%d')
-                        })
+                        }
                     
                     # 💡 [신규 추가] 해당 로직의 최종 잔고 역산 및 국고 반환
                     total_pnl = (t_trades['sim_kelly_invest'] * t_trades['final_ret'] / 100).sum()
@@ -1182,7 +1185,8 @@ def run_autonomous_analysis():
             (df['final_ret'] <= -10.0)
         ] if all(col in df.columns for col in ['status', 'entry_date', 'final_ret']) else pd.DataFrame()
         if not fatal_df.empty:
-            anti_patterns.append({
+            anti_key = f"FATAL_30D_{datetime.now().strftime('%y%m%d%H%M')}"
+            anti_patterns[anti_key] = {
                 "source": "FATAL_LOSERS_30D",
                 "cpv": round(float(fatal_df['dyn_cpv'].mean()), 4) if 'dyn_cpv' in fatal_df.columns else 0.0,
                 "tb": round(float(fatal_df['dyn_tb'].mean()), 4) if 'dyn_tb' in fatal_df.columns else 0.0,
@@ -1190,12 +1194,17 @@ def run_autonomous_analysis():
                 "rs": round(float(fatal_df['dyn_rs'].mean()), 4) if 'dyn_rs' in fatal_df.columns else 0.0,
                 "sample_size": int(len(fatal_df)),
                 "recorded_at": datetime.now().strftime('%Y-%m-%d')
-            })
+            }
     except Exception as e:
         report_lines.append(f"▪️ 안티 패턴(참사주) 축적 에러: {e}")
 
     # 최신 패턴 위주로 중복/폭주 방지
-    current_config["ANTI_PATTERNS"] = anti_patterns[-200:]
+    if len(anti_patterns) > 200:
+        sorted_keys = sorted(anti_patterns.keys())
+        excess = len(anti_patterns) - 200
+        for k in sorted_keys[:excess]:
+            anti_patterns.pop(k, None)
+    current_config["ANTI_PATTERNS"] = anti_patterns
 
     # ---------------------------------------------------------
     # 👑 엔진 12: [V105.0 순환매 예측 로직 자율 검증 및 가중치 부여]
@@ -1459,7 +1468,8 @@ def run_autonomous_analysis():
                 if evolved_shape is None:
                     _tpl_sh = promoted_tpl.get("shape")
                     evolved_shape = _tpl_sh if isinstance(_tpl_sh, list) and len(_tpl_sh) == 20 else [0.5] * 20
-                current_config["DNA_ALPHA_NEW_EVOLUTION_V1"] = {
+                evo_key = f"DNA_ALPHA_EVO_{promoted_name}"
+                current_config[evo_key] = {
                     "cpv": float(promoted_tpl.get("cpv", 0.0)),
                     "tb": float(promoted_tpl.get("tb", 0.0)),
                     "bbe": float(promoted_tpl.get("bbe", 0.0)),
@@ -1470,10 +1480,10 @@ def run_autonomous_analysis():
                     "shape": evolved_shape,
                     "passed_synthetic_sandbox": True
                 }
-                current_config["NEW_EVOLUTION_NAME"] = "NEW_EVOLUTION_V1"
+                current_config["NEW_EVOLUTION_NAME"] = evo_key
                 current_config["NEW_EVOLUTION_ACTIVE"] = True
                 remove_keys.append(promoted_name)
-                report_lines.append(f"🏆 <b>승격:</b> {promoted_name} ➔ [NEW_EVOLUTION_V1] 정규직 배치 완료")
+                report_lines.append(f"🏆 <b>승격:</b> {promoted_name} ➔ [{evo_key}] 정규직 배치 완료")
 
             for k in set(remove_keys):
                 incubator_templates.pop(k, None)
@@ -1653,8 +1663,8 @@ def _safe_call_ai_modules_for_report():
     try:
         import ai_overseer  # noqa: F401
         # 호출 가능한 엔트리가 있으면 실행, 없으면 import 체크만 수행
-        if hasattr(ai_overseer, "run_ai_overseer"):
-            ai_overseer.run_ai_overseer()
+        if hasattr(ai_overseer, "run_ai_auditor"):
+            ai_overseer.run_ai_auditor()
     except Exception as e:
         print(f"⚠️ [세이프티 넷] ai_overseer 호출 실패(무시): {e}")
 
@@ -1703,10 +1713,6 @@ def system_main_loop():
                         _send_daily_close_report(now, "SCHEDULED_1630")
                     elif (now.hour > 16 or (now.hour == 16 and now.minute >= 31)) and not sent_today:
                         _send_daily_close_report(now, "SAFETY_NET_RETRY")
-
-                    print("🛑 [오토파일럿] KR 장마감 이후 스캔/검색 위성 루프 break 처리 (다음 주기 대기)")
-                    time.sleep(30)
-                    continue
 
                 # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
                 if now.weekday() == 5 and now.hour == 10 and now.minute == 0:

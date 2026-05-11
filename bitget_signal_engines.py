@@ -106,7 +106,7 @@ def _core_factors(df: pd.DataFrame):
         cpv = np.where(h != l, (c - o) / (h - l), 0.5)
         v_ma20 = pd.Series(v).rolling(20).mean().values
         vol_mult = np.where(v_ma20 > 0, v / v_ma20, 1.0)
-        tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), vol_mult / 0.01)
+        tb_index = np.where(cpv > 0, vol_mult / np.maximum(cpv, 0.01), 0.0)
 
         bb_mid = pd.Series(c).rolling(20).mean().values
         bb_std = pd.Series(c).rolling(20).std().values
@@ -193,7 +193,7 @@ def _calc_shape20(close_arr: np.ndarray):
     c = close_arr[-300:] if len(close_arr) > 300 else close_arr
     c = np.asarray(c, dtype=float)
     c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
-    return np.mean(np.array_split(c_norm, 20), axis=1)
+    return np.array([np.mean(x) for x in np.array_split(c_norm, 20)])
 
 
 def _calc_dtw(s, t):
@@ -447,7 +447,7 @@ def _build_exit_strategy(sig_type, cur_cpv, total_score, regime_weight=1.0):
 
 def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: str = "1D") -> Tuple[bool, str, pd.DataFrame, Dict]:
     df_raw = _prepare_ohlcv_df(df_raw)
-    if df_raw is None or len(df_raw) < 500:
+    if df_raw is None or len(df_raw) < 240:
         return False, "", df_raw, {}
     df = df_raw.copy()
     for n in [10, 20, 30, 60, 112, 224, 448]:
@@ -612,7 +612,7 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
 
 def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: str = "1D") -> Tuple[bool, str, pd.DataFrame, Dict]:
     df_raw = _prepare_ohlcv_df(df_raw)
-    if df_raw is None or len(df_raw) < 500:
+    if df_raw is None or len(df_raw) < 240:
         return False, "", df_raw, {}
     df = df_raw.copy()
     for n in [10, 20, 30, 60, 112, 224, 448]:
@@ -755,7 +755,7 @@ def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
 
 def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: str = "1D") -> Tuple[bool, str, pd.DataFrame, Dict]:
     df_raw = _prepare_ohlcv_df(df_raw)
-    if df_raw is None or len(df_raw) < 500:
+    if df_raw is None or len(df_raw) < 240:
         return False, "", df_raw, {}
     df = df_raw.copy()
     for n in [5, 10, 20, 30, 60, 112, 224, 448]:
@@ -900,6 +900,20 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     cur_bbe = float(bb_energy[-1])
     cur_rs = float(rs[-1])
     score = 100.0
+
+    # 💡 [코인 생태계 특화] 숏(Short) 포지션도 의사결정나무 및 도플갱어 검증 필수 수행
+    vec7, meta7 = _auto_forward_style_7d_vector(out, idx_close)
+    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, out["Close"].values)
+    score = float(np.clip(score + dd_adj, 0.0, 100.0))
+    guard_comment = ""
+
+    rej, reason = _tree_reject(float(cur_cpv))
+    if rej:
+        score = 0.0
+        guard_comment += f"\n🚫 Decision Tree 기각: {reason}\n"
+    if dd_msg:
+        guard_comment += f"\n{dd_msg}\n"
+
     v11_comment = (
         f"📉 [TV Short V1 브리핑]\n"
         f"🔹 시스템 총점: {score:.1f} / 100점\n"
@@ -909,6 +923,7 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
         f"▪️ 시장상대강도(RS): {cur_rs:.3f}\n"
         f"▪️ 트리거: e1={bool(entry1.iloc[-1])}, e2={bool(entry2.iloc[-1])}, e3={bool(entry3.iloc[-1])}"
     )
+    v11_comment += guard_comment
     dbg = {
         "sig_type": sig_type,
         "score": float(score),
@@ -966,6 +981,20 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     cur_bbe = float(bb_energy[-1])
     cur_rs = float(rs[-1])
     score = 100.0
+
+    # 💡 [코인 생태계 특화] 숏(Short) 포지션도 의사결정나무 및 도플갱어 검증 필수 수행
+    vec7, meta7 = _auto_forward_style_7d_vector(out, idx_close)
+    dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, out["Close"].values)
+    score = float(np.clip(score + dd_adj, 0.0, 100.0))
+    guard_comment = ""
+
+    rej, reason = _tree_reject(float(cur_cpv))
+    if rej:
+        score = 0.0
+        guard_comment += f"\n🚫 Decision Tree 기각: {reason}\n"
+    if dd_msg:
+        guard_comment += f"\n{dd_msg}\n"
+
     v11_comment = (
         f"📉 [TV Short V2 브리핑]\n"
         f"🔹 시스템 총점: {score:.1f} / 100점\n"
@@ -975,6 +1004,7 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
         f"▪️ 시장상대강도(RS): {cur_rs:.3f}\n"
         f"▪️ 트리거: e2={bool(entry2.iloc[-1])}"
     )
+    v11_comment += guard_comment
     dbg = {
         "sig_type": sig_type,
         "score": float(score),

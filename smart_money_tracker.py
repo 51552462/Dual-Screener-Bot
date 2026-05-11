@@ -94,8 +94,9 @@ def run_smart_money_tracker():
             
             # 가격은 안 올랐는데, 평균 대비 1.5배 이상 거래량이 터진 날이 2일 이상 있다면 '은밀한 매집'으로 간주
             if price_change <= 1.0 and len(recent_vol_surge) >= 2:
-                # 세력 추정 평단가 (거래대금 가중 평균)
-                vwap = (recent_5d['Close'] * recent_5d['Volume']).sum() / recent_5d['Volume'].sum()
+                # 세력 추정 평단가 (거래대금 가중 평균 - 0 나누기 방어)
+                vol_sum = recent_5d['Volume'].sum()
+                vwap = (recent_5d['Close'] * recent_5d['Volume']).sum() / vol_sum if vol_sum > 0 else recent_5d['Close'].iloc[-1]
                 
                 stock_name = kospi[kospi['Code'] == code]['Name'].values[0]
                 smart_picks[code] = {

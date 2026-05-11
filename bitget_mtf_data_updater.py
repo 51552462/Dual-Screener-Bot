@@ -16,18 +16,43 @@ except ModuleNotFoundError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "ccxt"])
     import ccxt
 import pandas as pd
+from bitget_config_hub import load_config as hub_load_config
+from bitget_symbol_utils import normalize_table_symbol
+from bitget_rate_limit_guard import throttle, backoff_sleep
+from bitget_logger import setup_logging, get_logger
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_config.json")
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 DB_WRITE_MAX_RETRIES = 8
 DB_WRITE_BASE_SLEEP = 0.15
+setup_logging()
+logger = get_logger("bitget.mtf_updater")
+
+
+def _mtf_fallback_defaults():
+    """
+    레거시 bitget_config.json와 동등한 블랭크 상태 기본값(단일 bitget_system_config.json 사용).
+    """
+    return {
+        "exchange": "bitget",
+        "default_quote": "USDT",
+        "timeframes": ["1d", "4h", "2h", "1h"],
+        "ohlcv_limit": 500,
+        "universe": {
+            "spot": {"enabled": True, "min_quote_volume_usdt": 3000000},
+            "linear": {"enabled": True, "min_quote_volume_usdt": 5000000},
+        },
+        "parallel": {"max_workers_per_market_type": 8},
+    }
 
 
 def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    cfg = hub_load_config()
+    if cfg:
+        return cfg
+    return _mtf_fallback_defaults()
+
 
 
 def create_exchange(default_type: str):
@@ -104,7 +129,7 @@ def _run_with_db_retry(write_fn, op_desc: str):
 
 
 def normalize_symbol(symbol: str) -> str:
-    return symbol.replace("/", "_").replace(":", "_")
+    return normalize_table_symbol(symbol)
 
 
 def normalize_timeframe(tf: str) -> str:
@@ -137,6 +162,7 @@ def _extract_quote_volume_usdt(ticker: dict) -> float:
 
 
 def load_dynamic_universe(exchange, market_type: str, min_quote_volume_usdt: float, default_quote: str):
+    throttle("bitget.fetch_tickers", 0.45)
     tickers = exchange.fetch_tickers()
     selected = []
 
@@ -260,22 +286,24 @@ def _enforce_benchmark_preload(timeframes, ohlcv_limit: int):
 
 
 def fetch_symbol_ohlcv_payload(
+    exchange,
     market_type: str,
     symbol: str,
     timeframes,
     ohlcv_limit: int,
 ):
-    exchange = create_exchange("spot" if market_type == "spot" else "swap")
     payloads = []
     try:
         for tf in timeframes:
             try:
                 time.sleep(0.06)  # API ban 방어용 미세 지연
+                throttle("bitget.fetch_ohlcv", 0.10)
                 ohlcv = exchange.fetch_ohlcv(symbol=symbol, timeframe=tf, limit=ohlcv_limit)
                 if ohlcv:
                     payloads.append((symbol, tf, ohlcv))
             except Exception as e:
                 print(f"⚠️ [{market_type}] {symbol} {tf} 수집 실패: {e}")
+                backoff_sleep(1)
     finally:
         gc.collect()
     return symbol, payloads
@@ -310,8 +338,7 @@ def run_mtf_update():
         min_qv = float(mcfg.get("min_quote_volume_usdt", 0))
         ex = create_exchange("spot" if market_type == "spot" else "swap")
         universe = load_dynamic_universe(ex, market_type, min_qv, default_quote)
-        del ex
-        gc.collect()
+        # 💡 [버그 픽스] exchange 객체를 삭제하지 않고 워커들에 재사용하여 API 호출 폭주(IP 차단) 완벽 방어
         print(f"📦 [{market_type}] 거래대금 필터 통과: {len(universe)}개 (기준: {min_qv:,.0f} USDT)")
 
         if not universe:
@@ -325,7 +352,7 @@ def run_mtf_update():
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
-                    pool.submit(fetch_symbol_ohlcv_payload, market_type, sym, timeframes, ohlcv_limit): sym
+                    pool.submit(fetch_symbol_ohlcv_payload, ex, market_type, sym, timeframes, ohlcv_limit): sym
                     for sym in universe
                 }
                 for fut in as_completed(futures):

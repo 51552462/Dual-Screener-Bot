@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+import bitget_shadow_tracking
 from bitget_forward_tester import compute_evolved_alpha_bonus_score, try_add_virtual_position
 
 
@@ -20,6 +21,7 @@ CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
 TELEGRAM_TOKEN = os.environ.get("BITGET_TELEGRAM_TOKEN_MAIN", "")
 TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
 scanned_today_cache = {"spot": set(), "futures": set()}
+LOG_FILE_SNIPER = os.path.join(BASE_DIR, "sent_log_bitget_supernova.txt")
 
 
 def load_config():
@@ -56,48 +58,52 @@ def _scaled_lookbacks(tf: str):
 
 
 def evaluate_alpha_formula(df, formula):
-    if df.empty:
+    """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환. (AST 샌드박스 검증 추가)"""
+    if df is None or getattr(df, 'empty', True):
         return None
+
+    # 1. 샌드박스 검증: 허용된 변수/함수만 있는지, 트리가 너무 깊지 않은지 AST 사전 검사
+    ALLOWED_NAMES = {'O', 'H', 'L', 'C', 'V', 'add', 'sub', 'mul', 'div', 'rolling_mean', 'rolling_std'}
+    try:
+        formula_str = str(formula).strip()
+        tree = ast.parse(formula_str, mode='eval')
+        node_count = 0
+        for node in ast.walk(tree):
+            node_count += 1
+            if node_count > 150:  # 무한 루프나 비정상적으로 깊은 수식(메모리 폭발) 사전 차단
+                return None
+            if isinstance(node, ast.Name) and node.id not in ALLOWED_NAMES:
+                return None
+    except Exception:
+        return None
+
+    # 2. 기존 환경 변수 셋업
     O = df["Open"]
     H = df["High"]
     L = df["Low"]
     C = df["Close"]
     V = df["Volume"]
 
-    def add(a, b):
-        return a + b
-
-    def sub(a, b):
-        return a - b
-
-    def mul(a, b):
-        return a * b
-
+    def add(a, b): return a + b
+    def sub(a, b): return a - b
+    def mul(a, b): return a * b
     def div(a, b):
+        import numpy as np
         safe_b = b.replace(0, np.nan) if isinstance(b, pd.Series) else (np.nan if b == 0 else b)
         return a / safe_b
-
-    def rolling_mean(x, w):
-        return x.rolling(int(w)).mean()
-
-    def rolling_std(x, w):
-        return x.rolling(int(w)).std()
+    def rolling_mean(x, w): return x.rolling(int(w)).mean()
+    def rolling_std(x, w): return x.rolling(int(w)).std()
 
     env = {
-        "O": O,
-        "H": H,
-        "L": L,
-        "C": C,
-        "V": V,
-        "add": add,
-        "sub": sub,
-        "mul": mul,
-        "div": div,
-        "rolling_mean": rolling_mean,
-        "rolling_std": rolling_std,
+        "O": O, "H": H, "L": L, "C": C, "V": V,
+        "add": add, "sub": sub, "mul": mul, "div": div,
+        "rolling_mean": rolling_mean, "rolling_std": rolling_std,
     }
+
+    # 3. 안전이 검증된 수식만 eval() 실행
     try:
-        out = eval(str(formula), {"__builtins__": {}}, env)
+        import numpy as np
+        out = eval(formula_str, {"__builtins__": {}}, env)
         if isinstance(out, pd.Series):
             return out.replace([np.inf, -np.inf], np.nan)
     except Exception:
@@ -209,7 +215,7 @@ def extract_dna_from_df(df_raw, timeframe="1D"):
     tml = np.where(is_aligned_30, ema_roc * (r_squared**2), 0)
     dday_idx = int(np.nanargmax(bbe)) if not np.isnan(bbe).all() else len(hist_df) - 1
     c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
-    new_shape = np.mean(np.array_split(c_norm, 20), axis=1).tolist()
+    new_shape = [float(np.mean(x)) for x in np.array_split(c_norm, 20)]
     return {
         "cpv": float(cpv[dday_idx]),
         "tb": float(tb[dday_idx]),
@@ -397,6 +403,18 @@ def execute_supernova_live_scan(market_type, timeframe):
             alpha_bonus = compute_evolved_alpha_bonus_score(cfg, ev_df)
             eff_cos = min(1.0, best_cos + alpha_bonus)
             if eff_cos < dynamic_cos_cutoff or best_dtw > dynamic_dtw_cutoff:
+                try:
+                    bitget_shadow_tracking.record_blocked_trade(
+                        symbol=symbol,
+                        reason="TOXIC_ML_TREE",
+                        entry_price=float(c[-1]),
+                        market_type=market_type,
+                        name=symbol,
+                        position_side="LONG",
+                        timeframe=tf,
+                    )
+                except Exception:
+                    pass
                 return None
 
             facts = {
@@ -437,8 +455,30 @@ def execute_supernova_live_scan(market_type, timeframe):
             entry_price=target["entry_price"],
             facts=target["facts"],
         )
+        if not ok:
+            rsn = str(msg)
+            if ("ANTI_PATTERNS" in rsn) or ("TOXIC" in rsn) or ("DOOMSDAY" in rsn):
+                try:
+                    bitget_shadow_tracking.record_blocked_trade(
+                        symbol=target["symbol"],
+                        reason=rsn,
+                        entry_price=float(target["entry_price"]),
+                        market_type=market_type,
+                        name=target["symbol"],
+                        position_side="LONG",
+                        timeframe=tf,
+                    )
+                except Exception:
+                    pass
         if ok:
             scanned_today_cache[market_type].add(target["uniq"])
+            # 💡 [버그 픽스] 스나이퍼 발사 기록을 물리 파일에 즉시 저장
+            try:
+                with open(LOG_FILE_SNIPER, "a", encoding="utf-8") as f:
+                    f.write(f"{market_type}|{target['uniq']}\n")
+            except Exception:
+                pass
+            
             send_telegram_msg(
                 f"🦅 <b>[SUPERNOVA 실시간 저격]</b>\n"
                 f"시장: {market_type} | TF: {tf}\n"
@@ -457,6 +497,21 @@ def run_live_sniper_scheduler():
     print(" - 4H: 0/4/8/12/16/20시")
     print(" - 1D: 00:05 UTC")
     last_day = datetime.utcnow().strftime("%Y-%m-%d")
+    
+    # 💡 [버그 픽스] 서버 재부팅 시 기억 복원
+    if os.path.exists(LOG_FILE_SNIPER):
+        try:
+            with open(LOG_FILE_SNIPER, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+                if lines and lines[0] == last_day:
+                    for line in lines[1:]:
+                        if "|" in line:
+                            m_type, uniq = line.split("|", 1)
+                            if m_type in scanned_today_cache:
+                                scanned_today_cache[m_type].add(uniq)
+        except Exception:
+            pass
+
     while True:
         try:
             now = datetime.utcnow()
@@ -465,6 +520,12 @@ def run_live_sniper_scheduler():
                 scanned_today_cache["spot"].clear()
                 scanned_today_cache["futures"].clear()
                 last_day = day
+                # 날짜가 바뀌면 로그 파일 초기화
+                try:
+                    with open(LOG_FILE_SNIPER, "w", encoding="utf-8") as f:
+                        f.write(day + "\n")
+                except Exception:
+                    pass
 
             if now.minute == 0:
                 for mt in ("spot", "futures"):

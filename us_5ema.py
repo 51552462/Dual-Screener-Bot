@@ -118,11 +118,18 @@ def telegram_sender_daemon(target_queue, token):
         if SEND_TELEGRAM:
             for _ in range(3):
                 try:
-                    with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
+                    if img_path is None:
+                        # 💡 이미지가 없는 에러 메시지 등은 일반 텍스트 모드로 전송
+                        res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", params={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption, "parse_mode": "HTML"}, timeout=60, verify=False)
+                    else:
+                        # 💡 이미지가 있을 때는 사진과 함께 전송
+                        with open(img_path, 'rb') as f:
+                            res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
+                    
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except: time.sleep(2)
+            import time
             time.sleep(1.5)
         target_queue.task_done()
 
@@ -418,11 +425,20 @@ def compute_us_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close
 
         # 👇👇 [여기에 V53.0 초신성(Supernova) 타임머신 매칭 로직을 추가합니다!] 👇👇
                 market_str = "US" if "US" in ns_prefix else "KR"
-                sn_dna = SYS_CONFIG.get(f"DNA_SUPERNOVA_{market_str}")
-                if sn_dna:
-                    sn_sim = calc_similarity(sn_dna)
-                    if sn_sim > max_sn_similarity: 
-                        max_sn_similarity = sn_sim
+                # 1. 멀티 템플릿(세포 분열된 타점들) 순회 매칭
+                sn_multi = SYS_CONFIG.get(f"DNA_SUPERNOVA_{market_str}_MULTI", {})
+                if isinstance(sn_multi, dict):
+                    for _, t_dna in sn_multi.items():
+                        sn_sim = calc_similarity(t_dna)
+                        if sn_sim > max_sn_similarity:
+                            max_sn_similarity = sn_sim
+                            
+                # 2. MFE 황금 진화 템플릿 추가 매칭
+                mfe_weighted = SYS_CONFIG.get("DNA_SUPERNOVA_MFE_WEIGHTED")
+                if isinstance(mfe_weighted, dict):
+                    mfe_sim = calc_similarity(mfe_weighted)
+                    if mfe_sim > max_sn_similarity:
+                        max_sn_similarity = mfe_sim
                 # 👆👆 [초신성 매칭 끝] 👆👆
         
         # 4. 80% 이상 매칭 시 전략(exit_strategy) 문구 삽입 및 점수(total_score) 보정
@@ -684,6 +700,7 @@ def scan_market_1d():
         chunk = tickers[i:i+chunk_size]
         df_batch = None
         fallback_dict = {}
+        fallback_lock = threading.Lock()
 
         try:
             df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
@@ -691,7 +708,9 @@ def scan_market_1d():
             def fetch_single(tk):
                 try:
                     df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
-                    if not df_s.empty: fallback_dict[tk] = df_s
+                    if not df_s.empty:
+                        with fallback_lock:
+                            fallback_dict[tk] = df_s
                 except: pass
             with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
                 executor.map(fetch_single, chunk)

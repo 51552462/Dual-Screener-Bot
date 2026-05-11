@@ -121,7 +121,10 @@ def gather_daily_system_facts():
             report_data["trades"]["total_closed"] = len(df_closed)
             report_data["trades"]["wins"] = len(df_closed[df_closed['final_ret'] > 0])
             report_data["trades"]["loses"] = len(df_closed[df_closed['final_ret'] <= 0])
-            report_data["trades"]["avg_ret"] = round(df_closed['final_ret'].mean(), 2)
+            
+            # Numpy float64 직렬화 에러 방지를 위해 기본 float 강제 형변환
+            avg_val = df_closed['final_ret'].mean()
+            report_data["trades"]["avg_ret"] = float(round(avg_val, 2)) if not pd.isna(avg_val) else 0.0
             
             # 오버드라이브 발동 여부 팩트 체크
             od_trades = df_closed[df_closed['exit_reason'].str.contains('오버드라이브', na=False)]

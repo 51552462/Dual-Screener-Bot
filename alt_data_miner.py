@@ -11,8 +11,9 @@ ALT_DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener
 
 def init_alt_db():
     """대체 데이터 전용 DB와 테이블을 생성합니다."""
-    conn = sqlite3.connect(ALT_DB_PATH)
+    conn = sqlite3.connect(ALT_DB_PATH, timeout=60)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS macro_daily (
             date TEXT PRIMARY KEY,
@@ -58,8 +59,9 @@ def run_alternative_data_mining():
 
     # DB 저장 (INSERT OR REPLACE로 중복 방지)
     try:
-        conn = sqlite3.connect(ALT_DB_PATH)
+        conn = sqlite3.connect(ALT_DB_PATH, timeout=60)
         cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute('''
             INSERT OR REPLACE INTO macro_daily 
             (date, usd_krw, us_10y_yield, vix_index, dxy_index, put_call_ratio, fed_rate_prob)
