@@ -11,8 +11,7 @@ import requests
 
 # 👇👇 [수정] 대표님이 쓰시는 안전한 .env 방식 및 신형 구글 SDK 임포트 👇👇
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")

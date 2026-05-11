@@ -1617,6 +1617,67 @@ def send_weekly_flow_master_report():
     send_telegram_report(report_msg)
 
 # ==========================================
+# 🛡️ 스케줄러 세이프티 넷
+# ==========================================
+def _is_after_kr_close(now):
+    return now.weekday() < 5 and (now.hour > 15 or (now.hour == 15 and now.minute > 40))
+
+
+def _report_flag_sent_today(config_data, day_key):
+    flags = config_data.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
+    if not isinstance(flags, dict):
+        return False
+    return bool(flags.get(day_key))
+
+
+def _mark_report_flag(day_key, reason):
+    cfg = load_config()
+    flags = cfg.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
+    if not isinstance(flags, dict):
+        flags = {}
+    flags[day_key] = {
+        "sent": True,
+        "sent_at": datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S'),
+        "reason": reason,
+    }
+    # 최근 14일만 유지
+    sorted_days = sorted(flags.keys(), reverse=True)
+    cfg["AUTO_PILOT_DAILY_REPORT_FLAG"] = {k: flags[k] for k in sorted_days[:14]}
+    save_config(cfg)
+
+
+def _safe_call_ai_modules_for_report():
+    """
+    AI 서버 이슈로 스케줄러 전체가 멈추지 않도록 ai_overseer/auto_forward_tester 호출 보호.
+    """
+    try:
+        import ai_overseer  # noqa: F401
+        # 호출 가능한 엔트리가 있으면 실행, 없으면 import 체크만 수행
+        if hasattr(ai_overseer, "run_ai_overseer"):
+            ai_overseer.run_ai_overseer()
+    except Exception as e:
+        print(f"⚠️ [세이프티 넷] ai_overseer 호출 실패(무시): {e}")
+
+    try:
+        import auto_forward_tester
+        if hasattr(auto_forward_tester, "send_telegram_msg"):
+            auto_forward_tester.send_telegram_msg("🧾 [오토파일럿] 16:30 결과지 발송 파이프라인 점검 완료")
+    except Exception as e:
+        print(f"⚠️ [세이프티 넷] auto_forward_tester 호출 실패(무시): {e}")
+
+
+def _send_daily_close_report(now, reason):
+    msg = (
+        "🧾 <b>[오토파일럿 장마감 결과지]</b>\n"
+        f"📅 {now.strftime('%Y-%m-%d')} / ⏰ {now.strftime('%H:%M')}\n"
+        f"▪️ 발송 트리거: <b>{reason}</b>\n"
+        "▪️ 상태: 스케줄러 생존 / 장마감 후 스캔 위성 차단 적용"
+    )
+    send_telegram_report(msg)
+    _safe_call_ai_modules_for_report()
+    _mark_report_flag(now.strftime('%Y-%m-%d'), reason)
+
+# ==========================================
 # 🕒 루프 실행기
 # ==========================================
 def system_main_loop():
@@ -1632,6 +1693,21 @@ def system_main_loop():
                 continue
 
             if (now.date() - first_entry_date).days >= WARMUP_DAYS:
+                day_key = now.strftime('%Y-%m-%d')
+
+                # 🛑 장 마감(15:40) 이후 KR 스캔/검색 위성 스케줄 루프 차단 + 16:30 리포트 세이프티 넷
+                if _is_after_kr_close(now) and now.hour < 22:
+                    cfg = load_config()
+                    sent_today = _report_flag_sent_today(cfg, day_key)
+                    if now.hour == 16 and now.minute == 30 and not sent_today:
+                        _send_daily_close_report(now, "SCHEDULED_1630")
+                    elif (now.hour > 16 or (now.hour == 16 and now.minute >= 31)) and not sent_today:
+                        _send_daily_close_report(now, "SAFETY_NET_RETRY")
+
+                    print("🛑 [오토파일럿] KR 장마감 이후 스캔/검색 위성 루프 break 처리 (다음 주기 대기)")
+                    time.sleep(30)
+                    continue
+
                 # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
                 if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
                     print("🚀 주말 관제탑 자율 튜닝(뇌수술)을 시작합니다...")
@@ -1640,8 +1716,11 @@ def system_main_loop():
                     
                 # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
                 elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
-                    print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
-                    send_weekly_flow_master_report()
+                    try:
+                        print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
+                        send_weekly_flow_master_report()
+                    except Exception as e:
+                        print(f"⚠️ 주간 결과지 발송 실패(무시): {e}")
                     time.sleep(60)
 
                 # 3. 토요일 오전 10시 10분: 새 뇌(Config) 기반 과거 폭락장 타임머신 검증 자동 실행
@@ -1715,14 +1794,16 @@ def system_main_loop():
                         print(f"⚠️ 상한가 부검소 가동 실패: {e}")
                     time.sleep(60)
 
-                # 4. 매일 16시 30분: 스마트 머니(수급 다이버전스) 트래커 자동 가동
+                # 4. 매일 16시 30분: 장마감 결과지 발송 (리포트 플래그 기반)
                 elif now.hour == 16 and now.minute == 30:
                     try:
-                        import smart_money_tracker
-                        print("🔄 [오토파일럿] 스마트 머니 트래커 자동 가동 중...")
-                        smart_money_tracker.run_smart_money_tracker()
+                        cfg = load_config()
+                        if not _report_flag_sent_today(cfg, day_key):
+                            _send_daily_close_report(now, "SCHEDULED_1630")
+                        else:
+                            print("🧾 [오토파일럿] 16:30 결과지 이미 발송됨 — 중복 스킵")
                     except Exception as e:
-                        print(f"⚠️ 스마트 머니 트래커 가동 실패: {e}")
+                        print(f"⚠️ 16:30 결과지 발송 실패: {e}")
                     time.sleep(60)
 
                 # 5. 매일 17시 00분: 거시 둠스데이 레이더 (국채·원자재·신용)

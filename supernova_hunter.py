@@ -12,11 +12,16 @@ import pytz
 import warnings
 from io import StringIO
 import requests
+from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
 import shadow_tracking
 from yf_download_flatten import flatten_yf_download_df
 scanned_today_cache = {'KR': set(), 'US': set()}
+try:
+    import google.generativeai as genai
+except Exception:
+    genai = None
 
 # ==========================================
 # 💡 [환경 설정 및 텔레그램 세팅]
@@ -24,12 +29,53 @@ scanned_today_cache = {'KR': set(), 'US': set()}
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
 TELEGRAM_CHAT_ID = "6838834566"
+load_dotenv()
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if genai is not None and GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+    except Exception:
+        pass
 
 def send_telegram_msg(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except: pass
+
+
+def _alpha_formula_one_line_explain(formula, ic):
+    """
+    Gemini로 수식의 전략 논리를 1줄 자연어로 요약.
+    실패 시 규칙기반 안전 폴백 문구를 반환.
+    """
+    ftxt = str(formula)
+    fallback = "가격·거래량·변동성 요소를 결합해 단기 모멘텀과 눌림 신호를 동시에 판독하는 전략입니다."
+    if "div(" in ftxt and "V" in ftxt:
+        fallback = "거래량 대비 가격 위치(저점/고점)를 비율로 압축해, 수급 급변 직전의 비대칭 구간을 노리는 전략입니다."
+    elif "add(" in ftxt and "ma" in ftxt.lower():
+        fallback = "이동평균 추세와 단기 변동성 요인을 합성해, 추세 지속 구간의 승자주를 선별하는 전략입니다."
+
+    if genai is None or not GEMINI_API_KEY:
+        return fallback
+
+    prompt = (
+        "다음은 퀀트 알파 수식이다. 사람이 이해하기 쉬운 한국어 한 줄(40자~90자)로 "
+        "매매 논리를 설명해라. 과장 금지, 단정적 투자권유 금지.\n"
+        f"- IC: {float(ic):.4f}\n"
+        f"- 수식: {ftxt}\n"
+        "출력은 설명문 한 줄만."
+    )
+    try:
+        time.sleep(random.uniform(0.3, 0.7))
+        resp = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
+        text = getattr(resp, "text", "") or ""
+        text = text.strip().replace("\n", " ")
+        if text:
+            return text[:120]
+    except Exception:
+        pass
+    return fallback
 
 def load_config(max_retries=5):
     """
@@ -569,6 +615,8 @@ def evolve_alpha_factors():
     msg = "🧬 <b>[알파 진화 완료]</b>\n"
     for i, (formula, ic) in enumerate(top3, 1):
         msg += f"▪️ ALPHA_{i} (IC {ic:.4f}): <code>{formula}</code>\n"
+        explain = _alpha_formula_one_line_explain(formula, ic)
+        msg += f"  - AI 해석: {explain}\n"
     send_telegram_msg(msg)
     print("✅ EVOLVED_ALPHA_FACTORS 저장 완료")
 
