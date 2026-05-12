@@ -629,6 +629,91 @@ def generate_mutant_strategies():
     save_system_config(sys_config)
     send_telegram_msg("🧪 [인큐베이터] 금일 돌연변이 전략 3종(MUTANT_1~3) 생성 및 임시 저장 완료")
 
+
+_NUMERIC_BBOX_BASES = frozenset({"dyn_cpv", "dyn_tb", "v_energy", "dyn_rs"})
+
+
+def _fact_value_for_toxic_base(
+    base: str, cpv: float, tb: float, bbe: float, dyn_rs_live: float
+) -> float:
+    if base == "dyn_cpv":
+        return float(cpv)
+    if base == "dyn_tb":
+        return float(tb)
+    if base == "v_energy":
+        return float(bbe)
+    if base == "dyn_rs":
+        return float(dyn_rs_live)
+    raise ValueError(base)
+
+
+def evaluate_toxic_bbox_match(
+    bounds: dict,
+    cpv: float,
+    tb: float,
+    bbe: float,
+    dyn_rs_live: float,
+    sector_mapped: str,
+    now_dt=None,
+) -> bool:
+    """
+    ANTI_PATTERNS / ML 트리 bounding box 일치 여부.
+    - `*_max` / `*_min` 은 등록된 수치 피처(dyn_cpv, dyn_tb, v_energy, dyn_rs)에 한해 동적 평가.
+    - `sector_match`, `weekday_match` 가 있으면 각각 현재 섹터·요일과 일치해야 함.
+    """
+    if not isinstance(bounds, dict):
+        return False
+    now = now_dt or datetime.now()
+    tw = int(now.weekday())
+    match_flags: list = []
+    for key, raw in bounds.items():
+        if key in ("created_at",):
+            continue
+        if key == "sector_match":
+            match_flags.append(str(sector_mapped) == str(raw))
+            continue
+        if key == "weekday_match":
+            try:
+                wm = int(raw)
+            except (TypeError, ValueError):
+                match_flags.append(False)
+                continue
+            match_flags.append(tw == wm)
+            continue
+        ks = str(key)
+        if ks.endswith("_max"):
+            base = ks[:-4]
+            if base not in _NUMERIC_BBOX_BASES:
+                continue
+            try:
+                val = _fact_value_for_toxic_base(base, cpv, tb, bbe, dyn_rs_live)
+            except ValueError:
+                continue
+            if base == "dyn_rs" and isinstance(val, float) and np.isnan(val):
+                continue
+            try:
+                match_flags.append(float(val) <= float(raw))
+            except (TypeError, ValueError):
+                continue
+            continue
+        if ks.endswith("_min"):
+            base = ks[:-4]
+            if base not in _NUMERIC_BBOX_BASES:
+                continue
+            try:
+                val = _fact_value_for_toxic_base(base, cpv, tb, bbe, dyn_rs_live)
+            except ValueError:
+                continue
+            if base == "dyn_rs" and isinstance(val, float) and np.isnan(val):
+                continue
+            try:
+                match_flags.append(float(val) > float(raw))
+            except (TypeError, ValueError):
+                continue
+            continue
+    return bool(match_flags) and all(match_flags)
+
+
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
@@ -728,24 +813,7 @@ def try_add_virtual_position(
     for _, bounds in merged_anti.items():
         if not isinstance(bounds, dict):
             continue
-        match_flags = []
-        if "dyn_cpv_max" in bounds:
-            match_flags.append(cpv <= float(bounds["dyn_cpv_max"]))
-        if "dyn_cpv_min" in bounds:
-            match_flags.append(cpv > float(bounds["dyn_cpv_min"]))
-        if "dyn_tb_max" in bounds:
-            match_flags.append(tb <= float(bounds["dyn_tb_max"]))
-        if "dyn_tb_min" in bounds:
-            match_flags.append(tb > float(bounds["dyn_tb_min"]))
-        if "v_energy_max" in bounds:
-            match_flags.append(bbe <= float(bounds["v_energy_max"]))
-        if "v_energy_min" in bounds:
-            match_flags.append(bbe > float(bounds["v_energy_min"]))
-        if "dyn_rs_max" in bounds and not (isinstance(dyn_rs_live, float) and np.isnan(dyn_rs_live)):
-            match_flags.append(float(dyn_rs_live) <= float(bounds["dyn_rs_max"]))
-        if "dyn_rs_min" in bounds and not (isinstance(dyn_rs_live, float) and np.isnan(dyn_rs_live)):
-            match_flags.append(float(dyn_rs_live) > float(bounds["dyn_rs_min"]))
-        if match_flags and all(match_flags):
+        if evaluate_toxic_bbox_match(bounds, cpv, tb, bbe, dyn_rs_live, sector):
             is_toxic_bbox = True
             break
     if is_toxic_bbox:

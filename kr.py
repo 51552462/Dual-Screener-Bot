@@ -26,10 +26,11 @@ from dotenv import load_dotenv
 # ==========================================
 load_dotenv() 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
+_gemini_keys = [x.strip() for x in (GEMINI_API_KEY or "").split(",") if x.strip()]
+if not _gemini_keys:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
-genai.configure(api_key=GEMINI_API_KEY)
+genai.configure(api_key=_gemini_keys[0])
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
@@ -81,67 +82,11 @@ def telegram_sender_daemon(target_queue, token):
 threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
 threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
 
-# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 파싱 제거
+# 💡 [공통] 본캐 팩트 + 실시간 트렌드 해시태그 파싱 제거 — Gemini 캐시·다중키: gemini_report_cache
 def generate_ai_report(code: str, company_name: str):
-    import re, time
-    import yfinance as yf
-    
-    # 1. 팩트 데이터 추출
-    try:
-        if code.isdigit(): # 한국장
-            res = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, verify=False)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            sector_kr = soup.select_one('h4.h_sub.sub_tit7 a').text.strip() if soup.select_one('h4.h_sub.sub_tit7 a') else '국내 증시'
-        else: # 미국장
-            tk = yf.Ticker(code)
-            sector = tk.info.get('sector', '글로벌 산업')
-            sector_kr_map = {"Technology": "테크/기술", "Healthcare": "헬스케어", "Financial Services": "금융", "Consumer Cyclical": "소비재", "Industrials": "산업재", "Energy": "에너지", "Basic Materials": "원자재"}
-            sector_kr = sector_kr_map.get(sector, sector)
-    except:
-        sector_kr = '유망 섹터'
+    from gemini_report_cache import generate_stock_ai_report_cached
 
-    # 비상용 기본 멘트
-    fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
-
-    # 2. 구글 AI 호출
-    for attempt in range(3):
-        try:
-            time.sleep(4) 
-            
-            prompt = f"""
-            너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
-            ⚠️ [매우 중요 규칙]
-            1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
-
-            [본캐]
-            1. 섹터: (어떤 테마인지 한글로 1줄 요약)
-            2. 실적: (팩트 수치 한글 1줄 요약)
-            3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
-            """
-            gmodel = genai.GenerativeModel('gemini-2.5-flash', tools='google_search_retrieval')
-            try:
-                response = gmodel.generate_content(prompt)
-            except Exception:
-                return (
-                    f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}",
-                    "",
-                )
-            
-            if not response or not response.text:
-                continue
-                
-            report = response.text.replace('*', '').strip() 
-            
-            m_part = re.search(r'\[본캐\](.*)', report, re.DOTALL)
-
-            if not m_part: 
-                raise ValueError("파싱오류")
-
-            return m_part.group(1).strip(), ""
-        except:
-            pass 
-            
-    return fb_main, ""
+    return generate_stock_ai_report_cached(code, company_name)
 
 def get_krx_list_kind():
     """KRX 전 종목 리스트: FDR → CSV 캐시 → sqlite 테이블명 역추출 3단계 생존."""

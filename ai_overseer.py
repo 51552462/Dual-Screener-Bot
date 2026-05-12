@@ -125,7 +125,7 @@ def gather_daily_system_facts():
         df_closed = pd.read_sql(f"SELECT * FROM forward_trades WHERE exit_date = '{today_str}'", conn)
         
         # 오늘 진입한 R&D 샌드박스 데이터
-        df_rnd = pd.read_sql(f"SELECT * FROM forward_trades WHERE entry_date = '{today_str}' AND sig_type LIKE '%[R&D_%'", conn)
+        df_rnd = pd.read_sql(f"SELECT * FROM forward_trades WHERE entry_date = '{today_str}' AND sig_type LIKE '%[INCUBATOR_%'", conn)
         
         report_data["rnd_data_count"] = len(df_rnd)
         
@@ -154,7 +154,7 @@ def gather_daily_system_facts():
             config = load_config()
             report_data["config_status"] = {
                 "regime": config.get("CURRENT_REGIME_KEY", "UNKNOWN"),
-                "kelly_risk": config.get("DYNAMIC_KELLY_RISK", 0),
+                "kelly_risk": config.get("DYNAMIC_KELLY_RISK", 0.01),
                 "treasury_kr": config.get("CENTRAL_TREASURY_KR", 0),
                 "treasury_us": config.get("CENTRAL_TREASURY_US", 0),
                 "supernova_cutoff": config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0),
