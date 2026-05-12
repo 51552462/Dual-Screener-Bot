@@ -57,16 +57,56 @@ print("✅ 한글 폰트 준비 완료!\n")
 # ==========================================
 # 👑 퀀트 팩토리 9대 모듈 완벽 임포트
 # ==========================================
-import us_master as us_master
-import nasdaq_dante_reverse_breakout_screener as us_rev
-import nulusa as us_nul
-import usa as us_bowl
-import us_5ema as us_5ema  
-import dante_krx_reverse_breakout_screener as kr_rev
-import master as kr_master
-import kr as kr_bowl
-import nulrim as kr_nul
-import ema5 as kr_5ema
+try:
+    import us_master as us_master
+except ImportError as e:
+    print(f"⚠️ us_master 임포트 실패(해당 봇만 비활성): {e}")
+    us_master = None
+try:
+    import nasdaq_dante_reverse_breakout_screener as us_rev
+except ImportError as e:
+    print(f"⚠️ nasdaq_dante_reverse_breakout_screener 임포트 실패(해당 봇만 비활성): {e}")
+    us_rev = None
+try:
+    import nulusa as us_nul
+except ImportError as e:
+    print(f"⚠️ nulusa 임포트 실패(해당 봇만 비활성): {e}")
+    us_nul = None
+try:
+    import usa as us_bowl
+except ImportError as e:
+    print(f"⚠️ usa 임포트 실패(해당 봇만 비활성): {e}")
+    us_bowl = None
+try:
+    import us_5ema as us_5ema
+except ImportError as e:
+    print(f"⚠️ us_5ema 임포트 실패(해당 봇만 비활성): {e}")
+    us_5ema = None
+try:
+    import dante_krx_reverse_breakout_screener as kr_rev
+except ImportError as e:
+    print(f"⚠️ dante_krx_reverse_breakout_screener 임포트 실패(해당 봇만 비활성): {e}")
+    kr_rev = None
+try:
+    import master as kr_master
+except ImportError as e:
+    print(f"⚠️ master 임포트 실패(해당 봇만 비활성): {e}")
+    kr_master = None
+try:
+    import kr as kr_bowl
+except ImportError as e:
+    print(f"⚠️ kr 임포트 실패(해당 봇만 비활성): {e}")
+    kr_bowl = None
+try:
+    import nulrim as kr_nul
+except ImportError as e:
+    print(f"⚠️ nulrim 임포트 실패(해당 봇만 비활성): {e}")
+    kr_nul = None
+try:
+    import ema5 as kr_5ema
+except ImportError as e:
+    print(f"⚠️ ema5 임포트 실패(해당 봇만 비활성): {e}")
+    kr_5ema = None
 
 # 👇👇 [핵심 추가] 중앙 통제 시스템 코어 엔진 임포트
 import data_updater
@@ -106,17 +146,27 @@ def apply_weekend_patch(module, is_us):
     elif hasattr(module, 'scan_market'):
         module.scan_market = patcher(module.scan_market)
 
-apply_weekend_patch(us_master, True)
-apply_weekend_patch(us_rev, True)
-apply_weekend_patch(us_nul, True)
-apply_weekend_patch(us_bowl, True)
-apply_weekend_patch(us_5ema, True)
+if us_master is not None:
+    apply_weekend_patch(us_master, True)
+if us_rev is not None:
+    apply_weekend_patch(us_rev, True)
+if us_nul is not None:
+    apply_weekend_patch(us_nul, True)
+if us_bowl is not None:
+    apply_weekend_patch(us_bowl, True)
+if us_5ema is not None:
+    apply_weekend_patch(us_5ema, True)
 
-apply_weekend_patch(kr_rev, False)
-apply_weekend_patch(kr_master, False)
-apply_weekend_patch(kr_bowl, False)
-apply_weekend_patch(kr_nul, False)
-apply_weekend_patch(kr_5ema, False)
+if kr_rev is not None:
+    apply_weekend_patch(kr_rev, False)
+if kr_master is not None:
+    apply_weekend_patch(kr_master, False)
+if kr_bowl is not None:
+    apply_weekend_patch(kr_bowl, False)
+if kr_nul is not None:
+    apply_weekend_patch(kr_nul, False)
+if kr_5ema is not None:
+    apply_weekend_patch(kr_5ema, False)
 
 # ==========================================
 # 👑 [신규] 아침 07:00 DB 자동 업데이트 스케줄러
@@ -173,19 +223,23 @@ def status_monitor(threads_dict):
 if __name__ == "__main__":
     print("🚀 24시간 독립 멀티스레딩 컨트롤 타워 가동 시작...")
 
-    bot_targets = {
-        # 1. 텔레그램 발송 검색기 봇들
-        "🇺🇸 1. US 마스터": us_master.run_scheduler,
-        "🇺🇸 2. US 역매공파": us_rev.run_scheduler,
-        "🇺🇸 3. US 눌림목": us_nul.run_scheduler,
-        "🇺🇸 4. US 밥그릇": us_bowl.run_scheduler,
-        "🇺🇸 10. US 5일선": us_5ema.run_scheduler,
-        "🇰🇷 5. KR 역매공파": kr_rev.run_scheduler,
-        "🇰🇷 6. KR 마스터": kr_master.run_scheduler,
-        "🇰🇷 7. KR 밥그릇": kr_bowl.run_scheduler,
-        "🇰🇷 8. KR 눌림목": kr_nul.run_scheduler,
-        "🇰🇷 9. KR 5일선": kr_5ema.run_scheduler,
-        
+    bot_targets = {}
+    _scanner_bots = [
+        ("🇺🇸 1. US 마스터", us_master),
+        ("🇺🇸 2. US 역매공파", us_rev),
+        ("🇺🇸 3. US 눌림목", us_nul),
+        ("🇺🇸 4. US 밥그릇", us_bowl),
+        ("🇺🇸 10. US 5일선", us_5ema),
+        ("🇰🇷 5. KR 역매공파", kr_rev),
+        ("🇰🇷 6. KR 마스터", kr_master),
+        ("🇰🇷 7. KR 밥그릇", kr_bowl),
+        ("🇰🇷 8. KR 눌림목", kr_nul),
+        ("🇰🇷 9. KR 5일선", kr_5ema),
+    ]
+    for _label, _mod in _scanner_bots:
+        if _mod is not None and hasattr(_mod, "run_scheduler"):
+            bot_targets[_label] = _mod.run_scheduler
+    bot_targets.update({
         # 2. 👑 자율 운영 코어 엔진 (절대 멈추면 안 됨)
         "💠 [엔진] DB 자동 갱신": run_db_updater_scheduler,
         "💠 [엔진] 장부 관리기": auto_forward_tester.run_daily_scheduler,
@@ -193,7 +247,7 @@ if __name__ == "__main__":
         "💠 [엔진] 초신성 역추적기": supernova_hunter.run_scheduler,  # 💡 [추가] 매주 월요일 17시 자동 실행 장착!
         "💠 [엔진] AI 최고 감시자": ai_overseer.overseer_loop,
         "💠 [엔진] 텔레그램 AI 비서": ai_secretary.run_secretary
-    }
+    })
 
     active_threads = {}
 

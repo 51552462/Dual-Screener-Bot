@@ -266,9 +266,13 @@ def send_telegram_msg(text):
         for chunk in chunks:
             # 1차 시도: HTML 모드로 예쁘게 전송
             res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
+            if res.status_code != 200:
+                print(f"텔레그램 발송 실패: {res.text}")
             # 2차 시도: 주식 이름에 &, <, > 등이 섞여 HTML 문법 에러(400)가 나면 일반 텍스트로 재전송
             if res.status_code == 400:
-                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
+                res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
+                if res.status_code != 200:
+                    print(f"텔레그램 발송 실패: {res.text}")
             import time
             time.sleep(0.5) # 분할 전송 시 순서가 꼬이거나 API 도배 차단되는 것 방지
     except: pass

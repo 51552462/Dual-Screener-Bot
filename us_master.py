@@ -126,6 +126,8 @@ def telegram_sender_daemon(target_queue, token):
                         with open(img_path, 'rb') as f:
                             res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
                     
+                    if res.status_code != 200:
+                        print(f"텔레그램 에러: {res.text}")
                     if res.status_code == 200: break
                     elif res.status_code == 429: time.sleep(3)
                 except: time.sleep(2)
@@ -902,17 +904,20 @@ def scan_market_1d():
                             except:
                                 sector_info = "유망 섹터 포착"
                             
+                            name_tg = str(name).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            ai_main_tg = str(ai_main).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            sector_info_tg = str(sector_info).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                             # 1️⃣ 본캐용 캡션
                             main_caption = (
                                 f"🎯 [{dbg.get('sig_type', '')}]\n"
                                 f"🎯 추천: 단타, 스윙 / 종가배팅\n\n"
-                                f"🏢 {name} ({code})\n"
+                                f"🏢 {name_tg} ({code})\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
                                 f"{dbg.get('v9_comment', '')}\n"
                                 f"📉 [스마트 매수/청산 전략]\n"
                                 f"{dbg.get('recommend', '')}\n\n"
                                 f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_main}\n\n"
+                                f"{ai_main_tg}\n\n"
                                 f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
                                 f"⚠️ [면책 조항]\n"
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
@@ -971,8 +976,8 @@ def scan_market_1d():
                             # 💡 4. 홍보용 캡션을 만들고 전송합니다.
                             promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
-                                f"🏢 종목: {name} ({code})\n"
-                                f"🏷️ 섹터: {sector_info}\n"
+                                f"🏢 종목: {name_tg} ({code})\n"
+                                f"🏷️ 섹터: {sector_info_tg}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
                             q_promo.put((promo_chart_path, promo_caption))
@@ -1001,7 +1006,10 @@ def run_scheduler():
         now_ny = datetime.now(ny_tz)
         if (now_ny.hour == 9 and now_ny.minute == 30) or (now_ny.hour == 12 and now_ny.minute == 0) or (now_ny.hour == 14 and now_ny.minute == 30):
             print(f"🚀 [미국장 Top 1% 마스터 스캔 시작] {now_ny.strftime('%Y-%m-%d %H:%M:%S')}")
-            scan_market_1d()
+            try:
+                scan_market_1d()
+            except Exception as e:
+                print(e)
             time.sleep(60) 
         else: time.sleep(10)
 
