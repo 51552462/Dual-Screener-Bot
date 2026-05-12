@@ -158,7 +158,8 @@ def gather_daily_system_facts():
                 "treasury_kr": config.get("CENTRAL_TREASURY_KR", 0),
                 "treasury_us": config.get("CENTRAL_TREASURY_US", 0),
                 "supernova_cutoff": config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0),
-                "predicted_sector": config.get("PREDICTED_NEXT_SECTOR", "UNKNOWN")
+                "predicted_sector_kr": config.get("PREDICTED_NEXT_SECTOR_KR", "UNKNOWN"),
+                "predicted_sector_us": config.get("PREDICTED_NEXT_SECTOR_US", "UNKNOWN")
             }
     except Exception as e:
         report_data["config_error"] = str(e)

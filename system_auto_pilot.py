@@ -972,10 +972,10 @@ def run_autonomous_analysis():
     report_lines.append("\n⚔️ <b>[V103.0 통합 시스템 데스매치 결산]</b>")
     
     # 2. 발굴 대결 (STD vs SN vs BEAST vs UD)
-    std_r = df[df['sig_type'].str.contains('STANDARD', na=False)]['live_a_ret'].mean()
-    sn_r = df[df['sig_type'].str.contains('SUPERNOVA_COSINE|SUPERNOVA_MLBOX', na=False)]['cand_b_ret'].mean()
-    beast_r = df[df['sig_type'].str.contains('SUPERNOVA_BEAST', na=False)]['live_a_ret'].mean()
-    ud_r = df[df['sig_type'].str.contains('UNDERDOG', na=False)]['live_a_ret'].mean()
+    std_r = df[df['sig_type'].str.contains('STANDARD', na=False)]['final_ret'].mean()
+    sn_r = df[df['sig_type'].str.contains('SUPERNOVA_COSINE|SUPERNOVA_MLBOX', na=False)]['final_ret'].mean()
+    beast_r = df[df['sig_type'].str.contains('SUPERNOVA_BEAST', na=False)]['final_ret'].mean()
+    ud_r = df[df['sig_type'].str.contains('UNDERDOG', na=False)]['final_ret'].mean()
     
     # NaN 방어 보정
     std_v = std_r if pd.notna(std_r) else -99
@@ -1246,69 +1246,84 @@ def run_autonomous_analysis():
         conn = sqlite3.connect(DB_PATH, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
         sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
-        flow_df = pd.read_sql("""
-            SELECT entry_date, sector
-            FROM forward_trades
-            WHERE entry_date >= ?
-            ORDER BY entry_date ASC
-        """, conn, params=(sixty_days_ago,))
-        conn.close()
 
-        if not flow_df.empty:
-            daily_dom = flow_df.groupby('entry_date')['sector'].agg(
-                lambda x: x.mode().iloc[0] if not x.mode().empty else None
-            ).dropna()
+        def map_standard_sector(s):
+            s_str = str(s).lower()
+            if any(k in s_str for k in ["반도체", "it", "ai", "소프트웨어", "모바일", "테크", "데이터"]): return "반도체/IT"
+            if any(k in s_str for k in ["바이오", "헬스", "의료", "제약"]): return "바이오/헬스케어"
+            if any(k in s_str for k in ["배터리", "2차전지", "화학", "에너지", "정유"]): return "에너지/화학"
+            if any(k in s_str for k in ["금융", "은행", "증권", "지주", "투자"]): return "금융/지주"
+            if any(k in s_str for k in ["기계", "조선", "방산", "산업재", "로봇", "전력"]): return "산업재/기계"
+            if any(k in s_str for k in ["소비", "유통", "식품", "화장품", "엔터", "미디어"]): return "소비재/엔터"
+            return "기타/혼합"
 
-            transitions = {}
-            prev_sector = None
-            sec_path = [str(s).strip() for s in daily_dom.tolist() if str(s).strip()]
-            for sec in sec_path:
-                if prev_sector is not None and prev_sector != sec:
-                    key = (prev_sector, sec)
-                    transitions[key] = transitions.get(key, 0) + 1
-                prev_sector = sec
+        for mkt in ['KR', 'US']:
+            flow_df = pd.read_sql("""
+                SELECT entry_date, sector
+                FROM forward_trades
+                WHERE entry_date >= ?
+                  AND market = ?
+                ORDER BY entry_date ASC
+            """, conn, params=(sixty_days_ago, mkt))
 
-            if transitions and sec_path:
-                # 💡 [V_NEXT 진화 로직 적용] 전이 카운트로 Markov 전이확률행렬 M 구성 후 2-step(M^2) 예측
-                states = sorted({a for a, _ in transitions.keys()} | {b for _, b in transitions.keys()} | set(sec_path))
-                s2i = {s: i for i, s in enumerate(states)}
-                M = np.zeros((len(states), len(states)), dtype=float)
+            flow_df['sector'] = flow_df['sector'].apply(map_standard_sector)
 
-                for (a, b), cnt in transitions.items():
-                    ia, ib = s2i.get(a), s2i.get(b)
-                    if ia is None or ib is None:
-                        continue
-                    M[ia, ib] += float(cnt)
+            if not flow_df.empty:
+                daily_dom = flow_df.groupby('entry_date')['sector'].agg(
+                    lambda x: x.mode().iloc[0] if not x.mode().empty else None
+                ).dropna()
 
-                for i in range(len(states)):
-                    row_sum = float(M[i].sum())
-                    if row_sum > 0:
-                        M[i] = M[i] / row_sum
+                transitions = {}
+                prev_sector = None
+                sec_path = [str(s).strip() for s in daily_dom.tolist() if str(s).strip()]
+                for sec in sec_path:
+                    if prev_sector is not None and prev_sector != sec:
+                        key = (prev_sector, sec)
+                        transitions[key] = transitions.get(key, 0) + 1
+                    prev_sector = sec
 
-                today_state = sec_path[-1]
-                i0 = s2i.get(today_state)
-                predicted_next_sector = None
-                if i0 is not None:
-                    M2 = np.matmul(M, M)
-                    row2 = M2[i0]
-                    if np.isfinite(row2).any() and float(np.nansum(row2)) > 0:
-                        j = int(np.nanargmax(row2))
-                        predicted_next_sector = states[j]
+                if transitions and sec_path:
+                    # 💡 [V_NEXT 진화 로직 적용] 전이 카운트로 Markov 전이확률행렬 M 구성 후 2-step(M^2) 예측
+                    states = sorted({a for a, _ in transitions.keys()} | {b for _, b in transitions.keys()} | set(sec_path))
+                    s2i = {s: i for i, s in enumerate(states)}
+                    M = np.zeros((len(states), len(states)), dtype=float)
 
-                # 2-step 정보가 희박하면 1-step 최다 전이로 안전 폴백
-                if not predicted_next_sector:
-                    top_transition = max(transitions.items(), key=lambda kv: kv[1])[0]
-                    predicted_next_sector = top_transition[1]
+                    for (a, b), cnt in transitions.items():
+                        ia, ib = s2i.get(a), s2i.get(b)
+                        if ia is None or ib is None:
+                            continue
+                        M[ia, ib] += float(cnt)
 
-                current_config["PREDICTED_NEXT_SECTOR"] = predicted_next_sector
-                report_lines.append(
-                    f"▪️ Markov 2-Step 예측: {today_state} -> {predicted_next_sector} "
-                    f"(상태 {len(states)}개, 전이 {len(transitions)}쌍)"
-                )
+                    for i in range(len(states)):
+                        row_sum = float(M[i].sum())
+                        if row_sum > 0:
+                            M[i] = M[i] / row_sum
+
+                    today_state = sec_path[-1]
+                    i0 = s2i.get(today_state)
+                    predicted_next_sector = None
+                    if i0 is not None:
+                        M2 = np.matmul(M, M)
+                        row2 = M2[i0]
+                        if np.isfinite(row2).any() and float(np.nansum(row2)) > 0:
+                            j = int(np.nanargmax(row2))
+                            predicted_next_sector = states[j]
+
+                    # 2-step 정보가 희박하면 1-step 최다 전이로 안전 폴백
+                    if not predicted_next_sector:
+                        top_transition = max(transitions.items(), key=lambda kv: kv[1])[0]
+                        predicted_next_sector = top_transition[1]
+
+                    current_config[f"PREDICTED_NEXT_SECTOR_{mkt}"] = predicted_next_sector
+                    report_lines.append(
+                        f"▪️ [{mkt}] Markov 2-Step 예측: {today_state} -> {predicted_next_sector} "
+                        f"(상태 {len(states)}개, 전이 {len(transitions)}쌍)"
+                    )
+                else:
+                    report_lines.append(f"▪️ [{mkt}] 유의미한 섹터 전이 패턴이 없어 기존 예측값을 유지합니다.")
             else:
-                report_lines.append("▪️ 유의미한 섹터 전이 패턴이 없어 기존 예측값을 유지합니다.")
-        else:
-            report_lines.append("▪️ 순환매 예측 저장용 표본 데이터가 부족합니다.")
+                report_lines.append(f"▪️ [{mkt}] 순환매 예측 저장용 표본 데이터가 부족합니다.")
+        conn.close()
     except Exception as e:
         report_lines.append(f"⚠️ transitions 예측 저장 에러: {e}")
 
