@@ -1,8 +1,0 @@
-ccxt
-pandas
-numpy
-requests
-mplfinance
-matplotlib
-google-generativeai
-python-dotenv
