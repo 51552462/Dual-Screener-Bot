@@ -189,6 +189,64 @@ def load_dynamic_universe(exchange, market_type: str, min_quote_volume_usdt: flo
     return [sym for sym, _ in selected]
 
 
+def _needs_synth_2h(timeframes):
+    """Bitget REST는 2h 캔들을 지원하지 않음 → 1h로 합성 필요 여부."""
+    return any(str(t).lower() == "2h" for t in (timeframes or []))
+
+
+def _bitget_api_timeframes(timeframes):
+    """API에 직접 요청할 TF만 반환(2h 제외). 2h가 필요하면 1h를 강제 포함."""
+    out = []
+    seen = set()
+    for t in timeframes or []:
+        tl = str(t).lower()
+        if tl == "2h":
+            continue
+        if tl not in seen:
+            seen.add(tl)
+            out.append(t)
+    if _needs_synth_2h(timeframes) and "1h" not in seen:
+        out.append("1h")
+    return out
+
+
+def _resample_1h_ohlcv_to_2h(ohlcv_1h):
+    """1h OHLCV([[ms,o,h,l,c,v],...]) → 2h OHLCV (Bitget 미지원 TF 방어)."""
+    if not ohlcv_1h or len(ohlcv_1h) < 2:
+        return []
+    df = pd.DataFrame(ohlcv_1h, columns=["ts", "Open", "High", "Low", "Close", "Volume"])
+    df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    df = df.set_index("dt").sort_index()
+    agg = (
+        df[["Open", "High", "Low", "Close", "Volume"]]
+        .resample("2h", label="left", closed="left")
+        .agg(
+            {
+                "Open": "first",
+                "High": "max",
+                "Low": "min",
+                "Close": "last",
+                "Volume": "sum",
+            }
+        )
+        .dropna(how="any", subset=["Open", "Close"])
+    )
+    out = []
+    for idx, row in agg.iterrows():
+        ts_ms = int(idx.timestamp() * 1000)
+        out.append(
+            [
+                ts_ms,
+                float(row["Open"]),
+                float(row["High"]),
+                float(row["Low"]),
+                float(row["Close"]),
+                float(row["Volume"]),
+            ]
+        )
+    return out
+
+
 def save_ohlcv(conn, market_type: str, symbol: str, timeframe: str, ohlcv):
     if not ohlcv:
         return False
@@ -239,18 +297,40 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=7000;")
     ok = 0
+    need_2h = _needs_synth_2h(timeframes)
+    api_tfs = _bitget_api_timeframes(timeframes)
     try:
         for sym in symbols:
-            for tf in timeframes:
+            ohlcv_by = {}
+            for tf in api_tfs:
                 try:
                     time.sleep(0.06)  # API ban 방어용 미세 지연
-                    ohlcv = exchange.fetch_ohlcv(symbol=sym, timeframe=tf, limit=ohlcv_limit)
-                    if save_ohlcv(conn, market_type, sym, tf, ohlcv):
-                        ok += 1
+                    lim = ohlcv_limit
+                    if str(tf).lower() == "1h" and need_2h:
+                        lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
+                    throttle("bitget.fetch_ohlcv", 0.10)
+                    ohlcv = exchange.fetch_ohlcv(symbol=sym, timeframe=tf, limit=lim)
+                    if ohlcv:
+                        ohlcv_by[str(tf).lower()] = ohlcv
                     del ohlcv
                     gc.collect()
                 except Exception as e:
                     print(f"⚠️ [{market_type}] 벤치마크 {sym} {tf} 수집 실패: {e}")
+            for tf in timeframes:
+                tl = str(tf).lower()
+                try:
+                    if tl == "2h":
+                        h2 = _resample_1h_ohlcv_to_2h(ohlcv_by.get("1h") or [])
+                        if len(h2) > ohlcv_limit:
+                            h2 = h2[-ohlcv_limit:]
+                        if save_ohlcv(conn, market_type, sym, tf, h2):
+                            ok += 1
+                    else:
+                        ohlcv = ohlcv_by.get(tl)
+                        if ohlcv and save_ohlcv(conn, market_type, sym, tf, ohlcv):
+                            ok += 1
+                except Exception as e:
+                    print(f"⚠️ [{market_type}] 벤치마크 {sym} {tf} 저장 실패: {e}")
     finally:
         conn.close()
     return ok
@@ -293,17 +373,30 @@ def fetch_symbol_ohlcv_payload(
     ohlcv_limit: int,
 ):
     payloads = []
+    need_2h = _needs_synth_2h(timeframes)
+    api_tfs = _bitget_api_timeframes(timeframes)
+    ohlcv_by = {}
     try:
-        for tf in timeframes:
+        for tf in api_tfs:
             try:
                 time.sleep(0.06)  # API ban 방어용 미세 지연
+                lim = ohlcv_limit
+                if str(tf).lower() == "1h" and need_2h:
+                    lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
                 throttle("bitget.fetch_ohlcv", 0.10)
-                ohlcv = exchange.fetch_ohlcv(symbol=symbol, timeframe=tf, limit=ohlcv_limit)
+                ohlcv = exchange.fetch_ohlcv(symbol=symbol, timeframe=tf, limit=lim)
                 if ohlcv:
+                    ohlcv_by[str(tf).lower()] = ohlcv
                     payloads.append((symbol, tf, ohlcv))
             except Exception as e:
                 print(f"⚠️ [{market_type}] {symbol} {tf} 수집 실패: {e}")
                 backoff_sleep(1)
+        if need_2h:
+            h2 = _resample_1h_ohlcv_to_2h(ohlcv_by.get("1h") or [])
+            if h2:
+                if len(h2) > ohlcv_limit:
+                    h2 = h2[-ohlcv_limit:]
+                payloads.append((symbol, "2h", h2))
     finally:
         gc.collect()
     return symbol, payloads

@@ -4,12 +4,13 @@ import time
 import random
 import json
 import sqlite3
+from types import SimpleNamespace
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import requests
 
-# 👇👇 [수정] 대표님이 쓰시는 안전한 .env 방식 및 신형 구글 SDK 임포트 👇👇
+# 👇👇 [수정] 대표님이 쓰시는 안전한 .env 방식 및 google-generativeai 표준 임포트 👇👇
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -19,7 +20,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 # 👆👆 [적용 완료] 👆👆
 
 # ==========================================
@@ -64,31 +65,42 @@ def send_telegram_alert(text):
     except Exception as e:
         print(f"텔레그램 발송 실패: {e}")
 
-def safe_generate_content(client, *, model, contents, max_retries=5):
-    """429 에러 발생 시 지수 백오프(Exponential Backoff)를 적용하여 안전하게 재시도하는 함수"""
+GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:"
+
+
+def _gemini_raw_fallback_response(contents: str, detail: str = "") -> SimpleNamespace:
+    body = f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{contents}"
+    if detail:
+        body += f"\n\n(상세: {detail})"
+    return SimpleNamespace(text=body)
+
+
+def safe_generate_content(*, model, contents, max_retries=5):
+    """429 에러 발생 시 지수 백오프 후, 최종 실패 시에도 원본 프롬프트를 담아 절대 None을 반환하지 않음."""
+    last_err = ""
     for attempt in range(max_retries):
         try:
             # 💡 [핵심] API 호출 전 기본적으로 3.5초를 쉬어서 1분에 17회 이상 호출되지 않도록 강제 속도 조절
             time.sleep(3.5)
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-            )
-            return response
+            gmodel = genai.GenerativeModel(model)
+            try:
+                response = gmodel.generate_content(contents)
+                return response
+            except Exception as gen_e:
+                last_err = str(gen_e)
+                err_lower = last_err.lower()
+                if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err or "quota" in err_lower:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)
+                        send_telegram_alert(f"⏳ [API 속도 조절 중] 구글 제한에 걸려 {wait_time:.1f}초 대기 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                return _gemini_raw_fallback_response(contents, last_err)
         except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
-                # 구글이 차단하면 튕기지 않고 대기함 (시도 횟수에 따라 대기 시간 증가)
-                wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)  # 예: 10초, 20초, 40초...
-                send_telegram_alert(f"⏳ [API 속도 조절 중] 구글 제한에 걸려 {wait_time:.1f}초 대기 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-            else:
-                # 429가 아닌 진짜 에러는 그냥 뱉어냄
-                raise e
+            return _gemini_raw_fallback_response(contents, str(e))
 
-    # 5번 다 실패하면 그때 포기
-    send_telegram_alert("🚨 [API 감시자 에러] 5회 재시도에도 불구하고 API 통신에 실패했습니다.")
-    return None
+    send_telegram_alert("🚨 [API 감시자 에러] 5회 재시도에도 불구하고 API 통신에 실패했습니다. 원본 데이터로 대체 전송합니다.")
+    return _gemini_raw_fallback_response(contents, last_err or "재시도 소진")
 
 def gather_daily_system_facts():
     """시스템의 3대 장부(DB, JSON, CSV)에서 오늘 하루의 '팩트'만 무결성으로 추출합니다."""
@@ -185,17 +197,13 @@ def run_ai_auditor():
     """
 
     try:
-        # 👇👇 [수정] 대표님 코드 구조에 맞춘 신형 API(client.models) 호출 방식 대입 👇👇
+        # 👇👇 [수정] google-generativeai 표준(GenerativeModel.generate_content) 호출 👇👇
         ai_res = safe_generate_content(
-            client,
             model='gemini-2.5-flash', # 대표님이 사용하시는 최신 속도형 모델 적용
             contents=prompt,
         )
-        if ai_res is None:
-            return
-        
-        # 텔레그램 직보
-        ai_text = ai_res.text.strip() if ai_res.text else "⚠️ 분석 리포트를 생성하지 못했습니다."
+        # 텔레그램 직보 (safe_generate_content는 항상 .text 보유 — 실패 시 원본 프롬프트 폴백)
+        ai_text = (getattr(ai_res, "text", None) or "").strip() or f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}"
         send_telegram_alert(ai_text)
         print("✅ [AI 최고 감시자] 텔레그램 직보 완료.")
         # 👆👆 [적용 완료] 👆👆
@@ -203,7 +211,7 @@ def run_ai_auditor():
     except Exception as e:
         err_msg = f"🚨 <b>[AI 감시자 에러]</b> Gemini API 통신 또는 분석 중 오류 발생:\n{e}"
         print(err_msg)
-        send_telegram_alert(err_msg)
+        send_telegram_alert(f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}\n\n(상세: {e})")
 
 # ==========================================
 # 🕒 [자정 감시 스케줄러]

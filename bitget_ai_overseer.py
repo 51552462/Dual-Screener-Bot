@@ -4,6 +4,7 @@ import random
 import sqlite3
 import time
 from datetime import datetime
+from types import SimpleNamespace
 
 import pandas as pd
 import pytz
@@ -51,24 +52,40 @@ def send_telegram_alert(text):
         print(f"텔레그램 발송 실패: {e}")
 
 
+GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:"
+
+
+def _gemini_raw_fallback_response(contents: str, detail: str = "") -> SimpleNamespace:
+    body = f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{contents}"
+    if detail:
+        body += f"\n\n(상세: {detail})"
+    return SimpleNamespace(text=body)
+
+
 def safe_generate_content(*, model, contents, max_retries=5):
     if not GEMINI_API_KEY:
-        return None
+        return _gemini_raw_fallback_response(contents, "GEMINI_API_KEY 미설정")
+    last_err = ""
     for attempt in range(max_retries):
         try:
             time.sleep(3.5)
             gmodel = genai.GenerativeModel(model)
-            return gmodel.generate_content(contents)
+            try:
+                return gmodel.generate_content(contents)
+            except Exception as gen_e:
+                last_err = str(gen_e)
+                err_lower = last_err.lower()
+                if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err or "quota" in err_lower:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)
+                        send_telegram_alert(f"⏳ [Bitget AI 감시자] API 제한으로 {wait_time:.1f}초 대기 후 재시도 ({attempt+1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                return _gemini_raw_fallback_response(contents, last_err)
         except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
-                wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)
-                send_telegram_alert(f"⏳ [Bitget AI 감시자] API 제한으로 {wait_time:.1f}초 대기 후 재시도 ({attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-            else:
-                raise e
-    send_telegram_alert("🚨 [Bitget AI 감시자 에러] 5회 재시도에도 API 통신 실패.")
-    return None
+            return _gemini_raw_fallback_response(contents, str(e))
+    send_telegram_alert("🚨 [Bitget AI 감시자 에러] 5회 재시도에도 API 통신 실패. 원본 데이터로 대체 전송합니다.")
+    return _gemini_raw_fallback_response(contents, last_err or "재시도 소진")
 
 
 def gather_daily_system_facts():
@@ -166,18 +183,13 @@ def run_ai_auditor():
 
     try:
         ai_res = safe_generate_content(model="gemini-2.5-flash", contents=prompt)
-        if ai_res is None:
-            send_telegram_alert("👁️ [Bitget AI 상시 감사관 일일 리포트]\nAPI 키 미설정 또는 호출 실패로 요약 리포트를 생성하지 못했습니다.")
-            return
-        ai_text = (getattr(ai_res, "text", "") or "").strip()
-        if not ai_text:
-            ai_text = "👁️ [Bitget AI 상시 감사관 일일 리포트]\n⚠️ 분석 리포트를 생성하지 못했습니다."
+        ai_text = (getattr(ai_res, "text", "") or "").strip() or f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}"
         send_telegram_alert(ai_text)
         print("✅ [Bitget AI 최고 감시자] 텔레그램 직보 완료.")
     except Exception as e:
         err_msg = f"🚨 <b>[Bitget AI 감시자 에러]</b> Gemini 통신/분석 중 오류:\n{e}"
         print(err_msg)
-        send_telegram_alert(err_msg)
+        send_telegram_alert(f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}\n\n(상세: {e})")
 
 
 def overseer_loop():

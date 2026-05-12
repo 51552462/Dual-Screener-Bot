@@ -79,13 +79,16 @@ def _alpha_formula_one_line_explain(formula, ic):
     )
     try:
         time.sleep(random.uniform(0.3, 0.7))
-        resp = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
+        try:
+            resp = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
+        except Exception:
+            return f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
         text = getattr(resp, "text", "") or ""
         text = text.strip().replace("\n", " ")
         if text:
             return text[:120]
     except Exception:
-        pass
+        return f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
     return fallback
 
 def load_config(max_retries=5):

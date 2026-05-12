@@ -78,8 +78,7 @@ def get_dynamic_score(series_data, higher_is_better=True, window=252):
     if higher_is_better: return 1.0 + (pct_rank * 9.0)
     else: return 1.0 + ((1.0 - pct_rank) * 9.0)
 
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv() 
@@ -87,7 +86,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -165,11 +164,14 @@ def generate_ai_report(code: str, company_name: str):
             2. 실적: (팩트 수치 한글 1줄 요약)
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
             """
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt,
-                config=types.GenerateContentConfig(tools=[{"google_search": {}}])
-            )
+            gmodel = genai.GenerativeModel('gemini-2.5-flash', tools='google_search_retrieval')
+            try:
+                response = gmodel.generate_content(prompt)
+            except Exception:
+                return (
+                    f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}",
+                    "",
+                )
             
             if not response or not response.text: continue
             

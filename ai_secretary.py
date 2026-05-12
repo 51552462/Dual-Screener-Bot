@@ -7,8 +7,7 @@ import traceback
 from datetime import datetime
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 
 # ==========================================
 # 🔑 1. API 키 세팅 (.env 안전 파일 방식 적용)
@@ -19,7 +18,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
 # 🤖 2. 텔레그램 봇 토큰 (3개로 완벽 분리)
@@ -67,26 +66,21 @@ def listen_and_reply(token, market_name):
                                 # ⭐️ 동시에 질문이 들어와도 하나씩 차분히 처리하도록 락(Lock) 걸기
                                 with ai_request_lock:
                                     try:
-                                        ai_res = client.models.generate_content(
-                                            model='gemini-2.5-flash',
-                                            contents=prompt,
-                                            config=types.GenerateContentConfig(
-                                                tools=[{"google_search": {}}]
-                                            )
-                                        )
-                                        time.sleep(2) # 무료 한도 보호용 강제 휴식
-                                        ai_text = ai_res.text.strip() if ai_res.text else "⚠️ 답변을 생성하지 못했습니다."
+                                        gmodel = genai.GenerativeModel('gemini-2.5-flash', tools='google_search_retrieval')
+                                        try:
+                                            ai_res = gmodel.generate_content(prompt)
+                                        except Exception as gen_e:
+                                            err_msg = str(gen_e)
+                                            print(f"❌ [{market_name}] AI generate_content 실패: {err_msg}")
+                                            ai_text = f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
+                                        else:
+                                            time.sleep(2) # 무료 한도 보호용 강제 휴식
+                                            ai_text = ai_res.text.strip() if ai_res.text else f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
                                         
                                     except Exception as ai_e:
                                         err_msg = str(ai_e)
-                                        # ⭐️ 에러 발생 시 지저분한 영어 대신 깔끔하게 방어!
-                                        if 'Quota exceeded' in err_msg:
-                                            ai_text = "⚠️ [AI 시스템 알림]\n오늘 구글 AI가 답변할 수 있는 일일 한도가 모두 소진되었습니다. 내일 다시 질문해 주세요!"
-                                        elif '429' in err_msg or 'RESOURCE_EXHAUSTED' in err_msg:
-                                            ai_text = "⏳ [AI 시스템 알림]\n현재 질문이 너무 많이 몰려 트래픽이 지연되고 있습니다. 1분 정도 후에 다시 질문해 주세요!"
-                                        else:
-                                            ai_text = "❌ AI 서버에서 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
-                                            print(f"❌ [{market_name}] AI 에러: {err_msg}")
+                                        print(f"❌ [{market_name}] AI 에러: {err_msg}")
+                                        ai_text = f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
                                 
                                 # 답변 전송
                                 requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🤖 [AI 비서 답변]\n\n{ai_text}", "reply_to_message_id": msg.get("message_id")}, timeout=10)

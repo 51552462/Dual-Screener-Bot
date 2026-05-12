@@ -4,5 +4,5 @@ numpy
 requests
 mplfinance
 matplotlib
-google-genai
+google-generativeai
 python-dotenv
