@@ -1206,6 +1206,48 @@ def execute_supernova_live_scan(market):
         except Exception:
             benchmark_close_sr = None
 
+    us_data_dict = {}
+    if market == 'US':
+        _chunk_sz = 100
+        for _ci in range(0, len(tickers), _chunk_sz):
+            _chunk = tickers[_ci:_ci + _chunk_sz]
+            try:
+                _raw_panel = yf.download(
+                    " ".join(_chunk), period="2mo", group_by="ticker", progress=False, threads=False
+                )
+            except Exception:
+                _raw_panel = None
+            if _raw_panel is None or getattr(_raw_panel, "empty", True):
+                continue
+            try:
+                if len(_chunk) == 1:
+                    _tk0 = _chunk[0]
+                    _sub = flatten_yf_download_df(_raw_panel.copy())
+                    if _sub is not None and not _sub.empty:
+                        us_data_dict[_tk0] = _sub
+                else:
+                    _lvl0 = (
+                        _raw_panel.columns.get_level_values(0)
+                        if isinstance(_raw_panel.columns, pd.MultiIndex)
+                        else None
+                    )
+                    for _tk in _chunk:
+                        try:
+                            if isinstance(_raw_panel.columns, pd.MultiIndex):
+                                if _tk not in _lvl0:
+                                    continue
+                                _sub = _raw_panel[_tk].copy()
+                            else:
+                                _sub = _raw_panel.copy()
+                            _sub = flatten_yf_download_df(_sub)
+                            if _sub is not None and not _sub.empty:
+                                us_data_dict[_tk] = _sub
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+        print(f"   ↳ [US 배치 OHLCV] {len(us_data_dict)}/{len(tickers)} 종목 선로드 완료")
+
     # 💡 [핵심 1] 단일 스레드 병목 탈출을 위한 "개별 종목 연산 작업(Worker)" 분리
     _doomsday_halt_lock = threading.Lock()
     _doomsday_halt_notified = [False]
@@ -1252,8 +1294,9 @@ def execute_supernova_live_scan(market):
             if market == 'KR':
                 df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d'))
             else:
-                df = yf.download(code, period="2mo", progress=False)
-                df = flatten_yf_download_df(df)
+                df = us_data_dict.get(code)
+                if df is None or getattr(df, "empty", True):
+                    return None
             if df.empty or len(df) < 20: return None
 
             # 관제탑 EVOLVED_ALPHA_FACTORS → 실시간 알파 (ML N차원 바운딩 박스용)
@@ -1602,7 +1645,7 @@ def run_live_sniper_scheduler():
     tz_kr = pytz.timezone('Asia/Seoul')
     print("🕒 [초신성 실시간 스나이퍼] 대기 중...")
     print(" - 🇰🇷 한국 타격: 09:00, 09:30, 15:00, 16:00 (KST)")
-    print(" - 🇺🇸 미국 타격: 23:30, 00:00, 05:00, 06:00 (KST)")
+    print(" - 🇺🇸 미국 타격: 10:00, 10:30, 14:30, 15:30 (뉴욕 시간, DST 자동 반영)")
     
     global scanned_today_cache
     last_cleared_day = datetime.now(tz_kr).day
@@ -1611,6 +1654,8 @@ def run_live_sniper_scheduler():
         try:
             now = datetime.now(tz_kr)
             time_str = f"{now.hour:02d}:{now.minute:02d}"
+            now_ny = datetime.now(pytz.timezone('America/New_York'))
+            ny_time_str = f"{now_ny.hour:02d}:{now_ny.minute:02d}"
             
             # 날짜가 바뀌면 어제 쐈던 기록(캐시) 초기화
             if now.day != last_cleared_day:
@@ -1618,13 +1663,13 @@ def run_live_sniper_scheduler():
                 last_cleared_day = now.day
 
             kr_target_times = ["09:00", "09:30", "15:00", "16:00"]
-            us_target_times = ["23:30", "00:00", "05:00", "06:00"]
+            us_target_times = ["10:00", "10:30", "14:30", "15:30"]
             
             if time_str in kr_target_times:
                 execute_supernova_live_scan('KR')
                 time.sleep(65) 
                 
-            elif time_str in us_target_times:
+            elif ny_time_str in us_target_times:
                 execute_supernova_live_scan('US')
                 time.sleep(65) 
 

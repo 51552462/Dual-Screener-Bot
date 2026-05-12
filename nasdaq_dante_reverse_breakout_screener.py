@@ -385,6 +385,10 @@ def scan_market_1d():
                         
                         if main_chart_path and threads_chart_path:
                             ai_main, _ = generate_ai_report(code, name)
+                            try:
+                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                            except Exception:
+                                sector_info = "유망 섹터 포착"
                             
                             # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
                             main_caption = (
@@ -404,12 +408,28 @@ def scan_market_1d():
                             )
                             q_main.put((main_chart_path, main_caption))
 
-                            # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                             try:
-                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                            except:
-                                sector_info = "유망 섹터 포착"
-                                
+                                import auto_forward_tester as aft
+                                entry_facts = {
+                                    'v_rs': 0, 'v_cpv': 0, 'v_yang': 0, 'v_energy': 0,
+                                    'marcap_eok': 0, 'score_marcap': 0, 'freq_count': 0,
+                                    'dyn_rs': 0, 'dyn_cpv': 0, 'dyn_tb': 0,
+                                    'is_tenbagger': 0, 'is_top_dna': 0, 'is_worst_dna': 0, 'is_death_combo': 0
+                                }
+                                scaled_score = float(dbg.get('score', 0) or 0) * 10
+                                ep_us = float(dbg.get('last_close', 0) or 0)
+                                success, fwd_msg = aft.try_add_virtual_position(
+                                    market='US', code=code, name=name,
+                                    sig_type=f"[STANDARD] {dbg.get('sig_type', 'NASDAQ_INVERSE')}",
+                                    ep=ep_us, facts=entry_facts, sector=sector_info,
+                                    score=scaled_score,
+                                    trade_source="STANDARD"
+                                )
+                                print(f"   ↳ [미국장 오리지널 장부 기록]: {fwd_msg}")
+                            except Exception as e:
+                                print(f"   ↳ [포워드 장부 에러]: {e}")
+
+                            # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                             # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만! (미국장이므로 $ 유지)
                             promo_caption = (
                                 f"📈 [알고리즘 차트 포착]\n\n"
