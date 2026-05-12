@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from bitget_env import bitget_access_key, bitget_passphrase, bitget_secret_key
 from bitget_logger import get_logger, setup_logging
 from bitget_rate_limit_guard import backoff_sleep, throttle
 from bitget_symbol_utils import normalize_market_symbol
@@ -40,11 +41,14 @@ from bitget_forward_tester import (  # noqa: E402
 def create_trade_exchange(market_type="futures"):
     if ccxt is None:
         raise RuntimeError("ccxt not available")
-    api_key = os.environ.get("BITGET_API_KEY", "")
-    api_secret = os.environ.get("BITGET_API_SECRET", "")
-    passphrase = os.environ.get("BITGET_API_PASSPHRASE", "")
+    api_key = bitget_access_key()
+    api_secret = bitget_secret_key()
+    passphrase = bitget_passphrase()
     if not api_key or not api_secret or not passphrase:
-        raise RuntimeError("missing BITGET_API_KEY / BITGET_API_SECRET / BITGET_API_PASSPHRASE")
+        raise RuntimeError(
+            "missing Bitget API credentials: set BITGET_ACCESS_KEY, BITGET_SECRET_KEY, BITGET_PASSPHRASE "
+            "(or legacy BITGET_API_KEY / BITGET_API_SECRET / BITGET_API_PASSPHRASE)"
+        )
     ex = ccxt.bitget(
         {
             "apiKey": api_key,

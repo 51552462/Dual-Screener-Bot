@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 
 load_dotenv()
+from bitget_env import bitget_telegram_chat_id, bitget_telegram_token
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -22,8 +24,8 @@ DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
 CSV_PATH = os.path.join(BASE_DIR, "bitget_supernova_flow_tracking_master.csv")
 ALT_CSV_PATH = os.path.join(BASE_DIR, "Supernova_Flow_Tracking_Master.csv")
-TELEGRAM_TOKEN = os.environ.get("BITGET_TELEGRAM_TOKEN_MAIN", "")
-TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = bitget_telegram_token()
+TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 
 
 def load_config(max_retries=5):

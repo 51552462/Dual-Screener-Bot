@@ -9,13 +9,14 @@ import numpy as np
 import pandas as pd
 import requests
 
+from bitget_env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget_funding_fetcher import fetch_funding_snapshot
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-TELEGRAM_TOKEN = os.environ.get("BITGET_TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = bitget_telegram_token()
+TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 
 # 동시 오픈 포지션 상한(기본): 연쇄 청산(붓다빔) 리스크 완충. `BITGET_MAX_OPEN_POSITIONS` in bitget_system_config.json 로 변경.
 _DEFAULT_BITGET_MAX_OPEN_POSITIONS = 20

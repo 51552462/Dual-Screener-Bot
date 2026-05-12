@@ -12,14 +12,15 @@ import pandas as pd
 import requests
 
 import bitget_shadow_tracking
+from bitget_env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget_forward_tester import compute_evolved_alpha_bonus_score, try_add_virtual_position
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-TELEGRAM_TOKEN = os.environ.get("BITGET_TELEGRAM_TOKEN_MAIN", "")
-TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = bitget_telegram_token()
+TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 scanned_today_cache = {"spot": set(), "futures": set()}
 LOG_FILE_SNIPER = os.path.join(BASE_DIR, "sent_log_bitget_supernova.txt")
 

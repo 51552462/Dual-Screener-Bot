@@ -5,6 +5,7 @@ import time
 
 import requests
 
+from bitget_env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget_logger import get_logger, setup_logging
 
 
@@ -13,8 +14,8 @@ logger = get_logger("bitget.sentinel")
 
 
 def _send_telegram_alert(text):
-    token = os.environ.get("TELEGRAM_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    token = bitget_telegram_token()
+    chat_id = bitget_telegram_chat_id()
     if not token or not chat_id:
         return
     try:

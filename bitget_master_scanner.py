@@ -16,6 +16,7 @@ import bitget_shadow_tracking
 import bitget_signal_engines as bse
 from bitget_ai_report import generate_ai_report
 from bitget_charting import save_chart
+from bitget_env import bitget_telegram_chat_id, bitget_telegram_token, bitget_telegram_token_promo
 from bitget_executor import execute_real_order
 from bitget_forward_tester import generate_mutant_strategies, log_real_execution, track_daily_positions, try_add_virtual_position
 from bitget_signal_engines import (
@@ -32,9 +33,9 @@ DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 BENCHMARK = "BTC_USDT"
-TELEGRAM_TOKEN_MAIN = os.environ.get("BITGET_TELEGRAM_TOKEN_MAIN", "")
-TELEGRAM_TOKEN_PROMO = os.environ.get("BITGET_TELEGRAM_TOKEN_PROMO", "")
-TELEGRAM_CHAT_ID = os.environ.get("BITGET_TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN_MAIN = bitget_telegram_token()
+TELEGRAM_TOKEN_PROMO = bitget_telegram_token_promo()
+TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
 q_main = queue.Queue()
 q_promo = queue.Queue()
