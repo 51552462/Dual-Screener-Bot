@@ -368,13 +368,16 @@ def scan_market_1d():
                     if not df_raw.empty and 'Date' in df_raw.columns:
                         df_raw['Date'] = pd.to_datetime(df_raw['Date'])
                         df_raw.set_index('Date', inplace=True)
+                        df_raw = df_raw.loc[~df_raw.index.duplicated(keep='last')]
                 except Exception:
                     # 2. DB에 테이블이 없거나 에러 발생 시, FDR로 실시간 데이터 가져오기 (대체망 가동)
                     df_raw = fdr.DataReader(code, start_date)
+                    df_raw = df_raw.loc[~df_raw.index.duplicated(keep='last')]
 
                 # 3. 데이터 공통 전처리 (DB, FDR 어디서 가져왔든 결측치 제거 적용)
                 if df_raw is not None and not df_raw.empty:
                     df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                    df_raw = df_raw.loc[~df_raw.index.duplicated(keep='last')]
 
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
                 if is_valid: 

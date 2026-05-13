@@ -102,11 +102,20 @@ def calculate_trust_score(c, e60, signal_arr):
 def compute_bobgeureut_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
-    
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    _cl = np.squeeze(np.asarray(df['Close']))
+    if getattr(_cl, 'ndim', 0) != 1:
+        _cl = np.ravel(_cl)
+    df['Close'] = pd.Series(_cl, index=df.index)
+
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    c = np.squeeze(np.asarray(df['Close']))
+    o = np.squeeze(np.asarray(df['Open']))
+    h = np.squeeze(np.asarray(df['High']))
+    l = np.squeeze(np.asarray(df['Low']))
+    v = np.squeeze(np.asarray(df['Volume']))
     ema10, ema20, ema30, ema60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     ema112, ema224, ema448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
@@ -324,6 +333,7 @@ def scan_market_1d():
                 if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = flatten_yf_download_df(df_ticker) # 2차원 찌꺼기 완벽 평탄화 (백신 주입)
+                df_ticker = df_ticker.loc[:, ~df_ticker.columns.duplicated()].copy()
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]

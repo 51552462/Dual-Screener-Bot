@@ -59,14 +59,18 @@ def get_safe_data(code, start_date):
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
         df_db.index = pd.to_datetime(df_db.index)
+        df_db = df_db.loc[~df_db.index.duplicated(keep='last')]
     except Exception:
-        return fdr.DataReader(code, start_date)
+        df = fdr.DataReader(code, start_date)
+        df = df.loc[~df.index.duplicated(keep='last')]
+        return df
 
     try:
         df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
+        df_live = df_live.loc[~df_live.index.duplicated(keep='last')]
         if not df_live.empty:
             df_combined = pd.concat([df_db, df_live])
-            return df_combined[~df_combined.index.duplicated(keep='last')]
+            return df_combined.loc[~df_combined.index.duplicated(keep='last')]
         return df_db
     except Exception:
         return df_db
@@ -364,6 +368,7 @@ def scan_market_1d():
                 df_raw = get_safe_data(code, start_date)
                 if df_raw is not None and not df_raw.empty:
                     df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                    df_raw = df_raw.loc[~df_raw.index.duplicated(keep='last')]
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
                 if is_valid:
                     hit, sig_type, df, dbg = compute_inverse_1d(df_raw)

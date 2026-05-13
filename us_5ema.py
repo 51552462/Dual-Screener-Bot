@@ -175,14 +175,23 @@ def scale_score(val, best, worst):
 def compute_us_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.Series):
     if df_raw is None or len(df_raw) < 250: return False, "", df_raw, {}
     df = df_raw.copy()
-    
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    _cl = np.squeeze(np.asarray(df['Close']))
+    if getattr(_cl, 'ndim', 0) != 1:
+        _cl = np.ravel(_cl)
+    df['Close'] = pd.Series(_cl, index=df.index)
+
     idx_close_aligned = idx_close.reindex(df.index).ffill()
     df['Idx_Close'] = idx_close_aligned
     df['VIX_Close'] = vix_close.reindex(df.index).ffill()
     for n in [5, 10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    c = np.squeeze(np.asarray(df['Close']))
+    o = np.squeeze(np.asarray(df['Open']))
+    h = np.squeeze(np.asarray(df['High']))
+    l = np.squeeze(np.asarray(df['Low']))
+    v = np.squeeze(np.asarray(df['Volume']))
     e5, e10, e20, e30 = df['EMA5'].values, df['EMA10'].values, df['EMA20'].values, df['EMA30'].values
     e60, e112, e224, e448 = df['EMA60'].values, df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
@@ -708,6 +717,7 @@ def scan_market_1d():
                 if df_ticker is None or df_ticker.empty: continue
 
                 df_ticker = flatten_yf_download_df(df_ticker) # 2차원 찌꺼기 완벽 평탄화 (백신 주입)
+                df_ticker = df_ticker.loc[:, ~df_ticker.columns.duplicated()].copy()
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
                 df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]

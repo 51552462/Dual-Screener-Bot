@@ -183,14 +183,23 @@ def scale_score(val, best, worst):
 def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.Series): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
-    
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    _cl = np.squeeze(np.asarray(df['Close']))
+    if getattr(_cl, 'ndim', 0) != 1:
+        _cl = np.ravel(_cl)
+    df['Close'] = pd.Series(_cl, index=df.index)
+
     df['Idx_Close'] = idx_close
     df['Idx_Close'] = df['Idx_Close'].ffill()
 
     for n in [10, 20, 30, 60, 112, 224, 448]:
         df[f'EMA{n}'] = df['Close'].ewm(span=n, adjust=False, min_periods=0).mean()
 
-    c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+    c = np.squeeze(np.asarray(df['Close']))
+    o = np.squeeze(np.asarray(df['Open']))
+    h = np.squeeze(np.asarray(df['High']))
+    l = np.squeeze(np.asarray(df['Low']))
+    v = np.squeeze(np.asarray(df['Volume']))
     e10, e20, e30, e60 = df['EMA10'].values, df['EMA20'].values, df['EMA30'].values, df['EMA60'].values
     e112, e224, e448 = df['EMA112'].values, df['EMA224'].values, df['EMA448'].values
 
@@ -218,7 +227,7 @@ def compute_nulrim_1d(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.
         rs = (stock_ret / idx_ret) * 100
     rs = np.nan_to_num(rs, nan=0.0)
 
-  # =========================================================================
+    # =========================================================================
     # 👑 [2단계] 눌림목 타점 발생 로직 (S1, S2, S4, S6 4가지만 명확히 분리 포착)
     # =========================================================================
     moneyOk = (c * v) >= 5_000_000
@@ -811,6 +820,7 @@ def scan_market_1d():
                     continue
 
                 df_ticker = flatten_yf_download_df(df_ticker) # 2차원 찌꺼기 완벽 평탄화 (백신 주입)
+                df_ticker = df_ticker.loc[:, ~df_ticker.columns.duplicated()].copy()
                 df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                 if df_ticker.index.tzinfo is not None:
                     df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
