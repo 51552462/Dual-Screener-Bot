@@ -1,17 +1,10 @@
-#!/bin/bash
-
-# 1. 팩토리 작업 디렉토리로 이동 (경로는 현재 우분투 서버 기준)
-cd /home/ubuntu/dante_bots/Dual-Screener-Bot
-
-# 2. 혹시 엉켜있는 파이썬 프로세스가 있다면 전부 깔끔하게 종료
-pkill -f main.py
-pkill -f dashboard.py
-pkill -f heatmap_dashboard.py
-pkill -f factory_launcher.py
-pkill -f forensics_pioneer.py
-
-# 3. 3초 대기 후 마스터 런처 백그라운드 점화
-sleep 3
-nohup python3 factory_launcher.py > factory_master.log 2>&1 &
-
-echo "🚀 [시스템 재부팅 완료] 팩토리가 성공적으로 부활했습니다."
+#!/usr/bin/env bash
+# =============================================================================
+# [DEPRECATED] 이 스크립트는 폐기되었습니다. systemd B 방식만 사용하세요.
+#   sudo ./update_factory.sh
+# =============================================================================
+echo "" >&2
+echo " [DEPRECATED] start_factory.sh 는 더 이상 사용하지 마세요." >&2
+echo "  → 저장소 루트에서:  sudo ./update_factory.sh" >&2
+echo "" >&2
+exit 1

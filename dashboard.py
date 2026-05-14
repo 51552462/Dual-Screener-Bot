@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,13 +10,368 @@ import os
 import time
 import random
 
+from datetime import datetime, timezone
+
+from market_db_paths import MARKET_DATA_DB_PATH, market_db_read_path
+from ops_logger import OPS_EVENTS_DB_PATH, fetch_heartbeat_ticks, fetch_recent_rows
+
+
+@st.cache_data(ttl=30)
+def load_latest_ops_snapshot():
+    """ops_snapshot 최신 1행 (메인 DB — 쓰기와 동일 소스, 조인 없음)."""
+    if not os.path.isfile(MARKET_DATA_DB_PATH):
+        return None
+    last_err = None
+    for attempt in range(8):
+        try:
+            conn = sqlite3.connect(
+                f"file:{MARKET_DATA_DB_PATH.replace(os.sep, '/')}?mode=ro",
+                uri=True,
+                timeout=20.0,
+                check_same_thread=False,
+            )
+            try:
+                conn.execute("PRAGMA query_only=ON;")
+            except sqlite3.OperationalError:
+                pass
+            row = conn.execute(
+                """
+                SELECT timestamp, treasury_kr, treasury_us, tail_fund_kr, tail_fund_us,
+                       long_notional, short_notional
+                FROM ops_snapshot
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            conn.close()
+            if not row:
+                return None
+            return {
+                "timestamp": row[0],
+                "treasury_kr": float(row[1] or 0),
+                "treasury_us": float(row[2] or 0),
+                "tail_fund_kr": float(row[3] or 0),
+                "tail_fund_us": float(row[4] or 0),
+                "long_notional": float(row[5] or 0),
+                "short_notional": float(row[6] or 0),
+            }
+        except sqlite3.OperationalError as e:
+            last_err = e
+            if "locked" in str(e).lower() or "busy" in str(e).lower():
+                time.sleep(min(1.5, 0.05 * (2**attempt) + random.uniform(0, 0.1)))
+                continue
+            break
+        except Exception as e:
+            last_err = e
+            break
+    if last_err is not None:
+        st.session_state["_ops_snapshot_err"] = str(last_err)
+    return None
+
+
+def _render_capital_control_panel(snap: dict | None) -> None:
+    """자본 통제석: 국고 vs 롱, 테일 vs 숏 (ops_snapshot 1행 기준)."""
+    st.subheader("🏦 자본 통제석 (Capital Control Panel)")
+    if snap is None:
+        err = st.session_state.pop("_ops_snapshot_err", None)
+        if err:
+            st.caption(f"ops_snapshot 조회 메모: {err}")
+        st.info(
+            "아직 `ops_snapshot` 기록이 없습니다. `system_auto_pilot` 워밍업 이후 1분 주기로 채워집니다."
+        )
+        return
+
+    st.caption(f"스냅샷 시각: **{snap['timestamp']}** · 원천: `ops_snapshot` 최신 1행 (조인 없음)")
+    treasury_total = snap["treasury_kr"] + snap["treasury_us"]
+    tail_total = snap["tail_fund_kr"] + snap["tail_fund_us"]
+    long_n = snap["long_notional"]
+    short_n = snap["short_notional"]
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**메인 국고 (KR+US) vs 롱 오픈 명목**")
+        m1, m2 = st.columns(2)
+        m1.metric("국고 합계", f"{treasury_total:,.0f}")
+        m2.metric("롱 투입(OPEN)", f"{long_n:,.0f}")
+        cap = max(treasury_total, 1.0)
+        util_long = min(1.0, max(0.0, long_n / cap))
+        st.progress(util_long)
+        st.caption(f"롱 명목 / 국고 합계 ≈ {util_long * 100:.1f}%")
+        fig_l = go.Figure(
+            go.Bar(
+                y=["국고 (KR+US)", "롱 OPEN"],
+                x=[treasury_total, long_n],
+                orientation="h",
+                marker_color=["#81c784", "#4fc3f7"],
+                text=[f"{treasury_total:,.0f}", f"{long_n:,.0f}"],
+                textposition="auto",
+            )
+        )
+        fig_l.update_layout(
+            height=160,
+            template="plotly_dark",
+            showlegend=False,
+            margin=dict(l=8, r=8, t=8, b=8),
+            xaxis_title="원(명목)",
+        )
+        st.plotly_chart(fig_l, use_container_width=True)
+
+    with c2:
+        st.markdown("**테일 리스크 펀드 (KR+US) vs 숏(인버스) 오픈 명목**")
+        n1, n2 = st.columns(2)
+        n1.metric("테일 합계", f"{tail_total:,.0f}")
+        n2.metric("숏 투입(OPEN)", f"{short_n:,.0f}")
+        cap2 = max(tail_total, 1.0)
+        util_short = min(1.0, max(0.0, short_n / cap2))
+        st.progress(util_short)
+        st.caption(f"숏(인버스) 명목 / 테일 합계 ≈ {util_short * 100:.1f}%")
+        fig_s = go.Figure(
+            go.Bar(
+                y=["테일 (KR+US)", "숏 OPEN"],
+                x=[tail_total, short_n],
+                orientation="h",
+                marker_color=["#ffb74d", "#ff8a65"],
+                text=[f"{tail_total:,.0f}", f"{short_n:,.0f}"],
+                textposition="auto",
+            )
+        )
+        fig_s.update_layout(
+            height=160,
+            template="plotly_dark",
+            showlegend=False,
+            margin=dict(l=8, r=8, t=8, b=8),
+            xaxis_title="원(명목)",
+        )
+        st.plotly_chart(fig_s, use_container_width=True)
+
+    st.markdown("---")
+
+
+@st.cache_data(ttl=45)
+def load_ops_events_recent():
+    """최근 1시간 ops_events (읽기 전용, 45초 캐시)."""
+    if not os.path.isfile(OPS_EVENTS_DB_PATH):
+        return []
+    return fetch_recent_rows(hours=1.0, limit=1200)
+
+
+def _payload_queue_pending(p: dict) -> int | None:
+    if not isinstance(p, dict):
+        return None
+    for k in ("telegram_queue_pending", "telegram_queue_pending_sqlite"):
+        if k in p and p[k] is not None:
+            try:
+                return int(p[k])
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _render_ops_events_gauge_panel() -> None:
+    """상단: ops_events `gauge.snapshot` — 큐 적체·Gemini 게이트 (30~60초 캐시)."""
+    st.subheader("📡 운영 게이지 (ops_events · gauge.snapshot)")
+    st.caption(f"원천: `{OPS_EVENTS_DB_PATH}` · 갱신 주기 ≈ 45초")
+    rows = load_ops_events_recent()
+    gauges = [r for r in rows if r.get("event") == "gauge.snapshot"]
+    if not gauges:
+        st.info("`ops_events.sqlite`에 아직 게이지 스냅샷이 없습니다. `main.py`·텔레그램 데몬·Gemini 게이트 기동 후 수집됩니다.")
+        return
+
+    latest_by_comp: dict[str, dict] = {}
+    for r in gauges:
+        c = str(r.get("component") or "")
+        if c and c not in latest_by_comp:
+            latest_by_comp[c] = r
+
+    cols = st.columns(min(3, max(1, len(latest_by_comp))))
+    for i, (comp, row) in enumerate(sorted(latest_by_comp.items(), key=lambda x: x[0])):
+        p = row.get("payload") or {}
+        if not isinstance(p, dict):
+            p = {}
+        with cols[i % len(cols)]:
+            st.markdown(f"**{comp}**")
+            ts = str(row.get("ts_utc", ""))[:22]
+            st.caption(f"ts_utc: `{ts}`")
+            qp = _payload_queue_pending(p)
+            if qp is not None:
+                st.metric("텔레그램 큐(PENDING)", f"{qp:,}")
+            if "telegram_http_429_last_60s" in p:
+                st.metric("429 (60s)", int(p.get("telegram_http_429_last_60s") or 0))
+            if "gemini_gate_inflight" in p:
+                st.metric("Gemini inflight", int(p.get("gemini_gate_inflight") or 0))
+            if "gemini_gate_outstanding" in p:
+                st.metric("Gemini outstanding", int(p.get("gemini_gate_outstanding") or 0))
+            g = p.get("gemini")
+            if isinstance(g, dict) and g.get("phase"):
+                st.caption(f"ai_overseer phase: **{g.get('phase')}**")
+
+    # 시계열 (최근 스냅샷만 역순 정렬 후 상위 N개)
+    chrono = list(reversed(gauges[-120:])) if len(gauges) > 1 else list(reversed(gauges))
+    fig = go.Figure()
+    for comp in sorted({str(r.get("component") or "") for r in chrono if r.get("component")}):
+        sub = [r for r in chrono if str(r.get("component")) == comp]
+        xs, ys = [], []
+        for r in sub:
+            p = r.get("payload") or {}
+            q = _payload_queue_pending(p) if isinstance(p, dict) else None
+            if q is None:
+                continue
+            xs.append(str(r.get("ts_utc", "")))
+            ys.append(q)
+        if xs:
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name=f"{comp} queue"))
+    if fig.data:
+        fig.update_layout(
+            template="plotly_dark",
+            height=260,
+            title="텔레그램 PENDING 큐 추이 (gauge.snapshot)",
+            margin=dict(l=8, r=8, t=40, b=8),
+            xaxis_title="ts_utc",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    fig2 = go.Figure()
+    for comp in sorted({str(r.get("component") or "") for r in chrono if r.get("component")}):
+        sub = [r for r in chrono if str(r.get("component")) == comp]
+        xs, ys = [], []
+        for r in sub:
+            p = r.get("payload") or {}
+            if not isinstance(p, dict):
+                continue
+            if "gemini_gate_inflight" not in p:
+                continue
+            xs.append(str(r.get("ts_utc", "")))
+            ys.append(int(p.get("gemini_gate_inflight") or 0))
+        if xs:
+            fig2.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name=f"{comp} inflight"))
+    if fig2.data:
+        fig2.update_layout(
+            template="plotly_dark",
+            height=240,
+            title="Gemini 게이트 inflight 추이",
+            margin=dict(l=8, r=8, t=40, b=8),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("---")
+
+
+def _render_ops_events_errors_panel() -> None:
+    st.subheader("🛰 시스템 로그 (ops_events · log.python)")
+    st.caption(f"원천: `{OPS_EVENTS_DB_PATH}` · 최근 1시간 · WARNING 이상")
+    rows = load_ops_events_recent()
+    if not rows:
+        st.info("아직 `ops_events.sqlite` 기록이 없습니다.")
+        return
+
+    errs = [
+        r
+        for r in rows
+        if r.get("event") == "log.python"
+        and str(r.get("severity", "")).upper() in ("ERROR", "CRITICAL", "WARNING")
+    ]
+    if not errs:
+        st.success("해당 구간에 경고 이상 로그가 없습니다.")
+    else:
+        ed = []
+        for r in errs[:150]:
+            p = r.get("payload") or {}
+            ed.append(
+                {
+                    "ts_utc": r.get("ts_utc"),
+                    "component": r.get("component"),
+                    "severity": r.get("severity"),
+                    "logger": p.get("logger", "") if isinstance(p, dict) else "",
+                    "message": str(p.get("message", ""))[:800] if isinstance(p, dict) else "",
+                }
+            )
+        st.dataframe(pd.DataFrame(ed), use_container_width=True, height=300)
+
+    st.markdown("---")
+
+
+def _parse_ts_utc(s: str) -> datetime | None:
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        t = s.strip()
+        if t.endswith("Z"):
+            t = t[:-1] + "+00:00"
+        return datetime.fromisoformat(t)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=35)
+def load_heartbeat_ticks_cached():
+    return fetch_heartbeat_ticks(hours=2.0, limit=6000)
+
+
+def _render_heartbeat_slo_traffic_lights() -> None:
+    """
+    마지막 heartbeat.tick 기준 경과 시간 SLO:
+    - 3분 미만: 정상(녹), 3~10분: 지연(황), 10분 이상: 장애/데드락 의심(적).
+    """
+    st.subheader("💓 하트비트 SLO (심장박동)")
+    st.caption("이벤트 `heartbeat.tick` · 마지막 ts_utc 기준 (스캐너 주기 반영 3분 / 10분 임계)")
+    rows = load_heartbeat_ticks_cached()
+    if not rows:
+        st.warning("`heartbeat.tick` 기록이 없습니다. `main.py` 기동 후 스캐너·데몬 루프에서 적재됩니다.")
+        st.markdown("---")
+        return
+
+    latest: dict[str, str] = {}
+    for r in rows:
+        c = str(r.get("component") or "").strip()
+        ts = str(r.get("ts_utc") or "")
+        if c and c not in latest and ts:
+            latest[c] = ts
+
+    now = datetime.now(timezone.utc)
+    items = []
+    for comp, ts_s in sorted(latest.items(), key=lambda x: x[0].lower()):
+        parsed = _parse_ts_utc(ts_s)
+        if parsed is None:
+            items.append((comp, ts_s, None, "⚪", "파싱 실패"))
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        age_sec = max(0.0, (now - parsed.astimezone(timezone.utc)).total_seconds())
+        if age_sec >= 600:
+            emoji, label = "🔴", "장애/정지 의심 (≥10분)"
+        elif age_sec >= 180:
+            emoji, label = "🟡", "지연 (≥3분)"
+        else:
+            emoji, label = "🟢", "정상 (<3분)"
+        items.append((comp, ts_s, age_sec, emoji, label))
+
+    ncols = min(4, max(1, len(items)))
+    for i in range(0, len(items), ncols):
+        cols = st.columns(ncols)
+        for j, col in enumerate(cols):
+            if i + j >= len(items):
+                break
+            comp, ts_s, age_sec, emoji, label = items[i + j]
+            with col:
+                st.markdown(f"### {emoji} `{comp}`")
+                st.caption(label)
+                st.text(f"마지막: {ts_s[:26]}")
+                if age_sec is not None:
+                    st.metric("경과(초)", f"{int(age_sec):,}")
+    st.markdown("---")
+
+
 # ==========================================
 # 1. 환경 설정 및 DB 무결성 연결 (Read-Only)
 # ==========================================
 st.set_page_config(page_title="Dante Quant Factory Control Tower", layout="wide")
 st.title("🚀 퀀트 팩토리 관제탑 실시간 대시보드")
 
-DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+_render_heartbeat_slo_traffic_lights()
+_render_ops_events_gauge_panel()
+_ops_snap = load_latest_ops_snapshot()
+_render_capital_control_panel(_ops_snap)
+_render_ops_events_errors_panel()
 
 def _max_drawdown_from_cum_pnl(cum: pd.Series) -> float:
     """누적 손익(원) 곡선에서 최대 낙폭(MDD), 음수 비율(0 ~ -100% 근사)."""
@@ -57,12 +414,13 @@ def _logic_group_series(sig_series: pd.Series) -> pd.Series:
 
 @st.cache_data(ttl=60)  # 60초마다 데이터 자동 갱신 (메인 DB 부하 방지)
 def load_factory_data():
-    if not os.path.exists(DB_PATH):
+    db_path = market_db_read_path()
+    if not os.path.exists(db_path):
         return pd.DataFrame()
     last_err = None
     for attempt in range(12):
         try:
-            conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30.0, check_same_thread=False)
+            conn = sqlite3.connect(f"file:{db_path.replace(os.sep, '/')}?mode=ro", uri=True, timeout=30.0, check_same_thread=False)
             try:
                 conn.execute("PRAGMA query_only=ON;")
             except sqlite3.OperationalError:

@@ -1,9 +1,13 @@
 """
 Dante Quant Factory — 스마트머니 레이더 (SQLite 미사용, system_config.json 만).
 
+SSOT(단일 진실원): 본 스크립트 산출물 `SMART_MONEY_RADAR.picks`[*].avg_price 만이
+스나이퍼/가상매매 교차검증의 스마트머니 평단으로 사용됨. smart_money_targets.json 등 실험 트랙 미사용.
+
 - 외국인·기관 실순매수: pykrx 순매수 상위(소수 요청) 우선, 실패 시 네이버 순매수 iframe.
 - 2천 종 루프 금지: 상위 랭킹만 수집 후 다이버전스(최근 5일 가격 +1.8% 이하) 필터.
-- avg_price: 순매수대금/순매수량 기반 VWAP, KRX 일별 투자자 API가 살아 있으면 양수 순매수일 종가 가중.
+- avg_price: (다일) pykrx 일별 외인·기관 양수 순매수량 + 종가 시계열에 대해 1차원 상태공간 칼만(잠재 평균단가),
+  관측잡음 R_t를 일별 순매수 규모에 반비례(대량 매수일 저분산). 집계-only 경로는 기존 순매수 VWAP.
 - SMART_MONEY_RADAR.picks 스키마 고정: name, avg_price, divergence_score.
 """
 import json
@@ -16,6 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -338,9 +343,12 @@ def fetch_ohlcv_for_divergence(code: str, from_ymd: str, to_ymd: str) -> pd.Data
     return pd.DataFrame()
 
 
-def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Optional[float]:
+def _pykrx_daily_flow_points(
+    code: str, from_ymd: str, to_ymd: str
+) -> Optional[List[Tuple[float, float]]]:
     """
-    일별 외국인·기관 순매수량이 양수인 날만 종가로 가중한 VWAP (가능할 때만).
+    pykrx 일별 투자자 순매수 + OHLCV에서 (종가, 외인+기관 양수 순매수량 합) 시계열.
+    기존 `_try_pykrx_daily_smart_vwap`와 동일한 API 호출·컬럼 선택·루프 조건.
     """
     if krx_stock is None:
         return None
@@ -367,8 +375,7 @@ def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Option
     if not c_inst or not c_fr:
         return None
 
-    num = 0.0
-    den = 0.0
+    out: List[Tuple[float, float]] = []
     for ts in px.index:
         if ts not in dv.index:
             continue
@@ -385,9 +392,71 @@ def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Option
             close_px = float(px.loc[ts, c_close])
         except Exception:
             continue
-        num += close_px * buy_vol
-        den += buy_vol
+        out.append((close_px, buy_vol))
 
+    return out if out else None
+
+
+def _kalman_latent_avg_cost_1d(points: List[Tuple[float, float]]) -> Optional[float]:
+    """
+    잠재 상태 x_t = '스마트머니 참 평균 단가'(local level / random walk).
+    관측 z_t = 일별 프록시 가격(여기서는 양수 순매수일 종가), z_t = x_t + v_t.
+    관측 분산 R_t는 일별 순매수량 v_t에 반비례(대량 순매수일 R_t 축소 → 상태 강하게 갱신).
+    """
+    if not points:
+        return None
+    prices = np.array([p for p, _ in points], dtype=np.float64)
+    vols = np.array([max(v, 0.0) for _, v in points], dtype=np.float64)
+    if prices.size == 0 or not np.all(np.isfinite(prices)):
+        return None
+    if not np.any(vols > 0):
+        return float(np.mean(prices))
+
+    med_p = float(np.median(prices))
+    med_v = float(np.median(vols[vols > 0])) if np.any(vols > 0) else float(np.median(vols))
+    if med_v <= 0:
+        med_v = 1.0
+
+    # 공정 잡음: 잠재 평균단가의 미세 변동
+    q_var = max((0.002 * med_p) ** 2, 1.0)
+    # 기준 관측 분산 스케일(가격 스케일에 맞춤)
+    r_base = max((0.012 * med_p) ** 2, 25.0)
+    r_lo = max((0.003 * med_p) ** 2, 4.0)
+    r_hi = max((0.09 * med_p) ** 2, 10_000.0)
+
+    x = float(prices[0])
+    v0 = float(max(vols[0], 0.2 * med_v))
+    r0 = r_base * (med_v / v0)
+    P = float(np.clip(r0, r_lo, r_hi))
+
+    for t in range(1, prices.size):
+        x_pred = x
+        P_pred = P + q_var
+        z = float(prices[t])
+        vt = float(max(vols[t], 0.2 * med_v))
+        Rt = r_base * (med_v / vt)
+        Rt = float(np.clip(Rt, r_lo, r_hi))
+        S = P_pred + Rt
+        if S <= 1e-18:
+            K = 0.0
+        else:
+            K = P_pred / S
+        x = x_pred + K * (z - x_pred)
+        P = (1.0 - K) * P_pred
+
+    return float(x)
+
+
+def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Optional[float]:
+    """
+    일별 외국인·기관 순매수량이 양수인 날만 종가로 가중한 VWAP (가능할 때만).
+    데이터 경로는 `_pykrx_daily_flow_points`와 동일(수치적으로 기존과 동일한 가중평균).
+    """
+    pts = _pykrx_daily_flow_points(code, from_ymd, to_ymd)
+    if not pts:
+        return None
+    num = sum(p * v for p, v in pts)
+    den = sum(v for _, v in pts)
     if den <= 0:
         return None
     return num / den
@@ -453,12 +522,20 @@ def run_smart_money_tracker():
             continue
 
         vwap_flow: Optional[float] = None
+        daily_pts: Optional[List[Tuple[float, float]]] = None
         if used_krx_leader and pykrx_daily_flow_ok:
-            vwap_flow = _try_pykrx_daily_smart_vwap(code, from_ymd, to_ymd)
-        if vwap_flow is None or vwap_flow <= 0:
+            daily_pts = _pykrx_daily_flow_points(code, from_ymd, to_ymd)
+
+        if daily_pts:
+            vwap_k = _kalman_latent_avg_cost_1d(daily_pts)
+            if vwap_k is not None and vwap_k > 0:
+                vwap_flow = vwap_k
+            else:
+                vwap_flow = _flow_vwap(slot)
+        else:
             vwap_flow = _flow_vwap(slot)
 
-        if vwap_flow <= 0:
+        if vwap_flow is None or vwap_flow <= 0:
             vwap_flow = float(ohlcv[close_col].iloc[-1])
 
         stock_name = str(slot.get("name") or "").strip() or code

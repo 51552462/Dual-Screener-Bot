@@ -1,5 +1,5 @@
 # Dante_US_Nulrim_1D_AI_Pro_DualBot.py
-import os, re, time, random, threading, queue, concurrent.futures
+import os, re, time, random, threading, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
@@ -10,12 +10,10 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import requests
 import warnings, urllib3
-import yfinance as yf
 from yf_download_flatten import flatten_yf_download_df
 import FinanceDataReader as fdr
 import logging
 import json
-import sqlite3
 
 # 💡 [자율 관제탑 연결] 조율된 파라미터 수신
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
@@ -49,26 +47,12 @@ SYS_CONFIG = load_system_config()
 # 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
-# 💡 [Next Level 1] 하이브리드 데이터 로더 (한국장 전용)
+# 💡 [Next Level 1] 시세 로드 — market_data_fetcher 단일 파이프라인
 def get_safe_data(code, start_date):
-    table_name = f"KR_{code}"
-    try:
-        # 1. 내 컴퓨터(DB)에서 과거 데이터 광속 로드
-        conn = sqlite3.connect(DB_PATH)
-        df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
-        conn.close()
-        df_db.index = pd.to_datetime(df_db.index)
+    from market_data_fetcher import fetch_market_data
 
-        # 2. 오늘 실시간 캔들 딱 1개만 가져오기
-        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
-        
-        if not df_live.empty:
-            df_combined = pd.concat([df_db, df_live])
-            return df_combined[~df_combined.index.duplicated(keep='last')]
-        return df_db
-    except:
-        # DB가 없거나 에러 시 즉시 기존 방식으로 우회 (절대 멈추지 않음)
-        return fdr.DataReader(code, start_date)
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    return fetch_market_data(str(code).strip(), "US", start_date, end_date)
 
 # 💡 [Next Level 2] 동적 백분위 스코어링 함수
 def get_dynamic_score(series_data, higher_is_better=True, window=252):
@@ -80,16 +64,15 @@ def get_dynamic_score(series_data, higher_is_better=True, window=252):
     if higher_is_better: return 1.0 + (pct_rank * 9.0)
     else: return 1.0 + ((1.0 - pct_rank) * 9.0)
 
-import google.generativeai as genai
-from dotenv import load_dotenv
+# ==========================================
+# 🔑 리포트: gemini_report_cache 파사드(REPORT_BACKEND). import 시 google.generativeai 비로드.
+# ==========================================
+try:
+    from dotenv import load_dotenv
 
-load_dotenv() 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-_gemini_keys = [x.strip() for x in (GEMINI_API_KEY or "").split(",") if x.strip()]
-if not _gemini_keys:
-    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
-
-genai.configure(api_key=_gemini_keys[0])
+    load_dotenv()
+except Exception:
+    pass
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -100,8 +83,18 @@ TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
 TELEGRAM_CHAT_ID     = "6838834566"
 SEND_TELEGRAM        = True
 
-q_main = queue.Queue()
-q_promo = queue.Queue()
+from telegram_message_queue import (
+    enqueue_telegram,
+    start_telegram_queue_daemons,
+    wait_telegram_queue_drained,
+)
+
+start_telegram_queue_daemons(
+    TELEGRAM_TOKEN_MAIN,
+    TELEGRAM_TOKEN_PROMO,
+    TELEGRAM_CHAT_ID,
+    SEND_TELEGRAM,
+)
 
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Nulrim_1D')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
@@ -110,32 +103,14 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def telegram_sender_daemon(target_queue, token):
-    while True:
-        item = target_queue.get()
-        if item is None: break
-        img_path, caption = item
-        safe_caption = caption[:1000] + "\n...(요약됨)" if len(caption) > 1000 else caption
-
-        if SEND_TELEGRAM:
-            for _ in range(3):
-                try:
-                    with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
-            time.sleep(1.5)
-        target_queue.task_done()
-
-threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
-threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
-
-# 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거) — Gemini 캐시·다중키: gemini_report_cache
+# 💡 2. 본캐 팩트 리포트 — ReportProvider 파사드(REPORT_BACKEND=none|template|gemini)
 def generate_ai_report(code: str, company_name: str):
-    from gemini_report_cache import generate_stock_ai_report_cached
+    try:
+        from gemini_report_cache import get_report_provider
 
-    return generate_stock_ai_report_cached(code, company_name)
+        return get_report_provider().generate("stock", code=code, company_name=company_name)
+    except Exception:
+        return "", ""
 
 def get_us_ticker_list():
     """us_master.py와 동일 목록 로직 + 시장별 부분 실패·컬럼명 변경 대응."""
@@ -725,28 +700,18 @@ def scan_market_1d():
     t0 = time.time()
     print(f"\n🇺🇸 [일봉 전용] 미국장 4번(눌림목) 스캔 시작!")
 
-    # 💡 [V9.0 핵심] 벤치마크 지수(SPY, QQQ) 및 VIX(공포지수) 데이터 동시 로드
-    print("📊 벤치마크 지수 및 VIX(공포지수) 데이터 로드 중...")
-    try:
-        idx_df = yf.download("SPY QQQ ^VIX", interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
-        if not idx_df.empty:
-            spy_idx = idx_df['SPY']['Close'] if 'SPY' in idx_df.columns.levels[0] else pd.Series(dtype=float)
-            qqq_idx = idx_df['QQQ']['Close'] if 'QQQ' in idx_df.columns.levels[0] else pd.Series(dtype=float)
-            vix_idx = idx_df['^VIX']['Close'] if '^VIX' in idx_df.columns.levels[0] else pd.Series(dtype=float)
-            
-            if spy_idx.index.tzinfo is not None: spy_idx.index = spy_idx.index.tz_convert('America/New_York').tz_localize(None)
-            if qqq_idx.index.tzinfo is not None: qqq_idx.index = qqq_idx.index.tz_convert('America/New_York').tz_localize(None)
-            if vix_idx.index.tzinfo is not None: vix_idx.index = vix_idx.index.tz_convert('America/New_York').tz_localize(None)
-            
-            spy_idx = spy_idx[~spy_idx.index.duplicated(keep='last')]
-            qqq_idx = qqq_idx[~qqq_idx.index.duplicated(keep='last')]
-            vix_idx = vix_idx[~vix_idx.index.duplicated(keep='last')]
-        else:
-            spy_idx, qqq_idx, vix_idx = pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float)
-    except:
-        spy_idx, qqq_idx, vix_idx = pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float)
-
     ny_tz = pytz.timezone('America/New_York')
+    start_date = (datetime.now(ny_tz) - timedelta(days=3 * 365)).strftime('%Y-%m-%d')
+    end_date = datetime.now(ny_tz).strftime('%Y-%m-%d')
+
+    # 💡 [V9.0 핵심] 벤치마크 지수 + VIX — market_data_fetcher 단일 파이프라인
+    print("📊 벤치마크 지수 및 VIX(공포지수) 데이터 로드 중...")
+    from market_data_fetcher import fetch_market_data_batch, us_benchmark_close_series
+    try:
+        spy_idx, qqq_idx, vix_idx = us_benchmark_close_series(start_date, end_date)
+    except Exception:
+        spy_idx = qqq_idx = vix_idx = pd.Series(dtype=float)
+
     today_str = datetime.now(ny_tz).strftime('%Y-%m-%d')
     log_file = os.path.join(TOP_FOLDER, "sent_log_us.txt")
     
@@ -768,20 +733,14 @@ def scan_market_1d():
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
-        df_batch = None
-        fallback_dict = {}
+        batch_map = fetch_market_data_batch(
+            chunk,
+            "US",
+            start_date,
+            end_date,
+            max_workers=min(32, max(8, len(chunk))),
+        )
 
-        try:
-            df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
-        except:
-            def fetch_single(tk):
-                try:
-                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
-                    if not df_s.empty: fallback_dict[tk] = df_s
-                except: pass
-            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-                executor.map(fetch_single, chunk)
-        
         for tk in chunk:
             tracker['scanned'] += 1
             info = ticker_to_info.get(tk)
@@ -789,33 +748,7 @@ def scan_market_1d():
             name, code = info['name'], info['code']
 
             try:
-                df_ticker = None
-                if df_batch is not None and not df_batch.empty:
-                    if len(chunk) == 1:
-                        df_ticker = df_batch.copy()
-                    else:
-                        if isinstance(df_batch.columns, pd.MultiIndex):
-                            if tk in df_batch.columns.get_level_values(0):
-                                df_ticker = df_batch[tk].copy()
-                            elif tk in df_batch.columns.get_level_values(1):
-                                df_ticker = df_batch.xs(tk, level=1, axis=1).copy()
-                            else:
-                                try:
-                                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
-                                    if df_s is not None and not df_s.empty:
-                                        df_ticker = df_s
-                                except Exception:
-                                    df_ticker = None
-                        else:
-                            try:
-                                df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
-                                if df_s is not None and not df_s.empty:
-                                    df_ticker = df_s
-                            except Exception:
-                                df_ticker = None
-                else:
-                    df_ticker = fallback_dict.get(tk)
-
+                df_ticker = batch_map.get(tk)
                 if df_ticker is None or df_ticker.empty:
                     continue
 
@@ -874,7 +807,13 @@ def scan_market_1d():
                                 f"⚠️ [면책 조항]\n"
                                 f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 매수/매도 권유가 아닙니다."
                             )
-                            q_main.put((main_chart_path, main_caption))
+                            enqueue_telegram(
+                                "MAIN",
+                                main_chart_path,
+                                main_caption,
+                                enabled=SEND_TELEGRAM,
+                                send_profile="html_ro",
+                            )
 
                             try:
                                 import auto_forward_tester as aft
@@ -923,7 +862,13 @@ def scan_market_1d():
                                 f"🏷️ 섹터: {sector_info}\n"
                                 f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
                             )
-                            q_promo.put((promo_chart_path, promo_caption))
+                            enqueue_telegram(
+                                "PROMO",
+                                promo_chart_path,
+                                promo_caption,
+                                enabled=SEND_TELEGRAM,
+                                send_profile="html_ro",
+                            )
 
                         print(f"\n✅ [{name}] 미국장 포착! 듀얼 발송 대기열 추가 완료!")
             except Exception as e:
@@ -939,8 +884,7 @@ def scan_market_1d():
 
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 듀얼 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()
-        q_promo.join()
+        wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
     dt = time.time() - t0
     print(f"\n✅ [미국장 4번 V 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
@@ -955,6 +899,11 @@ def run_scheduler():
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
+        try:
+            import ops_logger
+            ops_logger.record_heartbeat("scanner.nulusa")
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     scan_market_1d()

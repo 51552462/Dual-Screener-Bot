@@ -23,7 +23,6 @@ from urllib.parse import urlparse
 from xml.etree.ElementTree import Element
 from zoneinfo import ZoneInfo
 
-import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -338,6 +337,8 @@ def analyze_headlines_with_gemini(headlines: list[str]) -> Optional[dict[str, An
         return None
 
     try:
+        import google.generativeai as genai
+
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash")
     except Exception as e:

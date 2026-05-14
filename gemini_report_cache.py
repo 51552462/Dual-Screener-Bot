@@ -1,11 +1,11 @@
 """
-Gemini 리포트: 로컬 SQLite 캐시 + 다중 API 키 로테이션 (무료 티어 429/쿼터 방어).
-- `ai_cache.sqlite` (이 모듈과 같은 디렉터리) `report_cache(date, code, report_text)`
-- `GEMINI_API_KEY="k1,k2,k3"` 콤마 구분, 3회 시도마다 키 순환 + `genai.configure`
-- WAL + timeout=30 (멀티 스레드 스크리너)
+리포트 생성 파사드: SQLite 캐시 + REPORT_BACKEND(None|template|gemini) 백엔드 분기.
+- google.generativeai 는 GeminiBackend 메서드 내부에서만 지연 로드.
+- `GEMINI_API_KEY="k1,k2,k3"` 콤마 구분, 3회 시도마다 키 순환
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -14,16 +14,136 @@ import sqlite3
 import threading
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Protocol, Tuple, runtime_checkable
 
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
+# ------- Gemini API: 다중 스캐너 스레드 → 전용 asyncio 루프에서 Semaphore(2) + to_thread -------
+_gem_gate_lock = threading.Lock()
+_gem_gate_loop: Optional[asyncio.AbstractEventLoop] = None
+_gem_gate_sem: Optional[asyncio.Semaphore] = None
+_gem_gate_ready = threading.Event()
+
+# ops_events 게이지: 게이트 동시성·대기 (스캐너 스레드 → gate 루프)
+_gem_metrics_lock = threading.Lock()
+_gem_outstanding_calls = 0
+_gem_inside_semaphore = 0
+_gem_ops_reporter_started = False
+_reporter_start_lock = threading.Lock()
+
+
+def get_gemini_gate_metrics() -> dict[str, Any]:
+    """telegram 데몬·대시보드용 스냅샷 (락 짧게)."""
+    with _gem_metrics_lock:
+        return {
+            "gemini_gate_inflight": int(_gem_inside_semaphore),
+            "gemini_gate_outstanding": int(_gem_outstanding_calls),
+            "gemini_gate_sem_limit": 2,
+        }
+
+
+def _gemini_ops_metrics_reporter_loop() -> None:
+    while True:
+        time.sleep(60.0)
+        try:
+            import ops_logger
+
+            ops_logger.record_gauge_snapshot("gemini_report_cache", get_gemini_gate_metrics())
+            ops_logger.record_heartbeat("gemini_report_cache")
+        except Exception:
+            pass
+
+
+def _maybe_start_gemini_ops_reporter() -> None:
+    global _gem_ops_reporter_started
+    with _reporter_start_lock:
+        if _gem_ops_reporter_started:
+            return
+        _gem_ops_reporter_started = True
+    t = threading.Thread(
+        target=_gemini_ops_metrics_reporter_loop,
+        daemon=True,
+        name="gemini_ops_metrics_reporter",
+    )
+    t.start()
+
+
+def _gem_gate_thread_main() -> None:
+    global _gem_gate_loop, _gem_gate_sem
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _gem_gate_sem = asyncio.Semaphore(2)
+    _gem_gate_loop = loop
+
+    def _signal_ready() -> None:
+        _gem_gate_ready.set()
+
+    loop.call_soon(_signal_ready)
+    try:
+        loop.run_forever()
+    except Exception:
+        pass
+
+
+def _ensure_gemini_async_api_gate() -> asyncio.AbstractEventLoop:
+    """백그라운드 이벤트 루프 1개(멱등)."""
+    global _gem_gate_loop
+    loop: Optional[asyncio.AbstractEventLoop] = None
+    with _gem_gate_lock:
+        if _gem_gate_loop is not None:
+            loop = _gem_gate_loop
+        else:
+            t = threading.Thread(
+                target=_gem_gate_thread_main,
+                daemon=True,
+                name="gemini_async_api_gate",
+            )
+            t.start()
+            if not _gem_gate_ready.wait(timeout=15.0):
+                raise RuntimeError("gemini async API gate: loop start timeout")
+            assert _gem_gate_loop is not None
+            loop = _gem_gate_loop
+    _maybe_start_gemini_ops_reporter()
+    assert loop is not None
+    return loop
+
+
+async def _gemini_guarded_api_call(fn: Callable[[], Any]) -> Any:
+    global _gem_inside_semaphore
+    async with _gem_gate_sem:  # type: ignore[union-attr]
+        with _gem_metrics_lock:
+            _gem_inside_semaphore += 1
+        try:
+            return await asyncio.to_thread(fn)
+        finally:
+            with _gem_metrics_lock:
+                _gem_inside_semaphore -= 1
+
+
+def run_gemini_network_gated(fn: Callable[[], Any], *, timeout_sec: float = 300.0) -> Any:
+    """스캐너 스레드에서 안전 호출: 동시 Google API I/O 최대 2."""
+    global _gem_outstanding_calls
+    loop = _ensure_gemini_async_api_gate()
+    with _gem_metrics_lock:
+        _gem_outstanding_calls += 1
+    try:
+        fut = asyncio.run_coroutine_threadsafe(_gemini_guarded_api_call(fn), loop)
+        return fut.result(timeout=timeout_sec)
+    finally:
+        with _gem_metrics_lock:
+            _gem_outstanding_calls -= 1
+
+
 _AI_CACHE_LOCK = threading.Lock()
 
 _AI_CACHE_DIR = os.path.dirname(os.path.abspath(__file__))
 AI_CACHE_DB = os.path.join(_AI_CACHE_DIR, "ai_cache.sqlite")
+
+# 팩토리 캐시 (환경변수 변경 없이 동일 인스턴스 재사용)
+_rp: Optional["ReportProvider"] = None
+_rp_backend: Optional[str] = None
 
 
 def _ensure_cache_dir() -> None:
@@ -59,17 +179,6 @@ def load_gemini_api_keys() -> List[str]:
     load_dotenv()
     raw = os.environ.get("GEMINI_API_KEY") or ""
     return [x.strip() for x in raw.split(",") if x.strip()]
-
-
-def configure_gemini_key_for_attempt(attempt: int) -> bool:
-    """attempt 번째 시도에 사용할 키로 `genai.configure`. 키 없으면 False."""
-    import google.generativeai as genai
-
-    keys = load_gemini_api_keys()
-    if not keys:
-        return False
-    genai.configure(api_key=keys[attempt % len(keys)])
-    return True
 
 
 def is_retryable_gemini_error(exc: BaseException) -> bool:
@@ -256,24 +365,83 @@ def _sector_block_for_prompt(code: str) -> str:
         return "유망 섹터"
 
 
-def generate_stock_ai_report_cached(code: str, company_name: str) -> Tuple[str, str]:
-    """
-    주식 스크리너 공통: (본캐 본문, 해시태그 문자열) — 기존 반환 형식 유지.
-    당일 동일 code 캐시 히트 시 API 미호출.
-    """
-    import google.generativeai as genai
+@runtime_checkable
+class ReportProvider(Protocol):
+    def generate(self, report_type: str, **kwargs: Any) -> Any:
+        ...
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    cache_key = str(code).strip()
 
-    cached_pair = _try_read_stock_cache(today, cache_key)
-    if cached_pair is not None:
-        return cached_pair
+class NoneBackend:
+    """초고속 스캔: 리포트 비활성화."""
 
-    sector_kr = _sector_block_for_prompt(code)
-    fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
+    def generate(self, report_type: str, **kwargs: Any) -> Any:
+        if report_type == "stock":
+            return "", ""
+        if report_type == "bitget":
+            return ""
+        raise ValueError(f"unknown report_type: {report_type!r}")
 
-    prompt = f"""
+
+class TemplateBackend:
+    """AI 실패·오프라인 폴백용 포맷 템플릿."""
+
+    def generate(self, report_type: str, **kwargs: Any) -> Any:
+        if report_type == "stock":
+            code = str(kwargs.get("code", "")).strip()
+            company_name = str(kwargs.get("company_name", "")).strip()
+            sector = _sector_block_for_prompt(code)
+            facts = kwargs.get("facts")
+            fact_line = str(facts).strip() if facts is not None else "팩트 수치는 스캐너 코어·DB 기준으로 집계 중입니다."
+            main = (
+                f"1. 섹터: {sector}\n"
+                f"2. 실적: {company_name} ({code}) — {fact_line}\n"
+                f"3. 모멘텀: 수급·차트 신호는 스캐너 탐지 로직을 참조하세요. (템플릿 모드)"
+            )
+            return main, ""
+        if report_type == "bitget":
+            sym = str(kwargs.get("symbol", "")).strip()
+            tf = str(kwargs.get("timeframe", "")).strip()
+            return (
+                f"[본캐 · 템플릿]\n"
+                f"1. 섹터/테마: {sym} — 암호화폐 시장군(요약 대기)\n"
+                f"2. 내러티브: {tf} 구간 시장 서사 — 스캐너 팩트 연동 대기\n"
+                f"3. 모멘텀: 코어 지표 기준으로 판독하세요."
+            )
+        raise ValueError(f"unknown report_type: {report_type!r}")
+
+
+class GeminiBackend:
+    """기존 캐시 + GenerativeModel 호출 (지연 import)."""
+
+    @staticmethod
+    def _configure(genai: Any, attempt: int) -> bool:
+        keys = load_gemini_api_keys()
+        if not keys:
+            return False
+        genai.configure(api_key=keys[attempt % len(keys)])
+        return True
+
+    def generate(self, report_type: str, **kwargs: Any) -> Any:
+        if report_type == "stock":
+            return self._generate_stock(str(kwargs["code"]), str(kwargs.get("company_name", "")))
+        if report_type == "bitget":
+            return self._generate_bitget(str(kwargs["symbol"]), str(kwargs.get("timeframe", "")))
+        raise ValueError(f"unknown report_type: {report_type!r}")
+
+    def _generate_stock(self, code: str, company_name: str) -> Tuple[str, str]:
+        import google.generativeai as genai
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        cache_key = str(code).strip()
+
+        cached_pair = _try_read_stock_cache(today, cache_key)
+        if cached_pair is not None:
+            return cached_pair
+
+        sector_kr = _sector_block_for_prompt(code)
+        fb_main = f"1. 섹터: {sector_kr}\n2. 실적: 데이터 분석 중\n3. 모멘텀: 수급 유입 및 차트 반등 포착"
+
+        prompt = f"""
             너는 주식 전문 마케터야. [{company_name} ({code})] 종목과 관련된 오늘자 최신 이슈나 테마를 검색해서 아래 양식에 맞게 딱 출력해.
             ⚠️ [매우 중요 규칙]
             1. 대괄호 [ ] 로만 정확히 섹션을 구분해. 굵은 글씨(**) 금지.
@@ -284,51 +452,49 @@ def generate_stock_ai_report_cached(code: str, company_name: str) -> Tuple[str, 
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
             """
 
-    for attempt in range(3):
-        if not configure_gemini_key_for_attempt(attempt):
-            return fb_main, ""
+        for attempt in range(3):
+            if not self._configure(genai, attempt):
+                return fb_main, ""
 
-        try:
-            time.sleep(4)
-            gmodel = genai.GenerativeModel("gemini-2.5-flash", tools="google_search_retrieval")
-            response = gmodel.generate_content(prompt)
-        except Exception as e:
-            if attempt < 2 and is_retryable_gemini_error(e):
+            try:
+                time.sleep(4)
+                gmodel = genai.GenerativeModel("gemini-2.5-flash", tools="google_search_retrieval")
+                response = run_gemini_network_gated(lambda: gmodel.generate_content(prompt))
+            except Exception as e:
+                if attempt < 2 and is_retryable_gemini_error(e):
+                    continue
+                return (
+                    f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}",
+                    "",
+                )
+
+            if not response or not response.text:
                 continue
-            return (
-                f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}",
-                "",
-            )
 
-        if not response or not response.text:
-            continue
+            report = response.text.replace("*", "").strip()
+            m_part = re.search(r"\[본캐\](.*)", report, re.DOTALL)
+            if not m_part:
+                continue
 
-        report = response.text.replace("*", "").strip()
-        m_part = re.search(r"\[본캐\](.*)", report, re.DOTALL)
-        if not m_part:
-            continue
+            main = m_part.group(1).strip()
+            out: Tuple[str, str] = (main, "")
+            cache_put_payload(today, cache_key, json.dumps(list(out), ensure_ascii=False))
+            return out
 
-        main = m_part.group(1).strip()
-        out: Tuple[str, str] = (main, "")
-        cache_put_payload(today, cache_key, json.dumps(list(out), ensure_ascii=False))
-        return out
+        return fb_main, ""
 
-    return fb_main, ""
+    def _generate_bitget(self, symbol: str, timeframe: str) -> str:
+        import google.generativeai as genai
 
+        today = datetime.now().strftime("%Y-%m-%d")
+        cache_key = f"{str(symbol).strip()}|{str(timeframe).strip()}"
 
-def generate_bitget_ai_report_cached(symbol: str, timeframe: str) -> str:
-    """비트겟용 단일 문자열 리포트 (기존 반환 형식 유지)."""
-    import google.generativeai as genai
+        cached_main = _try_read_bitget_cache(today, cache_key)
+        if cached_main is not None:
+            return cached_main
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    cache_key = f"{str(symbol).strip()}|{str(timeframe).strip()}"
-
-    cached_main = _try_read_bitget_cache(today, cache_key)
-    if cached_main is not None:
-        return cached_main
-
-    raw_survival = f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n"
-    prompt = f"""
+        raw_survival = f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n"
+        prompt = f"""
 너는 암호화폐 리서치 마케터다.
 [{symbol}] 코인의 최신 정보를 검색해 아래 형식만 출력하라.
 
@@ -337,28 +503,64 @@ def generate_bitget_ai_report_cached(symbol: str, timeframe: str) -> str:
 2. 내러티브: (현재 시장이 반응하는 재료 1줄)
 3. 모멘텀: ({timeframe} 기준 수급/변동성 관점 1줄)
 """
-    raw_survival_full = raw_survival + prompt
+        raw_survival_full = raw_survival + prompt
 
-    if not load_gemini_api_keys():
+        if not load_gemini_api_keys():
+            return raw_survival_full
+
+        for attempt in range(3):
+            if not self._configure(genai, attempt):
+                return raw_survival_full
+            try:
+                time.sleep(3)
+                gmodel = genai.GenerativeModel("gemini-2.5-flash", tools="google_search_retrieval")
+                response = run_gemini_network_gated(lambda: gmodel.generate_content(prompt))
+            except Exception as e:
+                if attempt < 2 and is_retryable_gemini_error(e):
+                    continue
+                return raw_survival_full
+
+            if response and response.text:
+                txt = response.text.replace("*", "").strip()
+                if "[본캐]" in txt:
+                    body = txt.split("[본캐]", 1)[1].strip()
+                    cache_put_payload(today, cache_key, json.dumps([body, ""], ensure_ascii=False))
+                    return body
+
         return raw_survival_full
 
-    for attempt in range(3):
-        if not configure_gemini_key_for_attempt(attempt):
-            return raw_survival_full
-        try:
-            time.sleep(3)
-            gmodel = genai.GenerativeModel("gemini-2.5-flash", tools="google_search_retrieval")
-            response = gmodel.generate_content(prompt)
-        except Exception as e:
-            if attempt < 2 and is_retryable_gemini_error(e):
-                continue
-            return raw_survival_full
 
-        if response and response.text:
-            txt = response.text.replace("*", "").strip()
-            if "[본캐]" in txt:
-                body = txt.split("[본캐]", 1)[1].strip()
-                cache_put_payload(today, cache_key, json.dumps([body, ""], ensure_ascii=False))
-                return body
+def get_report_provider() -> ReportProvider:
+    """
+    REPORT_BACKEND: gemini(기본) | none | template
+    (대소문자 무시, 공백 무시)
+    """
+    global _rp, _rp_backend
+    name = (os.environ.get("REPORT_BACKEND") or "gemini").strip().lower()
+    if _rp is not None and _rp_backend == name:
+        return _rp
+    _rp_backend = name
+    if name in ("none", "off", "disabled", "0"):
+        _rp = NoneBackend()
+    elif name in ("template", "fallback", "mock", "stub"):
+        _rp = TemplateBackend()
+    else:
+        _rp = GeminiBackend()
+    return _rp
 
-    return raw_survival_full
+
+def reset_report_provider_cache() -> None:
+    """테스트·런타임 환경 전환 시 팩토리 캐시 무효화."""
+    global _rp, _rp_backend
+    _rp = None
+    _rp_backend = None
+
+
+def generate_stock_ai_report_cached(code: str, company_name: str) -> Tuple[str, str]:
+    """하위 호환: 동일 시그니처."""
+    return get_report_provider().generate("stock", code=code, company_name=company_name)
+
+
+def generate_bitget_ai_report_cached(symbol: str, timeframe: str) -> str:
+    """하위 호환: 동일 시그니처."""
+    return get_report_provider().generate("bitget", symbol=symbol, timeframe=timeframe)

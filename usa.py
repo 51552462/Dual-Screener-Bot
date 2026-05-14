@@ -1,5 +1,5 @@
 # Dante_US_Bowl_1D_AI_Pro.py
-import os, re, time, threading, queue, concurrent.futures
+import os, re, time, threading, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
@@ -15,28 +15,35 @@ from yf_download_flatten import flatten_yf_download_df
 import FinanceDataReader as fdr
 import logging
 
-import google.generativeai as genai
-from dotenv import load_dotenv
+# 리포트: gemini_report_cache 파사드 (import 시 google.generativeai 비로드)
+try:
+    from dotenv import load_dotenv
 
-load_dotenv() 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-_gemini_keys = [x.strip() for x in (GEMINI_API_KEY or "").split(",") if x.strip()]
-if not _gemini_keys:
-    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
-
-genai.configure(api_key=_gemini_keys[0])
+    load_dotenv()
+except Exception:
+    pass
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
-TELEGRAM_TOKEN_MAIN  = "8557663212:AAGYJR67qAqkrR3fQw2cjDbCtUrxCAehv0E"
-TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
-TELEGRAM_CHAT_ID     = "6838834566"
-SEND_TELEGRAM        = True
+# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — 자격 증명은 .env 전용
+TELEGRAM_TOKEN_MAIN = (os.environ.get("TELEGRAM_TOKEN_MAIN") or "").strip()
+TELEGRAM_TOKEN_PROMO = (os.environ.get("TELEGRAM_TOKEN_PROMO") or "").strip()
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
 
-q_main = queue.Queue()
-q_promo = queue.Queue()
+from telegram_message_queue import (
+    enqueue_telegram,
+    start_telegram_queue_daemons,
+    wait_telegram_queue_drained,
+)
+
+start_telegram_queue_daemons(
+    TELEGRAM_TOKEN_MAIN,
+    TELEGRAM_TOKEN_PROMO or TELEGRAM_TOKEN_MAIN,
+    TELEGRAM_CHAT_ID,
+    SEND_TELEGRAM,
+)
 
 TOP_FOLDER   = os.path.join(os.path.expanduser('~'), 'Desktop', 'Dante_US_Bowl_1D')
 CHART_FOLDER = os.path.join(TOP_FOLDER, 'charts')
@@ -45,32 +52,11 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9._-]', '_', s)
 
-def telegram_sender_daemon(target_queue, token):
-    while True:
-        item = target_queue.get()
-        if item is None: break
-        img_path, caption = item
-        safe_caption = caption[:1000] + "\n...(요약됨)" if len(caption) > 1000 else caption
-
-        if SEND_TELEGRAM:
-            for _ in range(3):
-                try:
-                    with open(img_path, 'rb') as f:
-                        res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", params={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption}, files={"photo": f}, timeout=60, verify=False)
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(3)
-                except: time.sleep(2)
-            time.sleep(1.5)
-        target_queue.task_done()
-
-threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
-threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
-
 # 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 제거) — Gemini 캐시·다중키: gemini_report_cache
 def generate_ai_report(code: str, company_name: str):
-    from gemini_report_cache import generate_stock_ai_report_cached
+    from gemini_report_cache import get_report_provider
 
-    return generate_stock_ai_report_cached(code, company_name)
+    return get_report_provider().generate("stock", code=code, company_name=company_name)
 
 def get_us_ticker_list():
     try:
@@ -297,139 +283,163 @@ def scan_market_1d():
         
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
-    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0}
-    chunk_size = 100 
+    tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0, 'errors': 0, 'fetch_failed': 0}
+    start_date = (datetime.now(ny_tz) - timedelta(days=3 * 365)).strftime('%Y-%m-%d')
+    end_date = datetime.now(ny_tz).strftime('%Y-%m-%d')
 
-    for i in range(0, len(tickers), chunk_size):
-        chunk = tickers[i:i+chunk_size]
-        df_batch = None
-        fallback_dict = {}
+    from market_data_fetcher import fetch_market_data
+
+    def _fetch_one_us(tk: str):
+        return fetch_market_data(tk, "US", start_date, end_date)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
+        fetched = list(ex.map(_fetch_one_us, tickers))
+
+    for tk, df_ticker in zip(tickers, fetched):
+        tracker['scanned'] += 1
+        info = ticker_to_info.get(tk)
+        if not info:
+            continue
+        name, code = info['name'], info['code']
 
         try:
-            df_batch = yf.download(" ".join(chunk), interval="1d", period="3y", group_by="ticker", progress=False, threads=False)
-        except:
-            def fetch_single(tk):
+            if df_ticker is None or df_ticker.empty:
+                tracker['fetch_failed'] += 1
+                continue
+
+            df_ticker = df_ticker.loc[:, ~df_ticker.columns.duplicated()].copy()
+            df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
+
+            # 거래정지·단일가(Static Quote) — 최근 3일 동일 종가 + 거래량 극소 시 매집 착시 방지 (미국장)
+            if df_ticker is not None and not df_ticker.empty and len(df_ticker) >= 3:
                 try:
-                    df_s = yf.download(tk, interval="1d", period="3y", progress=False, threads=False)
-                    if not df_s.empty: fallback_dict[tk] = df_s
-                except: pass
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-                executor.map(fetch_single, chunk)
+                    tail_3 = df_ticker.tail(3)
+                    if "Close" in tail_3.columns and "Volume" in tail_3.columns:
+                        t3 = tail_3[["Close", "Volume"]].dropna()
+                        if len(t3) >= 3 and int(t3["Close"].nunique()) == 1 and float(t3["Volume"].sum()) < 50000:
+                            continue
+                except Exception:
+                    pass
 
-        for tk in chunk:
-            tracker['scanned'] += 1
-            info = ticker_to_info.get(tk)
-            if not info: continue
-            name, code = info['name'], info['code']
-
-            try:
-                if df_batch is not None:
-                    if len(chunk) == 1: df_ticker = df_batch.copy()
-                    else: 
-                        if tk not in df_batch.columns.get_level_values(0): continue
-                        df_ticker = df_batch[tk].copy()
-                else:
-                    df_ticker = fallback_dict.get(tk)
-                if df_ticker is None or df_ticker.empty: continue
-
-                df_ticker = flatten_yf_download_df(df_ticker) # 2차원 찌꺼기 완벽 평탄화 (백신 주입)
-                df_ticker = df_ticker.loc[:, ~df_ticker.columns.duplicated()].copy()
-                df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                if df_ticker.index.tzinfo is not None: df_ticker.index = df_ticker.index.tz_convert('America/New_York').tz_localize(None)
-                df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
-
-                if len(df_ticker) >= 500:
-                    tracker['analyzed'] += 1
-                    hit, sig_type, df, dbg = compute_bobgeureut_1d(df_ticker)
+            if len(df_ticker) >= 500:
+                tracker['analyzed'] += 1
+                hit, sig_type, df, dbg = compute_bobgeureut_1d(df_ticker)
                     
-                    if hit:
-                        if code in sent_today:
-                            hit = False 
-                        else:
-                            tracker['hits'] += 1
-                            hit_rank = tracker['hits']
-                            sent_today.add(code) 
-                            try:
-                                with open(log_file, "w") as f:
-                                    f.write(today_str + "\n")
-                                    for s_code in sent_today: f.write(s_code + "\n")
-                            except: pass
+                if hit:
+                    if code in sent_today:
+                        hit = False 
+                    else:
+                        tracker['hits'] += 1
+                        hit_rank = tracker['hits']
+                        sent_today.add(code) 
+                        try:
+                            with open(log_file, "w") as f:
+                                f.write(today_str + "\n")
+                                for s_code in sent_today: f.write(s_code + "\n")
+                        except: pass
                             
-                    if hit:
-                        # 💡 본캐용 및 홍보용 차트 생성
-                        main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                        promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+                if hit:
+                    # 💡 본캐용 및 홍보용 차트 생성
+                    main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                    promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
                         
-                        if main_chart_path and promo_chart_path:
-                            ai_main, _ = generate_ai_report(code, name)
-                            try:
-                                sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                            except Exception:
-                                sector_info = "유망 섹터 포착"
+                    if main_chart_path and promo_chart_path:
+                        ai_main, _ = generate_ai_report(code, name)
+                        try:
+                            sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
+                        except Exception:
+                            sector_info = "유망 섹터 포착"
                             
-                            # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
-                            main_caption = (
-                                f"🎯 [{dbg.get('sig_type', '')}]\n"
-                                f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
-                                f"🏢 {name} ({code})\n"
-                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
-                                f"📉 [매수/손절 전략]\n"
-                                f"- 양봉 길이만큼 분할매수\n"
-                                f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
-                                f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
-                                f"💡 [AI 비즈니스 요약]\n"
-                                f"{ai_main}\n\n"
-                                f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
-                                f"⚠️ [면책 조항]\n"
-                                f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                        # 1️⃣ 본캐용 캡션 (유료방용 - 기존 멘트 단 한 줄도 건드리지 않음)
+                        main_caption = (
+                            f"🎯 [{dbg.get('sig_type', '')}]\n"
+                            f"🎯 추천: {dbg.get('recommend', '단타, 스윙 / 종가배팅')}\n\n"
+                            f"🏢 {name} ({code})\n"
+                            f"💰 현재가: ${dbg.get('last_close', 0):,.2f}\n\n"
+                            f"📉 [매수/손절 전략]\n"
+                            f"- 양봉 길이만큼 분할매수\n"
+                            f"- 마지막 분할매수에서 -5% 손절 or 진입 양봉 시가 이탈시 손절\n\n"
+                            f"⭐ 알고리즘 신뢰도: {dbg.get('score', 10)} / 10점\n\n"
+                            f"💡 [AI 비즈니스 요약]\n"
+                            f"{ai_main}\n\n"
+                            f"💬 기업에 대해 더 깊이 알고 싶다면 채팅창에 '/질문 내용'을 입력해 보세요.\n\n"
+                            f"⚠️ [면책 조항]\n"
+                            f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
+                        )
+                        enqueue_telegram(
+                            "MAIN",
+                            main_chart_path,
+                            main_caption,
+                            enabled=SEND_TELEGRAM,
+                        )
+
+                        try:
+                            import auto_forward_tester as aft
+                            entry_facts = {
+                                'v_rs': 0, 'v_cpv': 0, 'v_yang': 0, 'v_energy': 0,
+                                'marcap_eok': 0, 'score_marcap': 0, 'freq_count': 0,
+                                'dyn_rs': 0, 'dyn_cpv': 0, 'dyn_tb': 0,
+                                'is_tenbagger': 0, 'is_top_dna': 0, 'is_worst_dna': 0, 'is_death_combo': 0
+                            }
+                            scaled_score = float(dbg.get('score', 0) or 0) * 10
+                            ep_us = float(dbg.get('last_close', 0) or 0)
+                            success, fwd_msg = aft.try_add_virtual_position(
+                                market='US', code=code, name=name,
+                                sig_type=f"[STANDARD] {dbg.get('sig_type', 'US_BOWL')}",
+                                score=scaled_score,
+                                ep=ep_us, facts=entry_facts, sector=sector_info,
+                                trade_source="STANDARD"
                             )
-                            q_main.put((main_chart_path, main_caption))
+                            print(f"   ↳ [미국장 오리지널 장부 기록]: {fwd_msg}")
+                        except Exception as e:
+                            print(f"   ↳ [포워드 장부 에러]: {e}")
 
-                            try:
-                                import auto_forward_tester as aft
-                                entry_facts = {
-                                    'v_rs': 0, 'v_cpv': 0, 'v_yang': 0, 'v_energy': 0,
-                                    'marcap_eok': 0, 'score_marcap': 0, 'freq_count': 0,
-                                    'dyn_rs': 0, 'dyn_cpv': 0, 'dyn_tb': 0,
-                                    'is_tenbagger': 0, 'is_top_dna': 0, 'is_worst_dna': 0, 'is_death_combo': 0
-                                }
-                                scaled_score = float(dbg.get('score', 0) or 0) * 10
-                                ep_us = float(dbg.get('last_close', 0) or 0)
-                                success, fwd_msg = aft.try_add_virtual_position(
-                                    market='US', code=code, name=name,
-                                    sig_type=f"[STANDARD] {dbg.get('sig_type', 'US_BOWL')}",
-                                    score=scaled_score,
-                                    ep=ep_us, facts=entry_facts, sector=sector_info,
-                                    trade_source="STANDARD"
-                                )
-                                print(f"   ↳ [미국장 오리지널 장부 기록]: {fwd_msg}")
-                            except Exception as e:
-                                print(f"   ↳ [포워드 장부 에러]: {e}")
+                        # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
+                        # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만! (미국장이므로 $ 유지)
+                        promo_caption = (
+                            f"📈 [알고리즘 차트 포착]\n\n"
+                            f"🏢 종목: {name} ({code})\n"
+                            f"🏷️ 섹터: {sector_info}\n"
+                            f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
+                        )
+                        enqueue_telegram(
+                            "PROMO",
+                            promo_chart_path,
+                            promo_caption,
+                            enabled=SEND_TELEGRAM,
+                        )
 
-                            # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
-                            # ⭐️ 멘트 싹 날리고 [차트+종목+섹터+현재가]만! (미국장이므로 $ 유지)
-                            promo_caption = (
-                                f"📈 [알고리즘 차트 포착]\n\n"
-                                f"🏢 종목: {name} ({code})\n"
-                                f"🏷️ 섹터: {sector_info}\n"
-                                f"💰 현재가: ${dbg.get('last_close', 0):,.2f}"
-                            )
-                            q_promo.put((promo_chart_path, promo_caption))
-
-                            print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
-            except Exception as e:
-                pass
+                        print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+            else:
+                tracker['fetch_failed'] += 1
+        except Exception as e:
+            tracker['errors'] += 1
+            pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()
-        q_promo.join()
+        wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
     dt = time.time() - t0
-    print(f"\n✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {dt/60:.1f}분\n")
+    print(f"\n✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 오류 발생: {tracker['errors']}건 | 데이터 수신 실패: {tracker['fetch_failed']}건 | 소요시간: {dt/60:.1f}분\n")
+    if SEND_TELEGRAM:
+        try:
+            _sum = (
+                f"✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 오류: {tracker['errors']}건 | "
+                f"데이터 수신 실패: {tracker['fetch_failed']}건 | 소요: {dt/60:.1f}분"
+            )
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": _sum},
+                timeout=10,
+                verify=False,
+            )
+        except Exception:
+            pass
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')
@@ -441,6 +451,11 @@ def run_scheduler():
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
+        try:
+            import ops_logger
+            ops_logger.record_heartbeat("scanner.usa")
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     scan_market_1d()

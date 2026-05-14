@@ -6,19 +6,23 @@ import threading
 import traceback
 from datetime import datetime
 
-from dotenv import load_dotenv
-import google.generativeai as genai
+GEMINI_API_KEY = ""
+genai = None  # type: ignore
+try:
+    from dotenv import load_dotenv
 
-# ==========================================
-# 🔑 1. API 키 세팅 (.env 안전 파일 방식 적용)
-# ==========================================
-load_dotenv() 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    load_dotenv()
+except Exception:
+    pass
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or ""
+try:
+    if GEMINI_API_KEY.strip():
+        import google.generativeai as _genai_mod
 
-if not GEMINI_API_KEY:
-    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
-
-genai.configure(api_key=GEMINI_API_KEY)
+        _genai_mod.configure(api_key=GEMINI_API_KEY.strip().split(",")[0].strip())
+        genai = _genai_mod
+except Exception:
+    genai = None
 
 # ==========================================
 # 🤖 2. 텔레그램 봇 토큰 (3개로 완벽 분리)
@@ -93,6 +97,11 @@ def listen_and_reply(token, market_name):
             time.sleep(2)
 
 def run_secretary():
+    if genai is None:
+        print("⚠️ [AI 비활성화] API 키가 없어 해당 기능을 스킵합니다.")
+        while True:
+            time.sleep(60)
+        return
     threading.Thread(target=listen_and_reply, args=(KR_TOKEN, "한국장"), daemon=True).start()
     threading.Thread(target=listen_and_reply, args=(US_TOKEN, "미국장"), daemon=True).start()
     threading.Thread(target=listen_and_reply, args=(NEW_TOKEN, "신규방"), daemon=True).start()

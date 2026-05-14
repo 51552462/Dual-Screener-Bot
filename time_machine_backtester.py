@@ -1,4 +1,5 @@
 import os
+import gc
 import json
 import time
 import random
@@ -8,11 +9,34 @@ import numpy as np
 import FinanceDataReader as fdr
 from datetime import timedelta
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
-# 1. 팩토리 뇌(Config) 읽기 전용 경로
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+def _process_pool_max_workers():
+    """OOM 보수: MAX_WORKERS 환경변수·system_config.json 우선, 기본 1."""
+    env = os.environ.get("MAX_WORKERS", "").strip()
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    try:
+        cfg = load_config()
+        v = cfg.get("MAX_WORKERS", 1)
+        return max(1, int(v))
+    except Exception:
+        return 1
+
+# 1. 팩토리 뇌(Config) 읽기 전용 경로 (config_manager·factory_data_dir 과 동일 루트)
+try:
+    from factory_data_paths import factory_data_dir
+
+    CONFIG_PATH = os.path.join(factory_data_dir(), "system_config.json")
+except ImportError:
+    CONFIG_PATH = os.path.join(
+        os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json"
+    )
 
 def load_config(max_retries=5):
     """
@@ -69,6 +93,17 @@ CRASH_PERIODS = {
     for k, v in REGIME_PERIODS.items()
     if v.get("regime") == "EXTREME_CRASH"
 }
+
+# 타임머신이 사용하는 템플릿은 '현재 뇌' 기준이므로 과거 구간 적용 시 룩어헤드가 존재함을 명시한다.
+LOOKAHEAD_BIAS_WARNING_HTML = (
+    "⚠️ <b>[Lookahead Bias 경고]</b> 본 백테스트는 '현재 시점'까지 학습된 미래의 템플릿(정답지)을 과거 데이터에 적용한 결과입니다. "
+    "이는 로직의 '범용적 견고성(Robustness)'을 증명할 뿐, 완벽한 Out-Of-Sample 성과를 보장하지 않으므로 과신(Overfitting)을 경계하십시오."
+)
+
+
+def _print_lookahead_bias_warning() -> None:
+    print(LOOKAHEAD_BIAS_WARNING_HTML)
+
 
 def evaluate_alpha_formula_series(df, formula):
     """
@@ -193,11 +228,12 @@ def _row_matches_template_bounds(row, bounds, evolved_slot_keys):
     return True
 
 def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evolved_factors):
-    """단일 종목: 다운로드 → DNA/알파 → 템플릿 매칭 → 15일 MFE/MAE. (워커 스레드에서 호출)"""
+    """단일 종목: 다운로드 → DNA/알파 → 템플릿 매칭 → 15일 MFE/MAE. (ProcessPool 워커에서 호출)"""
     out = []
     evolved_slot_keys = list(evolved_factors.keys()) if isinstance(evolved_factors, dict) else []
     fetch_latency_s = None
     t_mark = None
+    df = None
 
     try:
         time.sleep(random.uniform(0.05, 0.18))
@@ -206,12 +242,19 @@ def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evo
         fetch_latency_s = time.perf_counter() - t_mark
     except Exception:
         el = (time.perf_counter() - t_mark) if t_mark is not None else None
+        if df is not None:
+            del df
         return {"trades": [], "fetch_latency_s": el, "gate": "fetch_error"}
 
+    warmup_df = None
+    test_df = None
     try:
         if df is None or getattr(df, "empty", True):
+            if df is not None:
+                del df
             return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_empty"}
         if len(df) < 30:
+            del df
             return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_short"}
 
         df = df.sort_index()
@@ -224,6 +267,9 @@ def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evo
         # 테스트 구간(가격 경로·미래 15일 평가용)
         test_df = df[df.index >= start_ts]
         if len(test_df) < 16:
+            del test_df
+            del warmup_df
+            del df
             return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_regime_window"}
 
         for i in range(len(test_df) - 15):
@@ -234,6 +280,8 @@ def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evo
             if isinstance(current_history_df, pd.Series):
                 current_history_df = current_history_df.to_frame().T
             if len(current_history_df) < 30:
+                del past_in_regime
+                del current_history_df
                 continue
 
             hist = calculate_dna_factors(current_history_df.copy(), evolved_factors=evolved_factors)
@@ -280,8 +328,33 @@ def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evo
                     'mae': mae,
                     'final_ret': final_ret
                 })
+                del future_15d
+
+            del hist
+            del current_row
+            del past_in_regime
+            del current_history_df
+
+        del df
+        del warmup_df
+        del test_df
         return {"trades": out, "fetch_latency_s": fetch_latency_s, "gate": "success"}
     except Exception:
+        if df is not None:
+            try:
+                del df
+            except Exception:
+                pass
+        if warmup_df is not None:
+            try:
+                del warmup_df
+            except Exception:
+                pass
+        if test_df is not None:
+            try:
+                del test_df
+            except Exception:
+                pass
         return {"trades": out, "fetch_latency_s": fetch_latency_s, "gate": "processing_error"}
 
 def _summarize_trade_results(results):
@@ -342,7 +415,42 @@ def run_time_machine_backtest(target_period_name, stock_list):
         return
     period = REGIME_PERIODS[target_period_name]
     start_dt, end_dt = period["start"], period["end"]
-    
+
+    # ------------------------------------------------------------------
+    # [WFO / 블랙박스] 레짐 end 이전(포함) 날짜 중 가장 최근 config 스냅샷 탐색 — 현재는 뼈대만
+    # 향후: 아래 경로 JSON을 로드해 당시 동결 설정으로 시뮬 → Lookahead Bias 제거
+    # 지금: 스냅샷이 없을 수 있으므로 기존 load_factory_brain_readonly() Fallback 유지
+    # ------------------------------------------------------------------
+    try:
+        from config_manager import find_latest_config_snapshot_on_or_before
+    except ImportError:
+        find_latest_config_snapshot_on_or_before = None  # type: ignore
+
+    snap_for_regime = None
+    if find_latest_config_snapshot_on_or_before is not None:
+        try:
+            snap_for_regime = find_latest_config_snapshot_on_or_before(end_dt)
+        except Exception:
+            snap_for_regime = None
+
+    if snap_for_regime and os.path.isfile(snap_for_regime):
+        print(
+            f"📂 [config_snapshots] 레짐 end={end_dt} 기준 가장 가까운 과거 스냅샷 발견: {snap_for_regime}"
+        )
+        print(
+            "    → (향후) 미래에는 현재 system_config.json 대신 이 스냅샷을 로드하여 "
+            "Lookahead Bias를 완벽히 제거할 예정입니다. (현재 실행은 기존 경로 Fallback)"
+        )
+    else:
+        print(
+            f"📂 [config_snapshots] end={end_dt} 이전에 사용할 스냅샷 없음 — "
+            "현재 관제탑 설정(system_config.json 경로)으로 Fallback 유지."
+        )
+        print(
+            "    → (향후) 일별 아카이브(system_config_YYYYMMDD.json)가 쌓이면 "
+            "해당 시점 동결 설정으로 타임머신에 주입합니다."
+        )
+
     config = load_factory_brain_readonly()
     ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {})
     ud_templates = config.get("UNDERDOG_CLUSTER_TEMPLATES", {})
@@ -355,15 +463,16 @@ def run_time_machine_backtest(target_period_name, stock_list):
         print("⚠️ 팩토리에 학습된 템플릿(무기)이 없습니다. 테스트를 종료합니다.")
         return
 
+    _print_lookahead_bias_warning()
     results = []
     packs = []
     fetch_start = (pd.to_datetime(start_dt) - timedelta(days=40)).strftime('%Y-%m-%d')
     
     scanned = 0
     n_total = len(stock_list)
-    max_workers = min(24, max(4, (os.cpu_count() or 4) * 3))
+    max_workers = _process_pool_max_workers()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+    with ProcessPoolExecutor(max_workers=max_workers) as ex:
         futs = [
             ex.submit(_backtest_one_ticker, code, fetch_start, end_dt, start_dt, all_templates, evolved_factors)
             for code in stock_list
@@ -384,6 +493,7 @@ def run_time_machine_backtest(target_period_name, stock_list):
     # 결과 결산
     if not results:
         print(f"\n🛡️ 결과: {target_period_name} 동안 템플릿에 걸려든 종목이 없습니다. (위험 완벽 회피)")
+        _print_lookahead_bias_warning()
         _print_regime_fetch_diagnostics(target_period_name, n_total, packs)
         return
 
@@ -398,6 +508,7 @@ def run_time_machine_backtest(target_period_name, stock_list):
     print(f" ▪️ 승률: {win_rate:.1f}%")
     print(f" ▪️ 평균 수익률: {avg_pnl:+.2f}%")
     print(f" ▪️ 손익비(PF): {pf:.2f}")
+    _print_lookahead_bias_warning()
     
     if avg_pnl > 0:
         print("💡 결론: 우리 AI의 로직은 역사적인 폭락장에서도 수익을 창출하며 살아남는 압도적 방어력을 증명했습니다.")
@@ -425,8 +536,9 @@ def run_time_machine_regime_matrix(stock_list, pf_robust_threshold=1.2):
         print("⚠️ 팩토리에 학습된 템플릿(무기)이 없습니다. 레짐 매트릭스를 종료합니다.")
         return
 
+    _print_lookahead_bias_warning()
     n_total = len(stock_list)
-    max_workers = min(24, max(4, (os.cpu_count() or 4) * 3))
+    max_workers = _process_pool_max_workers()
     matrix_rows = []
 
     for regime_name, meta in REGIME_PERIODS.items():
@@ -437,7 +549,7 @@ def run_time_machine_regime_matrix(stock_list, pf_robust_threshold=1.2):
         results = []
         packs = []
         scanned = 0
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        with ProcessPoolExecutor(max_workers=max_workers) as ex:
             futs = [
                 ex.submit(_backtest_one_ticker, code, fetch_start, end_dt, start_dt, all_templates, evolved_factors)
                 for code in stock_list
@@ -467,9 +579,13 @@ def run_time_machine_regime_matrix(stock_list, pf_robust_threshold=1.2):
                 f"평균수익률: {stats['avg_pnl']:+.2f}% | n={stats['total_trades']}"
             )
         _print_regime_fetch_diagnostics(regime_name, n_total, packs)
+        del results
+        del packs
+        gc.collect()
 
     print("\n" + "=" * 72)
     print("📊 <b>[레짐 매트릭스 요약]</b> 승률(%) / Profit Factor / 표본수")
+    _print_lookahead_bias_warning()
     print("=" * 72)
     evaluable = [r for r in matrix_rows if r["total_trades"] > 0]
     for row in matrix_rows:
@@ -506,6 +622,8 @@ def run_time_machine_regime_matrix(stock_list, pf_robust_threshold=1.2):
     return matrix_rows
 
 if __name__ == "__main__":
+    # Windows(spawn)에서 ProcessPoolExecutor 사용 시, 워커는 이 모듈을 재임포트하므로
+    # 진입점은 반드시 이 가드 안에 두는 것이 안전하다.
     # 코스피 시총 상위 100개 랜덤 추출 (테스트 속도를 위해 100개만 스캔)
     print("증권사 API 연결 및 테스트 종목(코스피 우량주) 준비 중...")
     try:

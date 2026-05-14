@@ -18,28 +18,24 @@ import auto_forward_tester as aft
 import shadow_tracking
 from yf_download_flatten import flatten_yf_download_df
 scanned_today_cache = {'KR': set(), 'US': set()}
-try:
-    import google.generativeai as genai
-except Exception:
-    genai = None
 
 # ==========================================
 # 💡 [환경 설정 및 텔레그램 세팅]
 # ==========================================
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
-TELEGRAM_CHAT_ID = "6838834566"
+from system_config_atomic import CONFIG_PATH, load_config, update_config
+
 load_dotenv()
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if genai is not None and GEMINI_API_KEY:
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-    except Exception:
-        pass
+TELEGRAM_TOKEN_MAIN = (
+    os.environ.get("TELEGRAM_TOKEN_MAIN") or os.environ.get("TELEGRAM_TOKEN") or ""
+).strip()
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
 def send_telegram_msg(text):
+    if not TELEGRAM_TOKEN_MAIN or not TELEGRAM_CHAT_ID:
+        print("⚠️ [텔레그램] TELEGRAM_TOKEN_MAIN / TELEGRAM_CHAT_ID 미설정(.env) — 메시지 스킵")
+        return
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage"
         # 텔레그램은 1회 전송 시 4096자 제한이 있음. 방대한 리포트를 안전하게 4000자씩 분할 전송
         max_len = 4000
         chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
@@ -67,7 +63,7 @@ def _alpha_formula_one_line_explain(formula, ic):
     elif "add(" in ftxt and "ma" in ftxt.lower():
         fallback = "이동평균 추세와 단기 변동성 요인을 합성해, 추세 지속 구간의 승자주를 선별하는 전략입니다."
 
-    if genai is None or not GEMINI_API_KEY:
+    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
         return fallback
 
     prompt = (
@@ -78,6 +74,14 @@ def _alpha_formula_one_line_explain(formula, ic):
         "출력은 설명문 한 줄만."
     )
     try:
+        import google.generativeai as genai
+
+        _gk = (os.environ.get("GEMINI_API_KEY") or "").strip().split(",")[0].strip()
+        if _gk:
+            try:
+                genai.configure(api_key=_gk)
+            except Exception:
+                pass
         time.sleep(random.uniform(0.3, 0.7))
         try:
             resp = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
@@ -91,53 +95,6 @@ def _alpha_formula_one_line_explain(formula, ic):
         return f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
     return fallback
 
-def load_config(max_retries=5):
-    """
-    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
-    """
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
-
-
-def save_config(data, max_retries=5):
-    """
-    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
-    """
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
-        except Exception as e:
-            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-            return False
-    return False
 
 def _approx_dyn_rs_vs_benchmark(stock_df, idx_close_sr):
     """장부 dyn_rs와 유사하게, 최근 21거래일 구간 종가 수익률 / 동일 구간 벤치 수익률 × 100."""
@@ -160,9 +117,23 @@ def _approx_dyn_rs_vs_benchmark(stock_df, idx_close_sr):
     except Exception:
         return np.nan
 
+
+def _toxic_ml_antipatterns_rule_map(ml_obj):
+    """
+    system_config 의 TOXIC_ML_ANTIPATTERNS:
+    신규 {_metadata, rules} 래퍼와 구형(평면 dict·Bitget 키) 모두 규칙 맵만 추출.
+    """
+    if not isinstance(ml_obj, dict):
+        return {}
+    inner = ml_obj.get("rules")
+    if isinstance(inner, dict):
+        return inner
+    return {k: v for k, v in ml_obj.items() if k != "_metadata"}
+
+
 def _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_val):
     """toxic_graveyard_analyzer가 저장한 TOXIC_PATTERN_* 초입체박스 안에 들어오면 진입 차단."""
-    rules = config.get("TOXIC_ML_ANTIPATTERNS")
+    rules = _toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS"))
     if not isinstance(rules, dict) or not rules:
         return False
     feats = {"dyn_cpv": float(cpv), "dyn_tb": float(tb), "v_energy": float(bbe)}
@@ -639,12 +610,14 @@ def evolve_alpha_factors():
                 continue
             top3.append(cand)
 
-    config = load_config()
-    config["EVOLVED_ALPHA_FACTORS"] = {
-        f"ALPHA_{i+1}": top3[i][0] for i in range(len(top3))
-    }
-    config["EVOLVED_ALPHA_THRESHOLD"] = float(np.mean([ic for _, ic in top3]) * 0.5)
-    save_config(config)
+    update_config(
+        {
+            "EVOLVED_ALPHA_FACTORS": {
+                f"ALPHA_{i+1}": top3[i][0] for i in range(len(top3))
+            },
+            "EVOLVED_ALPHA_THRESHOLD": float(np.mean([ic for _, ic in top3]) * 0.5),
+        }
+    )
 
     msg = "🧬 <b>[알파 진화 완료]</b>\n"
     for i, (formula, ic) in enumerate(top3, 1):
@@ -1074,9 +1047,6 @@ def hunt_supernovas(market):
             new_added += 1
         else:
             rejected_due_to_funds += 1 # 자금 부족으로 채용 거절 (동결)
-            
-    # 💡 변경된 국고 잔액을 config(관제탑)에 즉각 반영
-    config[treasury_key] = current_treasury
 
     # 4. 최대 보유 한도 방어 (서버 터짐 방지를 위해 최대 50개 유지)
     if len(existing_templates) > 50:
@@ -1084,9 +1054,8 @@ def hunt_supernovas(market):
         excess = len(existing_templates) - 50
         for k in sorted_keys[:excess]:
             del existing_templates[k]
-            
-    config[multi_key] = existing_templates
-    save_config(config)
+
+    update_config({treasury_key: current_treasury, multi_key: dict(existing_templates)})
     
     # 텔레그램 리포트 내용 수정 (자금 순환 및 파산 경고 포함)
     report_msg = f"🚀 <b>[{market} 템플릿 세포 분열 완료]</b>\n"
@@ -1178,7 +1147,10 @@ def execute_supernova_live_scan(market):
     # 대상 종목 및 현재 보유 현황 로드
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
     tickers = stock_list['Code'].tolist()
-    
+
+    tracker = {'fetch_failed': 0}
+    _tracker_lock = threading.Lock()
+
     def get_similarity(vec1, vec2):
         n1, n2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
         return np.dot(vec1, vec2) / (n1 * n2) if n1 > 0 and n2 > 0 else 0
@@ -1292,12 +1264,22 @@ def execute_supernova_live_scan(market):
         try:
             # 병목의 원인인 API 호출을 각 스레드가 동시에 분산해서 처리
             if market == 'KR':
-                df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d'))
+                try:
+                    df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d'))
+                except Exception:
+                    with _tracker_lock:
+                        tracker['fetch_failed'] += 1
+                    return None
             else:
                 df = us_data_dict.get(code)
                 if df is None or getattr(df, "empty", True):
+                    with _tracker_lock:
+                        tracker['fetch_failed'] += 1
                     return None
-            if df.empty or len(df) < 20: return None
+            if df.empty or len(df) < 20:
+                with _tracker_lock:
+                    tracker['fetch_failed'] += 1
+                return None
 
             # 관제탑 EVOLVED_ALPHA_FACTORS → 실시간 알파 (ML N차원 바운딩 박스용)
             current_alphas = {}
@@ -1454,8 +1436,8 @@ def execute_supernova_live_scan(market):
                 anti_patterns = config.get('ANTI_PATTERNS', {})
                 if not isinstance(anti_patterns, dict):
                     anti_patterns = {}
-                _ml_toxic = config.get('TOXIC_ML_ANTIPATTERNS')
-                if isinstance(_ml_toxic, dict):
+                _ml_toxic = _toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS"))
+                if isinstance(_ml_toxic, dict) and _ml_toxic:
                     anti_patterns = {**anti_patterns, **_ml_toxic}
                 is_toxic = False
                 for t_name, bounds in anti_patterns.items():
@@ -1522,22 +1504,14 @@ def execute_supernova_live_scan(market):
 
                 if (not is_pass_ml_box) and str(best_pass_name).startswith("INCUBATOR_"):
                     fdict["incubator_sniper_key"] = str(best_pass_name)[len("INCUBATOR_"):]
-                # 💡 [신경망 통합] 스마트 머니 레이더 교차 검증
-                _radar_wrap = config.get('SMART_MONEY_RADAR') or {}
-                smart_radar = _radar_wrap.get('picks', {}) if isinstance(_radar_wrap, dict) else {}
-                smart_info = smart_radar.get(code)
-                if smart_info is None:
-                    smart_info = smart_radar.get(str(code))
-                if isinstance(smart_info, dict):
-                    estimated_avg = smart_info.get('avg_price')
-                    try:
-                        estimated_avg_f = float(estimated_avg)
-                    except (TypeError, ValueError):
-                        estimated_avg_f = 0.0
-                    # 현재가가 세력 평단가 부근(-3% ~ +3%)이라면 확인 도장(Confirm Seal) 부여
-                    if estimated_avg_f > 0 and abs(current_close - estimated_avg_f) / estimated_avg_f <= 0.03:
-                        msg_type = f"🕵️ [세력 매집 포착] 평단가({estimated_avg_f:,.0f}원) 근접! | " + msg_type
-                        final_sig = final_sig.replace("]", "_SMART]")
+                # 💡 SSOT: SMART_MONEY_RADAR.picks 만 (smart_money_tracker.py → system_config.json)
+                try:
+                    estimated_avg_f = float(aft.get_smart_money_avg_price_from_ssot(config, code))
+                except Exception:
+                    estimated_avg_f = 0.0
+                if estimated_avg_f > 0 and abs(current_close - estimated_avg_f) / estimated_avg_f <= 0.03:
+                    msg_type = f"🕵️ [세력 매집 포착] 평단가({estimated_avg_f:,.0f}원) 근접! | " + msg_type
+                    final_sig = final_sig.replace("]", "_SMART]")
                 return {
                     'code': code,
                     'name': stock_list[stock_list['Code']==code]['Name'].values[0],
@@ -1549,7 +1523,8 @@ def execute_supernova_live_scan(market):
                     'trade_source': "UNDERDOG" if is_underdog else "SUPERNOVA" # 💡 네임스페이스 분리용
                 }
             return None
-        except: return None
+        except Exception:
+            return None
 
     # 💡 [핵심 2] ThreadPoolExecutor를 이용한 15배속 동시 타격 (병목 돌파)
     valid_targets = []
@@ -1590,7 +1565,15 @@ def execute_supernova_live_scan(market):
             scanned_today_cache[market].add(target['code'])
             send_telegram_msg(f"<b>{target['msg_type']}</b>\n{target['code']} / {target['final_sig']}\n일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다.")
             
-    print(f"✅ [{market}] 멀티스레드 스나이퍼 쾌속 스캔 및 DB 기록 완료!")
+    print(
+        f"✅ [{market}] 멀티스레드 스나이퍼 쾌속 스캔 및 DB 기록 완료! | 데이터 수신 실패: {tracker['fetch_failed']}건"
+    )
+    try:
+        send_telegram_msg(
+            f"<b>[{market} 초신성 스캔 완료]</b>\n편입 후보: {len(valid_targets)}개 | 데이터 수신 실패: {tracker['fetch_failed']}건"
+        )
+    except Exception:
+        pass
 # 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
 def run_miner_scheduler():
     """1주일에 한 번 과거 데이터를 마이닝하여 템플릿 갱신 및 CSV 추출을 수행하는 봇"""
@@ -1634,6 +1617,11 @@ def run_miner_scheduler():
                     print(f"🚨 [에러] 마이닝 실행 중 오류 발생: {e}")
                 
                 time.sleep(65) 
+            try:
+                import ops_logger
+                ops_logger.record_heartbeat("scanner.supernova_miner")
+            except Exception:
+                pass
             time.sleep(30)
         except Exception as e:
             print(f"⚠️ 마이너 스케줄러 루프 에러: {e}")
@@ -1673,6 +1661,11 @@ def run_live_sniper_scheduler():
                 execute_supernova_live_scan('US')
                 time.sleep(65) 
 
+            try:
+                import ops_logger
+                ops_logger.record_heartbeat("scanner.supernova_hunter")
+            except Exception:
+                pass
             time.sleep(20) 
             
         except Exception as e:

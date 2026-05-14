@@ -1,177 +1,188 @@
+"""
+Project 2: Hyperbolic Time Chamber — 합성 일봉 OHLCV 생성기 (완전 격리).
+
+- 기존 market_data.sqlite / system_config.json / 스크리너 모듈과 무관.
+- 출력 전용 DB: synthetic_market.sqlite, 테이블: synthetic_ohlcv
+"""
+from __future__ import annotations
+
+import os
+import sqlite3
+
 import numpy as np
 import pandas as pd
-import json
-import os
-import time
-import random
-from datetime import datetime
 
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+# ---------------------------------------------------------------------------
+# 경로: 이 스크립트와 같은 디렉터리에만 DB 생성 (외부 설정 파일 미사용)
+# ---------------------------------------------------------------------------
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+SYNTHETIC_DB_PATH = os.path.join(_THIS_DIR, "synthetic_market.sqlite")
 
-
-def load_config(max_retries=5):
-    """
-    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
-    """
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
+NUM_TRADING_DAYS = 1000
+NUM_PARALLEL_UNIVERSES = 100
+TICKER_PREFIX = "SYN_"
+RNG = np.random.default_rng()
 
 
-def save_config(config, max_retries=5):
-    """
-    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
-    """
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=4, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
-        except Exception as e:
-            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-            return False
-    return False
-
-
-def generate_synthetic_ohlcv(n_paths=1000, n_days=252):
-    """
-    기하 브라운 운동(GBM) + 점프 확산(Jump Diffusion)을 이용해
-    가상의 극단적 주식 차트(OHLCV) N개를 생성합니다. (numpy 벡터화)
-    """
-    S0 = 10000
-    mu = 0.05 / 252
-    sigma = 0.3 / np.sqrt(252)
-    jump_prob = 0.01
-    jump_mean = -0.05
-    jump_std = 0.10
-
-    Z = np.random.standard_normal((n_paths, n_days))
-    J = np.random.poisson(jump_prob, (n_paths, n_days)) * np.random.normal(
-        jump_mean, jump_std, (n_paths, n_days)
-    )
-
-    returns = (mu - 0.5 * sigma ** 2) + sigma * Z + J
-
-    # S[:,0]=S0, S[:,t]=S0*exp(sum_{k=1}^{t} returns[:,k]) — 기존 루프와 동일(returns[:,0] 미사용)
-    log_cum = np.concatenate(
-        [np.zeros((n_paths, 1), dtype=np.float64), np.cumsum(returns[:, 1:], axis=1)],
-        axis=1,
-    )
-    path = S0 * np.exp(log_cum)
-
-    UH = np.random.uniform(1.0, 1.05, (n_paths, n_days))
-    UL = np.random.uniform(0.95, 1.0, (n_paths, n_days))
-    high_path = path * UH
-    low_path = path * UL
-    vol_path = np.abs(returns) * 1_000_000.0 + np.random.randint(
-        10000, 50000, size=(n_paths, n_days), dtype=np.int64
-    ).astype(np.float64)
-
-    open_path = np.roll(path, 1, axis=1)
-    open_path[:, 0] = S0
-
-    synthetic_data = []
-    for i in range(n_paths):
-        synthetic_data.append(
-            pd.DataFrame(
-                {
-                    "Open": open_path[i],
-                    "High": high_path[i],
-                    "Low": low_path[i],
-                    "Close": path[i],
-                    "Volume": vol_path[i],
-                }
-            )
+def _init_db(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS synthetic_ohlcv (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL NOT NULL,
+            PRIMARY KEY (ticker, date)
         )
-
-    return synthetic_data
-
-
-def _vectorized_survival_score(path, cpv_max=0.4, vol_mult_thr=2.5):
-    """
-    합성 우주에서 단순 프록시: 종가 변화율 기반 CPV 근사 + 거래량 배수(전일 대비)로 생존 마스크.
-    벡터화로 전 경로 한 번에 평가.
-    """
-    n_paths = path.shape[0]
-    c = path
-    o = np.roll(c, 1, axis=1)
-    o[:, 0] = c[:, 0]
-
-    rng = np.random.default_rng()
-    h = np.maximum(c, o) * rng.uniform(1.0, 1.002, size=c.shape)
-    l = np.minimum(c, o) * rng.uniform(0.998, 1.0, size=c.shape)
-    hl = np.maximum(h - l, 1e-12)
-    cpv = np.where(h > l, (c - o) / hl, 0.5)
-
-    vol_ratio = np.ones_like(c, dtype=np.float64)
-    vol_m = np.abs(c[:, 1:] / np.maximum(c[:, :-1], 1e-9))
-    vol_ratio[:, 1:] = vol_m
-
-    ok_cpv = np.nanmean(cpv, axis=1) <= cpv_max
-    ok_vol = np.nanmax(vol_ratio, axis=1) >= vol_mult_thr
-    survived = ok_cpv & ok_vol
-    win_rate = float(np.mean(survived) * 100.0) if n_paths else 0.0
-    return win_rate, int(np.sum(survived)), int(n_paths * path.shape[1])
-
-
-def stress_test_mutants():
-    print("⏳ [정신과 시간의 방] 합성 데이터 세계(Synthetic Universe) 생성 중...")
-
-    n_stocks = 1000
-    synthetic_universe = generate_synthetic_ohlcv(n_paths=n_stocks)
-    print(f"🌌 {n_stocks}개의 가상 주식, 극단적 스트레스 테스트 환경 구축 완료.")
-
-    # 전 경로 종가·수익률 행렬로 벡터화 생존율 산출
-    closes = np.stack([df["Close"].values for df in synthetic_universe], axis=0)
-
-    win_rate, n_survived, tested_cells = _vectorized_survival_score(closes)
-
-    survived_rules = {}
-    print("⚔️ 돌연변이 수식 1만 개 교배 및 생존 테스트 시작...")
-
-    proven_rule_id = f"SYNTHETIC_MUTANT_{datetime.now().strftime('%Y%m%d')}"
-    survived_rules[proven_rule_id] = {
-        "condition_cpv_max": 0.4,
-        "condition_vol_multiplier": 2.5,
-        "win_rate_in_chamber": round(win_rate, 2),
-        "survived_paths": n_survived,
-        "tested_paths": tested_cells,
-    }
-
-    config = load_config()
-    config["SYNTHETIC_PROVEN_RULES"] = survived_rules
-    save_config(config)
-
-    print(
-        f"✅ [초월 완료] 극한의 가상 우주에서 살아남은 1개의 돌연변이 로직이 관제탑에 이식되었습니다: {proven_rule_id}"
+        """
     )
-    print(f" ↳ 합성 챔버 생존율(프록시): {win_rate:.2f}% ({n_survived}/{n_stocks} paths)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_synth_ticker ON synthetic_ohlcv (ticker)"
+    )
+    conn.commit()
+
+
+def simulate_merton_jump_diffusion_clipped_ohlcv(
+    *,
+    n_days: int,
+    initial_price: float,
+    seed: int | None = None,
+) -> pd.DataFrame:
+    """
+    Merton-style 점프-확산 일간 수익률 → KRX ±30% 일일 변동폭 클리핑 → OHLCV.
+
+    이산 근사 (일간 dt=1):
+      로그수익률 r_t = μ + σ z_t + Σ_{k=1}^{N_t} Y_{t,k}
+      N_t ~ Poisson(λ), Y ~ Normal(μ_J, σ_J²)
+    단순수익률 s_t = exp(r_t) - 1 을 [-0.30, 0.30] 으로 클립 후 종가 누적.
+    """
+    rng = np.random.default_rng(seed)
+
+    # 연율화 느낌의 보수적 일간 파라미터 (합성용; 튜닝 가능)
+    mu = 0.00015
+    sigma = 0.018
+    lam = 0.035
+    mu_jump = -0.02
+    sigma_jump = 0.045
+
+    z = rng.standard_normal(n_days)
+    n_jumps = rng.poisson(lam, size=n_days)
+    # 일별 점프 항: N=0 이면 0, N>0 이면 N개 점프 합(근사: 한 번에 합성 정규로 대체해 속도 유지)
+    jump_component = np.zeros(n_days, dtype=np.float64)
+    mask = n_jumps > 0
+    if np.any(mask):
+        # 각 일의 점프 합: sqrt(N)*Y 근사 (분산 스케일 유지)
+        n_safe = np.maximum(n_jumps[mask], 1)
+        y = rng.normal(mu_jump, sigma_jump, size=np.sum(mask))
+        jump_component[mask] = np.sqrt(n_safe) * y
+
+    r_log = mu + sigma * z + jump_component
+    simple_ret = np.expm1(r_log)
+    clipped_ret = np.clip(simple_ret, -0.30, 0.30)
+
+    close = np.empty(n_days, dtype=np.float64)
+    close[0] = float(initial_price)
+    if n_days > 1:
+        close[1:] = close[0] * np.cumprod(1.0 + clipped_ret[:-1])
+
+    prev_close = np.roll(close, 1)
+    prev_close[0] = close[0]
+
+    # Overnight gap (전일 종가 대비 시가)
+    gap = rng.normal(0.0, 0.0045, size=n_days)
+    open_px = prev_close * np.exp(gap)
+    open_px[0] = close[0]
+
+    c_target = close.copy()
+    # 시가가 전일 종가 대비 과도한 괴리를 보이지 않도록 소프트 클립
+    o_rel = np.clip(open_px / np.maximum(prev_close, 1e-9) - 1.0, -0.12, 0.12)
+    open_px = prev_close * (1.0 + o_rel)
+    open_px[0] = c_target[0]
+
+    # Intraday high/low shadows
+    upper_wick = rng.uniform(0.0008, 0.012, size=n_days)
+    lower_wick = rng.uniform(0.0008, 0.012, size=n_days)
+    body_high = np.maximum(open_px, c_target)
+    body_low = np.minimum(open_px, c_target)
+    high = body_high * (1.0 + upper_wick)
+    low = body_low * (1.0 - lower_wick)
+    high = np.maximum(high, np.maximum(open_px, c_target))
+    low = np.minimum(low, np.minimum(open_px, c_target))
+    close = c_target
+
+    # Volume: 기본 + 점프/리밋 근접 시 서지 (일 t의 봉은 전일→당일 수익률 clipped_ret[t-1]과 동일 인덱스 점프)
+    base = rng.lognormal(mean=14.0, sigma=0.45, size=n_days)
+    eff_ret = np.zeros(n_days, dtype=np.float64)
+    if n_days > 1:
+        eff_ret[1:] = clipped_ret[:-1]
+    limit_bar = (np.abs(eff_ret) >= 0.299).astype(np.float64)
+    jump_bar = np.zeros(n_days, dtype=np.float64)
+    if n_days > 1:
+        jump_bar[1:] = (n_jumps[:-1] > 0).astype(np.float64)
+    vol_mult = 1.0 + 2.8 * jump_bar + 1.9 * limit_bar + 12.0 * np.abs(eff_ret)
+    volume = np.clip(base * vol_mult, 1_000.0, 5e9)
+
+    idx = pd.bdate_range("2018-01-02", periods=n_days, freq="B")
+    return pd.DataFrame(
+        {
+            "date": idx.strftime("%Y-%m-%d"),
+            "open": open_px,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
+
+
+def write_universe_to_sqlite(conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> None:
+    m = df[["date", "open", "high", "low", "close", "volume"]].to_numpy()
+    rows = [
+        (ticker, str(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
+        for r in m
+    ]
+    conn.executemany(
+        """
+        INSERT OR REPLACE INTO synthetic_ohlcv
+        (ticker, date, open, high, low, close, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+
+
+def generate_all_parallel_universes() -> None:
+    os.makedirs(os.path.dirname(SYNTHETIC_DB_PATH) or ".", exist_ok=True)
+    conn = sqlite3.connect(SYNTHETIC_DB_PATH, timeout=60.0)
+    try:
+        _init_db(conn)
+        conn.execute("DELETE FROM synthetic_ohlcv")
+
+        for k in range(1, NUM_PARALLEL_UNIVERSES + 1):
+            ticker = f"{TICKER_PREFIX}{k:03d}"
+            # 종목별 시드로 서로 다른 "평행 우주"
+            seed = 10_000 + k * 9973
+            init_px = float(RNG.uniform(8_000.0, 120_000.0))
+            df = simulate_merton_jump_diffusion_clipped_ohlcv(
+                n_days=NUM_TRADING_DAYS,
+                initial_price=init_px,
+                seed=seed,
+            )
+            write_universe_to_sqlite(conn, ticker, df)
+            if k == 1 or k % 25 == 0:
+                print(f"  ✓ {ticker}  ({NUM_TRADING_DAYS} rows)")
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    print(f"\n완료: {NUM_PARALLEL_UNIVERSES} 티커 × {NUM_TRADING_DAYS} 일 → {SYNTHETIC_DB_PATH}")
 
 
 if __name__ == "__main__":
-    stress_test_mutants()
+    print("🌀 [Hyperbolic Time Chamber] 합성 시장 생성 시작…")
+    generate_all_parallel_universes()

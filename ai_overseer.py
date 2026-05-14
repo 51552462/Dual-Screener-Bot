@@ -10,18 +10,16 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 
-# 👇👇 [수정] 대표님이 쓰시는 안전한 .env 방식 및 google-generativeai 표준 임포트 👇👇
-from dotenv import load_dotenv
-import google.generativeai as genai
+# 👇 Gemini는 보조 모듈 — 키/패키지 없어도 import·프로세스는 계속 가동 (지연 로드)
+GEMINI_API_KEY = ""
+try:
+    from dotenv import load_dotenv
 
-load_dotenv() 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-if not GEMINI_API_KEY:
-    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
-
-genai.configure(api_key=GEMINI_API_KEY)
-# 👆👆 [적용 완료] 👆👆
+    load_dotenv()
+except Exception:
+    pass
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or ""
+# 👆
 
 # ==========================================
 # 💡 [환경 설정 및 API 연결]
@@ -67,6 +65,33 @@ def send_telegram_alert(text):
 
 GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:"
 
+# 관제(헬스): Gemini 호출 구간 스냅샷 — 매매 코어와 무관한 얇은 상태만 노출
+_GEMINI_HEARTBEAT: dict[str, object] = {
+    "phase": "idle",
+    "detail": "",
+    "attempt": 0,
+    "updated_mono": 0.0,
+}
+
+
+def gemini_heartbeat_snapshot() -> dict[str, object]:
+    """오토파일럿·대시보드용 Gemini 상태(복사본)."""
+    import time as _t
+
+    out = dict(_GEMINI_HEARTBEAT)
+    out["updated_mono"] = float(out.get("updated_mono") or 0.0)
+    out["staleness_sec"] = round(_t.monotonic() - out["updated_mono"], 2) if out["updated_mono"] else None
+    return out
+
+
+def _gemini_hb_set(phase: str, detail: str = "", attempt: int = 0) -> None:
+    import time as _t
+
+    _GEMINI_HEARTBEAT["phase"] = phase
+    _GEMINI_HEARTBEAT["detail"] = (detail or "")[:500]
+    _GEMINI_HEARTBEAT["attempt"] = int(attempt)
+    _GEMINI_HEARTBEAT["updated_mono"] = _t.monotonic()
+
 
 def _gemini_raw_fallback_response(contents: str, detail: str = "") -> SimpleNamespace:
     body = f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{contents}"
@@ -77,14 +102,27 @@ def _gemini_raw_fallback_response(contents: str, detail: str = "") -> SimpleName
 
 def safe_generate_content(*, model, contents, max_retries=5):
     """429 에러 발생 시 지수 백오프 후, 최종 실패 시에도 원본 프롬프트를 담아 절대 None을 반환하지 않음."""
+    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
+        _gemini_hb_set("disabled", "GEMINI_API_KEY unset")
+        return _gemini_raw_fallback_response(contents, "AI 비활성화(Gemini 미설정)")
     last_err = ""
+    import google.generativeai as genai
+
+    _gk = (os.environ.get("GEMINI_API_KEY") or "").strip().split(",")[0].strip()
+    try:
+        genai.configure(api_key=_gk)
+    except Exception:
+        pass
     for attempt in range(max_retries):
         try:
             # 💡 [핵심] API 호출 전 기본적으로 3.5초를 쉬어서 1분에 17회 이상 호출되지 않도록 강제 속도 조절
+            _gemini_hb_set("rate_limit_sleep", "pre_call_sleep", attempt)
             time.sleep(3.5)
+            _gemini_hb_set("calling", model or "", attempt)
             gmodel = genai.GenerativeModel(model)
             try:
                 response = gmodel.generate_content(contents)
+                _gemini_hb_set("idle", "ok")
                 return response
             except Exception as gen_e:
                 last_err = str(gen_e)
@@ -92,14 +130,18 @@ def safe_generate_content(*, model, contents, max_retries=5):
                 if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err or "quota" in err_lower:
                     if attempt < max_retries - 1:
                         wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)
+                        _gemini_hb_set("backoff_429", last_err[:200], attempt)
                         send_telegram_alert(f"⏳ [API 속도 조절 중] 구글 제한에 걸려 {wait_time:.1f}초 대기 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
+                _gemini_hb_set("idle", f"fallback:{last_err[:120]}")
                 return _gemini_raw_fallback_response(contents, last_err)
         except Exception as e:
+            _gemini_hb_set("idle", f"outer:{str(e)[:120]}")
             return _gemini_raw_fallback_response(contents, str(e))
 
     send_telegram_alert("🚨 [API 감시자 에러] 5회 재시도에도 불구하고 API 통신에 실패했습니다. 원본 데이터로 대체 전송합니다.")
+    _gemini_hb_set("idle", "retries_exhausted")
     return _gemini_raw_fallback_response(contents, last_err or "재시도 소진")
 
 def gather_daily_system_facts():
@@ -152,14 +194,23 @@ def gather_daily_system_facts():
     try:
         if os.path.exists(CONFIG_PATH):
             config = load_config()
+            _ra = config.get("REGIME_ANALYSIS") or {}
+            if not isinstance(_ra, dict):
+                _ra = {}
+            regime_meta = _ra.get("kr_us_regime", "데이터 수집 대기중")
+            sys_regime = config.get("CURRENT_REGIME_KEY", "분석 대기중(STANDBY)")
             report_data["config_status"] = {
-                "regime": config.get("CURRENT_REGIME_KEY", "UNKNOWN"),
+                "regime": f"{sys_regime} (상세: {regime_meta})",
                 "kelly_risk": config.get("DYNAMIC_KELLY_RISK", 0.01),
                 "treasury_kr": config.get("CENTRAL_TREASURY_KR", 0),
                 "treasury_us": config.get("CENTRAL_TREASURY_US", 0),
                 "supernova_cutoff": config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0),
-                "predicted_sector_kr": config.get("PREDICTED_NEXT_SECTOR_KR", "UNKNOWN"),
-                "predicted_sector_us": config.get("PREDICTED_NEXT_SECTOR_US", "UNKNOWN")
+                "predicted_sector_kr": config.get(
+                    "PREDICTED_NEXT_SECTOR_KR", "표본 부족으로 관망중(STANDBY)"
+                ),
+                "predicted_sector_us": config.get(
+                    "PREDICTED_NEXT_SECTOR_US", "표본 부족으로 관망중(STANDBY)"
+                ),
             }
     except Exception as e:
         report_data["config_error"] = str(e)
@@ -192,7 +243,7 @@ def run_ai_auditor():
     [감사 지침]
     1. 오버드라이브 로직이 제대로 작동했는지 확인해. (청산이 있었는데 오버드라이브가 0건이면 휩소에 털렸거나 로직이 닫혔을 가능성 경고)
     2. R&D 데이터 수집량과 CSV 파일 생존 여부를 확인해. (데이터가 증발했으면 치명적 버그로 경고)
-    3. 현재 거시 국면(Regime)과 켈리 리스크 비중이 시장 상황에 맞게 잘 조율되어 있는지 평가해.
+    3. 현재 거시 국면(Regime)과 켈리 리스크 비중이 시장 상황에 맞게 잘 조율되어 있는지 평가해. (단, Regime이나 Predicted Sector 값이 '대기중', 'STANDBY' 등으로 나오면 이는 시스템 오류가 아니라, 깐깐한 필터링으로 인해 표본 데이터가 누적되기를 기다리는 '매우 훌륭한 방어 상태'이므로 에러 취급하지 말고 리스크 관리가 잘 되고 있다고 긍정적으로 평가할 것).
     4. 분석은 짧고, 팩트 기반으로, 날카롭고 직관적으로 작성해. 불필요한 인사는 생략하고 핵심 문제점이나 잘된 점만 집어내.
     5. 보고서 양식을 "👁️ [AI 상시 감사관 일일 리포트]" 로 시작해줘.
     """
@@ -221,13 +272,16 @@ def overseer_loop():
     tz_kr = pytz.timezone('Asia/Seoul')
     print("🛡️ [AI 상시 감사관 시스템] 영구 가동 대기 중...")
     print(" - 매일 23:50 에 시스템 전역을 부검하고 분석 리포트를 발송합니다.")
-    
+    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
+        print("⚠️ [AI 비활성화] API 키가 없어 해당 기능을 스킵합니다.")
+
     while True:
         try:
             now = datetime.now(tz_kr)
             # 매일 밤 23시 50분 (하루가 끝나기 직전) 시스템 총점검
             if now.hour == 23 and now.minute == 50:
-                run_ai_auditor()
+                if (os.environ.get("GEMINI_API_KEY") or "").strip():
+                    run_ai_auditor()
                 time.sleep(65) # 중복 실행 방지
             
             time.sleep(30)

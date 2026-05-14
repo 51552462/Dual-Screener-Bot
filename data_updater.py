@@ -13,9 +13,56 @@ warnings.filterwarnings('ignore')
 
 from yf_download_flatten import flatten_yf_download_df
 
+from market_db_paths import MARKET_DATA_DB_PATH, MARKET_DATA_SNAPSHOT_PATH
+
 # 💡 [핵심 픽스] Ubuntu 서버 환경에 맞춘 정확한 DB 절대 경로 세팅
-DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+DB_PATH = MARKET_DATA_DB_PATH
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+# 벤치마크·지수 테이블 (티커 OHLCV가 아님) — 고아 정리에서 제외
+_ORPHAN_CLEANUP_PROTECTED_TABLES = frozenset(
+    {"US_SPY", "US_QQQ", "US_VIX", "KR_KOSPI_IDX", "KR_KOSDAQ_IDX"}
+)
+
+
+def cleanup_orphan_tables(
+    conn: sqlite3.Connection,
+    us_list: pd.DataFrame,
+    kr_list: pd.DataFrame,
+) -> int:
+    """
+    sqlite_master에서 KR_% / US_% 테이블을 나열하고, 이번 배치의 생존 티커 집합과 대조해
+    상장폐지·티커 변경 등으로 남은 고아 테이블만 DROP 한다.
+    """
+    alive_us: set[str] = set()
+    if us_list is not None and not us_list.empty and "Symbol" in us_list.columns:
+        for sym in us_list["Symbol"].astype(str):
+            s = str(sym).strip()
+            if s:
+                alive_us.add(f"US_{s}")
+
+    alive_kr: set[str] = set()
+    if kr_list is not None and not kr_list.empty and "Code" in kr_list.columns:
+        for code in kr_list["Code"].astype(str):
+            c = str(code).strip().zfill(6)
+            alive_kr.add(f"KR_{c}")
+
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND (name LIKE 'US_%' OR name LIKE 'KR_%')"
+    )
+    dropped = 0
+    for (name,) in cur.fetchall():
+        if not name or name in _ORPHAN_CLEANUP_PROTECTED_TABLES:
+            continue
+        if name.startswith("US_") and name not in alive_us:
+            conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+            dropped += 1
+        elif name.startswith("KR_") and name not in alive_kr:
+            conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+            dropped += 1
+    conn.commit()
+    return dropped
 
 def save_data_safely(conn, table_name, df):
     """테이블 본체를 유지한 채 데이터만 원자적으로 교체한다."""
@@ -210,6 +257,71 @@ def run_daily_db_update():
             sys.stdout.flush()
 
     print(f"\n\n✅ DB 업데이트 완료! (미국: {us_success}개 / 한국: {kr_success}개 안전 저장 완료)")
+    snap = create_read_only_snapshot()
+    if snap:
+        print(f"📸 읽기 전용 스냅샷 갱신 완료: {snap}")
+    else:
+        print("⚠️ 읽기 전용 스냅샷 생성 스킵(메인 DB 없음 또는 복제 실패).")
+
+    try:
+        oc = sqlite3.connect(DB_PATH, timeout=60)
+        oc.execute("PRAGMA journal_mode=WAL;")
+        n_drop = cleanup_orphan_tables(oc, us_list, kr_list)
+        oc.close()
+        n_us = len(us_list) if us_list is not None and not us_list.empty else 0
+        n_kr = len(kr_list) if kr_list is not None and not kr_list.empty else 0
+        print(f"🧹 고아 티커 테이블 정리 완료: DROP {n_drop}개 (배치 티커 US {n_us} / KR {n_kr} 기준 대조)")
+    except Exception as e:
+        print(f"⚠️ 고아 테이블 정리 스킵/실패: {e}")
+
+
+def create_read_only_snapshot():
+    """
+    market_data.sqlite 의 읽기 전용 복제본(market_data_snapshot.sqlite)을 만든다.
+    우선 sqlite3.Connection.backup (WAL 환경에서도 안전한 온라인 복제),
+    실패 시 shutil.copy2 로 폴백한다.
+    """
+    import shutil
+
+    if not os.path.isfile(MARKET_DATA_DB_PATH):
+        return None
+    os.makedirs(os.path.dirname(MARKET_DATA_SNAPSHOT_PATH), exist_ok=True)
+    tmp_path = MARKET_DATA_SNAPSHOT_PATH + ".building"
+    try:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    except OSError:
+        pass
+
+    try:
+        src = sqlite3.connect(MARKET_DATA_DB_PATH, timeout=60.0)
+        try:
+            src.execute("PRAGMA journal_mode=WAL;")
+            dst = sqlite3.connect(tmp_path, timeout=60.0)
+            try:
+                dst.execute("PRAGMA journal_mode=WAL;")
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        os.replace(tmp_path, MARKET_DATA_SNAPSHOT_PATH)
+        return MARKET_DATA_SNAPSHOT_PATH
+    except Exception as e:
+        print(f"⚠️ [스냅샷] backup API 실패, copy2 폴백 시도: {e}")
+        try:
+            shutil.copy2(MARKET_DATA_DB_PATH, tmp_path)
+            os.replace(tmp_path, MARKET_DATA_SNAPSHOT_PATH)
+            return MARKET_DATA_SNAPSHOT_PATH
+        except Exception as e2:
+            print(f"🚨 [스냅샷] 생성 실패: {e2}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return None
+
 
 if __name__ == "__main__":
     run_daily_db_update()

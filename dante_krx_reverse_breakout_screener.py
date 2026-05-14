@@ -1,5 +1,5 @@
 # Dante_KRX_Reverse_Breakout_1D_AI_Pro.py
-import os, re, time, threading, queue, concurrent.futures
+import os, re, time, threading, concurrent.futures
 from datetime import datetime, timedelta
 import pytz
 import numpy as np, pandas as pd
@@ -18,19 +18,15 @@ import os
 # data_updater.py와 동일한 DB 경로 설정 [cite: 82]
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 
-import google.generativeai as genai
-from dotenv import load_dotenv
-
 # ==========================================
-# 🔑 .env 안전 파일 방식 적용
+# 🔑 리포트: gemini_report_cache 파사드 (import 시 google.generativeai 비로드)
 # ==========================================
-load_dotenv() 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-_gemini_keys = [x.strip() for x in (GEMINI_API_KEY or "").split(",") if x.strip()]
-if not _gemini_keys:
-    raise ValueError("🚨 API 키를 찾을 수 없습니다! .env 파일을 확인해 주세요.")
+try:
+    from dotenv import load_dotenv
 
-genai.configure(api_key=_gemini_keys[0])
+    load_dotenv()
+except Exception:
+    pass
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
@@ -40,8 +36,18 @@ TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
 TELEGRAM_CHAT_ID     = "6838834566"
 SEND_TELEGRAM        = True
 
-q_main = queue.Queue()
-q_promo = queue.Queue()
+from telegram_message_queue import (
+    enqueue_telegram,
+    start_telegram_queue_daemons,
+    wait_telegram_queue_drained,
+)
+
+start_telegram_queue_daemons(
+    TELEGRAM_TOKEN_MAIN,
+    TELEGRAM_TOKEN_PROMO,
+    TELEGRAM_CHAT_ID,
+    SEND_TELEGRAM,
+)
 
 sent_today = set()
 last_run_date = ""
@@ -54,70 +60,16 @@ os.makedirs(CHART_FOLDER, exist_ok=True)
 def sanitize_filename(s: str) -> str: return re.sub(r'[^A-Za-z0-9가-힣._-]', '_', s)
 
 def get_safe_data(code, start_date):
-    table_name = f"KR_{code}"
-    try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            df_db = pd.read_sql(f"SELECT * FROM {table_name}", conn, index_col='Date')
-        df_db.index = pd.to_datetime(df_db.index)
-        df_db = df_db.loc[~df_db.index.duplicated(keep='last')]
-    except Exception:
-        df = fdr.DataReader(code, start_date)
-        df = df.loc[~df.index.duplicated(keep='last')]
-        return df
+    from market_data_fetcher import fetch_market_data
 
-    try:
-        df_live = fdr.DataReader(code, datetime.now().strftime('%Y-%m-%d'))
-        df_live = df_live.loc[~df_live.index.duplicated(keep='last')]
-        if not df_live.empty:
-            df_combined = pd.concat([df_db, df_live])
-            return df_combined.loc[~df_combined.index.duplicated(keep='last')]
-        return df_db
-    except Exception:
-        return df_db
-
-def telegram_sender_daemon(target_queue, token):
-    import re
-    while True:
-        item = target_queue.get()
-        if item is None: break
-        img_path, caption = item
-        safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-        
-        if SEND_TELEGRAM:
-            res = None
-            for attempt in range(5):
-                try:
-                    if img_path: 
-                        with open(img_path, 'rb') as f:
-                            res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"}, files={"photo": f}, timeout=60, verify=False)
-                    else:
-                        res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption, "parse_mode": "HTML"}, timeout=60, verify=False)
-
-                    if res.status_code == 400:
-                        plain_caption = re.sub(r'<[^>]+>', '', safe_caption).replace('&', 'and').replace('<', '〈').replace('>', '〉')
-                        if img_path:
-                            with open(img_path, 'rb') as f:
-                                res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID, "caption": plain_caption}, files={"photo": f}, timeout=60, verify=False)
-                        else:
-                            res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_caption}, timeout=60, verify=False)
-
-                    if res.status_code == 200: break
-                    elif res.status_code == 429: time.sleep(10)
-                except requests.exceptions.ReadTimeout: break
-                except: time.sleep(2)
-            if res is not None and res.status_code != 200:
-                print(f"🚨 텔레그램 발송 에러 ({res.status_code}): {res.text}")
-            time.sleep(1.5)
-        target_queue.task_done()
-
-threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
-threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO), daemon=True).start()
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    return fetch_market_data(str(code).strip(), "KR", start_date, end_date)
 
 # 💡 2. 본캐 팩트 리포트 (해시태그 파싱 오류 및 스팸 방지를 위해 안전하게 교체) — Gemini 캐시·다중키: gemini_report_cache
 def generate_kr_ai_report(code: str, company_name: str):
-    from gemini_report_cache import generate_stock_ai_report_cached
+    from gemini_report_cache import get_report_provider
 
-    return generate_stock_ai_report_cached(code, company_name)
+    return get_report_provider().generate("stock", code=code, company_name=company_name)
 
 def get_krx_list_kind():
     """KRX 전 종목 리스트: FDR → CSV 캐시 → sqlite 테이블명 역추출 3단계 생존."""
@@ -369,6 +321,18 @@ def scan_market_1d():
                 if df_raw is not None and not df_raw.empty:
                     df_raw = df_raw[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                     df_raw = df_raw.loc[~df_raw.index.duplicated(keep='last')]
+
+                # 거래정지·단일가(Static Quote) — 최근 3일 동일 종가 + 거래량 극소 시 매집 착시 방지 (한국장)
+                if df_raw is not None and not df_raw.empty and len(df_raw) >= 3:
+                    try:
+                        tail_3 = df_raw.tail(3)
+                        if "Close" in tail_3.columns and "Volume" in tail_3.columns:
+                            t3 = tail_3[["Close", "Volume"]].dropna()
+                            if len(t3) >= 3 and int(t3["Close"].nunique()) == 1 and float(t3["Volume"].sum()) < 10000:
+                                df_raw = None
+                    except Exception:
+                        pass
+
                 is_valid = (df_raw is not None and not df_raw.empty and len(df_raw) >= 500)
                 if is_valid:
                     hit, sig_type, df, dbg = compute_inverse_1d(df_raw)
@@ -420,7 +384,13 @@ def scan_market_1d():
                         f"⚠️ [면책 조항]\n"
                         f"본 정보는 알고리즘에 의한 기술적 분석일 뿐, 특정 종목에 대한 매수/매도 권유가 아닙니다. 투자의 최종 판단과 책임은 투자자 본인에게 있습니다."
                     )
-                    q_main.put((main_chart_path, main_caption)) 
+                    enqueue_telegram(
+                        "MAIN",
+                        main_chart_path,
+                        main_caption,
+                        enabled=SEND_TELEGRAM,
+                        send_profile="html_ro",
+                    ) 
 
                     # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
                     try:
@@ -434,7 +404,13 @@ def scan_market_1d():
                         f"🏷️ 섹터: {sector_info}\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
                     )
-                    q_promo.put((promo_chart_path, promo_caption))
+                    enqueue_telegram(
+                        "PROMO",
+                        promo_chart_path,
+                        promo_caption,
+                        enabled=SEND_TELEGRAM,
+                        send_profile="html_ro",
+                    )
            
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
@@ -446,8 +422,7 @@ def scan_market_1d():
         
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
-        q_main.join()
-        q_promo.join()
+        wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
     print(f"\n✅ [한국장 3번 역매공파 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
 
@@ -462,6 +437,11 @@ def run_scheduler():
             scan_market_1d()
             time.sleep(60) 
         else: time.sleep(10)
+        try:
+            import ops_logger
+            ops_logger.record_heartbeat("scanner.krx_reverse")
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     # run_scheduler()  <-- 이 줄을 주석 처리하거나 지우고

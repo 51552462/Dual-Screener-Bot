@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic Dante CQRS snapshot (market_data + ops_snapshot)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=dante-snapshot.service
+
+[Install]
+WantedBy=timers.target

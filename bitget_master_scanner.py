@@ -1,6 +1,5 @@
 import json
 import os
-import queue
 import sqlite3
 import threading
 import time
@@ -37,8 +36,19 @@ TELEGRAM_TOKEN_MAIN = bitget_telegram_token()
 TELEGRAM_TOKEN_PROMO = bitget_telegram_token_promo()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
-q_main = queue.Queue()
-q_promo = queue.Queue()
+from telegram_message_queue import (
+    enqueue_telegram,
+    start_telegram_queue_daemons,
+    wait_telegram_queue_drained,
+)
+
+start_telegram_queue_daemons(
+    TELEGRAM_TOKEN_MAIN,
+    TELEGRAM_TOKEN_PROMO or TELEGRAM_TOKEN_MAIN,
+    TELEGRAM_CHAT_ID,
+    SEND_TELEGRAM,
+)
+
 sent_today = set()
 last_run_date = ""
 LOG_FILE = os.path.join(BASE_DIR, "sent_log_bitget_master.txt")
@@ -81,44 +91,6 @@ def _lookup_virtual_trade_id(market_type: str, symbol: str, timeframe: str, sig_
         return int(row[0]) if row else 0
     except Exception:
         return 0
-
-
-def telegram_sender_daemon(target_queue, token):
-    while True:
-        item = target_queue.get()
-        if item is None:
-            break
-        img_path, caption = item
-        safe_caption = caption[:1000] + "\n...(글자수 제한으로 요약됨)" if len(caption) > 1000 else caption
-        if SEND_TELEGRAM and token:
-            for _ in range(3):
-                try:
-                    if img_path and os.path.exists(img_path):
-                        with open(img_path, "rb") as f:
-                            res = requests.post(
-                                f"https://api.telegram.org/bot{token}/sendPhoto",
-                                data={"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "HTML"},
-                                files={"photo": f},
-                                timeout=60,
-                            )
-                    else:
-                        res = requests.post(
-                            f"https://api.telegram.org/bot{token}/sendMessage",
-                            json={"chat_id": TELEGRAM_CHAT_ID, "text": safe_caption, "parse_mode": "HTML"},
-                            timeout=60,
-                        )
-                    if res.status_code == 200:
-                        break
-                    if res.status_code == 429:
-                        time.sleep(3)
-                except Exception:
-                    time.sleep(2)
-            time.sleep(1.2)
-        target_queue.task_done()
-
-
-threading.Thread(target=telegram_sender_daemon, args=(q_main, TELEGRAM_TOKEN_MAIN), daemon=True).start()
-threading.Thread(target=telegram_sender_daemon, args=(q_promo, TELEGRAM_TOKEN_PROMO or TELEGRAM_TOKEN_MAIN), daemon=True).start()
 
 
 def _load_table(conn, table_name):
@@ -504,8 +476,20 @@ def run_scan():
                         f"🧭 TF: {tf} | {engine_name}\n"
                         f"⭐ 점수: {score:.1f}"
                     )
-                    q_main.put((chart_main, main_caption))
-                    q_promo.put((chart_promo, promo_caption))
+                    enqueue_telegram(
+                        "MAIN",
+                        chart_main,
+                        main_caption,
+                        enabled=SEND_TELEGRAM,
+                        send_profile="html",
+                    )
+                    enqueue_telegram(
+                        "PROMO",
+                        chart_promo,
+                        promo_caption,
+                        enabled=SEND_TELEGRAM,
+                        send_profile="html",
+                    )
                     print(f"[{engine_name}] {symbol} {tf} -> {db_msg} | charts queued")
                     del dbg
                     gc.collect()
@@ -514,8 +498,7 @@ def run_scan():
     conn.close()
     del table_names
     gc.collect()
-    q_main.join()
-    q_promo.join()
+    wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
 
 def datetime_now_utc_date():

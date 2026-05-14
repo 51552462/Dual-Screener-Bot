@@ -2,6 +2,10 @@ import sys
 import threading
 import time
 import os
+
+# 텔레그램 큐는 async_telegram_daemon(aiohttp)이 소비. 스캐너 모듈의 동기 데몬 스레드는 기동하지 않음.
+os.environ["DANTE_ASYNC_TELEGRAM_DAEMON"] = "1"
+
 import urllib.request
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
@@ -13,34 +17,13 @@ import functools
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
-# ==========================================
-# 🕵️ 스마트 에러 추적기
-# ==========================================
-class SmartErrorTracker:
-    def __init__(self):
-        self.errors = []
-        self.lock = threading.Lock()
-        self.original_stderr = sys.stderr
+import logging
 
-    def write(self, text):
-        self.original_stderr.write(text) 
-        if text.strip() and ("Exception" in text or "Traceback" in text or "Error" in text):
-            with self.lock:
-                now = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%H:%M:%S')
-                short_err = text.strip().split('\n')[-1][:100]
-                self.errors.append(f"[{now}] {short_err}")
+import ops_logger
 
-    def flush(self):
-        self.original_stderr.flush()
-
-    def get_and_clear(self):
-        with self.lock:
-            errs = list(self.errors)
-            self.errors.clear()
-            return errs
-
-error_tracker = SmartErrorTracker()
-sys.stderr = error_tracker 
+ops_logger.configure_root_ops_logging(default_component="main", level=logging.INFO)
+ops_logger.install_unhandled_exception_hooks()
+logging.captureWarnings(True)
 
 # ==========================================
 # 🇰🇷 한글 폰트 강제 설치
@@ -205,7 +188,9 @@ def status_monitor(threads_dict):
             else:
                 print(f"🔴 [스레드 상태] 🚨 경고! 사망한 봇 발견: {', '.join(dead_bots)}")
 
-            recent_errors = error_tracker.get_and_clear()
+            from ops_logger import recent_error_summaries_for_console
+
+            recent_errors = recent_error_summaries_for_console(hours=1.0, limit=5)
             if not recent_errors:
                 print("🟢 [시스템 건강] 에러 없이 완벽 구동 중.")
             else:
@@ -261,6 +246,31 @@ if __name__ == "__main__":
     # 관제 모니터 구동
     monitor_thread = threading.Thread(target=status_monitor, args=(active_threads,), daemon=True, name="관제탑_모니터")
     monitor_thread.start()
+
+    _skip_tg = str(os.environ.get("QUANT_SKIP_INLINE_TELEGRAM_DAEMON", "") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if _skip_tg:
+        print(
+            "ℹ️ [텔레그램] 인라인 aiohttp 데몬 생략 (QUANT_SKIP_INLINE_TELEGRAM_DAEMON) — "
+            "별도 systemd 텔레그램 유닛이 소비합니다."
+        )
+    else:
+        try:
+            from telegram_message_queue import get_telegram_daemon_registration
+            from async_telegram_daemon import start_async_telegram_daemon_thread
+
+            reg = get_telegram_daemon_registration()
+            if reg:
+                tm, tp, cid, en = reg
+                start_async_telegram_daemon_thread(tm, tp, cid, en)
+                print("✅ [텔레그램] aiohttp 비동기 발송 데몬 기동 (message_queue.sqlite, TCP limit=3)")
+            else:
+                print("⚠️ [텔레그램] 큐 데몬 등록 없음 — 스캐너 모듈 미로드 또는 토큰 미설정 가능")
+        except Exception as e:
+            print(f"⚠️ [텔레그램] 비동기 데몬 기동 실패: {e}")
 
     # 메인 프로세스가 꺼지지 않도록 영원히 대기
     for t in active_threads.values():

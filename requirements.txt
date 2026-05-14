@@ -2,6 +2,7 @@ ccxt
 pandas
 numpy
 requests
+aiohttp
 pykrx
 beautifulsoup4
 finance-datareader

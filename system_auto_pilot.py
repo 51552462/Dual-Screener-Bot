@@ -23,7 +23,17 @@ from yf_download_flatten import flatten_yf_download_df, yf_close_series
 TELEGRAM_TOKEN_MAIN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
 TELEGRAM_CHAT_ID    = "6838834566"
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+from config_manager import load_system_config as load_system_config_kv
+from inverse_etf_sniper import run_inverse_etf_sniper_cycle
+from shadow_tracking import record_ops_snapshot_from_live_state
+import ops_logger
+from system_config_atomic import (
+    CONFIG_PATH,
+    config_persisted,
+    load_config,
+    save_config,
+    update_config,
+)
 
 LOOKBACK_DAYS = 14
 SMOOTHING_ALPHA = 0.3 
@@ -38,57 +48,92 @@ def send_telegram_report(message):
     try: requests.post(url, json=payload, timeout=10)
     except Exception as e: print(f"텔레그램 전송 실패: {e}")
 
-def load_config(max_retries=5):
-    """
-    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
-    """
-    if not os.path.exists(CONFIG_PATH):
-        return {}
 
-    for attempt in range(max_retries):
+# 1분 주기: ops_snapshot + 인버스 스나이퍼 (모노토닉 시계)
+_OPS_INVERSE_MINUTE_STATE = {"last_mono": 0.0, "inverse_mode": None}
+
+
+def _telegram_inverse_sniper_critical_only(summary: dict, mode_after: bool) -> None:
+    """
+    인버스 스나이퍼 관련 텔레그램: 모드 전환·킬스위치 청산·테일 캡/잔액 거부만.
+    (스캔 완료·정상 스킵·진입 성공은 발송하지 않음)
+    """
+    st = _OPS_INVERSE_MINUTE_STATE
+    prev_mode = st["inverse_mode"]
+    if prev_mode is not None and mode_after != prev_mode:
+        send_telegram_report(
+            f"🛡️ <b>[인버스 관제]</b> INVERSE_MODE_ACTIVE 변경: "
+            f"<code>{prev_mode}</code> → <code>{mode_after}</code>"
+        )
+    kc = int(summary.get("kill_closed") or 0)
+    if kc > 0:
+        send_telegram_report(
+            f"🚨 <b>[인버스 킬 스위치]</b> 잔존 OPEN 인버스 <b>{kc}</b>건 시장가 청산 후 테일 반환."
+        )
+    sk = summary.get("skipped")
+    if isinstance(sk, str) and sk and (
+        "테일 30% 캡" in sk or "Reserve OCC" in sk or "테일 잔액 0" in sk
+    ):
+        send_telegram_report(
+            f"🚨 <b>[인버스 테일 캡/잔액]</b> 신규 진입 거부: {sk}"
+        )
+    st["inverse_mode"] = mode_after
+
+
+def _gemini_status_for_ops() -> dict:
+    try:
+        import ai_overseer as ao
+
+        fn = getattr(ao, "gemini_heartbeat_snapshot", None)
+        if callable(fn):
+            return dict(fn())
+    except Exception:
+        pass
+    return {"phase": "unknown"}
+
+
+def _minute_ops_snapshot_and_inverse_cycle() -> None:
+    """국고/테일·OPEN 롱숏 스냅샷 1행 + 인버스 스나이퍼 1사이클 (텔레그램은 치명 이벤트만)."""
+    mono = time.monotonic()
+    st = _OPS_INVERSE_MINUTE_STATE
+    if mono - st["last_mono"] < 60.0:
+        return
+    st["last_mono"] = mono
+    try:
+        summary = run_inverse_etf_sniper_cycle()
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] run_inverse_etf_sniper_cycle 실패: {e}")
+        summary = {"kill_closed": 0, "skipped": None, "entered": None}
+    try:
+        record_ops_snapshot_from_live_state()
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] ops_snapshot 기록 실패: {e}")
+    try:
+        mode_after = bool(load_system_config_kv().get("INVERSE_MODE_ACTIVE"))
+        _telegram_inverse_sniper_critical_only(summary, mode_after)
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] 인버스 텔레그램 게이트 실패: {e}")
+    try:
+        from telegram_message_queue import count_all_pending_messages
+
+        m: dict = {
+            "telegram_queue_pending": int(count_all_pending_messages()),
+            "gemini": _gemini_status_for_ops(),
+        }
         try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
+            from gemini_report_cache import get_gemini_gate_metrics
 
-
-def save_config(config_data, max_retries=5):
-    """
-    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
-    """
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, indent=4, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
-        except Exception as e:
-            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-            return False
-    return False
+            m.update(get_gemini_gate_metrics())
+        except Exception:
+            pass
+        ops_logger.record_gauge_snapshot("system_auto_pilot", m)
+        ops_logger.record_heartbeat("system_auto_pilot")
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] ops_events gauge 실패: {e}")
 
 def load_or_create_config():
     # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
-    if not os.path.exists(CONFIG_PATH):
+    if not config_persisted():
         default_config = {
             "ACTIVE_EXIT_MODE": "HYBRID",
             "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
@@ -101,7 +146,8 @@ def load_or_create_config():
             "GLOBAL_CIRCUIT_BREAKER": "OFF",
             "ARCHIVED_TEMPLATES": {},
             "ANTI_PATTERNS": [],
-            "INCUBATOR_TEMPLATES": {}
+            "INCUBATOR_TEMPLATES": {},
+            "INVERSE_MODE_ACTIVE": False,
         }
         save_config(default_config)
         return default_config
@@ -135,6 +181,9 @@ def load_or_create_config():
     if "INCUBATOR_TEMPLATES" not in config or not isinstance(config.get("INCUBATOR_TEMPLATES"), dict):
         config["INCUBATOR_TEMPLATES"] = {}
         need_save = True
+    if "INVERSE_MODE_ACTIVE" not in config:
+        config["INVERSE_MODE_ACTIVE"] = False
+        need_save = True
         
     # 변경 사항이 있으면 JSON 파일에 덮어쓰기
     if need_save:
@@ -142,6 +191,35 @@ def load_or_create_config():
         print("🏦 [국고 세팅 완료] 시스템에 한국 3억, 미국 3억의 초기 자본이 성공적으로 세팅되었습니다.")
         
     return config
+
+
+def _sync_inverse_mode_switch(current_config: dict, vix_last=0.0, regime_display=""):
+    """
+    폭락·신용경색 레짐과 연동해 INVERSE_MODE_ACTIVE를 갱신한다.
+    - DOOMSDAY_DEFCON.level <= 2
+    - regime_meta_analyzer가 기록한 REGIME_ANALYSIS.regime_key ∈ {HIGH_VOL, BEAR}
+    - 자율 관제탑 로컬 판정: VIX 극단 + '극단적 공포장' 문자열
+    (save_config와 동일 배치로 쓰여 원자적 일관성 유지)
+    """
+    dd = current_config.get("DOOMSDAY_DEFCON") or {}
+    try:
+        lvl = int(dd.get("level", 99))
+    except (TypeError, ValueError):
+        lvl = 99
+    defcon_crash = lvl <= 2
+
+    meta = current_config.get("REGIME_ANALYSIS") or {}
+    rk = str(meta.get("regime_key") or "").strip().upper()
+    meta_crash = rk in ("HIGH_VOL", "BEAR")
+
+    try:
+        vx = float(vix_last or 0.0)
+    except (TypeError, ValueError):
+        vx = 0.0
+    vix_crash = vx >= 28.0 and "극단적" in str(regime_display)
+
+    current_config["INVERSE_MODE_ACTIVE"] = bool(defcon_crash or meta_crash or vix_crash)
+
 
 def get_first_entry_date():
     """forward_trades 장부의 최초 진입일(MIN(entry_date))을 조회한다."""
@@ -338,6 +416,7 @@ def run_autonomous_analysis():
         optimal_risk = 0.01
         current_config["CURRENT_REGIME_KEY"] = regime_key
         current_config["DYNAMIC_KELLY_RISK"] = round(optimal_risk, 4)
+        _sync_inverse_mode_switch(current_config, vix_last, regime)
         save_config(current_config)
         send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n거시 국면 전환으로 룩백이 {dyn_lookback}일로 조정되었으나, 해당 기간 내 청산 표본이 10건 미만입니다. 기본 관제탑 키(CURRENT_REGIME_KEY/DYNAMIC_KELLY_RISK=1.00%)만 선반영하고 이번 주 조율을 스킵합니다.")
         return
@@ -778,6 +857,7 @@ def run_autonomous_analysis():
             else:
                 report_lines.append(f"▪️ {target_ns} TS 표본 부족으로 기존 Kelly 유지")
 
+        _sync_inverse_mode_switch(current_config, vix_last, regime)
         save_config(current_config)
 
     # 💡 [V_NEXT 진화 로직 적용] 네임스페이스 TS 리스크를 글로벌 Kelly에 합성(중앙값 사용)
@@ -789,6 +869,7 @@ def run_autonomous_analysis():
             report_lines.append(
                 f"\n🎛️ <b>[TS 글로벌 합성]</b> 네임스페이스 중앙값 Kelly {global_prev*100:.2f}% ➔ {global_ts*100:.2f}%"
             )
+            _sync_inverse_mode_switch(current_config, vix_last, regime)
             save_config(current_config)
         except Exception:
             pass
@@ -1512,6 +1593,7 @@ def run_autonomous_analysis():
     # ==========================================
     # 🚀 최종 저장 및 발송 (중복 제거 완료)
     # ==========================================
+    _sync_inverse_mode_switch(current_config, vix_last, regime)
     save_config(current_config)
     send_telegram_report("\n".join(report_lines))
     print("✅ 분석 완료! JSON 파일 덮어쓰기 및 텔레그램 발송 성공.")
@@ -1667,8 +1749,8 @@ def _mark_report_flag(day_key, reason):
     }
     # 최근 14일만 유지
     sorted_days = sorted(flags.keys(), reverse=True)
-    cfg["AUTO_PILOT_DAILY_REPORT_FLAG"] = {k: flags[k] for k in sorted_days[:14]}
-    save_config(cfg)
+    trimmed = {k: flags[k] for k in sorted_days[:14]}
+    update_config({"AUTO_PILOT_DAILY_REPORT_FLAG": trimmed})
 
 
 def _safe_call_ai_modules_for_report():
@@ -1703,6 +1785,57 @@ def _send_daily_close_report(now, reason):
     _mark_report_flag(now.strftime('%Y-%m-%d'), reason)
 
 # ==========================================
+# 🛰 위성 비블로킹 기동 (오토파일럿 메인 스레드의 GIL·장시간 블로킹 차단)
+# ==========================================
+_FACTORY_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def _spawn_satellite_argv(argv: list, tag: str) -> None:
+    """OS 분리 프로세스 — 반환 즉시 루프 진행. 로그는 satellite_{tag}.log"""
+    log_path = os.path.join(_FACTORY_ROOT, f"satellite_{tag}.log")
+    try:
+        lf = open(log_path, "ab", buffering=0)
+        try:
+            subprocess.Popen(
+                argv,
+                cwd=_FACTORY_ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+            )
+        finally:
+            lf.close()
+        print(f"🚀 [{tag}] 비블로킹 위성 기동 → {os.path.basename(log_path)}")
+        time.sleep(5)
+    except Exception as e:
+        print(f"⚠️ [{tag}] 위성 기동 실패: {e}")
+
+
+def _spawn_py_script(rel_name: str, tag: str) -> None:
+    script = os.path.join(_FACTORY_ROOT, rel_name)
+    if not os.path.isfile(script):
+        print(f"⚠️ [{tag}] 스크립트 없음: {script}")
+        return
+    _spawn_satellite_argv([sys.executable, script], tag)
+
+
+def _spawn_python_exec(code: str, tag: str) -> None:
+    _spawn_satellite_argv([sys.executable, "-c", code], tag)
+
+
+def _satellite_import_run_snippet(body_lines: str, tag: str) -> None:
+    """동일 디렉터리 모듈 호출 (markets 등 인자 유지용)."""
+    prefix = (
+        "import sys, os\n"
+        f"sys.path.insert(0, {repr(_FACTORY_ROOT)})\n"
+        f"os.chdir({repr(_FACTORY_ROOT)})\n"
+    )
+    _spawn_python_exec(prefix + body_lines.strip() + "\n", tag)
+
+
+# ==========================================
 # 🕒 루프 실행기
 # ==========================================
 def system_main_loop():
@@ -1729,13 +1862,80 @@ def system_main_loop():
                     elif (now.hour > 16 or (now.hour == 16 and now.minute >= 31)) and not sent_today:
                         _send_daily_close_report(now, "SAFETY_NET_RETRY")
 
-                # 1. 토요일 오전 10시 정각: 1주일치 데이터를 모아 파라미터 자율 최적화 (뇌수술)
-                if now.weekday() == 5 and now.hour == 10 and now.minute == 0:
-                    print("🚀 주말 관제탑 자율 튜닝(뇌수술)을 시작합니다...")
-                    run_autonomous_analysis()
-                    time.sleep(60) 
-                    
-                # 2. 토요일 오전 10시 5분: 뇌수술 결과를 포함하여 일주일간의 흐름 총결산 리포트 발송
+                # 🇺🇸 매일 07:00 KST — US 독성 ML (블랙홀 08:30 전 us_toxic_ml_antipatterns.json 갱신)
+                if now.hour == 7 and now.minute == 0:
+                    print("🇺🇸 [오토파일럿] US 독성 부검(us_toxic_graveyard_analyzer) 비블로킹 기동…")
+                    _spawn_py_script("us_toxic_graveyard_analyzer.py", "us_toxic_0700")
+                    time.sleep(60)
+
+                # 🌌 매주 토요일 00:00 — 합성 OHLCV 생성기 (무거움 → 프로세스 분리)
+                elif now.weekday() == 5 and now.hour == 0 and now.minute == 0:
+                    print("⏳ [오토파일럿] 정신과 시간의 방(합성 데이터 생성) 비블로킹 기동…")
+                    _spawn_python_exec(
+                        (
+                            "import sys, os; sys.path.insert(0, %r); os.chdir(%r); "
+                            "import synthetic_data_generator as S; "
+                            "fn = getattr(S, 'stress_test_mutants', None); "
+                            "(fn() if callable(fn) else S.generate_all_parallel_universes())"
+                        )
+                        % (_FACTORY_ROOT, _FACTORY_ROOT),
+                        "synthetic_lab_sat0000",
+                    )
+                    time.sleep(60)
+
+                # 🛡 매주 토요일 01:00 — 그림자 장부 성과 평가
+                elif now.weekday() == 5 and now.hour == 1 and now.minute == 0:
+                    print("🛡️ [오토파일럿] 그림자 장부 비블로킹 기동…")
+                    _spawn_py_script("shadow_performance_tracker.py", "shadow_perf_sat0100")
+                    time.sleep(60)
+
+                # 🧬 매주 토요일 02:00 — 인큐베이터 (합성 돌연변이 평가)
+                elif now.weekday() == 5 and now.hour == 2 and now.minute == 0:
+                    print("🧬 [오토파일럿] incubator_engine 비블로킹 기동…")
+                    _spawn_py_script("incubator_engine.py", "incubator_sat0200")
+                    time.sleep(60)
+
+                # ✅ 매주 토요일 03:00 — 뮤턴트 OOS 검증 (Hall of Fame 실데이터 게이트)
+                elif now.weekday() == 5 and now.hour == 3 and now.minute == 0:
+                    print("✅ [오토파일럿] mutant_oos_validator 비블로킹 기동…")
+                    _spawn_py_script("mutant_oos_validator.py", "mutant_oos_sat0300")
+                    time.sleep(60)
+
+                # 🔬 매일 06:00 — 미국 장 마감 직후 DNA 부검 (US 전용)
+                elif now.hour == 6 and now.minute == 0:
+                    print("🔬 [오토파일럿] limit_up_forensics US 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("US",))\n',
+                        "limit_up_us_0600",
+                    )
+                    time.sleep(60)
+
+                # 🚨 매일 08:00 — 거시 둠스데이 레이더 (스크립트 엔트리 = main())
+                elif now.hour == 8 and now.minute == 0:
+                    print("🚨 [오토파일럿] macro_doomsday_bot 비블로킹 기동…")
+                    _spawn_py_script("macro_doomsday_bot.py", "doomsday_0800")
+                    time.sleep(60)
+
+                # 🔭 평일 09:05 — forensics_pioneer KR
+                elif now.weekday() < 5 and now.hour == 9 and now.minute == 5:
+                    print("🔭 [오토파일럿] forensics_pioneer KR 비블로킹 기동…")
+                    _spawn_satellite_argv(
+                        [sys.executable, os.path.join(_FACTORY_ROOT, "forensics_pioneer.py"), "KR"],
+                        "forensics_kr_0905",
+                    )
+                    time.sleep(60)
+
+                # 1. 토요일 10:00 — 자율 튜닝(뇌수술) — 동일 파일 서브프로세스
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+                    print("🚀 주말 관제탑 자율 튜닝(뇌수술) 비블로킹 기동…")
+                    autop = os.path.join(_FACTORY_ROOT, "system_auto_pilot.py")
+                    _spawn_satellite_argv(
+                        [sys.executable, autop, "--run-autonomous-analysis-only"],
+                        "autonomous_sat1000",
+                    )
+                    time.sleep(60)
+
+                # 2. 토요일 10:05 — 주간 Flow 리포트 (가벼움·동기 유지)
                 elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
                     try:
                         print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
@@ -1744,78 +1944,51 @@ def system_main_loop():
                         print(f"⚠️ 주간 결과지 발송 실패(무시): {e}")
                     time.sleep(60)
 
-                # 3. 토요일 오전 10시 10분: 새 뇌(Config) 기반 과거 폭락장 타임머신 검증 자동 실행
+                # 3. 토요일 10:10 — 타임머신 백테스트 (동일 인자 유지)
                 elif now.weekday() == 5 and now.hour == 10 and now.minute == 10:
-                    try:
-                        import time_machine_backtester
-                        print("🚀 [오토파일럿] 새 파라미터 기반 과거 폭락장 검증(타임머신) 시작...")
-                        # 시총 상위 종목들로 1회 자동 검증 실행
-                        time_machine_backtester.run_time_machine_backtest("COVID-19 코로나 폭락장", ['005930', '000660', '035420'])
-                    except Exception as e:
-                        print(f"⚠️ 백테스터 자동 실행 실패: {e}")
+                    print("🚀 [오토파일럿] time_machine_backtester 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import time_machine_backtester as T\n'
+                        'T.run_time_machine_backtest('
+                        '"COVID-19 코로나 폭락장", ["005930", "000660", "035420"])\n',
+                        "time_machine_sat1010",
+                    )
                     time.sleep(60)
 
-                # 🔬 매일 06시 00분: 미국 장 마감 직후 DNA 부검 (US 전용)
-                elif now.hour == 6 and now.minute == 0:
-                    try:
-                        import limit_up_forensics
-                        print("🔬 [오토파일럿] 글로벌 DNA — 미국 장 마감 부검 (US)...")
-                        limit_up_forensics.run_limit_up_forensics(markets=("US",))
-                    except Exception as e:
-                        print(f"⚠️ US DNA 부검 실패: {e}")
+                # 🔬 매일 11:50 — KR 상한가 부검
+                elif now.hour == 11 and now.minute == 50:
+                    print("🔬 [오토파일럿] limit_up_forensics KR (11:50) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("KR",))\n',
+                        "limit_up_kr_1150",
+                    )
                     time.sleep(60)
 
-                # 🚨 매일 오전 08시 00분: 거시경제 둠스데이 레이더 스캔 (개장 전 선제 방어)
-                elif now.hour == 8 and now.minute == 0:
-                    try:
-                        import macro_doomsday_bot
-                        print("🚨 [오토파일럿] 거시경제 둠스데이 레이더 스캔 중...")
-                        macro_doomsday_bot.run_doomsday_radar()
-                    except Exception as e:
-                        print(f"⚠️ 둠스데이 레이더 가동 실패: {e}")
+                # 🔬 매일 15:40 — KR 상한가 최종 부검
+                elif now.hour == 15 and now.minute == 40:
+                    print("🔬 [오토파일럿] limit_up_forensics KR (15:40) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("KR",))\n',
+                        "limit_up_kr_1540",
+                    )
                     time.sleep(60)
 
-                # 🔭 평일 09시 05분: 부검 Pioneer — 한국 장 개장 구간 스캔
-                elif now.weekday() < 5 and now.hour == 9 and now.minute == 5:
-                    try:
-                        import forensics_pioneer
-                        print("🔭 [오토파일럿] forensics_pioneer — KR 장 스캔...")
-                        forensics_pioneer.run_forensics_pioneer("KR")
-                    except Exception as e:
-                        print(f"⚠️ forensics_pioneer KR 실패: {e}")
-                    time.sleep(60)
-
-                # 🔭 매일 22시 35분: 부검 Pioneer — 미국 장 시간대 스캔
-                elif now.hour == 22 and now.minute == 35:
-                    try:
-                        import forensics_pioneer
-                        print("🔭 [오토파일럿] forensics_pioneer — US 장 스캔...")
-                        forensics_pioneer.run_forensics_pioneer("US")
-                    except Exception as e:
-                        print(f"⚠️ forensics_pioneer US 실패: {e}")
-                    time.sleep(60)
-
-                # 💡 매일 16시 10분: 스마트 머니(다크풀/기관) 레이더 자동 가동
+                # 💡 매일 16:10 — 스마트 머니 레이더
                 elif now.hour == 16 and now.minute == 10:
-                    try:
-                        import smart_money_tracker
-                        print("🔄 [오토파일럿] 스마트 머니 레이더 자동 가동 중...")
-                        smart_money_tracker.run_smart_money_tracker()
-                    except Exception as e:
-                        print(f"⚠️ 스마트 머니 레이더 가동 실패: {e}")
+                    print("🔄 [오토파일럿] smart_money_tracker 비블로킹 기동…")
+                    _spawn_py_script("smart_money_tracker.py", "smart_money_1610")
                     time.sleep(60)
 
-                # 🔬 평일 16시 20분: 상한가 과거 30일 역추적 DNA (limit_up_forensics)
+                # 🔬 평일 16:20 — KR 상한가 부검소
                 elif now.weekday() < 5 and now.hour == 16 and now.minute == 20:
-                    try:
-                        import limit_up_forensics
-                        print("🔬 [오토파일럿] 상한가 해부학 부검소(선취매 DNA) 가동...")
-                        limit_up_forensics.run_limit_up_forensics(markets=("KR",))
-                    except Exception as e:
-                        print(f"⚠️ 상한가 부검소 가동 실패: {e}")
+                    print("🔬 [오토파일럿] limit_up_forensics KR (16:20) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("KR",))\n',
+                        "limit_up_kr_1620",
+                    )
                     time.sleep(60)
 
-                # 4. 매일 16시 30분: 장마감 결과지 발송 (리포트 플래그 기반)
+                # 4. 매일 16:30 — 장마감 결과지 (텔레그램·동기 유지)
                 elif now.hour == 16 and now.minute == 30:
                     try:
                         cfg = load_config()
@@ -1827,104 +2000,48 @@ def system_main_loop():
                         print(f"⚠️ 16:30 결과지 발송 실패: {e}")
                     time.sleep(60)
 
-                # 5. 매일 17시 00분: 거시 둠스데이 레이더 (국채·원자재·신용)
+                # 5. 매일 17:00 — 둠스데이 레이더
                 elif now.hour == 17 and now.minute == 0:
-                    try:
-                        import macro_doomsday_bot
-                        print("🚨 [오토파일럿] 둠스데이 레이더 가동...")
-                        macro_doomsday_bot.run_doomsday_radar()
-                    except Exception as e:
-                        print(f"⚠️ 둠스데이 레이더 실패: {e}")
+                    print("🚨 [오토파일럿] macro_doomsday_bot (17:00) 비블로킹 기동…")
+                    _spawn_py_script("macro_doomsday_bot.py", "doomsday_1700")
                     time.sleep(60)
 
-                # 6. 매일 18시 30분: 센티먼트(뉴스 심리) 마이닝 공장 가동
+                # 6. 매일 18:30 — 센티먼트 마이닝
                 elif now.hour == 18 and now.minute == 30:
-                    try:
-                        import sentiment_miner
-                        print("🧠 [오토파일럿] 센티먼트 마이닝 자동 가동 중...")
-                        sentiment_miner.run_sentiment_mining()
-                    except Exception as e:
-                        print(f"⚠️ 센티먼트 수집 실패: {e}")
+                    print("🧠 [오토파일럿] sentiment_miner 비블로킹 기동…")
+                    _spawn_py_script("sentiment_miner.py", "sentiment_1830")
                     time.sleep(60)
 
-                # 💡 매주 일요일 새벽 02시 00분: 오답노트 블랙박스 부검(Graveyard ML) 자동 가동
+                # 💀 매주 일요 02:00 — KR 독성 부검 (Graveyard ML)
                 elif now.weekday() == 6 and now.hour == 2 and now.minute == 0:
-                    try:
-                        import toxic_graveyard_analyzer
-                        print("💀 [오토파일럿] 참사주 독성 패턴 부검소 자동 가동 중...")
-                        toxic_graveyard_analyzer.run_graveyard_autopsy()
-                    except Exception as e:
-                        print(f"⚠️ 독성 부검소 가동 실패: {e}")
+                    print("💀 [오토파일럿] toxic_graveyard_analyzer 비블로킹 기동…")
+                    _spawn_py_script("toxic_graveyard_analyzer.py", "toxic_kr_sun0200")
                     time.sleep(60)
 
-                # 7. 매일 19시 정각: 독성 패턴(Decision Tree) 부검소 자동 가동
+                # 7. 매일 19:00 — KR 독성 부검 (일간)
                 elif now.hour == 19 and now.minute == 0:
-                    try:
-                        import toxic_graveyard_analyzer
-                        print("💀 [오토파일럿] 블랙박스 독성 패턴 부검 가동...")
-                        toxic_graveyard_analyzer.run_graveyard_autopsy()
-                    except Exception as e:
-                        print(f"⚠️ 독성 부검 실행 실패: {e}")
+                    print("💀 [오토파일럿] toxic_graveyard_analyzer (일간) 비블로킹 기동…")
+                    _spawn_py_script("toxic_graveyard_analyzer.py", "toxic_kr_1900")
                     time.sleep(60)
 
-                # 🚨 매일 오전 08시 30분: 블랙홀 스캐너 가동 (둠스데이 직후 개장 전 숏 타겟 스캔)
+                # 🕳 매일 08:30 — 블랙홀 스캐너 (07:00 US ML 산출 이후)
                 elif now.hour == 8 and now.minute == 30:
-                    try:
-                        import blackhole_hunter
-                        print("🕳️ [오토파일럿] 블랙홀 스캐너(인버스 타점) 자동 가동 중...")
-                        blackhole_hunter.scan_blackhole_targets()
-                    except Exception as e:
-                        print(f"⚠️ 블랙홀 스캐너 가동 실패: {e}")
+                    print("🕳️ [오토파일럿] blackhole_hunter 비블로킹 기동…")
+                    _spawn_py_script("blackhole_hunter.py", "blackhole_0830")
                     time.sleep(60)
 
-                # 🔬 매일 11시 50분 (오전장 상한가 부검)
-                elif now.hour == 11 and now.minute == 50:
-                    try:
-                        import limit_up_forensics
-                        limit_up_forensics.run_limit_up_forensics(markets=("KR",))
-                    except: pass
+                # 🔭 매일 22:35 — forensics_pioneer US
+                elif now.hour == 22 and now.minute == 35:
+                    print("🔭 [오토파일럿] forensics_pioneer US 비블로킹 기동…")
+                    _spawn_satellite_argv(
+                        [sys.executable, os.path.join(_FACTORY_ROOT, "forensics_pioneer.py"), "US"],
+                        "forensics_us_2235",
+                    )
                     time.sleep(60)
 
-                # 🔬 매일 15시 40분 (장 마감 직후 상한가 최종 부검)
-                elif now.hour == 15 and now.minute == 40:
-                    try:
-                        import limit_up_forensics
-                        limit_up_forensics.run_limit_up_forensics(markets=("KR",))
-                    except: pass
-                    time.sleep(60)
+                # 💡 매 루프(최대 1분 간격): ops_snapshot 시계열 + 인버스 스나이퍼
+                _minute_ops_snapshot_and_inverse_cycle()
 
-                # 🌌 매주 토요일 새벽 00시 00분: 정신과 시간의 방 (합성 데이터 스트레스 테스트)
-                elif now.weekday() == 5 and now.hour == 0 and now.minute == 0:
-                    try:
-                        import synthetic_data_generator
-                        print("⏳ [오토파일럿] 정신과 시간의 방(가상 10만 차트 테스트) 자동 가동 중...")
-                        synthetic_data_generator.stress_test_mutants()
-                    except Exception as e:
-                        print(f"⚠️ 정신과 시간의 방 가동 실패: {e}")
-                    time.sleep(60)
-
-                # 🛡️ 매주 토요일 새벽 01시 00분: 그림자 장부 (위성 기여도/방어력 평가) 자동 가동
-                elif now.weekday() == 5 and now.hour == 1 and now.minute == 0:
-                    try:
-                        import shadow_performance_tracker
-                        print("🛡️ [오토파일럿] 그림자 장부(위성 성과 평가) 자동 부검 중...")
-
-                        if hasattr(shadow_performance_tracker, "run_shadow_performance_evaluation"):
-                            shadow_performance_tracker.run_shadow_performance_evaluation()
-                        elif hasattr(shadow_performance_tracker, "evaluate_shadow_performance"):
-                            shadow_performance_tracker.evaluate_shadow_performance()
-                        else:
-                            _root = os.path.dirname(os.path.abspath(__file__))
-                            _sp = os.path.join(_root, "shadow_performance_tracker.py")
-                            subprocess.run(
-                                [sys.executable, _sp],
-                                cwd=_root,
-                                check=False,
-                            )
-                    except Exception as e:
-                        print(f"⚠️ 그림자 장부 가동 실패: {e}")
-                    time.sleep(60)
-                    
             time.sleep(30)
         except Exception as e:
             err_msg = f"🚨 <b>[오토파일럿 뇌수술 에러]</b> 주말 자율 학습 중 에러 발생:\n{e}"
@@ -1933,4 +2050,7 @@ def system_main_loop():
             time.sleep(300) # 에러 후 5분 대기
 
 if __name__ == "__main__":
-    system_main_loop()
+    if len(sys.argv) > 1 and sys.argv[1] == "--run-autonomous-analysis-only":
+        run_autonomous_analysis()
+    else:
+        system_main_loop()

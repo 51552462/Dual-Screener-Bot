@@ -15,12 +15,12 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from market_db_paths import market_db_read_path
+
 # 페이지 기본 설정
 st.set_page_config(page_title="Dante Quant Sector Heatmap", layout="wide")
 st.title("🔥 KOSPI/KOSDAQ 실시간 섹터 자금 흐름 히트맵")
 st.markdown("시장의 피(자금)가 어디로 쏠리고 있는지 우주에서 내려다봅니다. **실제 등락률·거래대금·시총** 기준입니다.")
-
-DB_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
 
 
 def _pick_col(df: pd.DataFrame, *needles: str) -> Optional[str]:
@@ -205,12 +205,18 @@ def load_factory_open_codes() -> Tuple[set, str]:
     """
     codes: set = set()
     err = ""
-    if not os.path.exists(DB_PATH):
+    db_path = market_db_read_path()
+    if not os.path.exists(db_path):
         return codes, "no_db"
 
     for attempt in range(8):
         try:
-            conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30.0, check_same_thread=False)
+            conn = sqlite3.connect(
+                f"file:{db_path.replace(os.sep, '/')}?mode=ro",
+                uri=True,
+                timeout=30.0,
+                check_same_thread=False,
+            )
             try:
                 conn.execute("PRAGMA query_only=ON;")
             except sqlite3.OperationalError:

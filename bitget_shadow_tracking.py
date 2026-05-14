@@ -13,6 +13,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
 
 
+def _toxic_ml_antipatterns_rule_map(ml_obj: object) -> dict:
+    if not isinstance(ml_obj, dict):
+        return {}
+    inner = ml_obj.get("rules")
+    if isinstance(inner, dict):
+        return inner
+    return {k: v for k, v in ml_obj.items() if k != "_metadata"}
+
+
 def init_shadow_tables(cursor) -> None:
     """bitget_forward_trades 초기화와 동일 커넥션에서 호출: 차단/그림자 테이블 생성."""
     cursor.execute(
@@ -73,8 +82,8 @@ def build_satellite_tags(config: dict) -> str:
             parts.append("DEFCON=?")
     parts.append(f"GLOBAL_CIRCUIT_BREAKER={config.get('GLOBAL_CIRCUIT_BREAKER', 'OFF')}")
     parts.append(f"BREADTH={config.get('CRYPTO_BREADTH_STATUS', 'UNKNOWN')}")
-    tox_ml = config.get("TOXIC_ML_ANTIPATTERNS")
-    if isinstance(tox_ml, dict) and len(tox_ml) > 0:
+    tox_rules = _toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS"))
+    if isinstance(tox_rules, dict) and len(tox_rules) > 0:
         parts.append("TOXIC_ML_RULES=yes")
     else:
         parts.append("TOXIC_ML_RULES=no")

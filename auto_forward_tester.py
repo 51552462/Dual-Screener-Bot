@@ -11,12 +11,34 @@ from datetime import datetime, timedelta
 import pytz
 import sqlite3
 import json
+from dotenv import load_dotenv
 
-TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
-TELEGRAM_CHAT_ID = "6838834566"
+load_dotenv()
+TELEGRAM_TOKEN_MAIN = (
+    os.environ.get("TELEGRAM_TOKEN_MAIN") or os.environ.get("TELEGRAM_TOKEN") or ""
+).strip()
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+
+from market_db_paths import MARKET_DATA_DB_PATH, market_db_read_path
 
 # 💡 [방향성 2번] 전문적인 DB 시스템 (CSV 폐기)
-DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+DB_PATH = MARKET_DATA_DB_PATH
+
+
+def _open_market_db_ro():
+    """무거운 집계 전용: 스냅샷이 있으면 읽기 복제본(uri=ro), 없으면 메인 DB."""
+    uri_path = market_db_read_path().replace("\\", "/")
+    return sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
+
+
+def _toxic_ml_antipatterns_rule_map(ml_obj):
+    """TOXIC_ML_ANTIPATTERNS: {_metadata, rules} 래퍼 또는 구형 평면 dict → 규칙 dict만."""
+    if not isinstance(ml_obj, dict):
+        return {}
+    inner = ml_obj.get("rules")
+    if isinstance(inner, dict):
+        return inner
+    return {k: v for k, v in ml_obj.items() if k != "_metadata"}
 
 
 def _strategy_colosseum_brief(db_path):
@@ -307,8 +329,11 @@ def _shadow_reason_defense_is_opportunity_cost_loss(shadow_perf, reason_key):
 
 
 def send_telegram_msg(text):
+    if not TELEGRAM_TOKEN_MAIN or not TELEGRAM_CHAT_ID:
+        print("⚠️ [텔레그램] TELEGRAM_TOKEN_MAIN / TELEGRAM_CHAT_ID 미설정(.env) — 메시지 스킵")
+        return
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage"
         # 텔레그램은 1회 전송 시 4096자 제한이 있음. 방대한 리포트를 안전하게 4000자씩 분할 전송
         max_len = 4000
         chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
@@ -414,57 +439,8 @@ def init_forward_db():
     conn.commit()
     conn.close()
 
-# 💡 [시스템 연결] 관제탑 설정 로드 함수 추가 (init_forward_db 밑에 추가)
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-
-
-def load_config(max_retries=5):
-    """
-    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
-    """
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
-
-
-def save_config(config, max_retries=5):
-    """
-    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
-    """
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=4, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
-        except Exception as e:
-            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-            return False
-    return False
+# 💡 [시스템 연결] 관제탑 설정 — 동시 쓰기 완화(파일 락 + update_config)
+from system_config_atomic import CONFIG_PATH, load_config, save_config, update_config
 
 
 def load_system_config():
@@ -714,6 +690,35 @@ def evaluate_toxic_bbox_match(
     return bool(match_flags) and all(match_flags)
 
 
+def get_smart_money_avg_price_from_ssot(sys_config: dict, code: object) -> float:
+    """
+    스마트머니 잠재 평단(SSOT): `smart_money_tracker.py` 가 기록한
+    system_config['SMART_MONEY_RADAR']['picks'][종목코드]['avg_price'] 만 사용.
+    실험용 smart_money_targets.json / smart_money_kalman 경로는 사용하지 않음.
+    """
+    try:
+        if not isinstance(sys_config, dict):
+            return 0.0
+        rad = sys_config.get("SMART_MONEY_RADAR") or {}
+        picks = rad.get("picks", {}) if isinstance(rad, dict) else {}
+        if not isinstance(picks, dict):
+            return 0.0
+        code_str = str(code).strip()
+        smart_info = picks.get(code_str)
+        if smart_info is None:
+            smart_info = picks.get(str(code))
+        if smart_info is None:
+            try:
+                smart_info = picks.get(str(int(code_str)))
+            except (TypeError, ValueError):
+                smart_info = None
+        if isinstance(smart_info, dict):
+            return float(smart_info.get("avg_price", 0) or 0)
+    except (TypeError, ValueError, Exception):
+        pass
+    return 0.0
+
+
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
@@ -779,7 +784,7 @@ def try_add_virtual_position(
             return False, "🛑 둠스데이 방어막 작동: 거시경제 발작으로 롱 포지션 진입 차단"
 
     _ap = pre_sys_config.get("ANTI_PATTERNS")
-    _ml = pre_sys_config.get("TOXIC_ML_ANTIPATTERNS")
+    _ml = _toxic_ml_antipatterns_rule_map(pre_sys_config.get("TOXIC_ML_ANTIPATTERNS"))
     merged_anti = {}
     if isinstance(_ap, dict):
         merged_anti.update(_ap)
@@ -787,7 +792,7 @@ def try_add_virtual_position(
         for _i, _bounds in enumerate(_ap):
             if isinstance(_bounds, dict):
                 merged_anti[f"PATTERN_{_i}"] = _bounds
-    if isinstance(_ml, dict):
+    if isinstance(_ml, dict) and _ml:
         merged_anti = {**merged_anti, **_ml}
 
     facts_d = facts if isinstance(facts, dict) else {}
@@ -827,29 +832,17 @@ def try_add_virtual_position(
                 pass
             return False, "💀 안티패턴 면역 차단: 과거 치명적 참사주 DNA와 일치함"
 
-    _radar = pre_sys_config.get("SMART_MONEY_RADAR") or {}
-    _picks = _radar.get("picks", {}) if isinstance(_radar, dict) else {}
-    if not isinstance(_picks, dict):
-        _picks = {}
-    smart_info = _picks.get(code_str)
-    if smart_info is None:
-        smart_info = _picks.get(str(code))
-    if smart_info is None:
-        try:
-            smart_info = _picks.get(str(int(code_str)))
-        except (TypeError, ValueError):
-            smart_info = None
-    if isinstance(smart_info, dict):
-        try:
-            avg_price = float(smart_info.get("avg_price", 0) or 0)
-        except (TypeError, ValueError):
-            avg_price = 0.0
-        try:
-            ep_f = float(ep)
-        except (TypeError, ValueError):
-            ep_f = 0.0
-        if avg_price > 0 and abs(ep_f - avg_price) / avg_price <= 0.03:
-            sig_type = f"{sig_type} [🕵️세력매집_교차검증]"
+    try:
+        avg_price = get_smart_money_avg_price_from_ssot(pre_sys_config, code_str)
+        if avg_price > 0:
+            try:
+                ep_f = float(ep)
+            except (TypeError, ValueError):
+                ep_f = 0.0
+            if abs(ep_f - avg_price) / avg_price <= 0.03:
+                sig_type = f"{sig_type} [🕵️세력매집_교차검증]"
+    except Exception:
+        pass
     
     # 💡 [V13.0 가상매매] 10점 단위 정밀 버킷 생성 (예: 85점 -> 80점대)
     score_bucket = int(score // 10) * 10
@@ -1803,7 +1796,7 @@ def send_comprehensive_daily_report():
 
     ranking_brief = ""
     try:
-        ranking_brief = _strategy_colosseum_brief(DB_PATH)
+        ranking_brief = _strategy_colosseum_brief(market_db_read_path())
     except Exception:
         ranking_brief = ""
 
@@ -1829,9 +1822,8 @@ def send_comprehensive_daily_report():
         treasury_balance = sys_config.get(f"CENTRAL_TREASURY_{market}", 0)
         
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=60)
-            conn.execute("PRAGMA journal_mode=WAL;")
-            
+            conn = _open_market_db_ro()
+
             # [사전 데이터 로드] — INCUBATOR 섀도우는 본계좌 누적 손익·리더보드 등에서 제외
             df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}'", conn)
             _sig_s = df_all['sig_type'].astype(str)
@@ -2206,8 +2198,7 @@ def run_deep_dive_analysis(market='KR'):
     대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
     """
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;") # 💡 추가
+        conn = _open_market_db_ro()
         df = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}' AND status LIKE 'CLOSED%'", conn)
         conn.close()
         
@@ -2392,8 +2383,7 @@ def run_deep_dive_analysis(market='KR'):
                     if any(k in s_str for k in ["소비", "유통", "식품", "화장품", "엔터", "미디어"]): return "소비재/엔터"
                     return "기타/혼합"
 
-                conn = sqlite3.connect(DB_PATH, timeout=60)
-                conn.execute("PRAGMA journal_mode=WAL;")
+                conn = _open_market_db_ro()
                 us_df = pd.read_sql("SELECT entry_date, sector FROM forward_trades WHERE market='US' AND entry_date >= date('now', '-30 days')", conn)
                 kr_df = pd.read_sql("SELECT entry_date, sector FROM forward_trades WHERE market='KR' AND entry_date >= date('now', '-30 days')", conn)
                 conn.close()
@@ -2472,8 +2462,7 @@ def run_deep_dive_analysis(market='KR'):
         # ---------------------------------------------------------
         report_msg += f"\n🔄 <b>[V29.0 {market}장 주도 섹터 순환매 자금 추적]</b>\n"
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=60)
-            conn.execute("PRAGMA journal_mode=WAL;")
+            conn = _open_market_db_ro()
             # 최근 60일치 거시 데이터 스캔
             rot_df = pd.read_sql(f"SELECT entry_date, sector FROM forward_trades WHERE market='{market}' AND entry_date >= date('now', '-60 days') ORDER BY entry_date ASC", conn)
 
