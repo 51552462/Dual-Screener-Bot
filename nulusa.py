@@ -77,11 +77,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리)
-TELEGRAM_TOKEN_MAIN  = "8730246628:AAH5aShPxQzYn6AfOAod65I62W2Qy1PLN9Y"
-TELEGRAM_TOKEN_PROMO = "8749364800:AAGEFhSMpugDApXwfszngCz8uC0cBsvZbSI"
-TELEGRAM_CHAT_ID     = "6838834566"
-SEND_TELEGRAM        = True
+# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — .env → telegram_env
+import telegram_env
+
+TELEGRAM_TOKEN_MAIN = telegram_env.get_equity_us_main_token()
+TELEGRAM_TOKEN_PROMO = telegram_env.get_equity_us_promo_token()
+TELEGRAM_CHAT_ID = telegram_env.get_equity_us_factory_chat_id()
+SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
 
 from telegram_message_queue import (
     enqueue_telegram,
@@ -91,7 +93,7 @@ from telegram_message_queue import (
 
 start_telegram_queue_daemons(
     TELEGRAM_TOKEN_MAIN,
-    TELEGRAM_TOKEN_PROMO,
+    TELEGRAM_TOKEN_PROMO or TELEGRAM_TOKEN_MAIN,
     TELEGRAM_CHAT_ID,
     SEND_TELEGRAM,
 )

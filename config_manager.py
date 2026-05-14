@@ -11,12 +11,16 @@
 하위 호환: system_config_atomic.py 가 기대하는 CONFIG_PATH·샤드 경로·
 load_system_config / save_system_config / update_system_config 유지.
 DB가 비어 있으면 기존 JSON(legacy + 샤드 파일)을 읽기 전용으로 병합해 반환한다.
+
+비밀(API 키·토큰·비밀번호 등)은 .env 만 사용한다. SQLite/JSON 에 실수로 들어간
+민감 키 이름은 저장·로드 시 `strip_sensitive_from_config_obj` 로 제거한다.
 """
 from __future__ import annotations
 
 import json
 import os
 import random
+import re
 import sqlite3
 import time
 from typing import Any, Callable, Mapping, Optional
@@ -24,6 +28,32 @@ from typing import Any, Callable, Mapping, Optional
 import low_ram_sqlite_pragmas
 import sqlite_schema_guard
 from factory_data_paths import factory_data_dir
+
+# 비밀·토큰은 .env 만 사용. JSON/SQLite 설정에 실수로 들어온 키는 저장·로드 시 제거한다.
+_SENSITIVE_KEY_RE = re.compile(
+    r"(TOKEN|SECRET|PASSPHRASE|PASSWORD|PRIVATE[_-]?KEY|API[_-]?KEY|CREDENTIAL|AUTHORIZATION|WEBHOOK)",
+    re.I,
+)
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    return bool(_SENSITIVE_KEY_RE.search(str(key)))
+
+
+def strip_sensitive_from_config_obj(obj: Any) -> Any:
+    """dict/list 재귀: 민감해 보이는 키는 제거. 스칼라는 그대로."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            ks = str(k)
+            if _is_sensitive_config_key(ks):
+                continue
+            out[ks] = strip_sensitive_from_config_obj(v)
+        return out
+    if isinstance(obj, list):
+        return [strip_sensitive_from_config_obj(x) for x in obj]
+    return obj
+
 
 # ---------------------------------------------------------------------------
 # 경로 (기존 system_config.json과 동일 디렉터리 = factory_data_dir())
@@ -295,8 +325,12 @@ def set_config_value(key: str, value: Any) -> None:
     """단순 덮어쓰기. 존재하면 version + 1, 없으면 version = 1 로 INSERT."""
     if not key:
         raise ValueError("config key must be non-empty")
+    if _is_sensitive_config_key(key):
+        raise ValueError(
+            f"config key {key!r} looks like a secret; use .env (telegram_env / BITGET_* ) instead"
+        )
 
-    payload = _encode_json(value)
+    payload = _encode_json(strip_sensitive_from_config_obj(value) if isinstance(value, (dict, list)) else value)
 
     def _write() -> None:
         conn = _connect()
@@ -355,6 +389,8 @@ def update_config_value(
 
             if row is None:
                 new_val = modifier_func(None)
+                if isinstance(new_val, (dict, list)):
+                    new_val = strip_sensitive_from_config_obj(new_val)
                 new_json = _encode_json(new_val)
                 try:
                     conn.execute(
@@ -374,6 +410,8 @@ def update_config_value(
                 cur_ver = int(row["version"])
                 old_val = _decode_json(str(row["value_json"]))
                 new_val = modifier_func(old_val)
+                if isinstance(new_val, (dict, list)):
+                    new_val = strip_sensitive_from_config_obj(new_val)
                 new_json = _encode_json(new_val)
                 cur2 = conn.execute(
                     """
@@ -441,8 +479,8 @@ def load_system_config(max_retries: int = 5) -> dict[str, Any]:
         blob = {}
 
     if blob:
-        return blob
-    return _load_legacy_merged_view(max_retries=max_retries)
+        return strip_sensitive_from_config_obj(blob)
+    return strip_sensitive_from_config_obj(_load_legacy_merged_view(max_retries=max_retries))
 
 
 def save_system_config(config_data: Mapping[str, Any], max_retries: int = 5) -> bool:
@@ -452,6 +490,7 @@ def save_system_config(config_data: Mapping[str, Any], max_retries: int = 5) -> 
     """
     if not isinstance(config_data, dict):
         return False
+    config_data = strip_sensitive_from_config_obj(dict(config_data))
 
     def _save() -> None:
         conn = _connect()
@@ -487,7 +526,7 @@ def update_system_config(updates_dict: Mapping[str, Any], max_retries: int = 5) 
     if not isinstance(updates_dict, dict) or not updates_dict:
         return True
     merged = load_system_config(max_retries=max_retries)
-    merged.update(dict(updates_dict))
+    merged.update(strip_sensitive_from_config_obj(dict(updates_dict)))
     return save_system_config(merged, max_retries=max_retries)
 
 

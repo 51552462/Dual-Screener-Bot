@@ -21,11 +21,13 @@ except Exception:
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or ""
 # 👆
 
+import telegram_env
+
 # ==========================================
 # 💡 [환경 설정 및 API 연결]
 # ==========================================
-TELEGRAM_TOKEN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
-TELEGRAM_CHAT_ID = "6838834566"
+TELEGRAM_TOKEN = telegram_env.get_overseer_token()
+TELEGRAM_CHAT_ID = telegram_env.get_overseer_chat_id()
 
 # (이하 DB_PATH 등 시스템 경로 설정 코드는 그대로 유지...)
 

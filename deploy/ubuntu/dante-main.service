@@ -1,6 +1,6 @@
 [Unit]
-Description=Dante quant factory — scanners & autopilot core (main.py)
-Documentation=file://@@INSTALL_ROOT@@/RUNBOOK.md
+Description=Dante quant factory — scanners & trading core (main.py)
+Documentation=file:///home/ubuntu/dante_bots/Dual-Screener-Bot/RUNBOOK.md
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300
@@ -10,9 +10,9 @@ StartLimitBurst=5
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=@@INSTALL_ROOT@@
-EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/.venv/bin/python -u @@INSTALL_ROOT@@/main.py
+WorkingDirectory=/home/ubuntu/dante_bots/Dual-Screener-Bot
+EnvironmentFile=-/home/ubuntu/dante_bots/Dual-Screener-Bot/.env
+ExecStart=/home/ubuntu/dante_bots/Dual-Screener-Bot/.venv/bin/python -u /home/ubuntu/dante_bots/Dual-Screener-Bot/main.py
 Restart=on-failure
 RestartSec=5
 KillMode=mixed

@@ -11,7 +11,8 @@
 #   LOCAL_ARCHIVE_DIR  — BACKUP_MODE=local 일 때 .tar.gz 저장 디렉터리
 #   RETENTION_DAYS     — LOCAL 만: 오래된 아카이브 삭제 (기본 21)
 #
-# crontab 예 (매일 새벽 3시):
+# systemd: deploy_quant_factory.sh 가 dante-backup.timer 로 매일 호출 (crontab 불필요).
+# 수동 crontab 예 (매일 새벽 3시):
 #   0 3 * * * INSTALL_ROOT=/home/ubuntu/dante_bots/Dual-Screener-Bot S3_BUCKET=s3://my-bucket/prefix/ /home/ubuntu/dante_bots/Dual-Screener-Bot/backup_to_cloud.sh >>/var/log/dante-backup.log 2>&1
 # =============================================================================
 set -euo pipefail

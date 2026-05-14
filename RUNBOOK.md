@@ -10,6 +10,7 @@
 | `dante-async.service` | 비동기 텔레그램 (`async_telegram_daemon.py`, 코어와 분리) |
 | `dante-watchdog.timer` | 부팅 **2분** 후 최초 실행, 이후 **5분**마다 `watchdog.py` (oneshot `dante-watchdog.service`) |
 | `dante-snapshot.timer` | CQRS 스냅샷 주기 실행 (`deploy_quant_factory.sh` 일괄 설치 시) |
+| `dante-backup.timer` | 매일 **03:00**(서버 로컬 시각) `backup_to_cloud.sh` (oneshot `dante-backup.service`) — S3/rsync 등은 `.env` |
 
 **표준 업데이트(휴먼 에러 방지):** 저장소 루트에서 아래 **한 줄**만 실행한다.
 
@@ -48,7 +49,7 @@ journalctl -u dante-factory -u dante-dashboard -u dante-async -u dante-watchdog 
 **워치독 타이머 상태:**
 
 ```bash
-systemctl list-timers dante-watchdog.timer --no-pager
+systemctl list-timers dante-watchdog.timer dante-snapshot.timer dante-backup.timer --no-pager
 ```
 
 ---
@@ -77,7 +78,8 @@ sudo systemctl start dante-main dante-streamlit
 
 ## DR 백업 (`backup_to_cloud.sh`)
 
-- **매일 새벽 3시** 예시:  
+- **systemd (권장):** `deploy_quant_factory.sh` 가 `dante-backup.timer` + `dante-backup.service` 를 설치한다. 매일 **03:00** 서버 로컬 시각에 oneshot 실행(스케줄은 `deploy/systemd/dante-backup.timer` 에서 변경). `S3_BUCKET` / `BACKUP_MODE` / `DATA_ROOT` 등은 `INSTALL_ROOT/.env` 에 설정.
+- **crontab (대안):**  
   `0 3 * * * INSTALL_ROOT=/home/ubuntu/dante_bots/Dual-Screener-Bot S3_BUCKET=s3://YOUR-BUCKET/dante-dr/ /home/ubuntu/dante_bots/Dual-Screener-Bot/backup_to_cloud.sh >>/var/log/dante-backup.log 2>&1`
 - **포함:** `market_data.sqlite`, `ops_events.sqlite`, (있으면) `ops_health.sqlite`, `message_queue.sqlite`, `system_config.sqlite`, `system_config.json` — SQLite 는 `sqlite3 ".backup"` 후 tar.gz.
 - **S3:** `aws s3 cp` (IAM 권한·`aws configure` 필요). **rsync:** `BACKUP_MODE=rsync RSYNC_TARGET=user@host:/path/`. **로컬만:** `BACKUP_MODE=local`.

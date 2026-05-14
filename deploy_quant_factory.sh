@@ -3,15 +3,15 @@
 # Dante 퀀트 팩토리 — Ubuntu systemd 네이티브 배포 (Docker 없음)
 #   sudo INSTALL_ROOT=/home/ubuntu/dante_bots/Dual-Screener-Bot ./deploy_quant_factory.sh
 #
-# 설치 대상: dante-factory, dante-dashboard, dante-async, dante-snapshot, dante-watchdog (timer)
+# 설치 대상: dante-factory, dante-dashboard, dante-async, dante-snapshot, dante-watchdog, dante-backup (timer)
 # =============================================================================
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
 
-SERVICES=(dante-factory dante-dashboard dante-async dante-snapshot dante-watchdog)
-TIMERS=(dante-snapshot.timer dante-watchdog.timer)
+SERVICES=(dante-factory dante-dashboard dante-async dante-snapshot dante-watchdog dante-backup)
+TIMERS=(dante-snapshot.timer dante-watchdog.timer dante-backup.timer)
 
 if [[ "${EUID:-0}" -ne 0 ]]; then
   echo "root(sudo)로 실행하세요." >&2

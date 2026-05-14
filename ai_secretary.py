@@ -25,11 +25,13 @@ except Exception:
     genai = None
 
 # ==========================================
-# 🤖 2. 텔레그램 봇 토큰 (3개로 완벽 분리)
+# 🤖 2. 텔레그램 봇 토큰 — .env → telegram_env (시장별 비서)
 # ==========================================
-KR_TOKEN = "7764404352:AAE9ZlpIPusEFd1qGk1VDWJE5cjtTogm4Pw"
-US_TOKEN = "7791873924:AAHcaajPux8r0KVydUqpQjaqAeYlwxrZ7tg"
-NEW_TOKEN = "8004222500:AAFS9rPPtiQiNx4SxGgYOnODFGULqLTNO8M"
+import telegram_env
+
+KR_TOKEN = telegram_env.get_secretary_kr_token()
+US_TOKEN = telegram_env.get_secretary_us_token()
+NEW_TOKEN = telegram_env.get_secretary_new_token()
 
 # 💡 봇 내부 트래픽 통제용 락 (무분별한 API 호출 방어)
 ai_request_lock = threading.Lock()

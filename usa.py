@@ -26,10 +26,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — 자격 증명은 .env 전용
-TELEGRAM_TOKEN_MAIN = (os.environ.get("TELEGRAM_TOKEN_MAIN") or "").strip()
-TELEGRAM_TOKEN_PROMO = (os.environ.get("TELEGRAM_TOKEN_PROMO") or "").strip()
-TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+# 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — 자격 증명은 .env → telegram_env
+import telegram_env
+
+TELEGRAM_TOKEN_MAIN = telegram_env.get_equity_us_main_token()
+TELEGRAM_TOKEN_PROMO = telegram_env.get_equity_us_promo_token()
+TELEGRAM_CHAT_ID = telegram_env.get_equity_us_factory_chat_id()
 SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
 
 from telegram_message_queue import (

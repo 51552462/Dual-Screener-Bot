@@ -25,10 +25,10 @@ scanned_today_cache = {'KR': set(), 'US': set()}
 from system_config_atomic import CONFIG_PATH, load_config, update_config
 
 load_dotenv()
-TELEGRAM_TOKEN_MAIN = (
-    os.environ.get("TELEGRAM_TOKEN_MAIN") or os.environ.get("TELEGRAM_TOKEN") or ""
-).strip()
-TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+import telegram_env
+
+TELEGRAM_TOKEN_MAIN = telegram_env.get_report_token()
+TELEGRAM_CHAT_ID = telegram_env.get_report_chat_id()
 
 def send_telegram_msg(text):
     if not TELEGRAM_TOKEN_MAIN or not TELEGRAM_CHAT_ID:

@@ -25,6 +25,13 @@ ops_logger.configure_root_ops_logging(default_component="main", level=logging.IN
 ops_logger.install_unhandled_exception_hooks()
 logging.captureWarnings(True)
 
+try:
+    import telegram_env
+
+    telegram_env.log_preflight_factory_telegram()
+except Exception:
+    pass
+
 # ==========================================
 # 🇰🇷 한글 폰트 강제 설치
 # ==========================================

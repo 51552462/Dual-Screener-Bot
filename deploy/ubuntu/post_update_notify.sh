@@ -6,7 +6,7 @@
 #   INSTALL_ROOT=/path/to/repo sudo ./deploy/ubuntu/post_update_notify.sh
 #   (보통 update_factory.sh 가 INSTALL_ROOT 를 넘김)
 #
-# TELEGRAM_TOKEN_MAIN / TELEGRAM_CHAT_ID 는 INSTALL_ROOT/.env 에 있어야 함.
+# TELEGRAM 자격 증명은 telegram_env(.env) 통일.
 # =============================================================================
 set -euo pipefail
 
@@ -55,6 +55,7 @@ bits = [
     f"dante-async={_ia('dante-async.service')}",
     f"dante-snapshot.timer={_ia('dante-snapshot.timer')}",
     f"dante-watchdog.timer={_ia('dante-watchdog.timer')}",
+    f"dante-backup.timer={_ia('dante-backup.timer')}",
 ]
 line = ", ".join(bits)
 msg = (
@@ -63,9 +64,17 @@ msg = (
 )
 
 from telegram_message_queue import enqueue_telegram
+from telegram_env import (
+    get_equity_kr_factory_chat_id,
+    get_equity_kr_main_token,
+    get_equity_us_factory_chat_id,
+    get_equity_us_main_token,
+    get_factory_chat_id,
+    get_main_token,
+)
 
-tok = (os.environ.get("TELEGRAM_TOKEN_MAIN") or "").strip()
-cid = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+tok = get_main_token() or get_equity_us_main_token() or get_equity_kr_main_token()
+cid = get_factory_chat_id() or get_equity_us_factory_chat_id() or get_equity_kr_factory_chat_id()
 enabled = bool(tok and cid)
 rid = enqueue_telegram("MAIN", None, msg, enabled=enabled)
 print(f"post_update_notify: enqueue id={rid} enabled={enabled}")

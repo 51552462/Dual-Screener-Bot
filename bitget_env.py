@@ -17,17 +17,16 @@ def bitget_passphrase() -> str:
     return (os.environ.get("BITGET_PASSPHRASE") or os.environ.get("BITGET_API_PASSPHRASE", "") or "").strip()
 
 
+import telegram_env
+
+
 def bitget_telegram_token() -> str:
-    return (
-        os.environ.get("BITGET_TELEGRAM_TOKEN")
-        or os.environ.get("BITGET_TELEGRAM_TOKEN_MAIN", "")
-        or ""
-    ).strip()
+    return telegram_env.get_bitget_bot_token()
 
 
 def bitget_telegram_token_promo() -> str:
-    return (os.environ.get("BITGET_TELEGRAM_TOKEN_PROMO") or bitget_telegram_token()).strip()
+    return telegram_env.get_bitget_promo_token()
 
 
 def bitget_telegram_chat_id() -> str:
-    return (os.environ.get("BITGET_TELEGRAM_CHAT_ID", "") or "").strip()
+    return telegram_env.get_bitget_chat_id()

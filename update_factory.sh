@@ -109,8 +109,8 @@ sudo INSTALL_ROOT="$INSTALL_ROOT" "$REPO_ROOT/deploy_quant_factory.sh"
 echo "[4/6] 장기 서비스 재시작 (코어·대시보드·텔레그램 비동기)"
 systemctl restart dante-factory.service dante-dashboard.service dante-async.service
 
-echo "[5/6] 타이머 재시작 (스냅샷·워치독 스케줄 반영)"
-systemctl restart dante-snapshot.timer dante-watchdog.timer || true
+echo "[5/6] 타이머 재시작 (스냅샷·워치독·DR백업 스케줄 반영)"
+systemctl restart dante-snapshot.timer dante-watchdog.timer dante-backup.timer || true
 
 echo ""
 echo "=== is-active ==="

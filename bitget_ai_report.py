@@ -2,6 +2,7 @@ import os
 
 from dotenv import load_dotenv
 
+# 텔레그램 미사용 — 자격 증명은 telegram_env / .env (알림 모듈에서만 사용).
 from gemini_report_cache import get_report_provider
 
 load_dotenv()

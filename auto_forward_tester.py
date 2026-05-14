@@ -14,10 +14,10 @@ import json
 from dotenv import load_dotenv
 
 load_dotenv()
-TELEGRAM_TOKEN_MAIN = (
-    os.environ.get("TELEGRAM_TOKEN_MAIN") or os.environ.get("TELEGRAM_TOKEN") or ""
-).strip()
-TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+import telegram_env
+
+TELEGRAM_TOKEN_MAIN = telegram_env.get_report_token()
+TELEGRAM_CHAT_ID = telegram_env.get_report_chat_id()
 
 from market_db_paths import MARKET_DATA_DB_PATH, market_db_read_path
 

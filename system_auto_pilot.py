@@ -15,13 +15,15 @@ import FinanceDataReader as fdr
 import warnings
 warnings.filterwarnings('ignore')
 
+import telegram_env
+
 from yf_download_flatten import flatten_yf_download_df, yf_close_series
 
 # ==========================================
 # 💡 [환경 설정]
 # ==========================================
-TELEGRAM_TOKEN_MAIN = "8709452406:AAHGVhTN8hu1ujA_xYUR8GvMPrd-qpMoSRk"
-TELEGRAM_CHAT_ID    = "6838834566"
+TELEGRAM_TOKEN_MAIN = telegram_env.get_report_token()
+TELEGRAM_CHAT_ID = telegram_env.get_report_chat_id()
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
 from config_manager import load_system_config as load_system_config_kv
 from inverse_etf_sniper import run_inverse_etf_sniper_cycle

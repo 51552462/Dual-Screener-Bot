@@ -10,7 +10,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+DEFAULT_INSTALL_ROOT="/home/ubuntu/dante_bots/Dual-Screener-Bot"
+INSTALL_ROOT="${INSTALL_ROOT:-${DEFAULT_INSTALL_ROOT}}"
 UNITS=(dante-main dante-streamlit)
 
 if [[ "${EUID:-0}" -ne 0 ]]; then
@@ -41,7 +42,8 @@ for name in "${UNITS[@]}"; do
     echo "[install] 누락: ${src}" >&2
     exit 1
   fi
-  sed "s|@@INSTALL_ROOT@@|${INSTALL_ROOT}|g" "${src}" >"${TMPD}/${name}.service"
+  # 유닛 파일은 기본 경로가 박혀 있음. 다른 INSTALL_ROOT 를 쓰면 문자열 치환.
+  sed "s|${DEFAULT_INSTALL_ROOT}|${INSTALL_ROOT}|g" "${src}" >"${TMPD}/${name}.service"
   install -m 0644 "${TMPD}/${name}.service" "/etc/systemd/system/${name}.service"
   echo "[install] -> /etc/systemd/system/${name}.service"
 done
