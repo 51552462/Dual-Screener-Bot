@@ -86,10 +86,12 @@ def _latest_heartbeat_ts(db_path: str, component: str) -> str | None:
 
 
 def _send_urgent_telegram(text: str) -> bool:
-    token = (os.environ.get("TELEGRAM_TOKEN_MAIN") or "").strip()
-    chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    import telegram_env
+
+    token = telegram_env.get_watchdog_token()
+    chat = telegram_env.get_watchdog_chat_id()
     if not token or not chat:
-        print("[watchdog] TELEGRAM_TOKEN_MAIN / TELEGRAM_CHAT_ID 없음 — 알림 생략", file=sys.stderr)
+        print("[watchdog] watchdog/main telegram 자격 증명 없음 — 알림 생략", file=sys.stderr)
         return False
     body = json.dumps({"chat_id": chat, "text": text[:3500]}, ensure_ascii=False).encode("utf-8")
     url = f"https://api.telegram.org/bot{token}/sendMessage"

@@ -360,12 +360,10 @@ def send_telegram_report(text: str) -> None:
     """
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     try:
-        token = (
-            (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TG_BOT_TOKEN") or "").strip()
-        )
-        chat_id = (
-            (os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TG_CHAT_ID") or "").strip()
-        )
+        import telegram_env
+
+        token = telegram_env.get_lab_token()
+        chat_id = telegram_env.get_lab_chat_id()
         if not token or not chat_id:
             _telegram_operator_alert(
                 f"[{ts}] ERROR: Telegram Token or Chat ID is missing. Message skipped."
