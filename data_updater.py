@@ -140,24 +140,55 @@ def get_kr_tickers():
         return pd.DataFrame(columns=["Code", "Name", "Market"])
     return df[["Code", "Name", "Market"]].dropna()
 
+_DL_MAX_TRIES = 3
+_UPDATE_CHUNK_SIZE = 50
+_UPDATE_CHUNK_SLEEP_SEC = 0.55
+
+
+def _dl_backoff(attempt: int) -> None:
+    time.sleep(min(10.0, 0.4 * (2**attempt)) + random.uniform(0, 0.15))
+
+
 # 개별 종목 데이터 다운로드 및 DB 저장 엔진 (💡 인자에서 conn 제거)
 def update_single_ticker(row, country): 
     if country == 'US':
         sym = row['Symbol']
         table_name = f"US_{sym}"
-        try:
-            df = yf.download(sym, period="3y", interval="1d", progress=False)
-            if df.empty: return False
-            df = flatten_yf_download_df(df)
-        except: return False
+        df = None
+        for attempt in range(_DL_MAX_TRIES):
+            try:
+                df = yf.download(sym, period="3y", interval="1d", progress=False)
+                if df is None or df.empty:
+                    if attempt < _DL_MAX_TRIES - 1:
+                        _dl_backoff(attempt)
+                        continue
+                    return False
+                df = flatten_yf_download_df(df)
+                break
+            except Exception:
+                if attempt < _DL_MAX_TRIES - 1:
+                    _dl_backoff(attempt)
+                    continue
+                return False
     else: # KR
         sym = row['Code']
         table_name = f"KR_{sym}"
-        try:
-            start_date = (datetime.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')
-            df = fdr.DataReader(sym, start_date)
-            if df.empty: return False
-        except: return False
+        df = None
+        start_date = (datetime.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')
+        for attempt in range(_DL_MAX_TRIES):
+            try:
+                df = fdr.DataReader(sym, start_date)
+                if df is None or df.empty:
+                    if attempt < _DL_MAX_TRIES - 1:
+                        _dl_backoff(attempt)
+                        continue
+                    return False
+                break
+            except Exception:
+                if attempt < _DL_MAX_TRIES - 1:
+                    _dl_backoff(attempt)
+                    continue
+                return False
 
     try:
         df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
@@ -211,7 +242,20 @@ def run_daily_db_update():
         bm_conn = sqlite3.connect(DB_PATH, timeout=30)
         bm_conn.execute("PRAGMA journal_mode=WAL;")
         
-        idx_us = yf.download("SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False)
+        idx_us = None
+        for attempt in range(_DL_MAX_TRIES):
+            try:
+                idx_us = yf.download(
+                    "SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False
+                )
+                if idx_us is not None and not idx_us.empty:
+                    break
+            except Exception:
+                pass
+            if attempt < _DL_MAX_TRIES - 1:
+                _dl_backoff(attempt)
+        if idx_us is None or idx_us.empty:
+            raise RuntimeError("벤치마크 US 지수 yfinance 빈 응답")
         time.sleep(random.uniform(0.3, 0.7))
         for tk, tbl in zip(['SPY', 'QQQ', '^VIX'], ['US_SPY', 'US_QQQ', 'US_VIX']):
             if tk in idx_us.columns.levels[0]:
@@ -223,7 +267,19 @@ def run_daily_db_update():
                 save_data_safely(bm_conn, tbl, df_temp)
         
         for tk, tbl in zip(['069500', '229200'], ['KR_KOSPI_IDX', 'KR_KOSDAQ_IDX']):
-            df_temp = fdr.DataReader(tk, (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')).reset_index()
+            df_temp = None
+            kr_start = (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')
+            for attempt in range(_DL_MAX_TRIES):
+                try:
+                    df_temp = fdr.DataReader(tk, kr_start).reset_index()
+                    if df_temp is not None and not df_temp.empty:
+                        break
+                except Exception:
+                    df_temp = None
+                if attempt < _DL_MAX_TRIES - 1:
+                    _dl_backoff(attempt)
+            if df_temp is None or df_temp.empty:
+                raise RuntimeError(f"벤치마크 KR 지수 {tk} 수신 실패")
             df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
             
             # 👇👇 [V102.6] 한국 지수 데이터도 안전한 원자 교체 방식으로 저장 👇👇
@@ -238,23 +294,39 @@ def run_daily_db_update():
     # 1/2 미국장 (스레드 실행부 conn 제거)
     print("\n⏳ [1/2] 미국장 데이터 갱신 중... (야후 파이낸스 접속)")
     us_success = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(update_single_ticker, row, 'US'): row['Symbol'] for _, row in us_list.iterrows()}
-        import sys
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            if future.result(): us_success += 1
-            sys.stdout.write(f"\r진행률: {i+1}/{len(us_list)} (성공: {us_success}개)")
-            sys.stdout.flush()
+    import sys
+    us_rows = list(us_list.iterrows())
+    us_done = 0
+    for ci in range(0, len(us_rows), _UPDATE_CHUNK_SIZE):
+        batch = us_rows[ci : ci + _UPDATE_CHUNK_SIZE]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {executor.submit(update_single_ticker, row, 'US'): row['Symbol'] for _, row in batch}
+            for future in concurrent.futures.as_completed(futures):
+                if future.result():
+                    us_success += 1
+                us_done += 1
+                sys.stdout.write(f"\r진행률: {us_done}/{len(us_list)} (성공: {us_success}개)")
+                sys.stdout.flush()
+        if ci + _UPDATE_CHUNK_SIZE < len(us_rows):
+            time.sleep(_UPDATE_CHUNK_SLEEP_SEC + random.uniform(0, 0.12))
 
     # 2/2 한국장 (스레드 실행부 conn 제거)
     print("\n\n⏳ [2/2] 한국장 데이터 갱신 중... (KRX 접속)")
     kr_success = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(update_single_ticker, row, 'KR'): row['Code'] for _, row in kr_list.iterrows()}
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            if future.result(): kr_success += 1
-            sys.stdout.write(f"\r진행률: {i+1}/{len(kr_list)} (성공: {kr_success}개)")
-            sys.stdout.flush()
+    kr_rows = list(kr_list.iterrows())
+    kr_done = 0
+    for ci in range(0, len(kr_rows), _UPDATE_CHUNK_SIZE):
+        batch = kr_rows[ci : ci + _UPDATE_CHUNK_SIZE]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {executor.submit(update_single_ticker, row, 'KR'): row['Code'] for _, row in batch}
+            for future in concurrent.futures.as_completed(futures):
+                if future.result():
+                    kr_success += 1
+                kr_done += 1
+                sys.stdout.write(f"\r진행률: {kr_done}/{len(kr_list)} (성공: {kr_success}개)")
+                sys.stdout.flush()
+        if ci + _UPDATE_CHUNK_SIZE < len(kr_rows):
+            time.sleep(_UPDATE_CHUNK_SLEEP_SEC + random.uniform(0, 0.12))
 
     print(f"\n\n✅ DB 업데이트 완료! (미국: {us_success}개 / 한국: {kr_success}개 안전 저장 완료)")
     snap = create_read_only_snapshot()

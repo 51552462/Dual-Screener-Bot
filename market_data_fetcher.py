@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import random
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -33,6 +34,15 @@ import low_ram_sqlite_pragmas
 from market_db_paths import market_db_read_path
 
 _MAX_TRIES = 3
+
+# 저 RAM / 공인 IP 환경: 업스트림(FDR·yfinance) 동시 연결 폭주로 429·빈 응답·차단 방지
+_MAX_CONCURRENT_UPSTREAM = 2
+_upstream_http_sem = threading.BoundedSemaphore(_MAX_CONCURRENT_UPSTREAM)
+
+# 배치 스캐너용: 청크 단위로 끊어 호출 후 휴지 (IP 레이트리밋·OOM 완화)
+_BATCH_CHUNK_SIZE = 50
+_BATCH_CHUNK_SLEEP_SEC = 0.55
+_BATCH_MAX_WORKERS_CAP = 4
 
 
 def _sleep_backoff(attempt: int) -> None:
@@ -63,6 +73,10 @@ def _retrying_call(fn: Callable[[], pd.DataFrame], *, label: str) -> pd.DataFram
             df = fn()
             if df is not None and not df.empty:
                 return df
+            # 빈 DataFrame: 일부 차단/일시 장애가 예외 없이 빈 패널만 돌려주는 경우 → 백오프 재시도
+            if attempt < _MAX_TRIES - 1:
+                _sleep_backoff(attempt)
+                continue
         except Exception as e:
             last = e
             if _is_transient_error(e) or attempt < _MAX_TRIES - 1:
@@ -123,7 +137,9 @@ def _fetch_fdr_kr(code: str, start_date: str, end_date: str) -> pd.DataFrame:
     import FinanceDataReader as fdr
 
     c = str(code).strip().zfill(6)
-    raw = fdr.DataReader(c, start_date, end_date)
+    with _upstream_http_sem:
+        raw = fdr.DataReader(c, start_date, end_date)
+        time.sleep(random.uniform(0.04, 0.12))
     return _slice_date_range(_normalize_ohlcv(raw), start_date, end_date)
 
 
@@ -131,7 +147,9 @@ def _fetch_fdr_us(code: str, start_date: str, end_date: str) -> pd.DataFrame:
     import FinanceDataReader as fdr
 
     sym = str(code).strip().replace("-", ".")
-    raw = fdr.DataReader(sym, start_date, end_date)
+    with _upstream_http_sem:
+        raw = fdr.DataReader(sym, start_date, end_date)
+        time.sleep(random.uniform(0.04, 0.12))
     return _finalize_us_index(_slice_date_range(_normalize_ohlcv(raw), start_date, end_date))
 
 
@@ -141,14 +159,16 @@ def _fetch_yf(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     from yf_download_flatten import flatten_yf_download_df
 
     end_excl = (pd.Timestamp(end_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    raw = yf.download(
-        symbol,
-        start=start_date,
-        end=end_excl,
-        interval="1d",
-        progress=False,
-        threads=False,
-    )
+    with _upstream_http_sem:
+        raw = yf.download(
+            symbol,
+            start=start_date,
+            end=end_excl,
+            interval="1d",
+            progress=False,
+            threads=False,
+        )
+        time.sleep(random.uniform(0.05, 0.14))
     if raw is None or raw.empty:
         return pd.DataFrame()
     flat = flatten_yf_download_df(raw)
@@ -279,6 +299,8 @@ def fetch_market_data_batch(
     심볼 리스트에 대해 fetch_market_data 를 병렬 호출.
     각 심볼은 FDR→YF→SQLite 체인을 그대로 탄다.
     반환: {원본 코드 문자열: OHLCV DataFrame} (빈 DF 는 생략)
+
+    대량 심볼 시 `_BATCH_CHUNK_SIZE` 단위로 끊어 처리하고 청크 사이에 짧은 휴지를 둔다.
     """
     raw = [str(c).strip() for c in codes if str(c).strip()]
     if not raw:
@@ -286,7 +308,7 @@ def fetch_market_data_batch(
     m = (market or "").strip().upper()
     if m not in ("KR", "US"):
         return {}
-    w = max(1, min(int(max_workers), len(raw), 48))
+    w = max(1, min(int(max_workers), len(raw), _BATCH_MAX_WORKERS_CAP))
 
     def _one(sym: str) -> tuple[str, pd.DataFrame, float, int]:
         t0 = time.perf_counter()
@@ -300,17 +322,21 @@ def fetch_market_data_batch(
     t_batch = time.perf_counter()
     walls: list[float] = []
     fallbacks: list[int] = []
-    with ThreadPoolExecutor(max_workers=w) as ex:
-        futs = {ex.submit(_one, c): c for c in raw}
-        for fut in as_completed(futs):
-            try:
-                sym, df, wall, fb = fut.result()
-                walls.append(float(wall))
-                fallbacks.append(int(fb))
-                if df is not None and not df.empty:
-                    out[sym] = df
-            except Exception:
-                pass
+    for i in range(0, len(raw), _BATCH_CHUNK_SIZE):
+        chunk = raw[i : i + _BATCH_CHUNK_SIZE]
+        with ThreadPoolExecutor(max_workers=min(w, len(chunk))) as ex:
+            futs = {ex.submit(_one, c): c for c in chunk}
+            for fut in as_completed(futs):
+                try:
+                    sym, df, wall, fb = fut.result()
+                    walls.append(float(wall))
+                    fallbacks.append(int(fb))
+                    if df is not None and not df.empty:
+                        out[sym] = df
+                except Exception:
+                    pass
+        if i + _BATCH_CHUNK_SIZE < len(raw):
+            time.sleep(_BATCH_CHUNK_SLEEP_SEC + random.uniform(0, 0.15))
     batch_wall = time.perf_counter() - t_batch
     try:
         import ops_logger
