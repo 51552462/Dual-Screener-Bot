@@ -1,6 +1,7 @@
 ccxt
 pandas
 numpy
+scikit-learn
 requests
 aiohttp
 pykrx

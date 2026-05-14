@@ -342,7 +342,7 @@ def fetch_market_data_batch(
         import ops_logger
 
         sw = sorted(walls) if walls else []
-        p95 = sw[min(len(sw) - 1, max(0, int(0.95 * (len(sw) - 1)))))] if sw else 0.0
+        p95 = sw[min(len(sw) - 1, max(0, int(0.95 * (len(sw) - 1))))] if sw else 0.0
 
         ops_logger.record_gauge_snapshot(
             "market_data_fetcher",
