@@ -1,0 +1,15 @@
+ccxt
+pandas
+numpy
+scikit-learn
+requests
+aiohttp
+pykrx
+beautifulsoup4
+finance-datareader
+mplfinance
+matplotlib
+google-generativeai
+python-dotenv
+streamlit
+plotly
