@@ -15,6 +15,8 @@ import FinanceDataReader as fdr
 import logging
 import json
 
+logger = logging.getLogger(__name__)
+
 # 💡 [자율 관제탑 연결] 조율된 파라미터 수신
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
 
@@ -724,7 +726,8 @@ def scan_market_1d():
                 lines = f.read().splitlines()
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
-        except: pass
+        except Exception as e:
+            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     # 💡 'Market' 정보를 딕셔너리에 함께 저장합니다.
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name'], 'market': row['Market']} for _, row in stock_list.iterrows()}
@@ -781,7 +784,8 @@ def scan_market_1d():
                                 with open(log_file, "w") as f:
                                     f.write(today_str + "\n")
                                     for s_code in sent_today: f.write(s_code + "\n")
-                            except: pass
+                            except Exception as e:
+                                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                             
                     if hit:
                         main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)

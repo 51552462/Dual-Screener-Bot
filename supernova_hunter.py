@@ -1,5 +1,6 @@
 # supernova_hunter.py (V53.2 글로벌 초신성 역추적 & 텔레그램 보고 엔진)
 import os, time, json, sqlite3, ast
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -12,17 +13,110 @@ import pytz
 import warnings
 from io import StringIO
 import requests
+import logging
 from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
 import shadow_tracking
 from yf_download_flatten import flatten_yf_download_df
+from market_db_paths import market_db_read_path
+from scanner_funnel import ScanFunnelTracker, format_supernova_scan_report
+from system_config_atomic import CONFIG_DIR, CONFIG_PATH, load_config, update_config
+
+logger = logging.getLogger(__name__)
+
 scanned_today_cache = {'KR': set(), 'US': set()}
+
+
+def _time_machine_cache_path() -> str:
+    """V2 데이터 루트(CONFIG_DIR)에 타임머신 DNA 캐시를 고정 저장한다."""
+    return os.path.join(CONFIG_DIR, "time_machine_supernova_cache.json")
+
+
+def _load_time_machine_cache() -> dict:
+    path = _time_machine_cache_path()
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _atomic_write_json(path: str, obj: dict) -> None:
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _persist_time_machine_templates(
+    market: str,
+    version_tag: str,
+    market_templates: dict,
+    existing_after_treasury: dict,
+    treasury_key: str,
+    treasury_value,
+) -> None:
+    """
+    국고 차감 여부와 무관하게 DNA_SUPERNOVA_* 를 JSON에 병합 저장한다.
+    (update_config만 쓸 때 국고 부족으로 템플릿이 비어 재시작 시 전체 스캔되는 문제 방지)
+    """
+    path = _time_machine_cache_path()
+    blob = _load_time_machine_cache()
+    multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
+    merged = dict(blob.get(multi_key) or {})
+    merged.update(dict(existing_after_treasury or {}))
+    for t_name, t_dna in (market_templates or {}).items():
+        vn = f"{t_name}_{version_tag}"
+        if vn not in merged:
+            merged[vn] = t_dna
+    blob[multi_key] = merged
+    blob[treasury_key] = treasury_value
+    meta = blob.get("_meta") if isinstance(blob.get("_meta"), dict) else {}
+    meta["saved_at"] = datetime.now().isoformat(timespec="seconds")
+    meta["last_market_refresh"] = market
+    blob["_meta"] = meta
+    _atomic_write_json(path, blob)
+
+
+def _tm_read_ohlc_from_sql(conn: sqlite3.Connection, table: str, start_date: str) -> pd.DataFrame:
+    """data_updater가 적재한 OHLCV(Date + OHLCV) 테이블을 읽어 DatetimeIndex DataFrame으로 반환."""
+    try:
+        df = pd.read_sql(
+            f'SELECT Date, Open, High, Low, Close, Volume FROM "{table}" WHERE Date >= ? ORDER BY Date ASC',
+            conn,
+            params=(start_date,),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    if df.empty:
+        return pd.DataFrame()
+    df = df.set_index("Date").sort_index()
+    try:
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+    except Exception:
+        pass
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        if col not in df.columns:
+            return pd.DataFrame()
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.dropna(subset=["Open", "High", "Low", "Close"])
+
 
 # ==========================================
 # 💡 [환경 설정 및 텔레그램 세팅]
 # ==========================================
-from system_config_atomic import CONFIG_PATH, load_config, update_config
 
 load_dotenv()
 import telegram_env
@@ -48,7 +142,8 @@ def send_telegram_msg(text):
                 requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
             import time
             time.sleep(0.5) # 분할 전송 시 순서가 꼬이거나 API 도배 차단되는 것 방지
-    except: pass
+    except Exception as e:
+        logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
 
 def _alpha_formula_one_line_explain(formula, ic):
@@ -826,25 +921,51 @@ def extract_dna_from_df(df_raw, benchmarks, target_date, rank_name="UNKNOWN", ma
 # ==========================================
 def hunt_supernovas(market):
     print(f"\n🚀 [{market}] 전체 시장 3단계 기만술 타임머신 역추적 가동...")
-    send_telegram_msg(f"⏳ <b>[{market} 초신성 타임머신 가동]</b>\n전체 상장 종목을 대상으로 과거 노이즈를 제거하고 '3단계 기만술'을 통과한 찐 대박주만 스캔합니다. (약 10~20분 소요)")
+    try:
+        from mutant_pending_bridge import apply_pending_mutants_if_approved, sync_validated_json_into_pending
+
+        _n, _sync_msg = sync_validated_json_into_pending()
+        if _n:
+            print(f"[R&D bridge] {_sync_msg}")
+        _ap = apply_pending_mutants_if_approved()
+        if not str(_ap).startswith("skip"):
+            print(f"[R&D bridge] {_ap}")
+    except Exception as _e:
+        print(f"⚠️ [R&D bridge] {_e}")
+    send_telegram_msg(f"⏳ <b>[{market} 초신성 타임머신 가동]</b>\n<code>market_data.sqlite</code> 로컬 DB만 사용해 과거 구간을 스캔합니다 (업스트림 API 미사용).")
     
     now = datetime.now()
     start_date = (now - timedelta(days=200)).strftime('%Y-%m-%d')
-    
+
+    dbp = market_db_read_path()
+    if not os.path.isfile(dbp):
+        print(f"⚠️ [{market}] 타임머신: 로컬 DB 파일 없음 — 중단 ({dbp})")
+        send_telegram_msg(f"⚠️ <b>[{market} 타임머신 중단]</b>\n<code>market_data.sqlite</code> 가 없습니다. data_updater 로 DB를 먼저 채워 주세요.")
+        return
+
     try:
-        if market == 'US':
-            spy_df = yf.download('SPY', start=start_date, progress=False)
-            spy_df = flatten_yf_download_df(spy_df)
-            qqq_df = yf.download('QQQ', start=start_date, progress=False)
-            qqq_df = flatten_yf_download_df(qqq_df)
-            spy_df.index = pd.to_datetime(spy_df.index).tz_localize(None)
-            qqq_df.index = pd.to_datetime(qqq_df.index).tz_localize(None)
-            benchmarks = {'SPY': spy_df, 'QQQ': qqq_df}
-        else:
-            idx_df = fdr.DataReader('069500', start_date)
-            idx_df.index = pd.to_datetime(idx_df.index).tz_localize(None)
-            benchmarks = {'KR': idx_df}
-    except: return
+        db_uri = Path(dbp).as_uri() + "?mode=ro"
+        _bm = sqlite3.connect(db_uri, uri=True, timeout=90)
+        _bm.execute("PRAGMA query_only=ON")
+        try:
+            if market == "US":
+                spy_df = _tm_read_ohlc_from_sql(_bm, "US_SPY", start_date)
+                qqq_df = _tm_read_ohlc_from_sql(_bm, "US_QQQ", start_date)
+                if spy_df.empty or qqq_df.empty:
+                    print(f"⚠️ [{market}] US_SPY / US_QQQ 로컬 구간 데이터 부족 — 타임머신 중단")
+                    return
+                benchmarks = {"SPY": spy_df, "QQQ": qqq_df}
+            else:
+                idx_df = _tm_read_ohlc_from_sql(_bm, "KR_KOSPI_IDX", start_date)
+                if idx_df.empty:
+                    print(f"⚠️ [{market}] KR_KOSPI_IDX 로컬 구간 데이터 부족 — 타임머신 중단")
+                    return
+                benchmarks = {"KR": idx_df}
+        finally:
+            _bm.close()
+    except Exception as e:
+        print(f"⚠️ [{market}] 타임머신 벤치마크 DB 읽기 실패: {e}")
+        return
 
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
     tickers = stock_list['Code'].tolist()
@@ -855,13 +976,25 @@ def hunt_supernovas(market):
     
     def process_ticker(code):
         try:
-            if market == 'KR':
-                df = fdr.DataReader(code, start_date)
-            else:
-                df = yf.download(code, start=start_date, progress=False)
-                df = flatten_yf_download_df(df)
-            if df.empty or len(df) < 130: return None
-            df.index = pd.to_datetime(df.index).tz_localize(None)
+            _dbp = market_db_read_path()
+            if not os.path.isfile(_dbp):
+                return None
+            _uri = Path(_dbp).as_uri() + "?mode=ro"
+            _conn = sqlite3.connect(_uri, uri=True, timeout=90)
+            _conn.execute("PRAGMA query_only=ON")
+            try:
+                tbl = f"KR_{str(code).strip().zfill(6)}" if market == "KR" else f"US_{str(code).strip()}"
+                hit = _conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (tbl,),
+                ).fetchone()
+                if not hit:
+                    return None
+                df = _tm_read_ohlc_from_sql(_conn, tbl, start_date)
+            finally:
+                _conn.close()
+            if df.empty or len(df) < 130:
+                return None
             
             c = df['Close'].values
             if c[-1] < (1000 if market == 'KR' else 3.0): return None 
@@ -872,7 +1005,8 @@ def hunt_supernovas(market):
             ret_6m = (c[-1] - c[-120]) / c[-120] * 100 if len(c) >= 120 else 0
             
             return {'code': code, 'df': df, 'ret_1w': ret_1w, 'ret_1m': ret_1m, 'ret_3m': ret_3m, 'ret_6m': ret_6m}
-        except: return None
+        except Exception:
+            return None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         for res in executor.map(process_ticker, tickers):
@@ -985,8 +1119,11 @@ def hunt_supernovas(market):
     multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
     treasury_key = f"CENTRAL_TREASURY_{market}" # 💡 국고 키 세팅
     
-    # 1. 기존 템플릿 뭉치와 현재 국고 잔액 로드
-    existing_templates = config.get(multi_key, {})
+    # 1. 기존 템플릿 뭉치와 현재 국고 잔액 로드 (V2 JSON 캐시 + 관제탑 병합)
+    _tm_blob = _load_time_machine_cache()
+    existing_templates = {}
+    existing_templates.update(_tm_blob.get(multi_key) or {})
+    existing_templates.update(config.get(multi_key) or {})
     current_treasury = config.get(treasury_key, 0)
     
     # 2. 오늘 날짜를 버전 번호로 생성 (예: V_240528)
@@ -1056,6 +1193,9 @@ def hunt_supernovas(market):
             del existing_templates[k]
 
     update_config({treasury_key: current_treasury, multi_key: dict(existing_templates)})
+    _persist_time_machine_templates(
+        market, version_tag, market_templates, existing_templates, treasury_key, current_treasury
+    )
     
     # 텔레그램 리포트 내용 수정 (자금 순환 및 파산 경고 포함)
     report_msg = f"🚀 <b>[{market} 템플릿 세포 분열 완료]</b>\n"
@@ -1075,13 +1215,18 @@ def hunt_supernovas(market):
 # 🚀 [V101.0 신규 엔진] 초신성 실시간 멀티스레드 스나이퍼
 # ==========================================
 def execute_supernova_live_scan(market):
+    import time as _time
+    _scan_t0 = _time.time()
     print(f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 (15배속 비동기 병렬 스캔)...")
     
     # 1. 템플릿 및 기준값 로드
     ideal_templates = {}
     config = load_config()
     multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
-    surviving_templates = config.get(multi_key, {})
+    _tm_snap = _load_time_machine_cache()
+    surviving_templates = {}
+    surviving_templates.update(_tm_snap.get(multi_key) or {})
+    surviving_templates.update(config.get(multi_key) or {})
     
     for t_name, t_dna in surviving_templates.items():
         ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
@@ -1148,8 +1293,12 @@ def execute_supernova_live_scan(market):
     stock_list = get_krx_list() if market == 'KR' else get_us_list()
     tickers = stock_list['Code'].tolist()
 
-    tracker = {'fetch_failed': 0}
-    _tracker_lock = threading.Lock()
+    funnel = ScanFunnelTracker(
+        scanner_id="SUPERNOVA",
+        market=market,
+        universe_size=len(tickers),
+        profile="SUPERNOVA",
+    )
 
     def get_similarity(vec1, vec2):
         n1, n2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
@@ -1219,6 +1368,7 @@ def execute_supernova_live_scan(market):
             except Exception:
                 continue
         print(f"   ↳ [US 배치 OHLCV] {len(us_data_dict)}/{len(tickers)} 종목 선로드 완료")
+        funnel.set_us_preloaded(len(us_data_dict), len(tickers))
 
     # 💡 [핵심 1] 단일 스레드 병목 탈출을 위한 "개별 종목 연산 작업(Worker)" 분리
     _doomsday_halt_lock = threading.Lock()
@@ -1246,6 +1396,7 @@ def execute_supernova_live_scan(market):
                         )
                     except Exception:
                         pass
+                    funnel.drop("DOOMSDAY_HALT")
                     return {
                         'code': code,
                         'name': "SYSTEM_HALT",
@@ -1256,9 +1407,11 @@ def execute_supernova_live_scan(market):
                         'msg_type': "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단.",
                         'trade_source': "DOOMSDAY_HALT",
                     }
+            funnel.drop("DOOMSDAY_HALT")
             return None
 
         if code in open_positions or code in scanned_today_cache[market]:
+            funnel.drop("SKIP_POSITION")
             return None
             
         try:
@@ -1267,18 +1420,18 @@ def execute_supernova_live_scan(market):
                 try:
                     df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d'))
                 except Exception:
-                    with _tracker_lock:
-                        tracker['fetch_failed'] += 1
+                    funnel.add_fetch_failed(1)
+                    funnel.drop("DATA_FAIL")
                     return None
             else:
                 df = us_data_dict.get(code)
                 if df is None or getattr(df, "empty", True):
-                    with _tracker_lock:
-                        tracker['fetch_failed'] += 1
+                    funnel.add_fetch_failed(1)
+                    funnel.drop("DATA_FAIL")
                     return None
             if df.empty or len(df) < 20:
-                with _tracker_lock:
-                    tracker['fetch_failed'] += 1
+                funnel.add_fetch_failed(1)
+                funnel.drop("DATA_FAIL")
                 return None
 
             # 관제탑 EVOLVED_ALPHA_FACTORS → 실시간 알파 (ML N차원 바운딩 박스용)
@@ -1295,9 +1448,15 @@ def execute_supernova_live_scan(market):
             c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
             current_close = c[-1]
             
-            if market == 'KR' and current_close < 1000: return None 
-            if market == 'US' and current_close < 1.0: return None  
-            if np.mean(v[-5:]) < 50000: return None            
+            if market == 'KR' and current_close < 1000:
+                funnel.drop("LIQUIDITY")
+                return None
+            if market == 'US' and current_close < 1.0:
+                funnel.drop("LIQUIDITY")
+                return None
+            if np.mean(v[-5:]) < 50000:
+                funnel.drop("LIQUIDITY")
+                return None
             
             # DNA 벡터 3차원 추출
             v_ma20 = pd.Series(v).rolling(20).mean().values
@@ -1343,6 +1502,7 @@ def execute_supernova_live_scan(market):
                     )
                 except Exception:
                     pass
+                funnel.drop("TOXIC_ML_TREE")
                 return None
 
             # 1. 코사인 유사도 연산 (템플릿별 컷: 인큐베이터는 cos_cutoff, 그 외는 DYNAMIC_SUPERNOVA_CUTOFF)
@@ -1428,6 +1588,10 @@ def execute_supernova_live_scan(market):
                         ml_score = ud_score
                         break
 
+            if not (is_pass_ml_box or is_pass_cosine):
+                funnel.drop("DNA_FAIL")
+                return None
+
             # 합격한 종목만 선별하여 데이터 반환 (DB 저장은 여기서 하지 않음 - 락 방어)
             if is_pass_ml_box or is_pass_cosine:
                 fdict = {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe}
@@ -1465,6 +1629,7 @@ def execute_supernova_live_scan(market):
                         break
 
                 if is_toxic:
+                    funnel.drop("ANTI_TOXIC")
                     try:
                         try:
                             _tn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
@@ -1512,41 +1677,64 @@ def execute_supernova_live_scan(market):
                 if estimated_avg_f > 0 and abs(current_close - estimated_avg_f) / estimated_avg_f <= 0.03:
                     msg_type = f"🕵️ [세력 매집 포착] 평단가({estimated_avg_f:,.0f}원) 근접! | " + msg_type
                     final_sig = final_sig.replace("]", "_SMART]")
+                if is_underdog:
+                    pass_path = "UNDERDOG"
+                elif is_pass_ml_box:
+                    pass_path = "MLBOX"
+                else:
+                    pass_path = "COSINE"
+                _nm = stock_list[stock_list['Code'] == code]['Name'].values[0]
+                funnel.add_final_candidate(
+                    code=str(code),
+                    name=str(_nm),
+                    pass_path=pass_path,
+                    final_sig=str(final_sig),
+                    final_score=float(final_score),
+                )
                 return {
                     'code': code,
-                    'name': stock_list[stock_list['Code']==code]['Name'].values[0],
+                    'name': _nm,
                     'final_sig': final_sig,
                     'final_score': final_score,
                     'current_close': current_close,
                     'facts': fdict,
                     'msg_type': msg_type,
-                    'trade_source': "UNDERDOG" if is_underdog else "SUPERNOVA" # 💡 네임스페이스 분리용
+                    'trade_source': "UNDERDOG" if is_underdog else "SUPERNOVA",
                 }
             return None
         except Exception:
+            funnel.drop("DATA_FAIL")
             return None
 
     # 💡 [핵심 2] ThreadPoolExecutor를 이용한 15배속 동시 타격 (병목 돌파)
-    valid_targets = []
+    valid_targets: list = []
     import concurrent.futures
-    
-    # 15개의 작업자(Thread)가 2500개 종목을 동시에 나눠서 다운로드하고 분석합니다.
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         for result in executor.map(process_live_ticker, tickers):
-            if result:
-                valid_targets.append(result)
+            if not result:
+                continue
+            if result.get("trade_source") == "DOOMSDAY_HALT" or result.get("name") == "SYSTEM_HALT":
+                continue
+            if "TOXIC_TRAP" in str(result.get("final_sig", "")):
+                continue
+            valid_targets.append(result)
 
     # 💡 [핵심 3] 발굴된 종목 장부 기록 (DB 락 방지를 위해 메인 스레드에서 순차적 기록)
+    _doomsday_tg_sent = False
     for target in valid_targets:
         if target.get('name') == 'SYSTEM_HALT' or '둠스데이 차단' in str(target.get('final_sig', '')):
-            send_telegram_msg(
-                "<b>🛑[둠스데이 차단] 거시경제 발작 감지</b>\n"
-                "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단."
-            )
+            funnel.set_pipeline_result(str(target['code']), "SKIPPED_DOOMSDAY")
+            if not _doomsday_tg_sent:
+                _doomsday_tg_sent = True
+                send_telegram_msg(
+                    "<b>🛑[둠스데이 차단] 거시경제 발작 감지</b>\n"
+                    "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단."
+                )
             continue
         if 'TOXIC_TRAP' in str(target.get('final_sig', '')):
+            funnel.set_pipeline_result(str(target['code']), "SKIPPED_TOXIC")
             continue
-        # 1. 메인 타점 사격 (초신성 or 언더독)
         is_success, msg = aft.try_add_virtual_position(
             market=market,
             code=target['code'],
@@ -1558,20 +1746,24 @@ def execute_supernova_live_scan(market):
             trade_source=target.get('trade_source', "SUPERNOVA"),
             satellite_tags=shadow_tracking.build_satellite_tags(config),
         )
-        
-        # 야수(BEAST) 로직은 일반 초신성(SUPERNOVA)일 때만 더블 탭 사격 (언더독은 스킵)
-        
+
         if is_success:
+            funnel.set_pipeline_result(str(target['code']), "ENROLLED")
             scanned_today_cache[market].add(target['code'])
-            send_telegram_msg(f"<b>{target['msg_type']}</b>\n{target['code']} / {target['final_sig']}\n일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다.")
-            
+            send_telegram_msg(
+                f"<b>{target['msg_type']}</b>\n{target['code']} / {target['final_sig']}\n"
+                f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
+            )
+        else:
+            funnel.set_pipeline_result(str(target['code']), "FAILED_DB")
+
+    report = funnel.finalize(elapsed_min=(_time.time() - _scan_t0) / 60.0)
     print(
-        f"✅ [{market}] 멀티스레드 스나이퍼 쾌속 스캔 및 DB 기록 완료! | 데이터 수신 실패: {tracker['fetch_failed']}건"
+        f"✅ [{market}] 멀티스레드 스나이퍼 완료 | 최종합격 {len(report.survivors_final)} | "
+        f"등재 {len(report.enrolled)} | DATA_FAIL {report.fetch_failed}"
     )
     try:
-        send_telegram_msg(
-            f"<b>[{market} 초신성 스캔 완료]</b>\n편입 후보: {len(valid_targets)}개 | 데이터 수신 실패: {tracker['fetch_failed']}건"
-        )
+        send_telegram_msg(format_supernova_scan_report(report))
     except Exception:
         pass
 # 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
@@ -1678,30 +1870,44 @@ def run_live_sniper_scheduler():
 def run_scheduler():
     """main.py에서 호출 시 기존 템플릿을 확인하고, 무중단으로 스나이퍼를 가동시키는 래퍼 함수"""
     import threading
-    
-    # 💡 [핵심 수술] 관제탑(JSON)을 열어서 기존에 쌓아둔 템플릿이 있는지 먼저 팩트 체크합니다.
-    config = load_config()
-    kr_templates = config.get("DNA_SUPERNOVA_KR_MULTI", {})
-    us_templates = config.get("DNA_SUPERNOVA_US_MULTI", {})
-    ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {})
 
-    # 만약 기존 데이터가 텅 비어있는 '진짜 최초 실행'일 때만 초기화를 돌립니다.
-    if not kr_templates or not us_templates or not ml_templates:
-        print("🚀 [최초 가동] 기존 템플릿이 없습니다. 즉시 1회 타임머신 스캔을 시작하여 기초 템플릿을 생성합니다...")
-        if not kr_templates: hunt_supernovas('KR')
-        if not us_templates: hunt_supernovas('US')
-        
-        # ML 박스 데이터 마이닝도 1회 강제 실행
+    tm_cache = _load_time_machine_cache()
+    config = load_config()
+    kr_templates: dict = {}
+    kr_templates.update(tm_cache.get("DNA_SUPERNOVA_KR_MULTI") or {})
+    kr_templates.update(config.get("DNA_SUPERNOVA_KR_MULTI") or {})
+    us_templates: dict = {}
+    us_templates.update(tm_cache.get("DNA_SUPERNOVA_US_MULTI") or {})
+    us_templates.update(config.get("DNA_SUPERNOVA_US_MULTI") or {})
+    ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {}) or {}
+
+    need_time_machine = not kr_templates or not us_templates
+    need_ml_mining = not ml_templates
+
+    if need_time_machine:
+        print("🚀 [타임머신 필요] DNA_SUPERNOVA KR/US 템플릿이 비어 있습니다. 로컬 DB로 타임머신을 수행합니다...")
+        if not kr_templates:
+            hunt_supernovas("KR")
+        if not us_templates:
+            hunt_supernovas("US")
+    elif need_ml_mining:
+        print(
+            f"✅ [타임머신 스킵] V2 캐시에서 DNA 로드 (KR {len(kr_templates)}·US {len(us_templates)}). "
+            "ML 클러스터만 생성합니다."
+        )
+
+    if need_time_machine or need_ml_mining:
         try:
             import data_miner
-            print("🔄 [최초 가동] K-Means 클러스터 마이닝 1회 자동 실행...")
+
+            print("🔄 K-Means 클러스터 마이닝 실행...")
             data_miner.run_cluster_mining()
         except Exception as e:
             print(f"⚠️ 마이닝 초기화 에러: {e}")
-            
-    # 💡 이미 쌓아둔 데이터가 있다면? 무거운 스캔을 건너뛰고 1초 만에 감시 모드로 복귀!
     else:
-        print(f"✅ [초기화 스킵] 기존에 보존된 템플릿(KR: {len(kr_templates)}개, US: {len(us_templates)}개, ML: {len(ml_templates)}개)을 성공적으로 로드했습니다.")
+        print(
+            f"✅ [초기화 스킵] DNA(KR {len(kr_templates)}·US {len(us_templates)}) + ML {len(ml_templates)} 로드 완료."
+        )
         print("⚡ 타임머신 스캔을 건너뛰고 즉시 [실시간 스나이퍼 모드]로 복귀합니다.")
 
     # 1. 템플릿 갱신 마이너는 백그라운드 스레드로 분리하여 '매주 월요일 17시'에만 조용히 실행되게 놔둡니다.

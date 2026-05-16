@@ -106,6 +106,13 @@ import supernova_hunter  # 💡 [추가] 4번째 코어 엔진 임포트!
 import ai_overseer
 import ai_secretary
 
+try:
+    from config_manager import load_runtime_system_config
+
+    load_runtime_system_config(60.0)
+except Exception:
+    pass
+
 # ==========================================
 # 🛑 주말 자동 휴장 스마트 차단기
 # ==========================================

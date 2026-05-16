@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 SYNTHETIC_DB = os.path.join(_THIS_DIR, "synthetic_market.sqlite")
 OUTPUT_JSON = os.path.join(_THIS_DIR, "mutant_hall_of_fame.json")
 TELEGRAM_ERROR_LOG = os.path.join(_THIS_DIR, "telegram_error_log.txt")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -335,7 +338,8 @@ def _load_incubator_dotenv_optional() -> None:
                 val = val.strip().strip('"').strip("'")
                 if key:
                     os.environ.setdefault(key, val)
-    except Exception:
+    except Exception as e:
+        logger.warning("incubator_engine: optional .env load failed (%s): %s", path, e)
         return
 
 
@@ -344,8 +348,8 @@ def _telegram_operator_alert(message: str) -> None:
     try:
         with open(TELEGRAM_ERROR_LOG, "a", encoding="utf-8") as f:
             f.write(message.rstrip() + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("incubator_engine: telegram_error_log append failed: %s", e)
     print("\n" + "*" * 72)
     print("⚠️  TELEGRAM REPORT NOT DELIVERED — CHECK telegram_error_log.txt  ⚠️")
     print("*" * 72)
@@ -446,8 +450,9 @@ def main() -> None:
         with open(OUTPUT_JSON, "r", encoding="utf-8") as f:
             saved = json.load(f)
         send_telegram_report(format_incubator_telegram_message_ko(saved))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.exception("incubator_engine: post-run telegram / JSON read failed: %s", e)
+        print(f"⚠️ [incubator_engine] 결과 텔레그램/후처리 실패: {e}")
 
 
 if __name__ == "__main__":

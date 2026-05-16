@@ -1,16 +1,18 @@
 """
-상한가·급등 종목 과거 ~30거래일 역추적 → 선취매 DNA → system_config.json LIMIT_UP_DNA (KR / US).
+상한가·급등 종목 과거 ~30거래일 역추적 → 선취매 DNA → system_config 의 상한가 코호트 블록
+(영속 키: LIMIT_UP_COHORT_DNA_CONFIG_KEY, 레거시 문자열 `LIMIT_UP_DNA`).
 독립 위성: main / supernova_hunter 비수정.
 """
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import random
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -24,12 +26,10 @@ try:
 except ImportError:
     yf = None
 
-CONFIG_PATH = os.path.join(
-    os.path.expanduser("~"),
-    "dante_bots",
-    "Dual-Screener-Bot",
-    "system_config.json",
-)
+from config_manager import CONFIG_PATH
+from dna_schema_constants import LIMIT_UP_COHORT_DNA_CONFIG_KEY
+
+logger = logging.getLogger(__name__)
 
 LIMIT_UP_THRESHOLD_PCT_KR = 29.5
 US_EXPLOSION_RET_PCT = 7.0
@@ -95,16 +95,133 @@ def _sleep_stealth() -> None:
     time.sleep(random.uniform(0.3, 0.7))
 
 
-def _ensure_change_rate(krx: pd.DataFrame) -> pd.DataFrame:
-    df = krx.copy()
-    if "ChangeRate" in df.columns:
-        df["ChangeRate"] = pd.to_numeric(df["ChangeRate"], errors="coerce")
-        return df
-    for alt in ("ChgRate", "등락률", "Change", "Rate"):
-        if alt in df.columns:
-            df["ChangeRate"] = pd.to_numeric(df[alt], errors="coerce")
-            return df
-    return df
+def _strip_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.columns = [
+        str(c).strip() if isinstance(c, str) else c for c in out.columns
+    ]
+    return out
+
+
+def _col_ci(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
+    """컬럼명 대소문자 무시·공백 제거 후 첫 일치 실제 컬럼명."""
+    low: Dict[str, str] = {}
+    for c in df.columns:
+        key = str(c).strip().lower()
+        if key not in low:
+            low[key] = str(c) if isinstance(c, str) else str(c)
+    for cand in candidates:
+        k = str(cand).strip().lower()
+        if k in low:
+            return low[k]
+    return None
+
+
+# 외부 API 스키마 변형 흡수 (단일 정규화 게이트)
+_CHANGE_RATE_ALIASES: Tuple[str, ...] = (
+    "ChgRate",
+    "등락률",
+    "등락율",
+    "Change",
+    "ChangesRatio",
+    "ChagesRatio",
+    "Rate",
+    "등락",
+    "Fluctuation",
+    "DRate",
+    "상승률",
+    "Per",
+    "pct_chg",
+    "PctChg",
+    "Change %",
+    "ChangePercent",
+    "Rtn",
+    "CR",
+)
+
+
+def _ensure_change_rate(krx: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str]]:
+    """
+    KRX 리스팅 등에 대해 ChangeRate(%) 단일 컬럼을 보장한다 (정규화 게이트).
+    - API가 제공하는 등락률·Change 계열 별칭을 유연히 매핑하고,
+    - 없으면 동일 행의 (당일가 - 전일가) / 전일가 * 100 으로 자가 치유,
+    - 시계열 단일 종목(리스팅이 아닌 OHLCV 뷰)에 한해서만 종가 shift 기반 파생.
+    반환: (df, 오류문자열|None). 실패 시 사유 문자열.
+    """
+    if krx is None:
+        return pd.DataFrame(), "입력 데이터 없음"
+    df = _strip_column_names(krx)
+    if df.empty:
+        return df, "데이터 비어 있음"
+
+    def _has_usable_rate(series: pd.Series) -> bool:
+        s = pd.to_numeric(series, errors="coerce")
+        return bool(s.notna().any())
+
+    # 1) 이미 ChangeRate
+    crn = _col_ci(df, ("ChangeRate",))
+    if crn:
+        df["ChangeRate"] = pd.to_numeric(df[crn], errors="coerce")
+        if _has_usable_rate(df["ChangeRate"]):
+            return df, None
+
+    # 2) 알려진 별칭
+    for alt in _CHANGE_RATE_ALIASES:
+        cn = _col_ci(df, (alt,))
+        if not cn:
+            continue
+        try:
+            df["ChangeRate"] = pd.to_numeric(df[cn], errors="coerce")
+            if _has_usable_rate(df["ChangeRate"]):
+                return df, None
+        except Exception:
+            continue
+
+    # 3) 동일 행: (당일 종가 - 전일 종가) / 전일 종가 * 100
+    today_prev_specs: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...]], ...] = (
+        (
+            ("종가", "Close", "현재가", "Price", "CurPrice", "현재가(원)"),
+            ("전일종가", "PrevClose", "기준가", "전일가", "Previous Close", "Prev", "전일종가(원)"),
+        ),
+    )
+    for today_cands, prev_cands in today_prev_specs:
+        tc = _col_ci(df, today_cands)
+        pc = _col_ci(df, prev_cands)
+        if not tc or not pc:
+            continue
+        try:
+            close = pd.to_numeric(df[tc], errors="coerce")
+            prev = pd.to_numeric(df[pc], errors="coerce")
+            denom = prev.replace(0, float("nan"))
+            df["ChangeRate"] = (close - prev) / denom * 100.0
+            if _has_usable_rate(df["ChangeRate"]):
+                return df, None
+        except Exception:
+            continue
+
+    # 4) 시계열 단독(심볼 컬럼 없음): 종가 shift — 교차단면 리스팅에는 적용하지 않음
+    has_symbol = bool(
+        _col_ci(df, ("Code",)) or _col_ci(df, ("Symbol",)) or _col_ci(df, ("ISU_CD",))
+    )
+    is_cross_section = has_symbol and len(df) > 5
+
+    if not is_cross_section:
+        close_col = _col_ci(
+            df, ("Close", "close", "Adj Close", "종가", "Price", "현재가")
+        )
+        if close_col is None:
+            return df, "종가·등락률 컬럼을 정규화 게이트에서 찾지 못함"
+        try:
+            close = pd.to_numeric(df[close_col], errors="coerce")
+            prev = close.shift(1)
+            denom = prev.replace(0, float("nan"))
+            df["ChangeRate"] = (close - prev) / denom * 100.0
+        except Exception as exc:
+            return df, f"등락률 산출 실패: {exc}"
+        if _has_usable_rate(df["ChangeRate"]):
+            return df, None
+
+    return df, "등락률·전일종가 쌍을 리스팅에서 찾지 못함 (API 스키마 변경 가능성)"
 
 
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -265,11 +382,14 @@ def extract_pattern_flags(
     return compute_dna_window_flags(ohlc, T_idx)
 
 
-def _fetch_listing_krx() -> pd.DataFrame:
+def _fetch_listing_krx() -> Tuple[pd.DataFrame, Optional[str]]:
     _sleep_stealth()
     if fdr is None:
-        raise RuntimeError("FinanceDataReader 미설치")
-    krx = fdr.StockListing("KRX")
+        return pd.DataFrame(), "FinanceDataReader 미설치"
+    try:
+        krx = fdr.StockListing("KRX")
+    except Exception as exc:
+        return pd.DataFrame(), f"KRX 리스트 수신 실패: {exc}"
     return _ensure_change_rate(krx)
 
 
@@ -414,60 +534,88 @@ def _cohort_to_payload(
     }
 
 
-def _run_region_pipeline(region: str) -> Tuple[Optional[Dict[str, Any]], str]:
-    """단일 지역 부검. (payload | None, 로그 메시지)"""
+def run_kr_limit_up_dna() -> Tuple[Optional[Dict[str, Any]], str]:
+    """한국장 상한가 DNA 부검만 실행. (payload | None, 로그)."""
     pattern_rows: List[Dict[str, bool]] = []
     codes_used: List[str] = []
     raw_n = 0
 
-    if region == "KR":
-        if fdr is None:
-            return None, "KR: FinanceDataReader 없음"
-        krx = _fetch_listing_krx()
-        if "ChangeRate" not in krx.columns or krx["ChangeRate"].isna().all():
-            return None, "KR: 등락률 컬럼 없음"
+    if fdr is None:
+        return None, "KR: FinanceDataReader 없음"
+    krx, rate_err = _fetch_listing_krx()
+    if rate_err:
+        return None, f"KR: {rate_err}"
+    if krx.empty:
+        return None, "KR: 데이터 비어 있음"
 
-        limit_ups = krx[krx["ChangeRate"] >= LIMIT_UP_THRESHOLD_PCT_KR].copy()
-        if limit_ups.empty:
-            return None, "KR: 상한가 종목 없음"
-        raw_n = len(limit_ups)
-        if len(limit_ups) > MAX_TARGETS_KR:
-            limit_ups = limit_ups.nlargest(MAX_TARGETS_KR, "ChangeRate", keep="first")
+    cr = pd.to_numeric(krx["ChangeRate"], errors="coerce")
+    if not cr.notna().any():
+        return None, "KR: ChangeRate 정규화 후 유효 수치 없음"
 
-        for _, row in limit_ups.iterrows():
-            code = row.get("Code", row.get("Symbol", ""))
-            code_s = _normalize_code(code)
-            if not code_s:
-                continue
-            ohlc = _fetch_ohlcv_kr(code_s)
-            if ohlc is None or len(ohlc) < MIN_HISTORY_ROWS:
-                continue
-            flags = extract_pattern_flags(ohlc, region="KR")
-            if flags:
-                pattern_rows.append(flags)
-                codes_used.append(code_s)
+    limit_ups = krx[cr >= LIMIT_UP_THRESHOLD_PCT_KR].copy()
+    if limit_ups.empty:
+        return None, "KR: 상한가 종목 없음"
+    raw_n = len(limit_ups)
+    if len(limit_ups) > MAX_TARGETS_KR:
+        limit_ups = limit_ups.nlargest(MAX_TARGETS_KR, "ChangeRate", keep="first")
 
-    else:
-        symbols = _rank_us_top_symbols(US_TOP_N, US_UNIVERSE_SCAN)
-        raw_n = len(symbols)
-        if not symbols:
-            return None, "US: 상위 티커 추출 실패"
+    for _, row in limit_ups.iterrows():
+        code = row.get("Code", row.get("Symbol", ""))
+        code_s = _normalize_code(code)
+        if not code_s:
+            continue
+        ohlc = _fetch_ohlcv_kr(code_s)
+        if ohlc is None or len(ohlc) < MIN_HISTORY_ROWS:
+            continue
+        flags = extract_pattern_flags(ohlc, region="KR")
+        if flags:
+            pattern_rows.append(flags)
+            codes_used.append(code_s)
 
-        for sym in symbols:
-            ohlc = _fetch_ohlcv_us(sym)
-            if ohlc is None or len(ohlc) < MIN_HISTORY_ROWS:
-                continue
-            flags = extract_pattern_flags(ohlc, region="US")
-            if flags:
-                pattern_rows.append(flags)
-                codes_used.append(sym)
-
-    payload = _cohort_to_payload(pattern_rows, codes_used, raw_n, region)
+    payload = _cohort_to_payload(pattern_rows, codes_used, raw_n, "KR")
     if payload is None:
-        return None, f"{region}: 유효 샘플 0"
+        return None, "KR: 유효 샘플 0"
     if not payload["consensus_met"]:
-        return None, f"{region}: 합의 패턴 {payload['consensus_pattern_hits']}/10 (<7), 저장 생략"
-    return payload, f"{region}: OK"
+        return None, f"KR: 합의 패턴 {payload['consensus_pattern_hits']}/10 (<7), 저장 생략"
+    return payload, "KR: OK"
+
+
+def run_us_limit_up_dna() -> Tuple[Optional[Dict[str, Any]], str]:
+    """미국장 급등 DNA 부검만 실행. (payload | None, 로그)."""
+    pattern_rows: List[Dict[str, bool]] = []
+    codes_used: List[str] = []
+    raw_n = 0
+
+    symbols = _rank_us_top_symbols(US_TOP_N, US_UNIVERSE_SCAN)
+    raw_n = len(symbols)
+    if not symbols:
+        return None, "US: 상위 티커 추출 실패"
+
+    for sym in symbols:
+        ohlc = _fetch_ohlcv_us(sym)
+        if ohlc is None or len(ohlc) < MIN_HISTORY_ROWS:
+            continue
+        flags = extract_pattern_flags(ohlc, region="US")
+        if flags:
+            pattern_rows.append(flags)
+            codes_used.append(sym)
+
+    payload = _cohort_to_payload(pattern_rows, codes_used, raw_n, "US")
+    if payload is None:
+        return None, "US: 유효 샘플 0"
+    if not payload["consensus_met"]:
+        return None, f"US: 합의 패턴 {payload['consensus_pattern_hits']}/10 (<7), 저장 생략"
+    return payload, "US: OK"
+
+
+def _run_region_pipeline(region: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """하위 호환: 단일 지역 부검."""
+    r = str(region).upper()
+    if r == "KR":
+        return run_kr_limit_up_dna()
+    if r == "US":
+        return run_us_limit_up_dna()
+    return None, f"Unknown region: {region}"
 
 
 def _merge_dna_section(
@@ -475,12 +623,12 @@ def _merge_dna_section(
     region_key: str,
     new_payload: Optional[Dict[str, Any]],
 ) -> None:
-    lump = cfg.get("LIMIT_UP_DNA")
+    lump = cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY)
     if not isinstance(lump, dict):
         lump = {}
     if new_payload is not None:
         lump[region_key] = new_payload
-    cfg["LIMIT_UP_DNA"] = lump
+    cfg[LIMIT_UP_COHORT_DNA_CONFIG_KEY] = lump
 
 
 def _send_global_dna_report(
@@ -488,21 +636,38 @@ def _send_global_dna_report(
     us_part: Optional[Dict[str, Any]],
     kr_msg: str,
     us_msg: str,
+    *,
+    include_kr: bool = True,
+    include_us: bool = True,
 ) -> None:
+    send_telegram_msg = None
     try:
-        from auto_forward_tester import send_telegram_msg
-    except Exception:
+        from auto_forward_tester import send_telegram_msg as _stm
+
+        send_telegram_msg = _stm
+    except Exception as e:
+        logger.error("limit_up_forensics: cannot import send_telegram_msg — DNA 리포트 미발송: %s", e)
+        print(f"⚠️ [limit_up_forensics] 텔레그램 모듈 import 실패, 글로벌 DNA 리포트 생략: {e}")
         return
 
     lines = [
         "<b>[🔬 글로벌 상한가 DNA 분석 리포트]</b>",
         f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>",
         "",
-        f"▪️ <b>KR</b>: {kr_msg}",
-        f"▪️ <b>US</b>: {us_msg}",
-        "",
     ]
-    for tag, part in (("KR", kr_part), ("US", us_part)):
+    if include_kr:
+        lines.append(f"▪️ <b>KR</b>: {kr_msg}")
+    if include_us:
+        lines.append(f"▪️ <b>US</b>: {us_msg}")
+    if include_kr or include_us:
+        lines.append("")
+
+    for tag, part, inc in (
+        ("KR", kr_part, include_kr),
+        ("US", us_part, include_us),
+    ):
+        if not inc:
+            continue
         if isinstance(part, dict) and part.get("consensus_met"):
             hits = part.get("consensus_pattern_hits", 0)
             n = part.get("samples_analyzed", 0)
@@ -516,8 +681,9 @@ def _send_global_dna_report(
 
     try:
         send_telegram_msg("\n".join(lines))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.exception("limit_up_forensics: send_telegram_msg failed for global DNA report: %s", e)
+        print(f"⚠️ [limit_up_forensics] 글로벌 DNA 텔레그램 발송 실패: {e}")
 
 
 def run_limit_up_forensics(
@@ -525,6 +691,7 @@ def run_limit_up_forensics(
 ) -> None:
     """
     markets: None → KR+US / ('KR',) / ('US',) 등.
+    KR·US 실행은 분리된 함수로 수행하고, 저장·텔레그램은 finally에서 수행한다.
     """
     print("🔬 [상한가 해부학 부검소] 글로벌 DNA 역추적...")
     if markets is None:
@@ -532,53 +699,71 @@ def run_limit_up_forensics(
     else:
         regions = tuple(m.upper() for m in markets)
 
+    include_kr = "KR" in regions
+    include_us = "US" in regions
+
     cfg = load_config()
     kr_payload: Optional[Dict[str, Any]] = None
     us_payload: Optional[Dict[str, Any]] = None
-    kr_log = "미실행"
-    us_log = "미실행"
+    kr_log = "N/A (스케줄 미포함)" if not include_kr else "미실행"
+    us_log = "N/A (스케줄 미포함)" if not include_us else "미실행"
 
     try:
-        if "KR" in regions:
-            kr_payload, kr_log = _run_region_pipeline("KR")
-            if kr_payload:
-                _merge_dna_section(cfg, "KR", kr_payload)
+        if include_kr:
+            try:
+                kr_payload, kr_log = run_kr_limit_up_dna()
+                if kr_payload:
+                    _merge_dna_section(cfg, "KR", kr_payload)
+                else:
+                    prev = cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY)
+                    if isinstance(prev, dict) and "KR" in prev:
+                        kr_log += " (KR 이전 스냅샷 유지)"
+            except Exception as e:
+                kr_payload = None
+                kr_log = f"KR: 예외 — {e}"
+                print(f"⚠️ [상한가 DNA] KR 파이프라인 오류(US와 논리 분리됨): {e}")
+
+        if include_us:
+            try:
+                us_payload, us_log = run_us_limit_up_dna()
+                if us_payload:
+                    _merge_dna_section(cfg, "US", us_payload)
+                else:
+                    prev = cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY)
+                    if isinstance(prev, dict) and "US" in prev:
+                        us_log += " (US 이전 스냅샷 유지)"
+            except Exception as e:
+                us_payload = None
+                us_log = f"US: 예외 — {e}"
+                print(f"⚠️ [상한가 DNA] US 파이프라인 오류: {e}")
+    finally:
+        try:
+            updated_any = kr_payload is not None or us_payload is not None
+            if updated_any:
+                lump = cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY)
+                if isinstance(lump, dict):
+                    lump["updated_at_global"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    lump["last_regions_run"] = list(regions)
+                if save_config(cfg):
+                    print(f"✅ {LIMIT_UP_COHORT_DNA_CONFIG_KEY} (상한가 코호트 DNA, KR/US) 원자적 저장 완료")
+                else:
+                    print(f"⚠️ {LIMIT_UP_COHORT_DNA_CONFIG_KEY} 저장 실패")
             else:
-                prev = cfg.get("LIMIT_UP_DNA")
-                if isinstance(prev, dict) and "KR" in prev:
-                    kr_log += " (KR 이전 스냅샷 유지)"
+                print(f"💡 갱신 없음 | KR: {kr_log} | US: {us_log}")
+        except Exception as e:
+            print(f"⚠️ 상한가 부검 저장 단계 오류: {e}")
 
-        if "US" in regions:
-            us_payload, us_log = _run_region_pipeline("US")
-            if us_payload:
-                _merge_dna_section(cfg, "US", us_payload)
-            else:
-                prev = cfg.get("LIMIT_UP_DNA")
-                if isinstance(prev, dict) and "US" in prev:
-                    us_log += " (US 이전 스냅샷 유지)"
-
-        updated_any = kr_payload is not None or us_payload is not None
-        if updated_any:
-            lump = cfg.get("LIMIT_UP_DNA")
-            if isinstance(lump, dict):
-                lump["updated_at_global"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                lump["last_regions_run"] = list(regions)
-            if save_config(cfg):
-                print("✅ LIMIT_UP_DNA (KR/US) 원자적 저장 완료")
-            else:
-                print("⚠️ LIMIT_UP_DNA 저장 실패")
-        else:
-            print(f"💡 갱신 없음 | KR: {kr_log} | US: {us_log}")
-
-        _send_global_dna_report(
-            kr_payload or (cfg.get("LIMIT_UP_DNA") or {}).get("KR"),
-            us_payload or (cfg.get("LIMIT_UP_DNA") or {}).get("US"),
-            kr_log,
-            us_log,
-        )
-
-    except Exception as e:
-        print(f"⚠️ 상한가 부검 중 오류: {e}")
+        try:
+            _send_global_dna_report(
+                kr_payload or (cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY) or {}).get("KR"),
+                us_payload or (cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY) or {}).get("US"),
+                kr_log,
+                us_log,
+                include_kr=include_kr,
+                include_us=include_us,
+            )
+        except Exception as e:
+            print(f"⚠️ 상한가 부검 텔레그램 단계 오류: {e}")
 
 
 if __name__ == "__main__":

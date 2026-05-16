@@ -9,6 +9,7 @@ Project 1: Sentiment Natural Language Mining Factory — 완전 격리 실크로
 """
 from __future__ import annotations
 
+import csv
 import html
 import json
 import os
@@ -18,7 +19,7 @@ import sqlite3
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Set, Tuple
 from urllib.parse import urlparse
 from xml.etree.ElementTree import Element
 from zoneinfo import ZoneInfo
@@ -64,6 +65,266 @@ US_FINANCE_RSS_URLS = [
 
 # Naver + BOK + Fed + US 한 블록; 과도한 토큰 방지
 MAX_HEADLINES_FOR_GEMINI = 64
+
+try:
+    from market_db_paths import market_db_read_path
+except Exception:
+
+    def market_db_read_path() -> str:
+        return os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
+
+
+# `toxic_graveyard_analyzer._sector_bucket_for_tree` 와 동일 버킷 라벨 (증권 도메인 테마 프록시).
+_SECTOR_BUCKET_LABELS = (
+    "반도체/IT",
+    "바이오/헬스케어",
+    "에너지/화학",
+    "금융/지주",
+    "산업재/기계",
+    "소비재/엔터",
+    "기타/혼합",
+)
+
+# 거시경제·금융정책 트리거만 (지수명·실적·정치 키워드 제외 — 종목 화이트리스트가 담당).
+_MACRO_MARKET_TERMS: Set[str] = {
+    "금리",
+    "기준금리",
+    "금통위",
+    "한은",
+    "한국은행",
+    "연준",
+    "ECB",
+    "유럽중앙은행",
+    "CPI",
+    "PPI",
+    "PCE",
+    "GDP",
+    "FOMC",
+    "양적완화",
+    "양적긴축",
+    "QT",
+    "QE",
+    "채권",
+    "국채",
+    "회사채",
+    "국고채",
+    "금리인상",
+    "금리인하",
+    "인플레이션",
+    "스태그플레이션",
+    "디플레이션",
+    "물가",
+    "환율",
+    "외환",
+    "스왑",
+    "유동성",
+    "긴축",
+    "완화",
+    "기준금리동결",
+}
+_MACRO_MARKET_EN: Set[str] = {
+    "rate",
+    "rates",
+    "fed",
+    "fomc",
+    "ecb",
+    "cpi",
+    "ppi",
+    "pce",
+    "gdp",
+    "inflation",
+    "deflation",
+    "stagflation",
+    "treasury",
+    "bond",
+    "bonds",
+    "yield",
+    "yields",
+    "fx",
+    "forex",
+    "liquidity",
+    "qe",
+    "qt",
+    "taper",
+    "hike",
+    "hikes",
+}
+
+
+def _compact_kr(s: str) -> str:
+    return re.sub(r"\s+", "", (s or "").strip())
+
+
+def _add_whitelist_tokens(raw: str, names: Set[str], symbols: Set[str]) -> None:
+    t = (raw or "").strip()
+    if not t:
+        return
+    if re.fullmatch(r"[A-Za-z.\-]+", t):
+        symbols.add(t.upper().replace(".", "-"))
+        for part in re.split(r"[\s\-]+", t):
+            if re.fullmatch(r"[A-Za-z]{1,5}", part):
+                symbols.add(part.upper())
+        return
+    names.add(t)
+    names.add(_compact_kr(t))
+    for part in re.split(r"[/|·,\s]+", t):
+        p = part.strip()
+        if len(p) >= 2:
+            names.add(p)
+            names.add(_compact_kr(p))
+
+
+def _load_equity_whitelist() -> Tuple[Set[str], Set[str]]:
+    """
+    KRX(또는 캐시)·선택 FDR·forward_trades 등록종목명·섹터 버킷 → 명사 화이트리스트.
+    """
+    names: Set[str] = set()
+    symbols: Set[str] = set()
+
+    for b in _SECTOR_BUCKET_LABELS:
+        _add_whitelist_tokens(b, names, symbols)
+
+    cache_csv = os.path.join(os.path.dirname(market_db_read_path()), "krx_list_cache.csv")
+    if os.path.isfile(cache_csv):
+        try:
+            with open(cache_csv, "r", encoding="utf-8", newline="") as f:
+                for row in csv.DictReader(f):
+                    n = (row.get("Name") or "").strip()
+                    c = (row.get("Code") or "").strip()
+                    if n:
+                        _add_whitelist_tokens(n, names, symbols)
+                    if c.isdigit():
+                        symbols.add(c.zfill(6))
+        except Exception:
+            pass
+
+    dbp = market_db_read_path()
+    if os.path.isfile(dbp):
+        uri = "file:" + os.path.abspath(dbp).replace("\\", "/") + "?mode=ro"
+        try:
+            conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30)
+            try:
+                cur = conn.execute(
+                    "SELECT DISTINCT COALESCE(NULLIF(trim(name),''), ''), "
+                    "COALESCE(NULLIF(trim(code),''), '') FROM forward_trades WHERE market='KR'"
+                )
+                for nm, cd in cur.fetchall():
+                    if nm:
+                        _add_whitelist_tokens(str(nm), names, symbols)
+                    if cd and str(cd).strip().isdigit():
+                        symbols.add(str(cd).strip().zfill(6))
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    try:
+        import FinanceDataReader as fdr  # type: ignore
+
+        for tag in ("KOSPI", "KOSDAQ"):
+            try:
+                lst = fdr.StockListing(tag)
+            except Exception:
+                continue
+            if lst is None or getattr(lst, "empty", True):
+                continue
+            code_col = "Code" if "Code" in lst.columns else ("Symbol" if "Symbol" in lst.columns else None)
+            name_col = "Name" if "Name" in lst.columns else None
+            if code_col:
+                for v in lst[code_col].astype(str):
+                    v = v.strip()
+                    if v.isdigit():
+                        symbols.add(v.zfill(6))
+            if name_col:
+                for v in lst[name_col].astype(str):
+                    _add_whitelist_tokens(str(v).strip(), names, symbols)
+            for col in ("Industry", "업종", "Sector", "sector", "분류"):
+                if col in lst.columns:
+                    for v in lst[col].astype(str):
+                        _add_whitelist_tokens(str(v).strip(), names, symbols)
+
+        for tag in ("NASDAQ", "NYSE", "AMEX"):
+            try:
+                lst = fdr.StockListing(tag)
+            except Exception:
+                continue
+            if lst is None or getattr(lst, "empty", True) or "Symbol" not in lst.columns:
+                continue
+            name_col = "Name" if "Name" in lst.columns else None
+            for sym in lst["Symbol"].astype(str):
+                s = sym.strip().upper().replace(".", "-")
+                if re.fullmatch(r"[A-Z.\-]+", s) and 1 <= len(s) <= 6:
+                    symbols.add(s)
+            if name_col:
+                for v in lst[name_col].astype(str):
+                    _add_whitelist_tokens(str(v).strip(), names, symbols)
+    except Exception:
+        pass
+
+    return names, symbols
+
+
+def _keyword_matches_equity_whitelist(keyword: str, names: Set[str], symbols: Set[str]) -> bool:
+    k = (keyword or "").strip()
+    if len(k) < 2:
+        return False
+
+    if re.fullmatch(r"[A-Za-z][A-Za-z.\-0-9]*", k):
+        ku = k.upper().replace(".", "-")
+        if ku in symbols:
+            return True
+
+    c = _compact_kr(k)
+    if c in names:
+        return True
+
+    for n in names:
+        if len(n) < 3:
+            continue
+        if n in c or (len(c) >= 4 and c in n):
+            return True
+    return False
+
+
+def _keyword_matches_macro_finance(keyword: str) -> bool:
+    k = (keyword or "").strip()
+    if len(k) < 2:
+        return False
+    c = _compact_kr(k)
+    if c in _MACRO_MARKET_TERMS or k in _MACRO_MARKET_TERMS:
+        return True
+    for t in _MACRO_MARKET_TERMS:
+        if len(t) >= 2 and t in c:
+            return True
+    tokens = re.findall(r"[A-Za-z]{2,}|[가-힣]{2,}", k)
+    for t in tokens:
+        if t in _MACRO_MARKET_TERMS:
+            return True
+        low = t.lower()
+        if low in _MACRO_MARKET_EN:
+            return True
+    return False
+
+
+def filter_gemini_keywords_through_whitelist(result: dict[str, Any]) -> dict[str, Any]:
+    """Gemini 산출 키워드를 등록 종목·섹터·거시금융 교집합으로 정제 (정치·일반 사회 이슈 드롭)."""
+    if not isinstance(result, dict):
+        return result
+    names, symbols = _load_equity_whitelist()
+    out = dict(result)
+    kept: list[Optional[str]] = []
+    for key in ("top_keyword_1", "top_keyword_2", "top_keyword_3"):
+        raw = out.get(key)
+        s = str(raw).strip() if raw is not None else ""
+        if not s:
+            kept.append(None)
+            continue
+        if _keyword_matches_equity_whitelist(s, names, symbols) or _keyword_matches_macro_finance(s):
+            kept.append(s)
+        else:
+            kept.append(None)
+    out["top_keyword_1"], out["top_keyword_2"], out["top_keyword_3"] = kept[0], kept[1], kept[2]
+    return out
 
 
 def _sleep_jitter(a: float = 0.5, b: float = 1.4) -> None:
@@ -347,11 +608,15 @@ def analyze_headlines_with_gemini(headlines: list[str]) -> Optional[dict[str, An
 
     trimmed = headlines[:MAX_HEADLINES_FOR_GEMINI]
     body = "\n".join(f"- {h}" for h in trimmed)
-    prompt = f"""You are a financial NLP engine. Below is a multilingual headline bundle: Korean equity news (tag [Naver]), Bank of Korea official RSS ([BOK]), US Federal Reserve press RSS ([Fed]), and major US financial wire headlines ([US]). Each line is one headline.
+    prompt = f"""You are a financial NLP engine for securities markets only. Below is a multilingual headline bundle: Korean equity news (tag [Naver]), Bank of Korea official RSS ([BOK]), US Federal Reserve press RSS ([Fed]), and major US financial wire headlines ([US]). Each line is one headline.
 
 {body}
 
-Synthesize across ALL sources. Return exactly 3 trending financial keywords (short noun phrases; use Korean when reflecting Korea-dominant themes, English when US/Fed-dominant — mixed is OK) and ONE overall blended market sentiment score from 0 (Extreme Fear) to 100 (Extreme Greed) for a Korea-US overlapping equity context.
+Rules for the 3 keywords:
+- Each MUST name something tradeable or a market-wide macro term only: a specific listed stock issuer / ADR name, a KOSPI/KOSDAQ industry sector, a major US ticker theme, OR a standard macro label (rates, inflation, FX, indices). 
+- NEVER output political figures, elections, welfare/social policy debates, or non-market current events. If headlines are dominated by such noise, still pick the closest *market* terms or leave a keyword blank by using an empty string.
+
+Return exactly 3 keyword slots (short noun phrases; Korean for Korea-dominant, English for US/Fed-dominant) and ONE overall blended market sentiment score from 0 (Extreme Fear) to 100 (Extreme Greed) for a Korea–US overlapping equity context.
 
 Respond with ONLY valid JSON. No markdown fences, no commentary. Use exactly this shape:
 {{"top_keyword_1":"...","top_keyword_2":"...","top_keyword_3":"...","sentiment_score":55}}
@@ -384,10 +649,24 @@ sentiment_score must be an integer from 0 to 100 inclusive."""
 
         if not k1 and not k2 and not k3 and score_f is None:
             return None
+        filtered = filter_gemini_keywords_through_whitelist(
+            {
+                "top_keyword_1": k1,
+                "top_keyword_2": k2,
+                "top_keyword_3": k3,
+                "sentiment_score": score_f,
+            }
+        )
+        fk1 = filtered.get("top_keyword_1")
+        fk2 = filtered.get("top_keyword_2")
+        fk3 = filtered.get("top_keyword_3")
+        dropped = [x for x, (a, b) in enumerate([(k1, fk1), (k2, fk2), (k3, fk3)]) if a and not b]
+        if dropped:
+            print("⚠️ [Sentiment Miner] 화이트리스트 탈락(keyword slot) — 원문 일부 제거됨.")
         return {
-            "top_keyword_1": k1,
-            "top_keyword_2": k2,
-            "top_keyword_3": k3,
+            "top_keyword_1": fk1,
+            "top_keyword_2": fk2,
+            "top_keyword_3": fk3,
             "sentiment_score": score_f,
         }
     except Exception as e:

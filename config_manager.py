@@ -22,12 +22,14 @@ import os
 import random
 import re
 import sqlite3
+import threading
 import time
 from typing import Any, Callable, Mapping, Optional
 
 import low_ram_sqlite_pragmas
 import sqlite_schema_guard
 from factory_data_paths import factory_data_dir
+from macro_context_snapshot import ENABLE_MACRO_SYNERGY_WEIGHTING_KEY
 
 # 비밀·토큰은 .env 만 사용. JSON/SQLite 설정에 실수로 들어온 키는 저장·로드 시 제거한다.
 _SENSITIVE_KEY_RE = re.compile(
@@ -446,6 +448,105 @@ def update_config_value(
     )
 
 
+def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
+    """
+    리포트·관제용 기본 키(스필오버 폴백, 데스매치 최소 표본 등)가 없으면 메모리에 주입한다.
+    반환: 이번 로드에서 새로 채운 키 이름 집합(영속화 대상).
+    """
+    added: set[str] = set()
+    if "ENABLE_SPILLOVER_FALLBACK" not in cfg:
+        cfg["ENABLE_SPILLOVER_FALLBACK"] = True
+        added.add("ENABLE_SPILLOVER_FALLBACK")
+    if "US_SPILLOVER_SECTOR_LAST_GOOD" not in cfg:
+        cfg["US_SPILLOVER_SECTOR_LAST_GOOD"] = ""
+        added.add("US_SPILLOVER_SECTOR_LAST_GOOD")
+    if "US_SPILLOVER_SECTOR_AS_OF" not in cfg:
+        cfg["US_SPILLOVER_SECTOR_AS_OF"] = ""
+        added.add("US_SPILLOVER_SECTOR_AS_OF")
+    if "DEATHMATCH_MIN_TRADES_PER_ARM" not in cfg:
+        cfg["DEATHMATCH_MIN_TRADES_PER_ARM"] = 5
+        added.add("DEATHMATCH_MIN_TRADES_PER_ARM")
+    if "PENDING_MUTANTS" not in cfg:
+        cfg["PENDING_MUTANTS"] = {"strategies": [], "updated_at": ""}
+        added.add("PENDING_MUTANTS")
+    if "APPROVE_PENDING_MUTANTS_TO_INCUBATOR" not in cfg:
+        cfg["APPROVE_PENDING_MUTANTS_TO_INCUBATOR"] = False
+        added.add("APPROVE_PENDING_MUTANTS_TO_INCUBATOR")
+    if ENABLE_MACRO_SYNERGY_WEIGHTING_KEY not in cfg:
+        cfg[ENABLE_MACRO_SYNERGY_WEIGHTING_KEY] = False
+        added.add(ENABLE_MACRO_SYNERGY_WEIGHTING_KEY)
+    return added
+
+
+def _sqlite_kv_nonempty() -> bool:
+    """system_config.sqlite 가 존재하고 config_kv 에 1행 이상이면 True."""
+    if not os.path.isfile(CONFIG_DB_PATH):
+        return False
+
+    def _count() -> int:
+        conn = _connect()
+        try:
+            return _sqlite_row_count(conn)
+        finally:
+            conn.close()
+
+    try:
+        return _retry_on_locked(_count) > 0
+    except (OSError, sqlite3.Error):
+        return False
+
+
+def _persist_spillover_autoinit(
+    cfg: dict[str, Any],
+    added: set[str],
+    *,
+    max_retries: int = 5,
+) -> None:
+    """
+    누락 키를 운영 저장소에 반영한다.
+    - SQLite KV 가 이미 쓰이는 환경: 추가된 키만 set_config_value (전체 삭제 없음).
+    - 레거시 JSON 전용: factory_data_dir()/system_config.json 에만 원자 병합 저장.
+    실패해도 호출자가 이미 가진 cfg 기본값으로 동작한다.
+    """
+    if not added:
+        return
+    try:
+        if _sqlite_kv_nonempty():
+            for k in sorted(added):
+                set_config_value(str(k), cfg[str(k)])
+            print(
+                "✅ [config_manager] 리포트/관제 기본 키를 SQLite(system_config.sqlite)에 자동 반영: "
+                + ", ".join(sorted(added))
+            )
+            return
+        disk = _read_json_file(CONFIG_PATH, max_retries=max_retries)
+        for k in added:
+            disk[str(k)] = cfg[str(k)]
+        _ensure_config_dir()
+        for attempt in range(max_retries):
+            try:
+                tmp = CONFIG_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(disk, f, indent=2, ensure_ascii=False, default=str)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, CONFIG_PATH)
+                print(
+                    "✅ [config_manager] 리포트/관제 기본 키를 system_config.json 에 자동 반영: "
+                    + ", ".join(sorted(added))
+                )
+                return
+            except OSError:
+                if attempt < max_retries - 1:
+                    time.sleep(random.uniform(0.05, 0.15))
+                else:
+                    raise
+    except Exception as e:
+        print(
+            f"⚠️ [config_manager] 리포트/관제 기본 키 자동 저장 실패(메모리 기본값으로 계속 동작): {e}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # 전체 dict 브릿지
 # ---------------------------------------------------------------------------
@@ -479,8 +580,40 @@ def load_system_config(max_retries: int = 5) -> dict[str, Any]:
         blob = {}
 
     if blob:
-        return strip_sensitive_from_config_obj(blob)
-    return strip_sensitive_from_config_obj(_load_legacy_merged_view(max_retries=max_retries))
+        out = strip_sensitive_from_config_obj(blob)
+    else:
+        out = strip_sensitive_from_config_obj(
+            _load_legacy_merged_view(max_retries=max_retries)
+        )
+
+    added = _ensure_spillover_autoinit_keys(out)
+    if added:
+        _persist_spillover_autoinit(out, added, max_retries=max_retries)
+    return out
+
+
+_RUNTIME_CFG_LOCK = threading.Lock()
+_RUNTIME_CFG_TS: float = 0.0
+_RUNTIME_CFG_DATA: Optional[dict[str, Any]] = None
+
+
+def load_runtime_system_config(ttl_seconds: float = 60.0, *, max_retries: int = 5) -> dict[str, Any]:
+    """
+    장시간 워커용: TTL 이내면 캐시된 전체 설정 dict 를 반환하고, 만료 시 `load_system_config` 를 다시 호출한다.
+    (오토파일럿 등이 갱신한 SQLite KV / 레거시 JSON 병합 뷰를 최대 ttl_seconds 지연으로 반영)
+    """
+    global _RUNTIME_CFG_TS, _RUNTIME_CFG_DATA
+    if ttl_seconds <= 0:
+        return load_system_config(max_retries=max_retries)
+    now = time.monotonic()
+    with _RUNTIME_CFG_LOCK:
+        if _RUNTIME_CFG_DATA is not None and (now - _RUNTIME_CFG_TS) < float(ttl_seconds):
+            return _RUNTIME_CFG_DATA
+    fresh = load_system_config(max_retries=max_retries)
+    with _RUNTIME_CFG_LOCK:
+        _RUNTIME_CFG_DATA = fresh
+        _RUNTIME_CFG_TS = time.monotonic()
+    return fresh
 
 
 def save_system_config(config_data: Mapping[str, Any], max_retries: int = 5) -> bool:

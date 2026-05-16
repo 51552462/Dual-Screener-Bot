@@ -12,6 +12,7 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 import FinanceDataReader as fdr
 import matplotlib.font_manager as fm
+import logging
 
 # data_updater.py와 동일한 DB 경로 설정 [cite: 82]
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
@@ -28,6 +29,8 @@ except Exception:
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
+logger = logging.getLogger(__name__)
+
 # 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — 자격 증명은 .env → telegram_env
 import telegram_env
 
@@ -41,6 +44,7 @@ from telegram_message_queue import (
     start_telegram_queue_daemons,
     wait_telegram_queue_drained,
 )
+from scanner_funnel import ScanFunnelTracker, format_scan_funnel_report
 
 start_telegram_queue_daemons(
     TELEGRAM_TOKEN_MAIN,
@@ -314,7 +318,8 @@ def scan_market_1d():
                     lines = f.read().splitlines()
                     if lines and lines[0] == today_str:
                         sent_today = set(lines[1:])
-            except: pass
+            except Exception as e:
+                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
@@ -322,6 +327,12 @@ def scan_market_1d():
     print(f"\n⚡ [일봉 전용] 한국장 4번(밥그릇) 스캔 시작! (당일 중복 차단 🛡️)")
     t0 = time.time()
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0, 'errors': 0, 'fetch_failed': 0}
+    funnel = ScanFunnelTracker(
+        scanner_id="KR_BOWL",
+        market="KR",
+        universe_size=len(stock_list),
+        profile="KR_BOWL",
+    )
     console_lock = threading.Lock()
     
     start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
@@ -332,6 +343,7 @@ def scan_market_1d():
             name, code = row["Name"], row["Code"]
             df_raw = None
             is_valid = False
+            static_quote = False
             hit, sig_type, df, dbg = False, "", None, {}
             
             # 👇👇 [수정된 DB 로드 블록: try-except 완벽 마감] 👇👇
@@ -351,6 +363,7 @@ def scan_market_1d():
                             t3 = tail_3[["Close", "Volume"]].dropna()
                             if len(t3) >= 3 and int(t3["Close"].nunique()) == 1 and float(t3["Volume"].sum()) < 10000:
                                 df_raw = None
+                                static_quote = True
                     except Exception:
                         pass
 
@@ -362,10 +375,17 @@ def scan_market_1d():
                 print(f"⚠️ [{name}] 시그널 연산 중 에러: {inner_e}")
                 with console_lock:
                     tracker['errors'] += 1
-                pass
-            if not is_valid:
+                funnel.drop("COMPUTE_ERROR")
+                return
+            if static_quote:
+                funnel.drop("STATIC_QUOTE")
+            elif not is_valid:
+                funnel.add_fetch_failed(1)
+                funnel.drop("DATA_FAIL")
                 with console_lock:
                     tracker['fetch_failed'] += 1
+            elif not hit:
+                funnel.drop("BOWL_FAIL")
             # 👆👆 [수정 완료] 👆👆 
 
             hit_rank = 0
@@ -377,6 +397,7 @@ def scan_market_1d():
                 
                 if hit:
                     if code in sent_today:
+                        funnel.drop("SKIP_DUPLICATE")
                         hit = False 
                     else:
                         tracker['hits'] += 1
@@ -386,9 +407,19 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except Exception as e:
+                            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                     
             if hit:
+                _sig = str(dbg.get("sig_type", sig_type) or "BOWL")
+                _score = float(dbg.get("score", 0) or 0)
+                funnel.add_final_candidate(
+                    code=str(code),
+                    name=str(name),
+                    pass_path=_sig,
+                    final_sig=f"[KR_BOWL] {_sig}",
+                    final_score=_score,
+                )
                 # 💡 본캐용 차트 및 홍보용 차트 각각 생성
                 main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
                 threads_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
@@ -441,9 +472,14 @@ def scan_market_1d():
                     )
 
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                    funnel.set_pipeline_result(str(code), "ENROLLED")
+                else:
+                    funnel.drop("CHART_FAIL")
+                    funnel.set_pipeline_result(str(code), "CHART_FAIL")
         except Exception as e:
             with console_lock:
                 tracker['errors'] += 1
+            funnel.drop("COMPUTE_ERROR")
             pass
 
     # 💡 5. 일꾼(스레드) 가동 및 대기
@@ -457,14 +493,17 @@ def scan_market_1d():
     print(f"\n✅ [한국장 4번 밥그릇 스캔 완료] 포착: {tracker['hits']}개 | 오류 발생: {tracker['errors']}건 | 데이터 수신 실패: {tracker['fetch_failed']}건 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
     if SEND_TELEGRAM:
         try:
-            _sum = (
-                f"✅ [한국장 4번 밥그릇 스캔 완료] 포착: {tracker['hits']}개 | 오류: {tracker['errors']}건 | "
-                f"데이터 수신 실패: {tracker['fetch_failed']}건 | 소요: {(time.time() - t0)/60:.1f}분"
+            _funnel_html = format_scan_funnel_report(
+                funnel.finalize(elapsed_min=(time.time() - t0) / 60.0)
             )
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": _sum},
-                timeout=10,
+                json={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": _funnel_html,
+                    "parse_mode": "HTML",
+                },
+                timeout=15,
                 verify=False,
             )
         except Exception:

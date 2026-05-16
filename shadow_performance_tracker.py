@@ -25,19 +25,16 @@ try:
 except ImportError:
     yf = None
 
-DB_PATH = os.path.join(
-    os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite"
-)
-CONFIG_PATH = os.path.join(
-    os.path.expanduser("~"),
-    "dante_bots",
-    "Dual-Screener-Bot",
-    "system_config.json",
-)
+from config_manager import CONFIG_PATH
+from market_db_paths import market_db_read_path
+
+
+def _db_path_ro() -> str:
+    return market_db_read_path()
 
 
 def _connect_ro(max_retries: int = 5):
-    uri_path = DB_PATH.replace("\\", "/")
+    uri_path = _db_path_ro().replace("\\", "/")
     uri = f"file:{uri_path}?mode=ro"
     last_err = None
     for attempt in range(max_retries):

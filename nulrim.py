@@ -13,40 +13,15 @@ import warnings, urllib3
 from bs4 import BeautifulSoup
 import FinanceDataReader as fdr
 import sqlite3
-import json
 import random
+import logging
 
-# 💡 [자율 관제탑 연결] 조율된 파라미터 수신
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+from config_manager import load_runtime_system_config
+from market_db_paths import MARKET_DATA_DB_PATH
 
+DB_PATH = MARKET_DATA_DB_PATH
 
-def load_config(max_retries=5):
-    """
-    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
-    """
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
-
-
-def load_system_config():
-    return load_config()
-
-SYS_CONFIG = load_system_config()
-
-# 💡 [DB 경로 세팅] 로컬 데이터베이스 위치
-DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+logger = logging.getLogger(__name__)
 
 # 💡 [Next Level 1] 시세 로드 — market_data_fetcher 단일 파이프라인
 def get_safe_data(code, start_date):
@@ -144,6 +119,7 @@ def scale_score(val, best, worst):
 def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, code: str = ""): 
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
     df = df_raw.copy()
+    cfg = load_runtime_system_config(60.0)
     
     df['Idx_Close'] = idx_close
     df['Idx_Close'] = df['Idx_Close'].ffill()
@@ -260,7 +236,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
             m = re.search(r'<em id="_market_sum"[^>]*>\s*([\d,]+)\s*</em>', res.text, re.DOTALL)
             if m:
                 marcap_val = float(m.group(1).replace(',', '')) * 100_000_000
-        except: pass
+        except Exception as e:
+            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     # 💡 [V11.0] 시가총액 체급 판별 및 통계 매핑 (초대형주 방어 로직 추가)
     marcap_eok = marcap_val / 100_000_000 
@@ -313,7 +290,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     
     if hit_s6: 
         sig_type = "🌱 [눌림] S6 (바닥턴 단기 정배열)"
-        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S6", 1.0)
+        regime_weight = cfg.get("WEIGHT_KR_NULRIM_S6", 1.0)
         score_rs   = scale_score(cur_rs, 770.60, -65.50)   
         score_tb   = scale_score(cur_tb, 24.60, 0.90)      
         score_cpv  = scale_score(cur_cpv, 0.14, 0.83)      
@@ -350,7 +327,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 
 
         total_score = (score_bbe*10 + score_cpv*9 + score_tb*8 + score_marcap*7 + score_rs*6 + score_ema*5 + score_freq*4) / 490 * 100
-        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S4", 1.0)
+        regime_weight = cfg.get("WEIGHT_KR_NULRIM_S4", 1.0)
         trap_warning += "⚠️ [S4 바닥 탈출] 승률 방어를 위해 반드시 서브 비중으로만 접근 요망!\n"
 
     else: # S1
@@ -363,7 +340,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
         score_freq = 10.0 if 1 <= freq_count <= 5 else 5.0 
 
         total_score = (score_rs*10 + score_ema*9 + score_marcap*8 + score_cpv*7 + score_bbe*6 + score_tb*5 + score_freq*4) / 490 * 100
-        regime_weight = SYS_CONFIG.get("WEIGHT_KR_NULRIM_S1", 1.0)
+        regime_weight = cfg.get("WEIGHT_KR_NULRIM_S1", 1.0)
         if cur_rs < -745.10: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
         if not align112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
 
@@ -384,7 +361,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     # =========================================================================
     # 👑 [비선형 의사결정 나무 (Decision Tree) 필터] - 선형 덧셈의 오류 차단
     # =========================================================================
-    tree_fatal_cpv = SYS_CONFIG.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
+    tree_fatal_cpv = cfg.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
     is_tree_rejected = False
     tree_reason = ""
 
@@ -405,7 +382,8 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     if hit_s7 and cur_rs >= 293.80 and cur_cpv <= 0.56 and align112[-1]: is_tenbagger = True
     if hit_s1 and cur_rs >= 239.30 and cur_cpv <= 0.55 and align448[-1]: is_tenbagger = True
 
-    is_top_dna = (cur_cpv <= 0.56) and (cur_tb >= 10.83) and (cur_bbe >= 16.12)
+    # 당일 봉 기반 형상 지표(상한가 코호트 DNA LIMIT_UP_DNA 와 무관)
+    intraday_shape_top_dna = (cur_cpv <= 0.56) and (cur_tb >= 10.83) and (cur_bbe >= 16.12)
     is_worst_dna = (cur_cpv >= 0.56) and (cur_tb <= 10.36) and (cur_bbe <= 5.20) 
 
     # =========================================================================
@@ -421,9 +399,9 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     # 👇 타점에 따른 동적 네임스페이스 분리 (S4면 S4 방, 아니면 S1 방)
     ns_prefix = "KR_NULRIM_S4" if hit_s4 else "KR_NULRIM_S1"
     
-    active_exit_mode = SYS_CONFIG.get("ACTIVE_EXIT_MODE", "HYBRID")
-    opt_time_stop    = SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10)
-    opt_sl_atr       = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+    active_exit_mode = cfg.get("ACTIVE_EXIT_MODE", "HYBRID")
+    opt_time_stop    = cfg.get(f"{ns_prefix}_TIME_STOP", 10)
+    opt_sl_atr       = cfg.get(f"{ns_prefix}_ATR_SL", 2.0)
 
     if active_exit_mode == "TECH":
         action = "📈 <b>[TECH 추세 모드 가동]</b>\n대세 상승장 판독 완료. 통계적 숏컷을 무시하고, '단기데드' 및 'ZLEMA 이탈' 전까지 차트 추세를 끝까지 발라먹으십시오."
@@ -486,14 +464,14 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
                 # 대장주 1~3위 & 참사주 1~3위 템플릿과 비교하여 가장 높은 유사도 찾기
                 for i in [1, 2, 3]:
                     # Alpha 매칭
-                    a_dna = SYS_CONFIG.get(f"DNA_ALPHA_RANK{i}")
+                    a_dna = cfg.get(f"DNA_ALPHA_RANK{i}")
                     if a_dna:
                         sim = calc_similarity(a_dna)
                         if sim > match_similarity: 
                             match_similarity, match_result, matched_name, best_window = sim, f"ALPHA_{i}", a_dna.get('name', '대장주'), window
                     
                     # Trap 매칭
-                    t_dna = SYS_CONFIG.get(f"DNA_TRAP_RANK{i}")
+                    t_dna = cfg.get(f"DNA_TRAP_RANK{i}")
                     if t_dna:
                         sim = calc_similarity(t_dna)
                         if sim > match_similarity: 
@@ -501,7 +479,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
 
         # 👇👇 [여기에 V53.0 초신성(Supernova) 타임머신 매칭 로직을 추가합니다!] 👇👇
                 market_str = "US" if "US" in ns_prefix else "KR"
-                sn_dna = SYS_CONFIG.get(f"DNA_SUPERNOVA_{market_str}")
+                sn_dna = cfg.get(f"DNA_SUPERNOVA_{market_str}")
                 if sn_dna:
                     sn_sim = calc_similarity(sn_dna)
                     if sn_sim > max_sn_similarity: 
@@ -543,7 +521,7 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
         cur_atr = np.mean(tr) if np.mean(tr) > 0 else c[-1] * 0.03
         
         # 2. 관제탑 손절 승수 로드 (파일별 ns_prefix 사용)
-        opt_sl_atr = SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0)
+        opt_sl_atr = cfg.get(f"{ns_prefix}_ATR_SL", 2.0)
         
         # 3. 1주당 손실 예상 금액 (리스크 폭)
         risk_per_share = cur_atr * opt_sl_atr
@@ -610,13 +588,13 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
     )
     
     if trap_warning != "": v11_comment += f"\n{trap_warning}"
-    if is_top_dna: v11_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
+    if intraday_shape_top_dna: v11_comment += f"\n💎 [Top 30 우량 DNA 검증 완료] 대박 확률 대폭 상승!\n"
     elif is_worst_dna: v11_comment += f"\n💀 [Worst 30 지옥행 DNA 일치] 꼬리는 달렸으나 에너지가 죽은 종목. 진입 주의!\n"
     if is_tenbagger: v11_comment += f"\n🚀 [초격차 텐배거 포착] 대세 상승 퀀텀점프 필수 조합 충족!\n"
     if weekday == 4: v11_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
     elif weekday == 0: v11_comment += f"⚠️ 월요일 주말 호재 고점 털기 리스크 반영 (-5% 삭감)\n"
 
-    return True, sig_type, df, {
+    dbg = {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
         "recommend": f"{exit_strategy}",
@@ -632,8 +610,19 @@ def compute_signal(df_raw: pd.DataFrame, idx_close: pd.Series, marcap: float, co
         "sn_score": max_sn_similarity,
         "marcap_eok": marcap_eok,          # 👈 추가
         "score_marcap": score_marcap,      # 👈 추가
-        "freq_count": freq_count           # 👈 추가
+        "freq_count": freq_count,          # 👈 추가
+        "intraday_shape_top_dna": intraday_shape_top_dna,
+        "is_tenbagger": is_tenbagger,
+        "is_worst_dna": is_worst_dna,
+        "is_death_combo": is_death_combo,
     }
+    try:
+        from macro_context_snapshot import attach_macro_context_to_dbg
+
+        attach_macro_context_to_dbg(dbg, cfg)
+    except Exception:
+        pass
+    return True, sig_type, df, dbg
 
 # 💡 매일 로테이션되는 5가지 프리미엄 차트 테마
 def get_daily_theme():
@@ -732,7 +721,8 @@ def scan_market_1d():
                     lines = f.read().splitlines()
                     if lines and lines[0] == today_str:
                         sent_today = set(lines[1:])
-            except: pass
+            except Exception as e:
+                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
@@ -818,20 +808,31 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except Exception as e:
+                            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                     
             if hit:
-                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
-                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
-                
-                if main_chart_path and promo_chart_path:
+                sector_info = "유망 섹터 포착"
+                ai_main = "(AI 요약 생략)"
+                try:
                     ai_main, _ = generate_ai_report(code, name)
-                    
                     try:
                         sector_info = ai_main.split('\n')[0].replace('1. 섹터:', '').strip()
-                    except:
-                        sector_info = "유망 섹터 포착"
-                    
+                    except Exception:
+                        pass
+                except Exception as _ae:
+                    print(f"⚠️ AI 리포트 실패(시너지·캡션 기본값): {_ae}")
+                try:
+                    from macro_context_snapshot import finalize_macro_synergy_on_dbg
+
+                    finalize_macro_synergy_on_dbg(dbg, load_runtime_system_config(60.0), sector_info)
+                except Exception as _me:
+                    print(f"⚠️ macro synergy finalize: {_me}")
+                main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
+                promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
+
+                if main_chart_path and promo_chart_path:
+
                     main_caption = (
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
@@ -862,28 +863,28 @@ def scan_market_1d():
                             'v_cpv': dbg.get('v_cpv', 0),
                             'v_yang': dbg.get('v_yang', 0),
                             'v_energy': dbg.get('v_energy', 0),
-                            'marcap_eok': dbg.get('marcap_eok', 0),    
-                            'score_marcap': dbg.get('score_marcap', 0), 
+                            'marcap_eok': dbg.get('marcap_eok', 0),
+                            'score_marcap': dbg.get('score_marcap', 0),
                             'freq_count': dbg.get('freq_count', 0),
                             'dyn_rs': dbg.get('dyn_rs_score', 0),
                             'dyn_cpv': dbg.get('dyn_cpv_score', 0),
                             'dyn_tb': dbg.get('dyn_tb_score', 0),
                             'is_tenbagger': 1 if dbg.get('is_tenbagger') else 0,
-                            'is_top_dna': 1 if dbg.get('is_top_dna') else 0,
+                            'is_top_dna': 1 if dbg.get('intraday_shape_top_dna') else 0,
                             'is_worst_dna': 1 if dbg.get('is_worst_dna') else 0,
                             'is_death_combo': 1 if dbg.get('is_death_combo') else 0
                         }
-            
+
                         # 1. 오리지널 로직 장부 기록 (STANDARD 진영)
                         success, fwd_msg = aft.try_add_virtual_position(
                             market=market_type, code=code, name=name,
-                            sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0), 
+                            sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0),
                             ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
                             trade_source="STANDARD"
                         )
                         print(f"   ↳ [오리지널 장부]: {fwd_msg}")
-                                
-                                # 2. 초신성 공통점 매칭 합격 시 추가 진입 (SUPERNOVA 진영 선취매)
+
+                        # 2. 초신성 공통점 매칭 합격 시 추가 진입 (SUPERNOVA 진영 선취매)
                         sn_score = dbg.get('sn_score', 0.0)
                         if sn_score >= 50.0: # 💡 폭등 6개월 전 DNA와 85% 이상 일치 시
                             _, sn_msg = aft.try_add_virtual_position(
@@ -893,17 +894,16 @@ def scan_market_1d():
                                 trade_source="SUPERNOVA"
                             )
                             print(f"   ↳ [초신성 장부]: {sn_msg}")
-                                    
+
                     except Exception as e:
                         print(f"   ↳ [포워드 장부 에러]: {e}")
-                            # 👆👆 [듀얼 리그 진입 끝] 👆👆
 
                     promo_caption = (
                         f"📈 [알고리즘 차트 포착]\n\n"
                         f"🏢 종목: {name} ({code})\n"
                         f"🏷️ 섹터: {sector_info}\n"
                         f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
-                        )
+                    )
                     enqueue_telegram(
                         "PROMO",
                         promo_chart_path,

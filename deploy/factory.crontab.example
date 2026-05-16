@@ -1,0 +1,34 @@
+# Dual-Screener-Bot — Factory crontab (paste into /etc/cron.d/dual-screener-factory)
+# Server path: set FACTORY to your clone directory. chmod +x factory.sh first.
+#
+# timedatectl may show UTC; CRON_TZ forces schedule interpretation in KST.
+
+SHELL=/bin/bash
+CRON_TZ=Asia/Seoul
+PATH=/usr/local/bin:/usr/bin:/bin
+
+FACTORY=/home/ubuntu/Dual-Screener-Bot
+FACTORY_USER=ubuntu
+
+# --- KR live sniper (align with your market schedule) ---
+25 10 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+0  13 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+0  15 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+
+# --- KR post-close audit (after 15:30 KST settle) ---
+35 16 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-kr
+
+# --- US session scans (example: Tue–Sat KST mornings) ---
+30 6 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+
+# --- US post-close audit (US prior close → KST ~06:45) ---
+45 6 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-us
+
+# --- Weekly Flow master (Saturday, after optional brain surgery) ---
+5 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --weekly
+
+# --- Legacy weekend brain surgery (optional, keep separate from weekly) ---
+0 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && python system_auto_pilot.py --run-autonomous-analysis-only >>${FACTORY}/logs/autonomous_${FACTORY_USER}.log 2>&1
+
+# Manual full daily (not scheduled — use when needed):
+#   cd ${FACTORY} && ./factory.sh --daily

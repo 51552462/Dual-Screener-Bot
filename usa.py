@@ -26,6 +26,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
+logger = logging.getLogger(__name__)
+
 # 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — 자격 증명은 .env → telegram_env
 import telegram_env
 
@@ -39,6 +41,7 @@ from telegram_message_queue import (
     start_telegram_queue_daemons,
     wait_telegram_queue_drained,
 )
+from scanner_funnel import ScanFunnelTracker, format_scan_funnel_report
 
 start_telegram_queue_daemons(
     TELEGRAM_TOKEN_MAIN,
@@ -281,11 +284,18 @@ def scan_market_1d():
                 lines = f.read().splitlines()
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
-        except: pass
+        except Exception as e:
+            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
         
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
     tracker = {'scanned': 0, 'analyzed': 0, 'hits': 0, 'errors': 0, 'fetch_failed': 0}
+    funnel = ScanFunnelTracker(
+        scanner_id="US_BOWL",
+        market="US",
+        universe_size=len(tickers),
+        profile="US_BOWL",
+    )
     start_date = (datetime.now(ny_tz) - timedelta(days=3 * 365)).strftime('%Y-%m-%d')
     end_date = datetime.now(ny_tz).strftime('%Y-%m-%d')
 
@@ -297,6 +307,11 @@ def scan_market_1d():
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
         fetched = list(ex.map(_fetch_one_us, tickers))
 
+    funnel.set_us_preloaded(
+        sum(1 for d in fetched if d is not None and not getattr(d, "empty", True)),
+        len(tickers),
+    )
+
     for tk, df_ticker in zip(tickers, fetched):
         tracker['scanned'] += 1
         info = ticker_to_info.get(tk)
@@ -307,12 +322,15 @@ def scan_market_1d():
         try:
             if df_ticker is None or df_ticker.empty:
                 tracker['fetch_failed'] += 1
+                funnel.add_fetch_failed(1)
+                funnel.drop("DATA_FAIL")
                 continue
 
             df_ticker = df_ticker.loc[:, ~df_ticker.columns.duplicated()].copy()
             df_ticker = df_ticker[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
             df_ticker = df_ticker[~df_ticker.index.duplicated(keep='last')]
 
+            static_quote = False
             # 거래정지·단일가(Static Quote) — 최근 3일 동일 종가 + 거래량 극소 시 매집 착시 방지 (미국장)
             if df_ticker is not None and not df_ticker.empty and len(df_ticker) >= 3:
                 try:
@@ -320,16 +338,23 @@ def scan_market_1d():
                     if "Close" in tail_3.columns and "Volume" in tail_3.columns:
                         t3 = tail_3[["Close", "Volume"]].dropna()
                         if len(t3) >= 3 and int(t3["Close"].nunique()) == 1 and float(t3["Volume"].sum()) < 50000:
-                            continue
+                            static_quote = True
                 except Exception:
                     pass
+
+            if static_quote:
+                funnel.drop("STATIC_QUOTE")
+                continue
 
             if len(df_ticker) >= 500:
                 tracker['analyzed'] += 1
                 hit, sig_type, df, dbg = compute_bobgeureut_1d(df_ticker)
+                if not hit:
+                    funnel.drop("BOWL_FAIL")
                     
                 if hit:
                     if code in sent_today:
+                        funnel.drop("SKIP_DUPLICATE")
                         hit = False 
                     else:
                         tracker['hits'] += 1
@@ -339,9 +364,19 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except Exception as e:
+                            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                             
                 if hit:
+                    _sig = str(dbg.get("sig_type", sig_type) or "BOWL")
+                    _score = float(dbg.get("score", 0) or 0)
+                    funnel.add_final_candidate(
+                        code=str(code),
+                        name=str(name),
+                        pass_path=_sig,
+                        final_sig=f"[US_BOWL] {_sig}",
+                        final_score=_score,
+                    )
                     # 💡 본캐용 및 홍보용 차트 생성
                     main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
                     promo_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=False, is_promo=True)
@@ -393,8 +428,12 @@ def scan_market_1d():
                                 ep=ep_us, facts=entry_facts, sector=sector_info,
                                 trade_source="STANDARD"
                             )
+                            funnel.set_pipeline_result(
+                                str(code), "ENROLLED" if success else "FAILED_DB"
+                            )
                             print(f"   ↳ [미국장 오리지널 장부 기록]: {fwd_msg}")
                         except Exception as e:
+                            funnel.set_pipeline_result(str(code), "FAILED_DB")
                             print(f"   ↳ [포워드 장부 에러]: {e}")
 
                         # 2️⃣ 홍보용 캡션 (쓸데없는 멘트 다 빼고 초심플 압축)
@@ -413,10 +452,16 @@ def scan_market_1d():
                         )
 
                         print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
+                    else:
+                        funnel.drop("CHART_FAIL")
+                        funnel.set_pipeline_result(str(code), "CHART_FAIL")
             else:
                 tracker['fetch_failed'] += 1
+                funnel.add_fetch_failed(1)
+                funnel.drop("DATA_FAIL")
         except Exception as e:
             tracker['errors'] += 1
+            funnel.drop("COMPUTE_ERROR")
             pass
         
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
@@ -430,14 +475,17 @@ def scan_market_1d():
     print(f"\n✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 오류 발생: {tracker['errors']}건 | 데이터 수신 실패: {tracker['fetch_failed']}건 | 소요시간: {dt/60:.1f}분\n")
     if SEND_TELEGRAM:
         try:
-            _sum = (
-                f"✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 오류: {tracker['errors']}건 | "
-                f"데이터 수신 실패: {tracker['fetch_failed']}건 | 소요: {dt/60:.1f}분"
+            _funnel_html = format_scan_funnel_report(
+                funnel.finalize(elapsed_min=dt / 60.0)
             )
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": _sum},
-                timeout=10,
+                json={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": _funnel_html,
+                    "parse_mode": "HTML",
+                },
+                timeout=15,
                 verify=False,
             )
         except Exception:

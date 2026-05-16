@@ -11,6 +11,12 @@ import requests
 
 from bitget_env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget_funding_fetcher import fetch_funding_snapshot
+from meta_governor_consumer import (
+    apply_meta_kelly_merge,
+    effective_max_position_pct,
+    load_meta_state_resolved,
+)
+from report_state_binder import build_macro_treasury_block, format_macro_treasury_section_html
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
@@ -81,6 +87,37 @@ def save_system_config(cfg):
             except Exception:
                 pass
         raise
+
+
+def _deathmatch_min_n_cfg(cfg: dict) -> int:
+    v = cfg.get("DEATHMATCH_MIN_TRADES_PER_ARM", 5)
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        n = 5
+    return max(1, n)
+
+
+def _fmt_deathmatch_ret(ret: float, n_closed: int) -> str:
+    if n_closed <= 0:
+        return "산출 불가 (청산 0건)"
+    return f"{float(ret):+.2f}%"
+
+
+def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret: float, sn_ret: float, n_min: int) -> str:
+    ok_a = n_std >= n_min
+    ok_b = n_sn >= n_min
+    if not ok_a and not ok_b:
+        return "거래 표본 부족 (양측 A/B 비교 보류)"
+    if not ok_a and ok_b:
+        return "거래 표본 부족 (오리지널 관망 대기 — A/B 대결 판정 보류)"
+    if ok_a and not ok_b:
+        return "거래 표본 부족 (초신성 관망 대기)"
+    if sn_ret > std_ret:
+        return "표본 충족: 청산 평균은 초신성(B)이 오리지널(A)보다 높음"
+    if sn_ret < std_ret:
+        return "표본 충족: 청산 평균은 오리지널(A)이 초신성(B)보다 높음"
+    return "표본 충족: 양측 청산 평균 동일"
 
 
 def _ensure_col(cur, col_name, col_type):
@@ -903,8 +940,19 @@ def try_add_virtual_position(
             kelly_risk_pct *= 2.0 
 
     core_group = _extract_core_group(sig_type)
+    _meta_state = load_meta_state_resolved()
+    ns_prefix = _thompson_ns_prefix(tf, sig_type)
+    kelly_risk_pct = apply_meta_kelly_merge(
+        kelly_risk_pct,
+        _meta_state,
+        ns_prefix=ns_prefix,
+        core_group_name=core_group,
+        sys_config=sys_config,
+        entry_facts=facts if isinstance(facts, dict) else {},
+        sector_mapped=str(sector),
+    )
     account_size = float(cfg.get("ACCOUNT_SIZE_USDT", 100000))
-    max_position_pct = float(cfg.get("MAX_POSITION_PCT", 0.25))
+    max_position_pct = float(effective_max_position_pct(cfg, _meta_state))
 
     cur.execute(
         "SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?",
@@ -2292,9 +2340,10 @@ def send_comprehensive_daily_report():
     init_forward_db()
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     cfg = load_system_config()
-    base_seed = float(cfg.get("ACCOUNT_SIZE_USDT", 100000.0))
-    regime = cfg.get("CURRENT_REGIME_KEY", "UNKNOWN")
-    kelly_risk = float(cfg.get("DYNAMIC_KELLY_RISK", 0.01)) * 100.0
+    try:
+        meta_state_coin = load_meta_state_resolved()
+    except Exception:
+        meta_state_coin = {}
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
 
@@ -2315,20 +2364,22 @@ def send_comprehensive_daily_report():
             df_open = df_real[df_real["status"] == "OPEN"].copy()
 
             treasury_key = "TREASURY_SPOT_USDT" if market_type == "spot" else "TREASURY_FUTURES_USDT"
-            treasury = float(cfg.get(treasury_key, 0.0))
-
-            msg1 = f"{m_icon} <b>[1/9] 거시 국면 및 국고(Treasury) 현황</b>\n"
-            msg1 += f"📅 {today_str} | 국면: <b>{regime}</b>\n"
-            msg1 += f"🏦 <b>{market_type.upper()} 국고 잔여금:</b> {treasury:,.2f} USDT\n"
-            msg1 += f"⚖️ 동적 켈리 비중: {kelly_risk:.2f}%\n"
-            msg1 += "<i>※ 아래 누적 손익·리더보드·순환·DNA 통계는 [INCUBATOR_] 섀도우 제외.</i>\n"
-            msg1 += "\n🗣️ <b>[관제탑 시선]</b> "
-            if "UNKNOWN" in regime or "CHOP" in regime:
-                msg1 += "현재 코인 시장의 뚜렷한 방향성이 없어 휩소 방어를 위해 투입 자본을 통제하고 있습니다.\n"
-            elif "BULL" in regime:
-                msg1 += "비트코인 장기 이평선(EMA200) 돌파 및 알트코인 수급 확산이 확인되어 공격적인 롱(Long) 베팅을 진행 중입니다.\n"
-            elif "BEAR" in regime:
-                msg1 += "하락장 늪지대입니다. 숏(Short) 포지션 위주로 대응하거나 현금 비중을 높이고 있습니다.\n"
+            block_coin = build_macro_treasury_block(
+                meta=meta_state_coin,
+                sys_config=cfg,
+                df_closed_real=df_closed,
+                treasury_config_key=treasury_key,
+                ledger_zero_invest_fallback=None,
+            )
+            msg1 = format_macro_treasury_section_html(
+                block_coin,
+                display_label=market_type.upper(),
+                market_icon=m_icon,
+                today_str=today_str,
+                lead_in_html="",
+                currency_suffix="USDT",
+                amount_decimals=2,
+            )
             send_telegram_msg(msg1)
             time.sleep(1)
 
@@ -2519,8 +2570,20 @@ def send_comprehensive_daily_report():
 
             std_df = df_closed[df_closed["sig_type"].astype(str).str.contains("STANDARD", na=False)]
             sn_df = df_closed[df_closed["sig_type"].astype(str).str.contains("SUPERNOVA", na=False)]
-            std_virtual_ret = float(pd.to_numeric(std_df.get("final_ret", 0.0), errors="coerce").fillna(0.0).mean()) if not std_df.empty else 0.0
-            sn_virtual_ret = float(pd.to_numeric(sn_df.get("final_ret", 0.0), errors="coerce").fillna(0.0).mean()) if not sn_df.empty else 0.0
+            n_std = int(len(std_df))
+            n_sn = int(len(sn_df))
+            std_virtual_ret = (
+                float(pd.to_numeric(std_df["final_ret"], errors="coerce").fillna(0.0).mean())
+                if n_std > 0
+                else 0.0
+            )
+            sn_virtual_ret = (
+                float(pd.to_numeric(sn_df["final_ret"], errors="coerce").fillna(0.0).mean())
+                if n_sn > 0
+                else 0.0
+            )
+            n_dm = _deathmatch_min_n_cfg(cfg)
+            v_verdict = _deathmatch_ab_verdict(n_std, n_sn, std_virtual_ret, sn_virtual_ret, n_dm)
 
             lb_all = build_practitioner_reality_leaderboard(market_type=market_type, limit_rows=40)
             if lb_all is not None and not lb_all.empty:
@@ -2536,9 +2599,10 @@ def send_comprehensive_daily_report():
 
             msg9 = f"{m_icon} <b>[9/9] 시스템 데스매치 결산 (실전+가상)</b>\n"
             msg9 += "🧠 <b>가상 리서치 기준(A/B)</b>\n"
-            msg9 += f" - 오리지널(A): {std_virtual_ret:+.2f}%\n"
-            msg9 += f" - 초신성(B): {sn_virtual_ret:+.2f}%\n"
-            msg9 += f" - 판정: {'초신성 우위' if sn_virtual_ret > std_virtual_ret else '오리지널 우위'}\n\n"
+            msg9 += f"📎 청산 표본: 오리지널(A) {n_std}건 | 초신성(B) {n_sn}건 (비교 최소 각 {n_dm}건)\n"
+            msg9 += f" - 오리지널(A): {_fmt_deathmatch_ret(std_virtual_ret, n_std)}\n"
+            msg9 += f" - 초신성(B): {_fmt_deathmatch_ret(sn_virtual_ret, n_sn)}\n"
+            msg9 += f" - 판정: {v_verdict}\n\n"
 
             msg9 += "💸 <b>실전 체결 기준(전체 PRACT 풀)</b>\n"
             msg9 += f" - 실전 평균: {real_system_ret:+.2f}%\n"

@@ -23,6 +23,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
+logger = logging.getLogger(__name__)
+
 # 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — .env → telegram_env
 import telegram_env
 
@@ -263,7 +265,8 @@ def scan_market_1d():
                 lines = f.read().splitlines()
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
-        except: pass
+        except Exception as e:
+            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name']} for _, row in stock_list.iterrows()}
     tickers = list(ticker_to_info.keys())
@@ -321,7 +324,8 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except Exception as e:
+                            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                             
                 if hit:
                     # 💡 본캐용 및 홍보용 차트 생성

@@ -15,9 +15,12 @@ import random
 import matplotlib.font_manager as fm
 import sqlite3
 import json
+import logging
 
 # 💡 [자율 관제탑 연결] 조율된 파라미터 수신
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
+
+logger = logging.getLogger(__name__)
 
 
 def load_config(max_retries=5):
@@ -535,6 +538,10 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
     if weekday == 4: v11_comment += f"✨ 금요일 주말 리스크를 이겨낸 진짜 주도주 프리미엄 (+5% 가산)\n"
     elif weekday == 0: v11_comment += f"⚠️ 월요일 고점 털기 리스크 반영 (-5% 삭감)\n"
 
+    intraday_shape_top_dna = (cur_cpv <= 0.56) and (cur_tb >= 10.83) and (cur_bbe >= 16.12)
+    is_worst_dna = (cur_cpv >= 0.56) and (cur_tb <= 10.36) and (cur_bbe <= 5.20)
+    is_tenbagger = False
+
     return True, sig_type, df, {
         "sig_type": sig_type,
         "last_close": float(c[-1]),
@@ -551,7 +558,11 @@ def compute_5ema_signal(df_raw: pd.DataFrame, idx_close: pd.Series, current_marc
         "sn_score": max_sn_similarity,
         "marcap_eok": marcap_eok,          # 👈 포워드 장부 에러 픽스용 추가
         "score_marcap": score_marcap,      # 👈 포워드 장부 에러 픽스용 추가
-        "freq_count": freq_count           # 👈 포워드 장부 에러 픽스용 추가
+        "freq_count": freq_count,           # 👈 포워드 장부 에러 픽스용 추가
+        "intraday_shape_top_dna": intraday_shape_top_dna,
+        "is_worst_dna": is_worst_dna,
+        "is_death_combo": is_death_combo,
+        "is_tenbagger": is_tenbagger,
     }
 def compute_ohdole_1d(df_raw: pd.DataFrame):
     if df_raw is None or len(df_raw) < 500: return False, "", df_raw, {}
@@ -691,7 +702,8 @@ def scan_market_1d():
                     lines = f.read().splitlines()
                     if lines and lines[0] == today_str:
                         sent_today = set(lines[1:])
-            except: pass
+            except Exception as e:
+                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
@@ -733,7 +745,8 @@ def scan_market_1d():
             
             try:
                 df_raw = get_safe_data(code, start_date)
-            except: pass
+            except Exception as e:
+                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
             # 거래정지·단일가(Static Quote) — 최근 3일 동일 종가 + 거래량 극소 시 매집 착시 방지 (한국장)
             if df_raw is not None and not df_raw.empty and len(df_raw) >= 3:
@@ -778,7 +791,8 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except Exception as e:
+                            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                     
             if hit:
                         main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)
@@ -835,7 +849,7 @@ def scan_market_1d():
                                  'dyn_tb': dbg.get('dyn_tb_score', 0),
                         
                                  'is_tenbagger': 1 if dbg.get('is_tenbagger') else 0, # 👈 한국장만 있음
-                                 'is_top_dna': 1 if dbg.get('is_top_dna') else 0,     # 👈 한국장만 있음
+                                 'is_top_dna': 1 if dbg.get('intraday_shape_top_dna') else 0,  # DB 컬럼명 레거시
                                  'is_worst_dna': 1 if dbg.get('is_worst_dna') else 0, # 👈 한국장만 있음
                                  'is_death_combo': 1 if dbg.get('is_death_combo') else 0
                                 }

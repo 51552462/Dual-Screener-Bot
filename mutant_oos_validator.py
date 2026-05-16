@@ -19,12 +19,11 @@ import numpy as np
 import pandas as pd
 import requests
 
+from market_db_paths import market_db_read_path
+
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 HALL_OF_FAME_JSON = os.path.join(_THIS_DIR, "mutant_hall_of_fame.json")
 VALIDATED_JSON = os.path.join(_THIS_DIR, "validated_live_mutants.json")
-MARKET_DB = os.path.join(
-    os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite"
-)
 TELEGRAM_ERROR_LOG = os.path.join(_THIS_DIR, "telegram_error_log.txt")
 
 # 최근 약 6개월 영업일(여유)
@@ -97,10 +96,11 @@ def send_telegram_report(text: str) -> None:
 
 
 def _open_market_db_ro() -> Optional[sqlite3.Connection]:
-    if not os.path.exists(MARKET_DB):
+    p = market_db_read_path()
+    if not os.path.exists(p):
         return None
     try:
-        uri = f"file:{MARKET_DB.replace(chr(92), '/')}?mode=ro"
+        uri = f"file:{p.replace(chr(92), '/')}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         conn.execute("PRAGMA query_only=ON;")
         return conn
@@ -414,6 +414,13 @@ def main() -> None:
         )
         return
     print(f"✅ 저장: {VALIDATED_JSON} | 합격 {len(out.get('promoted') or [])}건")
+    try:
+        from mutant_pending_bridge import sync_validated_json_into_pending
+
+        n_add, sync_msg = sync_validated_json_into_pending()
+        print(f"[mutant_pending_bridge] {sync_msg} (신규 {n_add})")
+    except Exception as sync_e:
+        print(f"⚠️ [mutant_pending_bridge] PENDING 동기화 스킵: {sync_e}")
     send_telegram_report(_format_telegram_top1(out))
 
 

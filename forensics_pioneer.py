@@ -1,5 +1,6 @@
 """
-LIMIT_UP_DNA 패턴과 일치하는 종목 스캔 → virtual_trade_history (sig_type=forensics_pioneer).
+상한가 코호트 DNA(system_config 의 LIMIT_UP_DNA 블록) 패턴과 일치하는 종목 스캔
+→ virtual_trade_history (sig_type=forensics_pioneer).
 독립 위성 — main / supernova_hunter 미수정.
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ from limit_up_forensics import (
 )
 
 import shadow_tracking
+from dna_schema_constants import LIMIT_UP_COHORT_DNA_CONFIG_KEY
 
 STRATEGY_NAME = "forensics_pioneer"
 MAX_SCAN_KR = 220
@@ -61,8 +63,8 @@ def _flags_match_required(flags: Dict[str, bool], required: List[str]) -> bool:
 def _kr_scan_codes(max_codes: int) -> List[str]:
     if fdr is None:
         return []
-    df = _fetch_listing_krx()
-    if df.empty:
+    df, err = _fetch_listing_krx()
+    if err or df.empty:
         return []
     df = df.copy()
     if "Marcap" in df.columns:
@@ -156,18 +158,18 @@ def record_forensics_virtual_trade(
 def run_forensics_pioneer(market: str) -> None:
     """
     market: 'KR' | 'US'
-    LIMIT_UP_DNA의 해당 지역 합의 룰과 오늘 바 기준 DNA 플래그가 모두 일치하면 가상 매매 기록.
+    상한가 코호트 DNA(설정 키 LIMIT_UP_DNA)의 해당 지역 합의 룰과 오늘 바 기준 DNA 플래그가 모두 일치하면 가상 매매 기록.
     """
     mkt = market.upper()
     print(f"🔭 [forensics_pioneer] {mkt} 장 내 부검 패턴 스캔...")
     try:
         cfg = load_config()
-        lump = cfg.get("LIMIT_UP_DNA")
-        if not isinstance(lump, dict):
-            print("⚠️ LIMIT_UP_DNA 없음 — 스킵")
+        limit_up_cohort_dna = cfg.get(LIMIT_UP_COHORT_DNA_CONFIG_KEY)
+        if not isinstance(limit_up_cohort_dna, dict):
+            print(f"⚠️ {LIMIT_UP_COHORT_DNA_CONFIG_KEY} (상한가 코호트 DNA) 없음 — 스킵")
             return
 
-        region_block = lump.get(mkt)
+        region_block = limit_up_cohort_dna.get(mkt)
         required = _required_rules_from_dna(region_block if isinstance(region_block, dict) else None)
         if not required:
             print(f"⚠️ {mkt} pre_emptive_rule 비어 있음 또는 DNA 미합의 — 스킵")
@@ -179,8 +181,8 @@ def run_forensics_pioneer(market: str) -> None:
             codes = _kr_scan_codes(MAX_SCAN_KR)
             name_map: Dict[str, str] = {}
             try:
-                live = _fetch_listing_krx()
-                if "Code" in live.columns:
+                live, _err_live = _fetch_listing_krx()
+                if isinstance(live, pd.DataFrame) and not live.empty and "Code" in live.columns:
                     cc = live["Code"].astype(str).str.strip().str.zfill(6)
                     if "Name" in live.columns:
                         for a, b in zip(cc, live["Name"].astype(str)):

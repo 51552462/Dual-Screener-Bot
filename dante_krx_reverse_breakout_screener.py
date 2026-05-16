@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 import FinanceDataReader as fdr
 import matplotlib.font_manager as fm
 import sqlite3  # DB 접속용
-import os
+import logging
 
 # data_updater.py와 동일한 DB 경로 설정 [cite: 82]
 DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
@@ -29,6 +29,8 @@ except Exception:
     pass
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
 
 # 💡 1. 듀얼 텔레그램 봇 세팅 (본캐용 / 홍보용 분리) — .env → telegram_env
 import telegram_env
@@ -298,7 +300,8 @@ def scan_market_1d():
                     lines = f.read().splitlines()
                     if lines and lines[0] == today_str:
                         sent_today = set(lines[1:])
-            except: pass
+            except Exception as e:
+                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     stock_list = get_krx_list_kind()
     if stock_list.empty: return
@@ -360,7 +363,8 @@ def scan_market_1d():
                             with open(log_file, "w") as f:
                                 f.write(today_str + "\n")
                                 for s_code in sent_today: f.write(s_code + "\n")
-                        except: pass
+                        except Exception as e:
+                            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                     
             if hit:
                 # 1️⃣ 본캐용 / 홍보용 차트 생성

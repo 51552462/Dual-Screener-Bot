@@ -20,8 +20,19 @@ TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 def load_config():
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+            cfg = json.load(f)
+    else:
+        cfg = {}
+    if "META_GOVERNOR_WINDOWS" not in cfg or not isinstance(cfg.get("META_GOVERNOR_WINDOWS"), dict):
+        cfg["META_GOVERNOR_WINDOWS"] = {
+            "calibrator_lookback_days": 90,
+            "treasury_lookback_days": 90,
+            "graveyard_rolling_days": 90,
+            "dist_lookback_days": 90,
+        }
+    if "META_GOVERNOR_SKIP_VIX" not in cfg:
+        cfg["META_GOVERNOR_SKIP_VIX"] = False
+    return cfg
 
 
 def save_config(cfg):
@@ -148,6 +159,12 @@ def detect_regime(cfg):
     cfg["CRYPTO_BREADTH_ETH_BTC_REL"] = float(breadth)
     cfg["CRYPTO_TOTAL2_BTC_RATIO"] = float(total2_btc)
     cfg["CRYPTO_BREADTH_STATUS"] = breadth_status
+    try:
+        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+
+        base_w1, base_w4 = apply_meta_weight_bounds_clamp(float(base_w1), float(base_w4), load_meta_state_resolved())
+    except Exception:
+        pass
     cfg["WEIGHT_S1"] = round(float(max(0.0, min(2.5, base_w1))), 4)
     cfg["WEIGHT_S4"] = round(float(max(0.0, min(2.5, base_w4))), 4)
 

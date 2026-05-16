@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+
+# Env / secrets
+.env
+.env.*
+
+# MetaGovernor 동적 상태 (AI/일배치 갱신 — 저장소 충돌 방지)
+meta_governor_state.json
+*.meta_governor.json.tmp

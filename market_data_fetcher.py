@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import logging
 import random
 import sqlite3
 import threading
@@ -32,6 +33,8 @@ import pandas as pd
 
 import low_ram_sqlite_pragmas
 from market_db_paths import market_db_read_path
+
+logger = logging.getLogger(__name__)
 
 _MAX_TRIES = 3
 
@@ -66,24 +69,31 @@ def _is_transient_error(exc: BaseException) -> bool:
     return any(n in msg for n in needles)
 
 
-def _retrying_call(fn: Callable[[], pd.DataFrame], *, label: str) -> pd.DataFrame:
+def _retrying_call(
+    fn: Callable[[], pd.DataFrame], *, label: str
+) -> tuple[Optional[pd.DataFrame], Optional[str]]:
+    """
+    업스트림 호출. 성공 시 (비어 있지 않은 DF, None).
+    재시도 후에도 비어 있거나 예외면 (None, 사유 문자열).
+    """
     last: Optional[BaseException] = None
     for attempt in range(_MAX_TRIES):
         try:
             df = fn()
             if df is not None and not df.empty:
-                return df
-            # 빈 DataFrame: 일부 차단/일시 장애가 예외 없이 빈 패널만 돌려주는 경우 → 백오프 재시도
+                return df, None
             if attempt < _MAX_TRIES - 1:
                 _sleep_backoff(attempt)
                 continue
+            return None, f"{label}:empty_or_invalid_after_{_MAX_TRIES}_tries"
         except Exception as e:
             last = e
             if _is_transient_error(e) or attempt < _MAX_TRIES - 1:
                 _sleep_backoff(attempt)
                 continue
-            break
-    return pd.DataFrame()
+            logger.warning("market_data_fetcher: %s failed after retries: %s", label, e)
+            return None, f"{label}:{type(e).__name__}:{e}"
+    return None, f"{label}:exhausted:{last!r}"
 
 
 def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
@@ -214,7 +224,8 @@ def _fetch_sqlite(code: str, market: str, start_date: str, end_date: str) -> pd.
             raw = pd.read_sql(f'SELECT * FROM "{table}"', conn)
         finally:
             conn.close()
-    except Exception:
+    except Exception as e:
+        logger.warning("market_data_fetcher: sqlite read failed table=%s: %s", table, e)
         return pd.DataFrame()
     df = _normalize_ohlcv(raw)
     df = _slice_date_range(df, start_date, end_date)
@@ -231,32 +242,54 @@ class _FetchHandler:
 
     def handle_with_path(
         self, code: str, market: str, start_date: str, end_date: str
-    ) -> tuple[pd.DataFrame, list[str]]:
-        """성공 시 (df, 시도한 핸들러 이름 순서). 실패 시 빈 DF + 전체 시도 경로."""
+    ) -> tuple[Optional[pd.DataFrame], list[str], Optional[str]]:
+        """성공 시 (df, 시도한 핸들러 이름 순서, None). 전부 실패 시 (None, 경로, 사유)."""
         path: list[str] = [self.name]
-        df = _retrying_call(
+        df, err = _retrying_call(
             lambda: self.fn(code, market, start_date, end_date),
             label=f"{market}:{self.name}",
         )
         if df is not None and not df.empty:
-            return df, path
+            return df, path, None
         if self.next_handler is not None:
-            df2, tail = self.next_handler.handle_with_path(code, market, start_date, end_date)
-            return df2, path + tail
-        return pd.DataFrame(), path
+            df2, tail, err2 = self.next_handler.handle_with_path(code, market, start_date, end_date)
+            full_path = path + tail
+            if df2 is not None and not df2.empty:
+                return df2, full_path, None
+            msg = err2 or err or f"chain_exhausted:{','.join(full_path)}"
+            logger.warning(
+                "market_data_fetcher: no OHLCV code=%s market=%s path=%s detail=%s",
+                code,
+                market,
+                "->".join(full_path),
+                msg,
+            )
+            return None, full_path, msg
+        msg = err or f"handler_failed:{self.name}"
+        logger.warning(
+            "market_data_fetcher: no OHLCV code=%s market=%s last_handler=%s detail=%s",
+            code,
+            market,
+            self.name,
+            msg,
+        )
+        return None, path, msg
 
-    def handle(self, code: str, market: str, start_date: str, end_date: str) -> pd.DataFrame:
-        df, _ = self.handle_with_path(code, market, start_date, end_date)
+    def handle(self, code: str, market: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        df, _, err = self.handle_with_path(code, market, start_date, end_date)
+        if err:
+            return None
         return df
 
 
 def fetch_market_data_with_trace(
     code: str, market: str, start_date: str, end_date: str
-) -> tuple[pd.DataFrame, list[str]]:
-    """fetch_market_data + 체인 시도 경로(폴백 판별용)."""
+) -> tuple[Optional[pd.DataFrame], list[str], Optional[str]]:
+    """OHLCV + 체인 시도 경로 + 실패 시 사유(성공이면 err=None)."""
     m = (market or "").strip().upper()
     if m not in ("KR", "US"):
-        return pd.DataFrame(), []
+        logger.warning("market_data_fetcher: invalid market %r for code=%s", market, code)
+        return None, [], f"invalid_market:{market!r}"
 
     if m == "KR":
         chain = _FetchHandler("FDR", lambda c, _mk, s, e: _fetch_fdr_kr(c, s, e), None)
@@ -274,16 +307,27 @@ def fetch_market_data_with_trace(
     return chain.handle_with_path(str(code).strip(), m, start_date, end_date)
 
 
-def fetch_market_data(code: str, market: str, start_date: str, end_date: str) -> pd.DataFrame:
+def fetch_market_data(
+    code: str, market: str, start_date: str, end_date: str
+) -> Optional[pd.DataFrame]:
     """
     OHLCV DataFrame (DatetimeIndex, 컬럼 Open/High/Low/Close/Volume).
-    전부 실패 시 빈 DataFrame.
+    전부 실패 시 None (빈 DataFrame으로 통신 실패를 위장하지 않음).
     """
     m = (market or "").strip().upper()
     if m not in ("KR", "US"):
-        return pd.DataFrame()
+        logger.warning("market_data_fetcher: fetch_market_data invalid market %r code=%s", market, code)
+        return None
 
-    df, _ = fetch_market_data_with_trace(str(code).strip(), m, start_date, end_date)
+    df, path, err = fetch_market_data_with_trace(str(code).strip(), m, start_date, end_date)
+    if err:
+        logger.warning(
+            "market_data_fetcher: fetch failed code=%s market=%s path=%s err=%s",
+            code,
+            m,
+            "->".join(path) if path else "(none)",
+            err,
+        )
     return df
 
 
@@ -310,13 +354,12 @@ def fetch_market_data_batch(
         return {}
     w = max(1, min(int(max_workers), len(raw), _BATCH_MAX_WORKERS_CAP))
 
-    def _one(sym: str) -> tuple[str, pd.DataFrame, float, int]:
+    def _one(sym: str) -> tuple[str, Optional[pd.DataFrame], float, int, Optional[str]]:
         t0 = time.perf_counter()
-        df, path = fetch_market_data_with_trace(sym, m, start_date, end_date)
+        df, path, err = fetch_market_data_with_trace(sym, m, start_date, end_date)
         wall = time.perf_counter() - t0
-        # 폴백 횟수: 1차 소스 외 추가 핸들러 시도 횟수 (성공/전부 실패 공통으로 path 길이 기반)
         fb = max(0, len(path) - 1)
-        return sym, df, wall, fb
+        return sym, df, wall, fb, err
 
     out: dict[str, pd.DataFrame] = {}
     t_batch = time.perf_counter()
@@ -328,13 +371,20 @@ def fetch_market_data_batch(
             futs = {ex.submit(_one, c): c for c in chunk}
             for fut in as_completed(futs):
                 try:
-                    sym, df, wall, fb = fut.result()
+                    sym, df, wall, fb, err = fut.result()
                     walls.append(float(wall))
                     fallbacks.append(int(fb))
+                    if err:
+                        logger.warning(
+                            "market_data_fetcher: batch symbol failed sym=%s market=%s err=%s",
+                            sym,
+                            m,
+                            err,
+                        )
                     if df is not None and not df.empty:
                         out[sym] = df
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception("market_data_fetcher: batch worker future failed: %s", e)
         if i + _BATCH_CHUNK_SIZE < len(raw):
             time.sleep(_BATCH_CHUNK_SLEEP_SEC + random.uniform(0, 0.15))
     batch_wall = time.perf_counter() - t_batch
@@ -357,8 +407,8 @@ def fetch_market_data_batch(
                 "fallback_steps_max": int(max(fallbacks)) if fallbacks else 0,
             },
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("market_data_fetcher: ops_logger gauge skipped: %s", e)
     return out
 
 

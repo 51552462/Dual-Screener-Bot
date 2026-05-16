@@ -1,6 +1,7 @@
 # Dante_US_Top1_Master_1D_AI_Pro.py (미국장 Top 1% 마스터 SIG 1,2,3,4 + System B US V7.0 완전판)
 import os, re, time, random, threading, concurrent.futures
 from datetime import datetime, timedelta
+from typing import Optional
 import pytz
 import numpy as np, pandas as pd
 import mplfinance as mpf
@@ -14,6 +15,8 @@ from yf_download_flatten import flatten_yf_download_df
 import FinanceDataReader as fdr
 import logging
 import json
+
+logger = logging.getLogger(__name__)
 
 # 💡 [자율 관제탑 연결] 조율된 파라미터 수신
 CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
@@ -126,16 +129,48 @@ def get_us_ticker_list():
         return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
     except: return pd.DataFrame()
 
-# 💡 보조 함수: 1~10점 스케일링 (10점 기준값과 1점 기준값을 정확히 매핑)
-def scale_score(val, pt10_val, pt1_val):
-    if pt10_val > pt1_val: # 높을수록 좋은 지표 (RS, 찐양봉, 응축에너지)
-        if val >= pt10_val: return 10.0
-        if val <= pt1_val: return 1.0
-        return 1.0 + 9.0 * (val - pt1_val) / (pt10_val - pt1_val)
-    else: # 낮을수록 좋은 지표 (CPV 등)
-        if val <= pt10_val: return 10.0
-        if val >= pt1_val: return 1.0
-        return 1.0 + 9.0 * (pt1_val - val) / (pt1_val - pt10_val)
+def _us_empirical_component_10(
+    tail: np.ndarray,
+    cur: float,
+    *,
+    lower_is_better: bool = False,
+    min_obs: Optional[int] = None,
+) -> float:
+    """
+    US 전용: 동일 종목·동일 지표의 최근 tail 분포에서 현재값의 경험적 백분위 → 1~10점.
+    KR `master.py`의 `scale_score_kr_*` 계열과 완전 분리 (KR 엔진 미사용).
+    """
+    if min_obs is None:
+        min_obs = int(SYS_CONFIG.get("US_SCORE_MIN_OBS", 60))
+    arr = np.asarray(tail, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size < int(min_obs):
+        return 5.5
+    frac_le = float(np.mean(arr <= float(cur)))
+    frac_le = min(max(frac_le, 0.0), 1.0)
+    pct = (1.0 - frac_le) if lower_is_better else frac_le
+    return 1.0 + 9.0 * pct
+
+
+def scale_score_us_rs(rs_tail: np.ndarray, cur_rs: float, *, min_obs: Optional[int] = None) -> float:
+    """US Top1 Master 전용 RS 백분위 점수. KR `scale_score_kr_rs(float,...)` 와 서명·산출 완전 분리."""
+    return _us_empirical_component_10(rs_tail, cur_rs, lower_is_better=False, min_obs=min_obs)
+
+
+def scale_score_us_tb(tb_tail: np.ndarray, cur_tb: float, *, min_obs: Optional[int] = None) -> float:
+    """US 전용 찐양봉 지수 백분위. KR 엔진 미사용."""
+    return _us_empirical_component_10(tb_tail, cur_tb, lower_is_better=False, min_obs=min_obs)
+
+
+def scale_score_us_cpv(cpv_tail: np.ndarray, cur_cpv: float, *, min_obs: Optional[int] = None) -> float:
+    """US 전용 CPV 백분위(낮을수록 유리). KR `scale_score_kr_cpv` 와 분리."""
+    return _us_empirical_component_10(cpv_tail, cur_cpv, lower_is_better=True, min_obs=min_obs)
+
+
+def scale_score_us_bbe(bbe_tail: np.ndarray, cur_bbe: float, *, min_obs: Optional[int] = None) -> float:
+    """US 전용 응축 에너지 백분위. KR 엔진 미사용."""
+    return _us_empirical_component_10(bbe_tail, cur_bbe, lower_is_better=False, min_obs=min_obs)
+
 
 # 💡 3. Top 1% 마스터 (미국장 US V7.0 완전판 로직)
 def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_close: pd.Series):
@@ -298,75 +333,108 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     else: ema_stat_str = "승률 26.3% / 손익비 2.64 (역배열/혼조세 찐바닥 텐배거 로또 타점)"
 
     # =========================================================================
-    # 👑 [4단계] S1, S4 미국장 V9.0 기준 스코어링 및 컷오프
+    # 👑 [4단계] S1/S4 스코어링 — US 전용 경험적 백분위 (RS 하드코딩 앵커 제거, KR 엔진과 분리)
     # =========================================================================
     cur_cpv, cur_tb, cur_bbe, cur_rs = cpv[-1], tb_index[-1], bb_energy[-1], rs[-1]
     cur_vix = df['VIX_Close'].iloc[-1] if not pd.isna(df['VIX_Close'].iloc[-1]) else 15.0
-    
+
+    _sco_w = int(SYS_CONFIG.get("US_SCORE_PERCENTILE_WINDOW", 252))
+    _sco_m = int(SYS_CONFIG.get("US_SCORE_MIN_OBS", 60))
+    rs_tail = rs[-_sco_w:] if len(rs) >= _sco_w else rs
+    tb_tail = tb_index[-_sco_w:] if len(tb_index) >= _sco_w else tb_index
+    cpv_tail = cpv[-_sco_w:] if len(cpv) >= _sco_w else cpv
+    bbe_tail = bb_energy[-_sco_w:] if len(bb_energy) >= _sco_w else bb_energy
+
+    _rs_fin = rs_tail[np.isfinite(rs_tail)]
+    _us_rs_p90 = float(np.percentile(_rs_fin, 90)) if _rs_fin.size >= _sco_m else float("nan")
+    _us_rs_p25 = float(np.percentile(_rs_fin, 25)) if _rs_fin.size >= _sco_m else float("nan")
+
     score_cpv, score_tb, score_bbe, score_rs, score_ema, score_freq = 0, 0, 0, 0, 0, 0
-    total_score = 0
     trap_warning = ""
-    
-    # 💡 [V9.0 청산 전략 가이드 (진입 이후 캔들 흐름 대응)]
+
     exit_strategy = "MFE 정점(평균 11.50일). 지저분한 꼬리(CPV 0.24 부근)로 올리면 단기데드로 2주 이상 추세 홀딩. 진입 후 꽉찬 예쁜 양봉(CPV 0.35 이상) 연속 출현 시 월가 설거지 패턴이므로 3일 내 ZLEMA 칼손절."
 
-    if hit_s4[-1]: # [S4 바닥 탈출 돌파]
+    if hit_s4[-1]:  # [S4 바닥 탈출 돌파]
         sig_type = "🔥 S4 (이평 바닥 탈출 돌파)"
-        score_rs   = scale_score(cur_rs, 5630.32, 165.20)
-        score_tb   = scale_score(cur_tb, 92.10, 16.60)
-        score_cpv  = scale_score(cur_cpv, 0.07, 0.72)
-        score_bbe  = scale_score(cur_bbe, 45.00, 5.70)
-        score_ema  = 10.0 if not is_aligned_112[-1] else 5.0
-        if 6 <= freq_count <= 15: score_freq = 10.0
-        elif freq_count >= 16: score_freq = 2.0 
-        else: score_freq = 6.0                         
-        
-        total_score = (score_rs*10 + score_tb*9 + score_cpv*8 + score_bbe*7 + score_ema*6 + score_freq*5) / 450 * 100
+        score_rs = scale_score_us_rs(rs_tail, cur_rs, min_obs=_sco_m)
+        score_tb = scale_score_us_tb(tb_tail, cur_tb, min_obs=_sco_m)
+        score_cpv = scale_score_us_cpv(cpv_tail, cur_cpv, min_obs=_sco_m)
+        score_bbe = scale_score_us_bbe(bbe_tail, cur_bbe, min_obs=_sco_m)
+        score_ema = 10.0 if not is_aligned_112[-1] else 5.0
+        if 6 <= freq_count <= 15:
+            score_freq = 10.0
+        elif freq_count >= 16:
+            score_freq = 2.0
+        else:
+            score_freq = 6.0
+
+        raw_total = (score_rs * 10 + score_tb * 9 + score_cpv * 8 + score_bbe * 7 + score_ema * 6 + score_freq * 5) / 450.0 * 100.0
         regime_weight = SYS_CONFIG.get("WEIGHT_US_MASTER_S4", 1.0)
-        if cur_tb < 16.60 and cur_bbe < 5.70: trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
-        if cur_cpv > 0.72 and freq_count >= 16: trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
 
-    elif hit_s1[-1]: # [S1 대세 추세 돌파]
+        _tb_f = tb_tail[np.isfinite(tb_tail)]
+        _bbe_f = bbe_tail[np.isfinite(bbe_tail)]
+        _cpv_f = cpv_tail[np.isfinite(cpv_tail)]
+        tb_p20 = float(np.percentile(_tb_f, 20)) if _tb_f.size >= _sco_m else float("nan")
+        bbe_p20 = float(np.percentile(_bbe_f, 20)) if _bbe_f.size >= _sco_m else float("nan")
+        if np.isfinite(tb_p20) and np.isfinite(bbe_p20) and cur_tb < tb_p20 and cur_bbe < bbe_p20:
+            trap_warning += "🚨 [기회비용 늪] 바닥인 척 튀었으나 돈과 에너지가 없음!\n"
+        cpv_p80 = float(np.percentile(_cpv_f, 80)) if _cpv_f.size >= _sco_m else float("nan")
+        if np.isfinite(cpv_p80) and cur_cpv > cpv_p80 and freq_count >= 16:
+            trap_warning += "💀 [참사의 늪] 세력 단타 놀이터! 즉각 갭하락 지옥행 주의!\n"
+
+    elif hit_s1[-1]:  # [S1 대세 추세 돌파]
         sig_type = "🔥 S1 (대세 추세 돌파 - 448 완전정배열)"
-        score_rs   = scale_score(cur_rs, 4018.70, 214.32)
-        score_ema  = 10.0 if is_aligned_448[-1] else 1.0
-        score_cpv  = scale_score(cur_cpv, 0.14, 0.88)
-        score_tb   = scale_score(cur_tb, 13.06, 1.20)
-        if 1 <= freq_count <= 5: score_freq = 10.0
-        else: score_freq = 5.0                            
-        score_bbe  = 5.0             
+        score_rs = scale_score_us_rs(rs_tail, cur_rs, min_obs=_sco_m)
+        score_ema = 10.0 if is_aligned_448[-1] else 1.0
+        score_cpv = scale_score_us_cpv(cpv_tail, cur_cpv, min_obs=_sco_m)
+        score_tb = scale_score_us_tb(tb_tail, cur_tb, min_obs=_sco_m)
+        score_bbe = 5.0
+        if 1 <= freq_count <= 5:
+            score_freq = 10.0
+        else:
+            score_freq = 5.0
 
-        total_score = (score_rs*10 + score_ema*9 + score_cpv*8 + score_tb*7 + score_freq*6) / 400 * 100
+        raw_total = (score_rs * 10 + score_ema * 9 + score_cpv * 8 + score_tb * 7 + score_freq * 6) / 400.0 * 100.0
         regime_weight = SYS_CONFIG.get("WEIGHT_US_MASTER_S1", 1.0)
-        if cur_rs < 214.32: trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수를 이기지 못해 박스권 갇힘!\n"
-        if not is_aligned_112[-1]: trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
 
-    # =========================================================================
-    # 👑 [5단계] 미국장 V9.0 디테일: 데스콤보, VIX 공포지수 매핑, 뱃지 시스템
-    # =========================================================================
+        if np.isfinite(_us_rs_p25) and cur_rs < _us_rs_p25:
+            trap_warning += "🚨 [기회비용 늪] 정배열이어도 지수 대비 상대강도가 자기 역사 대비 하위권에 가깝습니다!\n"
+        if not is_aligned_112[-1]:
+            trap_warning += "💀 [참사의 늪] 장기 추세가 없는 역배열/혼조 구간 진입 페이크 상승!\n"
+    else:
+        return False, "", df, {}
+
+    # 요일 가산/차감은 백분위 기반 raw_total 확정 직후, 곱셈 감점 전에만 적용
     weekday = df.index[-1].weekday()
-    if weekday == 4: total_score *= 1.05 # 금요일 가산
-    elif weekday == 0: total_score *= 0.95 # 월요일 차감
+    if weekday == 4:
+        raw_total *= 1.05
+    elif weekday == 0:
+        raw_total *= 0.95
 
-    # 1. 미국장 공통 데스콤보 (V9.0 기획서 완벽 반영)
+    scaled_core = min(max(raw_total, 0.0), 100.0)
+
+    # 곱셈 감점 트리: 스케일(백분위) 보정·요일 반영이 끝난 뒤에만 적용
+    penalized = float(scaled_core)
     is_death_combo = (cur_cpv > 0.85) and (cur_rs < 0)
-    if is_death_combo: 
-        total_score *= 0.70
+    if is_death_combo:
+        penalized *= 0.70
         trap_warning += "⚠️ [데스 콤보 발동] 거래량 없이 억지로 만든 꽉 찬 양봉+소외주 (점수 30% 삭감)\n"
-        
+
     if freq_count >= 16 and (score_rs < 8.0 or score_cpv < 8.0):
-        total_score *= 0.50
+        penalized *= 0.50
         trap_warning += "🚫 [고빈도 잡주 경고] 알고리즘 단타 때가 많이 탄 종목! (-50% 삭감)\n"
 
-    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning: 
-        total_score *= 0.70 
+    if trap_warning != "" and not is_death_combo and "고빈도" not in trap_warning:
+        penalized *= 0.70
 
-    total_score = min(max(total_score, 0), 100) # 0~100점 보정
+    total_score = min(max(penalized, 0.0), 100.0)
 
     # =========================================================================
     # 👑 [비선형 의사결정 나무 (Decision Tree) 필터] - 선형 덧셈의 오류 차단
     # =========================================================================
-    tree_fatal_cpv = SYS_CONFIG.get("TREE_FATAL_CPV", 0.85) # 관제탑이 학습한 한계치 로드
+    tree_fatal_cpv = float(
+        SYS_CONFIG.get("US_TREE_FATAL_CPV", SYS_CONFIG.get("TREE_FATAL_CPV", 0.85))
+    )  # US 전용 키 우선; 레거시 TREE_FATAL_CPV 는 이관 전 폴백
     is_tree_rejected = False
     tree_reason = ""
 
@@ -374,12 +442,13 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     if cur_cpv > tree_fatal_cpv:
         is_tree_rejected = True
         tree_reason = f"악성 매물 캔들 한계치 초과 (CPV {cur_cpv:.2f} > {tree_fatal_cpv})"
-        
+
     # [Node 2]: VIX가 25 이상(공포장)인데, 모멘텀(RS)이 0 이하면 기각 (약한 놈부터 죽음)
     elif cur_vix >= 25.0 and cur_rs < 0:
         is_tree_rejected = True
         tree_reason = f"공포장(VIX {cur_vix:.1f}) 속 모멘텀 붕괴 (RS {cur_rs:.1f})"
 
+    badge_str = ""
     # 비선형 필터에 걸렸다면 총점을 강제로 0점 처리하고 사형 선고
     if is_tree_rejected:
         total_score = 0.0
@@ -412,8 +481,8 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
         action = (f"⚖️ <b>[HYBRID 공수겸장 가동]</b>\n"
                   f"추세를 타되(ZLEMA 익절), 최대 <b>{opt_time_stop}일</b> 내에 승부를 보고, 폭락 시 <b>ATR {opt_sl_atr}배</b>에서 즉각 손실을 차단하십시오.")
 
-    if total_score <= 50 and cur_rs > 513 and cur_cpv <= 0.3:
-        tier_stat = f"💡 [특급 로또 타점] 총점은 낮으나 진입 전 시장 주도력(RS {cur_rs:.1f})이 최상위권입니다..."
+    if total_score <= 50 and np.isfinite(_us_rs_p90) and cur_rs > _us_rs_p90 and cur_cpv <= 0.3:
+        tier_stat = f"💡 [특급 로또 타점] 총점은 낮으나 진입 전 시장 주도력(RS {cur_rs:.1f})이 최근 구간 상위(자기 역사 대비)입니다..."
     elif total_score >= 80:
         tier_stat = f"총점 {total_score:.1f}점(1티어)으로 방어력과 평균수익(24.2%)이 수학적으로 완벽히 입증되었습니다. 메인 1.5배 비중 진입을 권장합니다."
     else:
@@ -572,16 +641,16 @@ def compute_top1_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, vix_c
     else:
         vix_strategy = f"🌊 [평온장 | VIX {cur_vix:.1f}] 시스템 기본 비중(1배수) 기계적 돌파 매매."
 
-    # 💡 [V9.0 뱃지 시스템 및 밈 주식 예외 로직]
-    badge_str = ""
-    if total_score >= 80.0:
-        badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (평균수익 24.2% 검증 완료. UI 상단 노출 및 비중 1.5배 확대)"
-        sig_type = "👑 [1티어] " + sig_type
-    elif total_score <= 50.0 and cur_rs > 513 and cur_cpv <= 0.3:
-        badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (매물소화 끝난 밈 주식 펌핑 가능성. 소액 진입 허용)"
-        sig_type = "💎 [로또] " + sig_type
-    else:
-        badge_str = "⚠️ [비중 축소] 80점 미만은 가짜 휩소 리스크가 크므로 철저히 비중 축소 요망"
+    # 💡 [V9.0 뱃지 시스템 및 밈 주식 예외 로직] (Decision Tree 기각 뱃지는 유지)
+    if badge_str == "":
+        if total_score >= 80.0:
+            badge_str = "🔥 [1티어 뱃지] 가산점 부여 대상 (평균수익 24.2% 검증 완료. UI 상단 노출 및 비중 1.5배 확대)"
+            sig_type = "👑 [1티어] " + sig_type
+        elif total_score <= 50.0 and np.isfinite(_us_rs_p90) and cur_rs > _us_rs_p90 and cur_cpv <= 0.3:
+            badge_str = "💎 [특급 모멘텀 예외] 점수 무시 텐배거 (매물소화 끝난 밈 주식 펌핑 가능성. 소액 진입 허용)"
+            sig_type = "💎 [로또] " + sig_type
+        else:
+            badge_str = "⚠️ [비중 축소] 80점 미만은 가짜 휩소 리스크가 크므로 철저히 비중 축소 요망"
     # =========================================================================
     # 👑 [Next Level 2] 듀얼 트랙 상대 평가 (미국장 백분위 랭크 추가)
     # =========================================================================
@@ -735,7 +804,8 @@ def scan_market_1d():
                 lines = f.read().splitlines()
                 if lines and lines[0] == today_str:
                     sent_today = set(lines[1:])
-        except: pass
+        except Exception as e:
+            logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     # 💡 'Market' 정보를 딕셔너리에 함께 저장합니다.
     ticker_to_info = {row['Symbol']: {'code': row['Symbol'], 'name': row['Name'], 'market': row['Market']} for _, row in stock_list.iterrows()}
@@ -792,7 +862,8 @@ def scan_market_1d():
                                 with open(log_file, "w") as f:
                                     f.write(today_str + "\n")
                                     for s_code in sent_today: f.write(s_code + "\n")
-                            except: pass
+                            except Exception as e:
+                                logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
                             
                     if hit:
                         main_chart_path = save_chart(df, code, name, hit_rank, dbg, show_volume=True, is_promo=False)

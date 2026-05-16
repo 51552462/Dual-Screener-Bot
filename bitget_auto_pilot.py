@@ -142,6 +142,12 @@ def detect_coin_regime(cfg):
         "eth_btc_breadth": round(float(breadth), 4),
         "atr_pct": round(float(atr_pct), 4),
     }
+    try:
+        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+
+        w1, w4 = apply_meta_weight_bounds_clamp(float(w1), float(w4), load_meta_state_resolved())
+    except Exception:
+        pass
     cfg["WEIGHT_S1"] = round(float(np.clip(w1, 0.0, 2.5)), 4)
     cfg["WEIGHT_S4"] = round(float(np.clip(w4, 0.0, 2.5)), 4)
     return cfg

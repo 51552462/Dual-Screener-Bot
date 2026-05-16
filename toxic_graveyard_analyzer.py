@@ -11,10 +11,26 @@ import pandas as pd
 import numpy as np
 from sklearn.inspection import permutation_importance
 from sklearn.tree import DecisionTreeClassifier, _tree
-from datetime import datetime
+from datetime import datetime, timedelta
 
-DB_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
-CONFIG_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json")
+try:
+    from config_manager import CONFIG_PATH
+except Exception:
+    CONFIG_PATH = os.path.join(
+        os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json"
+    )
+
+try:
+    from market_db_paths import market_db_read_path
+except Exception:
+    def market_db_read_path() -> str:
+        return os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
+
+
+def _forward_trades_db_uri_ro() -> str:
+    """`auto_forward_tester.forward_trades` 와 동일 파일(스냅샷 우선) — 윈도우 경로 URI 안전."""
+    p = os.path.abspath(market_db_read_path())
+    return "file:" + p.replace("\\", "/") + "?mode=ro"
 
 MIN_RULES_REQUIRED = 3
 _STRICT_REL_FLOOR = 0.03
@@ -345,16 +361,49 @@ def run_graveyard_autopsy():
     config = load_config()
     config = prune_old_anti_patterns(config)
 
+    rolling_days = 90
+    mw = config.get("META_GOVERNOR_WINDOWS") if isinstance(config.get("META_GOVERNOR_WINDOWS"), dict) else {}
+    if mw.get("graveyard_rolling_days") is not None:
+        try:
+            rolling_days = int(mw["graveyard_rolling_days"])
+        except (TypeError, ValueError):
+            rolling_days = 90
+    elif config.get("TOXIC_GRAVEYARD_ROLLING_DAYS") is not None:
+        try:
+            rolling_days = int(config["TOXIC_GRAVEYARD_ROLLING_DAYS"])
+        except (TypeError, ValueError):
+            rolling_days = 90
+    rolling_days = int(os.environ.get("TOXIC_GRAVEYARD_ROLLING_DAYS", str(rolling_days)))
     try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
+        import pytz
+
+        d = datetime.now(pytz.timezone("Asia/Seoul")).date()
+    except Exception:
+        d = datetime.now().date()
+    cutoff = (d - timedelta(days=max(30, rolling_days))).isoformat()
+    db_used = market_db_read_path()
+
+    try:
+        conn = sqlite3.connect(_forward_trades_db_uri_ro(), uri=True, check_same_thread=False)
         query = (
-            "SELECT entry_date, sector, dyn_cpv, dyn_tb, v_energy, dyn_rs, final_ret, exit_type "
-            "FROM forward_trades WHERE market = 'KR' AND status LIKE 'CLOSED%'"
+            "SELECT entry_date, sector, dyn_cpv, dyn_tb, v_energy, dyn_rs, final_ret, exit_type, exit_date "
+            "FROM forward_trades "
+            "WHERE market = 'KR' AND status LIKE 'CLOSED%' "
+            "AND date(IFNULL(NULLIF(trim(exit_date), ''), entry_date)) >= date(?)"
         )
-        df = pd.read_sql(query, conn)
+        df = pd.read_sql(query, conn, params=[cutoff])
         conn.close()
     except Exception as e:
         print(f"🚨 DB 로드 실패: {e}")
+        save_config(config)
+        return
+
+    print(f"📅 [Graveyard] db={db_used} rolling_since(KST base)={cutoff} closed_KR_rows={len(df)}")
+    if df.empty:
+        print(
+            "⚠️ [Graveyard] rolling 윈도우 내 청산 표본이 0건입니다. "
+            "forward_trades 경로·market/status·exit_date 포맷을 확인하세요."
+        )
         save_config(config)
         return
 

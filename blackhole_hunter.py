@@ -8,6 +8,7 @@ Project 1: Black Hole Scanner — Anti-Pattern Short Engine (US only, 격리 숏
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import sqlite3
@@ -24,6 +25,8 @@ from yf_download_flatten import flatten_yf_download_df
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 US_TOXIC_ML_JSON = os.path.join(_THIS_DIR, "us_toxic_ml_antipatterns.json")
+
+logger = logging.getLogger(__name__)
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json")
 SHORT_DB_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "short_data.sqlite")
@@ -118,8 +121,8 @@ def init_short_db() -> None:
         conn.close()
 
 
-def get_us_ticker_list() -> pd.DataFrame:
-    """`us_master.py` 와 동일한 US 유니버스 (NASDAQ/NYSE/AMEX)."""
+def get_us_ticker_list() -> Optional[pd.DataFrame]:
+    """`us_master.py` 와 동일한 US 유니버스 (NASDAQ/NYSE/AMEX). 실패 시 None (빈 DF 로 위장하지 않음)."""
     try:
         import FinanceDataReader as fdr
 
@@ -135,9 +138,14 @@ def get_us_ticker_list() -> pd.DataFrame:
                 use_cols.append(c)
                 break
         out = df[use_cols].drop_duplicates(subset=["Symbol"])
-        return out.dropna(subset=["Symbol"])
-    except Exception:
-        return pd.DataFrame()
+        out = out.dropna(subset=["Symbol"])
+        if out.empty:
+            logger.warning("blackhole_hunter: US listing query returned empty frame")
+            return None
+        return out
+    except Exception as e:
+        logger.exception("blackhole_hunter: US ticker listing (FinanceDataReader) failed: %s", e)
+        return None
 
 
 def _us_sector_bucket_for_tree(s: object) -> str:
@@ -603,8 +611,8 @@ def scan_blackhole_targets(max_us_tickers: int = DEFAULT_MAX_US_TICKERS) -> Dict
         return cfg["BLACKHOLE_TOXIC_COUNT"]
 
     listing = get_us_ticker_list()
-    if listing.empty:
-        print("🚨 US 리스팅(FinanceDataReader) 실패.")
+    if listing is None or listing.empty:
+        print("🚨 US 리스팅(FinanceDataReader) 실패 또는 빈 결과 — 스캔 중단.")
         cfg["BLACKHOLE_TOXIC_COUNT"] = {
             "count": 0,
             "symbols": [],

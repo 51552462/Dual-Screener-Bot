@@ -13,7 +13,10 @@ import requests
 import yfinance as yf
 import FinanceDataReader as fdr
 import warnings
+import logging
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
 
 import telegram_env
 
@@ -186,7 +189,19 @@ def load_or_create_config():
     if "INVERSE_MODE_ACTIVE" not in config:
         config["INVERSE_MODE_ACTIVE"] = False
         need_save = True
-        
+
+    if "META_GOVERNOR_WINDOWS" not in config or not isinstance(config.get("META_GOVERNOR_WINDOWS"), dict):
+        config["META_GOVERNOR_WINDOWS"] = {
+            "calibrator_lookback_days": 90,
+            "treasury_lookback_days": 90,
+            "graveyard_rolling_days": 90,
+            "dist_lookback_days": 90,
+        }
+        need_save = True
+    if "META_GOVERNOR_SKIP_VIX" not in config:
+        config["META_GOVERNOR_SKIP_VIX"] = False
+        need_save = True
+
     # 변경 사항이 있으면 JSON 파일에 덮어쓰기
     if need_save:
         save_config(config)
@@ -302,6 +317,17 @@ def _mean_entry_shape_incubator_winners(promoted_name: str):
     return [round(float(x), 6) for x in np.mean(stacked, axis=0)]
 
 
+def _meta_governor_skip_vix_from_config(cfg) -> bool:
+    if not isinstance(cfg, dict):
+        return False
+    v = cfg.get("META_GOVERNOR_SKIP_VIX")
+    if v is True or v == 1:
+        return True
+    if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return False
+
+
 # ==========================================
 # 🚀 [메인 분석 엔진] 
 # ==========================================
@@ -316,68 +342,79 @@ def run_autonomous_analysis():
     regime = "분석 중"
     w_s1, w_s4 = 1.0, 1.0 
     vix_last = 0.0
-    
-    try:
-        # 💡 [V24.0] SPY(시총비중), ^VIX(공포), RSP(동일비중) 데이터 동시 로드
-        df_idx = yf.download("SPY ^VIX RSP", period="1y", interval="1d", group_by="ticker", progress=False)
+    breadth_ratio = 1.0
+    breadth_status = "미계산"
 
-        def _bench_close(panel, sym):
-            s = yf_close_series(panel, sym)
-            if not getattr(s, "empty", True):
-                return s.dropna()
-            try:
-                if sym in panel.columns.levels[0]:
-                    return panel[sym]['Close'].dropna()
-                return panel['Close'][sym].dropna()
-            except Exception:
-                return pd.Series(dtype=float)
+    early_cfg = load_or_create_config()
+    skip_vix = os.environ.get("META_GOVERNOR_SKIP_VIX", "").strip().lower() in ("1", "true", "yes", "on") or _meta_governor_skip_vix_from_config(early_cfg)
 
-        spy_c = _bench_close(df_idx, 'SPY')
-        vix_c = _bench_close(df_idx, '^VIX')
-        rsp_c = _bench_close(df_idx, 'RSP')
-        
-        spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
-        spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
-        
-        # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
-        # 1.0보다 낮으면 대형주만 오르는 '취약한 장세', 높으면 낙수효과가 있는 '건강한 장세'
-        breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
+    if skip_vix:
+        dyn_lookback = 30
+        vix_status = "META_GOVERNOR_SKIP_VIX — VIX 미조회, 보수 룩백 30일"
+        vix_last = 0.0
+        regime = "Bear/Chop (VIX 스킵/오프라인)"
+        w_s1, w_s4 = 0.7, 1.3
+    else:
+        try:
+            # 💡 [V24.0] SPY(시총비중), ^VIX(공포), RSP(동일비중) 데이터 동시 로드
+            df_idx = yf.download("SPY ^VIX RSP", period="1y", interval="1d", group_by="ticker", progress=False)
 
-        # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
-        if spy_last > spy_ema200 and vix_last < 18:
-            regime = "Bull (상승장)"
-            base_w1, base_w4 = 1.2, 0.8
-        else:
-            regime = "Bear/Chop (하락/횡보)"
-            base_w1, base_w4 = 0.5, 1.5
+            def _bench_close(panel, sym):
+                s = yf_close_series(panel, sym)
+                if not getattr(s, "empty", True):
+                    return s.dropna()
+                try:
+                    if sym in panel.columns.levels[0]:
+                        return panel[sym]['Close'].dropna()
+                    return panel['Close'][sym].dropna()
+                except Exception:
+                    return pd.Series(dtype=float)
 
-        # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
-        breadth_status = "건강 (Broad)"
-        if breadth_ratio < 0.97: 
-            breadth_status = "취약 (Narrow/쏠림)"
-            base_w1 *= 0.5  # 공격(S1) 비중 반토막 (함정 방어)
-            base_w4 *= 1.2  # 방어/눌림(S4) 비중 강화
-        elif breadth_ratio > 1.03: 
-            breadth_status = "강력 (확산)"
-            base_w1 *= 1.2  # 공격(S1) 비중 추가 확대
+            spy_c = _bench_close(df_idx, 'SPY')
+            vix_c = _bench_close(df_idx, '^VIX')
+            rsp_c = _bench_close(df_idx, 'RSP')
 
-        w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
-        
-        # 3. VIX 기반 동적 룩백 설정 결합
-        if vix_last >= 28.0:
-            dyn_lookback = 7
-            regime = "Bear (극단적 공포장)"
-            w_s1, w_s4 = 0.0, 2.0
-            vix_status = f"VIX 폭발({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 7일"
-        elif vix_last >= 18.0:
-            dyn_lookback = 15
-            vix_status = f"VIX 경계({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 15일"
-        else:
-            dyn_lookback = 45
-            vix_status = f"VIX 평온({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 45일"
-            
-    except Exception as e:
-        print(f"거시 지표 로드 에러: {e}")
+            spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
+            spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
+
+            # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
+            breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
+
+            # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
+            if spy_last > spy_ema200 and vix_last < 18:
+                regime = "Bull (상승장)"
+                base_w1, base_w4 = 1.2, 0.8
+            else:
+                regime = "Bear/Chop (하락/횡보)"
+                base_w1, base_w4 = 0.5, 1.5
+
+            # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
+            breadth_status = "건강 (Broad)"
+            if breadth_ratio < 0.97:
+                breadth_status = "취약 (Narrow/쏠림)"
+                base_w1 *= 0.5
+                base_w4 *= 1.2
+            elif breadth_ratio > 1.03:
+                breadth_status = "강력 (확산)"
+                base_w1 *= 1.2
+
+            w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
+
+            # 3. VIX 기반 동적 룩백 설정 결합
+            if vix_last >= 28.0:
+                dyn_lookback = 7
+                regime = "Bear (극단적 공포장)"
+                w_s1, w_s4 = 0.0, 2.0
+                vix_status = f"VIX 폭발({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 7일"
+            elif vix_last >= 18.0:
+                dyn_lookback = 15
+                vix_status = f"VIX 경계({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 15일"
+            else:
+                dyn_lookback = 45
+                vix_status = f"VIX 평온({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 45일"
+
+        except Exception as e:
+            print(f"거시 지표 로드 에러: {e}")
 
     # 1. 계산된 [동적 룩백]으로 DB 데이터 로드
     try:
@@ -454,7 +491,14 @@ def run_autonomous_analysis():
                 _tail_msg_us = report_tail
     except Exception:
         _tail_msg_kr, _tail_msg_us = None, None
-    current_config["WEIGHT_S1"], current_config["WEIGHT_S4"] = w_s1, w_s4
+    try:
+        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+
+        w_s1, w_s4 = apply_meta_weight_bounds_clamp(float(w_s1), float(w_s4), load_meta_state_resolved())
+    except Exception:
+        pass
+    current_config["WEIGHT_S1"] = round(float(w_s1), 4)
+    current_config["WEIGHT_S4"] = round(float(w_s4), 4)
     
     report_lines = [f"<b>📊 [System B 자율 조율 리포트]</b>\n"]
     report_lines.append(f"<b>[1. 동적 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime}\n▪️ <b>동적 룩백: {vix_status}</b>\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
@@ -478,10 +522,21 @@ def run_autonomous_analysis():
 
         if not us_hot_df.empty:
             top_us_sector = us_hot_df.groupby('sector').size().sort_values(ascending=False).index[0]
-            current_config["US_SPILLOVER_SECTOR"] = str(top_us_sector)
+            sector_s = str(top_us_sector)
+            as_of = datetime.now().strftime("%Y-%m-%d")
+            current_config["US_SPILLOVER_SECTOR"] = sector_s
+            current_config["US_SPILLOVER_SECTOR_LAST_GOOD"] = sector_s
+            current_config["US_SPILLOVER_SECTOR_AS_OF"] = as_of
             report_lines.append(f"▪️ 최근 7일 미국장 고MFE(15%+) 주도 섹터 저장: <b>{top_us_sector}</b>")
         else:
             report_lines.append("▪️ 최근 7일 미국장 고MFE 섹터 표본 부족으로 기존 스필오버 섹터 유지")
+            # 명시 방어: 표본 0이어도 LAST_GOOD / AS_OF / 기존 US_SPILLOVER_SECTOR 를 삭제·덮어쓰지 않음
+            _lg = current_config.get("US_SPILLOVER_SECTOR_LAST_GOOD")
+            _as = current_config.get("US_SPILLOVER_SECTOR_AS_OF")
+            if _lg is not None:
+                current_config["US_SPILLOVER_SECTOR_LAST_GOOD"] = str(_lg)
+            if _as is not None:
+                current_config["US_SPILLOVER_SECTOR_AS_OF"] = str(_as)
     except Exception as e:
         report_lines.append(f"▪️ 글로벌 스필오버 저장 에러: {e}")
 
@@ -505,12 +560,21 @@ def run_autonomous_analysis():
                 dna_drift_warning = True
                 report_lines.append(f"🚨 <b>[DNA 변위 감지]</b> 지수는 상승장이나 포착 종목의 대장주 일치율이 {avg_alpha_sim*100:.1f}%로 급감했습니다.")
                 report_lines.append("⚠️ <b>조치:</b> 지수 판독 결과를 무시하고 '방어(CHOP)' 모드로 선제 전환합니다.")
-    except: pass
+    except Exception as e:
+        logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     # 국면 판독 결과 강제 보정 (지수보다 DNA 우선)
     if dna_drift_warning and "Bull" in regime:
         regime = "Chop (DNA 변위로 인한 선제적 방어)"
         w_s1, w_s4 = 0.5, 1.2 # 공격 비중 강제 축소
+    try:
+        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+
+        w_s1, w_s4 = apply_meta_weight_bounds_clamp(float(w_s1), float(w_s4), load_meta_state_resolved())
+    except Exception:
+        pass
+    current_config["WEIGHT_S1"] = round(float(w_s1), 4)
+    current_config["WEIGHT_S4"] = round(float(w_s4), 4)
     # 👆👆 [V45.0 엔진 끝] 👆👆
 
     # ---------------------------------------------------------
@@ -1054,24 +1118,44 @@ def run_autonomous_analysis():
     # ---------------------------------------------------------
     report_lines.append("\n⚔️ <b>[V103.0 통합 시스템 데스매치 결산]</b>")
     
-    # 2. 발굴 대결 (STD vs SN vs BEAST vs UD)
-    std_r = df[df['sig_type'].str.contains('STANDARD', na=False)]['final_ret'].mean()
-    sn_r = df[df['sig_type'].str.contains('SUPERNOVA_COSINE|SUPERNOVA_MLBOX', na=False)]['final_ret'].mean()
-    beast_r = df[df['sig_type'].str.contains('SUPERNOVA_BEAST', na=False)]['final_ret'].mean()
-    ud_r = df[df['sig_type'].str.contains('UNDERDOG', na=False)]['final_ret'].mean()
-    
-    # NaN 방어 보정
-    std_v = std_r if pd.notna(std_r) else -99
-    sn_v = sn_r if pd.notna(sn_r) else -99
-    beast_v = beast_r if pd.notna(beast_r) else -99
-    ud_v = ud_r if pd.notna(ud_r) else -99
-    
-    max_v = max(std_v, sn_v, beast_v, ud_v)
-    if max_v == ud_v: hunt_winner = f"언더독(UD) {ud_v:+.2f}%"
-    elif max_v == beast_v: hunt_winner = f"야수(BEAST) {beast_v:+.2f}%"
-    elif max_v == sn_v: hunt_winner = f"초신성(B) {sn_v:+.2f}%"
-    else: hunt_winner = f"오리지널(A) {std_v:+.2f}%"
-    report_lines.append(f"🏁 <b>[발굴 대결 우승]</b> {hunt_winner}")
+    # 2. 발굴 대결 (STD vs SN vs BEAST vs UD) — 축당 최소 청산 N건 미만은 판정에서 제외
+    try:
+        n_min_dm = int(current_config.get("DEATHMATCH_MIN_TRADES_PER_ARM", 5) or 5)
+    except (TypeError, ValueError):
+        n_min_dm = 5
+    n_min_dm = max(1, n_min_dm)
+
+    std_df_h = df[df["sig_type"].str.contains("STANDARD", na=False)]
+    sn_df_h = df[df["sig_type"].str.contains("SUPERNOVA_COSINE|SUPERNOVA_MLBOX", na=False)]
+    beast_df_h = df[df["sig_type"].str.contains("SUPERNOVA_BEAST", na=False)]
+    ud_df_h = df[df["sig_type"].str.contains("UNDERDOG", na=False)]
+
+    def _hunt_mean(sub: pd.DataFrame) -> float:
+        if sub.empty:
+            return float("nan")
+        m = sub["final_ret"].mean()
+        return float(m) if pd.notna(m) else float("nan")
+
+    arms_hunt = [
+        ("오리지널(A)", _hunt_mean(std_df_h), len(std_df_h)),
+        ("초신성(B)", _hunt_mean(sn_df_h), len(sn_df_h)),
+        ("야수(BEAST)", _hunt_mean(beast_df_h), len(beast_df_h)),
+        ("언더독(UD)", _hunt_mean(ud_df_h), len(ud_df_h)),
+    ]
+    eligible_hunt = [
+        (lab, ret, n)
+        for lab, ret, n in arms_hunt
+        if n >= n_min_dm and pd.notna(ret)
+    ]
+    if not eligible_hunt:
+        report_lines.append(
+            f"🏁 <b>[발굴 대결]</b> 표본 부족으로 판정 보류 (축당 최소 청산 {n_min_dm}건 미충족)"
+        )
+    else:
+        best_l, best_r, best_n = max(eligible_hunt, key=lambda x: (x[1], x[2]))
+        report_lines.append(
+            f"🏁 <b>[발굴 대결 우승]</b> {best_l} {best_r:+.2f}% (청산 n={best_n}, 표본 기준 충족)"
+        )
         
     # 💡 [핵심] 인위적인 WEIGHT(1.6 vs 0.4) 강제 배분 로직 완전 삭제
     report_lines.append("✅ <b>알림:</b> 인위적 가중치(WEIGHT) 배분 로직이 삭제되었습니다. 개별 시드의 복리 성장이 곧 자본 배분입니다.")
@@ -1603,127 +1687,15 @@ def run_autonomous_analysis():
 # ==========================================
 # 👑 엔진 11: [V100.0 주간 흐름(Flow) 총결산 마스터 리포트]
 # ==========================================
-
-# ==========================================
-# 👑 엔진 11: [V100.0 주간 흐름(Flow) 총결산 마스터 리포트]
-# ==========================================
 def send_weekly_flow_master_report():
-    """일주일간의 하루하루 자금 흐름, 승률 변화, 섹터 이동 궤적을 총결산하는 마스터 결과지"""
-    tz_kr = pytz.timezone('Asia/Seoul')
-    now = datetime.now(tz_kr)
-    week_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
-    today_str = now.strftime('%Y-%m-%d')
-    
-    sys_config = load_or_create_config()
-    regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
-    base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
+    """WeeklyFlowSnapshot + ReportStateBinder SSOT (weekly_flow_report)."""
+    from weekly_flow_report import send_weekly_flow_master_report as _send_weekly
 
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        
-        report_msg = f"🗺️ <b>[V100.0 퀀트 팩토리 주간 흐름(Flow) 총결산]</b>\n📅 기간: {week_ago} ~ {today_str}\n"
-        report_msg += "<i>※ 일자별 실현·MVP·섹터 궤적: sig_type에 INCUBATOR 포함 건 제외(본계좌만).</i>\n"
-        report_msg += "━━━━━━━━━━━━━━━━━━\n"
-
-        for market in ['KR', 'US']:
-            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
-            report_msg += f"\n{market_icon} <b>[{market} 일주일 자금 및 섹터 흐름 궤적]</b>\n"
-            
-            # ------------------------------------------------
-            # 1. 일자별(Day-by-Day) 자금 흐름 및 승률 궤적
-            # ------------------------------------------------
-            report_msg += f"🗓️ <b>[일자별 실현 손익 및 승률 타임라인]</b>\n"
-            
-            cursor = conn.execute("""
-                SELECT exit_date, 
-                       SUM((sim_kelly_invest * final_ret) / 100) as daily_pnl,
-                       SUM(CASE WHEN final_ret > 0 THEN 1 ELSE 0 END) as wins,
-                       COUNT(*) as total
-                FROM forward_trades 
-                WHERE market=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                GROUP BY exit_date ORDER BY exit_date ASC
-            """, (market, week_ago))
-            
-            daily_stats = cursor.fetchall()
-            weekly_pnl = 0.0
-            
-            if daily_stats:
-                for row in daily_stats:
-                    e_date, d_pnl, wins, total = row[0], row[1] or 0.0, row[2], row[3]
-                    d_wr = (wins / total) * 100 if total > 0 else 0
-                    weekly_pnl += d_pnl
-                    # 날짜에서 월-일만 추출 (예: 05-28)
-                    short_date = e_date[5:]
-                    icon = "🔴" if d_pnl < 0 else "🟢"
-                    report_msg += f" {icon} {short_date}: <b>{d_pnl:+,.0f}원</b> (승률 {d_wr:.0f}% / {total}건 청산)\n"
-                
-                report_msg += f" 💰 <b>주간 누적 실현 손익: {weekly_pnl:+,.0f} 원</b>\n"
-            else:
-                report_msg += " ↳ 이번 주 청산 데이터가 없습니다.\n"
-
-            # ------------------------------------------------
-            # 2. 일주일간 섹터 자금 이동 궤적 (요일별 흐름)
-            # ------------------------------------------------
-            report_msg += f"\n🔄 <b>[주간 주도 섹터 진화 궤적]</b>\n"
-            cursor = conn.execute("""
-                SELECT entry_date, sector 
-                FROM forward_trades 
-                WHERE market=? AND entry_date >= ? 
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                ORDER BY entry_date ASC
-            """, (market, week_ago))
-            
-            rot_df = pd.DataFrame(cursor.fetchall(), columns=['entry_date', 'sector'])
-            if not rot_df.empty:
-                daily_dom = rot_df.groupby('entry_date')['sector'].agg(lambda x: x.mode()[0] if not x.empty else None).dropna()
-                flow_path = []
-                for d, s in daily_dom.items():
-                    flow_path.append(f"{s[:4]}({d[5:]})")
-                
-                # ➔ 화살표로 이어붙여서 일주일의 흐름을 한눈에 시각화
-                report_msg += f" 🌊 <b>흐름:</b> {' ➔ '.join(flow_path)}\n"
-            else:
-                report_msg += " ↳ 섹터 편입 데이터가 없습니다.\n"
-
-            # ------------------------------------------------
-            # 3. 주간 MVP 로직 (이번 주 가장 돈을 많이 벌어온 로직)
-            # ------------------------------------------------
-            report_msg += f"\n🏆 <b>[이번 주 MVP 시그널 엔진]</b>\n"
-            cursor = conn.execute("""
-                SELECT sig_type, SUM((sim_kelly_invest * final_ret) / 100) as profit, COUNT(*) 
-                FROM forward_trades 
-                WHERE market=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                GROUP BY sig_type ORDER BY profit DESC LIMIT 3
-            """, (market, week_ago))
-            
-            top_sigs = cursor.fetchall()
-            if top_sigs:
-                for i, row in enumerate(top_sigs):
-                    sig, pnl, cnt = row[0], row[1] or 0.0, row[2]
-                    clean_sig = str(sig).split(']')[0] + "]" if "]" in str(sig) else str(sig)[:15]
-                    medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉"
-                    report_msg += f" {medal} {clean_sig}: <b>{pnl:+,.0f}원</b> 기여 ({cnt}건)\n"
-            else:
-                report_msg += " ↳ MVP 데이터가 없습니다.\n"
-
-        # ------------------------------------------------
-        # 4. 관제탑 주말 메타 최적화 결과 요약 (Before & After)
-        # ------------------------------------------------
-        report_msg += f"\n⚙️ <b>[주말 관제탑 자율 튜닝 결과 요약]</b>\n"
-        report_msg += f" ▪️ <b>현재 국면:</b> {regime}\n"
-        report_msg += f" ▪️ <b>동적 켈리 비중:</b> {sys_config.get('DYNAMIC_KELLY_RISK', 0.01)*100:.1f}%\n"
-        report_msg += f" ▪️ <b>초신성 허들:</b> 코사인 {sys_config.get('DYNAMIC_SUPERNOVA_CUTOFF', 0.50)*100:.0f}% | ML박스 {sys_config.get('DYNAMIC_ML_BOX_CUTOFF', 0.50)*100:.0f}%\n"
-        report_msg += f" ▪️ <b>로직 수명:</b> 최초 작동일로부터 {(now - datetime.strptime(sys_config.get('LIVE_A_PROMOTION_DATE', today_str), '%Y-%m-%d').replace(tzinfo=tz_kr)).days}일차 유지 중\n"
-
-        conn.close()
-    except Exception as e:
-        report_msg += f"\n⚠️ 주간 리포트 생성 중 에러: {e}"
-
-    report_msg += "\n━━━━━━━━━━━━━━━━━━\n💡 <i>시스템이 일주일간 시장의 궤적을 어떻게 흡수하고 진화했는지 증명하는 마스터 결과지입니다.</i>"
-    send_telegram_report(report_msg)
+    _send_weekly(
+        db_path=DB_PATH,
+        sys_config=load_or_create_config(),
+        send_fn=send_telegram_report,
+    )
 
 # ==========================================
 # 🛡️ 스케줄러 세이프티 넷
@@ -1903,6 +1875,20 @@ def system_main_loop():
                     _spawn_py_script("mutant_oos_validator.py", "mutant_oos_sat0300")
                     time.sleep(60)
 
+                # 🧬 토요일 03:10 — validated_live_mutants → PENDING_MUTANTS 브리지 (검증 프로세스와 분리·지연 안전)
+                elif now.weekday() == 5 and now.hour == 3 and now.minute == 10:
+                    print("🧬 [오토파일럿] mutant_pending_bridge (R&D 대기열 동기화) 비블로킹 기동…")
+                    _spawn_python_exec(
+                        (
+                            "import sys, os; sys.path.insert(0, %r); os.chdir(%r); "
+                            "from mutant_pending_bridge import sync_validated_json_into_pending as _s; "
+                            "print(_s())"
+                        )
+                        % (_FACTORY_ROOT, _FACTORY_ROOT),
+                        "mutant_pending_bridge_sat0310",
+                    )
+                    time.sleep(60)
+
                 # 🔬 매일 06:00 — 미국 장 마감 직후 DNA 부검 (US 전용)
                 elif now.hour == 6 and now.minute == 0:
                     print("🔬 [오토파일럿] limit_up_forensics US 비블로킹 기동…")
@@ -2051,8 +2037,85 @@ def system_main_loop():
             send_telegram_report(err_msg)
             time.sleep(300) # 에러 후 5분 대기
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--run-autonomous-analysis-only":
+def run_factory_cli(argv=None) -> int:
+    """Ubuntu cron / factory.sh 단일 진입점."""
+    import argparse
+
+    from factory_pipelines import get_pipeline
+    from factory_runtime import (
+        FACTORY_MODES,
+        dispatch_factory_mode,
+        factory_exit_code,
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Dual-Screener Factory scheduler (unified entrypoint)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=sorted(FACTORY_MODES),
+        help="Job pipeline to run once and exit",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List steps only; no lock, no side effects",
+    )
+    parser.add_argument(
+        "--skip-telegram",
+        action="store_true",
+        help="Suppress factory PARTIAL_FAIL / lock notifications",
+    )
+    parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=120.0,
+        help="Seconds to wait for factory_runtime.lock (default 120)",
+    )
+    parser.add_argument(
+        "--run-autonomous-analysis-only",
+        action="store_true",
+        help="Legacy: weekend MetaGovernor brain surgery only",
+    )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="24h system_main_loop (do not use from cron)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.run_autonomous_analysis_only:
         run_autonomous_analysis()
-    else:
+        return 0
+
+    if args.daemon or (args.mode is None and not args.run_autonomous_analysis_only):
+        if args.mode is not None:
+            parser.error("Use either --mode or --daemon, not both")
         system_main_loop()
+        return 0
+
+    if args.mode is None:
+        parser.error("Specify --mode <name> or --daemon")
+
+    pipeline = get_pipeline(args.mode)
+    print(f"🏭 [Factory] mode={args.mode} steps={[s.name for s in pipeline]}")
+    report = dispatch_factory_mode(
+        args.mode,
+        pipeline,
+        send_fn=send_telegram_report,
+        skip_telegram=args.skip_telegram,
+        dry_run=args.dry_run,
+        lock_timeout_sec=args.lock_timeout,
+    )
+    code = factory_exit_code(report)
+    print(f"🏭 [Factory] finished status={report.status_label} exit={code}")
+    return code
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--run-autonomous-analysis-only":
+            run_autonomous_analysis()
+            raise SystemExit(0)
+        raise SystemExit(run_factory_cli())
+    system_main_loop()
