@@ -1,0 +1,534 @@
+# Paste part 3/4 on Ubuntu (project root)
+cat << 'SAP_PART3_EOF' >> system_auto_pilot.py
+                report_lines.append("🚨 <b>[알파 반감기 도달]</b> 룰의 수명이 다했습니다. 선제적 파라미터 폐기를 집행합니다.")
+                
+                # 🔬 [노화 원인 정밀 부검]
+                late_losers = late_phase[late_phase['final_ret'] <= 0]
+                if len(late_losers) >= 3:
+                    avg_cpv = late_losers['dyn_cpv'].mean()
+                    avg_breadth = late_losers['entry_breadth'].mean() if 'entry_breadth' in late_losers.columns else 1.0
+                    
+                    if avg_breadth < 0.98: 
+                        cause = "거시적 시장 폭(Breadth) 붕괴. 지수 착시로 인한 무차별 하락장 전개."
+                    elif (10-avg_cpv)*11.1 > 60: 
+                        cause = "극단적 윗꼬리(CPV) 급증. 세력들이 해당 타점(룰)을 역이용하여 물량을 넘김."
+                    else: 
+                        cause = "해당 룰에 대한 시장 참여자들의 역이용 (과최적화 알파 소멸)."
+                        
+                    report_lines.append(f"💡 <b>[노화 원인 분석]</b>: {cause}")
+                    
+                # 🧠 자율 MAE 역추적: 최근 20개 패배 종목의 실제 MAE 평균으로 손절선 재설정
+                try:
+                    conn = sqlite3.connect(DB_PATH, timeout=60)
+                    conn.execute("PRAGMA journal_mode=WAL;")
+                    recent_loss_df = pd.read_sql("""
+                        SELECT entry_price, min_low
+                        FROM forward_trades
+                        WHERE status LIKE 'CLOSED%'
+                          AND final_ret <= 0
+                          AND entry_price > 0
+                          AND min_low IS NOT NULL
+                        ORDER BY exit_date DESC, id DESC
+                        LIMIT 20
+                    """, conn)
+                    conn.close()
+
+                    if not recent_loss_df.empty:
+                        recent_loss_df['real_mae_pct'] = (
+                            (recent_loss_df['min_low'] - recent_loss_df['entry_price'])
+                            / recent_loss_df['entry_price'] * 100.0
+                        )
+                        adaptive_sl = round(recent_loss_df['real_mae_pct'].mean(), 2)
+                        current_config["DYNAMIC_MAE_SL"] = adaptive_sl
+                        report_lines.append(f"💡 조치: 최근 20개 패배 종목의 실제 MAE 평균({adaptive_sl}%)으로 손절선을 자율 세팅했습니다.")
+                    else:
+                        report_lines.append("💡 조치: 최근 패배 표본이 부족하여 기존 손절선을 유지합니다.")
+                except Exception as e:
+                    report_lines.append(f"⚠️ MAE 역추적 계산 에러: {e}")
+            else:
+                report_lines.append("✅ <b>[알파 엣지 유지 중]</b> 현재 파라미터가 시장에서 여전히 강력하게 작동 중입니다.")
+        else:
+            report_lines.append(f"▪️ 생존 {days_alive}일차: 반감기를 판독하기엔 아직 표본이 부족합니다.")
+    else:
+        current_config["LIVE_A_PROMOTION_DATE"] = datetime.now().strftime('%Y-%m-%d')
+        report_lines.append("▪️ 알파 반감기 추적을 위한 최초 승격일을 오늘로 기록했습니다.")
+
+    # ---------------------------------------------------------
+    # 👑 엔진 7: [V103.0 통합 시스템 데스매치 결산 (자본주의 복리 배분)]
+    # ---------------------------------------------------------
+    report_lines.append("\n⚔️ <b>[V103.0 통합 시스템 데스매치 결산]</b>")
+    
+    # 2. 발굴 대결 (STD vs SN vs BEAST vs UD) — 축당 최소 청산 N건 미만은 판정에서 제외
+    try:
+        n_min_dm = int(current_config.get("DEATHMATCH_MIN_TRADES_PER_ARM", 5) or 5)
+    except (TypeError, ValueError):
+        n_min_dm = 5
+    n_min_dm = max(1, n_min_dm)
+
+    std_df_h = df[df["sig_type"].str.contains("STANDARD", na=False)]
+    sn_df_h = df[df["sig_type"].str.contains("SUPERNOVA_COSINE|SUPERNOVA_MLBOX", na=False)]
+    beast_df_h = df[df["sig_type"].str.contains("SUPERNOVA_BEAST", na=False)]
+    ud_df_h = df[df["sig_type"].str.contains("UNDERDOG", na=False)]
+
+    def _hunt_mean(sub: pd.DataFrame) -> float:
+        if sub.empty:
+            return float("nan")
+        m = sub["final_ret"].mean()
+        return float(m) if pd.notna(m) else float("nan")
+
+    arms_hunt = [
+        ("오리지널(A)", _hunt_mean(std_df_h), len(std_df_h)),
+        ("초신성(B)", _hunt_mean(sn_df_h), len(sn_df_h)),
+        ("야수(BEAST)", _hunt_mean(beast_df_h), len(beast_df_h)),
+        ("언더독(UD)", _hunt_mean(ud_df_h), len(ud_df_h)),
+    ]
+    eligible_hunt = [
+        (lab, ret, n)
+        for lab, ret, n in arms_hunt
+        if n >= n_min_dm and pd.notna(ret)
+    ]
+    if not eligible_hunt:
+        report_lines.append(
+            f"🏁 <b>[발굴 대결]</b> 표본 부족으로 판정 보류 (축당 최소 청산 {n_min_dm}건 미충족)"
+        )
+    else:
+        best_l, best_r, best_n = max(eligible_hunt, key=lambda x: (x[1], x[2]))
+        report_lines.append(
+            f"🏁 <b>[발굴 대결 우승]</b> {best_l} {best_r:+.2f}% (청산 n={best_n}, 표본 기준 충족)"
+        )
+        
+    # 💡 [핵심] 인위적인 WEIGHT(1.6 vs 0.4) 강제 배분 로직 완전 삭제
+    report_lines.append("✅ <b>알림:</b> 인위적 가중치(WEIGHT) 배분 로직이 삭제되었습니다. 개별 시드의 복리 성장이 곧 자본 배분입니다.")
+
+    # ---------------------------------------------------------
+    # 👑 엔진 8: [V55.0 초신성 실전 흐름 역추적 및 MFE 가중치 템플릿 진화]
+    # ---------------------------------------------------------
+    report_lines.append("\n🔬 <b>[V55.0 초신성 실전 DNA 검증 및 MFE 가중치 템플릿]</b>")
+    
+    # 1. 가상매매 장부에서 청산 완료된 '초신성' 데이터만 발췌
+    sn_closed = df[(df['sig_type'].str.contains('SUPERNOVA', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+    
+    if len(sn_closed) >= 5:
+        # 2. [미래 흐름 연결성] 실전에서 MFE(최대 수익률) 10% 이상을 달성한 '진짜 대박주'만 추출
+        high_mfe_sn = sn_closed[sn_closed['mfe'] >= 10.0]
+        
+        if not high_mfe_sn.empty:
+            report_lines.append(f"▪️ <b>실전 고수익(MFE 10%↑) 초신성 표본:</b> {len(high_mfe_sn)}개 발견")
+            
+            # 3. 승리한 초신성들의 '실제 DNA 수치값' 평균 산출 (MFE 가중치 템플릿)
+            real_cpv = high_mfe_sn['dyn_cpv'].mean()
+            real_tb = high_mfe_sn['dyn_tb'].mean()
+            real_bbe = high_mfe_sn['v_energy'].mean()
+            
+            # 기존 과거 백테스트 템플릿(Centroid) 값 가져오기 (비교용)
+            multi_templates = current_config.get(f"DNA_SUPERNOVA_{high_mfe_sn['market'].iloc[0]}_MULTI", {})
+            
+            report_lines.append(f"💡 <b>[과거 하드코딩 vs 실전 MFE DNA 대조]</b>")
+            
+            # 4. 랭크 및 그룹별(RANK_A, RANK_B 등) 하드코딩 수치 생존 추적 및 오차율 계산
+            for rank in ['RANK_A', 'RANK_B', 'RANK_C', 'RANK_D']:
+                rank_df = high_mfe_sn[high_mfe_sn['sig_type'].str.contains(rank, na=False)]
+                if not rank_df.empty:
+                    rank_mfe = rank_df['mfe'].mean()
+                    rank_cpv = rank_df['dyn_cpv'].mean()
+                    rank_tb = rank_df['dyn_tb'].mean()
+                    
+                    report_lines.append(f" ↳ <b>[{rank}]</b> 평균 MFE: <b>{rank_mfe:.1f}%</b> 달성")
+                    report_lines.append(f"    - 실전 CPV: {rank_cpv:.2f} | 실전 TB: {rank_tb:.1f}")
+            
+            # 5. [메타 최적화] 오리지널 로직의 '스무딩(Smoothing)' 오토 추적 시스템 이식
+            # 과거의 템플릿을 한 번에 갈아엎지 않고, SMOOTHING_ALPHA(0.3) 비율만큼만 시장 흐름을 부드럽게 흡수합니다.
+            
+            old_mfe_template = current_config.get("DNA_SUPERNOVA_MFE_WEIGHTED", {"cpv": real_cpv, "tb": real_tb})
+            
+            # (기존 값 * 0.7) + (새로운 실전 값 * 0.3) = 점진적 오토 추적
+            smoothed_cpv = (old_mfe_template["cpv"] * (1 - SMOOTHING_ALPHA)) + (real_cpv * SMOOTHING_ALPHA)
+            smoothed_tb = (old_mfe_template["tb"] * (1 - SMOOTHING_ALPHA)) + (real_tb * SMOOTHING_ALPHA)
+            smoothed_bbe = (old_mfe_template.get("bbe", real_bbe) * (1 - SMOOTHING_ALPHA)) + (real_bbe * SMOOTHING_ALPHA)
+            
+            # 💡 [핵심] 단일 덮어쓰기 대신 버전을 붙여서 황금 타점을 여러 개 누적 (세포 분열)
+            mfe_payload = {
+                "cpv": round(smoothed_cpv, 3),
+                "tb": round(smoothed_tb, 3),
+                "bbe": round(smoothed_bbe, 3),
+                "last_updated": datetime.now().strftime('%Y-%m-%d')
+            }
+            # 기존 호환성을 위해 원본 키도 업데이트하고, MFE 전용 멀티 저장소에도 누적
+            current_config["DNA_SUPERNOVA_MFE_WEIGHTED"] = mfe_payload
+            
+            mfe_multi_key = "DNA_SUPERNOVA_MFE_MULTI"
+            mfe_pool = current_config.setdefault(mfe_multi_key, {})
+            version_tag = datetime.now().strftime('V_%y%m%d_%H%M')
+            mfe_pool[f"MFE_GOLDEN_{version_tag}"] = mfe_payload
+            
+            # 서버 과부하 방지 (최대 10개 유지)
+            if len(mfe_pool) > 10:
+                oldest_k = sorted(mfe_pool.keys())[0]
+                mfe_pool.pop(oldest_k, None)
+            current_config[mfe_multi_key] = mfe_pool
+            
+            report_lines.append(f"\n🧬 <b>[MFE 황금 템플릿 오토 스무딩]</b>")
+            report_lines.append(f" ↳ CPV: {old_mfe_template.get('cpv', real_cpv):.2f} ➔ <b>{smoothed_cpv:.2f}</b>")
+            report_lines.append(f" ↳ TB: {old_mfe_template.get('tb', real_tb):.1f} ➔ <b>{smoothed_tb:.1f}</b>")
+            report_lines.append(f" ↳ BBE: {old_mfe_template.get('bbe', real_bbe):.1f} ➔ <b>{smoothed_bbe:.1f}</b>")
+
+    # 👇👇 [기존 엔진 9 영역을 이걸로 완전히 덮어쓰세요] 👇👇
+    # ---------------------------------------------------------
+    # 👑 엔진 9: [V56.0 초신성 내부 서브-데스매치 & 컷오프 자율 튜닝]
+    # ---------------------------------------------------------
+    report_lines.append("\n⚙️ <b>[V56.0 초신성 내부 결투 및 자율 튜닝]</b>")
+    
+    # 코사인 진영과 ML박스 진영의 유동적 컷오프 자율 튜닝 (독립 진행)
+    for tag_key, config_key in [("COSINE", "DYNAMIC_SUPERNOVA_CUTOFF"), ("MLBOX", "DYNAMIC_ML_BOX_CUTOFF")]:
+        sub_df = df[(df['sig_type'].str.contains(tag_key, na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+        
+        curr_val = current_config.get(config_key, 0.50) # 기본 50%
+        
+        if len(sub_df) >= 5:
+            wr = len(sub_df[sub_df['final_ret'] > 0]) / len(sub_df)
+            pf = sub_df[sub_df['final_ret'] > 0]['final_ret'].sum() / (abs(sub_df[sub_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+            
+            report_lines.append(f"▪️ [{tag_key} 타점]: 승률 {wr*100:.1f}% | PF {pf:.2f} (표본 {len(sub_df)}개)")
+            
+            if wr < 0.45: # 승률 낮으면 허들 조이기
+                new_val = min(0.90, curr_val + 0.05)
+                current_config[config_key] = round(new_val, 2)
+                report_lines.append(f" 🚨 <b>[방어력 강화]</b> 승률 저조 ➔ 허들을 {new_val*100:.0f}%로 상향 조율")
+            elif wr > 0.65 and len(sub_df) < 10: # 승률 좋은데 표본 적으면 그물 넓히기
+                new_val = max(0.40, curr_val - 0.03)
+                current_config[config_key] = round(new_val, 2)
+                report_lines.append(f" 🔥 <b>[공격적 포착]</b> 승률 우수 ➔ 허들을 {new_val*100:.0f}%로 하향 조율")
+            else:
+                report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
+        else:
+            # 💡 [100년 영속 진화 로직 적용: Cutoff Death-Spiral Relief Valve]
+            current_config[config_key] = round(max(0.40, curr_val - 0.02), 2)
+            report_lines.append(
+                f"▪️ [{tag_key} 타점]: 표본 기아 완화로 커트라인 {curr_val*100:.0f}% ➔ "
+                f"{current_config[config_key]*100:.0f}% (표본 데이터 수집 중)"
+            )
+
+    # ---------------------------------------------------------
+    # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
+    # ---------------------------------------------------------
+    report_lines.append("\n💀 <b>[V60.0 진화론 도태 심판 및 국고 환수]</b>")
+    anti_patterns = current_config.get("ANTI_PATTERNS", {})
+    if not isinstance(anti_patterns, dict):
+        anti_patterns = {}
+    
+    sn_all_closed = df[(df['sig_type'].str.contains('SUPERNOVA', na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+    
+    for mkt in ['KR', 'US']:
+        multi_key = f"DNA_SUPERNOVA_{mkt}_MULTI"
+        if multi_key not in current_config: continue
+        
+        market_templates = current_config[multi_key]
+        archive_root = current_config.setdefault("ARCHIVED_TEMPLATES", {})
+        market_archive = archive_root.setdefault(mkt, {})
+        treasury_key = f"CENTRAL_TREASURY_{mkt}"
+        current_treasury = current_config.get(treasury_key, 0)
+        culled_list = []
+        
+        for template_name in list(market_templates.keys()):
+            t_trades = sn_all_closed[sn_all_closed['sig_type'].str.contains(template_name, na=False)]
+            
+            if len(t_trades) >= 5:
+                t_wins = t_trades[t_trades['final_ret'] > 0]
+                t_wr = len(t_wins) / len(t_trades)
+                t_pf = t_wins['final_ret'].sum() / (abs(t_trades[t_trades['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+                
+                # 🚨 [사형 선고 및 자금 회수]
+                if t_wr < 0.35 or t_pf < 1.0:
+                    # 도태 유전자는 삭제하지 않고 냉동 보관소로 이동
+                    archived_payload = market_templates.pop(template_name)
+                    market_archive[template_name] = {
+                        "template_data": archived_payload,
+                        "archived_at": datetime.now().strftime('%Y-%m-%d'),
+                        "market": mkt,
+                        "wr": round(t_wr, 4),
+                        "pf": round(t_pf, 4),
+                        "sample_size": int(len(t_trades))
+                    }
+
+                    # 안티 패턴 면역 체계: 도태(승률 35% 미만) 템플릿 DNA 축적
+                    if t_wr < 0.35 and isinstance(archived_payload, dict):
+                        anti_key = f"CULLED_{template_name}_{datetime.now().strftime('%y%m%d%H%M')}"
+                        anti_patterns[anti_key] = {
+                            "source": "CULLED_TEMPLATE",
+                            "template": template_name,
+                            "market": mkt,
+                            "cpv": float(archived_payload.get("cpv", 0.0)),
+                            "tb": float(archived_payload.get("tb", 0.0)),
+                            "bbe": float(archived_payload.get("bbe", 0.0)),
+                            "rs": float(archived_payload.get("rs", 0.0)),
+                            "recorded_at": datetime.now().strftime('%Y-%m-%d')
+                        }
+                    
+                    # 💡 [신규 추가] 해당 로직의 최종 잔고 역산 및 국고 반환
+                    total_pnl = (t_trades['sim_kelly_invest'] * t_trades['final_ret'] / 100).sum()
+                    final_balance = 20000000 + total_pnl
+                    
+                    # 국고에 잔고 더하기 (Plus)
+                    current_treasury += final_balance 
+                    
+                    culled_list.append(f"{template_name} (회수금: {final_balance:,.0f}원)")
+        
+        current_config[multi_key] = market_templates
+        current_config["ARCHIVED_TEMPLATES"] = archive_root
+        current_config[treasury_key] = current_treasury # 업데이트된 국고 저장
+        
+        if culled_list:
+            report_lines.append(f"▪️ <b>{mkt}장 도태 집행 및 국고 환수 완료</b>")
+            for c_name in culled_list: 
+                report_lines.append(f"  ❌ {c_name}")
+            report_lines.append(f"💰 {mkt} 국고 총액: {current_treasury:,.0f}원")
+
+    # 최근 1개월 치명적 참사주(-10% 이하) 평균 DNA를 안티 패턴에 축적
+    try:
+        one_month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        fatal_df = df[
+            (df['status'].str.contains('CLOSED', na=False)) &
+            (df['entry_date'] >= one_month_ago) &
+            (df['final_ret'] <= -10.0)
+        ] if all(col in df.columns for col in ['status', 'entry_date', 'final_ret']) else pd.DataFrame()
+        if not fatal_df.empty:
+            anti_key = f"FATAL_30D_{datetime.now().strftime('%y%m%d%H%M')}"
+            anti_patterns[anti_key] = {
+                "source": "FATAL_LOSERS_30D",
+                "cpv": round(float(fatal_df['dyn_cpv'].mean()), 4) if 'dyn_cpv' in fatal_df.columns else 0.0,
+                "tb": round(float(fatal_df['dyn_tb'].mean()), 4) if 'dyn_tb' in fatal_df.columns else 0.0,
+                "bbe": round(float(fatal_df['v_energy'].mean()), 4) if 'v_energy' in fatal_df.columns else 0.0,
+                "rs": round(float(fatal_df['dyn_rs'].mean()), 4) if 'dyn_rs' in fatal_df.columns else 0.0,
+                "sample_size": int(len(fatal_df)),
+                "recorded_at": datetime.now().strftime('%Y-%m-%d')
+            }
+    except Exception as e:
+        report_lines.append(f"▪️ 안티 패턴(참사주) 축적 에러: {e}")
+
+    # 최신 패턴 위주로 중복/폭주 방지
+    if len(anti_patterns) > 200:
+        sorted_keys = sorted(anti_patterns.keys())
+        excess = len(anti_patterns) - 200
+        for k in sorted_keys[:excess]:
+            anti_patterns.pop(k, None)
+    current_config["ANTI_PATTERNS"] = anti_patterns
+
+    # ---------------------------------------------------------
+    # 👑 엔진 12: [V105.0 순환매 예측 로직 자율 검증 및 가중치 부여]
+    # ---------------------------------------------------------
+    report_lines.append("\n🔄 <b>[V105.0 순환매 예측 로직 자율 검증]</b>")
+    
+    # 태그 유무로 일반 매매와 선취매 매매를 완벽히 분리
+    rot_df = df[df['sig_type'].str.contains('#순환매_선취매', na=False)]
+    std_df = df[~df['sig_type'].str.contains('#순환매_선취매', na=False)]
+    
+    def get_pf(target_df):
+        if len(target_df) == 0: return 0
+        wins = target_df[target_df['final_ret'] > 0]['final_ret'].sum()
+        loses = abs(target_df[target_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1
+        return wins / loses
+
+    # 최소 표본 3개 이상일 때만 수학적 검증 진행
+    if len(rot_df) >= 3:
+        rot_pf = get_pf(rot_df)
+        std_pf = get_pf(std_df)
+        
+        report_lines.append(f" ▪️ 예측그룹 PF: {rot_pf:.2f} vs 일반그룹 PF: {std_pf:.2f}")
+        
+        # 💡 [자율 진화 핵심] 1.5배 우위 증명 시 가중치 플래그 활성화
+        if rot_pf > std_pf * 1.5:
+            current_config["ROTATION_ADVANTAGE_ACTIVE"] = True
+            report_lines.append("🚀 <b>[검증 성공]</b> 순환매 선취매 우위 증명 ➔ 다음 주 <b>켈리 비중 2배</b> 적용")
+        else:
+            current_config["ROTATION_ADVANTAGE_ACTIVE"] = False
+            report_lines.append("🛡️ <b>[검증 실패]</b> 예측 우위 부족 ➔ 일반 베팅 유지")
+    else:
+        report_lines.append(" ▪️ 표본 부족으로 순환매 자율 검증 스킵")
+
+    # ---------------------------------------------------------
+    # 🔮 엔진 12.5: transitions 1위 기반 다음 섹터 예측 저장
+    # ---------------------------------------------------------
+    report_lines.append("\n🔮 <b>[V105.1 transitions 기반 다음 섹터 예측 저장]</b>")
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+
+        def map_standard_sector(s):
+            s_str = str(s).lower()
+            if any(k in s_str for k in ["반도체", "it", "ai", "소프트웨어", "모바일", "테크", "데이터"]): return "반도체/IT"
+            if any(k in s_str for k in ["바이오", "헬스", "의료", "제약"]): return "바이오/헬스케어"
+            if any(k in s_str for k in ["배터리", "2차전지", "화학", "에너지", "정유"]): return "에너지/화학"
+            if any(k in s_str for k in ["금융", "은행", "증권", "지주", "투자"]): return "금융/지주"
+            if any(k in s_str for k in ["기계", "조선", "방산", "산업재", "로봇", "전력"]): return "산업재/기계"
+            if any(k in s_str for k in ["소비", "유통", "식품", "화장품", "엔터", "미디어"]): return "소비재/엔터"
+            return "기타/혼합"
+
+        for mkt in ['KR', 'US']:
+            flow_df = pd.read_sql("""
+                SELECT entry_date, sector
+                FROM forward_trades
+                WHERE entry_date >= ?
+                  AND market = ?
+                ORDER BY entry_date ASC
+            """, conn, params=(sixty_days_ago, mkt))
+
+            flow_df['sector'] = flow_df['sector'].apply(map_standard_sector)
+
+            if not flow_df.empty:
+                daily_dom = flow_df.groupby('entry_date')['sector'].agg(
+                    lambda x: x.mode().iloc[0] if not x.mode().empty else None
+                ).dropna()
+
+                transitions = {}
+                prev_sector = None
+                sec_path = [str(s).strip() for s in daily_dom.tolist() if str(s).strip()]
+                for sec in sec_path:
+                    if prev_sector is not None and prev_sector != sec:
+                        key = (prev_sector, sec)
+                        transitions[key] = transitions.get(key, 0) + 1
+                    prev_sector = sec
+
+                if transitions and sec_path:
+                    # 💡 [V_NEXT 진화 로직 적용] 전이 카운트로 Markov 전이확률행렬 M 구성 후 2-step(M^2) 예측
+                    states = sorted({a for a, _ in transitions.keys()} | {b for _, b in transitions.keys()} | set(sec_path))
+                    s2i = {s: i for i, s in enumerate(states)}
+                    M = np.zeros((len(states), len(states)), dtype=float)
+
+                    for (a, b), cnt in transitions.items():
+                        ia, ib = s2i.get(a), s2i.get(b)
+                        if ia is None or ib is None:
+                            continue
+                        M[ia, ib] += float(cnt)
+
+                    for i in range(len(states)):
+                        row_sum = float(M[i].sum())
+                        if row_sum > 0:
+                            M[i] = M[i] / row_sum
+
+                    today_state = sec_path[-1]
+                    i0 = s2i.get(today_state)
+                    predicted_next_sector = None
+                    if i0 is not None:
+                        M2 = np.matmul(M, M)
+                        row2 = M2[i0]
+                        if np.isfinite(row2).any() and float(np.nansum(row2)) > 0:
+                            j = int(np.nanargmax(row2))
+                            predicted_next_sector = states[j]
+
+                    # 2-step 정보가 희박하면 1-step 최다 전이로 안전 폴백
+                    if not predicted_next_sector:
+                        top_transition = max(transitions.items(), key=lambda kv: kv[1])[0]
+                        predicted_next_sector = top_transition[1]
+
+                    current_config[f"PREDICTED_NEXT_SECTOR_{mkt}"] = predicted_next_sector
+                    report_lines.append(
+                        f"▪️ [{mkt}] Markov 2-Step 예측: {today_state} -> {predicted_next_sector} "
+                        f"(상태 {len(states)}개, 전이 {len(transitions)}쌍)"
+                    )
+                else:
+                    report_lines.append(f"▪️ [{mkt}] 유의미한 섹터 전이 패턴이 없어 기존 예측값을 유지합니다.")
+            else:
+                report_lines.append(f"▪️ [{mkt}] 순환매 예측 저장용 표본 데이터가 부족합니다.")
+        conn.close()
+    except Exception as e:
+        report_lines.append(f"⚠️ transitions 예측 저장 에러: {e}")
+
+    # ---------------------------------------------------------
+    # 👑 엔진 13: [V106.0 주차별 로직 일관성 추적 및 시계열 DNA 부검]
+    # ---------------------------------------------------------
+    report_lines.append("\n⏳ <b>[V106.0 주차별 일관성 추적 및 시계열 DNA 부검]</b>")
+    
+    try:
+        # 💡 [핵심 교정] VIX 동적 룩백에 의해 메인 df가 7일/15일로 잘렸을 경우를 대비하여,
+        # 4주치(30일) 청산 데이터를 DB에서 독립적으로 무조건 로드합니다.
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        df_closed_30d = pd.read_sql(f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND exit_date >= '{thirty_days_ago}'", conn)
+        conn.close()
+
+        import re
+        def get_core_group(sig):
+            sig = str(sig).replace('💀[기각/관찰용] ', '')
+            sig = re.sub(r'^\[.*?\]\s*', '', sig)
+            return sig.split(' [')[0]
+
+        if not df_closed_30d.empty:
+            df_closed_30d['group'] = df_closed_30d['sig_type'].apply(get_core_group)
+            df_closed_30d['exit_date_dt'] = pd.to_datetime(df_closed_30d['exit_date'])
+            now_dt = datetime.now()
+            df_closed_30d['week_idx'] = (now_dt - df_closed_30d['exit_date_dt']).dt.days // 7
+            
+            group_weekly_pf = {}
+            
+            for group in df_closed_30d['group'].unique():
+                g_df = df_closed_30d[df_closed_30d['group'] == group]
+                weekly_pfs = {}
+                for w in range(4): # 0주차 ~ 3주차 (최근 1개월)
+                    w_df = g_df[g_df['week_idx'] == w]
+                    if len(w_df) >= 3: 
+                        w_wins = w_df[w_df['final_ret'] > 0]['final_ret'].sum()
+                        w_loses = abs(w_df[w_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1
+                        weekly_pfs[w] = w_wins / w_loses
+                    else:
+                        weekly_pfs[w] = None
+                group_weekly_pf[group] = weekly_pfs
+
+            consistent_good, consistent_bad, consistent_mid = [], [], []
+
+            for g, pfs in group_weekly_pf.items():
+                valid_pfs = [p for p in pfs.values() if p is not None]
+                if len(valid_pfs) >= 2: # 최소 2주 이상 활동 검증
+                    if all(p >= 1.2 for p in valid_pfs): consistent_good.append(g)      
+                    elif all(p <= 0.8 for p in valid_pfs): consistent_bad.append(g)     
+                    else: consistent_mid.append(g)                                      
+                    
+            report_lines.append(f"▪️ <b>장기 우상향(S급) 로직:</b> {', '.join(consistent_good) if consistent_good else '없음'}")
+            report_lines.append(f"▪️ <b>장기 우하향(폐급) 로직:</b> {', '.join(consistent_bad) if consistent_bad else '없음'}")
+
+            def extract_cohort_dna(group_list):
+                if not group_list: return "표본 없음"
+                tgt_df = df_closed_30d[df_closed_30d['group'].isin(group_list)]
+                if tgt_df.empty: return "표본 없음"
+                c = tgt_df['dyn_cpv'].mean()
+                t = tgt_df['dyn_tb'].mean()
+                e = tgt_df['v_energy'].mean()
+                return f"CPV {c:.2f} | 찐양봉 {t:.1f}배 | 응축 {e:.1f}"
+
+            report_lines.append(f"\n💡 <b>[우상향 로직 절대 공통 DNA]</b>\n ↳ {extract_cohort_dna(consistent_good)}")
+            report_lines.append(f"↔️ <b>[횡보/중간 로직 공통 DNA]</b>\n ↳ {extract_cohort_dna(consistent_mid)}")
+            report_lines.append(f"💀 <b>[우하향 로직 만성질환 DNA]</b>\n ↳ {extract_cohort_dna(consistent_bad)}")
+            
+            # 💡 [자율 진화] 장기 우상향 DNA를 MFE 황금 타점으로 강제 흡수 (엔진 8과 시너지)
+            if consistent_good:
+                best_df = df_closed_30d[df_closed_30d['group'].isin(consistent_good)]
+                current_config["DNA_SUPERNOVA_MFE_WEIGHTED"] = {
+                    "cpv": round(best_df['dyn_cpv'].mean(), 3),
+                    "tb": round(best_df['dyn_tb'].mean(), 3),
+                    "bbe": round(best_df['v_energy'].mean(), 3),
+                    "last_updated": datetime.now().strftime('%Y-%m-%d')
+                }
+                report_lines.append("✅ <b>조치:</b> 장기 우상향 DNA를 시스템의 황금 타점(MFE 템플릿)으로 강제 동기화 완료.")
+        else:
+            report_lines.append(" ▪️ 시계열 추적을 위한 청산 데이터가 아직 부족합니다.")
+    except Exception as e:
+        report_lines.append(f" ▪️ 시계열 분석 에러: {e}")
+
+    # ---------------------------------------------------------
+    # 👑 엔진 14: 인큐베이터 진화 심판 및 정규직 승격
+    # ---------------------------------------------------------
+    report_lines.append("\n🧪 <b>[V110.0 인큐베이터 진화 심판]</b>")
+    try:
+        incubator_templates = current_config.get("INCUBATOR_TEMPLATES", {})
+        if isinstance(incubator_templates, dict) and incubator_templates:
+            baseline_df = df[
+                df['sig_type'].str.contains('STANDARD', na=False) &
+                df['status'].str.contains('CLOSED', na=False)
+            ] if all(col in df.columns for col in ['sig_type', 'status', 'final_ret']) else pd.DataFrame()
+
+            if not baseline_df.empty:
+                b_wr = len(baseline_df[baseline_df['final_ret'] > 0]) / len(baseline_df)
+                b_pf = baseline_df[baseline_df['final_ret'] > 0]['final_ret'].sum() / (abs(baseline_df[baseline_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+            else:
+                b_wr, b_pf = 0.0, 0.0
+SAP_PART3_EOF

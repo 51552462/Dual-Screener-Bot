@@ -1,0 +1,534 @@
+# Paste part 1/4 on Ubuntu (project root)
+cat << 'SAP_PART1_EOF' > system_auto_pilot.py
+import sqlite3
+import pandas as pd
+import numpy as np
+import os
+import sys
+import json
+import subprocess
+import time
+import random
+from datetime import datetime, timedelta
+import pytz
+import requests
+import yfinance as yf
+import FinanceDataReader as fdr
+import warnings
+import logging
+warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
+
+import telegram_env
+
+from yf_download_flatten import flatten_yf_download_df, yf_close_series
+
+# ==========================================
+# 💡 [환경 설정]
+# ==========================================
+TELEGRAM_TOKEN_MAIN = telegram_env.get_report_token()
+TELEGRAM_CHAT_ID = telegram_env.get_report_chat_id()
+DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+from config_manager import load_system_config as load_system_config_kv
+from inverse_etf_sniper import run_inverse_etf_sniper_cycle
+from shadow_tracking import record_ops_snapshot_from_live_state
+import ops_logger
+from system_config_atomic import (
+    CONFIG_PATH,
+    config_persisted,
+    load_config,
+    save_config,
+    update_config,
+)
+
+LOOKBACK_DAYS = 14
+SMOOTHING_ALPHA = 0.3 
+WARMUP_DAYS = 14
+
+# ==========================================
+# 💡 [유틸리티 함수]
+# ==========================================
+def send_telegram_report(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    try: requests.post(url, json=payload, timeout=10)
+    except Exception as e: print(f"텔레그램 전송 실패: {e}")
+
+
+# 1분 주기: ops_snapshot + 인버스 스나이퍼 (모노토닉 시계)
+_OPS_INVERSE_MINUTE_STATE = {"last_mono": 0.0, "inverse_mode": None}
+
+
+def _telegram_inverse_sniper_critical_only(summary: dict, mode_after: bool) -> None:
+    """
+    인버스 스나이퍼 관련 텔레그램: 모드 전환·킬스위치 청산·테일 캡/잔액 거부만.
+    (스캔 완료·정상 스킵·진입 성공은 발송하지 않음)
+    """
+    st = _OPS_INVERSE_MINUTE_STATE
+    prev_mode = st["inverse_mode"]
+    if prev_mode is not None and mode_after != prev_mode:
+        send_telegram_report(
+            f"🛡️ <b>[인버스 관제]</b> INVERSE_MODE_ACTIVE 변경: "
+            f"<code>{prev_mode}</code> → <code>{mode_after}</code>"
+        )
+    kc = int(summary.get("kill_closed") or 0)
+    if kc > 0:
+        send_telegram_report(
+            f"🚨 <b>[인버스 킬 스위치]</b> 잔존 OPEN 인버스 <b>{kc}</b>건 시장가 청산 후 테일 반환."
+        )
+    sk = summary.get("skipped")
+    if isinstance(sk, str) and sk and (
+        "테일 30% 캡" in sk or "Reserve OCC" in sk or "테일 잔액 0" in sk
+    ):
+        send_telegram_report(
+            f"🚨 <b>[인버스 테일 캡/잔액]</b> 신규 진입 거부: {sk}"
+        )
+    st["inverse_mode"] = mode_after
+
+
+def _gemini_status_for_ops() -> dict:
+    try:
+        import ai_overseer as ao
+
+        fn = getattr(ao, "gemini_heartbeat_snapshot", None)
+        if callable(fn):
+            return dict(fn())
+    except Exception:
+        pass
+    return {"phase": "unknown"}
+
+
+def _minute_ops_snapshot_and_inverse_cycle() -> None:
+    """국고/테일·OPEN 롱숏 스냅샷 1행 + 인버스 스나이퍼 1사이클 (텔레그램은 치명 이벤트만)."""
+    mono = time.monotonic()
+    st = _OPS_INVERSE_MINUTE_STATE
+    if mono - st["last_mono"] < 60.0:
+        return
+    st["last_mono"] = mono
+    try:
+        summary = run_inverse_etf_sniper_cycle()
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] run_inverse_etf_sniper_cycle 실패: {e}")
+        summary = {"kill_closed": 0, "skipped": None, "entered": None}
+    try:
+        record_ops_snapshot_from_live_state()
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] ops_snapshot 기록 실패: {e}")
+    try:
+        mode_after = bool(load_system_config_kv().get("INVERSE_MODE_ACTIVE"))
+        _telegram_inverse_sniper_critical_only(summary, mode_after)
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] 인버스 텔레그램 게이트 실패: {e}")
+    try:
+        from telegram_message_queue import count_all_pending_messages
+
+        m: dict = {
+            "telegram_queue_pending": int(count_all_pending_messages()),
+            "gemini": _gemini_status_for_ops(),
+        }
+        try:
+            from gemini_report_cache import get_gemini_gate_metrics
+
+            m.update(get_gemini_gate_metrics())
+        except Exception:
+            pass
+        ops_logger.record_gauge_snapshot("system_auto_pilot", m)
+        ops_logger.record_heartbeat("system_auto_pilot")
+    except Exception as e:
+        print(f"⚠️ [오토파일럿] ops_events gauge 실패: {e}")
+
+def load_or_create_config():
+    # 1. 파일이 아예 없을 때 처음 생성하는 기본값 세팅
+    if not config_persisted():
+        default_config = {
+            "ACTIVE_EXIT_MODE": "HYBRID",
+            "WEIGHT_S1": 1.0, "WEIGHT_S4": 1.0,
+            "ACCOUNT_SIZE": 20000000,         # 💡 각 로직별 기본 시드 2,000만 원
+            "RISK_PCT": 0.02,                 # 💡 고정 리스크 2%
+            "CENTRAL_TREASURY_KR": 300000000, # 🏦 [추가] 한국장 초기 국고 3억 원
+            "CENTRAL_TREASURY_US": 300000000, # 🏦 [추가] 미국장 초기 국고 3억 원
+            "TAIL_RISK_FUND_KR": 0.0,
+            "TAIL_RISK_FUND_US": 0.0,
+            "GLOBAL_CIRCUIT_BREAKER": "OFF",
+            "ARCHIVED_TEMPLATES": {},
+            "ANTI_PATTERNS": [],
+            "INCUBATOR_TEMPLATES": {},
+            "INVERSE_MODE_ACTIVE": False,
+        }
+        save_config(default_config)
+        return default_config
+        
+    # 2. 기존 파일이 있을 때 읽어오기
+    config = load_config()
+        
+    # 💡 [국고 자동 입금 로직] 기존 파일에 국고(Treasury) 데이터가 없다면 알아서 3억씩 채워줍니다.
+    need_save = False
+    if "CENTRAL_TREASURY_KR" not in config:
+        config["CENTRAL_TREASURY_KR"] = 300000000  # 3억 원
+        need_save = True
+    if "CENTRAL_TREASURY_US" not in config:
+        config["CENTRAL_TREASURY_US"] = 300000000  # 3억 원
+        need_save = True
+    if "TAIL_RISK_FUND_KR" not in config:
+        config["TAIL_RISK_FUND_KR"] = 0.0
+        need_save = True
+    if "TAIL_RISK_FUND_US" not in config:
+        config["TAIL_RISK_FUND_US"] = 0.0
+        need_save = True
+    if "GLOBAL_CIRCUIT_BREAKER" not in config:
+        config["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
+        need_save = True
+    if "ARCHIVED_TEMPLATES" not in config or not isinstance(config.get("ARCHIVED_TEMPLATES"), dict):
+        config["ARCHIVED_TEMPLATES"] = {}
+        need_save = True
+    if "ANTI_PATTERNS" not in config or not isinstance(config.get("ANTI_PATTERNS"), list):
+        config["ANTI_PATTERNS"] = []
+        need_save = True
+    if "INCUBATOR_TEMPLATES" not in config or not isinstance(config.get("INCUBATOR_TEMPLATES"), dict):
+        config["INCUBATOR_TEMPLATES"] = {}
+        need_save = True
+    if "INVERSE_MODE_ACTIVE" not in config:
+        config["INVERSE_MODE_ACTIVE"] = False
+        need_save = True
+
+    if "META_GOVERNOR_WINDOWS" not in config or not isinstance(config.get("META_GOVERNOR_WINDOWS"), dict):
+        config["META_GOVERNOR_WINDOWS"] = {
+            "calibrator_lookback_days": 90,
+            "treasury_lookback_days": 90,
+            "graveyard_rolling_days": 90,
+            "dist_lookback_days": 90,
+        }
+        need_save = True
+    if "META_GOVERNOR_SKIP_VIX" not in config:
+        config["META_GOVERNOR_SKIP_VIX"] = False
+        need_save = True
+
+    # 변경 사항이 있으면 JSON 파일에 덮어쓰기
+    if need_save:
+        save_config(config)
+        print("🏦 [국고 세팅 완료] 시스템에 한국 3억, 미국 3억의 초기 자본이 성공적으로 세팅되었습니다.")
+        
+    return config
+
+
+def _sync_inverse_mode_switch(current_config: dict, vix_last=0.0, regime_display=""):
+    """
+    폭락·신용경색 레짐과 연동해 INVERSE_MODE_ACTIVE를 갱신한다.
+    - DOOMSDAY_DEFCON.level <= 2
+    - regime_meta_analyzer가 기록한 REGIME_ANALYSIS.regime_key ∈ {HIGH_VOL, BEAR}
+    - 자율 관제탑 로컬 판정: VIX 극단 + '극단적 공포장' 문자열
+    (save_config와 동일 배치로 쓰여 원자적 일관성 유지)
+    """
+    dd = current_config.get("DOOMSDAY_DEFCON") or {}
+    try:
+        lvl = int(dd.get("level", 99))
+    except (TypeError, ValueError):
+        lvl = 99
+    defcon_crash = lvl <= 2
+
+    meta = current_config.get("REGIME_ANALYSIS") or {}
+    rk = str(meta.get("regime_key") or "").strip().upper()
+    meta_crash = rk in ("HIGH_VOL", "BEAR")
+
+    try:
+        vx = float(vix_last or 0.0)
+    except (TypeError, ValueError):
+        vx = 0.0
+    vix_crash = vx >= 28.0 and "극단적" in str(regime_display)
+
+    current_config["INVERSE_MODE_ACTIVE"] = bool(defcon_crash or meta_crash or vix_crash)
+
+
+def get_first_entry_date():
+    """forward_trades 장부의 최초 진입일(MIN(entry_date))을 조회한다."""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        row = conn.execute("SELECT MIN(entry_date) FROM forward_trades").fetchone()
+        conn.close()
+        if row and row[0]:
+            return datetime.strptime(row[0], '%Y-%m-%d').date()
+    except Exception as e:
+        print(f"최초 거래일 조회 에러: {e}")
+    return None
+
+
+def _mean_entry_shape_incubator_winners(promoted_name: str):
+    """인큐베이터 승격 대상 로직의 forward_trades 승리 청산 건 entry_date 시점 종가로 20차원 shape 평균 역추적 (try_add와 동일 정규화·20분할)."""
+    tag_sub = f"[INCUBATOR_{promoted_name}]"
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        wins = pd.read_sql(
+            """SELECT market, code, entry_date FROM forward_trades
+               WHERE sig_type LIKE ? AND status LIKE 'CLOSED%' AND final_ret > 0""",
+            conn,
+            params=(f"%{tag_sub}%",),
+        )
+        conn.close()
+    except Exception:
+        return None
+    if wins is None or wins.empty:
+        return None
+    shapes = []
+    for _, row in wins.iterrows():
+        mkt = str(row.get("market") or "KR").upper()
+        code = str(row.get("code") or "").strip()
+        entry_d = row.get("entry_date")
+        if not code or entry_d is None or (isinstance(entry_d, float) and pd.isna(entry_d)):
+            continue
+        try:
+            end_dt = pd.Timestamp(str(entry_d))
+            end_str = end_dt.strftime("%Y-%m-%d")
+        except Exception:
+            continue
+        st_dt = (end_dt - pd.Timedelta(days=450)).strftime("%Y-%m-%d")
+        try:
+            if mkt == "KR":
+                hist = fdr.DataReader(code, st_dt, end_str)
+            else:
+                hist = yf.download(
+                    code,
+                    start=st_dt,
+                    end=(end_dt + pd.Timedelta(days=2)).strftime("%Y-%m-%d"),
+                    progress=False,
+                )
+                hist = flatten_yf_download_df(hist)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            hist = hist.sort_index()
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            hist = hist.loc[: pd.Timestamp(end_str)]
+            c = hist["Close"].astype(float).values
+            if len(c) < 60:
+                continue
+            c = c[-300:]
+            if len(c) < 60:
+                continue
+            c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
+            new_shape = np.mean(np.array_split(c_norm, 20), axis=1)
+            if new_shape.size != 20:
+                continue
+            shapes.append(np.nan_to_num(new_shape.astype(float)))
+        except Exception:
+            continue
+    if not shapes:
+        return None
+    stacked = np.vstack(shapes)
+    return [round(float(x), 6) for x in np.mean(stacked, axis=0)]
+
+
+def _meta_governor_skip_vix_from_config(cfg) -> bool:
+    if not isinstance(cfg, dict):
+        return False
+    v = cfg.get("META_GOVERNOR_SKIP_VIX")
+    if v is True or v == 1:
+        return True
+    if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return False
+
+
+# ==========================================
+# 🚀 [메인 분석 엔진] 
+# ==========================================
+def run_autonomous_analysis():
+    print(f"🚀 [자율 관제탑] 거시 경제(VIX) 기반 동적 룩백 윈도우 스캔 시작...")
+    
+    # ---------------------------------------------------------
+    # 👑 [사전 작업] 변동성(VIX & KOSPI) 기반 동적 룩백(Lookback) 결정
+    # ---------------------------------------------------------
+    dyn_lookback = 14 # 기본값
+    vix_status = "데이터 없음"
+    regime = "분석 중"
+    w_s1, w_s4 = 1.0, 1.0 
+    vix_last = 0.0
+    breadth_ratio = 1.0
+    breadth_status = "미계산"
+
+    early_cfg = load_or_create_config()
+    skip_vix = os.environ.get("META_GOVERNOR_SKIP_VIX", "").strip().lower() in ("1", "true", "yes", "on") or _meta_governor_skip_vix_from_config(early_cfg)
+
+    if skip_vix:
+        dyn_lookback = 30
+        vix_status = "META_GOVERNOR_SKIP_VIX — VIX 미조회, 보수 룩백 30일"
+        vix_last = 0.0
+        regime = "Bear/Chop (VIX 스킵/오프라인)"
+        w_s1, w_s4 = 0.7, 1.3
+    else:
+        try:
+            # 💡 [V24.0] SPY(시총비중), ^VIX(공포), RSP(동일비중) 데이터 동시 로드
+            df_idx = yf.download("SPY ^VIX RSP", period="1y", interval="1d", group_by="ticker", progress=False)
+
+            def _bench_close(panel, sym):
+                s = yf_close_series(panel, sym)
+                if not getattr(s, "empty", True):
+                    return s.dropna()
+                try:
+                    if sym in panel.columns.levels[0]:
+                        return panel[sym]['Close'].dropna()
+                    return panel['Close'][sym].dropna()
+                except Exception:
+                    return pd.Series(dtype=float)
+
+            spy_c = _bench_close(df_idx, 'SPY')
+            vix_c = _bench_close(df_idx, '^VIX')
+            rsp_c = _bench_close(df_idx, 'RSP')
+
+            spy_last, vix_last = spy_c.iloc[-1], vix_c.iloc[-1]
+            spy_ema200 = spy_c.ewm(span=200, adjust=False).mean().iloc[-1]
+
+            # 💡 [핵심] 시장 폭(Breadth) 계산: (현재 RSP/SPY 비율) / (50일 평균 RSP/SPY 비율)
+            breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
+
+            # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
+            if spy_last > spy_ema200 and vix_last < 18:
+                regime = "Bull (상승장)"
+                base_w1, base_w4 = 1.2, 0.8
+            else:
+                regime = "Bear/Chop (하락/횡보)"
+                base_w1, base_w4 = 0.5, 1.5
+
+            # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
+            breadth_status = "건강 (Broad)"
+            if breadth_ratio < 0.97:
+                breadth_status = "취약 (Narrow/쏠림)"
+                base_w1 *= 0.5
+                base_w4 *= 1.2
+            elif breadth_ratio > 1.03:
+                breadth_status = "강력 (확산)"
+                base_w1 *= 1.2
+
+            w_s1, w_s4 = round(base_w1, 2), round(base_w4, 2)
+
+            # 3. VIX 기반 동적 룩백 설정 결합
+            if vix_last >= 28.0:
+                dyn_lookback = 7
+                regime = "Bear (극단적 공포장)"
+                w_s1, w_s4 = 0.0, 2.0
+                vix_status = f"VIX 폭발({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 7일"
+            elif vix_last >= 18.0:
+                dyn_lookback = 15
+                vix_status = f"VIX 경계({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 15일"
+            else:
+                dyn_lookback = 45
+                vix_status = f"VIX 평온({vix_last:.1f}) | 폭:{breadth_ratio:.2f}({breadth_status}) - 룩백 45일"
+
+        except Exception as e:
+            print(f"거시 지표 로드 에러: {e}")
+
+    # 1. 계산된 [동적 룩백]으로 DB 데이터 로드
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        start_date = (datetime.now() - timedelta(days=dyn_lookback)).strftime('%Y-%m-%d')
+        query = f"SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND entry_date >= '{start_date}'"
+        df = pd.read_sql(query, conn)
+        conn.close()
+    except Exception as e:
+        print(f"DB 로드 에러: {e}")
+        return
+
+    if len(df) < 10:
+        # 표본 부족이어도 관제탑 핵심 키는 갱신해 UNKNOWN 뇌사 상태를 방지
+        current_config = load_or_create_config()
+        # 💡 [100년 영속 진화 로직 적용: Tail Risk Convexity Treasury Shield]
+        try:
+            for _mkt in ["KR", "US"]:
+                t_key = f"CENTRAL_TREASURY_{_mkt}"
+                f_key = f"TAIL_RISK_FUND_{_mkt}"
+                treasury = float(current_config.get(t_key, 0.0) or 0.0)
+                fund = float(current_config.get(f_key, 0.0) or 0.0)
+                # 💡 [100년 영속 진화 로직 적용: Tail Fund Target Cap Guard]
+                target_fund = max(0.0, treasury * 0.015)
+                transfer = max(0.0, target_fund - fund)
+                transfer = min(transfer, treasury)
+                treasury -= transfer
+                fund += transfer
+                if float(vix_last) >= 35.0 and fund > 0:
+                    treasury += fund * 30.0
+                    fund = 0.0
+                current_config[t_key] = round(max(0.0, treasury), 2)
+                current_config[f_key] = round(max(0.0, fund), 2)
+        except Exception:
+            pass
+        regime_key = "BULL" if "Bull" in regime else ("BEAR" if "극단적" in regime else "CHOP")
+        optimal_risk = 0.01
+        current_config["CURRENT_REGIME_KEY"] = regime_key
+        current_config["DYNAMIC_KELLY_RISK"] = round(optimal_risk, 4)
+        _sync_inverse_mode_switch(current_config, vix_last, regime)
+        save_config(current_config)
+        send_telegram_report(f"⚠️ <b>[자율 관제탑]</b>\n\n거시 국면 전환으로 룩백이 {dyn_lookback}일로 조정되었으나, 해당 기간 내 청산 표본이 10건 미만입니다. 기본 관제탑 키(CURRENT_REGIME_KEY/DYNAMIC_KELLY_RISK=1.00%)만 선반영하고 이번 주 조율을 스킵합니다.")
+        return
+
+    current_config = load_or_create_config()
+    # 💡 [100년 영속 진화 로직 적용: Tail Risk Convexity Treasury Shield]
+    try:
+        for _mkt in ["KR", "US"]:
+            t_key = f"CENTRAL_TREASURY_{_mkt}"
+            f_key = f"TAIL_RISK_FUND_{_mkt}"
+            treasury = float(current_config.get(t_key, 0.0) or 0.0)
+            fund = float(current_config.get(f_key, 0.0) or 0.0)
+            # 💡 [100년 영속 진화 로직 적용: Tail Fund Target Cap Guard]
+            target_fund = max(0.0, treasury * 0.015)
+            transfer = max(0.0, target_fund - fund)
+            transfer = min(transfer, treasury)
+            treasury -= transfer
+            fund += transfer
+            # VIX 공황장: 테일 리스크 펀드 30배 수익 시뮬레이션 후 국고 복원, 펀드 리셋
+            if float(vix_last) >= 35.0 and fund > 0:
+                payoff = fund * 30.0
+                treasury += payoff
+                report_tail = f"▪️ {_mkt} 테일리스크 펀드 발동: {fund:,.0f}원 ×30 => {payoff:,.0f}원 국고 복원"
+                fund = 0.0
+            else:
+                report_tail = f"▪️ {_mkt} 테일리스크 적립: {transfer:,.0f}원 (누적 {fund:,.0f}원 / 목표 {target_fund:,.0f}원)"
+            current_config[t_key] = round(max(0.0, treasury), 2)
+            current_config[f_key] = round(max(0.0, fund), 2)
+            # report_lines 선언 전이라 임시 변수로 보관
+            if _mkt == "KR":
+                _tail_msg_kr = report_tail
+            else:
+                _tail_msg_us = report_tail
+    except Exception:
+        _tail_msg_kr, _tail_msg_us = None, None
+    try:
+        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+
+        w_s1, w_s4 = apply_meta_weight_bounds_clamp(float(w_s1), float(w_s4), load_meta_state_resolved())
+    except Exception:
+        pass
+    current_config["WEIGHT_S1"] = round(float(w_s1), 4)
+    current_config["WEIGHT_S4"] = round(float(w_s4), 4)
+    
+    report_lines = [f"<b>📊 [System B 자율 조율 리포트]</b>\n"]
+    report_lines.append(f"<b>[1. 동적 거시 국면 판독 (Regime)]</b>\n▪️ 상태: {regime}\n▪️ <b>동적 룩백: {vix_status}</b>\n🚨 <b>액션:</b> S1 비중 {w_s1}배 / S4 비중 {w_s4}배 강제 조율\n")
+    if '_tail_msg_kr' in locals() and _tail_msg_kr:
+        report_lines.append(_tail_msg_kr)
+    if '_tail_msg_us' in locals() and _tail_msg_us:
+        report_lines.append(_tail_msg_us)
+
+    # ---------------------------------------------------------
+    # 👑 엔진 1.6: 미국장 고MFE 섹터 기반 글로벌 스필오버 저장
+    # ---------------------------------------------------------
+    report_lines.append("<b>[1.6 글로벌 스필오버 자동 연동]</b>")
+    try:
+        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        us_hot_df = df[
+            (df['market'] == 'US') &
+            (df['status'].str.contains('CLOSED', na=False)) &
+            (df['entry_date'] >= seven_days_ago) &
+            (df['mfe'] >= 15.0)
+        ] if all(col in df.columns for col in ['market', 'status', 'entry_date', 'mfe', 'sector']) else pd.DataFrame()
+
+        if not us_hot_df.empty:
+            top_us_sector = us_hot_df.groupby('sector').size().sort_values(ascending=False).index[0]
+            sector_s = str(top_us_sector)
+            as_of = datetime.now().strftime("%Y-%m-%d")
+            current_config["US_SPILLOVER_SECTOR"] = sector_s
+            current_config["US_SPILLOVER_SECTOR_LAST_GOOD"] = sector_s
+            current_config["US_SPILLOVER_SECTOR_AS_OF"] = as_of
+            report_lines.append(f"▪️ 최근 7일 미국장 고MFE(15%+) 주도 섹터 저장: <b>{top_us_sector}</b>")
+        else:
+SAP_PART1_EOF
