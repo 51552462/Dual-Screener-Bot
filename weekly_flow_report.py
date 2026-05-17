@@ -586,16 +586,27 @@ def send_weekly_flow_master_report(
     *,
     db_path: str,
     sys_config: Dict[str, Any],
-    send_fn: Callable[[str], None],
+    send_fn: Callable[[str], Any],
 ) -> None:
     try:
         snap = build_weekly_flow_snapshot(db_path=db_path, sys_config=sys_config)
-        send_fn(format_weekly_flow_report(snap))
+        kr_n = int(snap.kr.week_n_closed) if snap.kr else 0
+        us_n = int(snap.us.week_n_closed) if snap.us else 0
+        html_msg = format_weekly_flow_report(snap)
+        print(
+            f"[weekly_flow] 텔레그램 발송 시도 — html_len={len(html_msg)} "
+            f"KR청산={kr_n} US청산={us_n} "
+            f"(청산 0건이어도 리포트 본문은 생성·발송함, 스킵 없음)"
+        )
+        sent = send_fn(html_msg)
+        if sent is False:
+            print("[weekly_flow] 텔레그램 발송 실패 — send_fn이 False 반환 (.env·API 응답 확인)")
         persist_weekly_baseline(
             sys_config,
             macro_effective_kelly=float(snap.macro_kr.effective_kelly_risk),
         )
     except Exception as e:
+        print(f"[weekly_flow] 리포트 빌드 예외: {e}")
         send_fn(f"⚠️ <b>주간 Flow 리포트 생성 실패</b>\n{html.escape(str(e), quote=False)}")
 
 

@@ -47,11 +47,34 @@ WARMUP_DAYS = 14
 # ==========================================
 # 💡 [유틸리티 함수]
 # ==========================================
-def send_telegram_report(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-    try: requests.post(url, json=payload, timeout=10)
-    except Exception as e: print(f"텔레그램 전송 실패: {e}")
+def send_telegram_report(message) -> bool:
+    """주간/일일 리포트 등 HTML 텔레그램. 성공 True — 실패 시 터미널에 이유 출력."""
+    token = (telegram_env.get_report_token() or TELEGRAM_TOKEN_MAIN or "").strip()
+    chat_id = (telegram_env.get_report_chat_id() or TELEGRAM_CHAT_ID or "").strip()
+    if not token or not chat_id:
+        print(
+            "텔레그램 전송 스킵: REPORT_BOT_TOKEN(또는 TELEGRAM_TOKEN_MAIN) / "
+            "REPORT_BOT_CHAT_ID(또는 TELEGRAM_CHAT_ID) 미설정 — .env 로드 여부 확인"
+        )
+        logger.warning("telegram skip: missing token or chat_id")
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            print(f"텔레그램 발송 OK (chars={len(message)})")
+            return True
+        print(
+            f"텔레그램 API 실패: HTTP {resp.status_code} — "
+            f"{(resp.text or '')[:300]}"
+        )
+        logger.warning("telegram API error: %s %s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as e:
+        print(f"텔레그램 전송 실패: {e}")
+        logger.warning("telegram post exception: %s", e)
+        return False
 
 
 # 1분 주기: ops_snapshot + 인버스 스나이퍼 (모노토닉 시계)
