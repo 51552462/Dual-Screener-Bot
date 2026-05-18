@@ -535,6 +535,18 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
     if "ROTATION_PRED_EMA_ALPHA" not in cfg:
         cfg["ROTATION_PRED_EMA_ALPHA"] = 0.35
         added.add("ROTATION_PRED_EMA_ALPHA")
+    for mkt in ("KR", "US"):
+        k = f"PREDICTED_NEXT_SECTOR_{mkt}_CONFIDENCE"
+        if k not in cfg:
+            cfg[k] = 0.0
+            added.add(k)
+        sk = f"SECTOR_ROTATION_STATE_{mkt}"
+        if sk not in cfg:
+            cfg[sk] = {"confidence": 0.5, "miss_streak": 0, "ema_accuracy": 0.5}
+            added.add(sk)
+    if "SECTOR_ROTATION_LOOKBACK_DAYS" not in cfg:
+        cfg["SECTOR_ROTATION_LOOKBACK_DAYS"] = 90
+        added.add("SECTOR_ROTATION_LOOKBACK_DAYS")
     return added
 
 

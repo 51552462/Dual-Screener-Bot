@@ -2711,9 +2711,19 @@ def send_comprehensive_daily_report(
             # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버
             # ---------------------------------------------------------
             msg7 = f"{market_icon} <b>[7/9] 섹터 순환매 궤적 및 스필오버</b>\n"
+            _used_rotation_db = False
+            try:
+                from sector_rotation_store import _load_daily_series, format_rotation_telegram_block
+
+                if len(_load_daily_series(market, 60)) >= 3:
+                    msg7 += format_rotation_telegram_block(market, sys_config)
+                    _used_rotation_db = True
+            except Exception as _rot_db_ex:
+                print(f"⚠️ [7/9] sector_rotation DB 블록 스킵: {_rot_db_ex}")
+
             rot_df = df_real[df_real['entry_date'] >= (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')]
             
-            if not rot_df.empty:
+            if not _used_rotation_db and not rot_df.empty:
                 # 💡 [픽스] '유망'이 포함된 가짜 데이터를 걸러내고 진짜 섹터만 집계
                 def get_real_sector(x):
                     valid_s = [str(s) for s in x if '유망' not in str(s) and '포착' not in str(s)]
@@ -2757,7 +2767,7 @@ def send_comprehensive_daily_report(
                 if sorted_trans:
                     msg7 += "\n▪️ <b>빈번한 자금 이동 궤적:</b>\n"
                     for p, c in sorted_trans: msg7 += f" - {p} ({c}회 관측)\n"
-            else:
+            elif not _used_rotation_db:
                 msg7 += " ↳ 순환매 데이터 부족\n"
 
             if market == 'KR':

@@ -123,7 +123,16 @@ def refresh_predicted_sector_for_market(
     *,
     lookback_days: int = 60,
 ) -> Dict[str, Any]:
-    """Markov 2-step → PREDICTED_NEXT_SECTOR_{market} 갱신."""
+    """PREDICTED_NEXT_SECTOR_{market} — P1 rollup SSOT 우선, 레거시 Markov 폴백."""
+    try:
+        from sector_rotation_store import refresh_predicted_sector_via_store
+
+        out = refresh_predicted_sector_via_store(cfg, market, db_path=db_path)
+        if out.get("updated") or out.get("reason") == "rollup_empty_last_good":
+            return out
+    except Exception:
+        pass
+
     db = db_path or market_db_read_path()
     mkt = str(market).upper()
     key = f"PREDICTED_NEXT_SECTOR_{mkt}"
@@ -222,11 +231,22 @@ def refresh_sector_spillover_state(
         cfg = {}
 
     spill = refresh_us_spillover_from_db(cfg, db_path)
-    kr = refresh_predicted_sector_for_market(cfg, "KR", db_path)
-    us = refresh_predicted_sector_for_market(cfg, "US", db_path)
 
-    if save:
-        save_system_config(cfg)
+    rotation_pipe: Dict[str, Any] = {}
+    kr: Dict[str, Any] = {}
+    us: Dict[str, Any] = {}
+    try:
+        from sector_rotation_store import run_sector_rotation_pipeline
+
+        rotation_pipe = run_sector_rotation_pipeline(
+            db_path=db_path, cfg=cfg, save_config=False
+        )
+        kr = (rotation_pipe.get("markets") or {}).get("KR", {}).get("predict", {})
+        us = (rotation_pipe.get("markets") or {}).get("US", {}).get("predict", {})
+    except Exception as ex:
+        rotation_pipe = {"error": str(ex)[:120]}
+        kr = refresh_predicted_sector_for_market(cfg, "KR", db_path)
+        us = refresh_predicted_sector_for_market(cfg, "US", db_path)
 
     cross_pub: Dict[str, Any] = {}
     try:
@@ -236,12 +256,16 @@ def refresh_sector_spillover_state(
     except Exception as ex:
         cross_pub = {"error": str(ex)[:120]}
 
+    if save:
+        save_system_config(cfg)
+
     return {
         "spillover": spill,
         "predicted_kr": kr,
         "predicted_us": us,
         "saved": save,
         "cross_market": cross_pub,
+        "sector_rotation": rotation_pipe,
     }
 
 
@@ -286,22 +310,27 @@ def resolve_predicted_sector_display(cfg: Dict[str, Any], market: str) -> str:
     asof = str(cfg.get(f"{key}_AS_OF") or "").strip()[:10]
     src = str(cfg.get(f"{key}_FROM") or "").strip()
 
-    if raw and raw not in ("분석중", "NONE", "", "—"):
+    if raw and raw not in ("분석중", "분석 대기", "NONE", "", "—"):
         if asof and asof != _today_kst():
             tail = f" (산출 {asof}"
             if src:
                 tail += f", 현재 주도 {src}"
+            try:
+                conf = float(cfg.get(f"{key}_CONFIDENCE"))
+                tail += f", 신뢰 {conf:.0%}"
+            except (TypeError, ValueError):
+                pass
             return raw + tail + ")"
         return raw
 
     lg_key = f"{key}_LAST_GOOD"
     lg = str(cfg.get(lg_key) or "").strip()
     lg_asof = str(cfg.get(f"{lg_key}_AS_OF") or cfg.get(f"{key}_AS_OF") or "").strip()[:10]
-    if lg and lg not in ("분석중", "NONE"):
+    if lg and lg not in ("분석중", "분석 대기", "NONE"):
         ref = lg_asof or _last_business_day_kst()
         return f"{lg} (직전 영업일 캐시 {ref})"
 
-    return "데이터 없음"
+    return "데이터 없음 (순환매 DB 미축적)"
 
 
 def main() -> None:
