@@ -39,7 +39,15 @@ MA_WINDOW = 20
 
 
 def load_config(max_retries: int = 5) -> Dict[str, Any]:
-    """[장갑차] JSON 읽기."""
+    """system_config.sqlite 우선, 레거시 JSON 보조."""
+    try:
+        from config_manager import load_system_config
+
+        blob = load_system_config()
+        if blob:
+            return dict(blob)
+    except Exception:
+        pass
     if not os.path.exists(CONFIG_PATH):
         return {}
     for attempt in range(max_retries):
@@ -53,10 +61,20 @@ def load_config(max_retries: int = 5) -> Dict[str, Any]:
 
 
 def save_config(config_data: Dict[str, Any], max_retries: int = 5) -> bool:
-    """[장갑차] 원자적 저장."""
+    """REGIME_ANALYSIS 등 단일 키는 SQLite KV; 전체 dict 는 레거시 JSON 폴백."""
+    ra = config_data.get("REGIME_ANALYSIS") if isinstance(config_data, dict) else None
+    if isinstance(ra, dict):
+        try:
+            from config_manager import set_config_value
+
+            set_config_value("REGIME_ANALYSIS", ra)
+            return True
+        except Exception:
+            pass
     temp_path = f"{CONFIG_PATH}.temp"
     for attempt in range(max_retries):
         try:
+            os.makedirs(os.path.dirname(CONFIG_PATH) or ".", exist_ok=True)
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=4, ensure_ascii=False)
                 f.flush()

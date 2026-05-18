@@ -62,6 +62,15 @@ def _meta_age_hours(meta_path: str) -> Optional[float]:
 
 
 def _meta_needs_rebuild(meta_path: str) -> bool:
+    try:
+        from meta_state_store import is_meta_state_degraded, load_meta_governor_state_unified
+
+        state = load_meta_governor_state_unified(meta_path)
+        if is_meta_state_degraded(state):
+            return True
+    except Exception:
+        if not os.path.isfile(meta_path):
+            return True
     if not os.path.isfile(meta_path):
         return True
     try:
@@ -78,7 +87,12 @@ def _meta_needs_rebuild(meta_path: str) -> bool:
     age = _meta_age_hours(meta_path)
     if age is not None and age > _max_meta_age_hours():
         return True
-    return False
+    try:
+        from meta_state_store import is_meta_state_degraded
+
+        return is_meta_state_degraded(state)
+    except Exception:
+        return False
 
 
 def _run_meta_governor_cycle(db_path: str) -> str:
@@ -174,8 +188,8 @@ def ensure_factory_artifacts(
 
 def ensure_meta_governor_state(*, force: bool = False) -> Dict[str, Any]:
     """
-    MetaGovernor JSON 없음·NEVER·stale 시 run_governor_cycle 로 자가 치유.
-    리포트 [8/9]·ai_overseer 직전 호출용 (ensure_factory_artifacts 의 meta 단계와 동일).
+    MetaGovernor JSON/SQLite 없음·NEVER·UNKNOWN·stale 시 regime 선행 + governor 자가 치유.
+    리포트 [1/9]·[8/9]·ai_overseer 직전 호출용.
     """
     db_path = market_db_read_path()
     if not db_path or not os.path.isfile(db_path):
@@ -185,16 +199,28 @@ def ensure_meta_governor_state(*, force: bool = False) -> Dict[str, Any]:
     if not force and not _meta_needs_rebuild(meta_p):
         return {"meta": "ok", "meta_status": "fresh", "path": meta_p}
 
+    out: Dict[str, Any] = {"path": meta_p, "regime": "skipped"}
+    try:
+        from meta_state_store import regime_analysis_stale_or_missing
+
+        if force or regime_analysis_stale_or_missing():
+            from regime_meta_analyzer import analyze_market_regime
+
+            analyze_market_regime()
+            out["regime"] = "refreshed"
+    except Exception as e:
+        out["regime"] = "failed"
+        out["regime_error"] = str(e)
+        logger.warning("ensure_meta_governor_state: regime refresh failed: %s", e)
+
     try:
         status = _run_meta_governor_cycle(db_path)
-        return {
-            "meta": "rebuilt",
-            "meta_status": status,
-            "path": meta_p,
-        }
+        out["meta"] = "rebuilt"
+        out["meta_status"] = status
+        return out
     except Exception as e:
         logger.exception("ensure_meta_governor_state failed: %s", e)
-        return {"meta": "failed", "error": str(e), "path": meta_p}
+        return {"meta": "failed", "error": str(e), **out}
 
 
 def main() -> None:

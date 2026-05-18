@@ -567,6 +567,13 @@ def meta_state_path() -> str:
 
 
 def load_meta_governor_state(path: Optional[str] = None) -> Dict[str, Any]:
+    """SQLite SSOT 우선, 없으면 JSON (meta_state_store)."""
+    try:
+        from meta_state_store import load_meta_governor_state_unified
+
+        return load_meta_governor_state_unified(path)
+    except Exception as e:
+        logger.warning("meta_state_store load fallback to JSON only: %s", e)
     p = path or meta_state_path()
     if not os.path.isfile(p):
         return default_meta_state()
@@ -585,7 +592,14 @@ def load_meta_governor_state(path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def save_meta_governor_state_atomic(state: Dict[str, Any], path: Optional[str] = None) -> None:
-    """동일 디렉터리에 임시 파일 작성 후 os.replace 로 원자적 교체."""
+    """SQLite config_kv + JSON 미러 원자 저장."""
+    try:
+        from meta_state_store import save_meta_governor_state_unified
+
+        save_meta_governor_state_unified(state, path)
+        return
+    except Exception as e:
+        logger.warning("meta_state_store save fallback to JSON only: %s", e)
     p = path or meta_state_path()
     os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
     payload = json.dumps(state, ensure_ascii=False, indent=2)
@@ -604,6 +618,42 @@ def save_meta_governor_state_atomic(state: Dict[str, Any], path: Optional[str] =
         except OSError:
             pass
         raise
+
+
+def _load_system_config_for_governor(ctx: "GovernorRunContext") -> Dict[str, Any]:
+    """SQLite system_config.sqlite 우선, 레거시 JSON 경로는 보조 병합."""
+    merged: Dict[str, Any] = {}
+    try:
+        from config_manager import load_system_config
+
+        merged = dict(load_system_config() or {})
+    except Exception as e:
+        logger.warning("MetaGovernor: load_system_config failed: %s", e)
+    if ctx.system_config_path:
+        fc = _load_json_file(ctx.system_config_path)
+        if fc:
+            for k, v in fc.items():
+                if k not in merged or merged.get(k) in (None, "", {}):
+                    merged[k] = v
+    return merged
+
+
+def _load_bitget_config_for_governor(ctx: "GovernorRunContext") -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    try:
+        from config_manager import get_config_value
+
+        for key in ("CURRENT_REGIME_KEY", "REGIME_ANALYSIS"):
+            v = get_config_value(key)
+            if v is not None:
+                merged[key] = v
+    except Exception:
+        pass
+    if ctx.bitget_system_config_path:
+        fc = _load_json_file(ctx.bitget_system_config_path)
+        if fc:
+            merged = {**fc, **merged} if merged else fc
+    return merged
 
 
 @dataclass
@@ -936,8 +986,8 @@ class MetaGovernor:
     def _step_regime(self) -> None:
         ctx = self._ctx
         assert ctx is not None
-        cfg_m = _load_json_file(ctx.system_config_path)
-        cfg_b = _load_json_file(ctx.bitget_system_config_path)
+        cfg_m = _load_system_config_for_governor(ctx)
+        cfg_b = _load_bitget_config_for_governor(ctx)
         rk, conf, note = _resolve_regime_from_configs(cfg_m, cfg_b)
 
         vix_block = self._working.get("META_VIX_LEVEL_Q") or {}

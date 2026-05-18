@@ -2028,10 +2028,10 @@ def send_comprehensive_daily_report(
     """[V104.1] 국가별 9분할 정밀 리포트 (순환매 및 스필오버 복원 완료)"""
     if refresh_meta_governor:
         try:
-            from factory_artifact_guard import ensure_meta_governor_state
+            from meta_state_store import rebuild_meta_state
 
-            _meta_heal = ensure_meta_governor_state()
-            print(f"🛰️ [일일 통합 리포트] MetaGovernor 자가 치유: {_meta_heal}")
+            _meta_heal = rebuild_meta_state(force=False, refresh_regime=True)
+            print(f"🛰️ [일일 통합 리포트] MetaGovernor·REGIME 동기 치유: {_meta_heal}")
         except Exception as _mg_e:
             print(f"⚠️ [일일 통합 리포트] MetaGovernor 치유 실패(리포트는 계속): {_mg_e}")
 

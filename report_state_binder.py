@@ -179,17 +179,34 @@ def build_macro_treasury_block(
     treasury_config_key: str,
     ledger_zero_invest_fallback: Optional[float] = 400000.0,
     oms_equity: Optional[float] = None,
+    auto_heal_meta: bool = True,
 ) -> MacroTreasuryReportBlock:
     """
     treasury_config_key: 예) CENTRAL_TREASURY_KR, TREASURY_SPOT_USDT
     df_closed_real: 해당 시장(또는 market_type)만, 비-INCUBATOR, CLOSED 만 넘기는 것을 권장.
     ledger_zero_invest_fallback: KR 원화 장부의 0원 투입 보정(40만). 암호화폐 등은 None.
+    auto_heal_meta: UNKNOWN/NEVER 시 regime+MetaGovernor 동기 복구 후 리포트.
     """
-    regime = _resolve_regime(meta, sys_config)
-    conf = _resolve_regime_confidence(meta)
-    notes = _resolve_regime_notes(meta)
-    cap, floor = _resolve_kelly_cap_floor(meta)
-    base_k, g_mult, eff_k = _resolve_kelly_display(meta, sys_config)
+    m = meta
+    if auto_heal_meta:
+        try:
+            from meta_state_store import ensure_meta_state_for_report
+
+            m = ensure_meta_state_for_report()
+        except Exception:
+            m = meta if isinstance(meta, dict) else {}
+    elif m is None:
+        try:
+            from meta_governor_consumer import load_meta_state_resolved
+
+            m = load_meta_state_resolved()
+        except Exception:
+            m = {}
+    regime = _resolve_regime(m, sys_config)
+    conf = _resolve_regime_confidence(m)
+    notes = _resolve_regime_notes(m)
+    cap, floor = _resolve_kelly_cap_floor(m)
+    base_k, g_mult, eff_k = _resolve_kelly_display(m, sys_config)
     raw = _treasury_from_config(sys_config, treasury_config_key)
     mkt = "US" if "US" in str(treasury_config_key).upper() else "KR"
     led = _treasury_from_ledger(
@@ -259,7 +276,12 @@ def format_macro_treasury_section_html(
     if block.regime_notes:
         body += html.escape(block.regime_notes, quote=False) + "\n"
     else:
-        body += "<i>— (META_REGIME_ACTION.notes 없음 — meta_governor_state 갱신 확인)</i>\n"
+        body += (
+            "<i>— MetaGovernor notes 미기록. "
+            f"현재 국면 <b>{rk_esc}</b> — "
+            "서버에서 <code>python3 -c \"from meta_state_store import rebuild_meta_state; "
+            "print(rebuild_meta_state(force=True))\"</code> 실행 후 재확인.</i>\n"
+        )
     body += f"\n<i>{html.escape(block.treasury_footnote, quote=False)}</i>\n"
     return lead_in_html + body
 
@@ -387,11 +409,9 @@ def build_lifecycle_report_block(
     m: Dict[str, Any]
     if auto_heal_meta:
         try:
-            from factory_artifact_guard import ensure_meta_governor_state
-            from meta_governor_consumer import load_meta_state_resolved
+            from meta_state_store import ensure_meta_state_for_report
 
-            ensure_meta_governor_state()
-            m = load_meta_state_resolved()
+            m = ensure_meta_state_for_report()
         except Exception:
             m = meta if isinstance(meta, dict) else {}
     else:
