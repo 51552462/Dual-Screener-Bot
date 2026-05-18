@@ -65,6 +65,29 @@ CREATE TABLE IF NOT EXISTS deathmatch_elimination_event (
 CREATE INDEX IF NOT EXISTS idx_dm_elim_mkt ON deathmatch_elimination_event(market, event_date DESC);
 """
 
+_SCORECARD_EXTRA_COLS = [
+    ("expectancy", "REAL"),
+    ("sum_ret", "REAL"),
+    ("meta_mult", "REAL"),
+    ("tail_loss_streak", "INTEGER"),
+    ("kelly_path_ret", "REAL"),
+    ("outperform_pp", "REAL"),
+    ("hurdle_passed", "INTEGER"),
+    ("champion_eligible", "INTEGER"),
+    ("score_breakdown", "TEXT"),
+]
+
+
+def _migrate_snapshot_columns(conn: sqlite3.Connection) -> None:
+    try:
+        cur = conn.execute("PRAGMA table_info(deathmatch_arm_snapshot)")
+        existing = {str(r[1]) for r in cur.fetchall()}
+        for col, typ in _SCORECARD_EXTRA_COLS:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE deathmatch_arm_snapshot ADD COLUMN {col} {typ}")
+    except sqlite3.Error:
+        pass
+
 
 def _db_path() -> str:
     from market_db_paths import market_db_read_path
@@ -88,6 +111,7 @@ def ensure_deathmatch_schema(db_path: Optional[str] = None) -> None:
         conn = sqlite3.connect(path, timeout=60)
         try:
             conn.executescript(_DDL)
+            _migrate_snapshot_columns(conn)
             conn.commit()
         finally:
             conn.close()
@@ -113,6 +137,7 @@ def save_battle_royal_result(
     try:
         conn = sqlite3.connect(path, timeout=60)
         try:
+            _migrate_snapshot_columns(conn)
             for a in arms:
                 conn.execute(
                     """
@@ -120,8 +145,11 @@ def save_battle_royal_result(
                         trade_date, market, arm_id, arm_kind, registry_state, label,
                         n_closed, n_valid, mean_ret, win_rate, profit_factor,
                         mdd_pct, vol_pct, composite_score, rank, below_floor,
-                        relative_exempt, recorded_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        relative_exempt, recorded_at,
+                        expectancy, sum_ret, meta_mult, tail_loss_streak,
+                        kelly_path_ret, outperform_pp, hurdle_passed, champion_eligible,
+                        score_breakdown
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(trade_date, market, arm_id) DO UPDATE SET
                         arm_kind=excluded.arm_kind,
                         registry_state=excluded.registry_state,
@@ -137,7 +165,16 @@ def save_battle_royal_result(
                         rank=excluded.rank,
                         below_floor=excluded.below_floor,
                         relative_exempt=excluded.relative_exempt,
-                        recorded_at=excluded.recorded_at
+                        recorded_at=excluded.recorded_at,
+                        expectancy=excluded.expectancy,
+                        sum_ret=excluded.sum_ret,
+                        meta_mult=excluded.meta_mult,
+                        tail_loss_streak=excluded.tail_loss_streak,
+                        kelly_path_ret=excluded.kelly_path_ret,
+                        outperform_pp=excluded.outperform_pp,
+                        hurdle_passed=excluded.hurdle_passed,
+                        champion_eligible=excluded.champion_eligible,
+                        score_breakdown=excluded.score_breakdown
                     """,
                     (
                         td,
@@ -158,6 +195,15 @@ def save_battle_royal_result(
                         1 if a.get("below_floor") else 0,
                         1 if a.get("relative_exempt") else 0,
                         now,
+                        a.get("expectancy"),
+                        a.get("sum_ret"),
+                        a.get("meta_mult"),
+                        int(a.get("tail_loss_streak", 0) or 0),
+                        a.get("kelly_path_ret"),
+                        a.get("outperform_pp"),
+                        1 if a.get("hurdle_passed") else 0,
+                        1 if a.get("champion_eligible") else 0,
+                        a.get("score_breakdown"),
                     ),
                 )
             if champion:

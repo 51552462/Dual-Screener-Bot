@@ -1,5 +1,5 @@
 """
-Registry 기반 N-Way Battle Royal — composite(MDD 패널티) · 상대평가 탈락 면제 · KR/US 챔피언.
+Registry N-Way Battle Royal — Scorecard L1~L4 · Composite v2 · 절대 허들 · KR/US 챔피언.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 
 from deathmatch_config import load_deathmatch_config, market_deathmatch_params
@@ -18,10 +17,17 @@ from deathmatch_report import (
     ArmDeathmatchRow,
     NWayDeathmatchResult,
     _effective_final_ret_pct,
-    _profit_factor_from_ret,
     deathmatch_min_n_for_market,
     fmt_deathmatch_ret,
     nway_deathmatch_verdict,
+)
+from deathmatch_scorecard import (
+    ArmScorecard,
+    attach_meta_health,
+    attach_oos_from_mutants,
+    build_arm_scorecard_from_df,
+    compute_composite_v2,
+    scorecard_to_dict,
 )
 from deathmatch_store import log_elimination_events, save_battle_royal_result
 from strategy_promotion_engine import stable_strategy_id
@@ -53,27 +59,9 @@ def mdd_pct_from_returns(rets: List[float]) -> float:
     return float(worst_dd)
 
 
-def _zscore(vals: List[float]) -> List[float]:
-    if len(vals) < 2:
-        return [0.0] * len(vals)
-    arr = np.asarray(vals, dtype=float)
-    mu = float(np.nanmean(arr))
-    sd = float(np.nanstd(arr))
-    if sd < 1e-9:
-        return [0.0] * len(vals)
-    return [float((x - mu) / sd) for x in arr]
-
-
-def _finite_or_none(x: Any) -> Optional[float]:
-    try:
-        v = float(x)
-        return v if math.isfinite(v) else None
-    except (TypeError, ValueError):
-        return None
-
-
 @dataclass
 class RegistryArmRow:
+    """Telegram/레거시 호환 — 내부는 ArmScorecard."""
     arm_id: str
     label: str
     group_key: str
@@ -90,74 +78,55 @@ class RegistryArmRow:
     rank: int = 0
     below_floor: bool = False
     relative_exempt: bool = False
+    sum_ret: Optional[float] = None
+    expectancy: Optional[float] = None
+    kelly_path_ret: Optional[float] = None
+    meta_mult: float = 1.0
+    tail_loss_streak: int = 0
+    outperform_pp: Optional[float] = None
+    hurdle_passed: bool = False
+    hurdle_reason: str = ""
+    champion_eligible: bool = False
+    score_breakdown: Dict[str, float] = field(default_factory=dict)
 
 
-@dataclass
-class BattleRoyaleResult:
-    market: str
-    arms: List[RegistryArmRow] = field(default_factory=list)
-    champion: Optional[RegistryArmRow] = None
-    verdict: str = ""
-    allocation_note: str = ""
-    n_min: int = 5
-    market_benchmark_ret: Optional[float] = None
-    crash_defense_active: bool = False
-    elimination_events: List[Dict[str, Any]] = field(default_factory=list)
-    run_id: str = ""
+def _scorecard_to_registry(sc: ArmScorecard) -> RegistryArmRow:
+    return RegistryArmRow(
+        arm_id=sc.arm_id,
+        label=sc.label,
+        group_key=sc.group_key,
+        registry_state=sc.registry_state,
+        n_closed=sc.n_closed,
+        n_valid=sc.n_valid,
+        mean_ret=sc.mean_ret,
+        win_rate_pct=sc.win_rate_pct,
+        profit_factor=sc.profit_factor,
+        mdd_pct=sc.mdd_pct,
+        vol_pct=sc.vol_pct,
+        composite_score=sc.composite_score,
+        rank=sc.rank,
+        below_floor=sc.below_floor,
+        relative_exempt=sc.relative_exempt,
+        sum_ret=sc.sum_ret,
+        expectancy=sc.expectancy,
+        kelly_path_ret=sc.kelly_path_ret,
+        meta_mult=sc.meta_mult,
+        tail_loss_streak=sc.tail_loss_streak,
+        outperform_pp=sc.outperform_pp,
+        hurdle_passed=sc.hurdle_passed,
+        hurdle_reason=sc.hurdle_reason,
+        champion_eligible=sc.champion_eligible,
+        score_breakdown=dict(sc.score_breakdown),
+    )
 
 
-def _arm_metrics_from_df(df_arm: pd.DataFrame) -> Tuple[int, int, Optional[float], Optional[float], Optional[float], float, float]:
-    n_closed = int(len(df_arm))
-    ret_s = _effective_final_ret_pct(df_arm)
-    valid = ret_s.dropna()
-    n_valid = int(len(valid))
-    mean_ret = win_rate = pf = None
-    mdd = vol = 0.0
-    if n_valid > 0:
-        m = float(valid.mean())
-        if math.isfinite(m):
-            mean_ret = m
-        win_rate = float((valid > 0).sum() / n_valid * 100.0)
-        pf = _profit_factor_from_ret(valid)
-        rets = valid.tolist()
-        mdd = mdd_pct_from_returns(rets)
-        vol = float(valid.std()) if n_valid > 1 else 0.0
-    return n_closed, n_valid, mean_ret, win_rate, pf, mdd, vol
-
-
-def _compute_composite_scores(
-    arms: List[RegistryArmRow],
-    dmcfg: Dict[str, Any],
-) -> None:
-    weights = dmcfg.get("composite_weights") or {}
-    w_ret = float(weights.get("ret", 0.38))
-    w_wr = float(weights.get("wr", 0.22))
-    w_pf = float(weights.get("pf", 0.20))
-    w_mdd = float(weights.get("mdd_penalty", 0.20))
-    mdd_soft = float(dmcfg.get("mdd_soft_pct", -12.0))
-    mdd_scale = max(1.0, float(dmcfg.get("mdd_penalty_scale", 8.0)))
-    vol_scale = float(dmcfg.get("vol_penalty_scale", 0.15))
-
-    eligible = [a for a in arms if a.n_valid > 0 and a.mean_ret is not None and math.isfinite(a.mean_ret)]
-    if not eligible:
-        return
-
-    rets = [float(a.mean_ret) for a in eligible]
-    wrs = [float(a.win_rate_pct or 0) for a in eligible]
-    pfs = [math.log1p(max(0, float(a.profit_factor or 0))) for a in eligible]
-
-    z_ret = _zscore(rets)
-    z_wr = _zscore(wrs)
-    z_pf = _zscore(pfs)
-
-    for i, a in enumerate(eligible):
-        mdd_pen = 0.0
-        if a.mdd_pct < mdd_soft:
-            mdd_pen = (abs(a.mdd_pct) - abs(mdd_soft)) / mdd_scale
-        vol_pen = (float(a.vol_pct) / 100.0) * vol_scale if a.vol_pct else 0.0
-        a.composite_score = (
-            w_ret * z_ret[i] + w_wr * z_wr[i] + w_pf * z_pf[i] - w_mdd * mdd_pen - vol_pen
-        )
+def _mdd_for_df(df_arm: pd.DataFrame) -> float:
+    if df_arm is None or df_arm.empty:
+        return 0.0
+    ret_s = _effective_final_ret_pct(df_arm).dropna()
+    if ret_s.empty:
+        return 0.0
+    return mdd_pct_from_returns(ret_s.tolist())
 
 
 def _market_benchmark(df_closed: pd.DataFrame) -> Optional[float]:
@@ -170,8 +139,19 @@ def _market_benchmark(df_closed: pd.DataFrame) -> Optional[float]:
     return m if math.isfinite(m) else None
 
 
+def _load_meta_health(sys_config: Optional[dict]) -> Dict[str, Any]:
+    try:
+        from meta_governor_consumer import load_meta_state_resolved
+
+        meta = load_meta_state_resolved()
+        h = meta.get("META_STRATEGY_HEALTH")
+        return h if isinstance(h, dict) else {}
+    except Exception:
+        return {}
+
+
 def _assign_ranks_and_elimination(
-    arms: List[RegistryArmRow],
+    scorecards: List[ArmScorecard],
     *,
     n_min: int,
     dmcfg: Dict[str, Any],
@@ -189,16 +169,18 @@ def _assign_ranks_and_elimination(
 
     ranked = [
         a
-        for a in arms
-        if a.n_valid >= n_min and a.mean_ret is not None and math.isfinite(a.mean_ret)
+        for a in scorecards
+        if a.n_valid >= n_min
+        and a.mean_ret is not None
+        and math.isfinite(float(a.mean_ret))
     ]
     ranked.sort(key=lambda x: float(x.composite_score), reverse=True)
     for i, a in enumerate(ranked, start=1):
         a.rank = i
 
-    unranked = [a for a in arms if a not in ranked]
-    for a in unranked:
-        a.rank = 999
+    for a in scorecards:
+        if a not in ranked:
+            a.rank = 999
 
     events: List[Dict[str, Any]] = []
     if len(ranked) < 2:
@@ -225,8 +207,23 @@ def _assign_ranks_and_elimination(
                 }
             )
 
-    arms.sort(key=lambda x: (x.rank if x.rank < 999 else 9999, -float(x.composite_score)))
     return crash_active, events
+
+
+@dataclass
+class BattleRoyaleResult:
+    market: str
+    arms: List[RegistryArmRow] = field(default_factory=list)
+    champion: Optional[RegistryArmRow] = None
+    verdict: str = ""
+    allocation_note: str = ""
+    n_min: int = 5
+    market_benchmark_ret: Optional[float] = None
+    crash_defense_active: bool = False
+    elimination_events: List[Dict[str, Any]] = field(default_factory=list)
+    run_id: str = ""
+    n_hurdle_passed: int = 0
+    n_champion_eligible: int = 0
 
 
 def run_battle_royal(
@@ -235,6 +232,7 @@ def run_battle_royal(
     *,
     market: str,
     lookback_days: Optional[int] = None,
+    meta_health: Optional[Dict[str, Any]] = None,
     persist: bool = True,
 ) -> BattleRoyaleResult:
     cfg = sys_config if isinstance(sys_config, dict) else {}
@@ -259,6 +257,8 @@ def run_battle_royal(
 
     bench = _market_benchmark(work)
     out.market_benchmark_ret = bench
+
+    health = meta_health if isinstance(meta_health, dict) else _load_meta_health(cfg)
 
     from strategy_registry_store import load_registry_rows
 
@@ -292,46 +292,54 @@ def run_battle_royal(
                 }
             by_arm.setdefault(sid, []).append(idx)
 
-    arms: List[RegistryArmRow] = []
+    scorecards: List[ArmScorecard] = []
     for sid, meta in arm_meta.items():
         idxs = by_arm.get(sid, [])
         df_arm = work.loc[idxs] if idxs else pd.DataFrame()
-        nc, nv, mr, wr, pf, mdd, vol = _arm_metrics_from_df(df_arm)
-        arms.append(
-            RegistryArmRow(
-                arm_id=sid,
-                label=str(meta["label"]),
-                group_key=str(meta["group_key"]),
-                registry_state=str(meta["registry_state"]),
-                n_closed=nc,
-                n_valid=nv,
-                mean_ret=mr,
-                win_rate_pct=wr,
-                profit_factor=pf,
-                mdd_pct=mdd,
-                vol_pct=vol,
-            )
+        mdd = _mdd_for_df(df_arm)
+        sc = build_arm_scorecard_from_df(
+            sid,
+            str(meta["label"]),
+            str(meta["group_key"]),
+            str(meta["registry_state"]),
+            df_arm,
+            mdd_pct=mdd,
         )
+        scorecards.append(sc)
 
-    if not arms:
+    if not scorecards:
         out.verdict = "Registry·청산 매핑 arm 0 — Discovery 후 재실행"
         return out
 
-    _compute_composite_scores(arms, dmcfg)
+    attach_meta_health(scorecards, health, mk)
+    attach_oos_from_mutants(scorecards, cfg)
+    compute_composite_v2(scorecards, dmcfg, market_benchmark=bench)
+
     crash_active, elim_events = _assign_ranks_and_elimination(
-        arms,
-        n_min=n_min,
-        dmcfg=dmcfg,
-        market_benchmark=bench,
+        scorecards, n_min=n_min, dmcfg=dmcfg, market_benchmark=bench
     )
     out.crash_defense_active = crash_active
     out.elimination_events = elim_events
+    out.n_hurdle_passed = sum(1 for s in scorecards if s.hurdle_passed)
+    out.n_champion_eligible = sum(1 for s in scorecards if s.champion_eligible)
+
+    arms = [_scorecard_to_registry(s) for s in scorecards]
     out.arms = arms
 
-    ranked_ok = [a for a in arms if a.rank < 999]
-    if ranked_ok:
-        champ = min(ranked_ok, key=lambda x: x.rank)
-        out.champion = champ
+    eligible_champs = [
+        s for s in scorecards if s.champion_eligible and s.rank < 999
+    ]
+    if eligible_champs:
+        best = min(eligible_champs, key=lambda x: x.rank)
+        out.champion = _scorecard_to_registry(best)
+    else:
+        ranked_ok = [s for s in scorecards if s.rank < 999]
+        if ranked_ok and bench is not None and bench < 0:
+            out.champion = None
+        elif ranked_ok:
+            best = min(ranked_ok, key=lambda x: x.rank)
+            if best.hurdle_passed:
+                out.champion = _scorecard_to_registry(best)
 
     legacy_rows = [
         ArmDeathmatchRow(
@@ -343,32 +351,18 @@ def run_battle_royal(
             profit_factor=a.profit_factor,
             rank=a.rank if a.rank < 999 else 0,
         )
-        for a in (sorted(ranked_ok, key=lambda x: x.rank) if ranked_ok else arms[:8])
+        for a in out.arms
+        if a.rank < 999
     ]
     out.verdict = _battle_royal_verdict(out, legacy_rows, n_min)
     out.allocation_note = _allocation_note(out, n_min, cfg)
 
     if persist:
-        arm_dicts = [
-            {
-                "arm_id": a.arm_id,
-                "arm_kind": a.arm_kind,
-                "registry_state": a.registry_state,
-                "label": a.label,
-                "n_closed": a.n_closed,
-                "n_valid": a.n_valid,
-                "mean_ret": a.mean_ret,
-                "win_rate_pct": a.win_rate_pct,
-                "profit_factor": a.profit_factor,
-                "mdd_pct": a.mdd_pct,
-                "vol_pct": a.vol_pct,
-                "composite_score": a.composite_score,
-                "rank": a.rank,
-                "below_floor": a.below_floor,
-                "relative_exempt": a.relative_exempt,
-            }
-            for a in arms
-        ]
+        arm_dicts = [scorecard_to_dict(s) for s in scorecards]
+        for d, a in zip(arm_dicts, arms):
+            d["arm_kind"] = "REGISTRY"
+            d["below_floor"] = a.below_floor
+            d["relative_exempt"] = a.relative_exempt
         champ_d = None
         if out.champion:
             c = out.champion
@@ -402,15 +396,19 @@ def _battle_royal_verdict(
             f"{html.escape(c.label, quote=False)} ({c.registry_state}) "
             f"{ret_s} · score {c.composite_score:+.2f} · MDD {c.mdd_pct:.1f}%"
         )
+    elif br.n_champion_eligible == 0 and br.n_hurdle_passed == 0:
+        extra.append(
+            "⛔ <b>절대 허들 미통과</b> — 전 arm 마이너스·벤치 미달, 챔피언 공석"
+        )
     if br.crash_defense_active and br.market_benchmark_ret is not None:
         extra.append(
-            f"🛡️ 폭락 방어: 시장 평균 {br.market_benchmark_ret:+.2f}% — "
-            f"상대 선방 arm 탈락 면제 적용"
+            f"🛡️ 폭락 방어: 시장 평균 {br.market_benchmark_ret:+.2f}% · "
+            f"허들통과 {br.n_hurdle_passed} · 챔피언후보 {br.n_champion_eligible}"
         )
     n_elim = sum(1 for a in br.arms if a.below_floor)
     n_exempt = sum(1 for a in br.arms if a.relative_exempt)
     if n_elim or n_exempt:
-        extra.append(f"📉 탈락 후보 {n_elim} · 상대평가 면제 {n_exempt}")
+        extra.append(f"📉 탈락 후보 {n_elim} · 상대면제 {n_exempt}")
     if extra:
         return base + " | " + " · ".join(extra)
     return base
@@ -436,7 +434,6 @@ def _allocation_note(br: BattleRoyaleResult, n_min: int, cfg: dict) -> str:
 
 
 def battle_royal_to_nway(br: BattleRoyaleResult) -> NWayDeathmatchResult:
-    """레거시 NWayDeathmatchResult 호환."""
     arms = [
         ArmDeathmatchRow(
             label=a.label,
@@ -463,12 +460,14 @@ def build_nway_deathmatch_registry(
     *,
     lookback_days: Optional[int] = None,
     market: Optional[str] = None,
+    meta_health: Optional[Dict[str, Any]] = None,
 ) -> Tuple[BattleRoyaleResult, NWayDeathmatchResult]:
     br = run_battle_royal(
         df_closed,
         sys_config,
         market=str(market or "KR").upper(),
         lookback_days=lookback_days,
+        meta_health=meta_health,
         persist=True,
     )
     return br, battle_royal_to_nway(br)
@@ -483,11 +482,15 @@ def format_battle_royal_telegram(
 ) -> str:
     mk_label = "KR" if br.market == "KR" else "US" if br.market == "US" else br.market
     lines = [
-        f"{market_icon} <b>[9/9] 시스템 데스매치 결산 — {mk_label} Battle Royal</b>",
+        f"{market_icon} <b>[9/9] 시스템 데스매치 — {mk_label} Full Scorecard</b>",
         f"📎 {html.escape(lookback_label, quote=False)} · arm당 유효 최소 <b>{br.n_min}</b>건",
+        "<i>Composite v2 · 지수 MDD · 절대허들(0%↑ 또는 벤치 초과) · Meta mult 연동</i>",
     ]
     if br.market_benchmark_ret is not None and math.isfinite(br.market_benchmark_ret):
-        lines.append(f"📊 시장 청산 벤치마크 평균: <b>{br.market_benchmark_ret:+.2f}%</b>")
+        lines.append(f"📊 시장 벤치마크: <b>{br.market_benchmark_ret:+.2f}%</b>")
+    lines.append(
+        f"🧱 절대 허들: 통과 <b>{br.n_hurdle_passed}</b> · 챔피언 후보 <b>{br.n_champion_eligible}</b>"
+    )
     lines.append("")
 
     if br.champion:
@@ -495,15 +498,26 @@ def format_battle_royal_telegram(
         ret_s = fmt_deathmatch_ret(c.mean_ret, c.n_closed, n_valid=c.n_valid)
         wr_s = f"{c.win_rate_pct:.1f}%" if c.win_rate_pct is not None else "—"
         pf_s = f"{c.profit_factor:.2f}" if c.profit_factor is not None else "—"
+        exp_s = f"{c.expectancy:+.2f}" if c.expectancy is not None else "—"
+        kelly_s = f"{c.kelly_path_ret:+.2f}%" if c.kelly_path_ret is not None else "—"
+        op_s = f"{c.outperform_pp:+.2f}%p" if c.outperform_pp is not None else "—"
+        bd = c.score_breakdown or {}
+        mdd_exp = bd.get("mdd_exp_pen", 0)
         lines.append(
-            f"🏆 <b>{mk_label} 챔피언 전략</b>: {html.escape(c.label, quote=False)} "
+            f"🏆 <b>{mk_label} 챔피언</b>: {html.escape(c.label, quote=False)} "
             f"<i>({html.escape(c.registry_state, quote=False)})</i>\n"
-            f"   {ret_s} · 승률 {wr_s} · PF {pf_s} · "
-            f"MDD {c.mdd_pct:.1f}% · score <b>{c.composite_score:+.2f}</b>"
+            f"   {ret_s} · WR {wr_s} · PF {pf_s} · MDD {c.mdd_pct:.1f}% "
+            f"(exp MDD−{mdd_exp:.2f})\n"
+            f"   기대값 {exp_s} · Kelly경로 {kelly_s} · vs벤치 {op_s} · "
+            f"meta×{c.meta_mult:.2f} · <b>score {c.composite_score:+.2f}</b>"
         )
         lines.append("")
+    else:
+        lines.append(
+            f"🏆 <b>{mk_label} 챔피언</b>: <i>공석 — 절대 허들·meta mult 미충족</i>\n"
+        )
 
-    lines.append("<b>📋 Registry N-Way 랭킹 (복합 점수 · MDD 패널티 반영)</b>")
+    lines.append("<b>📋 N-Way Full Scorecard</b>")
     ranked = [a for a in br.arms if a.rank < 999]
     ranked.sort(key=lambda x: x.rank)
     if not ranked:
@@ -514,21 +528,32 @@ def format_battle_royal_telegram(
             wr_s = f"{a.win_rate_pct:.1f}%" if a.win_rate_pct is not None else "—"
             icon = "🥇" if a.rank == 1 else f"{a.rank}."
             flags = ""
+            if not a.hurdle_passed:
+                flags += " ⛔허들"
+            elif a.champion_eligible:
+                flags += " ✅후보"
             if a.below_floor:
-                flags = " 📉탈락후보"
+                flags += " 📉탈락"
             if a.relative_exempt:
-                flags = " 🛡️상대면제"
+                flags += " 🛡️면제"
+            bd = a.score_breakdown or {}
             lines.append(
                 f" {icon} <b>{html.escape(a.label, quote=False)}</b>"
                 f" <i>({a.registry_state})</i>{flags}\n"
-                f"    {ret_s} · N={a.n_closed}(유효{a.n_valid}) · WR {wr_s} · "
-                f"MDD {a.mdd_pct:.1f}% · <b>score {a.composite_score:+.2f}</b>"
+                f"    {ret_s} · WR {wr_s} · MDD {a.mdd_pct:.1f}% "
+                f"(pen {bd.get('mdd_exp_pen', 0):.2f}) · meta×{a.meta_mult:.2f} · "
+                f"<b>score {a.composite_score:+.2f}</b>"
             )
 
     observing = [a for a in br.arms if a.rank >= 999 and a.n_closed > 0]
     if observing:
-        lines.append(f"\n<i>⚠️ 관망 {len(observing)} arm — 유효 수익률·표본 미달</i>")
+        lines.append(f"\n<i>⚠️ 관망 {len(observing)} arm — 표본·유효 수익률 미달</i>")
 
+    lines.append("")
+    lines.append(
+        "<i>※ [3/9] 자금관리 데스매치(고정 vs 켈리 경로)는 시스템 전체 비교, "
+        "본 [9/9]은 전략 arm 결승입니다.</i>"
+    )
     lines.append("")
     lines.append(f"💡 <b>결론:</b> {br.verdict}")
     if br.allocation_note:
