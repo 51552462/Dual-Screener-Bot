@@ -113,20 +113,10 @@ def _fmt_deathmatch_ret(ret, n_closed: int, *, n_valid=None) -> str:
     return fmt_deathmatch_ret(ret, n_closed, n_valid=n_valid)
 
 
-def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret: float, sn_ret: float, n_min: int) -> str:
-    ok_a = n_std >= n_min
-    ok_b = n_sn >= n_min
-    if not ok_a and not ok_b:
-        return "거래 표본 부족 (양측 A/B 비교 보류)"
-    if not ok_a and ok_b:
-        return "거래 표본 부족 (오리지널 관망 대기 — A/B 대결 판정 보류)"
-    if ok_a and not ok_b:
-        return "거래 표본 부족 (초신성 관망 대기)"
-    if sn_ret > std_ret:
-        return "표본 충족: 청산 평균은 초신성(B)이 오리지널(A)보다 높음"
-    if sn_ret < std_ret:
-        return "표본 충족: 청산 평균은 오리지널(A)이 초신성(B)보다 높음"
-    return "표본 충족: 양측 청산 평균 동일"
+def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret, sn_ret, n_min: int) -> str:
+    from deathmatch_report import deathmatch_ab_verdict
+
+    return deathmatch_ab_verdict(n_std, n_sn, std_ret, sn_ret, n_min)
 
 
 def _ensure_col(cur, col_name, col_type):
@@ -2582,12 +2572,14 @@ def send_comprehensive_daily_report():
             send_telegram_msg(msg8)
             time.sleep(1)
 
-            from deathmatch_report import (
-                build_nway_deathmatch,
-                format_nway_deathmatch_telegram,
+            from deathmatch_battle_royale import (
+                build_nway_deathmatch_registry,
+                format_battle_royal_telegram,
             )
 
-            dm = build_nway_deathmatch(df_closed, cfg)
+            br, dm = build_nway_deathmatch_registry(
+                df_closed, cfg, market="BG"
+            )
 
             lb_all = build_practitioner_reality_leaderboard(market_type=market_type, limit_rows=40)
             if lb_all is not None and not lb_all.empty:
@@ -2601,14 +2593,10 @@ def send_comprehensive_daily_report():
                 top_real = pd.DataFrame()
                 top_virtual = pd.DataFrame()
 
-            msg9 = format_nway_deathmatch_telegram(
+            msg9 = format_battle_royal_telegram(
                 m_icon,
-                dm,
-                lookback_label=f"{market_type} 가상 청산",
-            )
-            msg9 = msg9.replace(
-                "[9/9] 시스템 데스매치 결산 (N-Way)",
-                "[9/9] 시스템 데스매치 결산 (실전+가상 · N-Way)",
+                br,
+                lookback_label=f"{market_type} 가상 청산 · BG Battle Royal",
             )
             msg9 += "\n"
 

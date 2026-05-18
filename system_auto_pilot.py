@@ -1,3 +1,4 @@
+import math
 import re
 import sqlite3
 import pandas as pd
@@ -230,6 +231,12 @@ def load_or_create_config():
         from strategy_lifecycle_config import DEFAULT_STRATEGY_LIFECYCLE
 
         config["STRATEGY_LIFECYCLE"] = dict(DEFAULT_STRATEGY_LIFECYCLE)
+        need_save = True
+
+    if "DEATHMATCH" not in config or not isinstance(config.get("DEATHMATCH"), dict):
+        from deathmatch_config import DEFAULT_DEATHMATCH
+
+        config["DEATHMATCH"] = dict(DEFAULT_DEATHMATCH)
         need_save = True
 
     # 변경 사항이 있으면 JSON 파일에 덮어쓰기
@@ -1158,21 +1165,27 @@ def run_autonomous_analysis():
     try:
         from deathmatch_report import build_nway_deathmatch
 
-        dm_hunt = build_nway_deathmatch(df, current_config)
+        df_kr = df
+        if "market" in df.columns:
+            df_kr = df[df["market"].astype(str).str.upper() == "KR"]
+        dm_hunt = build_nway_deathmatch(df_kr, current_config, market="KR")
         eligible_hunt = [
             a
             for a in dm_hunt.arms
-            if a.n_valid >= n_min_dm and a.mean_ret is not None
+            if a.n_valid >= n_min_dm
+            and a.mean_ret is not None
+            and math.isfinite(float(a.mean_ret))
         ]
         if not eligible_hunt:
             report_lines.append(
-                f"🏁 <b>[발굴 대결 N-Way]</b> 표본 부족으로 판정 보류 (축당 최소 유효 청산 {n_min_dm}건)"
+                f"🏁 <b>[발굴 대결 KR Battle Royal]</b> 표본 부족으로 판정 보류 "
+                f"(축당 최소 유효 청산 {n_min_dm}건)"
             )
         else:
             top = max(eligible_hunt, key=lambda a: float(a.mean_ret))
             _dm_plain = re.sub(r"<[^>]+>", "", str(dm_hunt.verdict))
             report_lines.append(
-                f"🏁 <b>[발굴 대결 1위]</b> {top.label} {top.mean_ret:+.2f}% "
+                f"🏁 <b>[발굴 대결 1위·KR]</b> {top.label} {top.mean_ret:+.2f}% "
                 f"(유효 n={top.n_valid}) · {_dm_plain}"
             )
     except Exception as _dm_ex:

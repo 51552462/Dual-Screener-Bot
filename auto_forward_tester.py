@@ -2807,26 +2807,22 @@ def send_comprehensive_daily_report(
             # ---------------------------------------------------------
             # 📑 결과지 9: 시스템 데스매치 결산
             # ---------------------------------------------------------
-            from deathmatch_report import (
-                build_nway_deathmatch,
-                format_nway_deathmatch_telegram,
-                maybe_apply_deathmatch_allocation,
+            from deathmatch_battle_royale import (
+                build_nway_deathmatch_registry,
+                format_battle_royal_telegram,
             )
+            from deathmatch_report import maybe_apply_deathmatch_allocation
 
-            dm = build_nway_deathmatch(df_closed, sys_config, market=market)
+            br, dm = build_nway_deathmatch_registry(df_closed, sys_config, market=market)
             maybe_apply_deathmatch_allocation(dm, sys_config)
-            _dm_label = f"{market} 청산 전체 · N-Way 로직군"
-            if not dm.arms and n_closed_mkt == 0:
+            _dm_label = f"{market} 청산 전체 · Registry Battle Royal"
+            if not br.arms and n_closed_mkt == 0:
                 _dm_label += " (청산 0 — scan 후 재확인)"
-            msg9 = format_nway_deathmatch_telegram(
-                market_icon,
-                dm,
-                lookback_label=_dm_label,
-            )
+            ace_line = ""
             try:
                 from ace_deathmatch_bridge import (
                     build_ace_deathmatch_comparison,
-                    format_ace_deathmatch_telegram_block,
+                    format_ace_evolution_oneliner,
                 )
                 from ace_evolution_store import load_playbook
 
@@ -2834,9 +2830,17 @@ def send_comprehensive_daily_report(
                 _ace_dm = build_ace_deathmatch_comparison(
                     df_closed, market=market, playbook=_ace_pb
                 )
-                msg9 += format_ace_deathmatch_telegram_block(_ace_dm)
+                ace_line = format_ace_evolution_oneliner(_ace_dm)
             except Exception as _adm_ex:
-                msg9 += f"\n<i>⚠️ Ace·데스매치 연동 스킵: {html_escape(str(_adm_ex)[:80], quote=False)}</i>\n"
+                ace_line = (
+                    f"<i>⚠️ [진화] 스킵: {html_escape(str(_adm_ex)[:72], quote=False)}</i>"
+                )
+            msg9 = format_battle_royal_telegram(
+                market_icon,
+                br,
+                lookback_label=_dm_label,
+                ace_oneliner=ace_line,
+            )
             send_telegram_msg(msg9); time.sleep(1)
 
             conn.close()

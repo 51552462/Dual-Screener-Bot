@@ -115,6 +115,34 @@ def build_ace_deathmatch_comparison(
     }
 
 
+def format_ace_evolution_oneliner(comp: Dict[str, Any]) -> str:
+    """챔피언 하단 1줄 — 초신성(M) vs 오리지널(A) 평균 승률."""
+    if not comp:
+        return ""
+    m: ArmDeathmatchRow = comp.get("mutant")
+    a: ArmDeathmatchRow = comp.get("original")
+    if m is None or a is None:
+        return ""
+
+    m_wr = f"{m.win_rate_pct:.1f}%" if m.win_rate_pct is not None and m.n_valid > 0 else "—"
+    a_wr = f"{a.win_rate_pct:.1f}%" if a.win_rate_pct is not None and a.n_valid > 0 else "—"
+    tail = ""
+    if m.win_rate_pct is not None and a.win_rate_pct is not None and m.n_valid >= 1 and a.n_valid >= 1:
+        diff = float(m.win_rate_pct) - float(a.win_rate_pct)
+        if abs(diff) > 0.5:
+            tail = f" · {'M' if diff > 0 else 'A'} 우위 {abs(diff):.1f}%p"
+        else:
+            tail = " · 동률권"
+    else:
+        verdict = str(comp.get("verdict") or "").strip()
+        if verdict:
+            tail = f" · {html.escape(verdict[:56], quote=False)}"
+
+    return (
+        f"🧬 <b>[진화]</b> 초신성(M) 그룹 평균 승률 {m_wr} vs 오리지널(A) {a_wr}{tail}"
+    )
+
+
 def format_ace_deathmatch_telegram_block(comp: Dict[str, Any]) -> str:
     if not comp:
         return ""

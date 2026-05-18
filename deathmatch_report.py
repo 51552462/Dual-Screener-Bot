@@ -165,8 +165,28 @@ def build_nway_deathmatch(
     market: Optional[str] = None,
 ) -> NWayDeathmatchResult:
     """
-    청산 forward_trades → 로직군별 N-Way 랭킹 (mean_ret 내림차순).
-    """
+    Registry Battle Royal → NWayDeathmatchResult (호환 래퍼).
+  """
+    from deathmatch_battle_royale import run_battle_royal, battle_royal_to_nway
+
+    br = run_battle_royal(
+        df_closed,
+        sys_config,
+        market=str(market or "KR").upper(),
+        lookback_days=lookback_days,
+        persist=True,
+    )
+    return battle_royal_to_nway(br)
+
+
+def build_nway_deathmatch_legacy_sigtype(
+    df_closed: pd.DataFrame,
+    sys_config: Optional[dict] = None,
+    *,
+    lookback_days: Optional[int] = None,
+    market: Optional[str] = None,
+) -> NWayDeathmatchResult:
+    """sig_type 로직군 분류 N-Way (폴백·대시보드용)."""
     cfg = sys_config if isinstance(sys_config, dict) else {}
     n_closed = len(df_closed) if df_closed is not None else 0
     n_min = deathmatch_min_n_for_market(cfg, market or "", n_closed=n_closed)
