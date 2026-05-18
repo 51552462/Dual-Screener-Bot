@@ -378,7 +378,8 @@ def format_allocation_proposal_note(
         f"💼 <b>[자본주의 데스매치 제안 · {mode}]</b>\n"
         f" ▪ 하위 {int(prop.get('bottom_pct', 0.2) * 100)}% STANDBY 후보: <i>{st_s}</i>\n"
         f" ▪ 상위 축 비중 ↑ 후보: <i>{bt_s}</i>\n"
-        f" ▪ 실행: <code>DEATHMATCH_APPLY_ALLOCATION</code> + MetaGovernor/META_GROUP_KELLY_MULT 연동"
+        f" ▪ 실행: <code>DEATHMATCH_APPLY_ALLOCATION=1</code> → "
+        f"<code>META_GROUP_KELLY_MULT</code> (group_key × health overlay)"
     )
 
 
@@ -406,13 +407,34 @@ def apply_allocation_proposal_to_config(
 def maybe_apply_deathmatch_allocation(
     result: NWayDeathmatchResult,
     sys_config: dict,
+    *,
+    battle_royale: Any = None,
+    market: Optional[str] = None,
 ) -> None:
-    """환경/설정 플래그 시에만 config 에 제안 저장."""
+    """
+    DEATHMATCH_APPLY_ALLOCATION=1:
+      - battle_royale 제공 시 P2 루프(META_GROUP_KELLY_MULT 연동)
+      - 없으면 레거시 label 기반 제안만 config 저장
+    """
     flag = str(
         sys_config.get("DEATHMATCH_APPLY_ALLOCATION", os.environ.get("DEATHMATCH_APPLY_ALLOCATION", "0"))
     ).strip().lower()
     if flag not in ("1", "true", "yes", "on"):
         return
+    if battle_royale is not None:
+        try:
+            from deathmatch_allocation import maybe_apply_deathmatch_allocation_p2
+
+            maybe_apply_deathmatch_allocation_p2(
+                battle_royale, result, sys_config, market=market
+            )
+            return
+        except Exception as ex:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Deathmatch P2 allocation failed, legacy fallback: %s", ex
+            )
     prop = compute_allocation_proposal(result.arms, result.n_min, sys_config)
     apply_allocation_proposal_to_config(sys_config, prop, save=True)
 

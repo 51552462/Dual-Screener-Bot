@@ -2580,6 +2580,14 @@ def send_comprehensive_daily_report():
             br, dm = build_nway_deathmatch_registry(
                 df_closed, cfg, market="BG"
             )
+            try:
+                from deathmatch_report import maybe_apply_deathmatch_allocation
+
+                maybe_apply_deathmatch_allocation(
+                    dm, cfg, battle_royale=br, market="BG"
+                )
+            except Exception as _dm_alloc_ex:
+                print(f"⚠️ [9/9] BG 데스매치 자본 연동 스킵: {_dm_alloc_ex}")
 
             lb_all = build_practitioner_reality_leaderboard(market_type=market_type, limit_rows=40)
             if lb_all is not None and not lb_all.empty:

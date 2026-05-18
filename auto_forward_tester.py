@@ -2814,7 +2814,9 @@ def send_comprehensive_daily_report(
             from deathmatch_report import maybe_apply_deathmatch_allocation
 
             br, dm = build_nway_deathmatch_registry(df_closed, sys_config, market=market)
-            maybe_apply_deathmatch_allocation(dm, sys_config)
+            maybe_apply_deathmatch_allocation(
+                dm, sys_config, battle_royale=br, market=market
+            )
             _dm_label = f"{market} 청산 전체 · Registry Battle Royal"
             if not br.arms and n_closed_mkt == 0:
                 _dm_label += " (청산 0 — scan 후 재확인)"

@@ -29,6 +29,12 @@ DEFAULT_DEATHMATCH: Dict[str, Any] = {
     "absolute_hurdle_fail_penalty": 5.0,
     "meta_mult_disqualify_below": 0.05,
     "bottom_pct": 0.20,
+    "allocation_standby_mult": 0.0,
+    "allocation_hurdle_fail_mult": 0.0,
+    "allocation_neutral_mult": 1.0,
+    "allocation_top_boost_mult": 1.25,
+    "allocation_champion_mult": 1.35,
+    "allocation_max_group_mult": 1.5,
     "lookback_days_kr": 90,
     "lookback_days_us": 120,
 }

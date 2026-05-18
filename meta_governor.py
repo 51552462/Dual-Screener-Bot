@@ -565,6 +565,9 @@ def default_meta_state() -> Dict[str, Any]:
         "META_GLOBAL_KELLY_MULT": 1.0,
         "META_NS_KELLY_MULT": {},
         "META_GROUP_KELLY_MULT": {},
+        "META_DEATHMATCH_KELLY_OVERLAY": {},
+        "META_DEATHMATCH_ALLOC_AS_OF": None,
+        "META_DEATHMATCH_ALLOC_MARKET": None,
         "META_MAX_POSITION_PCT": None,
         "META_STRATEGY_HEALTH": {},
         "META_TREASURY_MODE": "NORMAL",
@@ -1006,7 +1009,33 @@ class MetaGovernor:
             except (TypeError, ValueError):
                 m = 1.0
             full_gk_mult[gk_only] = min(full_gk_mult.get(gk_only, 1.0), m)
+        overlay = self._prior.get("META_DEATHMATCH_KELLY_OVERLAY")
+        if isinstance(overlay, dict):
+            cap = 1.5
+            try:
+                from deathmatch_config import load_deathmatch_config, market_deathmatch_params
+
+                _dmc = market_deathmatch_params(load_deathmatch_config({}), "KR")
+                cap = float(_dmc.get("allocation_max_group_mult", 1.5))
+            except Exception:
+                pass
+            for gk, ov in overlay.items():
+                if not gk:
+                    continue
+                try:
+                    o = float(ov)
+                except (TypeError, ValueError):
+                    continue
+                full_gk_mult[str(gk)] = min(max(0.0, full_gk_mult.get(str(gk), 1.0) * o), cap)
         self._working["META_GROUP_KELLY_MULT"] = full_gk_mult
+        if isinstance(overlay, dict):
+            self._working["META_DEATHMATCH_KELLY_OVERLAY"] = dict(overlay)
+            self._working["META_DEATHMATCH_ALLOC_AS_OF"] = self._prior.get(
+                "META_DEATHMATCH_ALLOC_AS_OF"
+            )
+            self._working["META_DEATHMATCH_ALLOC_MARKET"] = self._prior.get(
+                "META_DEATHMATCH_ALLOC_MARKET"
+            )
 
         prior_g = float(self._prior.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
         actionable = [
