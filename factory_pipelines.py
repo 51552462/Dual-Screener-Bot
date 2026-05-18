@@ -2,7 +2,7 @@
 Factory mode → Step 파이프라인 매핑 (순차 실행 SSOT).
 
 daily_audit* 동기 파이프라인 (순서 고정):
-  factory_artifact_guard → sentiment_mining → sector_spillover_refresh
+  meta_governor_sync → factory_artifact_guard → sentiment_mining → sector_spillover_refresh
   → track → deep_dive → comprehensive_daily_report → ai_overseer
 
 factory_runtime.run_step 은 각 StepSpec.fn() 을 동기 호출한다 (비동기 spawn 없음).
@@ -15,6 +15,22 @@ from factory_runtime import StepSpec
 
 
 # --- Step implementations (lazy import) ---
+
+
+def _step_meta_governor_sync() -> None:
+    """리포트·감사 전 REGIME_ANALYSIS + MetaGovernor 동기 (degraded 시 자동 복구)."""
+    from meta_state_store import rebuild_meta_state
+
+    out = rebuild_meta_state(force=False, refresh_regime=True)
+    print(f"🛰️ [Factory] meta_governor_sync: {out}")
+
+
+_META_GOVERNOR_SYNC = StepSpec(
+    "meta_governor_sync",
+    _step_meta_governor_sync,
+    critical=False,
+    delay_after_sec=0.5,
+)
 
 
 def _step_artifact_guard() -> None:
@@ -94,8 +110,8 @@ _COMPREHENSIVE_REPORT = StepSpec(
 
 
 def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
-    """일일 감사·통합 리포트: guard → sentiment → sector/spillover → 본 작업."""
-    return [_ARTIFACT_GUARD, _SENTIMENT_MINING, _SECTOR_SPILLOVER_REFRESH, *steps]
+    """일일 감사·통합 리포트: meta sync → guard → sentiment → sector/spillover → 본 작업."""
+    return [_META_GOVERNOR_SYNC, _ARTIFACT_GUARD, _SENTIMENT_MINING, _SECTOR_SPILLOVER_REFRESH, *steps]
 
 
 def _step_supernova_kr() -> None:

@@ -53,9 +53,24 @@ _dante_pre_update_sqlite_backup() {
     fi
   }
 
+  _backup_sqlite_named_from_dir() {
+    local dir="$1" name="$2" prefix="${3:-}"
+    [[ -d "$dir" ]] || return 0
+    local src="${dir}/${name}"
+    [[ -f "$src" ]] || return 0
+    if [[ -n "$prefix" ]]; then
+      _sqlite_copy_one "$src" "${dest}/${prefix}${name}"
+    else
+      _sqlite_copy_one "$src" "${dest}/${name}"
+    fi
+    echo "  copied sqlite: ${prefix}${name}"
+  }
+
   _backup_artifacts_from_dir() {
     local dir="$1" prefix="${2:-}"
     [[ -d "$dir" ]] || return 0
+    # MetaGovernor SSOT (config_kv) — git clean 내성
+    _backup_sqlite_named_from_dir "$dir" "system_config.sqlite" "$prefix"
     local rel
     for rel in \
       Supernova_Flow_Tracking_Master.csv \
