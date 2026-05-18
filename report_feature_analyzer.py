@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -17,6 +18,31 @@ import numpy as np
 import pandas as pd
 
 from forward_report_scalar import col_series, scalar_float
+
+# 리포트 집계 시 스냅샷 고착 방지 — 콜로세움/에이스는 메인 DB 우선
+_EXCLUDED_FEATURE_COLUMNS = frozenset(
+    {
+        "id",
+        "rowid",
+        "code",
+        "name",
+        "ticker",
+        "stock_name",
+        "sig_type",
+        "strategy_name",
+        "market",
+        "status",
+        "sector",
+        "flow_tags",
+        "exit_reason",
+        "entry_date",
+        "exit_date",
+        "mkt_group",
+        "tier",
+        "notes",
+        "message",
+    }
+)
 
 # 존재하는 컬럼만 조회·집계 (스키마 진화 대비)
 DEFAULT_REPORT_FEATURE_COLUMNS: List[str] = [
@@ -71,6 +97,99 @@ FEATURE_LABELS: Dict[str, str] = {
 def extra_forward_trade_columns_for_report() -> List[str]:
     """`forward_trades` SELECT 확장용 기본 화이트리스트."""
     return list(DEFAULT_REPORT_FEATURE_COLUMNS)
+
+
+def colosseum_db_path_for_report() -> str:
+    """스냅샷이 오래되면 market_data.sqlite 로 강제 (Stale cache bust)."""
+    from market_db_paths import (
+        MARKET_DATA_DB_PATH,
+        MARKET_DATA_SNAPSHOT_PATH,
+        market_db_read_path,
+    )
+
+    force = str(os.environ.get("REPORT_COLOSSEUM_FORCE_MAIN_DB", "1")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if force:
+        return MARKET_DATA_DB_PATH
+    snap_path = market_db_read_path()
+    if snap_path != MARKET_DATA_SNAPSHOT_PATH:
+        return snap_path
+    try:
+        import time
+
+        age = time.time() - os.path.getmtime(MARKET_DATA_SNAPSHOT_PATH)
+        max_age = float(os.environ.get("REPORT_COLOSSEUM_SNAPSHOT_MAX_AGE_SEC", "1800"))
+        if age > max_age:
+            return MARKET_DATA_DB_PATH
+    except OSError:
+        return MARKET_DATA_DB_PATH
+    return snap_path
+
+
+def colosseum_window_days(sys_config: Optional[Dict[str, Any]] = None) -> int:
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    try:
+        d = int(cfg.get("REPORT_COLOSSEUM_WINDOW_DAYS", 90))
+    except (TypeError, ValueError):
+        d = 90
+    return max(14, min(d, 365))
+
+
+def discover_numeric_feature_columns(
+    df: pd.DataFrame,
+    whitelist: Sequence[str],
+) -> List[str]:
+    """화이트리스트 ∪ DB 수치 컬럼 — 메타/문자열 제외."""
+    found: List[str] = []
+    seen: set[str] = set()
+    for c in list(whitelist) + list(df.columns):
+        cn = str(c).strip()
+        if not cn or cn in seen or cn in _EXCLUDED_FEATURE_COLUMNS:
+            continue
+        if cn not in df.columns:
+            continue
+        s = col_series(df, cn)
+        num = pd.to_numeric(s, errors="coerce")
+        if num.notna().sum() < 3:
+            continue
+        if num.nunique(dropna=True) < 2:
+            continue
+        seen.add(cn)
+        found.append(cn)
+    return found
+
+
+def _welch_pvalue(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    a = a[np.isfinite(a)]
+    b = b[np.isfinite(b)]
+    if len(a) < 3 or len(b) < 3:
+        return 1.0
+    try:
+        from scipy import stats
+
+        _, p = stats.ttest_ind(a, b, equal_var=False)
+        return float(p) if np.isfinite(p) else 1.0
+    except Exception:
+        m1, m2 = float(np.mean(a)), float(np.mean(b))
+        v1, v2 = float(np.var(a, ddof=1)), float(np.var(b, ddof=1))
+        n1, n2 = len(a), len(b)
+        se = np.sqrt(v1 / n1 + v2 / n2 + 1e-12)
+        if se < 1e-12:
+            return 1.0
+        t = abs(m1 - m2) / se
+        return float(max(0.001, min(1.0, 2.0 * (1.0 - min(1.0, t / 4.0)))))
+
+
+def _significance_weight(p: float) -> float:
+    """p 작을수록 1에 가깝게 — 랭킹 가중."""
+    if not np.isfinite(p):
+        return 0.0
+    return float(max(0.0, min(1.0, 1.0 - min(float(p), 0.25) / 0.25)))
 
 
 def _resolve_feature_whitelist(sys_config: Optional[Dict[str, Any]]) -> List[str]:
@@ -162,6 +281,8 @@ class FeatureInsight:
     combined: float
     ace_summary: str
     baseline_summary: str
+    p_value: float = 1.0
+    effect_size: float = 0.0
 
 
 @dataclass
@@ -188,9 +309,11 @@ class ReportFeatureAnalyzer:
         self.sys_config = sys_config if isinstance(sys_config, dict) else {}
         self.meta = meta if isinstance(meta, dict) else {}
         self._whitelist = _resolve_feature_whitelist(self.sys_config)
+        self._last_disc_pvalues: Dict[str, float] = {}
+        self._last_disc_effects: Dict[str, float] = {}
 
     def _columns_to_scan(self, ace_df: pd.DataFrame) -> List[str]:
-        return [c for c in self._whitelist if c in ace_df.columns]
+        return discover_numeric_feature_columns(ace_df, self._whitelist)
 
     def _rank_features_commonality(
         self, ace_df: pd.DataFrame, columns: Sequence[str]
@@ -215,15 +338,15 @@ class ReportFeatureAnalyzer:
         baseline_df: pd.DataFrame,
         columns: Sequence[str],
     ) -> Dict[str, float]:
-        """
-        비에이스(baseline) 대비 분포 분리도.
-        연속: Cohen's d (|Δmean|/pooled σ), 이후 tanh 로 [0,1) 근사 스케일.
-        이진: |p_ace - p_base| 스케일.
-        """
+        """비에이스 대비 분리도 — 연속: Cohen's d + Welch p, 이진: 확률차."""
         out: Dict[str, float] = {}
+        self._last_disc_pvalues: Dict[str, float] = {}
+        self._last_disc_effects: Dict[str, float] = {}
         for col in columns:
             if col not in baseline_df.columns:
                 out[col] = 0.0
+                self._last_disc_pvalues[col] = 1.0
+                self._last_disc_effects[col] = 0.0
                 continue
             a = ace_df[col]
             b = baseline_df[col]
@@ -232,11 +355,17 @@ class ReportFeatureAnalyzer:
                 bb = pd.to_numeric(b, errors="coerce").to_numpy()
                 eff = _discrimination_binary(aa, bb)
                 out[col] = float(np.tanh(eff))
+                self._last_disc_pvalues[col] = 1.0
+                self._last_disc_effects[col] = eff
             else:
                 aa = pd.to_numeric(a, errors="coerce").to_numpy()
                 bb = pd.to_numeric(b, errors="coerce").to_numpy()
                 d = _cohens_d(aa, bb)
-                out[col] = float(np.tanh(d))
+                p = _welch_pvalue(aa, bb)
+                sig_w = _significance_weight(p)
+                out[col] = float(np.tanh(d) * sig_w)
+                self._last_disc_pvalues[col] = p
+                self._last_disc_effects[col] = d
         return out
 
     def _merge_top_insights(
@@ -247,16 +376,22 @@ class ReportFeatureAnalyzer:
         commonality: Dict[str, float],
         discrimination: Dict[str, float],
         top_n: int = 3,
-        w_common: float = 0.42,
-        w_disc: float = 0.58,
+        w_common: float = 0.28,
+        w_disc: float = 0.72,
     ) -> List[FeatureInsight]:
         rows: List[FeatureInsight] = []
+        pvals = getattr(self, "_last_disc_pvalues", {}) or {}
+        effects = getattr(self, "_last_disc_effects", {}) or {}
         for col in columns:
             c0 = float(commonality.get(col, 0.0))
             d0 = float(discrimination.get(col, 0.0))
-            if c0 <= 0 and d0 <= 0:
+            if d0 <= 1e-6 and c0 <= 1e-6:
                 continue
+            pv = float(pvals.get(col, 1.0))
+            eff = float(effects.get(col, 0.0))
             comb = w_common * c0 + w_disc * d0
+            if comb <= 1e-6:
+                continue
             kind = "binary" if _is_binary_like(ace_df[col]) else "continuous"
             if kind == "binary":
                 ap = pd.to_numeric(ace_df[col], errors="coerce").mean()
@@ -283,9 +418,11 @@ class ReportFeatureAnalyzer:
                     combined=comb,
                     ace_summary=ace_s,
                     baseline_summary=base_s,
+                    p_value=pv,
+                    effect_size=eff,
                 )
             )
-        rows.sort(key=lambda x: x.combined, reverse=True)
+        rows.sort(key=lambda x: (x.combined, x.effect_size), reverse=True)
         return rows[:top_n]
 
     def _format_winner_loser_feature(
@@ -514,6 +651,9 @@ class ReportFeatureAnalyzer:
         ace_df: pd.DataFrame,
         baseline_df: pd.DataFrame,
         spillover_sector: Optional[str] = None,
+        data_anchor: Optional[str] = None,
+        window_days: Optional[int] = None,
+        n_features_scanned: Optional[int] = None,
     ) -> Tuple[List[str], bool]:
         """
         HTML 이스케이프 전 텍스트 라인.
@@ -521,7 +661,8 @@ class ReportFeatureAnalyzer:
             (lines, True) if at least one ranked feature insight was produced; else (lines, False).
         """
         cols = self._columns_to_scan(ace_df)
-        if ace_df.empty or len(ace_df) < 2 or not cols:
+        n_scan = len(cols) if n_features_scanned is None else int(n_features_scanned)
+        if ace_df.empty or len(ace_df) < 3 or not cols:
             return [], False
         base = baseline_df
         if base is None or base.empty:
@@ -542,18 +683,33 @@ class ReportFeatureAnalyzer:
 
         lines: List[str] = []
         flag = "🇰🇷" if league == "KR" else "🇺🇸"
+        anchor = html.escape(str(data_anchor or "").strip()[:10])
+        wd = int(window_days) if window_days else colosseum_window_days(self.sys_config)
+        if anchor:
+            lines.append(
+                f"{flag} <b>[동적 필터 교집합]</b> ({logic_label}) — "
+                f"KST 앵커 <b>{anchor}</b> · 롤링 <b>{wd}</b>일 · "
+                f"스캔 피처 <b>{n_scan}</b>축\n"
+            )
+        else:
+            lines.append(
+                f"{flag} <b>[동적 필터 교집합]</b> ({logic_label}) — "
+                f"롤링 <b>{wd}</b>일 · 스캔 피처 <b>{n_scan}</b>축\n"
+            )
         lines.append(
-            f"{flag} <b>[동적 필터 교집합]</b> ({logic_label}) — Meta 국면 <code>{rk}</code>, "
-            f"에이스 표본 <b>{len(ace_df)}</b>건 vs 비에이스 <b>{len(base)}</b>건\n"
+            f" Meta <code>{rk}</code> · 에이스 <b>{len(ace_df)}</b>건 vs 비에이스 <b>{len(base)}</b>건 "
+            f"<i>(당일 DB 실시간 · 캐시 미사용)</i>\n"
         )
         if not insights:
             lines.append("<i>유효한 수치 피처가 부족합니다.</i>\n")
             return lines, False
 
         for i, ins in enumerate(insights, 1):
+            p_s = f"p={ins.p_value:.3f}" if ins.kind == "continuous" else "이진"
+            eff_s = f"d={ins.effect_size:.2f}" if ins.kind == "continuous" else ""
             lines.append(
-                f" {i}) <b>{ins.label}</b> — 에이스 {ins.ace_summary} · {ins.baseline_summary} "
-                f"(공통성 {ins.commonality:.2f} · 분리 {ins.discrimination:.2f})\n"
+                f" {i}) <b>{ins.label}</b> — {ins.ace_summary} | {ins.baseline_summary} "
+                f"({eff_s} {p_s} · 분리 {ins.discrimination:.2f})\n"
             )
 
         if spill and hot:
@@ -565,9 +721,9 @@ class ReportFeatureAnalyzer:
                     f"<b>교차/다층</b> 구조입니다.\n"
                 )
         elif spill:
-            lines.append(f" 🧭 에이스 섹터 수렴: <b>{spill}</b>\n")
+            lines.append(f" 🧭 섹터: <b>{spill}</b>\n")
 
         lines.append(
-            " ◽ <i>공통성=에이스 내 CV 역수, 분리=비에이스 대비 Cohen's d(연속)/확률차(이진)의 tanh 스케일.</i>\n"
+            " ◽ <i>전 수치 피처 스캔 → 분리(Cohen's d×Welch p) 상위 3축. 공통성=에이스 내 CV 역수.</i>\n"
         )
         return lines, True
