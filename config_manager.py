@@ -609,6 +609,14 @@ _RUNTIME_CFG_TS: float = 0.0
 _RUNTIME_CFG_DATA: Optional[dict[str, Any]] = None
 
 
+def invalidate_runtime_system_config_cache() -> None:
+    """config_kv 갱신 직후 TTL 캐시 무효화 (Meta↔config regime 동기화 등)."""
+    global _RUNTIME_CFG_TS, _RUNTIME_CFG_DATA
+    with _RUNTIME_CFG_LOCK:
+        _RUNTIME_CFG_DATA = None
+        _RUNTIME_CFG_TS = 0.0
+
+
 def load_runtime_system_config(ttl_seconds: float = 60.0, *, max_retries: int = 5) -> dict[str, Any]:
     """
     장시간 워커용: TTL 이내면 캐시된 전체 설정 dict 를 반환하고, 만료 시 `load_system_config` 를 다시 호출한다.

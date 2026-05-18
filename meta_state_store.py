@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import tempfile
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from meta_governor import default_meta_state, meta_state_path
@@ -20,6 +21,151 @@ from meta_governor import default_meta_state, meta_state_path
 logger = logging.getLogger(__name__)
 
 META_STATE_KV_KEY = "META_GOVERNOR_STATE"
+
+_VALID_REGIME_KEYS = frozenset(
+    {"BULL", "BEAR", "SIDEWAYS", "HIGH_VOL", "CHOP", "WHIPSAW", "UNKNOWN"}
+)
+
+
+def normalize_regime_key(value: Any) -> str:
+    u = str(value or "").strip().upper()
+    if u in ("CHOP", "WHIPSAW"):
+        return "SIDEWAYS"
+    if u in _VALID_REGIME_KEYS:
+        return u
+    return "UNKNOWN"
+
+
+def resolve_config_regime_key(sys_config: Optional[Dict[str, Any]] = None) -> str:
+    """
+    system_config SSOT 국면 키 — REGIME_ANALYSIS.regime_key 우선, 없으면 CURRENT_REGIME_KEY.
+  리포트·Ruthless QA의 config_regime_key 와 동일 규칙.
+    """
+    cfg: Dict[str, Any]
+    if isinstance(sys_config, dict):
+        cfg = sys_config
+    else:
+        try:
+            from config_manager import load_system_config
+
+            cfg = load_system_config() or {}
+        except Exception:
+            cfg = {}
+    ra = cfg.get("REGIME_ANALYSIS")
+    if isinstance(ra, dict):
+        rk = normalize_regime_key(ra.get("regime_key"))
+        if rk not in ("", "UNKNOWN"):
+            return rk
+    return normalize_regime_key(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN"))
+
+
+def reconcile_meta_regime_action(state: Dict[str, Any]) -> Dict[str, Any]:
+    """META_REGIME_KEY 와 META_REGIME_ACTION.kelly_cap 불일치 시 행동 맵 재정렬."""
+    from meta_governor import ACTION_BY_REGIME
+
+    out = dict(state)
+    rk = normalize_regime_key(out.get("META_REGIME_KEY"))
+    if rk in ("", "UNKNOWN"):
+        return out
+    tpl = ACTION_BY_REGIME.get(rk) or ACTION_BY_REGIME["UNKNOWN"]
+    ra = out.get("META_REGIME_ACTION")
+    ra_d = ra if isinstance(ra, dict) else {}
+    try:
+        cur_cap = float(ra_d.get("kelly_cap")) if ra_d.get("kelly_cap") is not None else None
+    except (TypeError, ValueError):
+        cur_cap = None
+    try:
+        tpl_cap = float(tpl.get("kelly_cap")) if tpl.get("kelly_cap") is not None else None
+    except (TypeError, ValueError):
+        tpl_cap = None
+    if tpl_cap is not None and cur_cap != tpl_cap:
+        base_ra = {**default_meta_state()["META_REGIME_ACTION"], **dict(tpl)}
+        if isinstance(ra_d.get("notes"), str) and ra_d.get("notes", "").strip():
+            base_ra["notes"] = ra_d["notes"]
+        out["META_REGIME_ACTION"] = base_ra
+    return out
+
+
+def sync_config_regime_from_meta(
+    meta: Dict[str, Any],
+    *,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """
+    MetaGovernor 확정 국면 → config_kv REGIME_ANALYSIS.regime_key + CURRENT_REGIME_KEY 1:1 반영.
+    rebuild_meta 수동 치유 후 config 가 UNKNOWN 으로 남는 분열 방지.
+    """
+    meta = reconcile_meta_regime_action(meta)
+    rk_meta = normalize_regime_key(meta.get("META_REGIME_KEY"))
+    if rk_meta in ("", "UNKNOWN") and not force:
+        return {"synced": False, "reason": "meta_regime_unknown"}
+
+    from config_manager import (
+        get_config_value,
+        invalidate_runtime_system_config_cache,
+        set_config_value,
+    )
+
+    ra = get_config_value("REGIME_ANALYSIS")
+    if not isinstance(ra, dict):
+        ra = {}
+    rk_ra = normalize_regime_key(ra.get("regime_key"))
+    rk_cur = normalize_regime_key(get_config_value("CURRENT_REGIME_KEY"))
+
+    misaligned = (
+        rk_ra in ("", "UNKNOWN")
+        or rk_cur in ("", "UNKNOWN")
+        or rk_ra != rk_meta
+        or rk_cur != rk_meta
+    )
+    if not force and not misaligned:
+        return {
+            "synced": False,
+            "reason": "already_aligned",
+            "regime": rk_meta,
+            "REGIME_ANALYSIS": rk_ra,
+            "CURRENT_REGIME_KEY": rk_cur,
+        }
+
+    ra_out = dict(ra)
+    ra_out["regime_key"] = rk_meta
+    ra_out["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ra_out["synced_from"] = "META_REGIME_KEY"
+    conf = meta.get("META_REGIME_CONFIDENCE")
+    if conf is not None:
+        try:
+            ra_out["meta_confidence"] = float(conf)
+        except (TypeError, ValueError):
+            pass
+    mra = meta.get("META_REGIME_ACTION")
+    if isinstance(mra, dict):
+        notes = mra.get("notes")
+        if isinstance(notes, str) and notes.strip():
+            ra_out["meta_insight"] = notes.strip()[:4000]
+        kr = mra.get("kr_us_regime")
+        if isinstance(kr, str) and kr.strip():
+            ra_out["kr_us_regime"] = kr.strip()
+
+    set_config_value("REGIME_ANALYSIS", ra_out)
+    set_config_value("CURRENT_REGIME_KEY", rk_meta)
+    invalidate_runtime_system_config_cache()
+
+    logger.info(
+        "meta_state_store: synced config regime META→config_kv "
+        "REGIME_ANALYSIS.regime_key=%s CURRENT_REGIME_KEY=%s (was ra=%s cur=%s)",
+        rk_meta,
+        rk_meta,
+        rk_ra,
+        rk_cur,
+    )
+    return {
+        "synced": True,
+        "regime": rk_meta,
+        "REGIME_ANALYSIS": rk_meta,
+        "CURRENT_REGIME_KEY": rk_meta,
+        "previous_REGIME_ANALYSIS": rk_ra,
+        "previous_CURRENT_REGIME_KEY": rk_cur,
+    }
 
 
 def is_meta_state_degraded(state: Optional[Dict[str, Any]]) -> bool:
@@ -190,6 +336,11 @@ def load_meta_governor_state_unified(path: Optional[str] = None) -> Dict[str, An
 def save_meta_governor_state_unified(state: Dict[str, Any], path: Optional[str] = None) -> None:
     """market_data + config_kv + JSON 삼중 저장."""
     p = path or meta_state_path()
+    state = reconcile_meta_regime_action(dict(state))
+    try:
+        sync_config_regime_from_meta(state)
+    except Exception as e:
+        logger.warning("meta_state_store: config regime sync failed: %s", e)
     _save_to_market_db(state)
     _save_to_sqlite(state)
     _save_json_mirror(state, p)
@@ -252,6 +403,12 @@ def rebuild_meta_state(*, force: bool = False, refresh_regime: bool = True) -> D
 
     try:
         meta_after = load_meta_governor_state_unified(meta_state_path())
+        if not is_meta_state_degraded(meta_after):
+            try:
+                result["config_regime_sync"] = sync_config_regime_from_meta(meta_after)
+            except Exception as sync_exc:
+                result["config_regime_sync"] = {"synced": False, "error": str(sync_exc)}
+                logger.warning("rebuild_meta_state: config regime sync failed: %s", sync_exc)
         if is_meta_state_degraded(meta_after) and result.get("meta") != "failed":
             try:
                 from factory_meta_alerts import send_meta_critical_alert
@@ -286,4 +443,11 @@ def ensure_meta_state_for_report(*, force: bool = False) -> Dict[str, Any]:
         rebuild_meta_state(force=True, refresh_regime=True)
         invalidate_meta_state_cache()
         meta = load_meta_state_resolved()
+    if not is_meta_state_degraded(meta):
+        try:
+            sync_config_regime_from_meta(meta)
+            invalidate_meta_state_cache()
+            meta = reconcile_meta_regime_action(meta)
+        except Exception as e:
+            logger.warning("ensure_meta_state_for_report: config regime sync failed: %s", e)
     return meta

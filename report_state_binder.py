@@ -67,12 +67,14 @@ def _regime_action(meta: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _resolve_regime(meta: Optional[Dict[str, Any]], sys_config: Optional[Dict[str, Any]]) -> str:
+    """표시·켈리용 국면 — Meta 우선, config 는 resolve_config_regime_key 와 동일 체인."""
+    from meta_state_store import normalize_regime_key, resolve_config_regime_key
+
     m = meta or {}
-    c = sys_config or {}
-    rk = m.get("META_REGIME_KEY")
-    if rk is not None and str(rk).strip():
-        return str(rk).strip()
-    return str(c.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN").strip()
+    rk = normalize_regime_key(m.get("META_REGIME_KEY"))
+    if rk not in ("", "UNKNOWN"):
+        return rk
+    return resolve_config_regime_key(sys_config)
 
 
 def _resolve_regime_confidence(meta: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -234,6 +236,21 @@ def build_macro_treasury_block(
     auto_heal_meta: UNKNOWN/NEVER 시 regime+MetaGovernor 동기 복구 후 리포트.
     """
     m = _meta_with_optional_auto_heal(meta, auto_heal=auto_heal_meta)
+    try:
+        from meta_state_store import (
+            is_meta_state_degraded,
+            reconcile_meta_regime_action,
+            sync_config_regime_from_meta,
+        )
+
+        m = reconcile_meta_regime_action(m)
+        if auto_heal_meta and not is_meta_state_degraded(m):
+            sync_config_regime_from_meta(m)
+            from config_manager import load_system_config
+
+            sys_config = load_system_config()
+    except Exception:
+        pass
     regime = _resolve_regime(m, sys_config)
     conf = _resolve_regime_confidence(m)
     notes = _resolve_regime_notes(m)

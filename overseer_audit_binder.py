@@ -330,7 +330,22 @@ def build_overseer_audit_dossier(
             csv_status = f"Read error: {e}"
 
     eff_k = macro.effective_kelly_risk
-    cfg_regime = str(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN")
+    try:
+        from meta_state_store import sync_config_regime_from_meta, resolve_config_regime_key
+
+        if m and not isinstance(sys_config, dict):
+            cfg = {}
+        if m:
+            sync_config_regime_from_meta(m)
+            try:
+                from config_manager import load_system_config
+
+                cfg = load_system_config() or cfg
+            except Exception:
+                pass
+        cfg_regime = resolve_config_regime_key(cfg)
+    except Exception:
+        cfg_regime = str(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN")
 
     return OverseerAuditDossier(
         as_of_kst=today_str,
@@ -511,11 +526,10 @@ def detect_audit_anomalies(
             ),
         )
 
-    # Regime config vs meta divergence
+    # Regime config vs meta divergence (동기화 후에도 남으면 WARN)
     if (
         _normalize_regime(rk_meta) != _normalize_regime(rk_cfg)
         and rk_meta not in ("", "UNKNOWN")
-        and rk_cfg not in ("", "UNKNOWN")
     ):
         _add(
             "REGIME_SSOT_SPLIT",
@@ -523,7 +537,8 @@ def detect_audit_anomalies(
             "MetaGovernor 국면과 system_config 국면 불일치",
             (
                 f"META_REGIME_KEY=<b>{html.escape(rk_meta, quote=False)}</b> vs "
-                f"CURRENT_REGIME_KEY=<b>{html.escape(rk_cfg, quote=False)}</b>."
+                f"config_regime=<b>{html.escape(rk_cfg, quote=False)}</b> "
+                "(REGIME_ANALYSIS.regime_key / CURRENT_REGIME_KEY)."
             ),
         )
 
