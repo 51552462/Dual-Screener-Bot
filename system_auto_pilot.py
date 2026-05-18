@@ -226,6 +226,12 @@ def load_or_create_config():
         config["META_GOVERNOR_SKIP_VIX"] = False
         need_save = True
 
+    if "STRATEGY_LIFECYCLE" not in config or not isinstance(config.get("STRATEGY_LIFECYCLE"), dict):
+        from strategy_lifecycle_config import DEFAULT_STRATEGY_LIFECYCLE
+
+        config["STRATEGY_LIFECYCLE"] = dict(DEFAULT_STRATEGY_LIFECYCLE)
+        need_save = True
+
     # 변경 사항이 있으면 JSON 파일에 덮어쓰기
     if need_save:
         save_config(config)

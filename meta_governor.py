@@ -359,6 +359,16 @@ def _mdd_pct_from_returns(rets: List[float]) -> float:
     return float(worst_dd)
 
 
+def _profit_factor_from_returns(rets: List[float]) -> float:
+    if not rets:
+        return 0.0
+    wins = sum(float(x) for x in rets if float(x) > 0)
+    losses = sum(float(x) for x in rets if float(x) < 0)
+    if losses >= 0:
+        return float("inf") if wins > 0 else 0.0
+    return wins / abs(losses)
+
+
 def _tail_loss_streak_returns(rets: List[float]) -> int:
     k = 0
     for r in reversed(rets):
@@ -479,9 +489,12 @@ def _build_treasury_health_and_mult(
         elif streak >= 3 or wr < wr_soft:
             mult_val = 0.35
             reason = "soft_cut"
+        pf = _profit_factor_from_returns(rets)
+        pf_out = round(pf, 4) if pf != float("inf") else 99.99
         health[key] = {
             "n": n,
             "rolling_wr": round(wr, 4),
+            "rolling_pf": pf_out,
             "tail_loss_streak": streak,
             "mdd_pct": round(mdd, 2),
             "mult": mult_val,
@@ -567,6 +580,7 @@ def default_meta_state() -> Dict[str, Any]:
             "notes": "",
         },
         "META_STRATEGY_REGISTRY": [],
+        "META_REGISTRY_CYCLE_STATS": {},
         "META_LIVE_STRATEGY_IDS": [],
         "META_RETIRED_STRATEGY_IDS": [],
         "META_CHANGELOG": [],
@@ -1039,7 +1053,7 @@ class MetaGovernor:
         base_ra["notes"] = (note or "").strip()
         self._working["META_REGIME_ACTION"] = base_ra
 
-    # --- 5 Lifecycle ---
+    # --- 5 Lifecycle (Discovery · Hard Gate LIVE · Whipsaw · Alpha TTL) ---
     def _step_lifecycle(self) -> None:
         ctx = self._ctx
         assert ctx is not None
@@ -1048,100 +1062,54 @@ class MetaGovernor:
             health = {}
 
         prior_reg = self._prior.get("META_STRATEGY_REGISTRY")
-        reg: List[Dict[str, Any]] = []
+        prior_list: List[Dict[str, Any]] = []
         if isinstance(prior_reg, list):
             for item in prior_reg:
                 if isinstance(item, dict):
-                    reg.append(dict(item))
+                    prior_list.append(dict(item))
 
-        by_sid: Dict[str, Dict[str, Any]] = {
-            str(r.get("strategy_id")): r for r in reg if r.get("strategy_id")
+        from strategy_promotion_engine import run_registry_lifecycle
+
+        # treasury PF 필드 보강 (구 스냅샷 호환)
+        for hk, hv in list(health.items()):
+            if hk == "__meta__" or not isinstance(hv, dict):
+                continue
+            if "rolling_pf" not in hv:
+                hv["rolling_pf"] = 0.0
+
+        reg, cycle_stats = run_registry_lifecycle(
+            prior_registry=prior_list,
+            health=health,
+            system_cfg=self._system_cfg_snapshot,
+            validated_mutants_path=ctx.validated_mutants_path,
+            forward_db_path=ctx.forward_db_path,
+        )
+
+        live_before = {
+            str(r.get("strategy_id"))
+            for r in prior_list
+            if str(r.get("state") or "").upper() == "LIVE"
         }
-        now_iso = datetime.now(timezone.utc).isoformat()
-
-        for prom in _load_validated_promoted(ctx.validated_mutants_path):
-            name = str(prom.get("name") or "").strip()
-            if not name:
-                continue
-            sid = _stable_mutant_id(name)
-            if sid in by_sid:
-                continue
-            gk = f"INCUBATOR_{name}"
-            row: Dict[str, Any] = {
-                "strategy_id": sid,
-                "display_name": name,
-                "state": "CANDIDATE",
-                "group_key": gk,
-                "capital_mult": 0.0,
-                "source": "validated_live_mutants",
-                "updated_at": now_iso,
-                "oos_win_rate": prom.get("oos_win_rate"),
-                "oos_avg_return": prom.get("oos_avg_return"),
-            }
-            reg.append(row)
-            by_sid[sid] = row
-
-        win = dict(ctx.windows or {})
-        min_tr = int(win.get("treasury_min_trades", 10))
-
-        live_before = {str(r.get("strategy_id")) for r in reg if str(r.get("state") or "").upper() == "LIVE"}
-
-        for row in reg:
-            if str(row.get("state") or "").upper() != "LIVE":
-                continue
-            gk = str(row.get("group_key") or row.get("display_name") or "").strip()
-            wm = _health_worst_mult(health, gk)
-            wr_candidates = [
-                float(v.get("rolling_wr", 1.0))
-                for k, v in health.items()
-                if isinstance(v, dict) and (k.endswith("|" + gk) or k == gk)
-            ]
-            n_candidates = [
-                int(v.get("n", 0))
-                for k, v in health.items()
-                if isinstance(v, dict) and (k.endswith("|" + gk) or k == gk)
-            ]
-            n_match = max(n_candidates) if n_candidates else 0
-            wr_worst = min(wr_candidates) if wr_candidates else 1.0
-            if n_match >= min_tr and (wm <= 0.0 or wr_worst < 0.36):
-                row["state"] = "COOLED"
-                row["capital_mult"] = 0.0
-                row["updated_at"] = now_iso
-                row["demote_reason"] = "treasury_health_fail"
-
-        # CANDIDATE → LIVE: OOS 입성 후 롤링 헬스가 통과하면 실전 승격
-        for row in reg:
-            if str(row.get("state") or "").upper() != "CANDIDATE":
-                continue
-            gk = str(row.get("group_key") or row.get("display_name") or "").strip()
-            wm = _health_worst_mult(health, gk)
-            wr_candidates = [
-                float(v.get("rolling_wr", 0.0))
-                for k, v in health.items()
-                if isinstance(v, dict) and (k.endswith("|" + gk) or k == gk)
-            ]
-            n_candidates = [
-                int(v.get("n", 0))
-                for k, v in health.items()
-                if isinstance(v, dict) and (k.endswith("|" + gk) or k == gk)
-            ]
-            n_match = max(n_candidates) if n_candidates else 0
-            wr_best = max(wr_candidates) if wr_candidates else 0.0
-            if n_match >= min_tr and wm >= 1.0 - 1e-9 and wr_best >= 0.42:
-                row["state"] = "LIVE"
-                row["capital_mult"] = 1.0
-                row["updated_at"] = now_iso
-                row["promote_reason"] = "treasury_health_recovered"
-
-        live_after = {str(r.get("strategy_id")) for r in reg if str(r.get("state") or "").upper() == "LIVE"}
+        live_after = {
+            str(r.get("strategy_id")) for r in reg if str(r.get("state") or "").upper() == "LIVE"
+        }
         demoted_ids = list(live_before - live_after)
         prev_retired = self._prior.get("META_RETIRED_STRATEGY_IDS")
         retired_list = list(prev_retired) if isinstance(prev_retired, list) else []
         for did in demoted_ids:
             if did and did not in retired_list:
                 retired_list.append(did)
+        for r in reg:
+            if str(r.get("state") or "").upper() == "RETIRED":
+                sid = str(r.get("strategy_id") or "")
+                if sid and sid not in retired_list:
+                    retired_list.append(sid)
+
         self._working["META_STRATEGY_REGISTRY"] = reg
-        self._working["META_LIVE_STRATEGY_IDS"] = [str(r["strategy_id"]) for r in reg if str(r.get("state") or "").upper() == "LIVE"]
+        self._working["META_REGISTRY_CYCLE_STATS"] = cycle_stats
+        self._working["META_LIVE_STRATEGY_IDS"] = [
+            str(r["strategy_id"]) for r in reg if str(r.get("state") or "").upper() == "LIVE"
+        ]
         self._working["META_RETIRED_STRATEGY_IDS"] = retired_list[-200:]
 
     # --- 6 Changelog ---

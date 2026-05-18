@@ -9,7 +9,7 @@ import html
 import os
 import statistics
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -42,6 +42,8 @@ class LifecycleReportBlock:
     n_live: int
     n_cooled: int
     n_candidate: int
+    n_observing: int
+    n_retired: int
     n_registry_total: int
     n_other_state: int
     retired_tracked_count: int
@@ -49,6 +51,19 @@ class LifecycleReportBlock:
     autopilot_age_days: Optional[int]
     autopilot_age_source: str
     live_fleet_mean_age_days: Optional[float]
+    cycle_discovery_new: int
+    cycle_promoted_live: int
+    cycle_demoted_cooled: int
+    demoted_last_7d: int
+    live_kr: int
+    live_us: int
+    cooled_kr: int
+    cooled_us: int
+    candidate_kr: int
+    candidate_us: int
+    avg_alpha_life_days_kr: Optional[float]
+    avg_alpha_life_days_us: Optional[float]
+    health_groups_linked_live: int
     footnote: str
 
 
@@ -393,13 +408,15 @@ def _live_fleet_age_days(
     live_rows: List[Dict[str, Any]],
     now: datetime,
 ) -> Tuple[List[int], str]:
-    """Per-row whole-day ages vs `now` (timezone-aligned). Empty if no parseable rows."""
+    """Per-row whole-day ages vs `now` (promoted_at 우선, 없으면 updated_at)."""
     ages: List[int] = []
     if not live_rows:
         return ages, "no_live_rows"
     now_aware = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
     for row in live_rows:
-        dt = _parse_iso_datetime(row.get("updated_at"))
+        dt = _parse_iso_datetime(row.get("promoted_at") or row.get("last_promoted_at"))
+        if dt is None:
+            dt = _parse_iso_datetime(row.get("updated_at"))
         if dt is None:
             continue
         if dt.tzinfo is None:
@@ -408,8 +425,48 @@ def _live_fleet_age_days(
         delta = now_aware - dt
         ages.append(max(0, int(delta.days)))
     if not ages:
-        return [], "live_rows_without_updated_at"
+        return [], "live_rows_without_promoted_at"
     return ages, "ok"
+
+
+def _avg_alpha_life_days(
+    cooled_rows: List[Dict[str, Any]],
+    market: str,
+) -> Optional[float]:
+    """COOLED 행: promoted_at → last_demoted_at 일수 평균."""
+    m = str(market or "").upper()
+    spans: List[int] = []
+    for row in cooled_rows:
+        if str(row.get("market") or "KR").upper() != m:
+            continue
+        t0 = _parse_iso_datetime(row.get("promoted_at") or row.get("last_promoted_at"))
+        t1 = _parse_iso_datetime(row.get("last_demoted_at"))
+        if t0 is None or t1 is None:
+            continue
+        if t0.tzinfo is None:
+            t0 = t0.replace(tzinfo=timezone.utc)
+        if t1.tzinfo is None:
+            t1 = t1.replace(tzinfo=timezone.utc)
+        spans.append(max(0, int((t1 - t0).days)))
+    if not spans:
+        return None
+    return float(statistics.mean(spans))
+
+
+def _demoted_in_last_n_days(reg: List[Dict[str, Any]], now: datetime, days: int = 7) -> int:
+    cutoff = now - timedelta(days=days)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    n = 0
+    for row in reg:
+        dt = _parse_iso_datetime(row.get("last_demoted_at"))
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt >= cutoff.astimezone(timezone.utc):
+            n += 1
+    return n
 
 
 def _summarize_meta_strategy_health(health: Any) -> str:
@@ -459,28 +516,72 @@ def build_lifecycle_report_block(
     reg_raw = m.get("META_STRATEGY_REGISTRY")
     reg: List[Dict[str, Any]] = [r for r in reg_raw if isinstance(r, dict)] if isinstance(reg_raw, list) else []
 
-    n_live = n_cooled = n_candidate = n_other = 0
+    n_live = n_cooled = n_candidate = n_observing = n_retired = n_other = 0
     live_rows: List[Dict[str, Any]] = []
+    cooled_rows: List[Dict[str, Any]] = []
+    live_kr = live_us = cooled_kr = cooled_us = candidate_kr = candidate_us = 0
     for row in reg:
         st = str(row.get("state") or "").strip().upper()
+        mk = str(row.get("market") or "KR").upper()
         if st == "LIVE":
             n_live += 1
             live_rows.append(row)
+            if mk == "US":
+                live_us += 1
+            else:
+                live_kr += 1
         elif st == "COOLED":
             n_cooled += 1
+            cooled_rows.append(row)
+            if mk == "US":
+                cooled_us += 1
+            else:
+                cooled_kr += 1
         elif st == "CANDIDATE":
             n_candidate += 1
+            if mk == "US":
+                candidate_us += 1
+            else:
+                candidate_kr += 1
+        elif st == "OBSERVING":
+            n_observing += 1
+        elif st == "RETIRED":
+            n_retired += 1
         elif st:
             n_other += 1
 
     retired = m.get("META_RETIRED_STRATEGY_IDS")
     retired_n = len(retired) if isinstance(retired, list) else 0
 
+    cycle = m.get("META_REGISTRY_CYCLE_STATS")
+    if not isinstance(cycle, dict):
+        cycle = {}
+    cycle_discovery = int(cycle.get("discovery_new", 0) or 0)
+    cycle_promoted = int(cycle.get("promoted_live", 0) or 0)
+    cycle_demoted = int(cycle.get("demoted_cooled", 0) or 0)
+    demoted_7d = int(cycle.get("demoted_7d", 0) or 0)
+    if demoted_7d == 0:
+        demoted_7d = _demoted_in_last_n_days(reg, now, days=7)
+
     governor_at = m.get("META_GOVERNOR_LAST_RUN_AT")
     governor_at_s = str(governor_at) if governor_at not in (None, "") else None
     governor_status = str(m.get("META_GOVERNOR_LAST_RUN_STATUS") or "UNKNOWN")
 
-    health_line = _summarize_meta_strategy_health(m.get("META_STRATEGY_HEALTH"))
+    health_raw = m.get("META_STRATEGY_HEALTH")
+    health_line = _summarize_meta_strategy_health(health_raw)
+    health_groups_linked = 0
+    if isinstance(health_raw, dict) and n_live > 0:
+        live_gks = {
+            (str(r.get("market") or "KR").upper(), str(r.get("group_key") or ""))
+            for r in live_rows
+        }
+        for hk in health_raw:
+            if hk == "__meta__":
+                continue
+            if "|" in hk:
+                mp, _, gk = hk.partition("|")
+                if (mp.upper(), gk) in live_gks:
+                    health_groups_linked += 1
 
     explicit_d, explicit_src = _resolve_explicit_autopilot_epoch(m, sys_config if isinstance(sys_config, dict) else {})
     ages, ages_reason = _live_fleet_age_days(live_rows, now)
@@ -499,8 +600,12 @@ def build_lifecycle_report_block(
     else:
         age_source = f"unresolved:{ages_reason}"
 
+    avg_kr = _avg_alpha_life_days(cooled_rows, "KR")
+    avg_us = _avg_alpha_life_days(cooled_rows, "US")
+
     footnote = (
-        "COOLED 은 레지스트리 스냅샷 개수만 반영합니다. 강등일시는 last_demoted_at 미도입으로 구분되지 않습니다."
+        "Whipsaw 강등: rolling_wr·rolling_pf 가 LIVE Hard Gate 미만인 날이 "
+        "KR 2일·US 3일 연속일 때 COOLED. last_demoted_at 기준 최근 7일 강등 집계."
     )
 
     return LifecycleReportBlock(
@@ -509,6 +614,8 @@ def build_lifecycle_report_block(
         n_live=n_live,
         n_cooled=n_cooled,
         n_candidate=n_candidate,
+        n_observing=n_observing,
+        n_retired=n_retired,
         n_registry_total=len(reg),
         n_other_state=n_other,
         retired_tracked_count=retired_n,
@@ -516,6 +623,19 @@ def build_lifecycle_report_block(
         autopilot_age_days=autopilot_age,
         autopilot_age_source=age_source,
         live_fleet_mean_age_days=mean_age,
+        cycle_discovery_new=cycle_discovery,
+        cycle_promoted_live=cycle_promoted,
+        cycle_demoted_cooled=cycle_demoted,
+        demoted_last_7d=demoted_7d,
+        live_kr=live_kr,
+        live_us=live_us,
+        cooled_kr=cooled_kr,
+        cooled_us=cooled_us,
+        candidate_kr=candidate_kr,
+        candidate_us=candidate_us,
+        avg_alpha_life_days_kr=avg_kr,
+        avg_alpha_life_days_us=avg_us,
+        health_groups_linked_live=health_groups_linked,
         footnote=footnote,
     )
 
@@ -535,14 +655,34 @@ def format_lifecycle_section_html(
     """Telegram HTML — 숫자·SSOT 메타만 서술, 코사인/ML 등 외생 변수는 쓰지 않는다."""
     head = f"{market_icon} <b>[8/9] 메타 최적화 및 알파 반감기</b>\n"
     head += f"📅 {html.escape(today_str, quote=False)} | 레지스트리 <b>{block.n_registry_total}</b>행"
-    head += f" (LIVE {block.n_live} · COOLED {block.n_cooled} · CANDIDATE {block.n_candidate}"
+    head += (
+        f" (LIVE {block.n_live} · CANDIDATE {block.n_candidate} · COOLED {block.n_cooled}"
+        f" · OBS {block.n_observing}"
+    )
+    if block.n_retired:
+        head += f" · RETIRED {block.n_retired}"
     if block.n_other_state:
         head += f" · 기타 {block.n_other_state}"
     head += ")\n"
     gov_at_esc = html.escape(block.governor_last_run_at or "—", quote=False)
     gov_st_esc = html.escape(block.governor_last_run_status, quote=False)
     head += f"🛰️ MetaGovernor: <i>last_at</i> {gov_at_esc} | <i>status</i> <b>{gov_st_esc}</b>\n"
-    head += f"📚 은퇴 ID 추적 리스트: <b>{block.retired_tracked_count}</b>개 (상한 컷)\n"
+    if block.cycle_discovery_new or block.cycle_promoted_live or block.cycle_demoted_cooled:
+        head += (
+            f"📈 금일 사이클: Discovery +{block.cycle_discovery_new} · "
+            f"승격 LIVE +{block.cycle_promoted_live} · 강등 COOLED +{block.cycle_demoted_cooled}\n"
+        )
+    head += (
+        f"🇰🇷 KR LIVE <b>{block.live_kr}</b> · CANDIDATE {block.candidate_kr} · COOLED {block.cooled_kr}"
+        f"  |  🇺🇸 US LIVE <b>{block.live_us}</b> · CAND {block.candidate_us} · COOLED {block.cooled_us}\n"
+    )
+    if block.demoted_last_7d > 0:
+        head += f"⬇️ 최근 7일 강등(last_demoted_at): <b>{block.demoted_last_7d}</b>건\n"
+    if block.avg_alpha_life_days_kr is not None or block.avg_alpha_life_days_us is not None:
+        kr_s = _fmt_intish(block.avg_alpha_life_days_kr) if block.avg_alpha_life_days_kr is not None else "—"
+        us_s = _fmt_intish(block.avg_alpha_life_days_us) if block.avg_alpha_life_days_us is not None else "—"
+        head += f"⏱️ COOLED 평균 알파 수명: KR <b>{kr_s}</b>일 · US <b>{us_s}</b>일\n"
+    head += f"📚 은퇴 ID 추적: <b>{block.retired_tracked_count}</b>개 | 헬스↔LIVE 연동 <b>{block.health_groups_linked_live}</b>그룹\n"
 
     if block.autopilot_age_days is not None:
         src_esc = html.escape(block.autopilot_age_source, quote=False)
@@ -552,11 +692,11 @@ def format_lifecycle_section_html(
 
     if block.n_live > 0 and block.live_fleet_mean_age_days is not None:
         head += (
-            f"🎯 LIVE 편대 평균 레지스트리 일령: <b>{_fmt_intish(block.live_fleet_mean_age_days)}</b> "
-            f"<i>(updated_at 기준)</i>\n"
+            f"🎯 LIVE 편대 평균 실전 일령: <b>{_fmt_intish(block.live_fleet_mean_age_days)}</b> "
+            f"<i>(promoted_at 기준)</i>\n"
         )
     elif block.n_live > 0:
-        head += "🎯 LIVE 편대 평균 일령: <b>—</b> <i>(updated_at 파싱 불가)</i>\n"
+        head += "🎯 LIVE 편대 평균 일령: <b>—</b> <i>(promoted_at 파싱 불가)</i>\n"
 
     head += "🩺 <b>[전략 헬스 한줄]</b> " + html.escape(block.health_summary_line, quote=False) + "\n\n"
 
