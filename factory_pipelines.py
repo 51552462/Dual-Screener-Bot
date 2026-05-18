@@ -3,7 +3,7 @@ Factory mode → Step 파이프라인 매핑 (순차 실행 SSOT).
 
 daily_audit* 동기 파이프라인 (순서 고정):
   meta_governor_sync → factory_artifact_guard → sentiment_mining → sector_spillover_refresh
-  → track → deep_dive → comprehensive_daily_report → ai_overseer
+  → (US only: us_data_incremental) → track → deep_dive → comprehensive_daily_report → ai_overseer
 
 factory_runtime.run_step 은 각 StepSpec.fn() 을 동기 호출한다 (비동기 spawn 없음).
 """
@@ -109,9 +109,34 @@ _COMPREHENSIVE_REPORT = StepSpec(
 )
 
 
+def _step_us_data_incremental_update() -> None:
+    """daily_audit_us — 리포트·트래킹 직전 US OHLCV 증분 갱신 (KR daily와 대칭 신선도)."""
+    from data_updater import run_us_incremental_db_update
+
+    out = run_us_incremental_db_update()
+    print(f"🇺🇸 [Factory] us_data_incremental: {out}")
+
+
+_US_DATA_INCREMENTAL = StepSpec(
+    "us_data_incremental",
+    _step_us_data_incremental_update,
+    critical=False,
+    delay_after_sec=1.0,
+)
+
+
 def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     """일일 감사·통합 리포트: meta sync → guard → sentiment → sector/spillover → 본 작업."""
     return [_META_GOVERNOR_SYNC, _ARTIFACT_GUARD, _SENTIMENT_MINING, _SECTOR_SPILLOVER_REFRESH, *steps]
+
+
+def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    """US 일일 감사: 공통 prelude + US OHLCV 증분 (리포트 전 필수)."""
+    return [
+        *_with_daily_audit_prelude([]),
+        _US_DATA_INCREMENTAL,
+        *steps,
+    ]
 
 
 def _step_supernova_kr() -> None:
@@ -197,7 +222,7 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
 
 
 def _pipeline_daily_audit_us() -> List[StepSpec]:
-    return _with_daily_audit_prelude(
+    return _with_daily_audit_us_prelude(
         [
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
@@ -213,6 +238,7 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
         [
             StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=8.0),
+            _US_DATA_INCREMENTAL,
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
             _COMPREHENSIVE_REPORT,

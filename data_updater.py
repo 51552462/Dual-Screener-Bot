@@ -229,6 +229,97 @@ def update_single_ticker(row, country):
             local_conn.close()
         except:
             pass
+def _update_us_benchmark_indices(conn: sqlite3.Connection) -> bool:
+    """SPY / QQQ / VIX → US_SPY, US_QQQ, US_VIX."""
+    idx_us = None
+    for attempt in range(_DL_MAX_TRIES):
+        try:
+            idx_us = yf.download(
+                "SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False
+            )
+            if idx_us is not None and not idx_us.empty:
+                break
+        except Exception:
+            pass
+        if attempt < _DL_MAX_TRIES - 1:
+            _dl_backoff(attempt)
+    if idx_us is None or idx_us.empty:
+        return False
+    time.sleep(random.uniform(0.3, 0.7))
+    levels = idx_us.columns.levels[0] if isinstance(idx_us.columns, pd.MultiIndex) else []
+    for tk, tbl in zip(["SPY", "QQQ", "^VIX"], ["US_SPY", "US_QQQ", "US_VIX"]):
+        if tk not in levels:
+            continue
+        df_temp = flatten_yf_download_df(idx_us[tk].copy()).dropna().reset_index()
+        df_temp.rename(columns={"Date": "Date", "index": "Date"}, inplace=True)
+        df_temp["Date"] = pd.to_datetime(df_temp["Date"]).dt.strftime("%Y-%m-%d")
+        save_data_safely(conn, tbl, df_temp)
+    return True
+
+
+def _update_us_ticker_rows(us_list: pd.DataFrame) -> tuple[int, int]:
+    """미국 티커 OHLCV 배치 갱신. (성공 건수, 시도 건수)."""
+    import sys
+
+    if us_list is None or us_list.empty:
+        return 0, 0
+    us_success = 0
+    us_rows = list(us_list.iterrows())
+    us_done = 0
+    n_total = len(us_rows)
+    for ci in range(0, n_total, _UPDATE_CHUNK_SIZE):
+        batch = us_rows[ci : ci + _UPDATE_CHUNK_SIZE]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(update_single_ticker, row, "US"): row["Symbol"]
+                for _, row in batch
+            }
+            for future in concurrent.futures.as_completed(futures):
+                if future.result():
+                    us_success += 1
+                us_done += 1
+                sys.stdout.write(f"\r  US OHLCV: {us_done}/{n_total} (ok {us_success})")
+                sys.stdout.flush()
+        if ci + _UPDATE_CHUNK_SIZE < n_total:
+            time.sleep(_UPDATE_CHUNK_SLEEP_SEC + random.uniform(0, 0.12))
+    if n_total:
+        print()
+    return us_success, n_total
+
+
+def run_us_incremental_db_update() -> dict:
+    """
+    daily_audit_us 훅 — US 벤치마크 + US_* 티커만 갱신 (KR 스킵, 리포트 직전 신선도).
+    """
+    print(f"\n🇺🇸 [US 증분] OHLCV 갱신 시작 ({DB_PATH})")
+    out: dict = {"us_benchmarks": False, "us_tickers_ok": 0, "us_tickers_total": 0, "snapshot": None}
+
+    us_list = get_us_tickers()
+    if us_list is None or us_list.empty:
+        print("🚨 [US 증분] FDR 유니버스 비어 있음 — 스킵")
+        out["error"] = "empty_universe"
+        return out
+
+    try:
+        bm_conn = sqlite3.connect(DB_PATH, timeout=30)
+        bm_conn.execute("PRAGMA journal_mode=WAL;")
+        out["us_benchmarks"] = _update_us_benchmark_indices(bm_conn)
+        bm_conn.close()
+    except Exception as e:
+        print(f"⚠️ [US 증분] 벤치마크 갱신 실패: {e}")
+
+    us_ok, us_n = _update_us_ticker_rows(us_list)
+    out["us_tickers_ok"] = us_ok
+    out["us_tickers_total"] = us_n
+
+    snap = create_read_only_snapshot()
+    out["snapshot"] = snap
+    if snap:
+        print(f"📸 [US 증분] 스냅샷: {snap}")
+    print(f"✅ [US 증분] 완료 — 티커 {us_ok}/{us_n}, 벤치마크={out['us_benchmarks']}")
+    return out
+
+
 # 메인 업데이트 실행기
 def run_daily_db_update():
     print(f"\n🛢️ 글로벌 퀀트 로컬 데이터베이스 갱신 시작 (경로: {DB_PATH})")
@@ -241,31 +332,10 @@ def run_daily_db_update():
     try:
         bm_conn = sqlite3.connect(DB_PATH, timeout=30)
         bm_conn.execute("PRAGMA journal_mode=WAL;")
-        
-        idx_us = None
-        for attempt in range(_DL_MAX_TRIES):
-            try:
-                idx_us = yf.download(
-                    "SPY QQQ ^VIX", period="3y", interval="1d", group_by="ticker", progress=False
-                )
-                if idx_us is not None and not idx_us.empty:
-                    break
-            except Exception:
-                pass
-            if attempt < _DL_MAX_TRIES - 1:
-                _dl_backoff(attempt)
-        if idx_us is None or idx_us.empty:
+
+        if not _update_us_benchmark_indices(bm_conn):
             raise RuntimeError("벤치마크 US 지수 yfinance 빈 응답")
-        time.sleep(random.uniform(0.3, 0.7))
-        for tk, tbl in zip(['SPY', 'QQQ', '^VIX'], ['US_SPY', 'US_QQQ', 'US_VIX']):
-            if tk in idx_us.columns.levels[0]:
-                df_temp = flatten_yf_download_df(idx_us[tk].copy()).dropna().reset_index()
-                df_temp.rename(columns={'Date': 'Date', 'index': 'Date'}, inplace=True)
-                df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.strftime('%Y-%m-%d')
-                
-                # 👇👇 [V102.6] 지수 데이터도 안전한 원자 교체 방식으로 저장 👇👇
-                save_data_safely(bm_conn, tbl, df_temp)
-        
+
         for tk, tbl in zip(['069500', '229200'], ['KR_KOSPI_IDX', 'KR_KOSDAQ_IDX']):
             df_temp = None
             kr_start = (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime('%Y-%m-%d')
@@ -293,22 +363,7 @@ def run_daily_db_update():
 
     # 1/2 미국장 (스레드 실행부 conn 제거)
     print("\n⏳ [1/2] 미국장 데이터 갱신 중... (야후 파이낸스 접속)")
-    us_success = 0
-    import sys
-    us_rows = list(us_list.iterrows())
-    us_done = 0
-    for ci in range(0, len(us_rows), _UPDATE_CHUNK_SIZE):
-        batch = us_rows[ci : ci + _UPDATE_CHUNK_SIZE]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {executor.submit(update_single_ticker, row, 'US'): row['Symbol'] for _, row in batch}
-            for future in concurrent.futures.as_completed(futures):
-                if future.result():
-                    us_success += 1
-                us_done += 1
-                sys.stdout.write(f"\r진행률: {us_done}/{len(us_list)} (성공: {us_success}개)")
-                sys.stdout.flush()
-        if ci + _UPDATE_CHUNK_SIZE < len(us_rows):
-            time.sleep(_UPDATE_CHUNK_SLEEP_SEC + random.uniform(0, 0.12))
+    us_success, _ = _update_us_ticker_rows(us_list)
 
     # 2/2 한국장 (스레드 실행부 conn 제거)
     print("\n\n⏳ [2/2] 한국장 데이터 갱신 중... (KRX 접속)")
