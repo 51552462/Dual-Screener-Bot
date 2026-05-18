@@ -90,6 +90,7 @@ _dante_pre_update_sqlite_backup() {
 
   if [[ -d "$INSTALL_ROOT" ]]; then
     shopt -s nullglob
+    # market_data.sqlite 는 *.sqlite glob + data root 백업으로 이중 커버
     for f in "$INSTALL_ROOT"/*.sqlite; do
       [[ -f "$f" ]] || continue
       base="$(basename "$f")"
@@ -135,6 +136,48 @@ for line in open(p, encoding='utf-8', errors='ignore'):
       _backup_artifacts_from_dir "$extra_dir" "dataroot__"
     fi
   fi
+  # meta_state_log JSON 덤프 (git clean 내성 — MetaGovernor SSOT)
+  if command -v python3 &>/dev/null; then
+    INSTALL_ROOT="$INSTALL_ROOT" python3 -c "
+import json, os, sqlite3
+root = os.environ.get('INSTALL_ROOT', '.')
+paths = []
+for base in (root, os.path.join(root, 'data')):
+    p = os.path.join(base, 'market_data.sqlite')
+    if os.path.isfile(p):
+        paths.append(p)
+try:
+    from market_db_paths import MARKET_DATA_DB_PATH
+    if os.path.isfile(MARKET_DATA_DB_PATH):
+        paths.append(MARKET_DATA_DB_PATH)
+except Exception:
+    pass
+seen = set()
+for db in paths:
+    if db in seen:
+        continue
+    seen.add(db)
+    try:
+        conn = sqlite3.connect(db, timeout=15)
+        cur = conn.execute(
+            \"SELECT name FROM sqlite_master WHERE type='table' AND name='meta_state_log'\"
+        )
+        if not cur.fetchone():
+            conn.close()
+            continue
+        rows = conn.execute('SELECT * FROM meta_state_log ORDER BY rowid DESC LIMIT 5').fetchall()
+        cols = [d[0] for d in conn.execute('PRAGMA table_info(meta_state_log)').fetchall()]
+        conn.close()
+        out = os.path.join('${dest}', 'meta_state_log_dump.json')
+        payload = [dict(zip(cols, r)) for r in rows]
+        with open(out, 'w', encoding='utf-8') as f:
+            json.dump({'db': db, 'rows': payload}, f, ensure_ascii=False, indent=2, default=str)
+        print('  meta_state_log dump:', out)
+    except Exception as e:
+        print('  meta_state_log dump skip:', e)
+" 2>/dev/null || true
+  fi
+
   echo "  pre-update backup → $dest (sqlite + artifacts)"
 }
 

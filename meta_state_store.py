@@ -214,6 +214,16 @@ def rebuild_meta_state(*, force: bool = False, refresh_regime: bool = True) -> D
             result["regime"] = "failed"
             result["regime_error"] = str(e)
             logger.exception("rebuild_meta_state: regime_meta_analyzer failed: %s", e)
+            try:
+                from factory_meta_alerts import send_meta_critical_alert
+
+                send_meta_critical_alert(
+                    "Meta regime refresh failed",
+                    str(e),
+                    prefix="META_BRAIN",
+                )
+            except Exception:
+                pass
 
     try:
         from factory_artifact_guard import ensure_meta_governor_state
@@ -229,6 +239,34 @@ def rebuild_meta_state(*, force: bool = False, refresh_regime: bool = True) -> D
         result["meta"] = "failed"
         result["meta_error"] = str(e)
         logger.exception("rebuild_meta_state: ensure_meta_governor_state failed: %s", e)
+        try:
+            from factory_meta_alerts import send_meta_critical_alert
+
+            send_meta_critical_alert(
+                "MetaGovernor heal failed (UNKNOWN/NEVER risk)",
+                str(e),
+                prefix="META_BRAIN",
+            )
+        except Exception:
+            pass
+
+    try:
+        meta_after = load_meta_governor_state_unified(meta_state_path())
+        if is_meta_state_degraded(meta_after) and result.get("meta") != "failed":
+            try:
+                from factory_meta_alerts import send_meta_critical_alert
+
+                rk = str(meta_after.get("META_REGIME_KEY") or "UNKNOWN")
+                st = str(meta_after.get("META_GOVERNOR_LAST_RUN_STATUS") or "NEVER")
+                send_meta_critical_alert(
+                    "Meta state still degraded after rebuild",
+                    f"regime={rk} status={st}",
+                    prefix="META_BRAIN",
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     try:
         from meta_governor_consumer import invalidate_meta_state_cache

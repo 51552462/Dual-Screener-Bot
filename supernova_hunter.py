@@ -226,9 +226,24 @@ def _toxic_ml_antipatterns_rule_map(ml_obj):
     return {k: v for k, v in ml_obj.items() if k != "_metadata"}
 
 
-def _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_val):
+def _merged_toxic_ml_rules(config, market: str = "KR"):
+    """KR TOXIC_ML + US_TOXIC_ML 병합 (US 스캔 시 US 학습 규칙 반영)."""
+    rules: dict = {}
+    rules.update(_toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS")))
+    if str(market or "").upper() == "US":
+        rules.update(_toxic_ml_antipatterns_rule_map(config.get("US_TOXIC_ML_ANTIPATTERNS")))
+        try:
+            from blackhole_hunter import _load_us_toxic_ml_patterns
+
+            rules.update(_load_us_toxic_ml_patterns() or {})
+        except Exception:
+            pass
+    return rules
+
+
+def _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_val, market: str = "KR"):
     """toxic_graveyard_analyzer가 저장한 TOXIC_PATTERN_* 초입체박스 안에 들어오면 진입 차단."""
-    rules = _toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS"))
+    rules = _merged_toxic_ml_rules(config, market=market)
     if not isinstance(rules, dict) or not rules:
         return False
     feats = {"dyn_cpv": float(cpv), "dyn_tb": float(tb), "v_energy": float(bbe)}
@@ -747,14 +762,25 @@ def get_krx_list():
 
 def get_us_list():
     try:
-        df_nasdaq = fdr.StockListing('NASDAQ')
-        df_nyse = fdr.StockListing('NYSE')
-        df_amex = fdr.StockListing('AMEX')
+        from us_list_survival import collect_us_list_survival
+        from market_db_paths import MARKET_DATA_DB_PATH
+
+        df, src = collect_us_list_survival(db_path=MARKET_DATA_DB_PATH, fdr_module=fdr)
+        if df is not None and len(df) >= 50:
+            print(f"🇺🇸 [US universe] {len(df)} rows (source={src})")
+            return df[["Code", "Name"]].drop_duplicates("Code")
+    except Exception as e:
+        print(f"⚠️ get_us_list survival: {e}")
+    try:
+        df_nasdaq = fdr.StockListing("NASDAQ")
+        df_nyse = fdr.StockListing("NYSE")
+        df_amex = fdr.StockListing("AMEX")
         df = pd.concat([df_nasdaq, df_nyse, df_amex])
-        df = df[df['Symbol'].str.isalpha()]
-        df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
-        return df[['Symbol', 'Name']].rename(columns={'Symbol': 'Code'}).drop_duplicates('Code')
-    except: return pd.DataFrame()
+        df = df[df["Symbol"].str.isalpha()]
+        df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)
+        return df[["Symbol", "Name"]].rename(columns={"Symbol": "Code"}).drop_duplicates("Code")
+    except Exception:
+        return pd.DataFrame()
 
 # ==========================================
 # 💡 [핵심] 타임머신 DNA 추출기 (한/미 시장 완벽 분리형 3단계 기만술 및 랭크 정밀 필터)
@@ -1491,7 +1517,7 @@ def execute_supernova_live_scan(market):
             bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
 
             dyn_rs_live = _approx_dyn_rs_vs_benchmark(df, benchmark_close_sr)
-            if _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_live):
+            if _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_live, market=market):
                 try:
                     try:
                         _bn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
@@ -1830,6 +1856,8 @@ def run_live_sniper_scheduler():
     global scanned_today_cache
     last_cleared_day = datetime.now(tz_kr).day
 
+    scan_owner = (os.environ.get("FACTORY_SCAN_OWNER") or "both").strip().lower()
+
     while True:
         try:
             now = datetime.now(tz_kr)
@@ -1844,6 +1872,12 @@ def run_live_sniper_scheduler():
 
             kr_target_times = ["09:00", "09:30", "15:00", "16:00"]
             us_target_times = ["10:00", "10:30", "14:30", "15:30"]
+            if scan_owner == "cron":
+                kr_target_times = []
+                us_target_times = []
+            elif scan_owner == "daemon":
+                pass
+            # both (default): cron + daemon 모두 허용
             
             if time_str in kr_target_times:
                 execute_supernova_live_scan('KR')

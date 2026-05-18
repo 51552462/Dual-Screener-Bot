@@ -92,17 +92,41 @@ def save_data_safely(conn, table_name, df):
         conn.execute(f'DROP TABLE IF EXISTS "{temp_table}"')
         raise
 
-# 🇺🇸 미국장 리스트 추출
+# 🇺🇸 미국장 리스트 추출 (FDR → us_list_cache.csv → sqlite US_* 3단계 생존)
 def get_us_tickers():
+    from us_list_survival import collect_us_list_survival
+
     print("🇺🇸 미국장 종목 리스트 수집 중...")
-    nas = fdr.StockListing('NASDAQ').assign(Market='NASDAQ')
-    time.sleep(random.uniform(0.3, 0.7))
-    nyse = fdr.StockListing('NYSE').assign(Market='NYSE')
-    time.sleep(random.uniform(0.3, 0.7))
-    amex = fdr.StockListing('AMEX').assign(Market='AMEX')
-    df = pd.concat([nas, nyse, amex])
-    df['Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
-    return df[['Symbol', 'Name', 'Market']].drop_duplicates(subset=['Symbol']).dropna()
+    try:
+        df, src = collect_us_list_survival(db_path=DB_PATH, fdr_module=fdr)
+        print(f"   ↳ US universe source={src}, rows={len(df)}")
+    except Exception as e:
+        print(f"⚠️ US list survival failed: {e}")
+        df = pd.DataFrame()
+        src = "fail"
+    if df is None or len(df) < 50:
+        print("⚠️ US 리스트 부족(<50). FDR 직접 수집 2차 시도...")
+        try:
+            nas = fdr.StockListing("NASDAQ").assign(Market="NASDAQ")
+            time.sleep(random.uniform(0.3, 0.7))
+            nyse = fdr.StockListing("NYSE").assign(Market="NYSE")
+            time.sleep(random.uniform(0.3, 0.7))
+            amex = fdr.StockListing("AMEX").assign(Market="AMEX")
+            df = pd.concat([nas, nyse, amex])
+            df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)
+            df = df.rename(columns={"Symbol": "Code"})
+            src = "fdr_fallback"
+        except Exception:
+            df = pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Symbol", "Name", "Market"])
+    if "Symbol" not in df.columns and "Code" in df.columns:
+        df = df.rename(columns={"Code": "Symbol"})
+    df["Symbol"] = df["Symbol"].astype(str).str.replace(".", "-", regex=False)
+    out = df[["Symbol", "Name", "Market"]].drop_duplicates(subset=["Symbol"]).dropna()
+    if len(out) < 50:
+        print(f"🚨 US ticker list still sparse after fallback: {len(out)}")
+    return out
 
 # 🇰🇷 한국장 리스트 추출 (FDR → krx_list_cache.csv → sqlite KR_* 3단계 생존)
 def get_kr_tickers():

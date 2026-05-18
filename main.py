@@ -189,6 +189,33 @@ def run_db_updater_scheduler():
             time.sleep(65)
         time.sleep(30)
 
+
+def run_us_pipeline_heartbeat():
+    """6시간마다 US OHLCV·벤치마크 자가 치유 (KR 07:00 bulk 보완)."""
+    tz = pytz.timezone("Asia/Seoul")
+    print("💠 [US Heartbeat] 6h US pipeline self-heal 대기 중...")
+    last_slot = None
+    while True:
+        now = datetime.now(tz)
+        slot = (now.year, now.month, now.day, now.hour // 6)
+        if now.minute == 5 and slot != last_slot:
+            last_slot = slot
+            try:
+                from factory_us_health import (
+                    assess_us_pipeline_health,
+                    ensure_us_pipeline_ready_for_scan,
+                    format_us_health_log_line,
+                )
+
+                before = assess_us_pipeline_health()
+                print(f"🩺 [US Heartbeat] {format_us_health_log_line(before)}")
+                if before.get("needs_repair"):
+                    ensure_us_pipeline_ready_for_scan(context="heartbeat", repair=True)
+            except Exception as e:
+                print(f"⚠️ [US Heartbeat] error: {e}")
+            time.sleep(65)
+        time.sleep(25)
+
 # ==========================================
 # 📊 실시간 생존 확인 및 종합 보고서 (모니터)
 # ==========================================
@@ -249,6 +276,7 @@ if __name__ == "__main__":
     bot_targets.update({
         # 2. 👑 자율 운영 코어 엔진 (절대 멈추면 안 됨)
         "💠 [엔진] DB 자동 갱신": run_db_updater_scheduler,
+        "💠 [엔진] US 파이프라인 Heartbeat": run_us_pipeline_heartbeat,
         "💠 [엔진] 장부 관리기": auto_forward_tester.run_daily_scheduler,
         "💠 [엔진] 2주 자율 관제탑": system_auto_pilot.system_main_loop,
         "💠 [엔진] 초신성 역추적기": supernova_hunter.run_scheduler,  # 💡 [추가] 매주 월요일 17시 자동 실행 장착!

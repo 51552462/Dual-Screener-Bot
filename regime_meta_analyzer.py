@@ -26,12 +26,29 @@ CONFIG_PATH = os.path.join(
     "Dual-Screener-Bot",
     "system_config.json",
 )
-DB_PATH = os.path.join(
-    os.path.expanduser("~"),
-    "dante_bots",
-    "Dual-Screener-Bot",
-    "market_data.sqlite",
-)
+def resolve_regime_db_path() -> str:
+    """forward_trades·콜로세움 SSOT — market_db_paths 와 동일."""
+    try:
+        from market_db_paths import market_db_read_path
+
+        return market_db_read_path()
+    except Exception:
+        pass
+    try:
+        from market_db_paths import MARKET_DATA_DB_PATH
+
+        return MARKET_DATA_DB_PATH
+    except Exception:
+        return os.path.join(
+            os.path.expanduser("~"),
+            "dante_bots",
+            "Dual-Screener-Bot",
+            "market_data.sqlite",
+        )
+
+
+# 레거시 import 호환
+DB_PATH = resolve_regime_db_path()
 
 VIX_HIGH = 20.0
 NARROW_RANGE_PCT = 3.5  # 최근 5영업일 고저폭 / 종가 %
@@ -221,7 +238,8 @@ def fetch_colosseum_summary(limit_days: int = 45, top_n: int = 4) -> Tuple[str, 
     since = (datetime.now() - timedelta(days=limit_days)).strftime("%Y-%m-%d")
 
     try:
-        uri = f"file:{DB_PATH.replace(os.sep, '/')}?mode=ro"
+        db = resolve_regime_db_path()
+        uri = f"file:{db.replace(os.sep, '/')}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         try:
             df = pd.read_sql(

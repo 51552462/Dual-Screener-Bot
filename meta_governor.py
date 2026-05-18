@@ -116,7 +116,9 @@ def _quantiles(vals: List[float]) -> Dict[str, float]:
     }
 
 
-def _fetch_forward_scores(db_path: str, cutoff_iso: str) -> List[float]:
+def _fetch_forward_scores(
+    db_path: str, cutoff_iso: str, *, market: Optional[str] = None
+) -> List[float]:
     uri = f"file:{db_path.replace(chr(92), '/')}?mode=ro"
     try:
         conn = sqlite3.connect(uri, uri=True, timeout=30)
@@ -125,14 +127,25 @@ def _fetch_forward_scores(db_path: str, cutoff_iso: str) -> List[float]:
         return []
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT total_score FROM forward_trades
-            WHERE status LIKE 'CLOSED%' AND IFNULL(exit_date,'') >= ?
-              AND total_score IS NOT NULL
-            """,
-            (cutoff_iso,),
-        )
+        if market:
+            cur.execute(
+                """
+                SELECT total_score FROM forward_trades
+                WHERE UPPER(TRIM(IFNULL(market,''))) = ?
+                  AND status LIKE 'CLOSED%' AND IFNULL(exit_date,'') >= ?
+                  AND total_score IS NOT NULL
+                """,
+                (str(market).upper(), cutoff_iso),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT total_score FROM forward_trades
+                WHERE status LIKE 'CLOSED%' AND IFNULL(exit_date,'') >= ?
+                  AND total_score IS NOT NULL
+                """,
+                (cutoff_iso,),
+            )
         out = [float(r[0]) for r in cur.fetchall() if r and r[0] is not None]
         return out
     except sqlite3.Error as e:
@@ -806,10 +819,12 @@ class MetaGovernor:
 
         dist_block: Dict[str, Any] = {"window_days_kst": cal_days, "cutoff_exit_date_gte": cutoff}
 
-        # KR/US forward_trades: 롤링 청산 구간 total_score 분포
+        # KR/US forward_trades: 롤링 청산 구간 total_score 분포 (시장 분리)
         scores_kr: List[float] = []
+        scores_us: List[float] = []
         if ctx.forward_db_path:
-            scores_kr = _fetch_forward_scores(ctx.forward_db_path, cutoff)
+            scores_kr = _fetch_forward_scores(ctx.forward_db_path, cutoff, market="KR")
+            scores_us = _fetch_forward_scores(ctx.forward_db_path, cutoff, market="US")
         snap_kr: Dict[str, Any] = {"n": len(scores_kr)}
         if len(scores_kr) >= 5:
             arr = np.asarray(scores_kr, dtype=float)
@@ -817,6 +832,14 @@ class MetaGovernor:
             snap_kr["std"] = float(np.std(arr))
             snap_kr["quantiles"] = _quantiles(scores_kr)
         dist_block["KR_forward_trades"] = snap_kr
+
+        snap_us: Dict[str, Any] = {"n": len(scores_us)}
+        if len(scores_us) >= 5:
+            arr_u = np.asarray(scores_us, dtype=float)
+            snap_us["mean"] = float(np.mean(arr_u))
+            snap_us["std"] = float(np.std(arr_u))
+            snap_us["quantiles"] = _quantiles(scores_us)
+        dist_block["US_forward_trades"] = snap_us
 
         scores_bg: List[float] = []
         if ctx.bitget_db_path:

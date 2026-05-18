@@ -110,11 +110,29 @@ _COMPREHENSIVE_REPORT = StepSpec(
 
 
 def _step_us_data_incremental_update() -> None:
-    """daily_audit_us — 리포트·트래킹 직전 US OHLCV 증분 갱신 (KR daily와 대칭 신선도)."""
+    """daily_audit_us / scan-us — US OHLCV 증분 갱신 (KR 07:00 bulk 대칭)."""
     from data_updater import run_us_incremental_db_update
 
     out = run_us_incremental_db_update()
     print(f"🇺🇸 [Factory] us_data_incremental: {out}")
+
+
+def _step_us_health_gate(context: str = "scan") -> None:
+    """US 혈관 검사 — 치명 이슈 시 CRITICAL 알림 (repair는 다음 스텝)."""
+    from factory_us_health import assess_us_pipeline_health, format_us_health_log_line
+
+    rep = assess_us_pipeline_health()
+    print(f"🩺 [Factory] us_health_gate({context}): {format_us_health_log_line(rep)}")
+    if rep.get("critical_failures"):
+        print(f"⚠️ [Factory] US critical: {rep['critical_failures']}")
+
+
+def _step_us_health_repair(context: str = "scan") -> None:
+    from factory_us_health import ensure_us_pipeline_ready_for_scan, format_us_health_log_line
+
+    out = ensure_us_pipeline_ready_for_scan(context=context, repair=True)
+    after = out.get("after") or {}
+    print(f"🔧 [Factory] us_health_repair({context}): {format_us_health_log_line(after)}")
 
 
 _US_DATA_INCREMENTAL = StepSpec(
@@ -124,6 +142,20 @@ _US_DATA_INCREMENTAL = StepSpec(
     delay_after_sec=1.0,
 )
 
+_US_HEALTH_GATE = StepSpec(
+    "us_health_gate",
+    lambda: _step_us_health_gate("scan"),
+    critical=False,
+    delay_after_sec=0.5,
+)
+
+_US_HEALTH_REPAIR = StepSpec(
+    "us_health_repair",
+    lambda: _step_us_health_repair("scan"),
+    critical=False,
+    delay_after_sec=0.5,
+)
+
 
 def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     """일일 감사·통합 리포트: meta sync → guard → sentiment → sector/spillover → 본 작업."""
@@ -131,12 +163,19 @@ def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
 
 
 def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
-    """US 일일 감사: 공통 prelude + US OHLCV 증분 (리포트 전 필수)."""
+    """US 일일 감사: 공통 prelude + US health + OHLCV 증분 (리포트 전 필수)."""
     return [
         *_with_daily_audit_prelude([]),
+        StepSpec("us_health_gate_daily", lambda: _step_us_health_gate("daily"), critical=False, delay_after_sec=0.5),
+        StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
         _US_DATA_INCREMENTAL,
         *steps,
     ]
+
+
+def _with_scan_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    """scan-us: guard → health → repair → 증분 OHLCV → supernova."""
+    return [_US_HEALTH_GATE, _US_HEALTH_REPAIR, _US_DATA_INCREMENTAL, *steps]
 
 
 def _step_supernova_kr() -> None:
@@ -258,10 +297,12 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
             ]
         ),
         "scan_us": _with_artifact_guard(
-            [
-                StepSpec("supernova_scan_us", _step_supernova_us, critical=True, delay_after_sec=5.0),
-                StepSpec("us_bowl_scan", _step_us_bowl_optional, critical=False),
-            ]
+            _with_scan_us_prelude(
+                [
+                    StepSpec("supernova_scan_us", _step_supernova_us, critical=True, delay_after_sec=5.0),
+                    StepSpec("us_bowl_scan", _step_us_bowl_optional, critical=False),
+                ]
+            )
         ),
         "daily_audit_kr": daily_kr,
         "daily_audit_us": daily_us,

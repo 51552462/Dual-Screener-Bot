@@ -638,14 +638,18 @@ def _exit_date_on_calendar(val: object) -> str:
 
 
 def _reporter_unified_vip_fleet_mask(df_open: pd.DataFrame) -> pd.Series:
+    """레거시 — market 미지정 시 KR VIP 규칙."""
+    return _reporter_deploy_fleet_mask(df_open, "KR")
+
+
+def _reporter_deploy_fleet_mask(df_open: pd.DataFrame, market: str) -> pd.Series:
     """
-    [4/9] 투입 집계·한도 경고 공통: VIP 트랙(🔥주도주 / 🛡️차기섹터) + 투입금>0.
-    df_open 은 이미 유효 보유(OPEN/ACTIVE & 수량>0)로 좁혀진 뷰를 기대한다.
+    [4/9] 투입 집계: VIP(🔥/🛡️) + 투입금>0.
+    US: STANDARD/US_BOWL/US_MASTER 등 실전 스캐너 sig 포함 (KR 대칭).
     """
     if df_open is None or df_open.empty:
         return pd.Series(dtype=bool)
     sig = df_open["sig_type"].astype(str)
-    vip = sig.str.contains("🔥주도주", na=False) | sig.str.contains("🛡️차기섹터", na=False)
     sk = (
         pd.to_numeric(df_open["sim_kelly_invest"], errors="coerce").fillna(0.0)
         if "sim_kelly_invest" in df_open.columns
@@ -657,7 +661,34 @@ def _reporter_unified_vip_fleet_mask(df_open: pd.DataFrame) -> pd.Series:
         else pd.Series(0.0, index=df_open.index)
     )
     has_inv = (sk > 0.0) | (inv > 0.0)
+    vip = sig.str.contains("🔥주도주", na=False) | sig.str.contains("🛡️차기섹터", na=False)
+    if str(market or "").upper() == "US":
+        us_deploy = (
+            sig.str.contains("US_BOWL", na=False)
+            | sig.str.contains("US_MASTER", na=False)
+            | sig.str.contains("US_5EMA", na=False)
+            | sig.str.contains("US_NUL", na=False)
+            | sig.str.contains("SUPERNOVA", na=False)
+            | (sig.str.contains("STANDARD", na=False) & sig.str.contains("US", na=False))
+        )
+        return (vip | us_deploy) & has_inv
     return vip & has_inv
+
+
+def _daily_report_trades_for_market(df_all: pd.DataFrame, market: str) -> pd.DataFrame:
+    """일일 통합 리포트 — code 기반 market 정규화 (KR/US 누수·오태깅 방지)."""
+    if df_all is None or df_all.empty:
+        return df_all.copy() if df_all is not None else pd.DataFrame()
+    mkt = str(market or "").upper()
+    code_col = "code" if "code" in df_all.columns else ("ticker" if "ticker" in df_all.columns else None)
+    if code_col is None:
+        return df_all[df_all["market"].astype(str).str.upper() == mkt].copy()
+    mk_series = df_all["market"] if "market" in df_all.columns else pd.Series("", index=df_all.index)
+    norm = [
+        _normalize_trade_market(df_all.iloc[i][code_col], mk_series.iloc[i])
+        for i in range(len(df_all))
+    ]
+    return df_all.iloc[[i for i, nm in enumerate(norm) if nm == mkt]].copy()
 
 
 def _reporter_cleanup_zombie_forward_trades() -> int:
@@ -2298,8 +2329,9 @@ def send_comprehensive_daily_report(
         try:
             conn = _open_market_db_ro()
 
-            # [사전 데이터 로드] — INCUBATOR 섀도우는 본계좌 누적 손익·리더보드 등에서 제외
-            df_all = pd.read_sql(f"SELECT * FROM forward_trades WHERE market='{market}'", conn)
+            # [사전 데이터 로드] — market 열 + code 정규화 (오태깅 US/KR 교정)
+            df_all_raw = pd.read_sql("SELECT * FROM forward_trades", conn)
+            df_all = _daily_report_trades_for_market(df_all_raw, market)
             _sig_s = df_all['sig_type'].astype(str)
             _real_only = ~_sig_s.str.contains('INCUBATOR', na=False)
             df_real = df_all.loc[_real_only].copy()
@@ -2404,7 +2436,7 @@ def send_comprehensive_daily_report(
             # ---------------------------------------------------------
             # 📑 결과지 4: 포트폴리오 다중화 (VIP 편대 + 투입>0 기준으로 집계·한도 경고 통일)
             # ---------------------------------------------------------
-            _unified = _reporter_unified_vip_fleet_mask(df_open)
+            _unified = _reporter_deploy_fleet_mask(df_open, market)
             n_vip_fleet = int(_unified.sum())
             n_legacy_open = int(len(df_open) - n_vip_fleet)
 
@@ -2603,7 +2635,7 @@ def send_comprehensive_daily_report(
                 maybe_apply_deathmatch_allocation,
             )
 
-            dm = build_nway_deathmatch(df_closed, sys_config)
+            dm = build_nway_deathmatch(df_closed, sys_config, market=market)
             maybe_apply_deathmatch_allocation(dm, sys_config)
             _dm_label = f"{market} 청산 전체 · N-Way 로직군"
             if not dm.arms and n_closed_mkt == 0:

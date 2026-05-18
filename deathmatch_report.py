@@ -27,6 +27,30 @@ def deathmatch_min_n(sys_config: dict) -> int:
     return max(1, n)
 
 
+def deathmatch_min_n_for_market(
+    sys_config: dict,
+    market: str,
+    *,
+    n_closed: int = 0,
+) -> int:
+    """
+    US 등 표본이 적을 때 arm별 최소 건수 완화 (0건 메시지와 구분).
+    DEATHMATCH_MIN_TRADES_PER_ARM_US 로 시장별 override 가능.
+    """
+    base = deathmatch_min_n(sys_config)
+    m = str(market or "").upper()
+    if m == "US":
+        try:
+            us_override = sys_config.get("DEATHMATCH_MIN_TRADES_PER_ARM_US")
+            if us_override is not None:
+                return max(1, int(us_override))
+        except (TypeError, ValueError):
+            pass
+        if 0 < n_closed < base * 3:
+            return max(2, min(base, n_closed // max(1, 2) or 2))
+    return base
+
+
 def classify_strategy_arm(sig_type: Any) -> Optional[str]:
     """
     sig_type → 로직군 라벨. INCUBATOR·빈 값 제외.
@@ -138,12 +162,14 @@ def build_nway_deathmatch(
     sys_config: Optional[dict] = None,
     *,
     lookback_days: Optional[int] = None,
+    market: Optional[str] = None,
 ) -> NWayDeathmatchResult:
     """
     청산 forward_trades → 로직군별 N-Way 랭킹 (mean_ret 내림차순).
     """
     cfg = sys_config if isinstance(sys_config, dict) else {}
-    n_min = deathmatch_min_n(cfg)
+    n_closed = len(df_closed) if df_closed is not None else 0
+    n_min = deathmatch_min_n_for_market(cfg, market or "", n_closed=n_closed)
     out = NWayDeathmatchResult(n_min=n_min)
 
     if df_closed is None or df_closed.empty or "sig_type" not in df_closed.columns:

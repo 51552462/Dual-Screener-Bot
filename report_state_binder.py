@@ -90,6 +90,52 @@ def _resolve_regime_notes(meta: Optional[Dict[str, Any]]) -> str:
     return ""
 
 
+def _meta_with_optional_auto_heal(
+    meta: Optional[Dict[str, Any]], *, auto_heal: bool
+) -> Dict[str, Any]:
+    """리포트용 meta — heal 실패·지속 degraded 시 CRITICAL 텔레그램."""
+    if not auto_heal:
+        if meta is not None and isinstance(meta, dict):
+            return meta
+        try:
+            from meta_governor_consumer import load_meta_state_resolved
+
+            return load_meta_state_resolved()
+        except Exception:
+            return {}
+    try:
+        from meta_state_store import ensure_meta_state_for_report, is_meta_state_degraded
+
+        m = ensure_meta_state_for_report()
+        if is_meta_state_degraded(m):
+            try:
+                from factory_meta_alerts import send_meta_critical_alert
+
+                rk = str(m.get("META_REGIME_KEY") or "UNKNOWN")
+                st = str(m.get("META_GOVERNOR_LAST_RUN_STATUS") or "NEVER")
+                send_meta_critical_alert(
+                    "Meta still degraded after auto-heal",
+                    f"regime={rk} status={st}",
+                    prefix="META_BRAIN",
+                )
+            except Exception:
+                pass
+        return m
+    except Exception as ex:
+        fallback = meta if isinstance(meta, dict) else {}
+        try:
+            from factory_meta_alerts import send_meta_critical_alert
+
+            send_meta_critical_alert(
+                "Meta auto-heal failed in report",
+                str(ex),
+                prefix="META_BRAIN",
+            )
+        except Exception:
+            pass
+        return fallback
+
+
 def _resolve_kelly_cap_floor(meta: Optional[Dict[str, Any]]) -> tuple[Optional[float], Optional[float]]:
     ra = _regime_action(meta or {})
     return _coerce_float(ra.get("kelly_cap")), _coerce_float(ra.get("kelly_floor"))
@@ -187,21 +233,7 @@ def build_macro_treasury_block(
     ledger_zero_invest_fallback: KR 원화 장부의 0원 투입 보정(40만). 암호화폐 등은 None.
     auto_heal_meta: UNKNOWN/NEVER 시 regime+MetaGovernor 동기 복구 후 리포트.
     """
-    m = meta
-    if auto_heal_meta:
-        try:
-            from meta_state_store import ensure_meta_state_for_report
-
-            m = ensure_meta_state_for_report()
-        except Exception:
-            m = meta if isinstance(meta, dict) else {}
-    elif m is None:
-        try:
-            from meta_governor_consumer import load_meta_state_resolved
-
-            m = load_meta_state_resolved()
-        except Exception:
-            m = {}
+    m = _meta_with_optional_auto_heal(meta, auto_heal=auto_heal_meta)
     regime = _resolve_regime(m, sys_config)
     conf = _resolve_regime_confidence(m)
     notes = _resolve_regime_notes(m)
@@ -406,16 +438,7 @@ def build_lifecycle_report_block(
     오토파일럿 앵커 일령은 (1) 설정·메타의 명시 기준일 → (2) LIVE 편대의 최소 연령
     (가장 최근 updated_at 에 가까운 전략 기준, 일 환산) 순으로 결정한다.
     """
-    m: Dict[str, Any]
-    if auto_heal_meta:
-        try:
-            from meta_state_store import ensure_meta_state_for_report
-
-            m = ensure_meta_state_for_report()
-        except Exception:
-            m = meta if isinstance(meta, dict) else {}
-    else:
-        m = meta if isinstance(meta, dict) else {}
+    m = _meta_with_optional_auto_heal(meta, auto_heal=auto_heal_meta)
     reg_raw = m.get("META_STRATEGY_REGISTRY")
     reg: List[Dict[str, Any]] = [r for r in reg_raw if isinstance(r, dict)] if isinstance(reg_raw, list) else []
 
