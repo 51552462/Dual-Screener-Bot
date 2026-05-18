@@ -83,6 +83,69 @@ def load_latest_daily_sentiment() -> Optional[Dict[str, Any]]:
     return _row_to_record(row, today=today)
 
 
+def load_sentiment_with_prior() -> Dict[str, Any]:
+    """
+    당일(또는 최신) 센티 + 직전 영업일 행 — 전일 대비 Δ 산출용.
+    Returns keys: current, prior, delta, prior_date, db_missing, error
+    """
+    out: Dict[str, Any] = {
+        "current": None,
+        "prior": None,
+        "delta": None,
+        "prior_date": None,
+        "db_missing": False,
+        "error": None,
+    }
+    path = news_db_path()
+    if not os.path.isfile(path):
+        out["db_missing"] = True
+        return out
+    today = today_kst_str()
+    try:
+        conn = sqlite3.connect(path, timeout=30)
+        try:
+            rows = conn.execute(
+                """
+                SELECT date, top_keyword_1, top_keyword_2, top_keyword_3, sentiment_score
+                FROM daily_sentiment
+                ORDER BY date DESC
+                LIMIT 2
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        out["error"] = str(ex)[:120]
+        return out
+
+    if not rows:
+        return out
+
+    cur_rec = _row_to_record(rows[0], today=today)
+    out["current"] = cur_rec
+
+    prior_row = None
+    cur_date = str(cur_rec.get("date") or "")
+    for r in rows[1:]:
+        if str(r[0] or "").strip() != cur_date:
+            prior_row = r
+            break
+
+    if prior_row is None and len(rows) >= 2:
+        prior_row = rows[1]
+
+    if prior_row is not None:
+        prior_rec = _row_to_record(prior_row, today=today)
+        out["prior"] = prior_rec
+        out["prior_date"] = prior_rec.get("date")
+        cs = cur_rec.get("sentiment_score")
+        ps = prior_rec.get("sentiment_score")
+        if cs is not None and ps is not None:
+            out["delta"] = round(float(cs) - float(ps), 1)
+
+    return out
+
+
 def format_sentiment_satellite_line(*, hide_stale_keywords: bool = True) -> str:
     """
     텔레그램 [팩토리 위성망 통합 첩보] 센티먼트 한 줄.

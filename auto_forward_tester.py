@@ -2381,117 +2381,64 @@ def send_comprehensive_daily_report(
     except Exception as _ez:
         print(f"⚠️ [일일 통합 리포트] 좀비 정리 스킵: {_ez}")
 
-    # 둠스데이·블랙홀 첩보 (위성 브리핑과 시너지 판단에 공통 사용)
-    _dd = sys_config.get("DOOMSDAY_DEFCON") or {}
-    defcon_level = 5
-    if isinstance(_dd, dict):
+    from satellite_intel_brief import (
+        build_satellite_intel_for_report,
+        build_strategy_insight_html,
+        collect_satellite_intel_metrics,
+    )
+
+    _sat_metrics = collect_satellite_intel_metrics(sys_config)
+    smart_money_count = _sat_metrics["smart_money_count"]
+    toxic_count = _sat_metrics["toxic_rule_count"]
+    blackhole_count = _sat_metrics["blackhole_count"]
+
+    sentiment_fresh_warn = False
+    if refresh_sentiment:
         try:
-            defcon_level = int(_dd.get("level", 5))
-        except (TypeError, ValueError):
-            defcon_level = 5
-    _bh = sys_config.get("BLACKHOLE_TOXIC_COUNT", 0)
-    blackhole_count = 0
-    if isinstance(_bh, dict):
-        try:
-            blackhole_count = int(_bh.get("count", 0) or 0)
-        except (TypeError, ValueError):
-            blackhole_count = 0
-    else:
-        try:
-            blackhole_count = int(_bh or 0)
-        except (TypeError, ValueError):
-            blackhole_count = 0
+            from news_data_paths import assert_sentiment_fresh_for_report, today_kst_str
 
-    smart_money_count = 0
-    toxic_count = 0
+            if not assert_sentiment_fresh_for_report():
+                sentiment_fresh_warn = True
+                print(
+                    f"⚠️ [일일 통합 리포트] 당일({today_kst_str()}) 센티먼트 미확인 — "
+                    "리포트에 데이터 없음/스냅샷 날짜로 표시"
+                )
+        except Exception as _sent_chk_e:
+            sentiment_fresh_warn = True
+            print(f"⚠️ [일일 통합 리포트] 센티먼트 검증 스킵: {_sent_chk_e}")
 
-    # 🛰️ [신경망 통합] 위성 데이터 수집 로직
-    satellite_brief = "\n🛰️ <b>[팩토리 위성망 통합 첩보]</b>\n"
-    try:
-        _radar = (sys_config.get('SMART_MONEY_RADAR') or {})
-        smart_picks = _radar.get('picks', {}) if isinstance(_radar, dict) else {}
-        if not isinstance(smart_picks, dict):
-            smart_picks = {}
-        smart_money_count = len(smart_picks)
-        anti_n = len(collect_merged_antipattern_rules(sys_config))
-        toxic_count = anti_n
-        satellite_brief += f" ▪️ 🕵️ 스마트머니: {smart_money_count}개 종목 매집 포착\n"
-        satellite_brief += f" ▪️ 💀 오답노트: {anti_n}개의 독성 패턴 방어 중\n"
-    except Exception:
-        satellite_brief += " ▪️ 🕵️ 스마트머니: (조회 실패)\n ▪️ 💀 오답노트: (조회 실패)\n"
-
-    try:
-        alt_db = os.path.join(os.path.dirname(DB_PATH), 'alt_data.sqlite')
-        if os.path.exists(alt_db):
-            conn_alt = sqlite3.connect(f"file:{alt_db}?mode=ro", uri=True, check_same_thread=False)
-            try:
-                row = conn_alt.execute(
-                    "SELECT usd_krw, us_10y_yield, vix_index FROM macro_daily ORDER BY date DESC LIMIT 1"
-                ).fetchone()
-                if row:
-                    satellite_brief += f" ▪️ 💹 매크로: 환율 {row[0]}원 / 국채 {row[1]}% / VIX {row[2]}\n"
-            finally:
-                conn_alt.close()
-    except Exception:
-        pass
-
-    try:
-        from news_data_paths import (
-            assert_sentiment_fresh_for_report,
-            format_sentiment_satellite_line,
-            today_kst_str,
-        )
-
-        if refresh_sentiment and not assert_sentiment_fresh_for_report():
-            print(
-                f"⚠️ [일일 통합 리포트] 당일({today_kst_str()}) 센티먼트 미확인 — "
-                "리포트에 데이터 없음/스냅샷 날짜로 표시"
-            )
-        satellite_brief += format_sentiment_satellite_line(hide_stale_keywords=True)
-    except Exception:
-        satellite_brief += " ▪️ 🧠 센티먼트: 데이터 없음\n"
-
-    # 🧠 AI 관제탑 시너지 판단 엔진 (위성·거시 지표 종합)
-    strategy_insight = "\n💡 <b>[AI 관제탑 전략 브리핑]</b>\n"
-    if defcon_level <= 2:
-        strategy_insight += (
-            "🚨 <b>[폭풍 전야]</b> 거시경제(채권/원자재) 붕괴 시그널이 감지되었습니다. "
-            "스나이퍼 신규 매수를 전면 중단하고, 현금 비중을 극대화하십시오.\n"
-        )
-    elif defcon_level >= 4 and smart_money_count >= 5:
-        strategy_insight += (
-            "🚀 <b>[골디락스 공격]</b> 거시경제가 안정적이며 세력 수급이 강합니다. "
-            "공격적인 롱(Long) 포지션 베팅을 권장합니다.\n"
-        )
-    elif toxic_count >= 100 or blackhole_count >= 10:
-        strategy_insight += (
-            "🕳️ <b>[숏 타격 기회]</b> 시장 내부에 독성 참사주가 무더기로 쌓이고 있습니다. "
-            "인버스(숏) 베팅을 통한 시장 중립(Market Neutral) 방어망을 가동하십시오.\n"
-        )
-    else:
-        strategy_insight += (
-            "⚖️ <b>[관망 및 선별]</b> 시장 방향성이 혼조세입니다. 스나이퍼의 타점 기준을 엄격하게 높이고, "
-            "확실한 개별주 장세에만 짧게 대응하십시오.\n"
-        )
+    satellite_brief_kr = build_satellite_intel_for_report(
+        sys_config, market="KR", sentiment_fresh_warn=sentiment_fresh_warn
+    )
+    satellite_brief_us = build_satellite_intel_for_report(
+        sys_config, market="US", sentiment_fresh_warn=sentiment_fresh_warn
+    )
+    strategy_insight = build_strategy_insight_html(sys_config)
 
     ranking_brief = ""
     try:
         ranking_brief = _strategy_colosseum_brief(colosseum_db_path_for_report())
-    except Exception:
-        ranking_brief = ""
+    except Exception as _rank_e:
+        print(f"⚠️ [일일 통합 리포트] 콜로세움 브리핑 스킵: {_rank_e}")
 
     shadow_brief = ""
     try:
         shadow_brief = _shadow_performance_brief(sys_config)
-    except Exception:
-        shadow_brief = ""
+    except Exception as _sh_e:
+        print(f"⚠️ [일일 통합 리포트] 그림자 장부 브리핑 스킵: {_sh_e}")
 
-    satellite_brief += strategy_insight
-    if ranking_brief:
-        satellite_brief += ranking_brief
-    if shadow_brief:
-        satellite_brief += shadow_brief
-    satellite_brief += "--------------------------------------\n"
+    def _assemble_satellite_tail() -> str:
+        tail = strategy_insight
+        if ranking_brief:
+            tail += ranking_brief
+        if shadow_brief:
+            tail += shadow_brief
+        tail += "--------------------------------------\n"
+        return tail
+
+    _satellite_tail = _assemble_satellite_tail()
+    satellite_brief_kr += _satellite_tail
+    satellite_brief_us += _satellite_tail
 
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     try:
@@ -2530,8 +2477,10 @@ def send_comprehensive_daily_report(
                 lead_in = (
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     + f"📢 <b>[일일 통합 성과 리포트]</b>\n"
-                    + satellite_brief
+                    + satellite_brief_kr
                 )
+            elif market == "US":
+                lead_in = satellite_brief_us
             msg1 = format_macro_treasury_section_html(
                 block_mt,
                 display_label=market,
