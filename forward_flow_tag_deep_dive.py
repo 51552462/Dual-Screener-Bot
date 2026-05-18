@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from forward_report_scalar import col_series, scalar_float
 from forward_score_bucket_deep_dive import _exit_date_span, _resolve_stock_name
 
 RegistrySaveFn = Callable[[Dict[str, Any]], Any]
@@ -68,7 +69,7 @@ def _toxic_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
 
 def _stock_chip(row: pd.Series, ret_col: str = "_fr") -> str:
     nm = html.escape(_resolve_stock_name(row), quote=False)
-    r = float(row[ret_col])
+    r = scalar_float(row[ret_col])
     return f"{nm}({r:+.0f}%)"
 
 
@@ -103,11 +104,11 @@ def _persist_flow_tag_toxic_registry(
         "market": str(market),
         "registered_at": today_str,
         "n": int(toxic.n),
-        "win_rate_pct": round(float(toxic.win_rate_pct), 2),
-        "profit_factor": round(float(toxic.profit_factor), 4),
-        "cum_ret_pct": round(float(toxic.cum_ret_pct), 2),
-        "capital_mult": float(penalty_mult),
-        "kelly_mult": float(penalty_mult),
+        "win_rate_pct": round(scalar_float(toxic.win_rate_pct), 2),
+        "profit_factor": round(scalar_float(toxic.profit_factor), 4),
+        "cum_ret_pct": round(scalar_float(toxic.cum_ret_pct), 2),
+        "capital_mult": scalar_float(penalty_mult),
+        "kelly_mult": scalar_float(penalty_mult),
         "toxic_reason": toxic.toxic_reason,
         "carry_example": toxic.carry_stock_html,
         "bleed_example": toxic.bleed_stock_html,
@@ -148,9 +149,9 @@ def _is_toxic_candidate(
     n = int(row["n"])
     if n < min_n:
         return False, ""
-    wr = float(row["win_rate_pct"])
-    pf = float(row["profit_factor"])
-    cum = float(row["cum_ret_pct"])
+    wr = scalar_float(row["win_rate_pct"])
+    pf = scalar_float(row["profit_factor"])
+    cum = scalar_float(row["cum_ret_pct"])
     reasons: List[str] = []
     if wr < toxic_wr:
         reasons.append(f"WR<{toxic_wr:.0f}%")
@@ -223,7 +224,7 @@ def build_flow_tag_snapshot(
         return empty
 
     work = df.copy()
-    work["_fr"] = pd.to_numeric(work.get("final_ret"), errors="coerce")
+    work["_fr"] = pd.to_numeric(col_series(work, "final_ret"), errors="coerce")
     work = work.dropna(subset=["_fr"])
     if work.empty:
         return empty
@@ -256,8 +257,8 @@ def build_flow_tag_snapshot(
             continue
         wins = int(row["wins"])
         wr = (wins / n) * 100.0 if n else 0.0
-        cum = float(row["cum_ret"])
-        tag_pf = float(pf.get(tag, 1.0)) if tag in pf.index else 1.0
+        cum = scalar_float(row["cum_ret"])
+        tag_pf = scalar_float(pf.get(tag, 1.0), 1.0) if tag in pf.index else 1.0
         sub = long.loc[long["_tag"] == tag]
         carry_html = "—"
         bleed_html = "—"
@@ -298,7 +299,9 @@ def build_flow_tag_snapshot(
             toxic_cum=th["toxic_cum_ret"],
         )
         if ok:
-            toxic_candidates.append((float(rd["cum_ret_pct"]), float(rd["profit_factor"]), rd, reason))
+            toxic_candidates.append(
+                (scalar_float(rd["cum_ret_pct"]), scalar_float(rd["profit_factor"]), rd, reason)
+            )
 
     toxic_rd: Optional[Dict[str, Any]] = None
     toxic_reason = ""
@@ -311,9 +314,9 @@ def build_flow_tag_snapshot(
         toxic_block = FlowTagBlock(
             tag=str(toxic_rd["tag"]),
             n=int(toxic_rd["n"]),
-            win_rate_pct=float(toxic_rd["win_rate_pct"]),
-            profit_factor=float(toxic_rd["profit_factor"]),
-            cum_ret_pct=float(toxic_rd["cum_ret_pct"]),
+            win_rate_pct=scalar_float(toxic_rd["win_rate_pct"]),
+            profit_factor=scalar_float(toxic_rd["profit_factor"]),
+            cum_ret_pct=scalar_float(toxic_rd["cum_ret_pct"]),
             carry_stock_html=str(toxic_rd["carry_stock_html"]),
             bleed_stock_html=str(toxic_rd["bleed_stock_html"]),
             is_toxic=True,
@@ -322,7 +325,7 @@ def build_flow_tag_snapshot(
 
     registry_persisted = False
     registry_key: Optional[str] = None
-    penalty_mult = float(th["penalty_mult"])
+    penalty_mult = scalar_float(th["penalty_mult"])
     if persist_toxic and toxic_block is not None and save_config_fn is not None:
         registry_persisted, registry_key = _persist_flow_tag_toxic_registry(
             toxic_block,
@@ -342,9 +345,9 @@ def build_flow_tag_snapshot(
             FlowTagBlock(
                 tag=str(rd["tag"]),
                 n=int(rd["n"]),
-                win_rate_pct=float(rd["win_rate_pct"]),
-                profit_factor=float(rd["profit_factor"]),
-                cum_ret_pct=float(rd["cum_ret_pct"]),
+                win_rate_pct=scalar_float(rd["win_rate_pct"]),
+                profit_factor=scalar_float(rd["profit_factor"]),
+                cum_ret_pct=scalar_float(rd["cum_ret_pct"]),
                 carry_stock_html=str(rd["carry_stock_html"]),
                 bleed_stock_html=str(rd["bleed_stock_html"]),
                 is_toxic=is_t,

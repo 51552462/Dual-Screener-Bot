@@ -44,22 +44,31 @@ def _cached_funding_snapshot(symbol: str):
     return snap
 
 
-def send_telegram_msg(text):
+def _telegram_plain_from_html(chunk: str) -> str:
+    import re
+
+    return re.sub(r"</?([a-zA-Z][a-zA-Z0-9]*)[^>]*>", "", chunk)
+
+
+def send_telegram_msg(text, *, parse_mode: str = "HTML"):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        # 텔레그램 4096자 제한 방어: 4000자씩 분할
         max_len = 4000
-        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
-        
+        chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
+        use_html = str(parse_mode or "").upper() == "HTML"
+
         for chunk in chunks:
-            # 1차 시도: HTML 모드
-            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
-            # 2차 시도: HTML 파싱 에러(400) 발생 시 일반 텍스트 모드로 재전송
-            if res.status_code == 400:
-                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk}
+            if use_html:
+                payload["parse_mode"] = "HTML"
+            res = requests.post(url, json=payload, timeout=10)
+            if use_html and res.status_code == 400:
+                plain = _telegram_plain_from_html(chunk)
+                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
             import time
+
             time.sleep(0.5)
     except Exception:
         pass
@@ -2330,7 +2339,12 @@ def run_deep_dive_analysis(market_type="spot"):
         send_telegram_msg(report_msg)
         print(f"✅ [{market_type}] 딥 다이브 분석 리포트 발송 완료.")
     except Exception as e:
-        err_msg = f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n{e}"
+        from html import escape as html_escape
+
+        err_msg = (
+            f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n"
+            f"<code>{html_escape(str(e), quote=False)}</code>"
+        )
         print(err_msg)
         send_telegram_msg(err_msg)
 

@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from forward_report_scalar import col_series, scalar_float
+
 # 존재하는 컬럼만 조회·집계 (스키마 진화 대비)
 DEFAULT_REPORT_FEATURE_COLUMNS: List[str] = [
     "dyn_cpv",
@@ -294,17 +296,17 @@ class ReportFeatureAnalyzer:
     ) -> Optional[ContrastInsight]:
         if col not in winners_df.columns or col not in losers_df.columns:
             return None
-        w_s = winners_df[col]
-        l_s = losers_df[col]
+        w_s = col_series(winners_df, col)
+        l_s = col_series(losers_df, col)
         label = FEATURE_LABELS.get(col, col)
         combined = pd.concat([w_s, l_s], ignore_index=True)
         if _is_binary_like(combined):
-            wa = pd.to_numeric(w_s, errors="coerce")
-            la = pd.to_numeric(l_s, errors="coerce")
-            if wa.count() < 1 or la.count() < 1:
+            wa = pd.to_numeric(w_s, errors="coerce").dropna()
+            la = pd.to_numeric(l_s, errors="coerce").dropna()
+            if wa.empty or la.empty:
                 return None
-            pw = float(wa.mean())
-            pl = float(la.mean())
+            pw = scalar_float(wa.mean())
+            pl = scalar_float(la.mean())
             direction = "higher_in_winners" if pw >= pl else "lower_in_winners"
             return ContrastInsight(
                 column=col,
@@ -319,12 +321,12 @@ class ReportFeatureAnalyzer:
         l = pd.to_numeric(l_s, errors="coerce").dropna()
         if len(w) < 2 or len(l) < 2:
             return None
-        wm = float(w.median())
-        lm = float(l.median())
-        wmean = float(w.mean())
-        lmean = float(l.mean())
+        wm = scalar_float(w.median())
+        lm = scalar_float(l.median())
+        wmean = scalar_float(w.mean())
+        lmean = scalar_float(l.mean())
         direction = "higher_in_winners" if wmean >= lmean else "lower_in_winners"
-        p_above = float((w > lm).mean() * 100.0)
+        p_above = scalar_float((w > lm).mean() * 100.0)
         return ContrastInsight(
             column=col,
             label=label,

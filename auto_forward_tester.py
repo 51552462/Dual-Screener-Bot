@@ -28,6 +28,7 @@ from meta_governor_consumer import (
 from toxic_antipattern_core import collect_merged_antipattern_rules
 from report_feature_analyzer import ReportFeatureAnalyzer, extra_forward_trade_columns_for_report
 from forward_flow_tag_deep_dive import build_flow_tag_snapshot, format_flow_tag_report_html
+from forward_report_scalar import prepare_forward_trades_df, scalar_float
 from forward_score_bucket_deep_dive import (
     ForwardScoreBucketDeepDive,
     build_universal_dna_block,
@@ -388,29 +389,48 @@ def _shadow_reason_defense_is_opportunity_cost_loss(shadow_perf, reason_key):
         return False
 
 
-def send_telegram_msg(text):
+def _telegram_plain_from_html(chunk: str) -> str:
+    """HTML parse 실패 시 평문 — 의도한 굵게는 유지하지 않고 태그만 제거."""
+    return re.sub(r"</?([a-zA-Z][a-zA-Z0-9]*)[^>]*>", "", chunk)
+
+
+def send_telegram_msg(text, *, parse_mode: str = "HTML"):
     if not TELEGRAM_TOKEN_MAIN or not TELEGRAM_CHAT_ID:
         print("⚠️ [텔레그램] TELEGRAM_TOKEN_MAIN / TELEGRAM_CHAT_ID 미설정(.env) — 메시지 스킵")
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage"
-        # 텔레그램은 1회 전송 시 4096자 제한이 있음. 방대한 리포트를 안전하게 4000자씩 분할 전송
         max_len = 4000
-        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
-        
+        chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
+        use_html = str(parse_mode or "").upper() == "HTML"
+
         for chunk in chunks:
-            # 1차 시도: HTML 모드로 예쁘게 전송
-            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk}
+            if use_html:
+                payload["parse_mode"] = "HTML"
+            res = requests.post(url, json=payload, timeout=10)
             if res.status_code != 200:
                 print(f"텔레그램 발송 실패: {res.text}")
-            # 2차 시도: 주식 이름에 &, <, > 등이 섞여 HTML 문법 에러(400)가 나면 일반 텍스트로 재전송
-            if res.status_code == 400:
-                res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk}, timeout=10)
-                if res.status_code != 200:
-                    print(f"텔레그램 발송 실패: {res.text}")
+            if use_html and res.status_code == 400:
+                plain = _telegram_plain_from_html(chunk)
+                res2 = requests.post(
+                    url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10
+                )
+                if res2.status_code != 200:
+                    print(f"텔레그램 평문 재전송 실패: {res2.text}")
             import time
-            time.sleep(0.5) # 분할 전송 시 순서가 꼬이거나 API 도배 차단되는 것 방지
-    except: pass
+
+            time.sleep(0.5)
+    except Exception:
+        pass
+
+
+def _format_forward_ledger_error_html(context: str, exc: BaseException) -> str:
+    """예외 본문의 <class 'float'> 등이 HTML을 깨뜨리지 않도록 code 블록으로 감쌈."""
+    return (
+        f"🚨 <b>[포워드 장부 에러]</b> {html_escape(context, quote=False)}:\n"
+        f"<code>{html_escape(str(exc), quote=False)}</code>"
+    )
 
 def init_forward_db():
     """장부 테이블 생성 및 V12.0 필수 컬럼 안전 추가"""
@@ -2717,8 +2737,8 @@ def _deep_dive_cross_market_isolation_footer(df: pd.DataFrame, market: str) -> s
     ]
     ts = pd.to_numeric(df.get("total_score"), errors="coerce").dropna()
     if len(ts) >= 10:
-        mu = float(ts.mean())
-        sd = float(ts.std(ddof=0)) or 1e-9
+        mu = scalar_float(ts.mean())
+        sd = scalar_float(ts.std(ddof=0), 1e-9) or 1e-9
         z = (ts - mu) / sd
         lo = int((z < -0.5).sum())
         mid = int(((z >= -0.5) & (z <= 0.5)).sum())
@@ -2778,7 +2798,8 @@ def run_deep_dive_analysis(market='KR'):
             )
             return
 
-        df['Win'] = np.where(df['final_ret'] > 0, 1, 0)
+        df = prepare_forward_trades_df(df)
+        df["Win"] = np.where(df["final_ret"] > 0, 1, 0)
         m_roll = len(df)
         report_msg = (
             f"🔬 [{market}장 포워드 테스팅 딥 다이브 분석]\n"
@@ -2838,10 +2859,10 @@ def run_deep_dive_analysis(market='KR'):
                         else:
                             inc_map = dict(inc_map)
                         inc_map[ud_name] = {
-                            "cpv": round(float(winners["dyn_cpv"].mean()), 4),
-                            "tb": round(float(winners["dyn_tb"].mean()), 4),
-                            "bbe": round(float(winners["v_energy"].mean()), 4),
-                            "rs": round(float(winners["dyn_rs"].mean()), 4),
+                            "cpv": round(scalar_float(winners["dyn_cpv"].mean()), 4),
+                            "tb": round(scalar_float(winners["dyn_tb"].mean()), 4),
+                            "bbe": round(scalar_float(winners["v_energy"].mean()), 4),
+                            "rs": round(scalar_float(winners["dyn_rs"].mean()), 4),
                             "cos_cutoff": 0.75,
                             "created_at": datetime.now().strftime("%Y-%m-%d"),
                             "status": "INCUBATING",
@@ -3129,15 +3150,13 @@ def run_deep_dive_analysis(market='KR'):
             report_msg += f"\n⚖️ <b>[자금 관리 평행우주 대결 — 최근 {rolling_days}일 청산(KST) 기준 실현 손익]</b>\n"
             
             # 💡 [버그 픽스] 과거 투입금 0원 데이터 보정 (기본 40만원)
-            valid_invest_fixed = df['invest_amount'].replace(0, 400000)
-            valid_invest_kelly = df['sim_kelly_invest'].replace(0, 400000)
-            
-            df['fixed_profit'] = valid_invest_fixed * (df['final_ret'] / 100)
-            total_fixed_profit = df['fixed_profit'].sum()
-            
-            df['kelly_profit'] = valid_invest_kelly * (df['final_ret'] / 100)
-            total_kelly_profit = df['kelly_profit'].sum()
-            
+            valid_invest_fixed = pd.to_numeric(df["invest_amount"], errors="coerce").replace(0, 400000).fillna(400000)
+            valid_invest_kelly = pd.to_numeric(df["sim_kelly_invest"], errors="coerce").replace(0, 400000).fillna(400000)
+            fr_dd = pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0)
+
+            total_fixed_profit = scalar_float((valid_invest_fixed * (fr_dd / 100)).sum())
+            total_kelly_profit = scalar_float((valid_invest_kelly * (fr_dd / 100)).sum())
+
             report_msg += f"▪️ 고정 2% 베팅 누적 손익: <b>{total_fixed_profit:,.0f}원</b>\n"
             report_msg += f"▪️ 국면형 켈리 누적 손익: <b>{total_kelly_profit:,.0f}원</b>\n"
             
@@ -3157,7 +3176,7 @@ def run_deep_dive_analysis(market='KR'):
         print(f"✅ [{market}] 딥 다이브 분석 리포트 발송 완료.")
         
     except Exception as e:
-        err_msg = f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n{e}"
+        err_msg = _format_forward_ledger_error_html("딥 다이브 분석 중 에러 발생", e)
         print(err_msg)
         send_telegram_msg(err_msg)
 
@@ -3202,7 +3221,7 @@ def run_daily_scheduler():
             
         except Exception as e:
             # 👇👇 에러 발생 시 텔레그램으로 긴급 타전 👇👇
-            err_msg = f"🚨 <b>[관제탑 스케줄러 긴급 에러]</b> 무한 루프 구동 중 꼬임 발생:\n{e}"
+            err_msg = _format_forward_ledger_error_html("무한 루프 구동 중 꼬임 발생", e)
             print(err_msg)
             send_telegram_msg(err_msg)
             time.sleep(60) # 에러 폭탄(Spam) 방지를 위해 1분 대기 후 재가동

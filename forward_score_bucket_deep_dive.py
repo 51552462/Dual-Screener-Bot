@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
+from forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float
 from report_feature_analyzer import ContrastInsight, ReportFeatureAnalyzer
 
 
@@ -116,7 +117,7 @@ def _format_key_drivers_nlargest(
     parts: List[str] = []
     for _, row in pick.iterrows():
         nm = html.escape(_resolve_stock_name(row), quote=False)
-        r = float(row["_fr"])
+        r = scalar_float(row["_fr"])
         parts.append(f"{nm}({r:+.0f}%)")
     return ", ".join(parts) if parts else "—"
 
@@ -144,7 +145,7 @@ def _format_ranked_extremes(
     first_ret: Optional[float] = None
     for i, (_, row) in enumerate(pick.iterrows()):
         nm_plain = _resolve_stock_name(row)
-        r = float(row["_fr"])
+        r = scalar_float(row["_fr"])
         if i == 0:
             first_name = nm_plain
             first_ret = r
@@ -253,9 +254,11 @@ def build_universal_dna_block(
             top_shame_ret=None,
         )
 
-    fr = pd.to_numeric(df["final_ret"], errors="coerce")
-    winners = df.loc[fr >= float(jackpot_threshold)]
-    losers = df.loc[fr <= float(disaster_threshold)]
+    fr = pd.to_numeric(col_series(df, "final_ret"), errors="coerce").fillna(0.0)
+    j_th = scalar_float(jackpot_threshold, 5.0)
+    d_th = scalar_float(disaster_threshold, -3.0)
+    winners = df.loc[fr >= j_th]
+    losers = df.loc[fr <= d_th]
     nw, nl = len(winners), len(losers)
 
     insights, err_lines, _, _ = rfa._collect_winner_loser_contrast_insights(
@@ -417,26 +420,21 @@ class ForwardScoreBucketDeepDive:
             if len(t_df) < self._min_bucket:
                 continue
 
-            wins_mask = pd.to_numeric(t_df["final_ret"], errors="coerce") > 0
+            fr_b = pd.to_numeric(col_series(t_df, "final_ret"), errors="coerce").fillna(0.0)
+            wins_mask = fr_b > 0
             wins_count = int(wins_mask.sum())
-            t_wr = (wins_count / len(t_df)) * 100.0
-            gross_profit = pd.to_numeric(
-                t_df.loc[wins_mask, "final_ret"], errors="coerce"
-            ).sum()
-            loss_mask = pd.to_numeric(t_df["final_ret"], errors="coerce") <= 0
-            gross_loss = abs(
-                pd.to_numeric(t_df.loc[loss_mask, "final_ret"], errors="coerce").sum()
-            )
-            t_pf = float(gross_profit / (gross_loss + 0.1))
+            t_wr = (wins_count / len(t_df)) * 100.0 if len(t_df) else 0.0
+            gross_profit = scalar_float(fr_b.loc[wins_mask].sum())
+            gross_loss = abs(scalar_float(fr_b.loc[~wins_mask].sum()))
+            t_pf = scalar_float(gross_profit / (gross_loss + 0.1), 1.0)
 
             sector = _dominant_sector_from_bucket(t_df)
             exit_min, exit_max = _exit_date_span(t_df)
             top2 = _format_key_drivers_nlargest(t_df, k=self._top_summary_stocks)
             drivers = _format_key_drivers_nlargest(t_df, k=self._top_drv)
 
-            fr = pd.to_numeric(t_df["final_ret"], errors="coerce")
-            winners = t_df.loc[fr >= self._th_j].copy()
-            losers = t_df.loc[fr <= self._th_d].copy()
+            winners = t_df.loc[fr_b >= self._th_j].copy()
+            losers = t_df.loc[fr_b <= self._th_d].copy()
 
             lines, ok, ins = self._analyzer.build_winner_loser_dna_contrast(
                 winners_df=winners,
