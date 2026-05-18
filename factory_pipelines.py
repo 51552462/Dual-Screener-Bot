@@ -76,6 +76,35 @@ def _step_sector_spillover_refresh() -> None:
     print(f"🔄 [Factory] sector_spillover_refresh: {out}")
 
 
+def _step_us_cross_market_publish() -> None:
+    """US 파이프라인 종료 — DB 기반 스냅샷 publish (scan-us 재실행 없음)."""
+    from cross_market_ssot import publish_us_snapshot_after_pipeline
+
+    publish_us_snapshot_after_pipeline()
+
+
+def _step_kr_cross_market_hydrate() -> None:
+    """KR 직전 — SSOT 로드·graceful mode (US 스캐너 미호출)."""
+    from cross_market_ssot import hydrate_kr_runtime_from_ssot
+
+    hydrate_kr_runtime_from_ssot()
+
+
+_US_CROSS_MARKET_PUBLISH = StepSpec(
+    "us_cross_market_publish",
+    _step_us_cross_market_publish,
+    critical=False,
+    delay_after_sec=0.5,
+)
+
+_KR_CROSS_MARKET_HYDRATE = StepSpec(
+    "kr_cross_market_hydrate",
+    _step_kr_cross_market_hydrate,
+    critical=False,
+    delay_after_sec=0.0,
+)
+
+
 def _step_comprehensive_daily_report() -> None:
     from auto_forward_tester import send_comprehensive_daily_report
 
@@ -159,7 +188,14 @@ _US_HEALTH_REPAIR = StepSpec(
 
 def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     """일일 감사·통합 리포트: meta sync → guard → sentiment → sector/spillover → 본 작업."""
-    return [_META_GOVERNOR_SYNC, _ARTIFACT_GUARD, _SENTIMENT_MINING, _SECTOR_SPILLOVER_REFRESH, *steps]
+    return [
+        _META_GOVERNOR_SYNC,
+        _ARTIFACT_GUARD,
+        _SENTIMENT_MINING,
+        _SECTOR_SPILLOVER_REFRESH,
+        _KR_CROSS_MARKET_HYDRATE,
+        *steps,
+    ]
 
 
 def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
@@ -170,6 +206,7 @@ def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
         StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
         _US_DATA_INCREMENTAL,
         *steps,
+        _US_CROSS_MARKET_PUBLISH,
     ]
 
 
@@ -290,19 +327,21 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
     daily_kr = _pipeline_daily_audit_kr()
     daily_us = _pipeline_daily_audit_us()
     return {
-        "scan_kr": _with_artifact_guard(
-            [
-                StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
-                StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
-            ]
-        ),
         "scan_us": _with_artifact_guard(
             _with_scan_us_prelude(
                 [
                     StepSpec("supernova_scan_us", _step_supernova_us, critical=True, delay_after_sec=5.0),
                     StepSpec("us_bowl_scan", _step_us_bowl_optional, critical=False),
+                    _US_CROSS_MARKET_PUBLISH,
                 ]
             )
+        ),
+        "scan_kr": _with_artifact_guard(
+            [
+                _KR_CROSS_MARKET_HYDRATE,
+                StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
+                StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
+            ]
         ),
         "daily_audit_kr": daily_kr,
         "daily_audit_us": daily_us,

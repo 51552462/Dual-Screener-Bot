@@ -517,6 +517,24 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
     if "ACE_EVOLUTION_US_DECAY_WR_PCT" not in cfg:
         cfg["ACE_EVOLUTION_US_DECAY_WR_PCT"] = 45.0
         added.add("ACE_EVOLUTION_US_DECAY_WR_PCT")
+    if "CROSS_MARKET_SSOT" not in cfg:
+        cfg["CROSS_MARKET_SSOT"] = {}
+        added.add("CROSS_MARKET_SSOT")
+    if "CROSS_MARKET_STALE_HOURS" not in cfg:
+        cfg["CROSS_MARKET_STALE_HOURS"] = 36.0
+        added.add("CROSS_MARKET_STALE_HOURS")
+    if "SPILLOVER_RUNTIME_MODE" not in cfg:
+        cfg["SPILLOVER_RUNTIME_MODE"] = "KR_STANDALONE_MOMENTUM"
+        added.add("SPILLOVER_RUNTIME_MODE")
+    if "ROTATION_PRED_MISS_WARN_STREAK" not in cfg:
+        cfg["ROTATION_PRED_MISS_WARN_STREAK"] = 2
+        added.add("ROTATION_PRED_MISS_WARN_STREAK")
+    if "ROTATION_PRED_MISS_REDUCE_STREAK" not in cfg:
+        cfg["ROTATION_PRED_MISS_REDUCE_STREAK"] = 3
+        added.add("ROTATION_PRED_MISS_REDUCE_STREAK")
+    if "ROTATION_PRED_EMA_ALPHA" not in cfg:
+        cfg["ROTATION_PRED_EMA_ALPHA"] = 0.35
+        added.add("ROTATION_PRED_EMA_ALPHA")
     return added
 
 

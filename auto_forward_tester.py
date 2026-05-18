@@ -2761,8 +2761,16 @@ def send_comprehensive_daily_report(
                 msg7 += " ↳ 순환매 데이터 부족\n"
 
             if market == 'KR':
-                actual_spillover = _resolve_us_spillover_telegram_inner(sys_config)
-                msg7 += f"\n🌐 <b>한미 스필오버 연동:</b> 🇺🇸 최근 고수익 주도 섹터 [{actual_spillover}] ➔ 🇰🇷 관련 섹터 선취매 우대 적용 중\n"
+                try:
+                    from cross_market_ssot import format_kr_spillover_telegram_line
+
+                    msg7 += format_kr_spillover_telegram_line(sys_config)
+                except Exception as _cm_ex:
+                    actual_spillover = _resolve_us_spillover_telegram_inner(sys_config)
+                    msg7 += (
+                        f"\n🌐 <b>한미 스필오버 연동:</b> 🇺🇸 [{actual_spillover}] "
+                        f"➔ 🇰🇷 선취매 (fallback · {_cm_ex})\n"
+                    )
             send_telegram_msg(msg7); time.sleep(1)
 
             # ---------------------------------------------------------

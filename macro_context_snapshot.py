@@ -49,6 +49,17 @@ def _spillover_fallback_enabled(cfg: Mapping[str, Any]) -> bool:
 
 def _resolve_effective_us_spillover_sector(cfg: Mapping[str, Any]) -> str:
     """리포트용 auto_forward 와 동일 우선순위의 '비교용' 문자열(캐시 접미사 제거)."""
+    try:
+        from cross_market_ssot import load_cross_market_ssot, MODE_US_ONLINE
+
+        ssot = load_cross_market_ssot(dict(cfg) if isinstance(cfg, dict) else {})
+        if ssot.get("mode") == MODE_US_ONLINE:
+            raw = str(ssot.get("kr_sector_std") or ssot.get("us_sector_raw") or "").strip()
+            if raw and raw not in ("분석중", "NONE"):
+                return _strip_cache_suffix(raw)
+    except Exception:
+        pass
+
     if not _spillover_fallback_enabled(cfg):
         raw = cfg.get("US_SPILLOVER_SECTOR")
         cur = str(raw).strip() if raw is not None else ""

@@ -228,14 +228,35 @@ def refresh_sector_spillover_state(
     if save:
         save_system_config(cfg)
 
-    return {"spillover": spill, "predicted_kr": kr, "predicted_us": us, "saved": save}
+    cross_pub: Dict[str, Any] = {}
+    try:
+        from cross_market_ssot import publish_us_market_snapshot
+
+        cross_pub = publish_us_market_snapshot(cfg, db_path=db_path, source="sector_spillover_refresh", save=True)
+    except Exception as ex:
+        cross_pub = {"error": str(ex)[:120]}
+
+    return {
+        "spillover": spill,
+        "predicted_kr": kr,
+        "predicted_us": us,
+        "saved": save,
+        "cross_market": cross_pub,
+    }
 
 
 def resolve_us_spillover_display(cfg: Dict[str, Any]) -> str:
     """
     리포트 [7/9] 스필오버 대괄호 문자열.
-    당일/휴일: LAST_GOOD + AS_OF (직전 영업일 캐시) 우선.
+    CROSS_MARKET_SSOT 우선 · stale 시 KR 단독 모멘텀 (강제 US 스캔 없음).
     """
+    try:
+        from cross_market_ssot import resolve_us_spillover_display_v2
+
+        return resolve_us_spillover_display_v2(cfg)
+    except Exception:
+        pass
+
     if not spillover_fallback_enabled(cfg):
         cur = str(cfg.get("US_SPILLOVER_SECTOR") or "").strip()
         if cur and cur not in ("분석중", "NONE", ""):
