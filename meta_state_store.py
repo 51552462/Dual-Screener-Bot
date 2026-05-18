@@ -1,8 +1,11 @@
 """
-MetaGovernor 상태 SSOT — system_config.sqlite (config_kv) + JSON 미러.
+MetaGovernor 상태 SSOT — 3중 저장 (불사조).
 
-- git clean 으로 JSON 만 삭제돼도 DB 스냅샷에서 복구
-- 리포트 직전 UNKNOWN/NEVER 이면 regime + governor 동기 재실행
+1) market_data.sqlite `meta_state_log` (백업·DB 이전과 동행)
+2) system_config.sqlite `META_GOVERNOR_STATE` (config_kv)
+3) meta_governor_state.json (레거시 미러)
+
+리포트 직전 UNKNOWN/NEVER 이면 regime + governor 동기 재실행.
 """
 from __future__ import annotations
 
@@ -126,17 +129,46 @@ def _save_json_mirror(state: Dict[str, Any], path: str) -> None:
         raise
 
 
+def _load_from_market_db() -> Optional[Dict[str, Any]]:
+    try:
+        from meta_state_market_db import load_meta_state_from_market_db
+
+        return load_meta_state_from_market_db()
+    except Exception as e:
+        logger.debug("meta_state_store: market_db load skip: %s", e)
+        return None
+
+
+def _save_to_market_db(state: Dict[str, Any]) -> None:
+    from meta_state_market_db import save_meta_state_to_market_db
+
+    save_meta_state_to_market_db(state)
+
+
+def _promote_valid_state(state: Dict[str, Any]) -> None:
+    """유효 스냅샷을 빠진 저장소로 백필."""
+    try:
+        _save_to_market_db(state)
+    except Exception as e:
+        logger.warning("meta_state_store: market_db backfill failed: %s", e)
+    try:
+        _save_to_sqlite(state)
+    except Exception as e:
+        logger.warning("meta_state_store: config_kv backfill failed: %s", e)
+
+
 def load_meta_governor_state_unified(path: Optional[str] = None) -> Dict[str, Any]:
     """
-    1) config_kv META_GOVERNOR_STATE
-    2) meta_governor_state.json
-    3) default + JSON→SQLite 마이그레이션(유효 스냅샷만)
+    1) market_data.meta_state_log (최신)
+    2) config_kv META_GOVERNOR_STATE
+    3) meta_governor_state.json
     """
-    sqlite_state = _load_from_sqlite()
-    if sqlite_state is not None and not is_meta_state_degraded(sqlite_state):
-        out = default_meta_state()
-        out.update(sqlite_state)
-        return out
+    for candidate in (_load_from_market_db(), _load_from_sqlite()):
+        if candidate is not None and not is_meta_state_degraded(candidate):
+            out = default_meta_state()
+            out.update(candidate)
+            _promote_valid_state(out)
+            return out
 
     p = path or meta_state_path()
     file_state = _load_json_mirror(p)
@@ -144,20 +176,21 @@ def load_meta_governor_state_unified(path: Optional[str] = None) -> Dict[str, An
     out.update(file_state)
 
     if not is_meta_state_degraded(out):
-        try:
-            _save_to_sqlite(out)
-            logger.info("meta_state_store: migrated JSON snapshot → SQLite %s", META_STATE_KV_KEY)
-        except Exception as e:
-            logger.warning("meta_state_store: sqlite migrate failed: %s", e)
-    elif sqlite_state is not None:
-        out = default_meta_state()
-        out.update(sqlite_state)
+        _promote_valid_state(out)
+    else:
+        degraded_cfg = _load_from_sqlite()
+        degraded_mkt = _load_from_market_db()
+        pick = degraded_cfg if degraded_cfg is not None else degraded_mkt
+        if isinstance(pick, dict):
+            out = default_meta_state()
+            out.update(pick)
     return out
 
 
 def save_meta_governor_state_unified(state: Dict[str, Any], path: Optional[str] = None) -> None:
-    """SQLite SSOT + JSON 미러(레거시·백업·수동 점검용)."""
+    """market_data + config_kv + JSON 삼중 저장."""
     p = path or meta_state_path()
+    _save_to_market_db(state)
     _save_to_sqlite(state)
     _save_json_mirror(state, p)
 

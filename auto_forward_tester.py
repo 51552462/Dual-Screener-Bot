@@ -2372,22 +2372,37 @@ def send_comprehensive_daily_report(
             # 📑 결과지 6: 4차원 DNA 정밀 부검 (ReportFeatureAnalyzer 승·패 대조)
             # ---------------------------------------------------------
             msg6 = f"{market_icon} <b>[6/9] 대박주/참사주 4차원 DNA 부검</b>\n"
-            winners = df_closed[df_closed["final_ret"] >= 5.0].head(50)
-            losers = df_closed[df_closed["final_ret"] <= -3.0].head(50)
-            try:
-                dna_an = ReportFeatureAnalyzer(sys_config=sys_config, meta=meta_state_daily)
-                dna_lines, _dna_ok, _dna_ins = dna_an.build_winner_loser_dna_contrast(
-                    winners_df=winners,
-                    losers_df=losers,
-                    top_n=2,
-                    min_per_group=2,
-                )
-                msg6 += "".join(dna_lines)
-            except Exception as _dna_e:
-                print(f"⚠️ [6/9] DNA 대조 예외: {_dna_e}")
+            _ret6 = pd.to_numeric(df_closed["final_ret"], errors="coerce")
+            winners = df_closed[_ret6 >= 5.0].head(50)
+            losers = df_closed[_ret6 <= -3.0].head(50)
+            n_closed_mkt = int(len(df_closed))
+            if n_closed_mkt == 0:
                 msg6 += (
-                    "<i>DNA 대조 분석을 일시 생략했습니다 (예외 또는 데이터 부족).</i>\n"
+                    f"<i>⚠️ {market} 청산 표본 0건 — DNA 대조 불가. "
+                    "스캐너·진입 파이프라인을 확인하세요.</i>\n"
+                    f"▪ 복구: <code>./factory.sh --scan-{market.lower()}</code> "
+                    f"→ <code>./factory.sh --daily-{market.lower()}</code>\n"
                 )
+            elif winners.empty and losers.empty:
+                msg6 += (
+                    f"<i>⚠️ {market} 청산 {n_closed_mkt}건 중 대박(≥5%)/참사(≤-3%) 표본 없음 — "
+                    "횡보·소폭 손익 구간. 매매 중단이 아니면 임계 미충족일 수 있습니다.</i>\n"
+                )
+            else:
+                try:
+                    dna_an = ReportFeatureAnalyzer(sys_config=sys_config, meta=meta_state_daily)
+                    dna_lines, _dna_ok, _dna_ins = dna_an.build_winner_loser_dna_contrast(
+                        winners_df=winners,
+                        losers_df=losers,
+                        top_n=2,
+                        min_per_group=2,
+                    )
+                    msg6 += "".join(dna_lines)
+                except Exception as _dna_e:
+                    print(f"⚠️ [6/9] DNA 대조 예외: {_dna_e}")
+                    msg6 += (
+                        "<i>DNA 대조 분석을 일시 생략했습니다 (예외 또는 데이터 부족).</i>\n"
+                    )
             send_telegram_msg(msg6); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -2480,10 +2495,13 @@ def send_comprehensive_daily_report(
 
             dm = build_nway_deathmatch(df_closed, sys_config)
             maybe_apply_deathmatch_allocation(dm, sys_config)
+            _dm_label = f"{market} 청산 전체 · N-Way 로직군"
+            if not dm.arms and n_closed_mkt == 0:
+                _dm_label += " (청산 0 — scan 후 재확인)"
             msg9 = format_nway_deathmatch_telegram(
                 market_icon,
                 dm,
-                lookback_label=f"{market} 청산 전체",
+                lookback_label=_dm_label,
             )
             send_telegram_msg(msg9); time.sleep(1)
 

@@ -121,6 +121,12 @@ def _run_meta_governor_cycle(db_path: str) -> str:
     gov = MetaGovernor(state_path=meta_state_path())
     out = gov.run_governor_cycle(ctx)
     try:
+        from meta_state_market_db import ensure_meta_state_log_schema
+
+        ensure_meta_state_log_schema()
+    except Exception:
+        pass
+    try:
         from meta_governor_consumer import invalidate_meta_state_cache
 
         invalidate_meta_state_cache()
