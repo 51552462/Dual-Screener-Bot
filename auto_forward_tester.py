@@ -340,14 +340,19 @@ def _strategy_colosseum_brief(db_path=None):
 
     dynamic_kr = False
     dynamic_us = False
+    baseline_kr = pd.DataFrame()
+    baseline_us = pd.DataFrame()
+    kr_insights: list = []
+    us_insights: list = []
+    meta_st: dict = {}
     try:
-        sys_cfg = load_system_config()
         meta_st = load_meta_state_resolved()
         analyzer = ReportFeatureAnalyzer(sys_config=sys_cfg, meta=meta_st)
         if kr_top_logic and not kr_ace.empty and len(kr_ace) >= 3:
             _, baseline_kr, _, _ = _ace_analysis_frames(
                 df, "KR", kr_top_logic, window_days=window_days
             )
+            kr_insights = analyzer.collect_ace_feature_insights(kr_ace, baseline_kr)
             part_lines, ok_kr = analyzer.build_ace_deep_dive_lines(
                 league="KR",
                 logic_label=_esc(kr_top_logic),
@@ -366,6 +371,7 @@ def _strategy_colosseum_brief(db_path=None):
             _, baseline_us, _, _ = _ace_analysis_frames(
                 df, "US", us_top_logic, window_days=window_days
             )
+            us_insights = analyzer.collect_ace_feature_insights(us_ace, baseline_us)
             part_lines, ok_us = analyzer.build_ace_deep_dive_lines(
                 league="US",
                 logic_label=_esc(us_top_logic),
@@ -393,6 +399,35 @@ def _strategy_colosseum_brief(db_path=None):
         lines.append(
             f"💡 US 요약: 섹터 {us_sec} · 동적 피처 스캔 표본 부족(청산·수익 거래 확대 후 재산출).\n"
         )
+
+    try:
+        from ace_evolution_refresh import refresh_ace_evolution_from_colosseum_context
+        from ace_evolution_telegram import format_ace_dna_block
+
+        playbooks = refresh_ace_evolution_from_colosseum_context(
+            kr_logic=kr_top_logic or "",
+            us_logic=us_top_logic or "",
+            kr_ace=kr_ace,
+            us_ace=us_ace,
+            kr_baseline=baseline_kr,
+            us_baseline=baseline_us,
+            kr_insights=kr_insights,
+            us_insights=us_insights,
+            kr_sec=kr_sec,
+            us_sec=us_sec,
+            kr_anchor=kr_anchor or data_anchor,
+            us_anchor=us_anchor or data_anchor,
+            window_days=window_days,
+            sys_config=sys_cfg,
+            meta=meta_st,
+            df_closed_all=df,
+        )
+        if playbooks.get("KR"):
+            lines.append(format_ace_dna_block(playbooks["KR"]))
+        if playbooks.get("US"):
+            lines.append(format_ace_dna_block(playbooks["US"]))
+    except Exception as _ae_ex:
+        lines.append(f"<i>⚠️ AceEvolution 갱신 스킵: {_esc(str(_ae_ex)[:100])}</i>\n")
 
     return "".join(lines)
 
@@ -2770,6 +2805,20 @@ def send_comprehensive_daily_report(
                 dm,
                 lookback_label=_dm_label,
             )
+            try:
+                from ace_deathmatch_bridge import (
+                    build_ace_deathmatch_comparison,
+                    format_ace_deathmatch_telegram_block,
+                )
+                from ace_evolution_store import load_playbook
+
+                _ace_pb = load_playbook(market, sys_config)
+                _ace_dm = build_ace_deathmatch_comparison(
+                    df_closed, market=market, playbook=_ace_pb
+                )
+                msg9 += format_ace_deathmatch_telegram_block(_ace_dm)
+            except Exception as _adm_ex:
+                msg9 += f"\n<i>⚠️ Ace·데스매치 연동 스킵: {html_escape(str(_adm_ex)[:80], quote=False)}</i>\n"
             send_telegram_msg(msg9); time.sleep(1)
 
             conn.close()

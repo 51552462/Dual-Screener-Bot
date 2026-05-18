@@ -487,6 +487,36 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
     if ENABLE_MACRO_SYNERGY_WEIGHTING_KEY not in cfg:
         cfg[ENABLE_MACRO_SYNERGY_WEIGHTING_KEY] = False
         added.add(ENABLE_MACRO_SYNERGY_WEIGHTING_KEY)
+    if "ENABLE_ACE_EVOLUTION_WEIGHTING" not in cfg:
+        cfg["ENABLE_ACE_EVOLUTION_WEIGHTING"] = False
+        added.add("ENABLE_ACE_EVOLUTION_WEIGHTING")
+    if "ACE_EVOLUTION_FORCE_OBSERVE" not in cfg:
+        cfg["ACE_EVOLUTION_FORCE_OBSERVE"] = True
+        added.add("ACE_EVOLUTION_FORCE_OBSERVE")
+    if "ACE_EVOLUTION_TTL_DAYS_KR" not in cfg:
+        cfg["ACE_EVOLUTION_TTL_DAYS_KR"] = 1
+        added.add("ACE_EVOLUTION_TTL_DAYS_KR")
+    if "ACE_EVOLUTION_TTL_DAYS_US" not in cfg:
+        cfg["ACE_EVOLUTION_TTL_DAYS_US"] = 5
+        added.add("ACE_EVOLUTION_TTL_DAYS_US")
+    if "ACE_EVOLUTION_MULT_MIN" not in cfg:
+        cfg["ACE_EVOLUTION_MULT_MIN"] = 0.85
+        added.add("ACE_EVOLUTION_MULT_MIN")
+    if "ACE_EVOLUTION_MULT_MAX_DEFAULT" not in cfg:
+        cfg["ACE_EVOLUTION_MULT_MAX_DEFAULT"] = 1.08
+        added.add("ACE_EVOLUTION_MULT_MAX_DEFAULT")
+    if "ACE_EVOLUTION_MULT_MAX_STRONG" not in cfg:
+        cfg["ACE_EVOLUTION_MULT_MAX_STRONG"] = 1.15
+        added.add("ACE_EVOLUTION_MULT_MAX_STRONG")
+    if "ACE_EVOLUTION_MULT_MAX_SUPER" not in cfg:
+        cfg["ACE_EVOLUTION_MULT_MAX_SUPER"] = 1.20
+        added.add("ACE_EVOLUTION_MULT_MAX_SUPER")
+    if "ACE_EVOLUTION_KR_FAST_DECAY_WR_PCT" not in cfg:
+        cfg["ACE_EVOLUTION_KR_FAST_DECAY_WR_PCT"] = 40.0
+        added.add("ACE_EVOLUTION_KR_FAST_DECAY_WR_PCT")
+    if "ACE_EVOLUTION_US_DECAY_WR_PCT" not in cfg:
+        cfg["ACE_EVOLUTION_US_DECAY_WR_PCT"] = 45.0
+        added.add("ACE_EVOLUTION_US_DECAY_WR_PCT")
     return added
 
 

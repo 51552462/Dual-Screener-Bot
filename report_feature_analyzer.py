@@ -643,6 +643,22 @@ class ReportFeatureAnalyzer:
         lines.append(self._contrast_narrative_paragraph(insights) + "\n")
         return lines, True, insights
 
+    def collect_ace_feature_insights(
+        self,
+        ace_df: pd.DataFrame,
+        baseline_df: pd.DataFrame,
+    ) -> List[FeatureInsight]:
+        """AceEvolution FactPack·LLM용 통계 insight 목록."""
+        cols = self._columns_to_scan(ace_df)
+        if ace_df.empty or not cols:
+            return []
+        base = baseline_df
+        if base is None or base.empty:
+            base = pd.DataFrame(columns=ace_df.columns)
+        common = self._rank_features_commonality(ace_df, cols)
+        disc = self._rank_features_discrimination(ace_df, base, cols)
+        return self._merge_top_insights(ace_df, base, cols, common, disc)
+
     def build_ace_deep_dive_lines(
         self,
         *,
