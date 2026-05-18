@@ -98,8 +98,9 @@ def _sectors_soft_match(spill: str, stock_sector: str) -> bool:
 
 def _read_latest_daily_sentiment() -> tuple[Optional[float], Optional[str], str]:
     """news_data.sqlite daily_sentiment — 스캐너는 sentiment_miner 를 import 하지 않고 경로만 동일 규약 사용."""
-    news_db_dir = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot")
-    path = os.path.join(news_db_dir, "news_data.sqlite")
+    from news_data_paths import news_db_path
+
+    path = news_db_path()
     if not os.path.isfile(path):
         return None, None, path
     try:

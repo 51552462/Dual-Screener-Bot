@@ -113,6 +113,14 @@ try:
 except Exception:
     pass
 
+try:
+    from factory_artifact_guard import ensure_factory_artifacts
+
+    _artifact_heal = ensure_factory_artifacts()
+    print(f"🩹 [Self-Heal] boot artifact guard: {_artifact_heal}")
+except Exception as _artifact_err:
+    print(f"⚠️ [Self-Heal] boot artifact guard skipped: {_artifact_err}")
+
 # ==========================================
 # 🛑 주말 자동 휴장 스마트 차단기
 # ==========================================

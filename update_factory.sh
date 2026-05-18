@@ -29,7 +29,7 @@ if [[ ! -d "$INSTALL_ROOT" ]]; then
   exit 1
 fi
 
-# [1/6] git pull 전: 모든 주요 *.sqlite 를 타임스탬프 디렉터리에 백업 (데이터 유실 방지)
+# [1/6] git pull 전: *.sqlite + 핵심 파생 상태 파일을 타임스탬프 디렉터리에 백업
 _dante_pre_update_sqlite_backup() {
   local stamp dest f base extra_dir
   stamp="$(date -u +%Y%m%d_%H%M%S_utc)"
@@ -45,6 +45,34 @@ _dante_pre_update_sqlite_backup() {
     fi
   }
 
+  _plain_copy_if_exists() {
+    local src="$1" out="$2"
+    if [[ -f "$src" ]]; then
+      cp -a -- "$src" "$out"
+      echo "  copied artifact: $(basename "$out")"
+    fi
+  }
+
+  _backup_artifacts_from_dir() {
+    local dir="$1" prefix="${2:-}"
+    [[ -d "$dir" ]] || return 0
+    local rel
+    for rel in \
+      Supernova_Flow_Tracking_Master.csv \
+      meta_governor_state.json \
+      validated_live_mutants.json \
+      system_config.json \
+      news_data.sqlite; do
+      if [[ -f "${dir}/${rel}" ]]; then
+        if [[ -n "$prefix" ]]; then
+          _plain_copy_if_exists "${dir}/${rel}" "${dest}/${prefix}${rel}"
+        else
+          _plain_copy_if_exists "${dir}/${rel}" "${dest}/${rel}"
+        fi
+      fi
+    done
+  }
+
   if [[ -d "$INSTALL_ROOT" ]]; then
     shopt -s nullglob
     for f in "$INSTALL_ROOT"/*.sqlite; do
@@ -53,6 +81,7 @@ _dante_pre_update_sqlite_backup() {
       _sqlite_copy_one "$f" "$dest/$base"
     done
     shopt -u nullglob
+    _backup_artifacts_from_dir "$INSTALL_ROOT"
   fi
 
   extra_dir=""
@@ -88,9 +117,10 @@ for line in open(p, encoding='utf-8', errors='ignore'):
         _sqlite_copy_one "$f" "$dest/$base"
       done
       shopt -u nullglob
+      _backup_artifacts_from_dir "$extra_dir" "dataroot__"
     fi
   fi
-  echo "  pre-update sqlite backup → $dest"
+  echo "  pre-update backup → $dest (sqlite + artifacts)"
 }
 
 echo "[1/6] pre-update SQLite 백업 → /var/backups/dante-pre-update/"

@@ -16,6 +16,7 @@ FACTORY_USER=ubuntu
 0  15 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
 
 # --- KR post-close audit (after 15:30 KST settle) ---
+# Pipeline order: artifact_guard → sentiment_mining → track → deep_dive → comprehensive_report → overseer
 35 16 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-kr
 
 # --- US session scans (example: Tue–Sat KST mornings) ---

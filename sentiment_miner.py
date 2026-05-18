@@ -28,9 +28,12 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-# ── 격리 DB ─────────────────────────────────────────────────────────────
-NEWS_DB_DIR = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot")
-NEWS_DB_PATH = os.path.join(NEWS_DB_DIR, "news_data.sqlite")
+# ── 격리 DB (factory_data_dir SSOT — market_data 와 동일 데이터 루트) ─────
+from factory_data_paths import factory_data_dir
+from news_data_paths import news_db_path
+
+NEWS_DB_DIR = factory_data_dir()
+NEWS_DB_PATH = news_db_path()
 
 DEFAULT_HEADERS = {
     "User-Agent": (

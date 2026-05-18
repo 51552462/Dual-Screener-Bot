@@ -377,13 +377,25 @@ def build_lifecycle_report_block(
     meta: Optional[Dict[str, Any]] = None,
     sys_config: Optional[Dict[str, Any]] = None,
     now: datetime,
+    auto_heal_meta: bool = True,
 ) -> LifecycleReportBlock:
     """
     META_STRATEGY_REGISTRY 를 순회해 LIVE/COOLED/CANDIDATE 를 집계하고,
     오토파일럿 앵커 일령은 (1) 설정·메타의 명시 기준일 → (2) LIVE 편대의 최소 연령
     (가장 최근 updated_at 에 가까운 전략 기준, 일 환산) 순으로 결정한다.
     """
-    m = meta if isinstance(meta, dict) else {}
+    m: Dict[str, Any]
+    if auto_heal_meta:
+        try:
+            from factory_artifact_guard import ensure_meta_governor_state
+            from meta_governor_consumer import load_meta_state_resolved
+
+            ensure_meta_governor_state()
+            m = load_meta_state_resolved()
+        except Exception:
+            m = meta if isinstance(meta, dict) else {}
+    else:
+        m = meta if isinstance(meta, dict) else {}
     reg_raw = m.get("META_STRATEGY_REGISTRY")
     reg: List[Dict[str, Any]] = [r for r in reg_raw if isinstance(r, dict)] if isinstance(reg_raw, list) else []
 
@@ -513,6 +525,11 @@ def format_lifecycle_section_html(
         narrative = live_clause + "."
     elif extras:
         narrative = " 또한 ".join(extras)
+    elif str(block.governor_last_run_status or "").upper() in ("NEVER", "", "UNKNOWN"):
+        narrative = (
+            "MetaGovernor 상태가 미기동(NEVER)입니다. "
+            "factory_artifact_guard·meta_governor.py 로 레지스트리를 재생성하십시오."
+        )
     else:
         narrative = (
             "레지스트리에 LIVE·CANDIDATE 배치가 없거나 메타 스냅샷이 비어 있습니다. "

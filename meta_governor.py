@@ -839,7 +839,9 @@ class MetaGovernor:
             picks = {}
         codes = list(picks.keys())[:120]
         sent: Dict[str, Any] = {}
-        news_p = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "news_data.sqlite")
+        from news_data_paths import news_db_path
+
+        news_p = news_db_path()
         try:
             if os.path.isfile(news_p):
                 uri = f"file:{news_p.replace(chr(92), '/')}?mode=ro"

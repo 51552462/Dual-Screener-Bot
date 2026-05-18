@@ -56,3 +56,35 @@ def factory_data_dir() -> str:
             return p
 
     return legacy
+
+
+def install_root() -> str:
+    """코드·기본 meta_governor_state.json 위치 (저장소 루트)."""
+    raw = (os.environ.get("INSTALL_ROOT") or "").strip()
+    if raw:
+        return os.path.abspath(os.path.expanduser(raw))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def flow_csv_path() -> str:
+    """K-Means / 감사관 마스터 플로우 CSV (데이터 루트)."""
+    return os.path.join(factory_data_dir(), "Supernova_Flow_Tracking_Master.csv")
+
+
+def meta_governor_state_path() -> str:
+    """MetaGovernor 동적 상태 JSON (환경변수로 덮어쓰기 가능)."""
+    env = (os.environ.get("META_GOVERNOR_STATE_PATH") or "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    return os.path.join(install_root(), "meta_governor_state.json")
+
+
+def system_config_json_path() -> str:
+    sc = (os.environ.get("SYSTEM_CONFIG_PATH") or "").strip()
+    if sc:
+        return os.path.abspath(os.path.expanduser(sc))
+    return os.path.join(factory_data_dir(), "system_config.json")
+
+
+def validated_live_mutants_path() -> str:
+    return os.path.join(install_root(), "validated_live_mutants.json")

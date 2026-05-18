@@ -34,8 +34,8 @@ Usage: ./factory.sh <flag>
 
   --scan-kr       supernova KR funnel + optional kr bowl scan
   --scan-us       supernova US funnel + optional usa bowl scan
-  --daily-kr      track + deep dive KR + optional AI overseer
-  --daily-us      track + deep dive US + optional AI overseer
+  --daily-kr      guard → sentiment → track → deep dive → comprehensive → overseer (KR)
+  --daily-us      guard → sentiment → track → deep dive → comprehensive → overseer (US)
   --daily         full daily chain (KR then US, single overseer)
   --weekly        weekly Flow master report + baseline persist
 

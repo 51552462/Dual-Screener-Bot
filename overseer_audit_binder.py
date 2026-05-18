@@ -489,17 +489,25 @@ def detect_audit_anomalies(
             ),
         )
 
-    # STANDBY_IDLE — neutral only, no praise
-    if _is_standby_regime(rk_meta) and n_closed == 0 and n_entry == 0:
+    # STANDBY_IDLE — Governor 미기동일 때만 (UNKNOWN 국면·무거래는 매매 중지 사유 아님)
+    gov_st = str(dossier.meta_governor_last_run_status or "").upper()
+    if (
+        _is_standby_regime(rk_meta)
+        and n_closed == 0
+        and n_entry == 0
+        and gov_st in ("NEVER", "")
+        and not dossier.meta_governor_last_run_at
+    ):
         note_esc = html.escape(dossier.meta_regime_action_notes or "—", quote=False)
         _add(
-            "STANDBY_IDLE",
+            "META_GOVERNOR_STALE",
             "WARN",
-            "STANDBY/대기 국면 — 당일 매매 없음 (오류 단정 금지)",
+            "MetaGovernor 미실행/초기 상태 — 당일 무거래와 혼동 금지",
             (
+                f"Governor status=<b>{html.escape(gov_st or 'NEVER', quote=False)}</b> · "
                 f"META_REGIME=<b>{html.escape(rk_meta, quote=False)}</b> · "
                 f"notes=<i>{note_esc}</i>. "
-                "표본·스필오버·VIX·독성태그 중 무엇이 게이트했는지 추적."
+                "<i>factory_artifact_guard 또는 meta_governor.py 실행 여부 확인.</i>"
             ),
         )
 
@@ -541,11 +549,22 @@ def detect_audit_anomalies(
             ),
         )
 
+    # 파생 CSV — DB 손상이 아니면 WARN (자가 치유 대상)
     if "Missing" in dossier.csv_status:
         _add(
-            "CSV_MISSING",
-            "CRITICAL",
-            "마스터 CSV 누락",
+            "CSV_DERIVED_MISSING",
+            "WARN",
+            "마스터 CSV 파생 파일 없음 (DB SSOT는 유지)",
+            (
+                f"{html.escape(dossier.csv_status, quote=False)} · "
+                "<i>매매 중지 사유 아님 — factory_artifact_guard 가 DB에서 재생성 시도.</i>"
+            ),
+        )
+    elif dossier.csv_status.startswith("Read error"):
+        _add(
+            "CSV_READ_ERROR",
+            "WARN",
+            "마스터 CSV 읽기 오류",
             html.escape(dossier.csv_status, quote=False),
         )
 

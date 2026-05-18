@@ -37,9 +37,12 @@ from overseer_audit_binder import (
 TELEGRAM_TOKEN = telegram_env.get_overseer_token()
 TELEGRAM_CHAT_ID = telegram_env.get_overseer_chat_id()
 
-DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-CSV_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+from factory_data_paths import flow_csv_path, system_config_json_path
+from market_db_paths import market_db_read_path
+
+DB_PATH = market_db_read_path()
+CONFIG_PATH = system_config_json_path()
+CSV_PATH = flow_csv_path()
 
 
 def load_config(max_retries=5):
@@ -190,10 +193,19 @@ def gather_daily_system_facts():
 def run_ai_auditor():
     """Rules-first 감사(Anomaly) → SSOT 본문 → 선택적 LLM 해석."""
     print("👁️ [AI 최고 감시자] Rules-first 감사 스캔 중...")
+    try:
+        from factory_artifact_guard import ensure_factory_artifacts
+
+        heal = ensure_factory_artifacts()
+        print(f"🩹 [Self-Heal] pre-audit artifacts: {heal}")
+    except Exception as e:
+        print(f"⚠️ [Self-Heal] pre-audit guard skipped: {e}")
     cfg = load_config()
     try:
+        from factory_artifact_guard import ensure_meta_governor_state
         from meta_governor_consumer import load_meta_state_resolved
 
+        ensure_meta_governor_state()
         meta = load_meta_state_resolved()
     except Exception as e:
         print(f"⚠️ meta load: {e}")
