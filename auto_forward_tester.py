@@ -747,29 +747,17 @@ def _spillover_fallback_enabled(sys_config: dict) -> bool:
 def _resolve_us_spillover_telegram_inner(sys_config: dict) -> str:
     """
     [7/9] 대괄호 안에 넣을 미국 주도 섹터 문자열.
-    공식 US_SPILLOVER_SECTOR 우선; 비어있거나 '분석중'이면 LAST_GOOD + 캐시 일자.
+    sector_spillover_refresh.resolve_us_spillover_display 위임 (휴일 LAST_GOOD 폴백).
     """
-    if not _spillover_fallback_enabled(sys_config):
-        raw = sys_config.get("US_SPILLOVER_SECTOR")
-        cur = str(raw).strip() if raw is not None else ""
-        if cur and cur != "분석중":
-            return cur
-        return "[분석 대기]"
+    try:
+        from sector_spillover_refresh import resolve_us_spillover_display
 
-    raw = sys_config.get("US_SPILLOVER_SECTOR")
-    cur = str(raw).strip() if raw is not None else ""
-    if cur and cur != "분석중":
-        return cur
-
-    lg = sys_config.get("US_SPILLOVER_SECTOR_LAST_GOOD")
-    asof = sys_config.get("US_SPILLOVER_SECTOR_AS_OF")
-    lg_s = str(lg).strip() if lg is not None else ""
-    asof_s = str(asof).strip() if asof is not None else ""
-    if lg_s:
-        if asof_s:
-            return f"{lg_s} (캐시 기준: {asof_s})"
-        return f"{lg_s} (캐시 기준: 날짜 미기록)"
-    return "[분석 대기]"
+        return resolve_us_spillover_display(sys_config)
+    except Exception:
+        lg = str(sys_config.get("US_SPILLOVER_SECTOR_LAST_GOOD") or "").strip()
+        if lg and lg not in ("분석중", "NONE", ""):
+            return lg
+        return "데이터 없음"
 
 
 def _v28_add_norm_day_col(df: pd.DataFrame) -> pd.DataFrame:
@@ -810,58 +798,42 @@ def _v28_us_label_with_last_good_cache(
     sys_config: dict,
     map_standard_sector,
 ) -> str:
-    """US 칸만: 표본 없음일 때 AS_OF·LAST_GOOD과 날짜가 맞으면 설정 캐시 표기(휴장으로 위장하지 않음)."""
+    """US 칸: 당일 표본 없을 때 LAST_GOOD 캐시(직전 영업일) — 주말에도 금요일 섹터 표시."""
     if base_label != "데이터 없음":
         return base_label
     if not _spillover_fallback_enabled(sys_config):
         return base_label
-    asof = str(sys_config.get("US_SPILLOVER_SECTOR_AS_OF") or "").strip()[:10]
-    if asof != day:
-        return base_label
     lg = sys_config.get("US_SPILLOVER_SECTOR_LAST_GOOD")
     lg_s = str(lg).strip() if lg is not None else ""
-    if not lg_s:
+    if not lg_s or lg_s in ("분석중", "NONE"):
+        return base_label
+    asof = str(sys_config.get("US_SPILLOVER_SECTOR_AS_OF") or "").strip()[:10]
+    if asof and asof > day:
         return base_label
     ms = map_standard_sector(lg_s)
     if not ms or ms == "기타/혼합":
         return base_label
-    return f"캐시·{ms}"
+    if asof == day:
+        return f"캐시·{ms}"
+    return f"캐시·{ms}({asof[5:] if len(asof) >= 10 else asof})"
 
 
 def _deathmatch_min_n(sys_config: dict) -> int:
-    """[9/9] A/B 데스매치 비교에 필요한 축당 최소 청산 건수 (관제탑 기본 5)."""
-    v = sys_config.get("DEATHMATCH_MIN_TRADES_PER_ARM", 5)
-    try:
-        n = int(v)
-    except (TypeError, ValueError):
-        n = 5
-    return max(1, n)
+    from deathmatch_report import deathmatch_min_n
+
+    return deathmatch_min_n(sys_config)
 
 
-def _fmt_deathmatch_ret(ret: float, n_closed: int) -> str:
-    if n_closed <= 0:
-        return "산출 불가 (청산 0건)"
-    return f"{float(ret):+.2f}%"
+def _fmt_deathmatch_ret(ret, n_closed: int, *, n_valid=None) -> str:
+    from deathmatch_report import fmt_deathmatch_ret
+
+    return fmt_deathmatch_ret(ret, n_closed, n_valid=n_valid)
 
 
-def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret: float, sn_ret: float, n_min: int) -> str:
-    """
-    N건 미만이면 '우위/방어/진화' 등 판정성 문구 없이 중립 메시지만 반환.
-    양 축 N 이상일 때만 평균 수익률로 서술적 비교.
-    """
-    ok_a = n_std >= n_min
-    ok_b = n_sn >= n_min
-    if not ok_a and not ok_b:
-        return "거래 표본 부족 (양측 A/B 비교 보류)"
-    if not ok_a and ok_b:
-        return "거래 표본 부족 (오리지널 관망 대기 — A/B 대결 판정 보류)"
-    if ok_a and not ok_b:
-        return "거래 표본 부족 (초신성 관망 대기)"
-    if sn_ret > std_ret:
-        return "표본 충족: 청산 평균은 초신성(B)이 오리지널(A)보다 높음"
-    if sn_ret < std_ret:
-        return "표본 충족: 청산 평균은 오리지널(A)이 초신성(B)보다 높음"
-    return "표본 충족: 양측 청산 평균 동일"
+def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret, sn_ret, n_min: int) -> str:
+    from deathmatch_report import deathmatch_ab_verdict
+
+    return deathmatch_ab_verdict(n_std, n_sn, std_ret, sn_ret, n_min)
 
 
 # 💡 [시스템 연결] 관제탑 설정 — 동시 쓰기 완화(파일 락 + update_config)
@@ -2047,8 +2019,40 @@ def track_daily_positions(market):
                     f"조치: 신규 진입 전면 차단(현금 관망) 모드로 전환"
                 )
 
-def send_comprehensive_daily_report():
+def send_comprehensive_daily_report(
+    *,
+    refresh_sentiment: bool = True,
+    refresh_sector_spillover: bool = True,
+    refresh_meta_governor: bool = True,
+):
     """[V104.1] 국가별 9분할 정밀 리포트 (순환매 및 스필오버 복원 완료)"""
+    if refresh_meta_governor:
+        try:
+            from factory_artifact_guard import ensure_meta_governor_state
+
+            _meta_heal = ensure_meta_governor_state()
+            print(f"🛰️ [일일 통합 리포트] MetaGovernor 자가 치유: {_meta_heal}")
+        except Exception as _mg_e:
+            print(f"⚠️ [일일 통합 리포트] MetaGovernor 치유 실패(리포트는 계속): {_mg_e}")
+
+    if refresh_sector_spillover:
+        try:
+            from sector_spillover_refresh import refresh_sector_spillover_state
+
+            _sec_out = refresh_sector_spillover_state(save=True)
+            print(f"🔄 [일일 통합 리포트] 섹터·스필오버 선행 갱신: {_sec_out}")
+        except Exception as _sec_e:
+            print(f"⚠️ [일일 통합 리포트] 섹터·스필오버 갱신 실패(리포트는 계속): {_sec_e}")
+
+    if refresh_sentiment:
+        try:
+            from sentiment_miner import run_sentiment_mining
+
+            _sent_out = run_sentiment_mining()
+            print(f"🧠 [일일 통합 리포트] 센티먼트 선행 갱신: {_sent_out}")
+        except Exception as _sent_e:
+            print(f"⚠️ [일일 통합 리포트] 센티먼트 선행 갱신 실패(리포트는 계속): {_sent_e}")
+
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
@@ -2115,19 +2119,20 @@ def send_comprehensive_daily_report():
         pass
 
     try:
-        news_db = os.path.join(os.path.dirname(DB_PATH), 'news_data.sqlite')
-        if os.path.exists(news_db):
-            conn_news = sqlite3.connect(f"file:{news_db}?mode=ro", uri=True, check_same_thread=False)
-            try:
-                row = conn_news.execute(
-                    "SELECT top_keyword_1, top_keyword_2, top_keyword_3, sentiment_score FROM daily_sentiment ORDER BY date DESC LIMIT 1"
-                ).fetchone()
-                if row:
-                    satellite_brief += f" ▪️ 🧠 센티먼트: {row[0]}, {row[1]}, {row[2]} (온도 {row[3]}점)\n"
-            finally:
-                conn_news.close()
+        from news_data_paths import (
+            assert_sentiment_fresh_for_report,
+            format_sentiment_satellite_line,
+            today_kst_str,
+        )
+
+        if refresh_sentiment and not assert_sentiment_fresh_for_report():
+            print(
+                f"⚠️ [일일 통합 리포트] 당일({today_kst_str()}) 센티먼트 미확인 — "
+                "리포트에 데이터 없음/스냅샷 날짜로 표시"
+            )
+        satellite_brief += format_sentiment_satellite_line(hide_stale_keywords=True)
     except Exception:
-        pass
+        satellite_brief += " ▪️ 🧠 센티먼트: 데이터 없음\n"
 
     # 🧠 AI 관제탑 시너지 판단 엔진 (위성·거시 지표 종합)
     strategy_insight = "\n💡 <b>[AI 관제탑 전략 브리핑]</b>\n"
@@ -2418,7 +2423,13 @@ def send_comprehensive_daily_report():
 
                 msg7 += f"🔥 <b>현재 주도 섹터:</b> {current_sec} ({current_streak}일째 체류 중)\n"
                 # 👇👇 [추가된 모니터링 로직] 👇👇
-                msg7 += f"🔮 <b>다음 예측 섹터:</b> {sys_config.get(f'PREDICTED_NEXT_SECTOR_{market}', '분석중')}\n"
+                try:
+                    from sector_spillover_refresh import resolve_predicted_sector_display
+
+                    _pred = resolve_predicted_sector_display(sys_config, market)
+                except Exception:
+                    _pred = str(sys_config.get(f"PREDICTED_NEXT_SECTOR_{market}") or "데이터 없음")
+                msg7 += f"🔮 <b>다음 예측 섹터:</b> {_pred}\n"
                 msg7 += f"⚡ <b>베팅 어드밴티지:</b> {'🔥활성화(200%)' if sys_config.get('ROTATION_ADVANTAGE_ACTIVE') else '정상(100%)'}\n\n"
                 
                 msg7 += "▪️ <b>섹터별 자금 체류 시간(수명):</b>\n"
@@ -2461,20 +2472,19 @@ def send_comprehensive_daily_report():
             # ---------------------------------------------------------
             # 📑 결과지 9: 시스템 데스매치 결산
             # ---------------------------------------------------------
-            std_df = df_closed[df_closed['sig_type'].str.contains('STANDARD', na=False)]
-            sn_df = df_closed[df_closed['sig_type'].str.contains('SUPERNOVA', na=False)]
-            n_std = int(len(std_df))
-            n_sn = int(len(sn_df))
-            std_ret = float(std_df['final_ret'].mean()) if n_std > 0 else 0.0
-            sn_ret = float(sn_df['final_ret'].mean()) if n_sn > 0 else 0.0
-            n_dm = _deathmatch_min_n(sys_config)
-            verdict = _deathmatch_ab_verdict(n_std, n_sn, std_ret, sn_ret, n_dm)
+            from deathmatch_report import (
+                build_nway_deathmatch,
+                format_nway_deathmatch_telegram,
+                maybe_apply_deathmatch_allocation,
+            )
 
-            msg9 = f"{market_icon} <b>[9/9] 시스템 데스매치 결산</b>\n"
-            msg9 += f"📎 청산 표본: 오리지널(A) {n_std}건 | 초신성(B) {n_sn}건 (비교 최소 각 {n_dm}건)\n"
-            msg9 += f"⚔️ 오리지널(A) 평균 성적: {_fmt_deathmatch_ret(std_ret, n_std)}\n"
-            msg9 += f"⚔️ 초신성(B) 평균 성적: {_fmt_deathmatch_ret(sn_ret, n_sn)}\n"
-            msg9 += f"💡 결론: {verdict}\n"
+            dm = build_nway_deathmatch(df_closed, sys_config)
+            maybe_apply_deathmatch_allocation(dm, sys_config)
+            msg9 = format_nway_deathmatch_telegram(
+                market_icon,
+                dm,
+                lookback_label=f"{market} 청산 전체",
+            )
             send_telegram_msg(msg9); time.sleep(1)
 
             conn.close()

@@ -463,9 +463,21 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
     if "US_SPILLOVER_SECTOR_AS_OF" not in cfg:
         cfg["US_SPILLOVER_SECTOR_AS_OF"] = ""
         added.add("US_SPILLOVER_SECTOR_AS_OF")
+    for mkt in ("KR", "US"):
+        for suffix in ("_AS_OF", "_FROM", "_LAST_GOOD", "_LAST_GOOD_AS_OF"):
+            k = f"PREDICTED_NEXT_SECTOR_{mkt}{suffix}"
+            if k not in cfg:
+                cfg[k] = ""
+                added.add(k)
     if "DEATHMATCH_MIN_TRADES_PER_ARM" not in cfg:
         cfg["DEATHMATCH_MIN_TRADES_PER_ARM"] = 5
         added.add("DEATHMATCH_MIN_TRADES_PER_ARM")
+    if "DEATHMATCH_APPLY_ALLOCATION" not in cfg:
+        cfg["DEATHMATCH_APPLY_ALLOCATION"] = 0
+        added.add("DEATHMATCH_APPLY_ALLOCATION")
+    if "DEATHMATCH_BOTTOM_PCT" not in cfg:
+        cfg["DEATHMATCH_BOTTOM_PCT"] = 0.2
+        added.add("DEATHMATCH_BOTTOM_PCT")
     if "PENDING_MUTANTS" not in cfg:
         cfg["PENDING_MUTANTS"] = {"strategies": [], "updated_at": ""}
         added.add("PENDING_MUTANTS")

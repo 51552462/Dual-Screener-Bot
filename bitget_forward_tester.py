@@ -98,10 +98,10 @@ def _deathmatch_min_n_cfg(cfg: dict) -> int:
     return max(1, n)
 
 
-def _fmt_deathmatch_ret(ret: float, n_closed: int) -> str:
-    if n_closed <= 0:
-        return "산출 불가 (청산 0건)"
-    return f"{float(ret):+.2f}%"
+def _fmt_deathmatch_ret(ret, n_closed: int, *, n_valid=None) -> str:
+    from deathmatch_report import fmt_deathmatch_ret
+
+    return fmt_deathmatch_ret(ret, n_closed, n_valid=n_valid)
 
 
 def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret: float, sn_ret: float, n_min: int) -> str:
@@ -2568,22 +2568,12 @@ def send_comprehensive_daily_report():
             send_telegram_msg(msg8)
             time.sleep(1)
 
-            std_df = df_closed[df_closed["sig_type"].astype(str).str.contains("STANDARD", na=False)]
-            sn_df = df_closed[df_closed["sig_type"].astype(str).str.contains("SUPERNOVA", na=False)]
-            n_std = int(len(std_df))
-            n_sn = int(len(sn_df))
-            std_virtual_ret = (
-                float(pd.to_numeric(std_df["final_ret"], errors="coerce").fillna(0.0).mean())
-                if n_std > 0
-                else 0.0
+            from deathmatch_report import (
+                build_nway_deathmatch,
+                format_nway_deathmatch_telegram,
             )
-            sn_virtual_ret = (
-                float(pd.to_numeric(sn_df["final_ret"], errors="coerce").fillna(0.0).mean())
-                if n_sn > 0
-                else 0.0
-            )
-            n_dm = _deathmatch_min_n_cfg(cfg)
-            v_verdict = _deathmatch_ab_verdict(n_std, n_sn, std_virtual_ret, sn_virtual_ret, n_dm)
+
+            dm = build_nway_deathmatch(df_closed, cfg)
 
             lb_all = build_practitioner_reality_leaderboard(market_type=market_type, limit_rows=40)
             if lb_all is not None and not lb_all.empty:
@@ -2597,12 +2587,16 @@ def send_comprehensive_daily_report():
                 top_real = pd.DataFrame()
                 top_virtual = pd.DataFrame()
 
-            msg9 = f"{m_icon} <b>[9/9] 시스템 데스매치 결산 (실전+가상)</b>\n"
-            msg9 += "🧠 <b>가상 리서치 기준(A/B)</b>\n"
-            msg9 += f"📎 청산 표본: 오리지널(A) {n_std}건 | 초신성(B) {n_sn}건 (비교 최소 각 {n_dm}건)\n"
-            msg9 += f" - 오리지널(A): {_fmt_deathmatch_ret(std_virtual_ret, n_std)}\n"
-            msg9 += f" - 초신성(B): {_fmt_deathmatch_ret(sn_virtual_ret, n_sn)}\n"
-            msg9 += f" - 판정: {v_verdict}\n\n"
+            msg9 = format_nway_deathmatch_telegram(
+                m_icon,
+                dm,
+                lookback_label=f"{market_type} 가상 청산",
+            )
+            msg9 = msg9.replace(
+                "[9/9] 시스템 데스매치 결산 (N-Way)",
+                "[9/9] 시스템 데스매치 결산 (실전+가상 · N-Way)",
+            )
+            msg9 += "\n"
 
             msg9 += "💸 <b>실전 체결 기준(전체 PRACT 풀)</b>\n"
             msg9 += f" - 실전 평균: {real_system_ret:+.2f}%\n"

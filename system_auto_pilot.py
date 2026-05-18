@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import pandas as pd
 import numpy as np
@@ -1148,37 +1149,28 @@ def run_autonomous_analysis():
         n_min_dm = 5
     n_min_dm = max(1, n_min_dm)
 
-    std_df_h = df[df["sig_type"].str.contains("STANDARD", na=False)]
-    sn_df_h = df[df["sig_type"].str.contains("SUPERNOVA_COSINE|SUPERNOVA_MLBOX", na=False)]
-    beast_df_h = df[df["sig_type"].str.contains("SUPERNOVA_BEAST", na=False)]
-    ud_df_h = df[df["sig_type"].str.contains("UNDERDOG", na=False)]
+    try:
+        from deathmatch_report import build_nway_deathmatch
 
-    def _hunt_mean(sub: pd.DataFrame) -> float:
-        if sub.empty:
-            return float("nan")
-        m = sub["final_ret"].mean()
-        return float(m) if pd.notna(m) else float("nan")
-
-    arms_hunt = [
-        ("오리지널(A)", _hunt_mean(std_df_h), len(std_df_h)),
-        ("초신성(B)", _hunt_mean(sn_df_h), len(sn_df_h)),
-        ("야수(BEAST)", _hunt_mean(beast_df_h), len(beast_df_h)),
-        ("언더독(UD)", _hunt_mean(ud_df_h), len(ud_df_h)),
-    ]
-    eligible_hunt = [
-        (lab, ret, n)
-        for lab, ret, n in arms_hunt
-        if n >= n_min_dm and pd.notna(ret)
-    ]
-    if not eligible_hunt:
-        report_lines.append(
-            f"🏁 <b>[발굴 대결]</b> 표본 부족으로 판정 보류 (축당 최소 청산 {n_min_dm}건 미충족)"
-        )
-    else:
-        best_l, best_r, best_n = max(eligible_hunt, key=lambda x: (x[1], x[2]))
-        report_lines.append(
-            f"🏁 <b>[발굴 대결 우승]</b> {best_l} {best_r:+.2f}% (청산 n={best_n}, 표본 기준 충족)"
-        )
+        dm_hunt = build_nway_deathmatch(df, current_config)
+        eligible_hunt = [
+            a
+            for a in dm_hunt.arms
+            if a.n_valid >= n_min_dm and a.mean_ret is not None
+        ]
+        if not eligible_hunt:
+            report_lines.append(
+                f"🏁 <b>[발굴 대결 N-Way]</b> 표본 부족으로 판정 보류 (축당 최소 유효 청산 {n_min_dm}건)"
+            )
+        else:
+            top = max(eligible_hunt, key=lambda a: float(a.mean_ret))
+            _dm_plain = re.sub(r"<[^>]+>", "", str(dm_hunt.verdict))
+            report_lines.append(
+                f"🏁 <b>[발굴 대결 1위]</b> {top.label} {top.mean_ret:+.2f}% "
+                f"(유효 n={top.n_valid}) · {_dm_plain}"
+            )
+    except Exception as _dm_ex:
+        report_lines.append(f"⚠️ [발굴 대결] N-Way 산출 스킵: {_dm_ex}")
         
     # 💡 [핵심] 인위적인 WEIGHT(1.6 vs 0.4) 강제 배분 로직 완전 삭제
     report_lines.append("✅ <b>알림:</b> 인위적 가중치(WEIGHT) 배분 로직이 삭제되었습니다. 개별 시드의 복리 성장이 곧 자본 배분입니다.")
@@ -1838,7 +1830,14 @@ def _satellite_import_run_snippet(body_lines: str, tag: str) -> None:
 def system_main_loop():
     tz = pytz.timezone('Asia/Seoul')
     print("🕒 [완전 자율 오토파일럿 V12.0] 대기 중... (기준: 장부 최초 거래일 + 14일)")
-    
+    try:
+        from factory_artifact_guard import ensure_factory_artifacts
+
+        _boot_heal = ensure_factory_artifacts()
+        print(f"🩹 [Self-Heal] autopilot boot: {_boot_heal}")
+    except Exception as _boot_heal_err:
+        print(f"⚠️ [Self-Heal] autopilot boot guard skipped: {_boot_heal_err}")
+
     while True:
         try:
             now = datetime.now(tz)
@@ -2017,11 +2016,8 @@ def system_main_loop():
                     _spawn_py_script("macro_doomsday_bot.py", "doomsday_1700")
                     time.sleep(60)
 
-                # 6. 매일 18:30 — 센티먼트 마이닝
-                elif now.hour == 18 and now.minute == 30:
-                    print("🧠 [오토파일럿] sentiment_miner 비블로킹 기동…")
-                    _spawn_py_script("sentiment_miner.py", "sentiment_1830")
-                    time.sleep(60)
+                # 센티먼트: factory daily_audit 파이프라인에서 sentiment_mining 동기 실행 (SSOT).
+                # (구 18:30 비동기 spawn 제거 — 16:30 리포트보다 늦게 돌아 과거 DB 고착 유발)
 
                 # 💀 매주 일요 02:00 — KR 독성 부검 (Graveyard ML)
                 elif now.weekday() == 6 and now.hour == 2 and now.minute == 0:
