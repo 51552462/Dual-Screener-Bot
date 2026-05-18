@@ -537,6 +537,86 @@ def _reporter_valid_holding_mask(df: pd.DataFrame) -> pd.Series:
     return _reporter_is_live_open_status(df["status"]) & (_reporter_qty_numeric(df) > 0)
 
 
+# 실무자 리포트·좀비 정리 — 내부 exit_reason 코드 (DB 저장·표시 치환)
+_EXIT_REASON_INTERNAL = frozenset(
+    {
+        "REPORTER_SELF_HEAL_ZOMBIE",
+        "REPORTER_SELF_HEAL_FACT_CLOSE",
+    }
+)
+_EXIT_REASON_ZOMBIE_DB = "강제청산(기간만료·데이터누락)"
+_EXIT_REASON_FACT_CLOSE_DB = "강제청산(청산팩트정리)"
+
+
+def _format_exit_reason_display(reason: object) -> str:
+    """텔레그램 노출용 — 내부 디버그 태그는 유저 친화 문구로 치환."""
+    s = str(reason or "").strip()
+    if not s or s.lower() in ("none", "nan"):
+        return "사유 미기록"
+    mapping = {
+        "REPORTER_SELF_HEAL_ZOMBIE": _EXIT_REASON_ZOMBIE_DB,
+        "REPORTER_SELF_HEAL_FACT_CLOSE": _EXIT_REASON_FACT_CLOSE_DB,
+        _EXIT_REASON_ZOMBIE_DB: _EXIT_REASON_ZOMBIE_DB,
+        _EXIT_REASON_FACT_CLOSE_DB: _EXIT_REASON_FACT_CLOSE_DB,
+    }
+    return mapping.get(s, s)
+
+
+def _normalize_trade_market(code: object, market: object) -> str:
+    """
+    code·market 불일치 교정 — KR 리포트에 US 티커 누수 방지.
+    KR: 5~6자리 숫자 코드 / US: 알파벳 티커.
+    """
+    c = str(code or "").strip().upper()
+    m = str(market or "").strip().upper()
+    if re.fullmatch(r"\d{5,6}", c) or (c.isdigit() and len(c) <= 6):
+        return "KR"
+    if c and re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,14}", c):
+        return "US"
+    if m in ("KR", "US"):
+        return m
+    return "KR"
+
+
+def _parse_mkt_group_key(mkt_group: str) -> tuple[str, str]:
+    """mkt_group = '{KR|US}_{group}' — group 내 '_' 는 분리하지 않음."""
+    s = str(mkt_group or "").strip()
+    su = s.upper()
+    if su.startswith("KR_"):
+        return "KR", s[3:]
+    if su.startswith("US_"):
+        return "US", s[3:]
+    if "_" in s:
+        head, tail = s.split("_", 1)
+        return head.upper(), tail
+    return "KR", s
+
+
+def _safe_final_ret_pct(val: object, default: float = 0.0) -> float:
+    r = pd.to_numeric(val, errors="coerce")
+    if r is None or (isinstance(r, float) and (np.isnan(r) or not np.isfinite(r))):
+        return float(default)
+    try:
+        f = float(r)
+    except (TypeError, ValueError):
+        return float(default)
+    return f if np.isfinite(f) else float(default)
+
+
+def _win_loss_flat_counts(ret_series: pd.Series) -> tuple[int, int, int]:
+    """동일 Series 기준 승/패/무 — NaN 은 무(0%) 처리."""
+    r = pd.to_numeric(ret_series, errors="coerce").fillna(0.0)
+    win = int((r > 0).sum())
+    loss = int((r < 0).sum())
+    flat = int((r == 0).sum())
+    return win, loss, flat
+
+
+def _exit_date_on_calendar(val: object) -> str:
+    s = str(val or "").strip()
+    return s[:10] if len(s) >= 10 else s
+
+
 def _reporter_unified_vip_fleet_mask(df_open: pd.DataFrame) -> pd.Series:
     """
     [4/9] 투입 집계·한도 경고 공통: VIP 트랙(🔥주도주 / 🛡️차기섹터) + 투입금>0.
@@ -587,9 +667,14 @@ def _reporter_cleanup_zombie_forward_trades() -> int:
         ids = [int(r[0]) for r in cur.fetchall() if r and r[0] is not None]
         exit_day = datetime.now().strftime("%Y-%m-%d")
         if ids:
-            reason = "REPORTER_SELF_HEAL_ZOMBIE"
+            reason = _EXIT_REASON_ZOMBIE_DB
             conn.executemany(
-                "UPDATE forward_trades SET status='CLOSED_ZOMBIE', exit_date=?, exit_reason=? WHERE id=?",
+                """
+                UPDATE forward_trades
+                SET status='CLOSED_ZOMBIE', exit_date=?, exit_reason=?,
+                    final_ret=COALESCE(final_ret, 0.0)
+                WHERE id=?
+                """,
                 [(exit_day, reason, i) for i in ids],
             )
             total += len(ids)
@@ -613,9 +698,14 @@ def _reporter_cleanup_zombie_forward_trades() -> int:
         ids_set = set(ids)
         ids2 = [i for i in ids2 if i not in ids_set]
         if ids2:
-            rsn = "REPORTER_SELF_HEAL_FACT_CLOSE"
+            rsn = _EXIT_REASON_FACT_CLOSE_DB
             conn.executemany(
-                "UPDATE forward_trades SET status='CLOSED_AUTO', exit_reason=? WHERE id=?",
+                """
+                UPDATE forward_trades
+                SET status='CLOSED_AUTO', exit_reason=?,
+                    final_ret=COALESCE(final_ret, 0.0)
+                WHERE id=?
+                """,
                 [(rsn, i) for i in ids2],
             )
             total += len(ids2)
@@ -2538,33 +2628,51 @@ def send_group_practitioner_reports():
             return clean_sig if clean_sig else str(sig).replace('[', '').replace(']', '').strip()
 
         df_all = df_all.copy()
+        df_all["market"] = df_all.apply(
+            lambda r: _normalize_trade_market(r.get("code"), r.get("market")),
+            axis=1,
+        )
         df_all['group'] = df_all['sig_type'].apply(get_core_group)
         df_all['mkt_group'] = df_all['market'].astype(str) + "_" + df_all['group'].astype(str)
         # 💡 현재 OPEN 종목이 없어도, 최근 청산 내역이 있는 실무자는 모두 보고서에 소환
         recent_cutoff = (datetime.now(tz_kr) - timedelta(days=2)).strftime('%Y-%m-%d')
-        active_condition = (df_all['status'] == 'OPEN') | (df_all['exit_date'] >= recent_cutoff)
+        _exit_cal = df_all['exit_date'].map(_exit_date_on_calendar) if 'exit_date' in df_all.columns else ""
+        active_condition = (df_all['status'] == 'OPEN') | (_exit_cal >= recent_cutoff)
         df_active = df_all[active_condition]
         active_groups = sorted([g for g in df_active['mkt_group'].dropna().unique() if str(g).strip()])
 
         for mkt_group in active_groups:
-            g_all = df_all[df_all['mkt_group'] == mkt_group]
-            if "_" in mkt_group:
-                market, group = mkt_group.split("_", 1)
+            market, group = _parse_mkt_group_key(mkt_group)
+            g_all = df_all[
+                (df_all['mkt_group'] == mkt_group)
+                & (df_all['market'].astype(str).str.upper() == market)
+            ].copy()
+            # 코드 기준 2차 격리 (DB market 오염 방어)
+            if market == "KR":
+                g_all = g_all[g_all['code'].astype(str).str.match(r'^\d{5,6}$', na=False)]
             else:
-                market, group = "KR", mkt_group
+                g_all = g_all[~g_all['code'].astype(str).str.match(r'^\d{5,6}$', na=False)]
+
             tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
             mkt_today_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
             market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
-            g_closed = g_all[g_all['status'].str.contains('CLOSED', na=False)]
-            g_today_closed = g_closed[g_closed['exit_date'] == mkt_today_str] if 'exit_date' in g_closed.columns else g_closed.iloc[0:0]
+            g_closed = g_all[g_all['status'].astype(str).str.contains('CLOSED', na=False)].copy()
+            if 'exit_date' in g_closed.columns:
+                g_closed['_exit_day'] = g_closed['exit_date'].map(_exit_date_on_calendar)
+                g_today_closed = g_closed[g_closed['_exit_day'] == mkt_today_str].copy()
+            else:
+                g_today_closed = g_closed.iloc[0:0].copy()
 
-            win_cnt = len(g_today_closed[g_today_closed['final_ret'] > 0]) if 'final_ret' in g_today_closed.columns else 0
-            loss_cnt = len(g_today_closed[g_today_closed['final_ret'] <= 0]) if 'final_ret' in g_today_closed.columns else 0
+            if 'final_ret' in g_today_closed.columns:
+                g_today_closed['_ret_pct'] = g_today_closed['final_ret'].map(_safe_final_ret_pct)
+            else:
+                g_today_closed['_ret_pct'] = 0.0
+            win_cnt, loss_cnt, flat_cnt = _win_loss_flat_counts(g_today_closed['_ret_pct'])
 
             if 'sim_kelly_invest' in g_closed.columns and 'final_ret' in g_closed.columns:
-                # NaN(결측치)도 안전하게 기본 시드로 보정하여 복리 누락 방지
-                valid_invest = g_closed['sim_kelly_invest'].fillna(400000).replace(0, 400000)
-                cum_pnl = (valid_invest * g_closed['final_ret'] / 100.0).sum()
+                valid_invest = pd.to_numeric(g_closed['sim_kelly_invest'], errors='coerce').fillna(400000).replace(0, 400000)
+                ret_c = pd.to_numeric(g_closed['final_ret'], errors='coerce').fillna(0.0)
+                cum_pnl = (valid_invest * ret_c / 100.0).sum()
             else:
                 cum_pnl = 0.0
             compound_seed = base_seed + cum_pnl
@@ -2572,8 +2680,12 @@ def send_group_practitioner_reports():
             # 💡 [픽스 3] 유효 보유만 집계: OPEN/ACTIVE + 수량>0 (좀비 OPEN 제외)
             open_cnt = int(_reporter_valid_holding_mask(g_all).sum())
 
+            n_today = int(len(g_today_closed))
             msg = f"{market_icon} <b>[{market} 실무자 리포트]</b> {group}\n"
-            msg += f"📅 오늘 성적: <b>{win_cnt}승 {loss_cnt}패</b>\n"
+            msg += f"📅 오늘 성적: <b>{win_cnt}승 {loss_cnt}패</b>"
+            if flat_cnt:
+                msg += f" · 무{flat_cnt}"
+            msg += f" (청산 <b>{n_today}</b>건)\n"
             msg += f"💰 현재 누적 복리 시드: <b>{compound_seed:,.0f}원</b>\n"
             msg += f"📦 현재 보유 종목: <b>{open_cnt}개</b>\n"
 
@@ -2581,8 +2693,8 @@ def send_group_practitioner_reports():
                 msg += "📌 오늘 청산 종목:\n"
                 for _, row in g_today_closed.iterrows():
                     name = row.get('name', '-')
-                    reason = row.get('exit_reason', '사유 미기록')
-                    ret = row.get('final_ret', 0.0)
+                    reason = _format_exit_reason_display(row.get('exit_reason'))
+                    ret = float(row.get('_ret_pct', _safe_final_ret_pct(row.get('final_ret'))))
                     msg += f" - {name} ({ret:+.2f}%) / {reason}\n"
             else:
                 msg += "📌 오늘 청산 종목: 없음\n"
