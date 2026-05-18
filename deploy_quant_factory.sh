@@ -56,9 +56,16 @@ else
   echo "경고: ${JCONF} 없음 — journald 설정 스킵" >&2
 fi
 
+# RUNBOOK: REPO_ROOT == INSTALL_ROOT(일반 clone 배포)이면 install 동일 파일 에러 → skip
+_repo_canon="$(cd "${REPO_ROOT}" && pwd -P)"
+_install_canon="$(cd "${INSTALL_ROOT}" && pwd -P)"
 if [[ -f "${REPO_ROOT}/RUNBOOK.md" ]]; then
-  install -m 0644 "${REPO_ROOT}/RUNBOOK.md" "${INSTALL_ROOT}/RUNBOOK.md"
-  echo "✓ RUNBOOK.md -> ${INSTALL_ROOT}/RUNBOOK.md"
+  if [[ "${_repo_canon}" != "${_install_canon}" ]]; then
+    install -m 0644 "${REPO_ROOT}/RUNBOOK.md" "${INSTALL_ROOT}/RUNBOOK.md"
+    echo "✓ RUNBOOK.md -> ${INSTALL_ROOT}/RUNBOOK.md"
+  else
+    echo "✓ RUNBOOK.md (REPO_ROOT=INSTALL_ROOT, 복사 생략)"
+  fi
 fi
 
 TMPD="$(mktemp -d)"
