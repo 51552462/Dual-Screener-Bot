@@ -111,6 +111,7 @@ class ScanFunnelReport:
     pipeline_line: str
     profile_id: str = "SUPERNOVA"
     elapsed_min: Optional[float] = None
+    db_error_samples: Tuple[str, ...] = ()
 
 
 class ScanFunnelTracker:
@@ -143,6 +144,8 @@ class ScanFunnelTracker:
         self._us_preloaded: Optional[int] = None
         self._final: Dict[str, ScanSurvivor] = {}
         self._pipeline: Dict[str, str] = {}
+        self._db_fail_samples: List[str] = []
+        self._db_fail_reasons: Counter = Counter()
 
     def drop(self, reason: str, n: int = 1) -> None:
         if not reason or n <= 0:
@@ -193,6 +196,16 @@ class ScanFunnelTracker:
                 )
             self._pipeline[c] = str(status)
 
+    def record_db_failure(self, reason: str) -> None:
+        """forward_trades 등재 실패 사유 샘플 (Telegram·로그용, 최대 5종)."""
+        key = str(reason or "UNKNOWN").strip()[:240]
+        if not key:
+            key = "UNKNOWN"
+        with self._lock:
+            self._db_fail_reasons[key] += 1
+            if key not in self._db_fail_samples and len(self._db_fail_samples) < 5:
+                self._db_fail_samples.append(key)
+
     def get_final_candidates(self) -> List[ScanSurvivor]:
         with self._lock:
             return list(self._final.values())
@@ -241,6 +254,17 @@ class ScanFunnelTracker:
             line += " · 오토파일럿 OPEN 감시 경로로 편입"
         return line
 
+    def _build_pipeline_line_with_db_errors(
+        self, finals: List[ScanSurvivor], db_samples: Tuple[str, ...]
+    ) -> str:
+        line = self._build_pipeline_line(finals)
+        if db_samples:
+            top = html.escape(db_samples[0][:160], quote=False)
+            line += f"\n⚠️ <b>DB거절 샘플:</b> <code>{top}</code>"
+            if len(db_samples) > 1:
+                line += f" <i>(+{len(db_samples) - 1}종 유형)</i>"
+        return line
+
     def finalize(self, *, elapsed_min: Optional[float] = None) -> ScanFunnelReport:
         with self._lock:
             drops = Counter(self._drops)
@@ -249,6 +273,7 @@ class ScanFunnelTracker:
             finals = list(self._final.values())
             universe = self.universe
             profile_id = self.profile_id
+            db_samples = tuple(self._db_fail_samples)
 
         n_final = len(finals)
         steps: List[FunnelStep] = [
@@ -294,9 +319,12 @@ class ScanFunnelTracker:
             enrolled=enrolled,
             fetch_failed=fetch_failed,
             us_preloaded=us_pre,
-            pipeline_line=self._build_pipeline_line(sorted_finals),
+            pipeline_line=self._build_pipeline_line_with_db_errors(
+                sorted_finals, db_samples
+            ),
             profile_id=profile_id,
             elapsed_min=elapsed_min,
+            db_error_samples=db_samples,
         )
 
 
@@ -358,6 +386,12 @@ def format_scan_funnel_report(report: ScanFunnelReport) -> str:
         out += "🏆 <b>Top 3:</b> <i>최종 합격 없음</i>\n"
 
     out += f"🛰️ <b>파이프라인:</b> {report.pipeline_line}\n"
+    if report.db_error_samples and "DB거절 샘플" not in report.pipeline_line:
+        for i, sample in enumerate(report.db_error_samples[:3]):
+            out += (
+                f"⚠️ <b>DB거절[{i + 1}]:</b> "
+                f"<code>{html.escape(sample[:200], quote=False)}</code>\n"
+            )
     return out
 
 

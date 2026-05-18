@@ -621,6 +621,53 @@ def init_forward_db():
     conn.close()
 
 
+_FORWARD_TRADE_INSERT_COLS: tuple[str, ...] = (
+    "entry_date",
+    "market",
+    "code",
+    "name",
+    "sector",
+    "sig_type",
+    "tier",
+    "total_score",
+    "dyn_rs",
+    "dyn_cpv",
+    "dyn_tb",
+    "entry_price",
+    "v_cpv",
+    "v_yang",
+    "v_energy",
+    "v_rs",
+    "max_high",
+    "min_low",
+    "market_breadth",
+    "entry_breadth",
+    "entry_cos_score",
+    "entry_dtw_score",
+    "entry_atr",
+    "invest_amount",
+    "shares",
+    "sim_kelly_invest",
+    "entry_regime",
+)
+
+
+def _insert_forward_trade_row(cursor: sqlite3.Cursor, row: dict) -> None:
+    """forward_trades INSERT — 컬럼·플레이스홀더 개수 SSOT (스키마 드리프트 방지)."""
+    cols = _FORWARD_TRADE_INSERT_COLS
+    values = tuple(row[c] for c in cols)
+    if len(values) != len(cols):
+        raise ValueError(
+            f"forward_trades row length {len(values)} != columns {len(cols)}"
+        )
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join("?" for _ in cols)
+    cursor.execute(
+        f"INSERT INTO forward_trades ({col_sql}) VALUES ({placeholders})",
+        values,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 텔레그램 리포트 전용: 유효 보유 집계 + 좀비 OPEN 자가 치유 (매매 order 경로 미개입)
 # ---------------------------------------------------------------------------
@@ -1862,32 +1909,66 @@ def try_add_virtual_position(
 
     ep = ep * 1.005
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
-    cursor.execute('''
-        INSERT INTO forward_trades 
-        (entry_date, market, code, name, sector, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score, entry_atr, invest_amount, shares, sim_kelly_invest, entry_regime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        today_str, market, code_str, name, sector, sig_type, tier_label, score,
-        facts.get('dyn_rs', 0), facts.get('dyn_cpv', 0), facts.get('dyn_tb', 0), ep,
-        facts.get('v_cpv', 0), facts.get('v_yang', 0), facts.get('v_energy', 0), facts.get('v_rs', 0),
-        ep, ep, round(cur_breadth, 3), round(cur_breadth, 3), 
-        round(min(1.0, max_alpha_cos + alpha_bonus_score), 3), round(min_alpha_dtw, 3), 
-        round(entry_atr, 4), invest_amount, shares, sim_kelly_invest, cur_regime # 💡 V38.0 ATR 및 투입 금액/수량 기록
-    ))
-    if satellite_tags is not None:
-        try:
-            import shadow_tracking
+    insert_row = {
+        "entry_date": today_str,
+        "market": market,
+        "code": code_str,
+        "name": name,
+        "sector": sector,
+        "sig_type": sig_type,
+        "tier": tier_label,
+        "total_score": score,
+        "dyn_rs": facts.get("dyn_rs", 0),
+        "dyn_cpv": facts.get("dyn_cpv", 0),
+        "dyn_tb": facts.get("dyn_tb", 0),
+        "entry_price": ep,
+        "v_cpv": facts.get("v_cpv", 0),
+        "v_yang": facts.get("v_yang", 0),
+        "v_energy": facts.get("v_energy", 0),
+        "v_rs": facts.get("v_rs", 0),
+        "max_high": ep,
+        "min_low": ep,
+        "market_breadth": round(cur_breadth, 3),
+        "entry_breadth": round(cur_breadth, 3),
+        "entry_cos_score": round(min(1.0, max_alpha_cos + alpha_bonus_score), 3),
+        "entry_dtw_score": round(min_alpha_dtw, 3),
+        "entry_atr": round(entry_atr, 4),
+        "invest_amount": invest_amount,
+        "shares": shares,
+        "sim_kelly_invest": sim_kelly_invest,
+        "entry_regime": cur_regime,
+    }
+    try:
+        _insert_forward_trade_row(cursor, insert_row)
+        if satellite_tags is not None:
+            try:
+                import shadow_tracking
 
-            logged_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-            shadow_tracking.insert_virtual_trade_row(
-                cursor, market, code_str, name, ep, sig_type, str(satellite_tags), logged_at
-            )
-        except Exception:
-            pass
-    conn.commit()
-    conn.close()
-    
-    return True, f"🎯 {tier_label} 가상매매 편입 성공: {name} ({score:.1f}점)"
+                logged_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+                shadow_tracking.insert_virtual_trade_row(
+                    cursor,
+                    market,
+                    code_str,
+                    name,
+                    ep,
+                    sig_type,
+                    str(satellite_tags),
+                    logged_at,
+                )
+            except Exception as shadow_exc:
+                print(
+                    f"⚠️ shadow_tracking INSERT 스킵 {code_str}: "
+                    f"{type(shadow_exc).__name__}: {shadow_exc}"
+                )
+        conn.commit()
+        return True, f"🎯 {tier_label} 가상매매 편입 성공: {name} ({score:.1f}점)"
+    except sqlite3.Error as db_exc:
+        conn.rollback()
+        err = f"DB_INSERT:{type(db_exc).__name__}:{db_exc}"
+        print(f"⚠️ forward_trades INSERT 실패 {code_str}: {err}")
+        return False, err
+    finally:
+        conn.close()
 
 # ==========================================
 # 2. 매일 종가 흐름 추적 및 청산 엔진 (DB 기반)

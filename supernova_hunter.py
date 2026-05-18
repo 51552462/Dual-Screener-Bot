@@ -1781,7 +1781,10 @@ def execute_supernova_live_scan(market):
                 f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
             )
         else:
+            funnel.record_db_failure(msg or "UNKNOWN")
             funnel.set_pipeline_result(str(target['code']), "FAILED_DB")
+            if msg and "DB_INSERT" in str(msg):
+                print(f"⚠️ [{market}] forward_trades 등재 실패 {target['code']}: {msg}")
 
     report = funnel.finalize(elapsed_min=(_time.time() - _scan_t0) / 60.0)
     print(
