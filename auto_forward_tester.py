@@ -2405,6 +2405,17 @@ def send_comprehensive_daily_report(
         except Exception as _sent_e:
             print(f"⚠️ [일일 통합 리포트] 센티먼트 선행 갱신 실패(리포트는 계속): {_sent_e}")
 
+    try:
+        from doomsday_bridge import sync_doomsday_to_system_config
+
+        _dd_sync = sync_doomsday_to_system_config(
+            alert_on_escalation=False,
+            run_inverse_cycle=True,
+        )
+        print(f"🛰️ [일일 통합 리포트] 둠스데이 브릿지: {_dd_sync}")
+    except Exception as _ddb_e:
+        print(f"⚠️ [일일 통합 리포트] 둠스데이 브릿지 스킵: {_ddb_e}")
+
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
@@ -2416,6 +2427,11 @@ def send_comprehensive_daily_report(
     except Exception as _ez:
         print(f"⚠️ [일일 통합 리포트] 좀비 정리 스킵: {_ez}")
 
+    from report_collectors import (
+        _df_long_only,
+        build_market_evolution_digest,
+        build_market_report_opening,
+    )
     from satellite_intel_brief import (
         build_satellite_intel_for_report,
         build_strategy_insight_html,
@@ -2490,9 +2506,7 @@ def send_comprehensive_daily_report(
             # [사전 데이터 로드] — market 열 + code 정규화 (오태깅 US/KR 교정)
             df_all_raw = pd.read_sql("SELECT * FROM forward_trades", conn)
             df_all = _daily_report_trades_for_market(df_all_raw, market)
-            _sig_s = df_all['sig_type'].astype(str)
-            _real_only = ~_sig_s.str.contains('INCUBATOR', na=False)
-            df_real = df_all.loc[_real_only].copy()
+            df_real = _df_long_only(df_all)
             df_closed = df_real[df_real['status'].str.contains('CLOSED', na=False)]
             _vm = _reporter_valid_holding_mask(df_real)
             df_open = df_real.loc[_vm].copy()
@@ -2507,15 +2521,20 @@ def send_comprehensive_daily_report(
                 treasury_config_key=f"CENTRAL_TREASURY_{market}",
                 ledger_zero_invest_fallback=400000.0,
             )
+            try:
+                _unified_open = build_market_report_opening(market, sys_config, conn=conn)
+            except Exception as _uo_ex:
+                _unified_open = f"<i>⚠️ [0/0b] 통합 헤더 스킵: {_uo_ex}</i>\n"
             lead_in = ""
             if market == "KR":
                 lead_in = (
-                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    _unified_open
+                    + "━━━━━━━━━━━━━━━━━━━━\n"
                     + f"📢 <b>[일일 통합 성과 리포트]</b>\n"
                     + satellite_brief_kr
                 )
             elif market == "US":
-                lead_in = satellite_brief_us
+                lead_in = _unified_open + satellite_brief_us
             msg1 = format_macro_treasury_section_html(
                 block_mt,
                 display_label=market,
@@ -2843,6 +2862,10 @@ def send_comprehensive_daily_report(
                 lookback_label=_dm_label,
                 ace_oneliner=ace_line,
             )
+            try:
+                msg9 += build_market_evolution_digest(market, meta_state_daily)
+            except Exception as _ev_ex:
+                msg9 += f"\n<i>⚠️ [Δ] 스킵: {html_escape(str(_ev_ex)[:72], quote=False)}</i>"
             send_telegram_msg(msg9); time.sleep(1)
 
             conn.close()

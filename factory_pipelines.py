@@ -105,6 +105,24 @@ _KR_CROSS_MARKET_HYDRATE = StepSpec(
 )
 
 
+def _step_doomsday_bridge_sync() -> None:
+    from doomsday_bridge import sync_doomsday_to_system_config
+
+    out = sync_doomsday_to_system_config(
+        alert_on_escalation=True,
+        run_inverse_cycle=True,
+    )
+    print(f"🛰️ [Factory] doomsday_bridge: {out}")
+
+
+_DOOMSDAY_BRIDGE = StepSpec(
+    "doomsday_bridge_sync",
+    _step_doomsday_bridge_sync,
+    critical=False,
+    delay_after_sec=0.5,
+)
+
+
 def _step_comprehensive_daily_report() -> None:
     from auto_forward_tester import send_comprehensive_daily_report
 
@@ -291,6 +309,7 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
         [
             StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
+            _DOOMSDAY_BRIDGE,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
         ]
@@ -302,6 +321,7 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
         [
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
+            _DOOMSDAY_BRIDGE,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
         ]
@@ -317,6 +337,7 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
             _US_DATA_INCREMENTAL,
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
+            _DOOMSDAY_BRIDGE,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False),
         ]

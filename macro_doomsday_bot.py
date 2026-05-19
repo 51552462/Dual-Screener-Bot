@@ -220,6 +220,13 @@ def main() -> None:
     try:
         _atomic_write_json(OUTPUT_JSON, payload)
         print(f"✅ 저장 완료: {OUTPUT_JSON}  (Regime={payload.get('regime')})")
+        try:
+            from doomsday_bridge import ingest_doomsday_status_file
+
+            ing = ingest_doomsday_status_file(alert_on_escalation=True, run_inverse_cycle=True)
+            print(f"🔗 [Doomsday Bridge] config 동기화: {ing}")
+        except Exception as br_e:
+            print(f"⚠️ [Doomsday Bridge] 동기화 실패: {br_e}")
     except Exception as e:
         print(f"🚨 JSON 저장 실패: {e}")
 

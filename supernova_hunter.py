@@ -1221,7 +1221,18 @@ def execute_supernova_live_scan(market):
     import time as _time
     _scan_t0 = _time.time()
     print(f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 (15배속 비동기 병렬 스캔)...")
-    
+
+    try:
+        from doomsday_bridge import refresh_doomsday_from_file
+
+        _dd_live = refresh_doomsday_from_file(
+            alert_on_escalation=True,
+            run_inverse_cycle=True,
+        )
+        print(f"🛰️ [{market}] 둠스데이 브릿지(스캔 전): {_dd_live}")
+    except Exception as _dd_scan_e:
+        print(f"⚠️ [{market}] 둠스데이 브릿지 스킵: {_dd_scan_e}")
+
     # 1. 템플릿 및 기준값 로드
     ideal_templates = {}
     config = load_config()
