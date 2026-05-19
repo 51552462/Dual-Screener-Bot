@@ -1,0 +1,17 @@
+[Unit]
+Description=Dante CQRS DB snapshot (market_data_snapshot + ops_snapshot row)
+Documentation=file://@@INSTALL_ROOT@@/RUNBOOK.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=2
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@@INSTALL_ROOT@@
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+ExecStart=@@INSTALL_ROOT@@/.venv/bin/python -u @@INSTALL_ROOT@@/dante_snapshot_runner.py
+StandardOutput=journal
+StandardError=journal
