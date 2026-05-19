@@ -18,9 +18,10 @@ DEFAULT_DB_PATH = os.path.join(
 )
 KRX_LIST_CACHE_BASENAME = "krx_list_cache.csv"
 
-_DEFAULT_JUNK = r"스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권|KODEX|TIGER|KBSTAR|ACE|ARIRANG|KOSEF|HANARO|SOL|TIMEFOLIO|WOORI|히어로즈|마이티|디딤|BNK|PLUS"
 _CODE_RE = re.compile(r"^KR_(\d{6})$")
 _MIN_LIVE_ROWS = 300
+# 레거시 호출부 호환(이름 정규식 필터 비사용 — krx_equity_universe 가 SSOT)
+_DEFAULT_JUNK: str | None = None
 
 
 def default_krx_list_cache_path(db_path: str | None = None) -> str:
@@ -81,15 +82,14 @@ def _normalize_columns(d: pd.DataFrame) -> pd.DataFrame:
 def _finalize_standard(
     df: pd.DataFrame, junk_pattern: str | None, apply_junk_filter: bool
 ) -> pd.DataFrame:
+    from krx_equity_universe import filter_krx_equity_universe
+
     out = df.copy()
     out["Marcap"] = pd.to_numeric(out["Marcap"], errors="coerce").fillna(0.0)
-    if apply_junk_filter and junk_pattern and "Name" in out.columns:
-        out = out[
-            ~out["Name"].astype(str).str.contains(junk_pattern, regex=True)
-        ].copy()
-    return out[["Code", "Name", "Market", "Marcap"]].dropna(
-        subset=["Code", "Name", "Market"]
-    )
+    if apply_junk_filter:
+        out = filter_krx_equity_universe(out)
+    cols = [c for c in ("Code", "Name", "Market", "Marcap") if c in out.columns]
+    return out[cols].dropna(subset=["Code", "Name", "Market"])
 
 
 def _stage3_sqlite_codes(db_path: str) -> pd.DataFrame | None:
@@ -178,7 +178,12 @@ def _fetch_from_naver_finance() -> pd.DataFrame:
                             pass
 
                     result.append(
-                        {"Code": code, "Name": name, "Market": mkt, "Marcap": marcap}
+                        {
+                            "Code": code,
+                            "Name": name,
+                            "Market": mkt,
+                            "Marcap": marcap,
+                        }
                     )
 
                 # 해당 페이지에 종목이 없으면 마지막 페이지를 넘긴 것

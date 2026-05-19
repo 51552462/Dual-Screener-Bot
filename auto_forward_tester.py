@@ -889,8 +889,9 @@ def _reporter_cleanup_zombie_forward_trades() -> int:
             "(COALESCE(sim_kelly_invest,0) <= 0 AND COALESCE(invest_amount,0) <= 0)"
         )
         status_open = "(status = 'OPEN' OR UPPER(TRIM(IFNULL(status,''))) = 'ACTIVE')"
+        observe_skip = "AND IFNULL(sig_type,'') NOT LIKE '%OBSERVE_ONLY%'"
         cur = conn.execute(
-            f"SELECT id FROM forward_trades WHERE {status_open} AND {qty_zero} AND {invest_zero}"
+            f"SELECT id FROM forward_trades WHERE {status_open} AND {qty_zero} AND {invest_zero} {observe_skip}"
         )
         ids = [int(r[0]) for r in cur.fetchall() if r and r[0] is not None]
         exit_day = datetime.now().strftime("%Y-%m-%d")

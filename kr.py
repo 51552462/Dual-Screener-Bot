@@ -91,10 +91,9 @@ def get_krx_list_kind():
                     if "Market" not in kospi.columns:
                         kospi["Market"] = "KOSPI"
                     kospi["Code"] = kospi["Code"].astype(str).str.strip().str.zfill(6)
-                    junk = r"스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권"
-                    kospi = kospi[
-                        ~kospi["Name"].astype(str).str.contains(junk, regex=True)
-                    ].copy()
+                    from krx_equity_universe import filter_krx_equity_universe
+
+                    kospi = filter_krx_equity_universe(kospi)
                     df = kospi[["Code", "Name", "Market"]].dropna()
             except Exception:
                 pass
@@ -472,7 +471,27 @@ def scan_market_1d():
                     )
 
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
-                    funnel.set_pipeline_result(str(code), "ENROLLED")
+                    _pipe = "ENROLLED"
+                    try:
+                        from kr_bowl_forward_bridge import enroll_kr_bowl_shadow_observe
+
+                        _sh_ok, _sh_msg = enroll_kr_bowl_shadow_observe(
+                            code=str(code),
+                            name=str(name),
+                            sig_type=str(dbg.get("sig_type", sig_type) or ""),
+                            trust_score=float(dbg.get("score", 0) or 0),
+                            entry_price=float(dbg.get("last_close", 0) or 0),
+                            cat2_count=int(dbg.get("cat2_count", 0) or 0),
+                            sector_hint=None,
+                        )
+                        if _sh_ok:
+                            _pipe = "ENROLLED_SHADOW"
+                            print(f"   ↳ [밥그릇 관측 장부] {_sh_msg}")
+                        else:
+                            print(f"   ↳ [밥그릇 관측 장부 스킵] {_sh_msg}")
+                    except Exception as _bowl_br:
+                        print(f"   ↳ [밥그릇 관측 장부 에러] {_bowl_br}")
+                    funnel.set_pipeline_result(str(code), _pipe)
                 else:
                     funnel.drop("CHART_FAIL")
                     funnel.set_pipeline_result(str(code), "CHART_FAIL")

@@ -55,6 +55,22 @@ SCANNER_DISPLAY_TITLES: Dict[str, str] = {
     "US_BOWL": "미국장 밥그릇(3번)",
 }
 
+# KR 밥그릇: ENROLLED = forward_trades 아님 → 텔레그램 관종 발송 완료
+_PIPELINE_STATUS_LABEL_KR_BOWL: Dict[str, str] = {
+    "ENROLLED_SHADOW": "텔레그램+가상장부 관측 등재",
+    "ENROLLED": "텔레그램만(장부 미등재)",
+    "CHART_FAIL": "차트 생성 실패",
+    "PENDING": "미처리",
+    "SKIP_DUPLICATE": "당일 중복 스킵",
+}
+
+
+def _pipeline_status_display(profile_id: str, status: str) -> str:
+    key = str(status or "").strip().upper()
+    if profile_id == "KR_BOWL":
+        return _PIPELINE_STATUS_LABEL_KR_BOWL.get(key, status)
+    return status
+
 
 def get_funnel_stages(profile_id: str) -> Tuple[Tuple[str, str], ...]:
     key = str(profile_id).upper()
@@ -220,7 +236,16 @@ class ScanFunnelTracker:
 
         pid = self.profile_id
         if pid == "KR_BOWL":
-            line = f"텔레그램 편성 <b>{n_enrolled}</b>건"
+            n_shadow = sum(1 for s in finals if s.pipeline_status == "ENROLLED_SHADOW")
+            n_tg_only = sum(1 for s in finals if s.pipeline_status == "ENROLLED")
+            n_tg_total = n_shadow + n_tg_only
+            line = (
+                f"텔레그램 <b>{n_tg_total}</b>건 · "
+                f"가상장부 관측 <b>{n_shadow}</b>건 "
+                f"<i>(실매수 없음·Meta/Deathmatch 평가용)</i>"
+            )
+            if n_tg_only:
+                line += f" · 장부 스킵 <b>{n_tg_only}</b>"
             if n_chart:
                 line += f" · 차트 실패 <b>{n_chart}</b>"
             if n_pending:
@@ -302,7 +327,11 @@ class ScanFunnelTracker:
 
         sorted_finals = sorted(finals, key=lambda s: s.final_score, reverse=True)
         top3 = tuple(sorted_finals[:3])
-        enrolled = tuple(s for s in sorted_finals if s.pipeline_status == "ENROLLED")
+        enrolled = tuple(
+            s
+            for s in sorted_finals
+            if s.pipeline_status in ("ENROLLED", "ENROLLED_SHADOW")
+        )
 
         tz_kr = pytz.timezone("Asia/Seoul")
         as_of = datetime.now(tz_kr).strftime("%Y-%m-%d %H:%M")
@@ -378,14 +407,22 @@ def format_scan_funnel_report(report: ScanFunnelReport) -> str:
             path = html.escape(s.pass_path, quote=False)
             sig = html.escape(s.final_sig[:48], quote=False)
             score_lbl = "신뢰" if report.profile_id in ("KR_BOWL", "US_BOWL") else "sim"
+            pstat = _pipeline_status_display(report.profile_id, s.pipeline_status)
             out += (
                 f" · <b>{nm}</b>({cd}) {path} · {score_lbl} <b>{s.final_score:.1f}</b> · "
-                f"<i>{sig}</i> · <code>{html.escape(s.pipeline_status, quote=False)}</code>\n"
+                f"<i>{sig}</i> · <code>{html.escape(pstat, quote=False)}</code>\n"
             )
     else:
         out += "🏆 <b>Top 3:</b> <i>최종 합격 없음</i>\n"
 
     out += f"🛰️ <b>파이프라인:</b> {report.pipeline_line}\n"
+    if report.profile_id == "KR_BOWL":
+        out += (
+            "📖 <b>용어:</b> "
+            "<code>B (J 강조)</code>=6단 EMA 정배열+밥그릇 돌파 · "
+            "<code>B (일반)</code>=돌파만 · "
+            "<code>텔레그램+가상장부 관측</code>=유료방 발송+forward_trades 관측행(자본 0·청산 추적)\n"
+        )
     if report.db_error_samples and "DB거절 샘플" not in report.pipeline_line:
         for i, sample in enumerate(report.db_error_samples[:3]):
             out += (
