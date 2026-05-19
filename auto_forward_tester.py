@@ -2060,8 +2060,10 @@ def track_daily_positions(market):
 
     for _, r in df_active.iterrows():
         code = r['code']
-        ep = r['entry_price']
-        
+        ep = float(r['entry_price'] or 0)
+        _sig_raw = str(r.get('sig_type') or '')
+        _is_observe_only = 'OBSERVE_ONLY' in _sig_raw
+
         try:
             if market == 'US':
                 import time, random
@@ -2088,18 +2090,21 @@ def track_daily_positions(market):
             low_ret_pct = ((l - ep) / ep) * 100            # 장중 최저 수익률 (손절 터치 감시용)
             high_ret_pct = ((h - ep) / ep) * 100           # 장중 최고 수익률 (익절 터치 감시용)
 
-            # 계좌 통합 서킷 브레이커용 당일 보유 손실 총합(손실만 누적)
-            position_notional = float(r.get('sim_kelly_invest', 0) or 0)
-            if position_notional <= 0:
-                fallback_notional = float(r.get('invest_amount', 0) or 0)
-                position_notional = fallback_notional if fallback_notional > 0 else float(ep)
-            position_pnl = position_notional * (current_ret_pct / 100.0)
-            if position_pnl < 0:
-                total_open_loss_amount += position_pnl
-            
-            new_max = max(r['max_high'], h)
-            new_min = min(r['min_low'], l)
-            new_bars = r['bars_held'] + 1
+            # 계좌 통합 서킷 브레이커용 당일 보유 손실(실투자 OPEN만 — 관측 행 제외)
+            if not _is_observe_only:
+                position_notional = float(r.get('sim_kelly_invest', 0) or 0)
+                if position_notional <= 0:
+                    fallback_notional = float(r.get('invest_amount', 0) or 0)
+                    position_notional = (
+                        fallback_notional if fallback_notional > 0 else float(ep)
+                    )
+                position_pnl = position_notional * (current_ret_pct / 100.0)
+                if position_pnl < 0:
+                    total_open_loss_amount += position_pnl
+
+            new_max = max(float(r.get('max_high') or ep), h)
+            new_min = min(float(r.get('min_low') or ep), l)
+            new_bars = int(r.get('bars_held') or 0) + 1
             new_up_vol = r['up_vol_sum'] + (v if c > o else 0)
             new_down_vol = r['down_vol_sum'] + (v if c < o else 0)
 
@@ -2134,14 +2139,20 @@ def track_daily_positions(market):
             # 👇👇 [수정] 초신성(SUPERNOVA) 전용 독립 네임스페이스 분기 추가 👇👇
             ns_prefix = f"{market}_MASTER_S1" # 기본값
             
-            if "SUPERNOVA" in r['sig_type']:
+            if "SUPERNOVA" in _sig_raw:
                 # 초신성은 오리지널과 완전히 분리된 전용 파라미터 방을 사용합니다.
                 ns_prefix = f"{market}_SUPERNOVA_MASTER"
+            elif "KR_BOWL" in _sig_raw or _is_observe_only:
+                # 밥그릇 관측·표본: 롱 마스터 S1 청산 규칙(가상 청산만, 실주문 없음)
+                ns_prefix = f"{market}_MASTER_S1"
             else:
                 # 기존 오리지널 로직 분류 유지
-                if "S4" in r['sig_type']: ns_prefix = f"{market}_MASTER_S4"
-                if "눌림" in r['sig_type']: ns_prefix = f"{market}_NULRIM_S4" if "S4" in r['sig_type'] else f"{market}_NULRIM_S1" 
-                if "5선" in r['sig_type']: ns_prefix = f"{market}_5EMA_S1" 
+                if "S4" in _sig_raw:
+                    ns_prefix = f"{market}_MASTER_S4"
+                if "눌림" in _sig_raw:
+                    ns_prefix = f"{market}_NULRIM_S4" if "S4" in _sig_raw else f"{market}_NULRIM_S1"
+                if "5선" in _sig_raw:
+                    ns_prefix = f"{market}_5EMA_S1"
             # 👆👆 [수정 끝] 👆👆
             
             opt_time_stop = sys_config.get(f"{ns_prefix}_TIME_STOP", 10)
@@ -2340,8 +2351,16 @@ def track_daily_positions(market):
                 ''', ('CLOSED_WIN' if ret > 0 else 'CLOSED_LOSS', exit_date, exit_rsn, flow_tags, ret, mfe, new_max, new_min, new_bars, new_up_vol, new_down_vol, actual_exit_type, r['id']))
                 
                 icon = "🔥스마트청산" if ret > 0 else "🛡️방어손절"
+                if _is_observe_only:
+                    icon = "👁️관측청산" if ret > 0 else "👁️관측손절"
                 # 💡 [V15.1 픽스] 시그널 타입(sig_type) 명시 및 점수 소수점 첫째 자리 정리
-                send_telegram_msg(f"🤖 [{market} 관제탑 제어] {icon}: {r['name']} ({r['sig_type']} | {round(r['total_score'], 1)}점)\n▪️ 수익: {ret}%\n▪️ 모드: {active_mode}\n▪️ 사유: {exit_rsn}\n▪️ 태그: {flow_tags}")
+                send_telegram_msg(
+                    f"🤖 [{market} 관제탑 제어] {icon}: {r['name']} "
+                    f"({r['sig_type']} | {round(r['total_score'], 1)}점)\n"
+                    f"▪️ 수익: {ret}%"
+                    + (" · <i>가상장부(OBSERVE_ONLY)</i>" if _is_observe_only else "")
+                    + f"\n▪️ 모드: {active_mode}\n▪️ 사유: {exit_rsn}\n▪️ 태그: {flow_tags}"
+                )
             else:
                 # DB 업데이트 (유지)
                 conn.execute('''
