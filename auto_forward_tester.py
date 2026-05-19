@@ -2850,9 +2850,15 @@ def send_comprehensive_daily_report(
             send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
 
 def send_group_practitioner_reports():
-    """활성 시그널 그룹별 실무자 개별 일일 리포트를 발송한다."""
+    """PIL — 활성 시그널 그룹별 실무자 리포트(Post-Mortem·Vitality·LLM) + 메타 페널티."""
+    from practitioner_intelligence import (
+        build_practitioner_brief,
+        format_practitioner_brief_html,
+        parse_group_from_sig,
+    )
+    from practitioner_penalty_bridge import apply_pil_vitality_penalties
+
     tz_kr = pytz.timezone('Asia/Seoul')
-    today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
     sys_config = load_system_config()
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
 
@@ -2864,27 +2870,31 @@ def send_group_practitioner_reports():
         print(f"⚠️ [실무자 리포트] 좀비 정리 스킵: {_ez}")
 
     try:
+        meta_state = load_meta_state_resolved()
+    except Exception:
+        meta_state = {}
+
+    briefs = []
+    try:
         conn = sqlite3.connect(DB_PATH, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
-        df_all = pd.read_sql("SELECT * FROM forward_trades WHERE IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'", conn)
+        df_all = pd.read_sql(
+            "SELECT * FROM forward_trades WHERE IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'",
+            conn,
+        )
         conn.close()
 
         if df_all.empty:
             return
-
-        import re
-        def get_core_group(sig):
-            clean_sig = re.sub(r'\[.*?\]', '', str(sig)).strip()
-            return clean_sig if clean_sig else str(sig).replace('[', '').replace(']', '').strip()
 
         df_all = df_all.copy()
         df_all["market"] = df_all.apply(
             lambda r: _normalize_trade_market(r.get("code"), r.get("market")),
             axis=1,
         )
-        df_all['group'] = df_all['sig_type'].apply(get_core_group)
-        df_all['mkt_group'] = df_all['market'].astype(str) + "_" + df_all['group'].astype(str)
-        # 💡 현재 OPEN 종목이 없어도, 최근 청산 내역이 있는 실무자는 모두 보고서에 소환
+        df_all["group"] = df_all["sig_type"].apply(parse_group_from_sig)
+        df_all["mkt_group"] = df_all["market"].astype(str) + "_" + df_all["group"].astype(str)
+
         recent_cutoff = (datetime.now(tz_kr) - timedelta(days=2)).strftime('%Y-%m-%d')
         _exit_cal = df_all['exit_date'].map(_exit_date_on_calendar) if 'exit_date' in df_all.columns else ""
         active_condition = (df_all['status'] == 'OPEN') | (_exit_cal >= recent_cutoff)
@@ -2897,15 +2907,19 @@ def send_group_practitioner_reports():
                 (df_all['mkt_group'] == mkt_group)
                 & (df_all['market'].astype(str).str.upper() == market)
             ].copy()
-            # 코드 기준 2차 격리 (DB market 오염 방어)
             if market == "KR":
                 g_all = g_all[g_all['code'].astype(str).str.match(r'^\d{5,6}$', na=False)]
             else:
                 g_all = g_all[~g_all['code'].astype(str).str.match(r'^\d{5,6}$', na=False)]
 
+            if g_all.empty:
+                continue
+
             tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
             mkt_today_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
             market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
+            sample_sig = str(g_all["sig_type"].iloc[0] if len(g_all) else group)
+
             g_closed = g_all[g_all['status'].astype(str).str.contains('CLOSED', na=False)].copy()
             if 'exit_date' in g_closed.columns:
                 g_closed['_exit_day'] = g_closed['exit_date'].map(_exit_date_on_calendar)
@@ -2913,44 +2927,31 @@ def send_group_practitioner_reports():
             else:
                 g_today_closed = g_closed.iloc[0:0].copy()
 
-            if 'final_ret' in g_today_closed.columns:
-                g_today_closed['_ret_pct'] = g_today_closed['final_ret'].map(_safe_final_ret_pct)
-            else:
-                g_today_closed['_ret_pct'] = 0.0
-            win_cnt, loss_cnt, flat_cnt = _win_loss_flat_counts(g_today_closed['_ret_pct'])
-
-            if 'sim_kelly_invest' in g_closed.columns and 'final_ret' in g_closed.columns:
-                valid_invest = pd.to_numeric(g_closed['sim_kelly_invest'], errors='coerce').fillna(400000).replace(0, 400000)
-                ret_c = pd.to_numeric(g_closed['final_ret'], errors='coerce').fillna(0.0)
-                cum_pnl = (valid_invest * ret_c / 100.0).sum()
-            else:
-                cum_pnl = 0.0
-            compound_seed = base_seed + cum_pnl
-            
-            # 💡 [픽스 3] 유효 보유만 집계: OPEN/ACTIVE + 수량>0 (좀비 OPEN 제외)
-            open_cnt = int(_reporter_valid_holding_mask(g_all).sum())
-
-            n_today = int(len(g_today_closed))
-            msg = f"{market_icon} <b>[{market} 실무자 리포트]</b> {group}\n"
-            msg += f"📅 오늘 성적: <b>{win_cnt}승 {loss_cnt}패</b>"
-            if flat_cnt:
-                msg += f" · 무{flat_cnt}"
-            msg += f" (청산 <b>{n_today}</b>건)\n"
-            msg += f"💰 현재 누적 복리 시드: <b>{compound_seed:,.0f}원</b>\n"
-            msg += f"📦 현재 보유 종목: <b>{open_cnt}개</b>\n"
-
-            if not g_today_closed.empty:
-                msg += "📌 오늘 청산 종목:\n"
-                for _, row in g_today_closed.iterrows():
-                    name = row.get('name', '-')
-                    reason = _format_exit_reason_display(row.get('exit_reason'))
-                    ret = float(row.get('_ret_pct', _safe_final_ret_pct(row.get('final_ret'))))
-                    msg += f" - {name} ({ret:+.2f}%) / {reason}\n"
-            else:
-                msg += "📌 오늘 청산 종목: 없음\n"
-
-            send_telegram_msg(msg)
+            valid_open = _reporter_valid_holding_mask(g_all)
+            brief = build_practitioner_brief(
+                market=market,
+                group_key=group,
+                sample_sig=sample_sig,
+                g_all=g_all,
+                g_closed=g_closed,
+                g_today_closed=g_today_closed,
+                sys_config=sys_config,
+                meta=meta_state,
+                base_seed=float(base_seed),
+                market_icon=market_icon,
+                mkt_today_str=mkt_today_str,
+                valid_open_mask=valid_open,
+                format_exit_reason=_format_exit_reason_display,
+                safe_ret_fn=_safe_final_ret_pct,
+                win_loss_fn=_win_loss_flat_counts,
+            )
+            briefs.append(brief)
+            send_telegram_msg(format_practitioner_brief_html(brief))
             time.sleep(3.5)
+
+        if briefs:
+            pen = apply_pil_vitality_penalties(briefs, sys_config)
+            print(f"🛡️ [PIL] 메타 페널티: {pen}")
     except Exception as e:
         send_telegram_msg(f"⚠️ 실무자 개별 리포트 발송 에러: {e}")
 # ==========================================

@@ -568,6 +568,10 @@ def default_meta_state() -> Dict[str, Any]:
         "META_DEATHMATCH_KELLY_OVERLAY": {},
         "META_DEATHMATCH_ALLOC_AS_OF": None,
         "META_DEATHMATCH_ALLOC_MARKET": None,
+        "META_PIL_GROUP_STATUS": {},
+        "META_PIL_ZOMBIE_GROUPS": [],
+        "META_PIL_RETIRE_CANDIDATES": [],
+        "META_PIL_PENALTY_AS_OF": None,
         "META_MAX_POSITION_PCT": None,
         "META_STRATEGY_HEALTH": {},
         "META_TREASURY_MODE": "NORMAL",
@@ -1036,6 +1040,14 @@ class MetaGovernor:
             self._working["META_DEATHMATCH_ALLOC_MARKET"] = self._prior.get(
                 "META_DEATHMATCH_ALLOC_MARKET"
             )
+        for pil_key in (
+            "META_PIL_GROUP_STATUS",
+            "META_PIL_ZOMBIE_GROUPS",
+            "META_PIL_RETIRE_CANDIDATES",
+            "META_PIL_PENALTY_AS_OF",
+        ):
+            if pil_key in self._prior:
+                self._working[pil_key] = self._prior.get(pil_key)
 
         prior_g = float(self._prior.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
         actionable = [
@@ -1113,6 +1125,23 @@ class MetaGovernor:
             validated_mutants_path=ctx.validated_mutants_path,
             forward_db_path=ctx.forward_db_path,
         )
+
+        pil_cands = self._prior.get("META_PIL_RETIRE_CANDIDATES")
+        if isinstance(pil_cands, list):
+            by_sid = {str(r.get("strategy_id")): r for r in reg if r.get("strategy_id")}
+            for c in pil_cands:
+                if not isinstance(c, dict):
+                    continue
+                sid = str(c.get("strategy_id") or "")
+                row = by_sid.get(sid)
+                if not row:
+                    continue
+                st = str(row.get("state") or "").upper()
+                if st in ("LIVE", "CANDIDATE"):
+                    row["state"] = "COOLED"
+                    row["capital_mult"] = 0.0
+                    row["demote_reason"] = str(c.get("reason") or "PIL_ZOMBIE_VITALITY")
+                    row["last_demoted_at"] = datetime.now(timezone.utc).isoformat()
 
         live_before = {
             str(r.get("strategy_id"))
