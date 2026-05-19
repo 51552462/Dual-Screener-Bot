@@ -156,7 +156,7 @@ def _format_ranked_extremes(
 
 def _dna_brackets_from_insights(insights: Sequence[ContrastInsight]) -> str:
     if not insights:
-        return "<i>대박 DNA: 표본·판별력 부족으로 생략</i>"
+        return "<i>표본 부족 (대박 DNA 판별 인사이트 0건)으로 Micro-DNA 대조 생략</i>"
     chunks = [f"[<b>{html.escape(ins.label, quote=False)}</b>]" for ins in insights]
     return " ".join(chunks)
 
@@ -270,7 +270,10 @@ def build_universal_dna_block(
     if insights:
         brackets = _universal_feature_brackets_detailed(insights)
     else:
-        brackets = " ".join(err_lines).strip() or "<i>Universal DNA 대조 생략</i>"
+        brackets = (
+            " ".join(err_lines).strip()
+            or f"<i>표본 부족 (대박 <b>{nw}</b>건 · 참사 <b>{nl}</b>건)으로 Universal DNA 대조 생략</i>"
+        )
 
     hall_html, hall_name, hall_ret = _format_ranked_extremes(
         df, k=int(top_n_extremes), largest=True

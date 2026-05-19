@@ -3,10 +3,13 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def col_series(df: Optional[pd.DataFrame], col: str) -> pd.Series:
@@ -39,20 +42,68 @@ def scalar_float(val: Any, default: float = 0.0) -> float:
     return float(default) if not np.isfinite(f) else f
 
 
-def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+def row_scalar(row: pd.Series, col: str, default: float = 0.0) -> float:
+    """iterrows() 행에서 단일 컬럼 → float (Series/DataFrame/NaN 방어)."""
+    if col not in row.index:
+        return float(default)
+    val = row[col]
+    if isinstance(val, pd.Series):
+        val = val.iloc[0] if len(val) else default
+    elif isinstance(val, pd.DataFrame):
+        val = val.iloc[0, 0] if not val.empty else default
+    return scalar_float(val, default)
+
+
+def series_mean(df: Optional[pd.DataFrame], col: str, default: float = 0.0) -> float:
+    """df[col]이 DataFrame이어도 안전한 평균."""
+    s = col_series(df, col)
+    if s.empty:
+        return float(default)
+    return scalar_float(s.mean(), default)
+
+
+def duplicated_column_names(df: pd.DataFrame) -> list[str]:
+    """중복으로 제거될 컬럼명 목록(첫 occurrence 제외)."""
+    if df is None or df.empty:
+        return []
+    cols = pd.Index(df.columns)
+    if cols.is_unique:
+        return []
+    dup_mask = cols.duplicated(keep="first")
+    return sorted(set(str(c) for c in cols[dup_mask]))
+
+
+def dedupe_columns(
+    df: pd.DataFrame,
+    *,
+    log_warnings: bool = True,
+    context: str = "",
+) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     cols = pd.Index(df.columns)
     if cols.is_unique:
         return df
+    duplicated_cols = duplicated_column_names(df)
+    if log_warnings and duplicated_cols:
+        ctx = f" ({context})" if context else ""
+        logger.warning(
+            "Duplicate columns detected and dropped: %s%s",
+            duplicated_cols,
+            ctx,
+        )
     return df.loc[:, ~cols.duplicated(keep="first")]
 
 
-def prepare_forward_trades_df(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+def prepare_forward_trades_df(
+    df: Optional[pd.DataFrame],
+    *,
+    context: str = "",
+) -> pd.DataFrame:
     """딥다이브 입력 — 컬럼 dedupe + final_ret 수치화·NaN→0."""
     if df is None:
         return pd.DataFrame()
-    out = dedupe_columns(df.copy())
+    out = dedupe_columns(df.copy(), log_warnings=True, context=context or "prepare_forward_trades_df")
     if out.empty or "final_ret" not in out.columns:
         return out
     out["final_ret"] = pd.to_numeric(col_series(out, "final_ret"), errors="coerce").fillna(0.0)

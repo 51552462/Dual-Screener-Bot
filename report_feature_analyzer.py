@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from forward_report_scalar import col_series, scalar_float
+from forward_report_scalar import col_series, scalar_float, series_mean
 
 # 리포트 집계 시 스냅샷 고착 방지 — 콜로세움/에이스는 메인 DB 우선
 _EXCLUDED_FEATURE_COLUMNS = frozenset(
@@ -320,7 +320,9 @@ class ReportFeatureAnalyzer:
     ) -> Dict[str, float]:
         out: Dict[str, float] = {}
         for col in columns:
-            s = ace_df[col]
+            s = col_series(ace_df, col)
+            if s.empty:
+                continue
             if _is_binary_like(s):
                 arr = pd.to_numeric(s, errors="coerce").to_numpy()
                 out[col] = _commonality_binary(arr)
@@ -348,8 +350,13 @@ class ReportFeatureAnalyzer:
                 self._last_disc_pvalues[col] = 1.0
                 self._last_disc_effects[col] = 0.0
                 continue
-            a = ace_df[col]
-            b = baseline_df[col]
+            a = col_series(ace_df, col)
+            b = col_series(baseline_df, col)
+            if a.empty and b.empty:
+                out[col] = 0.0
+                self._last_disc_pvalues[col] = 1.0
+                self._last_disc_effects[col] = 0.0
+                continue
             if _is_binary_like(pd.concat([a, b], ignore_index=True)):
                 aa = pd.to_numeric(a, errors="coerce").to_numpy()
                 bb = pd.to_numeric(b, errors="coerce").to_numpy()
@@ -392,21 +399,34 @@ class ReportFeatureAnalyzer:
             comb = w_common * c0 + w_disc * d0
             if comb <= 1e-6:
                 continue
-            kind = "binary" if _is_binary_like(ace_df[col]) else "continuous"
+            ace_col = col_series(ace_df, col)
+            kind = "binary" if not ace_col.empty and _is_binary_like(ace_col) else "continuous"
             if kind == "binary":
-                ap = pd.to_numeric(ace_df[col], errors="coerce").mean()
-                bp = pd.to_numeric(baseline_df[col], errors="coerce").mean() if col in baseline_df.columns else np.nan
-                ace_s = f"활성비율 {float(ap) * 100:.0f}%"
-                base_s = f"비교군 {float(bp) * 100:.0f}%" if np.isfinite(bp) else "비교군 N/A"
-            else:
-                am = pd.to_numeric(ace_df[col], errors="coerce").mean()
-                bm = (
-                    pd.to_numeric(baseline_df[col], errors="coerce").mean()
+                ap = series_mean(ace_df, col, default=np.nan)
+                bp = (
+                    series_mean(baseline_df, col, default=np.nan)
                     if col in baseline_df.columns
                     else np.nan
                 )
-                ace_s = f"평균 {float(am):.3g}"
-                base_s = f"비교군 평균 {float(bm):.3g}" if np.isfinite(bm) else "비교군 N/A"
+                ace_s = f"활성비율 {scalar_float(ap) * 100:.0f}%"
+                base_s = (
+                    f"비교군 {scalar_float(bp) * 100:.0f}%"
+                    if np.isfinite(scalar_float(bp, default=np.nan))
+                    else "비교군 N/A"
+                )
+            else:
+                am = series_mean(ace_df, col, default=np.nan)
+                bm = (
+                    series_mean(baseline_df, col, default=np.nan)
+                    if col in baseline_df.columns
+                    else np.nan
+                )
+                ace_s = f"평균 {scalar_float(am):.3g}"
+                base_s = (
+                    f"비교군 평균 {scalar_float(bm):.3g}"
+                    if np.isfinite(scalar_float(bm, default=np.nan))
+                    else "비교군 N/A"
+                )
             label = FEATURE_LABELS.get(col, col)
             rows.append(
                 FeatureInsight(
@@ -534,9 +554,9 @@ class ReportFeatureAnalyzer:
             or nl < min_per_group
         ):
             lines_err.append(
-                "<i>DNA 대조: 승자·패자 표본이 각각 "
-                f"<b>{min_per_group}</b>건 미만이라 통계적 대조를 생략합니다 "
-                f"(승 <b>{nw}</b> · 패 <b>{nl}</b>).</i>\n"
+                "<i>표본 부족 (승자 <b>"
+                f"{nw}</b>건 · 패자 <b>{nl}</b>건, 각 최소 <b>{min_per_group}</b>건 필요)으로 "
+                "DNA 대조 딥다이브 생략.</i>\n"
             )
             return [], lines_err, nw, nl
 

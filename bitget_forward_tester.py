@@ -16,6 +16,13 @@ from meta_governor_consumer import (
     effective_max_position_pct,
     load_meta_state_resolved,
 )
+from forward_report_scalar import (
+    col_series,
+    prepare_forward_trades_df,
+    row_scalar,
+    scalar_float,
+    series_mean,
+)
 from report_state_binder import build_macro_treasury_block, format_macro_treasury_section_html
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2126,13 +2133,20 @@ def run_deep_dive_analysis(market_type="spot"):
         )
         conn.close()
 
-        if len(df) < 10:
-            print(f"⚠️ [{market_type}] 아직 통계를 낼 만큼 청산된 데이터가 충분하지 않습니다. (최소 10개 필요)")
+        n_closed = len(df)
+        if n_closed < 10:
+            skip_msg = (
+                f"⚠️ <b>[{str(market_type).upper()} Bitget 딥 다이브]</b>\n"
+                f"표본 부족 (현재 <b>{n_closed}</b>건 / 최소 10건)으로 딥다이브 생략."
+            )
+            print(skip_msg.replace("<b>", "").replace("</b>", ""))
+            send_telegram_msg(skip_msg)
             return
 
         cfg = load_system_config()
+        df = prepare_forward_trades_df(df, context=f"bitget_deep_dive:{market_type}")
 
-        df["Win"] = np.where(pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) > 0, 1, 0)
+        df["Win"] = np.where(col_series(df, "final_ret") > 0, 1, 0)
         report_msg = f"🔬 [{str(market_type).upper()}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
 
         for t in range(10, 100, 10):
@@ -2153,13 +2167,17 @@ def run_deep_dive_analysis(market_type="spot"):
 
             def get_dna(sub_df):
                 if len(sub_df) == 0:
-                    return "표본없음"
-                rs = pd.to_numeric(sub_df.get("dyn_rs", pd.Series(dtype=float)), errors="coerce").dropna()
-                cpv = pd.to_numeric(sub_df.get("dyn_cpv", pd.Series(dtype=float)), errors="coerce").dropna()
-                eng = pd.to_numeric(sub_df.get("v_energy", pd.Series(dtype=float)), errors="coerce").dropna()
+                    return f"표본 부족 (현재 0건)으로 {tier_label} DNA 생략"
+                rs = pd.to_numeric(col_series(sub_df, "dyn_rs"), errors="coerce").dropna()
+                cpv = pd.to_numeric(col_series(sub_df, "dyn_cpv"), errors="coerce").dropna()
+                eng = pd.to_numeric(col_series(sub_df, "v_energy"), errors="coerce").dropna()
                 if rs.empty or cpv.empty or eng.empty:
-                    return "표본없음"
-                return f"RS:{(10-rs.mean())*11.1:.1f}% | CPV:{(10-cpv.mean())*11.1:.1f}% | ENG:{eng.mean():.1f}"
+                    return f"표본 부족 (현재 {len(sub_df)}건, DNA 컬럼 결측)으로 {tier_label} DNA 생략"
+                return (
+                    f"RS:{(10 - scalar_float(rs.mean())) * 11.1:.1f}% | "
+                    f"CPV:{(10 - scalar_float(cpv.mean())) * 11.1:.1f}% | "
+                    f"ENG:{scalar_float(eng.mean()):.1f}"
+                )
 
             report_msg += f" ✅ 대박 DNA: {get_dna(winners)}\n"
             report_msg += f" ↔️ 횡보 DNA: {get_dna(sideways)}\n"
@@ -2199,7 +2217,10 @@ def run_deep_dive_analysis(market_type="spot"):
                 else:
                     report_msg += "현재 시장은 악성 윗꼬리(CPV)에 한 번 걸리면 무조건 계좌가 녹아내리는 변동성 장세입니다.\n"
         else:
-            report_msg += "⚠️ 전체 그룹 통합 분석을 위한 표본이 아직 부족합니다.\n"
+            report_msg += (
+                f"⚠️ 표본 부족 (대박 {len(all_winners)}건 · 참사 {len(all_losers)}건, "
+                "각 5건 이상 필요)으로 Universal DNA 딥다이브 생략.\n"
+            )
         report_msg += "\n"
 
         report_msg += "🏷️ [세부 흐름 태그별 승률 기여도]\n"
@@ -2222,11 +2243,11 @@ def run_deep_dive_analysis(market_type="spot"):
             df["fixed_profit"] = pd.to_numeric(df["margin_used"], errors="coerce").fillna(0.0) * (
                 pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) / 100.0
             )
-            total_fixed_profit = float(df["fixed_profit"].sum())
+            total_fixed_profit = scalar_float(df["fixed_profit"].sum())
             df["kelly_profit"] = pd.to_numeric(df["sim_kelly_invest"], errors="coerce").fillna(0.0) * (
                 pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) / 100.0
             )
-            total_kelly_profit = float(df["kelly_profit"].sum())
+            total_kelly_profit = scalar_float(df["kelly_profit"].sum())
             report_msg += f"▪️ 고정 2% 베팅 누적 손익: <b>{total_fixed_profit:,.2f}USDT</b>\n"
             report_msg += f"▪️ 국면형 켈리 누적 손익: <b>{total_kelly_profit:,.2f}USDT</b>\n"
             if total_kelly_profit > total_fixed_profit:
@@ -2246,11 +2267,11 @@ def run_deep_dive_analysis(market_type="spot"):
                         "market_type": str(market_type).lower(),
                         "symbol": str(row.get("symbol", "")),
                         "sig_type": str(row.get("sig_type", "")),
-                        "dyn_cpv": float(row.get("dyn_cpv", 0.0) or 0.0),
-                        "dyn_tb": float(row.get("dyn_tb", 0.0) or 0.0),
-                        "v_energy": float(row.get("v_energy", 0.0) or 0.0),
-                        "dyn_rs": float(row.get("dyn_rs", 0.0) or 0.0),
-                        "final_ret": float(row.get("final_ret", 0.0) or 0.0),
+                        "dyn_cpv": row_scalar(row, "dyn_cpv"),
+                        "dyn_tb": row_scalar(row, "dyn_tb"),
+                        "v_energy": row_scalar(row, "v_energy"),
+                        "dyn_rs": row_scalar(row, "dyn_rs"),
+                        "final_ret": row_scalar(row, "final_ret"),
                         "recorded_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )

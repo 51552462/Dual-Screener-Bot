@@ -16,7 +16,7 @@ import pandas as pd
 import pytz
 
 from deathmatch_battle_royale import ledger_group_key
-from forward_report_scalar import prepare_forward_trades_df
+from forward_report_scalar import col_series, prepare_forward_trades_df, row_scalar
 from practitioner_llm import build_practitioner_llm_summary, format_llm_html_line
 from practitioner_market_profiles import (
     PractitionerMarketProfile,
@@ -107,10 +107,10 @@ def _toxic_hit_line(
     n = 0
     for _, row in losers.iterrows():
         facts = {
-            "dyn_cpv": float(row.get("dyn_cpv") or 0),
-            "dyn_tb": float(row.get("dyn_tb") or 0),
-            "v_energy": float(row.get("v_energy") or 0),
-            "dyn_rs": float(row.get("dyn_rs") or 0),
+            "dyn_cpv": row_scalar(row, "dyn_cpv"),
+            "dyn_tb": row_scalar(row, "dyn_tb"),
+            "v_energy": row_scalar(row, "v_energy"),
+            "dyn_rs": row_scalar(row, "dyn_rs"),
         }
         sec = _compress_sector(row.get("sector")) or "유망섹터"
         if any_toxic_rule_matches(sys_config, facts, sec):
@@ -147,7 +147,7 @@ def compute_vitality(
     n_closed_w = int(len(closed))
 
     if n_closed_w > 0:
-        ret = pd.to_numeric(closed["final_ret"], errors="coerce").fillna(0.0)
+        ret = pd.to_numeric(col_series(closed, "final_ret"), errors="coerce").fillna(0.0)
         rolling_wr = float((ret > 0).sum() / len(ret) * 100.0)
         active_days = int(closed["_xd"].nunique())
         weeks: List[float] = []
@@ -157,7 +157,7 @@ def compute_vitality(
             ws, we = w_start.strftime("%Y-%m-%d"), w_end.strftime("%Y-%m-%d")
             chunk = closed[(closed["_xd"] >= ws) & (closed["_xd"] <= we)]
             if len(chunk) >= 1:
-                cr = pd.to_numeric(chunk["final_ret"], errors="coerce").fillna(0.0)
+                cr = pd.to_numeric(col_series(chunk, "final_ret"), errors="coerce").fillna(0.0)
                 weeks.append(float((cr > 0).mean() * 100.0))
         if len(weeks) >= 2:
             wr_trend_pp = float(weeks[0] - weeks[-1])
@@ -212,7 +212,7 @@ def build_post_mortem(
     win_days = int(profile.post_mortem_window_days)
     cutoff = (today - timedelta(days=win_days)).strftime("%Y-%m-%d")
 
-    closed = prepare_forward_trades_df(g_closed)
+    closed = prepare_forward_trades_df(g_closed, context="build_post_mortem")
     if closed.empty or "exit_date" not in closed.columns:
         return (
             f"최근 {win_days}일 청산 없음 (프로필 {profile.rank_tier})",
@@ -230,7 +230,7 @@ def build_post_mortem(
             "",
         )
 
-    fr = pd.to_numeric(windowed["final_ret"], errors="coerce").fillna(0.0)
+    fr = pd.to_numeric(col_series(windowed, "final_ret"), errors="coerce").fillna(0.0)
     winners = windowed[fr >= float(profile.winner_ret_pct)]
     losers = windowed[fr <= float(profile.loser_ret_pct)]
 
@@ -286,6 +286,12 @@ def build_practitioner_brief(
     if str(market).upper().startswith("BG"):
         rank_tier = "PRACT" if "PRACT" in str(sample_sig).upper() else rank_tier
     profile = resolve_practitioner_profile(market, rank_tier, sys_config)
+    g_all = prepare_forward_trades_df(g_all, context=f"PIL:{market}:{group_key}:all")
+    g_closed = prepare_forward_trades_df(g_closed, context=f"PIL:{market}:{group_key}:closed")
+    g_today_closed = prepare_forward_trades_df(
+        g_today_closed, context=f"PIL:{market}:{group_key}:today"
+    )
+
     mk_u = str(market).upper()
     if mk_u.startswith("BG"):
         tz_name = "UTC"
@@ -338,7 +344,7 @@ def build_practitioner_brief(
     n_closed_window = len(closed_w)
     rolling_wr = None
     if n_closed_window > 0:
-        r = pd.to_numeric(closed_w["final_ret"], errors="coerce").fillna(0.0)
+        r = pd.to_numeric(col_series(closed_w, "final_ret"), errors="coerce").fillna(0.0)
         rolling_wr = float((r > 0).sum() / len(r) * 100.0)
 
     llm_facts = {
@@ -373,7 +379,7 @@ def build_practitioner_brief(
         for _, row in g_today_closed.iterrows():
             name = html.escape(str(row.get("name", "-")), quote=False)
             reason = html.escape(format_exit_reason(row.get("exit_reason")), quote=False)
-            ret = float(row.get("_ret_pct", safe_ret_fn(row.get("final_ret"))))
+            ret = row_scalar(row, "_ret_pct", safe_ret_fn(row_scalar(row, "final_ret")))
             closes_html += f" - {name} ({ret:+.2f}%) / {reason}\n"
     else:
         closes_html = " - 없음\n"

@@ -213,7 +213,7 @@ def build_flow_tag_snapshot(
     empty = FlowTagReportSnapshot(
         blocks=(),
         toxic=None,
-        synergy_action_html="<i>flow_tags 표본 없음</i>",
+        synergy_action_html="<i>표본 부족 (flow_tags 컬럼 없음 또는 0건)으로 flow 태그 딥다이브 생략</i>",
         exit_date_min=exit_min,
         exit_date_max=exit_max,
         registry_persisted=False,
@@ -244,6 +244,8 @@ def build_flow_tag_snapshot(
         wins=("_win", "sum"),
         cum_ret=("_fr", "sum"),
     )
+    if isinstance(agg.columns, pd.MultiIndex):
+        agg.columns = [c[0] if isinstance(c, tuple) else c for c in agg.columns]
     gross_profit = long.loc[long["_fr"] > 0].groupby("_tag", observed=True)["_fr"].sum()
     gross_loss = (
         long.loc[long["_fr"] <= 0].groupby("_tag", observed=True)["_fr"].sum().abs() + 0.1
@@ -263,8 +265,10 @@ def build_flow_tag_snapshot(
         carry_html = "—"
         bleed_html = "—"
         if not sub.empty:
-            carry_html = f"[캐리] {_stock_chip(sub.loc[sub['_fr'].idxmax()])}"
-            bleed_html = f"[출혈] {_stock_chip(sub.loc[sub['_fr'].idxmin()])}"
+            fr_sub = col_series(sub, "_fr")
+            if not fr_sub.empty:
+                carry_html = f"[캐리] {_stock_chip(sub.loc[fr_sub.idxmax()])}"
+                bleed_html = f"[출혈] {_stock_chip(sub.loc[fr_sub.idxmin()])}"
         row_dicts.append(
             {
                 "tag": str(tag),
@@ -281,7 +285,10 @@ def build_flow_tag_snapshot(
         return FlowTagReportSnapshot(
             blocks=(),
             toxic=None,
-            synergy_action_html="<i>태그별 최소 표본 미달 — 집계 생략</i>",
+            synergy_action_html=(
+                f"<i>표본 부족 (유효 태그 0개, 태그별 최소 <b>{min_n}</b>건 미달)으로 "
+                "flow 태그 집계 딥다이브 생략</i>"
+            ),
             exit_date_min=exit_min,
             exit_date_max=exit_max,
             registry_persisted=False,

@@ -34,7 +34,7 @@ from report_feature_analyzer import (
     extra_forward_trade_columns_for_report,
 )
 from forward_flow_tag_deep_dive import build_flow_tag_snapshot, format_flow_tag_report_html
-from forward_report_scalar import prepare_forward_trades_df, scalar_float
+from forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float, series_mean
 from forward_score_bucket_deep_dive import (
     ForwardScoreBucketDeepDive,
     build_universal_dna_block,
@@ -3022,14 +3022,18 @@ def run_deep_dive_analysis(market='KR'):
         finally:
             conn.close()
 
-        if len(df) < 10:
-            print(
-                f"⚠️ [{market}] 최근 {rolling_days}일(KST) 청산 표본이 10건 미만입니다. "
-                f"(해당 구간 {len(df)}건 / 전체 청산 누적 {n_all_closed}건, 앵커 {today_str})"
+        n_rolling = len(df)
+        if n_rolling < 10:
+            skip_msg = (
+                f"⚠️ <b>[{market}장 포워드 딥 다이브]</b>\n"
+                f"표본 부족 (현재 <b>{n_rolling}</b>건 / 최소 10건)으로 딥다이브 생략 "
+                f"(롤링 {rolling_days}일·전체 청산 {n_all_closed}건, KST {today_str})."
             )
+            print(skip_msg.replace("<b>", "").replace("</b>", ""))
+            send_telegram_msg(skip_msg)
             return
 
-        df = prepare_forward_trades_df(df)
+        df = prepare_forward_trades_df(df, context=f"deep_dive:{market}")
         df["Win"] = np.where(df["final_ret"] > 0, 1, 0)
         m_roll = len(df)
         report_msg = (
@@ -3067,7 +3071,10 @@ def run_deep_dive_analysis(market='KR'):
             report_msg += format_bucket_blocks_telegram_html(bucket_blocks)
             report_msg += "\n"
         else:
-            report_msg += "<i>점수대별 표본 부족 또는 total_score/tier 부재.</i>\n\n"
+            report_msg += (
+                f"<i>표본 부족 (점수 버킷 통과 구간 0개, 롤링 청산 <b>{m_roll}</b>건) 또는 "
+                "total_score/tier 부재로 Micro-DNA 딥다이브 생략.</i>\n\n"
+            )
 
         prep_df = ForwardScoreBucketDeepDive.assign_score_buckets(df)
         for bucket_label, t_df in prep_df.dropna(subset=["_score_bucket"]).groupby("_score_bucket", observed=True, sort=True):
@@ -3090,10 +3097,10 @@ def run_deep_dive_analysis(market='KR'):
                         else:
                             inc_map = dict(inc_map)
                         inc_map[ud_name] = {
-                            "cpv": round(scalar_float(winners["dyn_cpv"].mean()), 4),
-                            "tb": round(scalar_float(winners["dyn_tb"].mean()), 4),
-                            "bbe": round(scalar_float(winners["v_energy"].mean()), 4),
-                            "rs": round(scalar_float(winners["dyn_rs"].mean()), 4),
+                            "cpv": round(series_mean(winners, "dyn_cpv"), 4),
+                            "tb": round(series_mean(winners, "dyn_tb"), 4),
+                            "bbe": round(series_mean(winners, "v_energy"), 4),
+                            "rs": round(series_mean(winners, "dyn_rs"), 4),
                             "cos_cutoff": 0.75,
                             "created_at": datetime.now().strftime("%Y-%m-%d"),
                             "status": "INCUBATING",
@@ -3370,7 +3377,9 @@ def run_deep_dive_analysis(market='KR'):
                 else:
                     report_msg += "💡 <b>관제탑 동적 통찰:</b> 아직 뚜렷한 섹터 전이 패턴이 확보되지 않아 관망을 권장합니다.\n"
             else:
-                report_msg += "⚠️ 순환매 추적을 위한 표본 데이터가 부족합니다.\n"
+                report_msg += (
+                    f"⚠️ 표본 부족 (최근 60일 {market}장 진입 행 0건)으로 순환매 추적 딥다이브 생략.\n"
+                )
         except Exception as e:
             report_msg += f"⚠️ 순환매 추적 에러: {e}\n"
             
