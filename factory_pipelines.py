@@ -19,9 +19,11 @@ from factory_runtime import StepSpec
 
 def _step_meta_governor_sync() -> None:
     """리포트·감사 전 REGIME_ANALYSIS + MetaGovernor 동기 (degraded 시 자동 복구)."""
-    from meta_state_store import rebuild_meta_state
+    from meta_state_store import ensure_config_regime_aligned, rebuild_meta_state
 
     out = rebuild_meta_state(force=False, refresh_regime=True)
+    align = ensure_config_regime_aligned()
+    out["config_regime_align"] = align
     print(f"🛰️ [Factory] meta_governor_sync: {out}")
 
 

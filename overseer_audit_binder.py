@@ -336,7 +336,9 @@ def build_overseer_audit_dossier(
         if m and not isinstance(sys_config, dict):
             cfg = {}
         if m:
-            sync_config_regime_from_meta(m)
+            from meta_state_store import ensure_config_regime_aligned
+
+            ensure_config_regime_aligned(m, force=True)
             try:
                 from config_manager import load_system_config
 
@@ -344,6 +346,12 @@ def build_overseer_audit_dossier(
             except Exception:
                 pass
         cfg_regime = resolve_config_regime_key(cfg)
+        try:
+            from regime_self_heal import tick_regime_mismatch
+
+            tick_regime_mismatch(m, cfg)
+        except Exception:
+            pass
     except Exception:
         cfg_regime = str(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN")
 

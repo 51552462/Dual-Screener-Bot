@@ -358,6 +358,14 @@ def analyze_market_regime() -> None:
             "top_strategies_recent": top_rows,
         }
 
+        try:
+            from config_manager import invalidate_runtime_system_config_cache, set_config_value
+
+            set_config_value("CURRENT_REGIME_KEY", regime_key)
+            invalidate_runtime_system_config_cache()
+        except Exception:
+            cfg["CURRENT_REGIME_KEY"] = regime_key
+
         if save_config(cfg):
             print(f"✅ [판독 완료] 현재 장세: {regime_name}")
         else:

@@ -164,14 +164,32 @@ def _resolve_kelly_display(
 ) -> tuple[float, float, float]:
     """
     리포트용 켈리: 베이스(system) × META_GLOBAL_KELLY_MULT 후 regime kelly_cap/floor 클램프.
+    config 국면 UNKNOWN 시 Graceful fail-safe (이동평균·NEUTRAL 기본) 적용.
     (per-entry 의 NS/GROUP 멀티플라이어는 포함하지 않음 — 일일 브리핑 요약과 동일 계열.)
     """
     c = sys_config or {}
-    base = float(c.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01)
     m = meta or {}
     g = float(m.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
-    eff = base * g
     cap, floor = _resolve_kelly_cap_floor(m)
+    try:
+        from meta_state_store import resolve_config_regime_key
+        from regime_kelly_failsafe import apply_graceful_kelly_to_effective
+
+        rk_cfg = resolve_config_regime_key(c)
+        eff, base, _reason = apply_graceful_kelly_to_effective(
+            float(c.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01),
+            g,
+            cap,
+            floor,
+            sys_config=c,
+            meta=m,
+            config_regime_unknown=rk_cfg in ("", "UNKNOWN"),
+        )
+        return float(base), float(g), float(eff)
+    except Exception:
+        pass
+    base = float(c.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01)
+    eff = base * g
     if floor is not None:
         eff = max(eff, floor)
     if cap is not None:
@@ -255,12 +273,13 @@ def build_macro_treasury_block(
         from meta_state_store import (
             is_meta_state_degraded,
             reconcile_meta_regime_action,
-            sync_config_regime_from_meta,
         )
 
         m = reconcile_meta_regime_action(m)
         if auto_heal_meta and not is_meta_state_degraded(m):
-            sync_config_regime_from_meta(m)
+            from meta_state_store import ensure_config_regime_aligned
+
+            ensure_config_regime_aligned(m, force=True)
             from config_manager import load_system_config
 
             sys_config = load_system_config()
@@ -279,6 +298,12 @@ def build_macro_treasury_block(
         market=mkt,
     )
     foot = _merge_treasury_policy(raw, led, oms_equity, sys_config)
+    try:
+        from regime_kelly_failsafe import record_kelly_snapshot
+
+        record_kelly_snapshot(eff_k, regime)
+    except Exception:
+        pass
     return MacroTreasuryReportBlock(
         regime_key=regime,
         regime_confidence=conf,

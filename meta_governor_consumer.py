@@ -18,20 +18,59 @@ logger = logging.getLogger(__name__)
 _META_CACHE: Dict[str, Any] = {"path": None, "mtime": None, "data": None}
 
 
-def load_meta_state_resolved(path: Optional[str] = None) -> Dict[str, Any]:
-    """파일 mtime 기준 소프트 캐시 (try_add 고빈도 호출 대비)."""
-    p = path or meta_state_path()
+def _meta_cache_fingerprint(path: str) -> tuple:
+    """JSON mtime + config_kv META_GOVERNOR_STATE version — SQLite-only 갱신도 캐시 무효화."""
     try:
-        mtime = os.path.getmtime(p) if os.path.isfile(p) else None
+        mtime = os.path.getmtime(path) if os.path.isfile(path) else None
     except OSError:
         mtime = None
-    if _META_CACHE["path"] == p and _META_CACHE["mtime"] == mtime and isinstance(_META_CACHE["data"], dict):
+    kv_ver = None
+    try:
+        from config_manager import get_config_value
+
+        raw = get_config_value("META_GOVERNOR_STATE")
+        if isinstance(raw, dict):
+            kv_ver = (
+                raw.get("META_GOVERNOR_LAST_RUN_AT"),
+                raw.get("META_REGIME_KEY"),
+                raw.get("META_SCHEMA_VERSION"),
+            )
+    except Exception:
+        pass
+    return (mtime, kv_ver)
+
+
+def load_meta_state_resolved(path: Optional[str] = None) -> Dict[str, Any]:
+    """파일·config_kv 핑거프린트 기준 소프트 캐시 (try_add 고빈도 호출 대비)."""
+    p = path or meta_state_path()
+    fp = _meta_cache_fingerprint(p)
+    if _META_CACHE["path"] == p and _META_CACHE["mtime"] == fp and isinstance(_META_CACHE["data"], dict):
         return _META_CACHE["data"]
     data = load_meta_governor_state(p)
     _META_CACHE["path"] = p
-    _META_CACHE["mtime"] = mtime
+    _META_CACHE["mtime"] = fp
     _META_CACHE["data"] = data
     return data
+
+
+def resolve_trading_kelly_base(
+    sys_config: Dict[str, Any],
+    meta: Optional[Dict[str, Any]] = None,
+) -> float:
+    """실매매·try_add — config UNKNOWN 이어도 Meta·스냅샷 기반 Graceful Kelly 베이스."""
+    try:
+        from meta_state_store import resolve_config_regime_key
+        from regime_kelly_failsafe import resolve_graceful_base_kelly
+
+        rk_cfg = resolve_config_regime_key(sys_config)
+        kelly, _reason = resolve_graceful_base_kelly(
+            sys_config,
+            meta,
+            config_regime_unknown=rk_cfg in ("", "UNKNOWN"),
+        )
+        return float(kelly)
+    except Exception:
+        return float(sys_config.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01)
 
 
 def invalidate_meta_state_cache() -> None:

@@ -1788,14 +1788,36 @@ def try_add_virtual_position(
 
             account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
             fixed_risk_pct = 0.02 
-            kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01)
+            try:
+                from meta_governor_consumer import (
+                    load_meta_state_resolved,
+                    resolve_trading_kelly_base,
+                )
+
+                kelly_risk_pct = resolve_trading_kelly_base(
+                    sys_config, load_meta_state_resolved()
+                )
+            except Exception:
+                kelly_risk_pct = sys_config.get("DYNAMIC_KELLY_RISK", 0.01)
             w_s1 = float(sys_config.get("WEIGHT_S1", 1.0) or 1.0)
             w_s4 = float(sys_config.get("WEIGHT_S4", 1.0) or 1.0)
             if "S1" in sig_type or "SUPERNOVA" in sig_type:
                 kelly_risk_pct *= w_s1
             if "S4" in sig_type or "눌림" in sig_type:
                 kelly_risk_pct *= w_s4
-            cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
+            try:
+                from meta_state_store import normalize_regime_key, resolve_config_regime_key
+
+                _rk_m = normalize_regime_key(
+                    load_meta_state_resolved().get("META_REGIME_KEY")
+                )
+                cur_regime = (
+                    _rk_m
+                    if _rk_m not in ("", "UNKNOWN")
+                    else resolve_config_regime_key(sys_config)
+                )
+            except Exception:
+                cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
 
             # 💡 [100년 영속 진화 로직 적용: Namespace Thompson Kelly Sampler]
             # try_add 시점에 시그널 네임스페이스를 추론해 [NS]_BETA_PARAMS 기반으로 켈리 배율을 동적 샘플링한다.
