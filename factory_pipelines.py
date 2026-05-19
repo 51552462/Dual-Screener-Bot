@@ -156,6 +156,21 @@ _COMPREHENSIVE_REPORT = StepSpec(
 )
 
 
+def _step_pil_practitioner_reports() -> None:
+    """PIL 실무자 리포트 + ZOMBIE → Kelly=0 / RETIRED (MetaGovernor 자동 반영)."""
+    from auto_forward_tester import send_group_practitioner_reports
+
+    send_group_practitioner_reports()
+
+
+_PIL_PRACTITIONER = StepSpec(
+    "pil_practitioner_reports",
+    _step_pil_practitioner_reports,
+    critical=False,
+    delay_after_sec=2.0,
+)
+
+
 def _step_us_data_incremental_update() -> None:
     """daily_audit_us / scan-us — US OHLCV 증분 갱신 (KR 07:00 bulk 대칭)."""
     from data_updater import run_us_incremental_db_update
@@ -310,6 +325,7 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
             StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
             _DOOMSDAY_BRIDGE,
+            _PIL_PRACTITIONER,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
         ]
@@ -322,6 +338,7 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
             _DOOMSDAY_BRIDGE,
+            _PIL_PRACTITIONER,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
         ]
@@ -338,6 +355,7 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
             _DOOMSDAY_BRIDGE,
+            _PIL_PRACTITIONER,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False),
         ]

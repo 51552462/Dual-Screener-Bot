@@ -473,7 +473,7 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
         cfg["DEATHMATCH_MIN_TRADES_PER_ARM"] = 5
         added.add("DEATHMATCH_MIN_TRADES_PER_ARM")
     if "DEATHMATCH_APPLY_ALLOCATION" not in cfg:
-        cfg["DEATHMATCH_APPLY_ALLOCATION"] = 0
+        cfg["DEATHMATCH_APPLY_ALLOCATION"] = 1
         added.add("DEATHMATCH_APPLY_ALLOCATION")
     if "DEATHMATCH_BOTTOM_PCT" not in cfg:
         cfg["DEATHMATCH_BOTTOM_PCT"] = 0.2

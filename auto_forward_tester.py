@@ -2396,6 +2396,7 @@ def send_comprehensive_daily_report(
     refresh_sentiment: bool = True,
     refresh_sector_spillover: bool = True,
     refresh_meta_governor: bool = True,
+    apply_deathmatch_allocation: bool = True,
 ):
     """[V104.1] 국가별 9분할 정밀 리포트 (순환매 및 스필오버 복원 완료)"""
     if refresh_meta_governor:
@@ -2853,8 +2854,11 @@ def send_comprehensive_daily_report(
             from deathmatch_report import maybe_apply_deathmatch_allocation
 
             br, dm = build_nway_deathmatch_registry(df_closed, sys_config, market=market)
+            _cfg_dm = dict(sys_config)
+            if apply_deathmatch_allocation:
+                _cfg_dm["DEATHMATCH_APPLY_ALLOCATION"] = 1
             maybe_apply_deathmatch_allocation(
-                dm, sys_config, battle_royale=br, market=market
+                dm, _cfg_dm, battle_royale=br, market=market
             )
             _dm_label = f"{market} 청산 전체 · Registry Battle Royal"
             if not br.arms and n_closed_mkt == 0:

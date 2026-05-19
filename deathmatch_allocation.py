@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _allocation_flag(sys_config: Optional[dict]) -> bool:
     cfg = sys_config if isinstance(sys_config, dict) else {}
     flag = str(
-        cfg.get("DEATHMATCH_APPLY_ALLOCATION", os.environ.get("DEATHMATCH_APPLY_ALLOCATION", "0"))
+        cfg.get("DEATHMATCH_APPLY_ALLOCATION", os.environ.get("DEATHMATCH_APPLY_ALLOCATION", "1"))
     ).strip().lower()
     return flag in ("1", "true", "yes", "on")
 

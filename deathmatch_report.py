@@ -417,7 +417,7 @@ def maybe_apply_deathmatch_allocation(
       - 없으면 레거시 label 기반 제안만 config 저장
     """
     flag = str(
-        sys_config.get("DEATHMATCH_APPLY_ALLOCATION", os.environ.get("DEATHMATCH_APPLY_ALLOCATION", "0"))
+        sys_config.get("DEATHMATCH_APPLY_ALLOCATION", os.environ.get("DEATHMATCH_APPLY_ALLOCATION", "1"))
     ).strip().lower()
     if flag not in ("1", "true", "yes", "on"):
         return
