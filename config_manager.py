@@ -481,6 +481,9 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
     if "PRACTITIONER_APPLY_PENALTIES" not in cfg:
         cfg["PRACTITIONER_APPLY_PENALTIES"] = 1
         added.add("PRACTITIONER_APPLY_PENALTIES")
+    if "PIL_ZOMBIE_RETIRE_DAYS" not in cfg:
+        cfg["PIL_ZOMBIE_RETIRE_DAYS"] = {"KR": 5, "US": 7, "BG": 10, "BG_SPOT": 10, "BG_FUT": 10}
+        added.add("PIL_ZOMBIE_RETIRE_DAYS")
     if "PENDING_MUTANTS" not in cfg:
         cfg["PENDING_MUTANTS"] = {"strategies": [], "updated_at": ""}
         added.add("PENDING_MUTANTS")

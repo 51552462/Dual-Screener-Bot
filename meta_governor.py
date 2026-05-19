@@ -572,6 +572,8 @@ def default_meta_state() -> Dict[str, Any]:
         "META_PIL_ZOMBIE_GROUPS": [],
         "META_PIL_RETIRE_CANDIDATES": [],
         "META_PIL_PENALTY_AS_OF": None,
+        "META_PIL_ZOMBIE_STREAK": {},
+        "META_PIL_FORCE_RETIRED": [],
         "META_MAX_POSITION_PCT": None,
         "META_STRATEGY_HEALTH": {},
         "META_TREASURY_MODE": "NORMAL",
@@ -1043,7 +1045,9 @@ class MetaGovernor:
         for pil_key in (
             "META_PIL_GROUP_STATUS",
             "META_PIL_ZOMBIE_GROUPS",
+            "META_PIL_ZOMBIE_STREAK",
             "META_PIL_RETIRE_CANDIDATES",
+            "META_PIL_FORCE_RETIRED",
             "META_PIL_PENALTY_AS_OF",
         ):
             if pil_key in self._prior:
@@ -1142,6 +1146,39 @@ class MetaGovernor:
                     row["capital_mult"] = 0.0
                     row["demote_reason"] = str(c.get("reason") or "PIL_ZOMBIE_VITALITY")
                     row["last_demoted_at"] = datetime.now(timezone.utc).isoformat()
+
+        pil_force = self._prior.get("META_PIL_FORCE_RETIRED")
+        if isinstance(pil_force, list):
+            by_sid = {str(r.get("strategy_id")): r for r in reg if r.get("strategy_id")}
+            for c in pil_force:
+                if not isinstance(c, dict):
+                    continue
+                sid = str(c.get("strategy_id") or "")
+                row = by_sid.get(sid)
+                if not row:
+                    gk = str(c.get("group_key") or "")
+                    mk = str(c.get("market") or "KR").upper()
+                    from strategy_promotion_engine import stable_strategy_id
+
+                    sid = stable_strategy_id(mk, gk)
+                    row = {
+                        "strategy_id": sid,
+                        "market": mk.split("_")[0] if "_" in mk else mk,
+                        "group_key": gk,
+                        "state": "RETIRED",
+                        "capital_mult": 0.0,
+                        "display_name": gk,
+                        "source": "PIL_ZOMBIE_STREAK",
+                        "demote_reason": str(c.get("reason") or "PIL_ZOMBIE_STREAK"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    reg.append(row)
+                    by_sid[sid] = row
+                    continue
+                row["state"] = "RETIRED"
+                row["capital_mult"] = 0.0
+                row["demote_reason"] = str(c.get("reason") or "PIL_ZOMBIE_STREAK")
+                row["last_demoted_at"] = datetime.now(timezone.utc).isoformat()
 
         live_before = {
             str(r.get("strategy_id"))

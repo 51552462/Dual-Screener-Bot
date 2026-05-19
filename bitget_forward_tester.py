@@ -1966,89 +1966,29 @@ def _auto_tune_brain_from_closed_df(cfg: dict, closed_df: pd.DataFrame):
 
 
 def send_group_practitioner_reports():
-    """
-    코인 실무자 30명 개별 리포트 (spot/futures 분리).
-    최근 청산 데이터를 30개 그룹으로 나눠 각 그룹 성과를 발송한다.
-    """
+    """PIL — Bitget PRACT_01~30 (spot/futures) Post-Mortem · Vitality · LLM · ZOMBIE 페널티."""
+    from practitioner_bitget_adapter import send_bitget_practitioner_reports_pil
+
     init_forward_db()
     sync_real_leaderboard_with_virtual()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    cfg = load_system_config()
+    seed = float(cfg.get("BITGET_ACCOUNT_SIZE_USDT", 10000) or 10000)
     try:
-        for market_type in ["spot", "futures"]:
-            df = pd.read_sql(
-                """
-                SELECT symbol, sig_type, total_score, final_ret, mfe, exit_type, position_side
-                FROM bitget_forward_trades
-                WHERE market_type=? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                ORDER BY id DESC
-                LIMIT 1200
-                """,
-                conn,
-                params=(market_type,),
-            )
-            if df.empty:
-                continue
+        from meta_governor_consumer import load_meta_state_resolved
+    except Exception:
+        load_meta_state_resolved = lambda: {}
 
-            df["final_ret"] = pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0)
-            df["mfe"] = pd.to_numeric(df["mfe"], errors="coerce").fillna(0.0)
-            df["total_score"] = pd.to_numeric(df["total_score"], errors="coerce").fillna(0.0)
-            # 💡 [버그 픽스] 임의의 점수 등분이 아닌, 실제 실무자(Engine) 명찰을 기준으로 그룹화
-            def _get_prac_key(sig):
-                import re
-                m = re.search(r"(PRACT_\d{2})", str(sig), re.IGNORECASE)
-                return m.group(1).upper() if m else "UNKNOWN"
-            
-            df["practitioner_key"] = df["sig_type"].apply(_get_prac_key)
-            prac_keys = sorted([k for k in df["practitioner_key"].unique() if k != "UNKNOWN"])
-
-            icon = "🟢" if market_type == "spot" else "🟠"
-            for p_key in prac_keys:
-                g = df[df["practitioner_key"] == p_key].copy()
-                if g.empty: continue
-                wins = int((g["final_ret"] > 0).sum())
-                total = int(len(g))
-                wr = (wins / total) * 100.0 if total > 0 else 0.0
-                pf = _pf(g["final_ret"])
-                avg_ret = float(g["final_ret"].mean()) if total > 0 else 0.0
-                avg_mfe = float(g["mfe"].mean()) if total > 0 else 0.0
-                top_row = g.sort_values("final_ret", ascending=False).iloc[0]
-                # 동일 실무자 키의 실전 로그를 병합해 "입실력 vs 실전실력" 비교
-                prac_key = str(p_key)
-                real_df = pd.read_sql(
-                    """
-                    SELECT realized_ret_pct, virtual_final_ret, notional_usdt, exec_ok, is_dry_run
-                    FROM bitget_real_execution
-                    WHERE market_type=? AND practitioner_key=?
-                    ORDER BY id DESC
-                    LIMIT 500
-                    """,
-                    conn,
-                    params=(market_type, prac_key),
-                )
-                real_ret = 0.0
-                real_notion = 0.0
-                real_samples = 0
-                if not real_df.empty:
-                    real_df["realized_ret_pct"] = pd.to_numeric(real_df["realized_ret_pct"], errors="coerce").fillna(0.0)
-                    real_df["notional_usdt"] = pd.to_numeric(real_df["notional_usdt"], errors="coerce").fillna(0.0)
-                    real_ret = float(real_df["realized_ret_pct"].mean())
-                    real_notion = float(real_df["notional_usdt"].sum())
-                    real_samples = int(len(real_df))
-
-                msg = (
-                    f"{icon} <b>[{market_type.upper()} 실무자 {prac_key}]</b>\n"
-                    f"▪️ 성적: 승률 {wr:.1f}% | PF {pf:.2f}\n"
-                    f"▪️ 평균: RET {avg_ret:+.2f}% | MFE {avg_mfe:+.2f}% | 표본 {total}\n"
-                    f"▪️ 실전: RET {real_ret:+.2f}% | 노셔널 {real_notion:,.1f} USDT | 체결 {real_samples}\n"
-                    f"▪️ 괴리: 실전-가상 {real_ret - avg_ret:+.2f}pp\n"
-                    f"▪️ 대표 트레이드: {top_row['symbol']} ({top_row['position_side']}) {float(top_row['final_ret']):+.2f}%"
-                )
-                send_telegram_msg(msg)
-                time.sleep(0.35)
-    finally:
-        conn.close()
+    try:
+        out = send_bitget_practitioner_reports_pil(
+            db_path=DB_PATH,
+            send_telegram_msg=send_telegram_msg,
+            load_system_config=load_system_config,
+            load_meta_state_resolved=load_meta_state_resolved,
+            base_seed_usdt=seed,
+        )
+        print(f"🧠 [Bitget PIL] 실무자 리포트: {out}")
+    except Exception as ex:
+        send_telegram_msg(f"⚠️ Bitget PIL 실무자 리포트 에러: {ex}")
 
 
 def send_comprehensive_daily_report():

@@ -111,6 +111,48 @@ _PROFILE_TABLE: List[PractitionerMarketProfile] = [
         narrative_focus="KR 일반",
     ),
     PractitionerMarketProfile(
+        market="BG",
+        rank_tier="PRACT",
+        post_mortem_window_days=14,
+        post_mortem_min_days=7,
+        winner_ret_pct=4.0,
+        loser_ret_pct=-2.5,
+        vitality_lookback_days=30,
+        zombie_vitality_threshold=0.38,
+        min_closed_for_post_mortem=2,
+        toxic_config_key="US",
+        feature_priority=("v_energy", "dyn_cpv", "dyn_rs", "total_score"),
+        narrative_focus="Bitget PRACT 엔진",
+    ),
+    PractitionerMarketProfile(
+        market="BG_SPOT",
+        rank_tier="PRACT",
+        post_mortem_window_days=14,
+        post_mortem_min_days=7,
+        winner_ret_pct=4.0,
+        loser_ret_pct=-2.5,
+        vitality_lookback_days=30,
+        zombie_vitality_threshold=0.38,
+        min_closed_for_post_mortem=2,
+        toxic_config_key="US",
+        feature_priority=("v_energy", "dyn_cpv", "dyn_rs", "total_score"),
+        narrative_focus="Bitget Spot PRACT",
+    ),
+    PractitionerMarketProfile(
+        market="BG_FUT",
+        rank_tier="PRACT",
+        post_mortem_window_days=21,
+        post_mortem_min_days=10,
+        winner_ret_pct=5.0,
+        loser_ret_pct=-3.0,
+        vitality_lookback_days=30,
+        zombie_vitality_threshold=0.36,
+        min_closed_for_post_mortem=2,
+        toxic_config_key="US",
+        feature_priority=("v_energy", "dyn_cpv", "dyn_rs", "bars_held"),
+        narrative_focus="Bitget Futures PRACT",
+    ),
+    PractitionerMarketProfile(
         market="US",
         rank_tier="DEFAULT",
         post_mortem_window_days=45,
@@ -142,26 +184,28 @@ def resolve_practitioner_profile(
 ) -> PractitionerMarketProfile:
     mk = str(market or "KR").upper()
     tier = str(rank_tier or "DEFAULT").upper()
-    if tier == "DEFAULT":
+    base = None
+    for p in _PROFILE_TABLE:
+        if p.market == mk and p.rank_tier == tier:
+            base = p
+            break
+    if base is None and tier != "DEFAULT":
         for p in _PROFILE_TABLE:
             if p.market == mk and p.rank_tier == "DEFAULT":
                 base = p
                 break
-        else:
-            base = _DEFAULT_PROFILE
-    else:
-        base = None
+    if base is None and mk.startswith("BG_"):
         for p in _PROFILE_TABLE:
-            if p.market == mk and p.rank_tier == tier:
+            if p.market == "BG" and p.rank_tier == tier:
                 base = p
                 break
-        if base is None:
-            for p in _PROFILE_TABLE:
-                if p.market == mk and p.rank_tier == "DEFAULT":
-                    base = p
-                    break
-        if base is None:
-            base = _DEFAULT_PROFILE
+    if base is None and mk.startswith("BG"):
+        for p in _PROFILE_TABLE:
+            if p.market == "BG" and p.rank_tier == "PRACT":
+                base = p
+                break
+    if base is None:
+        base = _DEFAULT_PROFILE
 
     if not isinstance(sys_config, dict):
         return base

@@ -56,6 +56,11 @@ class PractitionerBrief:
     llm_summary: str = ""
     penalty_action: str = ""
     today_closes_html: str = ""
+    currency_suffix: str = "원"
+    venue_label: str = ""
+    zombie_streak_days: int = 0
+    zombie_retire_after_days: int = 5
+    force_retired: bool = False
 
 
 def _exit_day_series(df: pd.DataFrame) -> pd.Series:
@@ -278,8 +283,16 @@ def build_practitioner_brief(
     win_loss_fn,
 ) -> PractitionerBrief:
     rank_tier = extract_rank_tier(sample_sig)
+    if str(market).upper().startswith("BG"):
+        rank_tier = "PRACT" if "PRACT" in str(sample_sig).upper() else rank_tier
     profile = resolve_practitioner_profile(market, rank_tier, sys_config)
-    tz_name = "Asia/Seoul" if market == "KR" else "America/New_York"
+    mk_u = str(market).upper()
+    if mk_u.startswith("BG"):
+        tz_name = "UTC"
+    elif mk_u == "KR":
+        tz_name = "Asia/Seoul"
+    else:
+        tz_name = "America/New_York"
 
     if "final_ret" in g_today_closed.columns:
         g_today_closed = g_today_closed.copy()
@@ -397,8 +410,9 @@ def build_practitioner_brief(
 
 
 def format_practitioner_brief_html(b: PractitionerBrief) -> str:
+    venue = f" · {html.escape(b.venue_label, quote=False)}" if b.venue_label else ""
     lines = [
-        f"{b.market_icon} <b>[{b.market} 실무자 리포트 · PIL]</b> "
+        f"{b.market_icon} <b>[{b.market} 실무자 리포트 · PIL{venue}]</b> "
         f"{html.escape(b.group_key, quote=False)} "
         f"<i>({html.escape(b.rank_tier, quote=False)} · {html.escape(b.profile.narrative_focus, quote=False)})</i>\n",
         f"📅 오늘: <b>{b.today_win}승 {b.today_loss}패</b>",
@@ -420,8 +434,16 @@ def format_practitioner_brief_html(b: PractitionerBrief) -> str:
         lines.append(
             f"⛔ <b>시스템 페널티:</b> {html.escape(b.penalty_action, quote=False)}\n"
         )
+        if b.zombie_streak_days > 0:
+            lines.append(
+                f" ⏱️ 좀비 연속 <b>{b.zombie_streak_days}</b>/{b.zombie_retire_after_days}일 "
+                f"{'→ <b>RETIRED</b>' if b.force_retired else '(N일 시 강제 퇴역)'}\n"
+            )
+    if b.force_retired:
+        lines.append(" ☠️ <b>무자비 퇴역:</b> Kelly=0 · registry <b>RETIRED</b>\n")
 
-    lines.append(f"💰 누적 복리 시드: <b>{b.compound_seed:,.0f}원</b>\n")
+    cur = b.currency_suffix or "원"
+    lines.append(f"💰 누적 복리 시드: <b>{b.compound_seed:,.0f}{cur}</b>\n")
     lines.append(f"📦 유효 보유: <b>{b.open_cnt}개</b>\n")
     lines.append(
         f"🔬 <b>Post-Mortem</b> ({b.post_mortem_window_days}일 윈도우 · "
