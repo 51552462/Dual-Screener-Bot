@@ -147,48 +147,11 @@ def send_telegram_msg(text):
 
 
 def _alpha_formula_one_line_explain(formula, ic):
-    """
-    Gemini로 수식의 전략 논리를 1줄 자연어로 요약.
-    실패 시 규칙기반 안전 폴백 문구를 반환.
-    """
+    """규칙 기반 1줄 요약 (LLM은 evolve 백그라운드 enrich에서 비동기 처리)."""
     ftxt = str(formula)
-    fallback = "가격·거래량·변동성 요소를 결합해 단기 모멘텀과 눌림 신호를 동시에 판독하는 전략입니다."
-    if "div(" in ftxt and "V" in ftxt:
-        fallback = "거래량 대비 가격 위치(저점/고점)를 비율로 압축해, 수급 급변 직전의 비대칭 구간을 노리는 전략입니다."
-    elif "add(" in ftxt and "ma" in ftxt.lower():
-        fallback = "이동평균 추세와 단기 변동성 요인을 합성해, 추세 지속 구간의 승자주를 선별하는 전략입니다."
+    from llm_gemini_core import AlphaFormulaFallbackParser
 
-    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
-        return fallback
-
-    prompt = (
-        "다음은 퀀트 알파 수식이다. 사람이 이해하기 쉬운 한국어 한 줄(40자~90자)로 "
-        "매매 논리를 설명해라. 과장 금지, 단정적 투자권유 금지.\n"
-        f"- IC: {float(ic):.4f}\n"
-        f"- 수식: {ftxt}\n"
-        "출력은 설명문 한 줄만."
-    )
-    try:
-        import google.generativeai as genai
-
-        _gk = (os.environ.get("GEMINI_API_KEY") or "").strip().split(",")[0].strip()
-        if _gk:
-            try:
-                genai.configure(api_key=_gk)
-            except Exception:
-                pass
-        time.sleep(random.uniform(0.3, 0.7))
-        try:
-            resp = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
-        except Exception:
-            return f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
-        text = getattr(resp, "text", "") or ""
-        text = text.strip().replace("\n", " ")
-        if text:
-            return text[:120]
-    except Exception:
-        return f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}"
-    return fallback
+    return AlphaFormulaFallbackParser.explain(ftxt, float(ic))
 
 
 def _approx_dyn_rs_vs_benchmark(stock_df, idx_close_sr):
@@ -729,13 +692,27 @@ def evolve_alpha_factors():
         }
     )
 
-    msg = "🧬 <b>[알파 진화 완료]</b>\n"
-    for i, (formula, ic) in enumerate(top3, 1):
-        msg += f"▪️ ALPHA_{i} (IC {ic:.4f}): <code>{formula}</code>\n"
-        explain = _alpha_formula_one_line_explain(formula, ic)
-        msg += f"  - AI 해석: {explain}\n"
-    send_telegram_msg(msg)
-    print("✅ EVOLVED_ALPHA_FACTORS 저장 완료")
+    from llm_gemini_core import (
+        AlphaFormulaFallbackParser,
+        build_alpha_evolution_telegram_html,
+        schedule_alpha_evolution_enrich,
+        send_telegram_html_chunks_return_first_id,
+    )
+
+    explains = [AlphaFormulaFallbackParser.explain(f, ic) for f, ic in top3]
+    msg = build_alpha_evolution_telegram_html(top3, explains, enriched=False)
+    message_id = send_telegram_html_chunks_return_first_id(
+        msg,
+        token=TELEGRAM_TOKEN_MAIN,
+        chat_id=TELEGRAM_CHAT_ID,
+    )
+    schedule_alpha_evolution_enrich(
+        top3=top3,
+        token=TELEGRAM_TOKEN_MAIN,
+        chat_id=TELEGRAM_CHAT_ID,
+        message_id=message_id or 0,
+    )
+    print("✅ EVOLVED_ALPHA_FACTORS 저장 완료 (1차 발송·백그라운드 AI enrich 예약)")
 
 # ==========================================
 # 💡 [전체 상장 종목 리스트 수집기]

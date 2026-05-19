@@ -228,25 +228,23 @@ def _optional_llm_tail(facts_plain: str, *, rule_plain: str) -> str:
     ):
         return ""
     try:
-        import google.generativeai as genai
-        from gemini_report_cache import load_gemini_api_keys
-        from ai_overseer import safe_generate_content
+        from llm_gemini_core import LlmCallSpec, generate_text_sync, load_gemini_api_keys
 
-        keys = load_gemini_api_keys()
-        if not keys:
+        if not load_gemini_api_keys():
             return ""
-        genai.configure(api_key=keys[0])
-        prompt = (
-            f"{_WEEKLY_LLM_SYSTEM}\n\n"
-            f"[FACTS]\n{facts_plain}\n\n"
-            f"[RULE PLAN]\n{rule_plain[:600]}\n"
-        )
-        res = safe_generate_content(
+        spec = LlmCallSpec(
+            task_id="weekly_action_plan",
+            system_prompt=_WEEKLY_LLM_SYSTEM,
+            user_payload=(
+                f"[FACTS]\n{facts_plain}\n\n[RULE PLAN]\n{rule_plain[:600]}\n"
+            ),
             model="gemini-2.0-flash",
-            contents=prompt,
-            max_retries=2,
+            max_attempts=6,
         )
-        text = (getattr(res, "text", None) or str(res) or "").strip()
+        res = generate_text_sync(spec, max_wait_sec=3.0)
+        text = (res.text or "").strip()
+        if not res.ok:
+            return ""
         if not text:
             return ""
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()][:2]

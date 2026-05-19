@@ -176,33 +176,15 @@ def init_ai_report_cache_db() -> None:
 
 
 def load_gemini_api_keys() -> List[str]:
-    load_dotenv()
-    raw = os.environ.get("GEMINI_API_KEY") or ""
-    return [x.strip() for x in raw.split(",") if x.strip()]
+    from llm_gemini_core import load_gemini_api_keys as _load_keys
+
+    return _load_keys()
 
 
 def is_retryable_gemini_error(exc: BaseException) -> bool:
-    """429·쿼터·일시 과부하 등 → 다음 키로 재시도."""
-    msg = str(exc).lower()
-    needles = (
-        "429",
-        "resource exhausted",
-        "resourceexhausted",
-        "quota",
-        "rate limit",
-        "too many requests",
-        "503",
-        "504",
-        "deadline",
-        "unavailable",
-        "exhausted",
-    )
-    if any(n in msg for n in needles):
-        return True
-    name = type(exc).__name__.lower()
-    if "resourceexhausted" in name or "aborted" in name or "deadline" in name:
-        return True
-    return False
+    from llm_gemini_core import is_retryable_gemini_error as _retry
+
+    return _retry(exc)
 
 
 def cache_get_payload(date_str: str, cache_key: str) -> Optional[str]:
@@ -429,8 +411,6 @@ class GeminiBackend:
         raise ValueError(f"unknown report_type: {report_type!r}")
 
     def _generate_stock(self, code: str, company_name: str) -> Tuple[str, str]:
-        import google.generativeai as genai
-
         today = datetime.now().strftime("%Y-%m-%d")
         cache_key = str(code).strip()
 
@@ -452,40 +432,32 @@ class GeminiBackend:
             3. 모멘텀: (앞으로의 호재 한글 1줄 요약)
             """
 
-        for attempt in range(3):
-            if not self._configure(genai, attempt):
-                return fb_main, ""
+        from llm_gemini_core import LlmCallSpec, generate_text_sync
 
-            try:
-                time.sleep(4)
-                gmodel = genai.GenerativeModel("gemini-2.5-flash", tools="google_search_retrieval")
-                response = run_gemini_network_gated(lambda: gmodel.generate_content(prompt))
-            except Exception as e:
-                if attempt < 2 and is_retryable_gemini_error(e):
-                    continue
-                return (
-                    f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n{prompt}",
-                    "",
-                )
-
-            if not response or not response.text:
-                continue
-
-            report = response.text.replace("*", "").strip()
+        spec = LlmCallSpec(
+            task_id="stock_report",
+            user_payload=prompt.strip(),
+            model="gemini-2.5-flash",
+            cache_key=cache_key,
+            timeout_sec=30.0,
+        )
+        res = generate_text_sync(spec, max_wait_sec=3.0)
+        report = (res.text or "").replace("*", "").strip()
+        if report and "[본캐]" in report:
             m_part = re.search(r"\[본캐\](.*)", report, re.DOTALL)
-            if not m_part:
-                continue
-
-            main = m_part.group(1).strip()
-            out: Tuple[str, str] = (main, "")
+            if m_part:
+                main = m_part.group(1).strip()
+                out: Tuple[str, str] = (main, "")
+                cache_put_payload(today, cache_key, json.dumps(list(out), ensure_ascii=False))
+                return out
+        if report and "[본캐]" not in report and res.ok:
+            out = (report, "")
             cache_put_payload(today, cache_key, json.dumps(list(out), ensure_ascii=False))
             return out
 
         return fb_main, ""
 
     def _generate_bitget(self, symbol: str, timeframe: str) -> str:
-        import google.generativeai as genai
-
         today = datetime.now().strftime("%Y-%m-%d")
         cache_key = f"{str(symbol).strip()}|{str(timeframe).strip()}"
 
@@ -493,7 +465,12 @@ class GeminiBackend:
         if cached_main is not None:
             return cached_main
 
-        raw_survival = f"⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:\n\n"
+        fb_main = (
+            f"[본캐 · 템플릿]\n"
+            f"1. 섹터/테마: {symbol} — 암호화폐 시장군(요약 대기)\n"
+            f"2. 내러티브: {timeframe} 구간 시장 서사 — 스캐너 팩트 연동 대기\n"
+            f"3. 모멘텀: 코어 지표 기준으로 판독하세요."
+        )
         prompt = f"""
 너는 암호화폐 리서치 마케터다.
 [{symbol}] 코인의 최신 정보를 검색해 아래 형식만 출력하라.
@@ -503,31 +480,29 @@ class GeminiBackend:
 2. 내러티브: (현재 시장이 반응하는 재료 1줄)
 3. 모멘텀: ({timeframe} 기준 수급/변동성 관점 1줄)
 """
-        raw_survival_full = raw_survival + prompt
-
         if not load_gemini_api_keys():
-            return raw_survival_full
+            return fb_main
 
-        for attempt in range(3):
-            if not self._configure(genai, attempt):
-                return raw_survival_full
-            try:
-                time.sleep(3)
-                gmodel = genai.GenerativeModel("gemini-2.5-flash", tools="google_search_retrieval")
-                response = run_gemini_network_gated(lambda: gmodel.generate_content(prompt))
-            except Exception as e:
-                if attempt < 2 and is_retryable_gemini_error(e):
-                    continue
-                return raw_survival_full
+        from llm_gemini_core import LlmCallSpec, generate_text_sync
 
-            if response and response.text:
-                txt = response.text.replace("*", "").strip()
-                if "[본캐]" in txt:
-                    body = txt.split("[본캐]", 1)[1].strip()
-                    cache_put_payload(today, cache_key, json.dumps([body, ""], ensure_ascii=False))
-                    return body
+        spec = LlmCallSpec(
+            task_id="bitget_report",
+            user_payload=prompt.strip(),
+            model="gemini-2.5-flash",
+            cache_key=cache_key,
+            timeout_sec=30.0,
+        )
+        res = generate_text_sync(spec, max_wait_sec=3.0)
+        txt = (res.text or "").replace("*", "").strip()
+        if txt and "[본캐]" in txt:
+            body = txt.split("[본캐]", 1)[1].strip()
+            cache_put_payload(today, cache_key, json.dumps([body, ""], ensure_ascii=False))
+            return body
+        if txt and res.ok:
+            cache_put_payload(today, cache_key, json.dumps([txt, ""], ensure_ascii=False))
+            return txt
 
-        return raw_survival_full
+        return fb_main
 
 
 def get_report_provider() -> ReportProvider:

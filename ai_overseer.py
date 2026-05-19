@@ -1,4 +1,4 @@
-# ai_overseer.py
+# ai_overseer.py — Rules-first 감사 + LLM 해석 (llm_gemini_core SSOT)
 import os
 import time
 import random
@@ -10,8 +10,6 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 
-# 👇 Gemini는 보조 모듈 — 키/패키지 없어도 import·프로세스는 계속 가동 (지연 로드)
-GEMINI_API_KEY = ""
 try:
     from dotenv import load_dotenv
 
@@ -19,7 +17,6 @@ try:
 except Exception:
     pass
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or ""
-# 👆
 
 import telegram_env
 
@@ -31,9 +28,6 @@ from overseer_audit_binder import (
     format_overseer_audit_html,
 )
 
-# ==========================================
-# 💡 [환경 설정 및 API 연결]
-# ==========================================
 TELEGRAM_TOKEN = telegram_env.get_overseer_token()
 TELEGRAM_CHAT_ID = telegram_env.get_overseer_chat_id()
 
@@ -44,15 +38,22 @@ DB_PATH = market_db_read_path()
 CONFIG_PATH = system_config_json_path()
 CSV_PATH = flow_csv_path()
 
+GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 규칙 감사 본문은 이미 전송되었습니다."
+
+_GEMINI_HEARTBEAT: dict[str, object] = {
+    "phase": "idle",
+    "detail": "",
+    "attempt": 0,
+    "updated_mono": 0.0,
+}
+
 
 def load_config(max_retries=5):
-    """[장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용"""
     if not os.path.exists(CONFIG_PATH):
         return {}
-
     for attempt in range(max_retries):
         try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, PermissionError) as e:
             if attempt < max_retries - 1:
@@ -64,7 +65,6 @@ def load_config(max_retries=5):
 
 
 def send_telegram_alert(text):
-    """최고 감시자의 경고 및 분석 리포트를 텔레그램으로 전송합니다."""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         max_len = 4000
@@ -84,16 +84,6 @@ def send_telegram_alert(text):
             time.sleep(0.5)
     except Exception as e:
         print(f"텔레그램 발송 실패: {e}")
-
-
-GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 규칙 감사 본문은 이미 전송되었습니다."
-
-_GEMINI_HEARTBEAT: dict[str, object] = {
-    "phase": "idle",
-    "detail": "",
-    "attempt": 0,
-    "updated_mono": 0.0,
-}
 
 
 def gemini_heartbeat_snapshot() -> dict[str, object]:
@@ -122,47 +112,18 @@ def _gemini_raw_fallback_response(detail: str = "") -> SimpleNamespace:
 
 
 def safe_generate_content(*, model, contents, max_retries=5):
-    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
-        _gemini_hb_set("disabled", "GEMINI_API_KEY unset")
-        return _gemini_raw_fallback_response("AI 비활성화(Gemini 미설정)")
-    last_err = ""
-    import google.generativeai as genai
+    """llm_gemini_core SSOT 위임."""
+    from llm_gemini_core import safe_generate_content as _core_safe
 
-    _gk = (os.environ.get("GEMINI_API_KEY") or "").strip().split(",")[0].strip()
-    try:
-        genai.configure(api_key=_gk)
-    except Exception:
-        pass
-    for attempt in range(max_retries):
-        try:
-            _gemini_hb_set("rate_limit_sleep", "pre_call_sleep", attempt)
-            time.sleep(3.5)
-            _gemini_hb_set("calling", model or "", attempt)
-            gmodel = genai.GenerativeModel(model)
-            try:
-                response = gmodel.generate_content(contents)
-                _gemini_hb_set("idle", "ok")
-                return response
-            except Exception as gen_e:
-                last_err = str(gen_e)
-                err_lower = last_err.lower()
-                if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err or "quota" in err_lower:
-                    if attempt < max_retries - 1:
-                        wait_time = (2 ** attempt) * 10 + random.uniform(1, 5)
-                        _gemini_hb_set("backoff_429", last_err[:200], attempt)
-                        send_telegram_alert(
-                            f"⏳ [API 속도 조절 중] {wait_time:.1f}초 대기 후 재시도... ({attempt+1}/{max_retries})"
-                        )
-                        time.sleep(wait_time)
-                        continue
-                _gemini_hb_set("idle", f"fallback:{last_err[:120]}")
-                return _gemini_raw_fallback_response(last_err)
-        except Exception as e:
-            _gemini_hb_set("idle", f"outer:{str(e)[:120]}")
-            return _gemini_raw_fallback_response(str(e))
-
-    _gemini_hb_set("idle", "retries_exhausted")
-    return _gemini_raw_fallback_response(last_err or "재시도 소진")
+    _gemini_hb_set("calling", model or "", 0)
+    res = _core_safe(
+        model=model,
+        contents=contents,
+        max_retries=max_retries,
+        task_id="legacy",
+    )
+    _gemini_hb_set("idle", "ok")
+    return res
 
 
 def gather_daily_system_facts():
@@ -192,7 +153,7 @@ def gather_daily_system_facts():
 
 def run_ai_auditor():
     """Rules-first 감사(Anomaly) → SSOT 본문 → 선택적 LLM 해석."""
-    print("👁️ [AI 최고 감시자] Rules-first 감사 스캔 중...")
+    print("🛡️ [AI 최고 감시자] Rules-first 감사 스캔 중...")
     try:
         from factory_artifact_guard import ensure_factory_artifacts
 
@@ -223,13 +184,18 @@ def run_ai_auditor():
 
     if (os.environ.get("GEMINI_API_KEY") or "").strip():
         try:
+            from llm_gemini_core import LlmCallSpec, generate_text_sync
+
             user_prompt = build_llm_narrative_prompt(dossier, anomalies)
-            full_prompt = f"{OVERSEER_LLM_SYSTEM_PROMPT}\n\n{user_prompt}"
-            ai_res = safe_generate_content(
+            spec = LlmCallSpec(
+                task_id="overseer_audit",
+                system_prompt=OVERSEER_LLM_SYSTEM_PROMPT,
+                user_payload=user_prompt,
                 model="gemini-2.5-flash",
-                contents=full_prompt,
+                timeout_sec=45.0,
             )
-            ai_text = (getattr(ai_res, "text", None) or "").strip()
+            ai_res = generate_text_sync(spec, max_wait_sec=90.0)
+            ai_text = (ai_res.text or "").strip()
             if ai_text and GEMINI_RAW_FALLBACK_PREFIX not in ai_text:
                 msg += "━━━ <b>[LLM 해석 · Ruthless QA]</b> ━━━\n"
                 msg += ai_text + "\n"
@@ -245,7 +211,7 @@ def run_ai_auditor():
 
 
 def overseer_loop():
-    tz_kr = pytz.timezone('Asia/Seoul')
+    tz_kr = pytz.timezone("Asia/Seoul")
     print("🛡️ [AI 상시 감사관 시스템] 영구 가동 대기 중...")
     print(" - 매일 23:50 에 Rules-first 감사 + 선택 LLM 해석 발송")
     if not (os.environ.get("GEMINI_API_KEY") or "").strip():

@@ -60,22 +60,21 @@ def build_practitioner_llm_summary(
         f"롤링성적={facts.get('rolling_wr')} 표본={facts.get('n_closed_window')}\n"
     )
     try:
-        import google.generativeai as genai
-        from gemini_report_cache import load_gemini_api_keys
-        from ai_overseer import safe_generate_content
+        from llm_gemini_core import LlmCallSpec, generate_text_sync, load_gemini_api_keys
 
-        keys = load_gemini_api_keys()
-        if not keys:
+        if not load_gemini_api_keys():
             return _stats_fallback(facts)
-        genai.configure(api_key=keys[0])
-        prompt = f"{_PIL_LLM_SYSTEM}\n\n[FACTS]\n{plain}\n"
-        res = safe_generate_content(
+        spec = LlmCallSpec(
+            task_id="pil_brief",
+            system_prompt=_PIL_LLM_SYSTEM,
+            user_payload=f"[FACTS]\n{plain}\n",
             model="gemini-2.0-flash",
-            contents=prompt,
-            max_retries=2,
+            max_attempts=6,
+            timeout_sec=20.0,
         )
-        text = (getattr(res, "text", None) or str(res) or "").strip()
-        if not text:
+        res = generate_text_sync(spec, max_wait_sec=2.5)
+        text = (res.text or "").strip()
+        if not text or not res.ok:
             return _stats_fallback(facts)
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()][:2]
         joined = " ".join(lines) if lines else text

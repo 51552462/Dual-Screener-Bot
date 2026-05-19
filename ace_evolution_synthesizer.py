@@ -55,10 +55,19 @@ def synthesize_playbook_from_facts(
     )
 
     try:
-        from ai_overseer import safe_generate_content
+        from llm_gemini_core import LlmCallSpec, generate_text_sync
 
-        res = safe_generate_content(model=model, contents=prompt)
-        text = (getattr(res, "text", "") or "").strip()
+        spec = LlmCallSpec(
+            task_id="ace_evolution",
+            user_payload=prompt,
+            model=model,
+            timeout_sec=40.0,
+        )
+        res = generate_text_sync(spec, max_wait_sec=60.0)
+        text = (res.text or "").strip()
+        if not res.ok:
+            pb = stats_only_playbook(fact_pack, observe_only=observe_only)
+            return pb, "llm_unavailable_stats_fallback"
         if not text or "API" in text[:80] or "실패" in text[:40]:
             pb = stats_only_playbook(fact_pack, observe_only=observe_only)
             return pb, "llm_unavailable_stats_fallback"

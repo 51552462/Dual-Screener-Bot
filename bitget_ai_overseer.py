@@ -51,49 +51,29 @@ def send_telegram_alert(text):
         print(f"텔레그램 발송 실패: {e}")
 
 
-GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 아래는 원본 데이터입니다:"
+GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 규칙 감사 본문은 유지됩니다."
 
 
 def _gemini_raw_fallback_response(contents: str, detail: str = "") -> SimpleNamespace:
-    body = f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{contents}"
+    from llm_gemini_core import LlmCallSpec, deterministic_fallback
+
+    body = deterministic_fallback(
+        LlmCallSpec(task_id="bitget_overseer", user_payload=str(contents or "")[:200])
+    )
     if detail:
-        body += f"\n\n(상세: {detail})"
+        body += f" ({detail[:80]})"
     return SimpleNamespace(text=body)
 
 
 def safe_generate_content(*, model, contents, max_retries=5):
-    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
-        return _gemini_raw_fallback_response(contents, "GEMINI_API_KEY 미설정")
-    import google.generativeai as genai
+    from llm_gemini_core import safe_generate_content as _core_safe
 
-    _gk = (os.environ.get("GEMINI_API_KEY") or "").strip().split(",")[0].strip()
-    try:
-        genai.configure(api_key=_gk)
-    except Exception:
-        pass
-    last_err = ""
-    for attempt in range(max_retries):
-        try:
-            time.sleep(3.5)
-            gmodel = genai.GenerativeModel(model)
-            try:
-                return gmodel.generate_content(contents)
-            except Exception as gen_e:
-                last_err = str(gen_e)
-                err_lower = last_err.lower()
-                if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err or "quota" in err_lower:
-                    if attempt < max_retries - 1:
-                        wait_time = (2**attempt) * 10 + random.uniform(1, 5)
-                        send_telegram_alert(
-                            f"⏳ [Bitget AI 감시자] API 제한으로 {wait_time:.1f}초 대기 후 재시도 ({attempt+1}/{max_retries})"
-                        )
-                        time.sleep(wait_time)
-                        continue
-                return _gemini_raw_fallback_response(contents, last_err)
-        except Exception as e:
-            return _gemini_raw_fallback_response(contents, str(e))
-    send_telegram_alert("🚨 [Bitget AI 감시자 에러] 5회 재시도에도 API 통신 실패. 원본 데이터로 대체 전송합니다.")
-    return _gemini_raw_fallback_response(contents, last_err or "재시도 소진")
+    return _core_safe(
+        model=model,
+        contents=contents,
+        max_retries=max_retries,
+        task_id="bitget_overseer",
+    )
 
 
 def gather_daily_system_facts():
