@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from ace_evolution_clamp import compute_dynamic_multiplier_bounds
 from ace_evolution_schema import SCHEMA_VERSION, default_playbook
 from ace_evolution_ttl import apply_ttl_to_playbook, default_ttl_days
+from ace_text_sanitize import (
+    sanitize_human_insight,
+    sanitize_noun_phrase,
+    sanitize_playbook_text_fields,
+    sanitize_theme_tokens,
+)
 
 
 def _parse_json_blob(text: str) -> Optional[Dict[str, Any]]:
@@ -85,10 +91,7 @@ def validate_rules(
                 }
             )
         elif rt == "theme_token":
-            tokens = r.get("tokens") or []
-            if not isinstance(tokens, list):
-                continue
-            clean = [str(t).strip() for t in tokens if str(t).strip()][:5]
+            clean = sanitize_theme_tokens(r.get("tokens"))
             if not clean:
                 continue
             try:
@@ -105,14 +108,14 @@ def validate_rules(
                 }
             )
         elif rt == "logic_match":
-            pat = str(r.get("pattern") or fact_pack.get("logic_core") or "")
+            pat = sanitize_noun_phrase(r.get("pattern") or fact_pack.get("logic_core") or "", max_chars=24)
             if not pat:
                 continue
             out.append(
                 {
                     "id": r.get("id") or f"r{i+1}",
                     "type": "logic_match",
-                    "pattern": pat[:48],
+                    "pattern": pat,
                     "priority_rank": int(r.get("priority_rank", -1)),
                 }
             )
@@ -162,13 +165,13 @@ def stats_only_playbook(fact_pack: Dict[str, Any], *, observe_only: bool = True)
             except ValueError:
                 pass
     sec = str(fact_pack.get("sector_summary") or "")
-    tokens = re.findall(r"\[([^\]]+)\]", sec)
+    tokens = sanitize_theme_tokens(re.findall(r"\[([^\]]+)\]", sec))
     if tokens:
         rules.append(
             {
                 "id": "theme1",
                 "type": "theme_token",
-                "tokens": tokens[:3],
+                "tokens": tokens,
                 "match": "any",
                 "bonus": 0.02,
             }
@@ -185,15 +188,15 @@ def stats_only_playbook(fact_pack: Dict[str, Any], *, observe_only: bool = True)
     pb["min_p_value"] = min(p_vals) if p_vals else 1.0
     pb["confidence"] = _confidence_from_stats(pb["min_p_value"], int(pb["n_ace"]))
     labels = [fs.get("label") for fs in (fact_pack.get("feature_stats") or [])[:2] if isinstance(fs, dict)]
-    pb["human_insight_ko"] = (
-        f"{market} {pb['logic_core']}: 통계 교집합 "
-        + " · ".join(str(x) for x in labels if x)
-        + f" (p_min={pb['min_p_value']:.3f}, N={pb['n_ace']})."
+    pb["human_insight_ko"] = sanitize_human_insight(
+        f"{market} {pb['logic_core']}: "
+        + "·".join(sanitize_noun_phrase(x) for x in labels if x)[:24]
+        + f" p={pb['min_p_value']:.2f} N={pb['n_ace']}"
     )
     mult_min, mult_max = compute_dynamic_multiplier_bounds(pb)
     pb["mult_min"] = mult_min
     pb["mult_max"] = mult_max
-    return apply_ttl_to_playbook(pb, market=market)
+    return apply_ttl_to_playbook(sanitize_playbook_text_fields(pb), market=market)
 
 
 def _confidence_from_stats(min_p: float, n_ace: int) -> float:
@@ -226,13 +229,15 @@ def merge_llm_playbook(
         {
             "schema_version": SCHEMA_VERSION,
             "market": market,
-            "logic_core": str(llm_raw.get("logic_core") or fact_pack.get("logic_core") or ""),
+            "logic_core": sanitize_noun_phrase(
+                llm_raw.get("logic_core") or fact_pack.get("logic_core") or ""
+            ),
             "as_of_kst": str(fact_pack.get("as_of_kst") or ""),
             "window_days": int(fact_pack.get("window_days") or 14),
             "n_ace": int(fact_pack.get("n_ace") or 0),
             "n_baseline": int(fact_pack.get("n_baseline") or 0),
             "observe_only": observe_only,
-            "human_insight_ko": str(llm_raw.get("human_insight_ko") or "")[:400],
+            "human_insight_ko": sanitize_human_insight(llm_raw.get("human_insight_ko") or ""),
             "ttl_days": default_ttl_days(market),
         }
     )
@@ -274,7 +279,7 @@ def merge_llm_playbook(
         "source": "llm+stats",
         "stats_top_features": [fs.get("column") for fs in (fact_pack.get("feature_stats") or [])[:3]],
     }
-    pb = apply_ttl_to_playbook(pb, market=market)
+    pb = apply_ttl_to_playbook(sanitize_playbook_text_fields(pb), market=market)
     return pb, ";".join(notes)
 
 
@@ -282,5 +287,6 @@ def parse_and_validate_llm_response(text: str, fact_pack: Dict[str, Any], *, obs
     obj = _parse_json_blob(text)
     if not obj:
         pb = stats_only_playbook(fact_pack, observe_only=observe_only)
-        return pb, "json_parse_failed_stats_fallback"
-    return merge_llm_playbook(obj, fact_pack, observe_only=observe_only)
+        return sanitize_playbook_text_fields(pb), "json_parse_failed_stats_fallback"
+    pb, notes = merge_llm_playbook(obj, fact_pack, observe_only=observe_only)
+    return sanitize_playbook_text_fields(pb), notes

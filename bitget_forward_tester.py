@@ -914,7 +914,12 @@ def try_add_virtual_position(
         return False, "리스크 거리 계산 실패"
 
     fixed_risk_pct = float(cfg.get("FIXED_RISK_PCT", 0.02))
-    kelly_risk_pct = float(cfg.get("DYNAMIC_KELLY_RISK", 0.01))
+    try:
+        from meta_governor_consumer import load_meta_state_resolved, resolve_trading_kelly_base
+
+        kelly_risk_pct = resolve_trading_kelly_base(cfg, load_meta_state_resolved())
+    except Exception:
+        kelly_risk_pct = float(cfg.get("DYNAMIC_KELLY_RISK", 0.01))
     w_s1 = float(cfg.get("WEIGHT_S1", 1.0) or 1.0)
     w_s4 = float(cfg.get("WEIGHT_S4", 1.0) or 1.0)
     breadth_now = _calc_market_breadth(conn)

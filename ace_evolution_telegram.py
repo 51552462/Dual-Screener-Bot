@@ -7,6 +7,7 @@ import html
 from typing import Any, Dict, Optional
 
 from ace_evolution_clamp import compute_dynamic_multiplier_bounds
+from ace_text_sanitize import sanitize_human_insight, sanitize_noun_phrase
 
 
 def format_ace_dna_block(playbook: Dict[str, Any]) -> str:
@@ -14,7 +15,7 @@ def format_ace_dna_block(playbook: Dict[str, Any]) -> str:
         return ""
     m = str(playbook.get("market") or "KR").upper()
     flag = "🇰🇷" if m == "KR" else "🇺🇸"
-    logic = html.escape(str(playbook.get("logic_core") or ""), quote=False)
+    logic = html.escape(sanitize_noun_phrase(playbook.get("logic_core")), quote=False)
     try:
         conf = float(playbook.get("confidence") or 0)
     except (TypeError, ValueError):
@@ -23,7 +24,7 @@ def format_ace_dna_block(playbook: Dict[str, Any]) -> str:
     obs = bool(playbook.get("observe_only", True))
     mode = "관측(점수 미반영)" if obs else "활성"
     mult_min, mult_max = compute_dynamic_multiplier_bounds(playbook)
-    insight = html.escape(str(playbook.get("human_insight_ko") or ""), quote=False)
+    insight = html.escape(sanitize_human_insight(playbook.get("human_insight_ko")), quote=False)
     try:
         p_val = float(playbook.get("min_p_value", 1.0))
     except (TypeError, ValueError):

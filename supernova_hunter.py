@@ -1236,6 +1236,12 @@ def execute_supernova_live_scan(market):
     # 1. 템플릿 및 기준값 로드
     ideal_templates = {}
     config = load_config()
+    try:
+        from scanner_regime_ssot import hydrate_intraday_scanner_config
+
+        config = hydrate_intraday_scanner_config(config, market=market)
+    except Exception as _ssot_e:
+        print(f"⚠️ [{market}] scanner Kelly SSOT 스킵: {_ssot_e}")
     multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
     _tm_snap = _load_time_machine_cache()
     surviving_templates = {}

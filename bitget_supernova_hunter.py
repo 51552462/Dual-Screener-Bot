@@ -334,6 +334,12 @@ def execute_supernova_live_scan(market_type, timeframe):
     print(f"\n🦅 [{market_type}/{tf}] 초신성 15배속 실시간 저격 시작...")
 
     cfg = load_config()
+    try:
+        from scanner_regime_ssot import hydrate_intraday_scanner_config
+
+        cfg = hydrate_intraday_scanner_config(cfg, market=f"BG_{market_type.upper()}")
+    except Exception as _ssot_e:
+        print(f"⚠️ [bitget/{market_type}] scanner Kelly SSOT 스킵: {_ssot_e}")
     dynamic_cos_cutoff = float(cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50))
     dynamic_dtw_cutoff = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
 

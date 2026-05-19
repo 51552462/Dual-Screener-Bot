@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_TEMPLATE = """당신은 퀀트 팩토리의 에이스 DNA 분석가다.
 아래 FACT_PACK만 사용하라. 없는 수치를 지어내지 마라.
-GICS 섹터 이름만 반복하지 말고, 수치 밴드·테마 토큰·로직 조합의 교집합을 찾아라.
+
+[출력 형식 — 엄수]
+- logic_core: 한국어 명사 1~2단어만 (예: "반도체", "2차전지"). 15자 초과 금지. 문장·서술 금지.
+- human_insight_ko: 최대 48자, 동사 1개 포함 가능한 한 줄 행동 지침. 섹터·테마 나열 금지.
+- theme_token.tokens: 각 토큰 15자 이하 명사 1~2개만. GICS 전체명·"관련/유망/테마" 금지.
+- GICS 섹터 이름만 반복하지 말고, 수치 밴드·짧은 테마 토큰·로직 조합의 교집합을 찾아라.
 
 [FACT_PACK]
 {fact_json}
@@ -21,14 +26,14 @@ GICS 섹터 이름만 반복하지 말고, 수치 밴드·테마 토큰·로직 
 [출력]
 반드시 JSON 하나만 출력:
 {{
-  "logic_core": "...",
+  "logic_core": "명사1~2단어",
   "confidence": 0.0-1.0,
   "min_p_value": 0.0-1.0,
-  "human_insight_ko": "1~2문장. 내일 매매 적용 행동 지침 포함.",
+  "human_insight_ko": "48자 이내 한 줄",
   "max_stack_bonus": 0.08,
   "rules": [
     {{"id":"r1","type":"feature_band","column":"dyn_cpv","op":"gte","value":0.0,"bonus":0.03}},
-    {{"id":"r2","type":"theme_token","tokens":["테마"],"match":"any","bonus":0.02}},
+    {{"id":"r2","type":"theme_token","tokens":["반도체"],"match":"any","bonus":0.02}},
     {{"id":"r3","type":"logic_match","pattern":"S4","priority_rank":-1}}
   ]
 }}
@@ -47,7 +52,9 @@ def synthesize_playbook_from_facts(
     Returns (playbook, notes).
     """
     if int(fact_pack.get("n_ace") or 0) < 3:
-        pb = stats_only_playbook(fact_pack, observe_only=True)
+        from ace_text_sanitize import sanitize_playbook_text_fields
+
+        pb = sanitize_playbook_text_fields(stats_only_playbook(fact_pack, observe_only=True))
         return pb, "n_ace_lt_3_observe"
 
     prompt = _PROMPT_TEMPLATE.format(
@@ -71,7 +78,10 @@ def synthesize_playbook_from_facts(
         if not text or "API" in text[:80] or "실패" in text[:40]:
             pb = stats_only_playbook(fact_pack, observe_only=observe_only)
             return pb, "llm_unavailable_stats_fallback"
-        return parse_and_validate_llm_response(text, fact_pack, observe_only=observe_only)
+        pb, notes = parse_and_validate_llm_response(text, fact_pack, observe_only=observe_only)
+        from ace_text_sanitize import sanitize_playbook_text_fields
+
+        return sanitize_playbook_text_fields(pb), notes
     except Exception as ex:
         logger.warning("AceEvolution LLM failed: %s", ex)
         pb = stats_only_playbook(fact_pack, observe_only=observe_only)

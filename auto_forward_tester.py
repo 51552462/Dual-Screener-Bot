@@ -63,7 +63,14 @@ def _open_market_db_ro():
 
 
 def _compress_sector_theme(raw: object) -> str:
-    """긴 섹터/테마 문자열 → 퀀트 태그 (예: [헬스케어/대마])."""
+    """긴 섹터/테마 문자열 → 퀀트 태그 (15자 캡, 서술어 제거)."""
+    try:
+        from ace_text_sanitize import sanitize_noun_phrase
+
+        out = sanitize_noun_phrase(raw)
+        return out or "미분류"
+    except Exception:
+        pass
     s = str(raw or "").strip()
     if not s or s.lower() in ("nan", "none", "미상", "null"):
         return "미분류"
@@ -73,8 +80,8 @@ def _compress_sector_theme(raw: object) -> str:
         if sep in s:
             s = s.split(sep)[0].strip()
     s = re.sub(r"\s+", "", s)
-    if len(s) > 20:
-        s = s[:18] + "…"
+    if len(s) > 15:
+        s = s[:14] + "…"
     return s or "미분류"
 
 
