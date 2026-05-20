@@ -12,6 +12,6 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=@@INSTALL_ROOT@@
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/.venv/bin/python -u @@INSTALL_ROOT@@/dante_snapshot_runner.py
+ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/dante_snapshot_runner.py
 StandardOutput=journal
 StandardError=journal

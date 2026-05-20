@@ -14,7 +14,7 @@ WorkingDirectory=@@INSTALL_ROOT@@
 Environment=QUANT_SKIP_INLINE_TELEGRAM_DAEMON=1
 Environment=DANTE_ASYNC_TELEGRAM_DAEMON=1
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/.venv/bin/python -u @@INSTALL_ROOT@@/factory_launcher.py
+ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/factory_launcher.py
 Restart=on-failure
 RestartSec=5
 KillMode=mixed

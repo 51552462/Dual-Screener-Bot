@@ -22,6 +22,8 @@ sudo ./update_factory.sh
 
 **데이터 영속:** `update_factory.sh` 는 `git pull` 전에 `INSTALL_ROOT/*.sqlite` 및 `.env` 의 `DB_STORAGE_PATH` 디렉터리(코드 루트와 다를 때) 상단 `*.sqlite` 을 `/var/backups/dante-pre-update/<UTC타임스탬프>/` 로 복사한다. 스키마 변경 시 `CREATE TABLE IF NOT EXISTS` 뒤 `sqlite_schema_guard.py` 의 `KNOWN_COLUMN_MIGRATIONS` 에 `(컬럼명, ADD COLUMN …)` 만 추가하면 기존 행을 유지한 채 컬럼이 붙는다. DB·JSON 을 Git 작업 트리 밖에 두려면 `.env` 또는 `system_config.json` 에 `DB_STORAGE_PATH=/var/lib/quant-factory/data` 등 절대 경로를 설정한다 (`factory_data_paths.factory_data_dir`).
 
+**가상환경:** systemd·`update_factory.sh`·`factory.sh` 는 `INSTALL_ROOT/venv` 를 표준으로 한다 (레거시 `.venv` 는 `deploy/dante_venv.sh` 폴백만). `update_factory.sh` 는 DB/JSON 을 삭제하지 않고, graceful stop → `.venv` 잔존 프로세스 SIGTERM → `sqlite_schema_guard` ALTER → `venv` 로 재기동한다.
+
 **재시작 정책:** `Restart=on-failure`, `RestartSec=5`, `StartLimitIntervalSec=300`, `StartLimitBurst=5`. 시크릿: `INSTALL_ROOT/.env` (`EnvironmentFile=-`).
 
 ---

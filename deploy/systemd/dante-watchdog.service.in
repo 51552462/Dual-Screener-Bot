@@ -10,6 +10,6 @@ User=root
 Environment=DANTE_OPS_EVENTS_DB=@@INSTALL_ROOT@@/ops_events.sqlite
 Environment=WATCHDOG_STATE_DIR=/var/lib/dante-watchdog
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/.venv/bin/python -u @@INSTALL_ROOT@@/watchdog.py
+ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/watchdog.py
 StandardOutput=journal
 StandardError=journal

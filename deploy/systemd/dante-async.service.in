@@ -13,7 +13,7 @@ Group=ubuntu
 WorkingDirectory=@@INSTALL_ROOT@@
 Environment=DANTE_ASYNC_TELEGRAM_DAEMON=1
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/.venv/bin/python -u @@INSTALL_ROOT@@/async_telegram_daemon.py
+ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/async_telegram_daemon.py
 Restart=on-failure
 RestartSec=5
 KillMode=mixed

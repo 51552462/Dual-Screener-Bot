@@ -12,7 +12,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=@@INSTALL_ROOT@@
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/.venv/bin/streamlit run @@INSTALL_ROOT@@/dashboard.py --server.address=0.0.0.0 --server.port=8501
+ExecStart=@@INSTALL_ROOT@@/venv/bin/streamlit run @@INSTALL_ROOT@@/dashboard.py --server.address=0.0.0.0 --server.port=8501
 Restart=on-failure
 RestartSec=5
 KillMode=mixed

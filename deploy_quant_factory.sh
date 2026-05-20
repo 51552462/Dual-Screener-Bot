@@ -24,6 +24,14 @@ if [[ ! -d "${INSTALL_ROOT}" ]]; then
   exit 1
 fi
 
+# shellcheck source=deploy/dante_venv.sh
+source "${REPO_ROOT}/deploy/dante_venv.sh"
+if ! dante_resolve_python "${INSTALL_ROOT}" &>/dev/null; then
+  echo "경고: ${INSTALL_ROOT}/venv (또는 .venv) 없음 — 유닛은 venv 경로를 가리킵니다." >&2
+else
+  echo "✓ venv python: $(dante_resolve_python "${INSTALL_ROOT}")"
+fi
+
 ENV_FILE="${INSTALL_ROOT}/.env"
 if [[ -f "${ENV_FILE}" ]]; then
   chmod 600 "${ENV_FILE}" || true

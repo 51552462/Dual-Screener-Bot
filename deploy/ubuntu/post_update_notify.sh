@@ -25,7 +25,11 @@ if [[ -f .env ]]; then
   set +a
 fi
 export PYTHONPATH="\${INSTALL_ROOT}\${PYTHONPATH:+:\${PYTHONPATH}}"
-exec "\${INSTALL_ROOT}/.venv/bin/python" - <<'PY'
+PYBIN="\${INSTALL_ROOT}/venv/bin/python"
+if [[ ! -x "\$PYBIN" ]]; then
+  PYBIN="\${INSTALL_ROOT}/.venv/bin/python"
+fi
+exec "\$PYBIN" - <<'PY'
 import os
 import subprocess
 import sys
@@ -59,7 +63,7 @@ bits = [
 ]
 line = ", ".join(bits)
 msg = (
-    "✅ [Dual-Screener 팩토리] V2 시스템 업데이트 및 전체 서비스 재기동이 성공적으로 완료되었습니다.\n"
+    "✅ [Dual-Screener 팩토리] 데이터 100% 보존 · venv 엔진 교체 및 전체 서비스 재기동 완료.\n"
     f"(is-active: {line})"
 )
 

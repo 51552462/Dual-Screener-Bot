@@ -37,7 +37,7 @@ FACTORY_USER=ubuntu
 5 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --weekly
 
 # --- Legacy weekend brain surgery (optional, keep separate from weekly) ---
-0 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && python system_auto_pilot.py --run-autonomous-analysis-only >>${FACTORY}/logs/autonomous_${FACTORY_USER}.log 2>&1
+0 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && ${FACTORY}/venv/bin/python system_auto_pilot.py --run-autonomous-analysis-only >>${FACTORY}/logs/autonomous_${FACTORY_USER}.log 2>&1
 
 # Manual full daily (not scheduled — use when needed):
 #   cd ${FACTORY} && ./factory.sh --daily
