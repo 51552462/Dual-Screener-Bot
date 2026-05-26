@@ -21,6 +21,6 @@ def run_daily_scheduler():
     Prevents double-firing with daily-kr / daily-us pipelines.
     """
     print(
-        "[forward] run_daily_scheduler disabled — use cron: factory.sh --daily-kr|--daily-us"
+        "[forward] run_daily_scheduler disabled - use cron: factory.sh --daily-kr|--daily-us"
     )
     return
