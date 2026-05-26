@@ -1,5 +1,2 @@
-from bitget_doomsday_bot import run_doomsday_radar
-
-
-if __name__ == "__main__":
-    run_doomsday_radar()
+"""Compatibility shim — implementation in bitget.macro_doomsday_bot."""
+from bitget.macro_doomsday_bot import *  # noqa: F401,F403

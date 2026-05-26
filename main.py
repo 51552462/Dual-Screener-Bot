@@ -277,7 +277,7 @@ if __name__ == "__main__":
         # 2. 👑 자율 운영 코어 엔진 (절대 멈추면 안 됨)
         "💠 [엔진] DB 자동 갱신": run_db_updater_scheduler,
         "💠 [엔진] US 파이프라인 Heartbeat": run_us_pipeline_heartbeat,
-        "💠 [엔진] 장부 관리기": auto_forward_tester.run_daily_scheduler,
+        # 장부·리포트 스케줄 SSOT: cron factory.sh (--daily-kr / --daily-us) only
         "💠 [엔진] 2주 자율 관제탑": system_auto_pilot.system_main_loop,
         "💠 [엔진] 초신성 역추적기": supernova_hunter.run_scheduler,  # 💡 [추가] 매주 월요일 17시 자동 실행 장착!
         "💠 [엔진] AI 최고 감시자": ai_overseer.overseer_loop,
