@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import pytz
 
-from market_db_paths import market_db_read_path
+from market_db_paths import report_db_read_path
 
 
 def map_standard_sector(s: Any) -> str:
@@ -69,7 +69,7 @@ def refresh_us_spillover_from_db(
     mfe_min: float = 15.0,
 ) -> Dict[str, Any]:
     """최근 US 고MFE 청산 표본 → US_SPILLOVER_* 갱신. 표본 없으면 LAST_GOOD 유지."""
-    db = db_path or market_db_read_path()
+    db = db_path or report_db_read_path()
     out: Dict[str, Any] = {"updated": False, "sector": None, "as_of": None, "reason": ""}
     if not db or not os.path.isfile(db):
         out["reason"] = "no_db"
@@ -133,7 +133,7 @@ def refresh_predicted_sector_for_market(
     except Exception:
         pass
 
-    db = db_path or market_db_read_path()
+    db = db_path or report_db_read_path()
     mkt = str(market).upper()
     key = f"PREDICTED_NEXT_SECTOR_{mkt}"
     out: Dict[str, Any] = {"market": mkt, "updated": False, "predicted": None, "reason": ""}

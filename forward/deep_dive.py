@@ -699,7 +699,6 @@ def run_deep_dive_analysis(market='KR'):
         today_str = tk.calendar_today_kst
         anchor_biz = tk.session_anchor
         cutoff_rolling = tk.rolling_cutoff
-        cutoff_spill_30 = (now_kst.date() - timedelta(days=30)).strftime("%Y-%m-%d")
         cutoff_rot_60 = (now_kst.date() - timedelta(days=60)).strftime("%Y-%m-%d")
         staleness = evaluate_staleness(tk, live_row_count=dual_meta.live_row_count)
         persist_staleness_to_config(
@@ -859,152 +858,21 @@ def run_deep_dive_analysis(market='KR'):
         # ---------------------------------------------------------
         # 👑 엔진 7: [V28.0 한미 주도 섹터 스필오버(Spillover) 시차 분석]
         # ---------------------------------------------------------
-        if market == 'KR':
-            report_msg += "\n🌐 <b>[V28.0 한미 주도 섹터 스필오버(전이) 팩트 체크]</b>\n"
+        if market == "KR":
             try:
-                sys_config = load_system_config()
+                from spillover_v28_report import build_v28_spillover_section
 
-                def map_standard_sector(s):
-                    s_str = str(s).lower()
-                    if any(k in s_str for k in ["반도체", "it", "ai", "소프트웨어", "모바일", "테크", "데이터"]):
-                        return "반도체/IT"
-                    if any(k in s_str for k in ["바이오", "헬스", "의료", "제약"]):
-                        return "바이오/헬스케어"
-                    if any(k in s_str for k in ["배터리", "2차전지", "화학", "에너지", "정유"]):
-                        return "에너지/화학"
-                    if any(k in s_str for k in ["금융", "은행", "증권", "지주", "투자"]):
-                        return "금융/지주"
-                    if any(k in s_str for k in ["기계", "조선", "방산", "산업재", "로봇", "전력"]):
-                        return "산업재/기계"
-                    if any(k in s_str for k in ["소비", "유통", "식품", "화장품", "엔터", "미디어"]):
-                        return "소비재/엔터"
-                    return "기타/혼합"
-
-                def _sector_row_ok(val):
-                    t = str(val).strip()
-                    if not t or t.lower() in ('nan', 'none'):
-                        return False
-                    if '유망' in t:
-                        return False
-                    if t == '기타/혼합':
-                        return False
-                    return True
-
-                conn_sp = _open_market_db_ro()
-                try:
-                    us_df = pd.read_sql(
-                        "SELECT entry_date, sector FROM forward_trades WHERE market='US' AND entry_date >= ?",
-                        conn_sp,
-                        params=(cutoff_spill_30,),
-                    )
-                    kr_df = pd.read_sql(
-                        "SELECT entry_date, sector FROM forward_trades WHERE market='KR' AND entry_date >= ?",
-                        conn_sp,
-                        params=(cutoff_spill_30,),
-                    )
-                finally:
-                    conn_sp.close()
-
-                us_raw = _v28_add_norm_day_col(us_df)
-                kr_raw = _v28_add_norm_day_col(kr_df)
-
-                T = today_kst
-                cal_days = [(T - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
-
-                _bad = frozenset({"데이터 없음", "필터 탈락"})
-
-                def _sector_norm_align(lab: str) -> str:
-                    s = str(lab).strip()
-                    if s.startswith("캐시·"):
-                        return s[2:].strip()
-                    return s
-
-                def _is_real_sector(lab: str) -> bool:
-                    s = str(lab).strip()
-                    if not s or s in _bad:
-                        return False
-                    core = _sector_norm_align(s)
-                    if not core or core in _bad:
-                        return False
-                    return True
-
-                timeline_for_ssot: list[dict] = []
-
-                if us_raw.empty and kr_raw.empty:
-                    report_msg += (
-                        f"⚠️ 스필오버 분석: 최근 30일(KST, 진입일 ≥ {cutoff_spill_30}) 한·미 가상매매 진입 행이 DB에 없습니다.\n"
-                    )
-                else:
-                    report_msg += "▪️ <b>최근 7일 섹터 모멘텀 타임라인 (캘린더 앵커 T-6~T, KST):</b>\n"
-                    for d in cal_days:
-                        lab_us = _v28_dominant_sector_label_for_day(
-                            d, us_raw, map_standard_sector, _sector_row_ok
-                        )
-                        lab_kr = _v28_dominant_sector_label_for_day(
-                            d, kr_raw, map_standard_sector, _sector_row_ok
-                        )
-                        lab_us = _v28_us_label_with_last_good_cache(
-                            d, lab_us, sys_config, map_standard_sector
-                        )
-                        report_msg += f" [{d[5:]}] 🇺🇸 {str(lab_us)[:12]} ➔ 🇰🇷 {str(lab_kr)[:12]}\n"
-                        aligned = _is_real_sector(lab_us) and _is_real_sector(lab_kr) and (
-                            _sector_norm_align(lab_us) == _sector_norm_align(lab_kr)
-                        )
-                        timeline_for_ssot.append({"d": d, "us": lab_us, "kr": lab_kr, "aligned": bool(aligned)})
-
-                    align_days = [(T - timedelta(days=i)).strftime("%Y-%m-%d") for i in (2, 1, 0)]
-                    align_count = 0
-                    by_d = {row["d"]: row for row in timeline_for_ssot}
-                    for ad in align_days:
-                        r = by_d.get(ad)
-                        if r and r.get("aligned"):
-                            align_count += 1
-                    observe_mult = min(1.5, 1.0 + 0.1 * float(align_count))
-
-                    report_msg += (
-                        f"\n◽ <b>[관측·점수 미반영]</b> 최근3일(KST) 한·미 표준섹터 일치 <b>{align_count}</b>회 "
-                        f"→ 가상배수 <b>{observe_mult:.1f}x</b> <i>(엔진 점수·가중치에 적용 없음)</i>\n"
-                    )
-
-                    try:
-                        payload = {
-                            "updated_at": datetime.now(kr_tz).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                            "anchor_end": cal_days[-1],
-                            "align_3d": int(align_count),
-                            "observe_multiplier": float(observe_mult),
-                            "timeline_T6_T": list(timeline_for_ssot),
-                        }
-                        cfg_ob = load_system_config()
-                        if not isinstance(cfg_ob, dict):
-                            cfg_ob = {}
-                        else:
-                            cfg_ob = dict(cfg_ob)
-                        cfg_ob["SPILLOVER_OBSERVE_SSOT"] = payload
-                        save_system_config(cfg_ob)
-                    except Exception as _se:
-                        report_msg += f"⚠️ SPILLOVER_OBSERVE_SSOT 저장 실패(관측만): {_se}\n"
-
-                current_spillover = sys_config.get("US_SPILLOVER_SECTOR", "NONE")
-                if current_spillover is None or str(current_spillover).strip() == "" or str(current_spillover).strip().upper() == "NONE":
-                    mapped_spillover = "NONE"
-                else:
-                    mapped_spillover = map_standard_sector(current_spillover)
-
-                if mapped_spillover != "NONE" and mapped_spillover != "기타/혼합":
-                    report_msg += f"\n💡 <b>[관제탑 스필오버 지령]</b>\n"
-                    report_msg += (
-                        f"현재 미국장에서 검증된 강력한 주도 섹터는 <b>[{mapped_spillover}]</b>입니다. "
-                        "한국장 스나이퍼는 해당 섹터 포착 시 켈리 비중을 1.5배로 증폭하여 선취매(Spillover) 시너지를 극대화하고 있습니다.\n"
-                    )
-                else:
-                    report_msg += (
-                        "\n💡 <b>[관제탑 스필오버 지령]</b>\n"
-                        "현재 미국장에서 전이될 만한 뚜렷한 고수익 주도 섹터가 발견되지 않아, 스필오버 가중치를 대기 중입니다.\n"
-                    )
+                report_msg += build_v28_spillover_section(
+                    open_db_ro=_open_market_db_ro,
+                    tk_kr=tk,
+                    ref_kst=now_kst,
+                    load_system_config=load_system_config,
+                    save_system_config=save_system_config,
+                    spillover_fallback_enabled=_spillover_fallback_enabled,
+                )
             except Exception as e:
                 report_msg += f"⚠️ 스필오버 분석 에러: {e}\n"
 
-        # ---------------------------------------------------------
         # 👑 엔진 8: [V29.0 주도 섹터 순환매(Rotation) 수명 및 전이 추적]
         # ---------------------------------------------------------
         report_msg += f"\n🔄 <b>[V29.0 {market}장 주도 섹터 순환매 자금 추적]</b>\n"

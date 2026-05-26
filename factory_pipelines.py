@@ -2,8 +2,9 @@
 Factory mode → Step 파이프라인 매핑 (순차 실행 SSOT).
 
 daily_audit* 동기 파이프라인 (순서 고정):
-  meta_governor_sync → factory_artifact_guard → sentiment_mining → sector_spillover_refresh
-  → (US only: us_data_incremental) → track → deep_dive → comprehensive_daily_report → ai_overseer
+  meta_governor_sync → factory_artifact_guard → sentiment_mining
+  → (KR: track_us → sector_spillover_refresh → us_cross_market_publish → kr_hydrate)
+  → track → deep_dive → comprehensive_daily_report → ai_overseer
 
 factory_runtime.run_step 은 각 StepSpec.fn() 을 동기 호출한다 (비동기 spawn 없음).
 """
@@ -222,26 +223,56 @@ _US_HEALTH_REPAIR = StepSpec(
 
 
 def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
-    """일일 감사·통합 리포트: meta sync → guard → sentiment → sector/spillover → 본 작업."""
+    """일일 감사·통합 리포트: meta sync → guard → sentiment → 본 작업 (스필오버는 KR/US 선행 블록)."""
     return [
         _META_GOVERNOR_SYNC,
         _ARTIFACT_GUARD,
         _SENTIMENT_MINING,
-        _SECTOR_SPILLOVER_REFRESH,
+        *steps,
+    ]
+
+
+def _with_kr_spillover_prerequisite(steps: List[StepSpec]) -> List[StepSpec]:
+    """
+    KR V28 직전: US 장부 갱신 → 스필오버 KV/SSOT → KR hydrate.
+    Option A — daily-kr / combined 의 KR deep_dive 전 필수.
+    """
+    return [
+        StepSpec(
+            "track_daily_positions_us_prereq",
+            _step_track_us,
+            critical=True,
+            delay_after_sec=2.0,
+        ),
+        StepSpec(
+            "sector_spillover_refresh_prereq",
+            _step_sector_spillover_refresh,
+            critical=False,
+            delay_after_sec=1.0,
+        ),
+        _US_CROSS_MARKET_PUBLISH,
         _KR_CROSS_MARKET_HYDRATE,
         *steps,
     ]
 
 
+def _with_us_spillover_tail(steps: List[StepSpec]) -> List[StepSpec]:
+    """US track 직후 스필오버 갱신 + cross_market publish."""
+    return [
+        *steps,
+        _SECTOR_SPILLOVER_REFRESH,
+        _US_CROSS_MARKET_PUBLISH,
+    ]
+
+
 def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
-    """US 일일 감사: 공통 prelude + US health + OHLCV 증분 (리포트 전 필수)."""
+    """US 일일 감사: 공통 prelude + US health + OHLCV 증분 + track/spillover/publish."""
     return [
         *_with_daily_audit_prelude([]),
         StepSpec("us_health_gate_daily", lambda: _step_us_health_gate("daily"), critical=False, delay_after_sec=0.5),
         StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
         _US_DATA_INCREMENTAL,
-        *steps,
-        _US_CROSS_MARKET_PUBLISH,
+        *_with_us_spillover_tail(steps),
     ]
 
 
@@ -323,14 +354,16 @@ def _step_weekly_master() -> None:
 
 def _pipeline_daily_audit_kr() -> List[StepSpec]:
     return _with_daily_audit_prelude(
-        [
-            StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
-            StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
-            _DOOMSDAY_BRIDGE,
-            _PIL_PRACTITIONER,
-            _COMPREHENSIVE_REPORT,
-            StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
-        ]
+        _with_kr_spillover_prerequisite(
+            [
+                StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
+                StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
+                _DOOMSDAY_BRIDGE,
+                _PIL_PRACTITIONER,
+                _COMPREHENSIVE_REPORT,
+                StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
+            ]
+        )
     )
 
 
@@ -348,19 +381,28 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
 
 
 def _pipeline_daily_audit_combined() -> List[StepSpec]:
-    """수동 ./factory.sh --daily 용 — KR→US 순차, overseer 1회."""
+    """수동 ./factory.sh --daily 용 — US 선행 후 KR V28, 이후 US deep_dive."""
     return _with_daily_audit_prelude(
-        [
-            StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
-            StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=8.0),
-            _US_DATA_INCREMENTAL,
-            StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
-            StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
-            _DOOMSDAY_BRIDGE,
-            _PIL_PRACTITIONER,
-            _COMPREHENSIVE_REPORT,
-            StepSpec("ai_overseer", _step_overseer_optional, critical=False),
-        ]
+        _with_kr_spillover_prerequisite(
+            [
+                StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
+                StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=8.0),
+                _US_DATA_INCREMENTAL,
+                StepSpec(
+                    "track_daily_positions_us_combined",
+                    _step_track_us,
+                    critical=True,
+                    delay_after_sec=3.0,
+                ),
+                StepSpec("sector_spillover_refresh_us_tail", _step_sector_spillover_refresh, critical=False),
+                StepSpec("us_cross_market_publish_combined", _step_us_cross_market_publish, critical=False),
+                StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
+                _DOOMSDAY_BRIDGE,
+                _PIL_PRACTITIONER,
+                _COMPREHENSIVE_REPORT,
+                StepSpec("ai_overseer", _step_overseer_optional, critical=False),
+            ]
+        )
     )
 
 
