@@ -11,11 +11,16 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from forward_market_guard import enforce_market_frame
 from forward_report_scalar import col_series, scalar_float
 from forward_score_bucket_deep_dive import _exit_date_span, _resolve_stock_name
+from report_staleness_gate import StalenessVerdict, evaluate_staleness
+from report_timekeeper import ReportTimekeeper
 
 RegistrySaveFn = Callable[[Dict[str, Any]], Any]
 RegistryLoadFn = Callable[[], Dict[str, Any]]
+
+_INVALID_TAGS = frozenset({"", "nan", "none", "null", "nat"})
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,36 @@ class FlowTagReportSnapshot:
     exit_date_max: Optional[str]
     registry_persisted: bool
     registry_key: Optional[str]
+    session_anchor: str = ""
+    db_watermark_exit: Optional[str] = None
+    staleness_grade: str = "GREEN"
+    data_lag_days: int = 0
+    skipped_red: bool = False
+
+
+def _is_valid_tag(tag: object) -> bool:
+    t = str(tag or "").strip()
+    return t.lower() not in _INVALID_TAGS
+
+
+def _sanitize_flow_tags_series(s: pd.Series) -> pd.Series:
+    return (
+        s.fillna("")
+        .astype(str)
+        .str.strip()
+        .replace(
+            {
+                "nan": "",
+                "NaN": "",
+                "None": "",
+                "none": "",
+                "null": "",
+                "NULL": "",
+                "nat": "",
+                "NaT": "",
+            }
+        )
+    )
 
 
 def _toxic_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
@@ -68,9 +103,25 @@ def _toxic_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
 
 
 def _stock_chip(row: pd.Series, ret_col: str = "_fr") -> str:
-    nm = html.escape(_resolve_stock_name(row), quote=False)
+    nm = _resolve_stock_name(row)
+    if nm == "—":
+        for k in ("code", "ticker"):
+            if k not in row.index:
+                continue
+            v = row.get(k)
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                continue
+            t = str(v).strip()
+            if t and t.lower() not in ("nan", "none"):
+                nm = t
+                break
+        if nm == "—":
+            nm = "종목미상"
+    nm_esc = html.escape(nm, quote=False)
     r = scalar_float(row[ret_col])
-    return f"{nm}({r:+.0f}%)"
+    if r >= 0:
+        return f"{nm_esc}(+{r:.0f}%)"
+    return f"{nm_esc}({r:.0f}%)"
 
 
 def _persist_flow_tag_toxic_registry(
@@ -114,7 +165,6 @@ def _persist_flow_tag_toxic_registry(
         "bleed_example": toxic.bleed_stock_html,
     }
 
-    # 오래된 항목 컷 (최대 80키)
     if len(reg) > 80:
         keys = list(reg.keys())
         for old_k in keys[: len(keys) - 80]:
@@ -193,50 +243,108 @@ def _assemble_tag_synergy_html(
     )
 
 
+def _empty_snapshot(
+    timekeeper: ReportTimekeeper,
+    staleness: Optional[StalenessVerdict],
+    *,
+    synergy: str,
+    exit_date_min: Optional[str] = None,
+    exit_date_max: Optional[str] = None,
+    skipped_red: bool = False,
+) -> FlowTagReportSnapshot:
+    grade = staleness.grade if staleness else "GREEN"
+    lag = staleness.lag_business_days if staleness else 0
+    return FlowTagReportSnapshot(
+        blocks=(),
+        toxic=None,
+        synergy_action_html=synergy,
+        exit_date_min=exit_date_min,
+        exit_date_max=exit_date_max,
+        registry_persisted=False,
+        registry_key=None,
+        session_anchor=timekeeper.session_anchor,
+        db_watermark_exit=timekeeper.db_watermark_exit,
+        staleness_grade=grade,
+        data_lag_days=lag,
+        skipped_red=skipped_red,
+    )
+
+
 def build_flow_tag_snapshot(
     df: pd.DataFrame,
     *,
+    timekeeper: ReportTimekeeper,
+    staleness: Optional[StalenessVerdict] = None,
     sys_config: Optional[Dict[str, Any]] = None,
-    market: str = "KR",
-    today_str: Optional[str] = None,
     persist_toxic: bool = True,
     save_config_fn: Optional[RegistrySaveFn] = None,
     load_config_fn: Optional[RegistryLoadFn] = None,
 ) -> FlowTagReportSnapshot:
     """explode + groupby 1패스 — 태그별 WR/PF/누적·캐리/출혈·독성."""
-    today = today_str or datetime.now().strftime("%Y-%m-%d")
+    market = str(timekeeper.market).upper()
+    today = timekeeper.calendar_today_kst
+    if staleness is None:
+        staleness = evaluate_staleness(timekeeper, live_row_count=0)
+
     th = _toxic_thresholds(sys_config)
     min_n = int(th["min_n"])
     top_k = int(th["top_k"])
-    exit_min, exit_max = _exit_date_span(df) if df is not None and len(df) else (None, None)
 
-    empty = FlowTagReportSnapshot(
-        blocks=(),
-        toxic=None,
-        synergy_action_html="<i>표본 부족 (flow_tags 컬럼 없음 또는 0건)으로 flow 태그 딥다이브 생략</i>",
-        exit_date_min=exit_min,
-        exit_date_max=exit_max,
-        registry_persisted=False,
-        registry_key=None,
+    work = enforce_market_frame(df, market, context="flow_tag_snapshot")
+    exit_min, exit_max = _exit_date_span(work) if work is not None and len(work) else (None, None)
+
+    if staleness.grade == "RED":
+        return _empty_snapshot(
+            timekeeper,
+            staleness,
+            synergy=(
+                "<i>데이터 정체 RED — flow 태그 집계를 생략합니다. "
+                "track_daily_positions · 메인 DB WAL · factory daily 파이프라인을 확인하십시오.</i>"
+            ),
+            exit_date_min=exit_min,
+            exit_date_max=exit_max,
+            skipped_red=True,
+        )
+
+    empty_synergy = (
+        "<i>표본 부족 (flow_tags 컬럼 없음 또는 0건)으로 flow 태그 딥다이브 생략</i>"
     )
+    if work is None or work.empty or "flow_tags" not in work.columns:
+        return _empty_snapshot(
+            timekeeper,
+            staleness,
+            synergy=empty_synergy,
+            exit_date_min=exit_min,
+            exit_date_max=exit_max,
+        )
 
-    if df is None or df.empty or "flow_tags" not in df.columns:
-        return empty
-
-    work = df.copy()
+    work = work.copy()
     work["_fr"] = pd.to_numeric(col_series(work, "final_ret"), errors="coerce")
     work = work.dropna(subset=["_fr"])
     if work.empty:
-        return empty
+        return _empty_snapshot(
+            timekeeper,
+            staleness,
+            synergy=empty_synergy,
+            exit_date_min=exit_min,
+            exit_date_max=exit_max,
+        )
 
     work["_win"] = work["_fr"] > 0
-    tags_split = work["flow_tags"].fillna("").astype(str).str.split()
+    work["flow_tags"] = _sanitize_flow_tags_series(work["flow_tags"])
+    tags_split = work["flow_tags"].str.split()
     long = work.assign(_tag=tags_split).explode("_tag")
     long["_tag"] = long["_tag"].astype(str).str.strip()
-    long = long[long["_tag"].ne("")]
+    long = long[long["_tag"].map(_is_valid_tag)]
 
     if long.empty:
-        return empty
+        return _empty_snapshot(
+            timekeeper,
+            staleness,
+            synergy=empty_synergy,
+            exit_date_min=exit_min,
+            exit_date_max=exit_max,
+        )
 
     g = long.groupby("_tag", observed=True)
     agg = g.agg(
@@ -254,6 +362,8 @@ def build_flow_tag_snapshot(
 
     row_dicts: List[Dict[str, Any]] = []
     for tag, row in agg.iterrows():
+        if not _is_valid_tag(tag):
+            continue
         n = int(row["n"])
         if n < min_n:
             continue
@@ -282,20 +392,17 @@ def build_flow_tag_snapshot(
         )
 
     if not row_dicts:
-        return FlowTagReportSnapshot(
-            blocks=(),
-            toxic=None,
-            synergy_action_html=(
+        return _empty_snapshot(
+            timekeeper,
+            staleness,
+            synergy=(
                 f"<i>표본 부족 (유효 태그 0개, 태그별 최소 <b>{min_n}</b>건 미달)으로 "
                 "flow 태그 집계 딥다이브 생략</i>"
             ),
             exit_date_min=exit_min,
             exit_date_max=exit_max,
-            registry_persisted=False,
-            registry_key=None,
         )
 
-    # 독성 후보
     toxic_candidates: List[Tuple[float, Dict[str, Any], str]] = []
     for rd in row_dicts:
         ok, reason = _is_toxic_candidate(
@@ -373,38 +480,68 @@ def build_flow_tag_snapshot(
         blocks=tuple(blocks_list),
         toxic=toxic_block,
         synergy_action_html=synergy,
-        exit_date_min=exit_min,
-        exit_date_max=exit_max,
         registry_persisted=registry_persisted,
         registry_key=registry_key,
+        skipped_red=False,
+        exit_date_min=exit_min,
+        exit_date_max=exit_max,
+        session_anchor=timekeeper.session_anchor,
+        db_watermark_exit=timekeeper.db_watermark_exit,
+        staleness_grade=staleness.grade,
+        data_lag_days=staleness.lag_business_days,
     )
 
 
 def format_flow_tag_report_html(
     snap: FlowTagReportSnapshot,
     *,
-    market: str,
-    rolling_days: int,
-    today_str: str,
+    timekeeper: ReportTimekeeper,
+    staleness: Optional[StalenessVerdict] = None,
+    rolling_days: Optional[int] = None,
 ) -> str:
-    m_esc = html.escape(str(market), quote=False)
-    today_esc = html.escape(today_str, quote=False)
+    if staleness is None:
+        staleness = evaluate_staleness(timekeeper, live_row_count=0)
+
+    rd = int(rolling_days if rolling_days is not None else timekeeper.rolling_days)
+    m_esc = html.escape(str(timekeeper.market), quote=False)
+    anchor_esc = html.escape(timekeeper.session_anchor, quote=False)
+    label_esc = html.escape(timekeeper.anchor_label, quote=False)
+    wm = timekeeper.db_watermark_exit or snap.db_watermark_exit or "—"
+    wm_esc = html.escape(str(wm), quote=False)
+    grade = staleness.grade if staleness else snap.staleness_grade
+    lag = staleness.lag_business_days if staleness else snap.data_lag_days
 
     out = "🏷️ <b>[세부 흐름 태그별 승률·기여도]</b>\n"
     out += (
-        f"📎 <i>{m_esc}장 · 최근 <b>{rolling_days}</b>일 청산 롤링 · "
-        f"리포트일 KST <b>{today_esc}</b></i>\n"
+        f"📎 <i>{m_esc}장 · 최근 <b>{rd}</b>일 청산 롤링 · "
+        f"리포트일 KST <b>{html.escape(timekeeper.calendar_today_kst, quote=False)}</b></i>\n"
+    )
+    out += f"📌 세션앵커({label_esc}) <b>{anchor_esc}</b>\n"
+    out += (
+        f"📊 DB청산워터마크 <b>{wm_esc}</b> · Staleness <b>{grade}</b> "
+        f"(lag <b>{lag}</b>영업일)\n"
     )
     if snap.exit_date_min and snap.exit_date_max:
         out += (
-            f"📅 청산 알리바이: <b>{html.escape(snap.exit_date_min, quote=False)}</b>"
+            f"📅 청산 표본: <b>{html.escape(snap.exit_date_min, quote=False)}</b>"
             f"~<b>{html.escape(snap.exit_date_max, quote=False)}</b>\n"
         )
+
+    if snap.skipped_red:
+        out += (
+            "<i>데이터 정체 RED — 태그별 승률·기여도 집계를 생략했습니다. "
+            "장부 갱신 후 재송출하십시오.</i>\n\n"
+        )
+        out += "🗣️ <b>[관제탑 · 태그 시너지]</b> "
+        out += snap.synergy_action_html + "\n\n"
+        return out
 
     if not snap.blocks:
         out += "<i>태그 집계 표본 없음 (flow_tags 미기록 또는 최소 표본 미달).</i>\n\n"
     else:
         for b in snap.blocks:
+            if not _is_valid_tag(b.tag):
+                continue
             tag_esc = html.escape(b.tag, quote=False)
             toxic_mark = " ☠️" if b.is_toxic else ""
             out += (

@@ -6,11 +6,16 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import pytz
 
 from forward_flow_tag_deep_dive import FlowTagBlock, build_flow_tag_snapshot
+from forward_market_guard import enforce_market_frame
+from report_staleness_gate import evaluate_staleness
+from report_timekeeper import ReportTimekeeper
 from forward_score_bucket_deep_dive import (
     UniversalDnaBlock,
     _assemble_universal_governor_insight,
@@ -138,6 +143,16 @@ def build_weekly_flow_tag_rollup(
         return _empty_tag_rollup(mkt)
 
 
+def _timekeeper_for_weekly_rollup(market: str, today_str: Optional[str]) -> ReportTimekeeper:
+    kr_tz = pytz.timezone("Asia/Seoul")
+    if today_str:
+        d = datetime.strptime(str(today_str)[:10], "%Y-%m-%d")
+        ref = kr_tz.localize(datetime(d.year, d.month, d.day, 23, 59, 59))
+    else:
+        ref = datetime.now(kr_tz)
+    return ReportTimekeeper.for_market(str(market).upper(), rolling_days=90, ref_kst=ref)
+
+
 def _build_weekly_flow_tag_rollup_inner(
     df: pd.DataFrame,
     *,
@@ -145,11 +160,15 @@ def _build_weekly_flow_tag_rollup_inner(
     sys_config: Optional[Dict[str, Any]] = None,
     today_str: Optional[str] = None,
 ) -> WeeklyFlowTagRollup:
+    mkt = str(market).upper()
+    tk = _timekeeper_for_weekly_rollup(mkt, today_str)
+    scrubbed = enforce_market_frame(df, mkt, context=f"weekly_flow_tag:{mkt}")
+    staleness = evaluate_staleness(tk, live_row_count=0)
     snap = build_flow_tag_snapshot(
-        df,
+        scrubbed,
+        timekeeper=tk,
+        staleness=staleness,
         sys_config=sys_config,
-        market=market,
-        today_str=today_str,
         persist_toxic=False,
     )
     cfg = sys_config if isinstance(sys_config, dict) else {}

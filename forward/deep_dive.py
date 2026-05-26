@@ -1,5 +1,6 @@
 """Forward reporting — deep dive, comprehensive daily, practitioner."""
 from forward.shared import *  # noqa: F403
+from forward_market_guard import enforce_market_frame
 
 
 def send_comprehensive_daily_report(
@@ -679,12 +680,13 @@ def run_deep_dive_analysis(market='KR'):
                 """
                 SELECT * FROM forward_trades
                 WHERE market=? AND status LIKE 'CLOSED%'
-                  AND IFNULL(exit_date,'') >= ?
+                  AND substr(IFNULL(exit_date,''),1,10) >= ?
+                  AND substr(IFNULL(exit_date,''),1,10) <= ?
                   AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
                 ORDER BY exit_date DESC
                 """,
                 conn,
-                params=(market, tk.rolling_cutoff),
+                params=(market, tk.rolling_cutoff, tk.session_anchor),
             )
             df_live_raw, df_hist_raw, df_champion_raw, dual_meta = load_dual_track_frames(
                 conn,
@@ -716,14 +718,20 @@ def run_deep_dive_analysis(market='KR'):
             return
 
         df = prepare_forward_trades_df(df, context=f"deep_dive:{market}")
+        df = enforce_market_frame(df, market, context=f"deep_dive:{market}")
         df_live = prepare_forward_trades_df(
             df_live_raw, context=f"deep_dive_live:{market}"
         )
+        df_live = enforce_market_frame(df_live, market, context=f"deep_dive_live:{market}")
         df_hist = prepare_forward_trades_df(
             df_hist_raw, context=f"deep_dive_hist:{market}"
         )
+        df_hist = enforce_market_frame(df_hist, market, context=f"deep_dive_hist:{market}")
         df_champion = prepare_forward_trades_df(
             df_champion_raw, context=f"deep_dive_champion:{market}"
+        )
+        df_champion = enforce_market_frame(
+            df_champion, market, context=f"deep_dive_champion:{market}"
         )
         df["Win"] = np.where(df["final_ret"] > 0, 1, 0)
         m_roll = len(df)
@@ -832,18 +840,18 @@ def run_deep_dive_analysis(market='KR'):
 
         tag_snap = build_flow_tag_snapshot(
             df,
+            timekeeper=tk,
+            staleness=staleness,
             sys_config=_cfg_dd,
-            market=market,
-            today_str=today_str,
             persist_toxic=True,
             save_config_fn=save_system_config,
             load_config_fn=load_system_config,
         )
         report_msg += format_flow_tag_report_html(
             tag_snap,
-            market=market,
+            timekeeper=tk,
+            staleness=staleness,
             rolling_days=rolling_days,
-            today_str=today_str,
         )
 
         report_msg += _deep_dive_cross_market_isolation_footer(df, market)
