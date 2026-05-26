@@ -1,0 +1,18 @@
+[Unit]
+Description=Dante DR backup oneshot (backup_to_cloud.sh)
+Documentation=file://@@INSTALL_ROOT@@/RUNBOOK.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=2
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@@INSTALL_ROOT@@
+Environment=INSTALL_ROOT=@@INSTALL_ROOT@@
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+ExecStart=/bin/bash @@INSTALL_ROOT@@/backup_to_cloud.sh
+StandardOutput=journal
+StandardError=journal

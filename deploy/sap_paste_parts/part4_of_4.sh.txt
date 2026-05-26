@@ -1,0 +1,531 @@
+# Paste part 4/4 on Ubuntu (project root)
+cat << 'SAP_PART4_EOF' >> system_auto_pilot.py
+
+            promoted_name = None
+            remove_keys = []
+            for m_name, m_tpl in incubator_templates.items():
+                tag = f"[INCUBATOR_{m_name}]"
+                m_df = df[df['sig_type'].str.contains(tag, regex=False, na=False)] if 'sig_type' in df.columns else pd.DataFrame()
+                if m_df.empty:
+                    remove_keys.append(m_name)
+                    continue
+
+                oldest_raw = pd.to_datetime(m_df['entry_date'], errors='coerce').min() if 'entry_date' in m_df.columns else pd.NaT
+                if pd.isna(oldest_raw):
+                    age_days = 0
+                else:
+                    age_days = (datetime.now() - oldest_raw.to_pydatetime()).days
+                m_closed = m_df[m_df['status'].str.contains('CLOSED', na=False)] if 'status' in m_df.columns else pd.DataFrame()
+                if age_days < 30 or m_closed.empty:
+                    report_lines.append(f"▪️ {m_name}: 생존 {age_days}일차 (심판 대기)")
+                    continue
+
+                m_wr = len(m_closed[m_closed['final_ret'] > 0]) / len(m_closed)
+                m_pf = m_closed[m_closed['final_ret'] > 0]['final_ret'].sum() / (abs(m_closed[m_closed['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+
+                # 💡 [100년 영속 진화 로직 적용: Synthetic Sandbox BlackSwan Gate]
+                # 종가 -15% 충격 + 변동성 2배(수익률 스케일링) 가상 스트레스 테스트
+                passed_synthetic_sandbox = False
+                synthetic_pf = 0.0
+                try:
+                    synthetic_df = m_closed.copy()
+                    # 💡 [100년 영속 진화 로직 적용: Synthetic Sandbox Severity Rebalance]
+                    # 기존 (ret-15)*2는 과도한 학살을 유발하므로, 공황 쇼크(-15%) 후 변동성 2배를 ret*2-15로 완화 적용
+                    synthetic_df['synthetic_ret'] = (pd.to_numeric(synthetic_df['final_ret'], errors='coerce') * 2.0) - 15.0
+                    synthetic_df = synthetic_df.dropna(subset=['synthetic_ret'])
+                    if not synthetic_df.empty:
+                        syn_wins = synthetic_df[synthetic_df['synthetic_ret'] > 0]['synthetic_ret'].sum()
+                        syn_loses = abs(synthetic_df[synthetic_df['synthetic_ret'] <= 0]['synthetic_ret'].sum()) + 0.1
+                        synthetic_pf = float(syn_wins / syn_loses)
+                        passed_synthetic_sandbox = synthetic_pf >= 1.0
+                except Exception:
+                    passed_synthetic_sandbox = False
+                report_lines.append(
+                    f"▪️ {m_name}: 승률 {m_wr*100:.1f}% | PF {m_pf:.2f} | Synthetic PF {synthetic_pf:.2f} "
+                    f"({'통과' if passed_synthetic_sandbox else '탈락'})"
+                )
+
+                # 💡 [100년 영속 진화 로직 적용: Incubator Sample Threshold Relaxation]
+                if m_pf >= 1.5 and m_wr >= 0.55 and m_pf > b_pf and m_wr > b_wr and len(m_closed) >= 7 and passed_synthetic_sandbox:
+                    promoted_name = m_name
+                else:
+                    remove_keys.append(m_name)
+
+            if promoted_name is not None:
+                promoted_tpl = incubator_templates.get(promoted_name, {})
+                # // [수정 전] "shape": [0.5] * 20  (평선 하드코딩)
+                # // [수정 후] 승격 로직의 forward_trades 승리 청산 종목 진입일 종가 궤적 shape 평균
+                evolved_shape = _mean_entry_shape_incubator_winners(promoted_name)
+                if evolved_shape is None:
+                    _tpl_sh = promoted_tpl.get("shape")
+                    evolved_shape = _tpl_sh if isinstance(_tpl_sh, list) and len(_tpl_sh) == 20 else [0.5] * 20
+                evo_key = f"DNA_ALPHA_EVO_{promoted_name}"
+                current_config[evo_key] = {
+                    "cpv": float(promoted_tpl.get("cpv", 0.0)),
+                    "tb": float(promoted_tpl.get("tb", 0.0)),
+                    "bbe": float(promoted_tpl.get("bbe", 0.0)),
+                    "rs": float(promoted_tpl.get("rs", 0.0)),
+                    "vcp": 1.0,
+                    "vol": 1.0,
+                    "ma": 0.0,
+                    "shape": evolved_shape,
+                    "passed_synthetic_sandbox": True
+                }
+                current_config["NEW_EVOLUTION_NAME"] = evo_key
+                current_config["NEW_EVOLUTION_ACTIVE"] = True
+                remove_keys.append(promoted_name)
+                report_lines.append(f"🏆 <b>승격:</b> {promoted_name} ➔ [{evo_key}] 정규직 배치 완료")
+
+            for k in set(remove_keys):
+                incubator_templates.pop(k, None)
+            current_config["INCUBATOR_TEMPLATES"] = incubator_templates
+            report_lines.append(f"🗑️ 인큐베이터 정리 완료 (잔존 {len(incubator_templates)}개)")
+        else:
+            report_lines.append("▪️ 심판할 인큐베이터 템플릿이 없습니다.")
+    except Exception as e:
+        report_lines.append(f"⚠️ 인큐베이터 진화 심판 에러: {e}")
+
+    # ==========================================
+    # 🚀 최종 저장 및 발송 (중복 제거 완료)
+    # ==========================================
+    _sync_inverse_mode_switch(current_config, vix_last, regime)
+    save_config(current_config)
+    send_telegram_report("\n".join(report_lines))
+    print("✅ 분석 완료! JSON 파일 덮어쓰기 및 텔레그램 발송 성공.")
+
+# ==========================================
+# 👑 엔진 11: [V100.0 주간 흐름(Flow) 총결산 마스터 리포트]
+# ==========================================
+def send_weekly_flow_master_report():
+    """WeeklyFlowSnapshot + ReportStateBinder SSOT (weekly_flow_report)."""
+    from weekly_flow_report import send_weekly_flow_master_report as _send_weekly
+
+    _send_weekly(
+        db_path=DB_PATH,
+        sys_config=load_or_create_config(),
+        send_fn=send_telegram_report,
+    )
+
+# ==========================================
+# 🛡️ 스케줄러 세이프티 넷
+# ==========================================
+def _is_after_kr_close(now):
+    return now.weekday() < 5 and (now.hour > 15 or (now.hour == 15 and now.minute > 40))
+
+
+def _report_flag_sent_today(config_data, day_key):
+    flags = config_data.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
+    if not isinstance(flags, dict):
+        return False
+    return bool(flags.get(day_key))
+
+
+def _mark_report_flag(day_key, reason):
+    cfg = load_config()
+    flags = cfg.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
+    if not isinstance(flags, dict):
+        flags = {}
+    flags[day_key] = {
+        "sent": True,
+        "sent_at": datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S'),
+        "reason": reason,
+    }
+    # 최근 14일만 유지
+    sorted_days = sorted(flags.keys(), reverse=True)
+    trimmed = {k: flags[k] for k in sorted_days[:14]}
+    update_config({"AUTO_PILOT_DAILY_REPORT_FLAG": trimmed})
+
+
+def _safe_call_ai_modules_for_report():
+    """
+    AI 서버 이슈로 스케줄러 전체가 멈추지 않도록 ai_overseer/auto_forward_tester 호출 보호.
+    """
+    try:
+        import ai_overseer  # noqa: F401
+        # 호출 가능한 엔트리가 있으면 실행, 없으면 import 체크만 수행
+        if hasattr(ai_overseer, "run_ai_auditor"):
+            ai_overseer.run_ai_auditor()
+    except Exception as e:
+        print(f"⚠️ [세이프티 넷] ai_overseer 호출 실패(무시): {e}")
+
+    try:
+        import auto_forward_tester
+        if hasattr(auto_forward_tester, "send_telegram_msg"):
+            auto_forward_tester.send_telegram_msg("🧾 [오토파일럿] 16:30 결과지 발송 파이프라인 점검 완료")
+    except Exception as e:
+        print(f"⚠️ [세이프티 넷] auto_forward_tester 호출 실패(무시): {e}")
+
+
+def _send_daily_close_report(now, reason):
+    msg = (
+        "🧾 <b>[오토파일럿 장마감 결과지]</b>\n"
+        f"📅 {now.strftime('%Y-%m-%d')} / ⏰ {now.strftime('%H:%M')}\n"
+        f"▪️ 발송 트리거: <b>{reason}</b>\n"
+        "▪️ 상태: 스케줄러 생존 / 장마감 후 스캔 위성 차단 적용"
+    )
+    send_telegram_report(msg)
+    _safe_call_ai_modules_for_report()
+    _mark_report_flag(now.strftime('%Y-%m-%d'), reason)
+
+# ==========================================
+# 🛰 위성 비블로킹 기동 (오토파일럿 메인 스레드의 GIL·장시간 블로킹 차단)
+# ==========================================
+_FACTORY_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def _spawn_satellite_argv(argv: list, tag: str) -> None:
+    """OS 분리 프로세스 — 반환 즉시 루프 진행. 로그는 satellite_{tag}.log"""
+    log_path = os.path.join(_FACTORY_ROOT, f"satellite_{tag}.log")
+    try:
+        lf = open(log_path, "ab", buffering=0)
+        try:
+            subprocess.Popen(
+                argv,
+                cwd=_FACTORY_ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+            )
+        finally:
+            lf.close()
+        print(f"🚀 [{tag}] 비블로킹 위성 기동 → {os.path.basename(log_path)}")
+        time.sleep(5)
+    except Exception as e:
+        print(f"⚠️ [{tag}] 위성 기동 실패: {e}")
+
+
+def _spawn_py_script(rel_name: str, tag: str) -> None:
+    script = os.path.join(_FACTORY_ROOT, rel_name)
+    if not os.path.isfile(script):
+        print(f"⚠️ [{tag}] 스크립트 없음: {script}")
+        return
+    _spawn_satellite_argv([sys.executable, script], tag)
+
+
+def _spawn_python_exec(code: str, tag: str) -> None:
+    _spawn_satellite_argv([sys.executable, "-c", code], tag)
+
+
+def _satellite_import_run_snippet(body_lines: str, tag: str) -> None:
+    """동일 디렉터리 모듈 호출 (markets 등 인자 유지용)."""
+    prefix = (
+        "import sys, os\n"
+        f"sys.path.insert(0, {repr(_FACTORY_ROOT)})\n"
+        f"os.chdir({repr(_FACTORY_ROOT)})\n"
+    )
+    _spawn_python_exec(prefix + body_lines.strip() + "\n", tag)
+
+
+# ==========================================
+# 🕒 루프 실행기
+# ==========================================
+def system_main_loop():
+    tz = pytz.timezone('Asia/Seoul')
+    print("🕒 [완전 자율 오토파일럿 V12.0] 대기 중... (기준: 장부 최초 거래일 + 14일)")
+    
+    while True:
+        try:
+            now = datetime.now(tz)
+            first_entry_date = get_first_entry_date()
+            if first_entry_date is None:
+                time.sleep(30)
+                continue
+
+            if (now.date() - first_entry_date).days >= WARMUP_DAYS:
+                day_key = now.strftime('%Y-%m-%d')
+
+                # 🛑 장 마감(15:40) 이후 KR 스캔/검색 위성 스케줄 루프 차단 + 16:30 리포트 세이프티 넷
+                if _is_after_kr_close(now) and now.hour < 22:
+                    cfg = load_config()
+                    sent_today = _report_flag_sent_today(cfg, day_key)
+                    if now.hour == 16 and now.minute == 30 and not sent_today:
+                        _send_daily_close_report(now, "SCHEDULED_1630")
+                    elif (now.hour > 16 or (now.hour == 16 and now.minute >= 31)) and not sent_today:
+                        _send_daily_close_report(now, "SAFETY_NET_RETRY")
+
+                # 🇺🇸 매일 07:00 KST — US 독성 ML (블랙홀 08:30 전 us_toxic_ml_antipatterns.json 갱신)
+                if now.hour == 7 and now.minute == 0:
+                    print("🇺🇸 [오토파일럿] US 독성 부검(us_toxic_graveyard_analyzer) 비블로킹 기동…")
+                    _spawn_py_script("us_toxic_graveyard_analyzer.py", "us_toxic_0700")
+                    time.sleep(60)
+
+                # 🌌 매주 토요일 00:00 — 합성 OHLCV 생성기 (무거움 → 프로세스 분리)
+                elif now.weekday() == 5 and now.hour == 0 and now.minute == 0:
+                    print("⏳ [오토파일럿] 정신과 시간의 방(합성 데이터 생성) 비블로킹 기동…")
+                    _spawn_python_exec(
+                        (
+                            "import sys, os; sys.path.insert(0, %r); os.chdir(%r); "
+                            "import synthetic_data_generator as S; "
+                            "fn = getattr(S, 'stress_test_mutants', None); "
+                            "(fn() if callable(fn) else S.generate_all_parallel_universes())"
+                        )
+                        % (_FACTORY_ROOT, _FACTORY_ROOT),
+                        "synthetic_lab_sat0000",
+                    )
+                    time.sleep(60)
+
+                # 🛡 매주 토요일 01:00 — 그림자 장부 성과 평가
+                elif now.weekday() == 5 and now.hour == 1 and now.minute == 0:
+                    print("🛡️ [오토파일럿] 그림자 장부 비블로킹 기동…")
+                    _spawn_py_script("shadow_performance_tracker.py", "shadow_perf_sat0100")
+                    time.sleep(60)
+
+                # 🧬 매주 토요일 02:00 — 인큐베이터 (합성 돌연변이 평가)
+                elif now.weekday() == 5 and now.hour == 2 and now.minute == 0:
+                    print("🧬 [오토파일럿] incubator_engine 비블로킹 기동…")
+                    _spawn_py_script("incubator_engine.py", "incubator_sat0200")
+                    time.sleep(60)
+
+                # ✅ 매주 토요일 03:00 — 뮤턴트 OOS 검증 (Hall of Fame 실데이터 게이트)
+                elif now.weekday() == 5 and now.hour == 3 and now.minute == 0:
+                    print("✅ [오토파일럿] mutant_oos_validator 비블로킹 기동…")
+                    _spawn_py_script("mutant_oos_validator.py", "mutant_oos_sat0300")
+                    time.sleep(60)
+
+                # 🧬 토요일 03:10 — validated_live_mutants → PENDING_MUTANTS 브리지 (검증 프로세스와 분리·지연 안전)
+                elif now.weekday() == 5 and now.hour == 3 and now.minute == 10:
+                    print("🧬 [오토파일럿] mutant_pending_bridge (R&D 대기열 동기화) 비블로킹 기동…")
+                    _spawn_python_exec(
+                        (
+                            "import sys, os; sys.path.insert(0, %r); os.chdir(%r); "
+                            "from mutant_pending_bridge import sync_validated_json_into_pending as _s; "
+                            "print(_s())"
+                        )
+                        % (_FACTORY_ROOT, _FACTORY_ROOT),
+                        "mutant_pending_bridge_sat0310",
+                    )
+                    time.sleep(60)
+
+                # 🔬 매일 06:00 — 미국 장 마감 직후 DNA 부검 (US 전용)
+                elif now.hour == 6 and now.minute == 0:
+                    print("🔬 [오토파일럿] limit_up_forensics US 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("US",))\n',
+                        "limit_up_us_0600",
+                    )
+                    time.sleep(60)
+
+                # 🚨 매일 08:00 — 거시 둠스데이 레이더 (스크립트 엔트리 = main())
+                elif now.hour == 8 and now.minute == 0:
+                    print("🚨 [오토파일럿] macro_doomsday_bot 비블로킹 기동…")
+                    _spawn_py_script("macro_doomsday_bot.py", "doomsday_0800")
+                    time.sleep(60)
+
+                # 🔭 평일 09:05 — forensics_pioneer KR
+                elif now.weekday() < 5 and now.hour == 9 and now.minute == 5:
+                    print("🔭 [오토파일럿] forensics_pioneer KR 비블로킹 기동…")
+                    _spawn_satellite_argv(
+                        [sys.executable, os.path.join(_FACTORY_ROOT, "forensics_pioneer.py"), "KR"],
+                        "forensics_kr_0905",
+                    )
+                    time.sleep(60)
+
+                # 1. 토요일 10:00 — 자율 튜닝(뇌수술) — 동일 파일 서브프로세스
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 0:
+                    print("🚀 주말 관제탑 자율 튜닝(뇌수술) 비블로킹 기동…")
+                    autop = os.path.join(_FACTORY_ROOT, "system_auto_pilot.py")
+                    _spawn_satellite_argv(
+                        [sys.executable, autop, "--run-autonomous-analysis-only"],
+                        "autonomous_sat1000",
+                    )
+                    time.sleep(60)
+
+                # 2. 토요일 10:05 — 주간 Flow 리포트 (가벼움·동기 유지)
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 5:
+                    try:
+                        print("🚀 주간 흐름(Flow) 마스터 총결산 리포트를 발송합니다...")
+                        send_weekly_flow_master_report()
+                    except Exception as e:
+                        print(f"⚠️ 주간 결과지 발송 실패(무시): {e}")
+                    time.sleep(60)
+
+                # 3. 토요일 10:10 — 타임머신 백테스트 (동일 인자 유지)
+                elif now.weekday() == 5 and now.hour == 10 and now.minute == 10:
+                    print("🚀 [오토파일럿] time_machine_backtester 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import time_machine_backtester as T\n'
+                        'T.run_time_machine_backtest('
+                        '"COVID-19 코로나 폭락장", ["005930", "000660", "035420"])\n',
+                        "time_machine_sat1010",
+                    )
+                    time.sleep(60)
+
+                # 🔬 매일 11:50 — KR 상한가 부검
+                elif now.hour == 11 and now.minute == 50:
+                    print("🔬 [오토파일럿] limit_up_forensics KR (11:50) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("KR",))\n',
+                        "limit_up_kr_1150",
+                    )
+                    time.sleep(60)
+
+                # 🔬 매일 15:40 — KR 상한가 최종 부검
+                elif now.hour == 15 and now.minute == 40:
+                    print("🔬 [오토파일럿] limit_up_forensics KR (15:40) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("KR",))\n',
+                        "limit_up_kr_1540",
+                    )
+                    time.sleep(60)
+
+                # 💡 매일 16:10 — 스마트 머니 레이더
+                elif now.hour == 16 and now.minute == 10:
+                    print("🔄 [오토파일럿] smart_money_tracker 비블로킹 기동…")
+                    _spawn_py_script("smart_money_tracker.py", "smart_money_1610")
+                    time.sleep(60)
+
+                # 🔬 평일 16:20 — KR 상한가 부검소
+                elif now.weekday() < 5 and now.hour == 16 and now.minute == 20:
+                    print("🔬 [오토파일럿] limit_up_forensics KR (16:20) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import limit_up_forensics as L\nL.run_limit_up_forensics(markets=("KR",))\n',
+                        "limit_up_kr_1620",
+                    )
+                    time.sleep(60)
+
+                # 4. 매일 16:30 — 장마감 결과지 (텔레그램·동기 유지)
+                elif now.hour == 16 and now.minute == 30:
+                    try:
+                        cfg = load_config()
+                        if not _report_flag_sent_today(cfg, day_key):
+                            _send_daily_close_report(now, "SCHEDULED_1630")
+                        else:
+                            print("🧾 [오토파일럿] 16:30 결과지 이미 발송됨 — 중복 스킵")
+                    except Exception as e:
+                        print(f"⚠️ 16:30 결과지 발송 실패: {e}")
+                    time.sleep(60)
+
+                # 5. 매일 17:00 — 둠스데이 레이더
+                elif now.hour == 17 and now.minute == 0:
+                    print("🚨 [오토파일럿] macro_doomsday_bot (17:00) 비블로킹 기동…")
+                    _spawn_py_script("macro_doomsday_bot.py", "doomsday_1700")
+                    time.sleep(60)
+
+                # 6. 매일 18:30 — 센티먼트 마이닝
+                elif now.hour == 18 and now.minute == 30:
+                    print("🧠 [오토파일럿] sentiment_miner 비블로킹 기동…")
+                    _spawn_py_script("sentiment_miner.py", "sentiment_1830")
+                    time.sleep(60)
+
+                # 💀 매주 일요 02:00 — KR 독성 부검 (Graveyard ML)
+                elif now.weekday() == 6 and now.hour == 2 and now.minute == 0:
+                    print("💀 [오토파일럿] toxic_graveyard_analyzer 비블로킹 기동…")
+                    _spawn_py_script("toxic_graveyard_analyzer.py", "toxic_kr_sun0200")
+                    time.sleep(60)
+
+                # 7. 매일 19:00 — KR 독성 부검 (일간)
+                elif now.hour == 19 and now.minute == 0:
+                    print("💀 [오토파일럿] toxic_graveyard_analyzer (일간) 비블로킹 기동…")
+                    _spawn_py_script("toxic_graveyard_analyzer.py", "toxic_kr_1900")
+                    time.sleep(60)
+
+                # 🕳 매일 08:30 — 블랙홀 스캐너 (07:00 US ML 산출 이후)
+                elif now.hour == 8 and now.minute == 30:
+                    print("🕳️ [오토파일럿] blackhole_hunter 비블로킹 기동…")
+                    _spawn_py_script("blackhole_hunter.py", "blackhole_0830")
+                    time.sleep(60)
+
+                # 🔭 매일 22:35 — forensics_pioneer US
+                elif now.hour == 22 and now.minute == 35:
+                    print("🔭 [오토파일럿] forensics_pioneer US 비블로킹 기동…")
+                    _spawn_satellite_argv(
+                        [sys.executable, os.path.join(_FACTORY_ROOT, "forensics_pioneer.py"), "US"],
+                        "forensics_us_2235",
+                    )
+                    time.sleep(60)
+
+                # 💡 매 루프(최대 1분 간격): ops_snapshot 시계열 + 인버스 스나이퍼
+                _minute_ops_snapshot_and_inverse_cycle()
+
+            time.sleep(30)
+        except Exception as e:
+            err_msg = f"🚨 <b>[오토파일럿 뇌수술 에러]</b> 주말 자율 학습 중 에러 발생:\n{e}"
+            print(err_msg)
+            send_telegram_report(err_msg)
+            time.sleep(300) # 에러 후 5분 대기
+
+def run_factory_cli(argv=None) -> int:
+    """Ubuntu cron / factory.sh 단일 진입점."""
+    import argparse
+
+    from factory_pipelines import get_pipeline
+    from factory_runtime import (
+        FACTORY_MODES,
+        dispatch_factory_mode,
+        factory_exit_code,
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Dual-Screener Factory scheduler (unified entrypoint)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=sorted(FACTORY_MODES),
+        help="Job pipeline to run once and exit",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List steps only; no lock, no side effects",
+    )
+    parser.add_argument(
+        "--skip-telegram",
+        action="store_true",
+        help="Suppress factory PARTIAL_FAIL / lock notifications",
+    )
+    parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=120.0,
+        help="Seconds to wait for factory_runtime.lock (default 120)",
+    )
+    parser.add_argument(
+        "--run-autonomous-analysis-only",
+        action="store_true",
+        help="Legacy: weekend MetaGovernor brain surgery only",
+    )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="24h system_main_loop (do not use from cron)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.run_autonomous_analysis_only:
+        run_autonomous_analysis()
+        return 0
+
+    if args.daemon or (args.mode is None and not args.run_autonomous_analysis_only):
+        if args.mode is not None:
+            parser.error("Use either --mode or --daemon, not both")
+        system_main_loop()
+        return 0
+
+    if args.mode is None:
+        parser.error("Specify --mode <name> or --daemon")
+
+    pipeline = get_pipeline(args.mode)
+    print(f"🏭 [Factory] mode={args.mode} steps={[s.name for s in pipeline]}")
+    report = dispatch_factory_mode(
+        args.mode,
+        pipeline,
+        send_fn=send_telegram_report,
+        skip_telegram=args.skip_telegram,
+        dry_run=args.dry_run,
+        lock_timeout_sec=args.lock_timeout,
+    )
+    code = factory_exit_code(report)
+    print(f"🏭 [Factory] finished status={report.status_label} exit={code}")
+    return code
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--run-autonomous-analysis-only":
+            run_autonomous_analysis()
+            raise SystemExit(0)
+        raise SystemExit(run_factory_cli())
+    system_main_loop()
+SAP_PART4_EOF
