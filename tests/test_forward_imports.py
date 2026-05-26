@@ -26,8 +26,9 @@ _DEEP_DIVE_PRIVATE_SYMBOLS = (
 
 
 def test_deep_dive_module_imports_without_error():
-    mod = importlib.import_module("forward.deep_dive")
+    mod = importlib.reload(importlib.import_module("forward.deep_dive"))
     assert mod is not None
+    mod._verify_deep_dive_private_bindings()
 
 
 @pytest.mark.parametrize("name", _DEEP_DIVE_PRIVATE_SYMBOLS)

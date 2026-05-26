@@ -1,24 +1,40 @@
 """Forward reporting — deep dive, comprehensive daily, practitioner."""
 from forward.shared import *  # noqa: F403
-from forward.shared import (  # reporter / DB private helpers — not exported by import *
-    _open_market_db_ro,
-    _normalize_trade_market,
-    _reporter_cleanup_zombie_forward_trades,
-    _reporter_valid_holding_mask,
-    _reporter_deploy_fleet_mask,
-    _daily_report_trades_for_market,
-    _strategy_colosseum_brief,
-    _shadow_performance_brief,
-    _tier80_sync_effective_and_report_line,
-    _parse_mkt_group_key,
-    _exit_date_on_calendar,
-    _format_exit_reason_display,
-    _safe_final_ret_pct,
-    _win_loss_flat_counts,
-    _spillover_fallback_enabled,
-    _format_forward_ledger_error_html,
-)
+import forward.shared as _forward_shared
 from forward_market_guard import enforce_market_frame
+
+# import * skips leading-underscore names (PEP). Bind via module alias — survives star-import.
+_DEEP_DIVE_PRIVATE_NAMES = (
+    "_open_market_db_ro",
+    "_normalize_trade_market",
+    "_reporter_cleanup_zombie_forward_trades",
+    "_reporter_valid_holding_mask",
+    "_reporter_deploy_fleet_mask",
+    "_daily_report_trades_for_market",
+    "_strategy_colosseum_brief",
+    "_shadow_performance_brief",
+    "_tier80_sync_effective_and_report_line",
+    "_parse_mkt_group_key",
+    "_exit_date_on_calendar",
+    "_format_exit_reason_display",
+    "_safe_final_ret_pct",
+    "_win_loss_flat_counts",
+    "_spillover_fallback_enabled",
+    "_format_forward_ledger_error_html",
+)
+for _priv in _DEEP_DIVE_PRIVATE_NAMES:
+    globals()[_priv] = getattr(_forward_shared, _priv)
+
+
+def _verify_deep_dive_private_bindings() -> None:
+    missing = [n for n in _DEEP_DIVE_PRIVATE_NAMES if not callable(globals().get(n))]
+    if missing:
+        raise ImportError(
+            f"forward.deep_dive: private reporter bindings missing: {missing}"
+        )
+
+
+_verify_deep_dive_private_bindings()
 
 
 def send_comprehensive_daily_report(

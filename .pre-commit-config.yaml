@@ -1,0 +1,18 @@
+# Install: pip install -r requirements-dev.txt && pre-commit install
+# Or:     scripts/install_pre_commit_hooks.ps1  (Windows)
+#         scripts/install_pre_commit_hooks.sh   (Linux/macOS)
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-deep-dive-f821
+        name: ruff F821 forward/deep_dive.py (always)
+        entry: ruff check forward/deep_dive.py --select=F821,F822,F823
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: pytest-forward-imports
+        name: pytest forward import bindings
+        entry: python -B -m pytest tests/test_forward_imports.py -q -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        always_run: true
