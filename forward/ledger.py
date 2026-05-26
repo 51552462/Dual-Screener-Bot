@@ -1,5 +1,15 @@
 """Forward ledger — track_daily_positions, virtual entries."""
+import logging
+
 from forward.shared import *  # noqa: F403
+from forward_report_scalar import (
+    ohlcv_last_floats,
+    prepare_forward_trades_df,
+    row_scalar,
+    safe_float_cast,
+)
+
+logger = logging.getLogger(__name__)
 
 # ==========================================
 # 2. 매일 종가 흐름 추적 및 청산 엔진 (DB 기반)
@@ -12,6 +22,7 @@ def track_daily_positions(market):
     
     # 현재 보유 중인 종목만 불러오기
     df_active = pd.read_sql("SELECT * FROM forward_trades WHERE market=? AND status='OPEN'", conn, params=(market,))
+    df_active = prepare_forward_trades_df(df_active, context="track_daily_positions")
     if df_active.empty:
         conn.close()
         return
@@ -54,12 +65,21 @@ def track_daily_positions(market):
         )
 
     for _, r in df_active.iterrows():
-        code = r['code']
-        ep = float(r['entry_price'] or 0)
-        _sig_raw = str(r.get('sig_type') or '')
-        _is_observe_only = 'OBSERVE_ONLY' in _sig_raw
-
         try:
+            code = r['code']
+            ep = safe_float_cast(r.get('entry_price'), 0.0)
+            if not np.isfinite(ep) or ep <= 0:
+                logger.warning(
+                    "track_daily_positions invalid entry_price market=%s id=%s code=%s raw=%r",
+                    market,
+                    r.get('id'),
+                    code,
+                    r.get('entry_price'),
+                )
+                continue
+            _sig_raw = str(r.get('sig_type') or '')
+            _is_observe_only = 'OBSERVE_ONLY' in _sig_raw
+
             if market == 'US':
                 import time, random
                 time.sleep(random.uniform(0.3, 0.7)) # 무호흡 연사로 인한 IP 차단 완벽 방어
@@ -78,7 +98,15 @@ def track_daily_positions(market):
                 except: pass
                 continue
                 
-            c, o, h, l, v = float(df['Close'].iloc[-1]), float(df['Open'].iloc[-1]), float(df['High'].iloc[-1]), float(df['Low'].iloc[-1]), float(df['Volume'].iloc[-1])
+            c, o, h, l, v = ohlcv_last_floats(df)
+            if not all(np.isfinite(x) for x in (c, o, h, l, v)):
+                logger.warning(
+                    "track_daily_positions bad OHLCV market=%s id=%s code=%s",
+                    market,
+                    r.get('id'),
+                    code,
+                )
+                continue
             
             # 장중 수익률 3총사: 이후 모든 판독 로직보다 먼저 계산해 NameError 방지
             current_ret_pct = ((c - ep) / ep) * 100        # 종가 기준 수익률
@@ -87,21 +115,21 @@ def track_daily_positions(market):
 
             # 계좌 통합 서킷 브레이커용 당일 보유 손실(실투자 OPEN만 — 관측 행 제외)
             if not _is_observe_only:
-                position_notional = float(r.get('sim_kelly_invest', 0) or 0)
+                position_notional = row_scalar(r, 'sim_kelly_invest', 0.0)
                 if position_notional <= 0:
-                    fallback_notional = float(r.get('invest_amount', 0) or 0)
+                    fallback_notional = row_scalar(r, 'invest_amount', 0.0)
                     position_notional = (
-                        fallback_notional if fallback_notional > 0 else float(ep)
+                        fallback_notional if fallback_notional > 0 else ep
                     )
                 position_pnl = position_notional * (current_ret_pct / 100.0)
                 if position_pnl < 0:
                     total_open_loss_amount += position_pnl
 
-            new_max = max(float(r.get('max_high') or ep), h)
-            new_min = min(float(r.get('min_low') or ep), l)
-            new_bars = int(r.get('bars_held') or 0) + 1
-            new_up_vol = r['up_vol_sum'] + (v if c > o else 0)
-            new_down_vol = r['down_vol_sum'] + (v if c < o else 0)
+            new_max = max(row_scalar(r, 'max_high', ep), h)
+            new_min = min(row_scalar(r, 'min_low', ep), l)
+            new_bars = int(row_scalar(r, 'bars_held', 0.0)) + 1
+            new_up_vol = row_scalar(r, 'up_vol_sum', 0.0) + (v if c > o else 0)
+            new_down_vol = row_scalar(r, 'down_vol_sum', 0.0) + (v if c < o else 0)
 
             # =================================================================
             # 👑 [3차원 청산 최적화 엔진 가동] MFE/MAE, ATR, Time Stop 연산
@@ -110,10 +138,10 @@ def track_daily_positions(market):
             df['prev_c'] = df['Close'].shift(1)
             df['tr'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['prev_c']), abs(df['Low'] - df['prev_c'])))
             df['atr'] = df['tr'].ewm(span=14, adjust=False).mean()
-            cur_atr = float(df['atr'].iloc[-1])
+            cur_atr = safe_float_cast(df['atr'].iloc[-1], 0.0)
             
             # 진입 시점의 ATR이 DB에 없다면 현재 ATR로 팩트 보정 후 저장
-            entry_atr = r.get('entry_atr', 0.0)
+            entry_atr = safe_float_cast(r.get('entry_atr'), 0.0)
             if entry_atr == 0.0 or pd.isna(entry_atr):
                 entry_atr = cur_atr
                 conn.execute("UPDATE forward_trades SET entry_atr=? WHERE id=?", (entry_atr, r['id']))
@@ -123,9 +151,12 @@ def track_daily_positions(market):
             df['ema20'] = df['Close'].ewm(span=20, adjust=False).mean()
             z_ema1 = df['Close'].ewm(span=20, adjust=False).mean()
             z_ema2 = z_ema1.ewm(span=20, adjust=False).mean()
-            cur_zlema = float((z_ema1 + (z_ema1 - z_ema2)).iloc[-1])
+            cur_zlema = safe_float_cast((z_ema1 + (z_ema1 - z_ema2)).iloc[-1], 0.0)
             
-            is_tech_exit = (c < cur_zlema) or (float(df['ema10'].iloc[-1]) < float(df['ema20'].iloc[-1]) and float(df['ema10'].iloc[-2]) >= float(df['ema20'].iloc[-2]))
+            is_tech_exit = (c < cur_zlema) or (
+                safe_float_cast(df['ema10'].iloc[-1], 0.0) < safe_float_cast(df['ema20'].iloc[-1], 0.0)
+                and safe_float_cast(df['ema10'].iloc[-2], 0.0) >= safe_float_cast(df['ema20'].iloc[-2], 0.0)
+            )
 
             # 3. 🎯 관제탑 네임스페이스 매핑 및 JSON 지시사항 수신
             sys_config = load_system_config()
@@ -153,7 +184,8 @@ def track_daily_positions(market):
             opt_time_stop = sys_config.get(f"{ns_prefix}_TIME_STOP", 10)
             opt_sl_atr    = sys_config.get(f"{ns_prefix}_ATR_SL", 2.0)
             if breadth_collapse:
-                opt_time_stop = max(1, int(round(float(opt_time_stop) * 0.5)))
+                opt_time_stop = max(1, int(round(safe_float_cast(opt_time_stop, 10.0) * 0.5)))
+            opt_sl_atr = safe_float_cast(opt_sl_atr, 2.0)
             
             # 수학적 손절가(SL) 산출: 진입가 - (관제탑 승수 * 진입변동성)
             sl_price = ep - (opt_sl_atr * entry_atr)
@@ -177,7 +209,7 @@ def track_daily_positions(market):
             # 모든 평행우주(A, B, C)에 대해 장중 저가(Low) 기준으로 손절 여부 판독
             for key, params in abc_sets.items():
                 if not params: continue
-                sl_limit = float(params.get("DYNAMIC_MAE_SL", -3.5))
+                sl_limit = safe_float_cast(params.get("DYNAMIC_MAE_SL", -3.5), -3.5)
                 if breadth_collapse:
                     sl_limit *= 0.5
                 
@@ -189,12 +221,12 @@ def track_daily_positions(market):
 
             # [V17.0 청산 평행우주 대결 (STAT vs TECH)]
             # 💡 [팩트] 관제탑이 내 전략방(ns_prefix) 맞춤형으로 깎아둔 실전 한계점 로드
-            dyn_mae_sl = float(ns_live_params.get("DYNAMIC_MAE_SL", -3.5))
+            dyn_mae_sl = safe_float_cast(ns_live_params.get("DYNAMIC_MAE_SL", -3.5), -3.5)
             if breadth_collapse:
                 dyn_mae_sl *= 0.5
-            dyn_mfe_tp = ns_live_params.get("DYNAMIC_MFE_TP", 10.0)
-            od_hurdle = float(sys_config.get("DYNAMIC_OD_HURDLE", 20.0))
-            is_overdrive_on = float(r.get('v_energy', 0) or 0) >= od_hurdle
+            dyn_mfe_tp = safe_float_cast(ns_live_params.get("DYNAMIC_MFE_TP", 10.0), 10.0)
+            od_hurdle = safe_float_cast(sys_config.get("DYNAMIC_OD_HURDLE", 20.0), 20.0)
+            is_overdrive_on = row_scalar(r, 'v_energy', 0.0) >= od_hurdle
             if is_overdrive_on:
                 dyn_mfe_tp *= 1.10
 
@@ -204,7 +236,9 @@ def track_daily_positions(market):
 
                 _ace_evo = ace_exit_overrides(r, market, sys_config)
                 if _ace_evo.active:
-                    dyn_mfe_tp = float(dyn_mfe_tp) + float(_ace_evo.mfe_tp_relax_pct)
+                    dyn_mfe_tp = safe_float_cast(dyn_mfe_tp, 10.0) + safe_float_cast(
+                        _ace_evo.mfe_tp_relax_pct, 0.0
+                    )
             except Exception:
                 _ace_evo = None
 
@@ -261,18 +295,20 @@ def track_daily_positions(market):
             
             # RL 프록시(Q-Value 근사): 2순위 타임스탑 직전에 홀딩 엣지가 높으면 opt_time_stop만 +2일 연장(1순위 MAE/MFE 불변)
             try:
-                _ots = int(round(float(opt_time_stop)))
+                _ots = int(round(safe_float_cast(opt_time_stop, 10.0)))
             except (TypeError, ValueError):
                 _ots = 10
             opt_time_stop_effective = max(1, _ots)
-            holding_edge_score = (current_ret_pct / max(1, int(new_bars))) * (float(r.get('v_energy') or 1) / 10.0)
+            holding_edge_score = (current_ret_pct / max(1, int(new_bars))) * (
+                row_scalar(r, 'v_energy', 1.0) / 10.0
+            )
             if holding_edge_score > 1.5:
                 opt_time_stop_effective = opt_time_stop_effective + 2
 
             if _ace_evo is not None and _ace_evo.active:
                 opt_time_stop_effective = max(
                     opt_time_stop_effective,
-                    int(round(opt_time_stop_effective * float(_ace_evo.time_stop_mult)))
+                    int(round(opt_time_stop_effective * safe_float_cast(_ace_evo.time_stop_mult, 1.0)))
                     + int(_ace_evo.min_hold_bars_extra),
                 )
 
@@ -340,10 +376,10 @@ def track_daily_positions(market):
                 # 👆👆 [추가 끝] 👆👆
                 
                 # 🧟 [핵심 추가] 언더독(0~60점대) 전용 정밀 부검 꼬리표 부착
-                if float(r.get('total_score', 100)) <= 60.0:
-                    _rs = float(r.get('dyn_rs', 0) or r.get('v_rs', 0))
-                    _eng = float(r.get('v_energy', 0) or 0)
-                    _cpv = float(r.get('dyn_cpv', 0) or r.get('v_cpv', 0))
+                if row_scalar(r, 'total_score', 100.0) <= 60.0:
+                    _rs = row_scalar(r, 'dyn_rs', 0.0) or row_scalar(r, 'v_rs', 0.0)
+                    _eng = row_scalar(r, 'v_energy', 0.0)
+                    _cpv = row_scalar(r, 'dyn_cpv', 0.0) or row_scalar(r, 'v_cpv', 0.0)
 
                     if ret > 0 or mfe >= 10.0: # 수익으로 마감했거나 장중 10% 이상 대시세를 준 경우
                         if _rs < 0: tags.append("#저득점_역배열_반등성공")
@@ -371,7 +407,7 @@ def track_daily_positions(market):
                 # 💡 [V15.1 픽스] 시그널 타입(sig_type) 명시 및 점수 소수점 첫째 자리 정리
                 send_telegram_msg(
                     f"🤖 [{market} 관제탑 제어] {icon}: {r['name']} "
-                    f"({r['sig_type']} | {round(r['total_score'], 1)}점)\n"
+                    f"({r['sig_type']} | {round(row_scalar(r, 'total_score', 0.0), 1)}점)\n"
                     f"▪️ 수익: {ret}%"
                     + (" · <i>가상장부(OBSERVE_ONLY)</i>" if _is_observe_only else "")
                     + f"\n▪️ 모드: {active_mode}\n▪️ 사유: {exit_rsn}\n▪️ 태그: {flow_tags}"
@@ -384,14 +420,23 @@ def track_daily_positions(market):
                     WHERE id=?
                 ''', (new_max, new_min, new_bars, new_up_vol, new_down_vol, r['id']))
                 
-        except Exception as e: pass
+        except Exception as e:
+            logger.warning(
+                "track_daily_positions skip market=%s id=%s code=%s: %s",
+                market,
+                r.get('id'),
+                r.get('code'),
+                e,
+                exc_info=True,
+            )
+            continue
 
     conn.commit()
     conn.close()
 
     # 블랙스완 붕괴 감지 시 전역 서킷 브레이커 ON
     if base_seed > 0:
-        loss_ratio = total_open_loss_amount / float(base_seed)
+        loss_ratio = total_open_loss_amount / safe_float_cast(base_seed, 20000000.0)
         if loss_ratio <= -0.05:
             latest_config = load_system_config()
             if latest_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") != "ON":

@@ -35,7 +35,13 @@ from report_feature_analyzer import (
     extra_forward_trade_columns_for_report,
 )
 from forward_flow_tag_deep_dive import build_flow_tag_snapshot, format_flow_tag_report_html
-from forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float, series_mean
+from forward_report_scalar import (
+    col_series,
+    prepare_forward_trades_df,
+    safe_float_cast,
+    scalar_float,
+    series_mean,
+)
 from forward_dual_track_queries import (
     load_dual_track_frames,
     query_latest_closed_trade_date,

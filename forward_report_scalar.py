@@ -1,10 +1,11 @@
 """
-포워드 리포트·딥다이브용 스칼라 추출 — Series/NaN/중복 컬럼 방어.
+포워드 리포트·딥다이브용 스칼라 추출 — Series/NaN/중복 컬럼/ BLOB 방어.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+import struct
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -42,6 +43,52 @@ def scalar_float(val: Any, default: float = 0.0) -> float:
     return float(default) if not np.isfinite(f) else f
 
 
+def safe_float_cast(val: Any, default: float = 0.0) -> float:
+    """
+    bytes(BLOB) · Series · NaN · 비정상 문자열 → float.
+    4/8바이트 IEEE 리틀/빅엔디언 디코딩 1회 시도 후 scalar_float 폴백.
+    """
+    if val is None:
+        return float(default)
+    if isinstance(val, (bytes, bytearray)):
+        b = bytes(val)
+        for fmt in ("<d", "<f", ">d", ">f"):
+            if len(b) != struct.calcsize(fmt):
+                continue
+            try:
+                x = float(struct.unpack(fmt, b)[0])
+                if np.isfinite(x):
+                    return x
+            except struct.error:
+                continue
+        try:
+            return scalar_float(b.decode("utf-8", errors="ignore").strip(), default)
+        except Exception:
+            return float(default)
+    if isinstance(val, (np.floating, np.integer)):
+        val = val.item()
+    out = scalar_float(val, default)
+    return float(default) if not np.isfinite(out) else out
+
+
+def ohlcv_last_floats(df: Optional[pd.DataFrame]) -> Tuple[float, float, float, float, float]:
+    """OHLCV 마지막 봉 — BLOB/NaN 방어. 비정상 시 nan."""
+    nan = float("nan")
+    if df is None or df.empty:
+        return nan, nan, nan, nan, nan
+    out: list[float] = []
+    for col in ("Close", "Open", "High", "Low", "Volume"):
+        if col not in df.columns:
+            out.append(nan)
+            continue
+        s = pd.to_numeric(col_series(df, col), errors="coerce")
+        if s.empty:
+            out.append(nan)
+        else:
+            out.append(safe_float_cast(s.iloc[-1], nan))
+    return tuple(out)  # type: ignore[return-value]
+
+
 def row_scalar(row: pd.Series, col: str, default: float = 0.0) -> float:
     """iterrows() 행에서 단일 컬럼 → float (Series/DataFrame/NaN 방어)."""
     if col not in row.index:
@@ -51,7 +98,7 @@ def row_scalar(row: pd.Series, col: str, default: float = 0.0) -> float:
         val = val.iloc[0] if len(val) else default
     elif isinstance(val, pd.DataFrame):
         val = val.iloc[0, 0] if not val.empty else default
-    return scalar_float(val, default)
+    return safe_float_cast(val, default)
 
 
 def series_mean(df: Optional[pd.DataFrame], col: str, default: float = 0.0) -> float:
