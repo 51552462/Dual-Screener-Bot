@@ -769,6 +769,8 @@ _FORWARD_TRADE_INSERT_COLS: tuple[str, ...] = (
     "dyn_rs",
     "dyn_cpv",
     "dyn_tb",
+    "is_death_combo",
+    "is_tenbagger",
     "entry_price",
     "v_cpv",
     "v_yang",
@@ -1095,17 +1097,6 @@ def _tier80_sync_effective_and_report_line(
     동일 커넥션에서 읽어온 값으로만 텔레그램 문구를 생성한다.
     """
     if t1_df is None or t1_df.empty:
-        init_forward_db()
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        try:
-            conn.execute(
-                "UPDATE forward_trades SET tier_effective = NULL WHERE market = ? AND tier = '80점대'",
-                (market,),
-            )
-            conn.commit()
-        finally:
-            conn.close()
         return ""
 
     n = int(len(t1_df))
@@ -1128,14 +1119,25 @@ def _tier80_sync_effective_and_report_line(
     init_forward_db()
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
+    _tier80_where = (
+        "market = ? AND (tier = '80점대' OR (total_score >= 80 AND total_score < 90))"
+    )
     try:
-        conn.execute(
-            "UPDATE forward_trades SET tier_effective = ? WHERE market = ? AND tier = '80점대'",
-            (db_val, market),
-        )
+        if "id" in t1_df.columns and not t1_df["id"].dropna().empty:
+            ids = [int(x) for x in t1_df["id"].dropna().unique()]
+            ph = ",".join("?" * len(ids))
+            conn.execute(
+                f"UPDATE forward_trades SET tier_effective = ? WHERE id IN ({ph})",
+                (db_val, *ids),
+            )
+        else:
+            conn.execute(
+                f"UPDATE forward_trades SET tier_effective = ? WHERE {_tier80_where}",
+                (db_val, market),
+            )
         conn.commit()
         row = conn.execute(
-            "SELECT tier_effective FROM forward_trades WHERE market = ? AND tier = '80점대' LIMIT 1",
+            f"SELECT tier_effective FROM forward_trades WHERE {_tier80_where} LIMIT 1",
             (market,),
         ).fetchone()
         stored = row[0] if row is not None else db_val
@@ -2074,6 +2076,7 @@ def try_add_virtual_position(
     # 👆👆 [추가 끝] 👆👆
 
     ep = ep * 1.005
+    _facts = facts if isinstance(facts, dict) else {}
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     insert_row = {
         "entry_date": today_str,
@@ -2084,14 +2087,16 @@ def try_add_virtual_position(
         "sig_type": sig_type,
         "tier": tier_label,
         "total_score": score,
-        "dyn_rs": facts.get("dyn_rs", 0),
-        "dyn_cpv": facts.get("dyn_cpv", 0),
+        "dyn_rs": _facts.get("dyn_rs", 0),
+        "dyn_cpv": _facts.get("dyn_cpv", 0),
         "dyn_tb": facts.get("dyn_tb", 0),
+        "is_death_combo": int(_facts.get("is_death_combo") or 0),
+        "is_tenbagger": int(_facts.get("is_tenbagger") or 0),
         "entry_price": ep,
-        "v_cpv": facts.get("v_cpv", 0),
-        "v_yang": facts.get("v_yang", 0),
-        "v_energy": facts.get("v_energy", 0),
-        "v_rs": facts.get("v_rs", 0),
+        "v_cpv": _facts.get("v_cpv", 0),
+        "v_yang": _facts.get("v_yang", 0),
+        "v_energy": _facts.get("v_energy", 0),
+        "v_rs": _facts.get("v_rs", 0),
         "max_high": ep,
         "min_low": ep,
         "market_breadth": round(cur_breadth, 3),

@@ -5,12 +5,20 @@ from forward_market_guard import enforce_market_frame
 
 def send_comprehensive_daily_report(
     *,
+    ctx=None,
     refresh_sentiment: bool = True,
     refresh_sector_spillover: bool = True,
     refresh_meta_governor: bool = True,
     apply_deathmatch_allocation: bool = True,
 ):
-    """[V104.1] 국가별 9분할 정밀 리포트 (순환매 및 스필오버 복원 완료)"""
+    """[V104.1] 국가별 9분할 정밀 리포트 — DailyReportContext 시계 SSOT 필수."""
+    from daily_report_context import DailyReportContext
+    from forward_report_tier import filter_death_combo_df, filter_tier_80_df
+
+    if ctx is None:
+        ctx = DailyReportContext.build()
+    elif not isinstance(ctx, DailyReportContext):
+        raise TypeError("ctx must be DailyReportContext")
     if refresh_meta_governor:
         try:
             from meta_state_store import rebuild_meta_state
@@ -50,7 +58,8 @@ def send_comprehensive_daily_report(
         print(f"⚠️ [일일 통합 리포트] 둠스데이 브릿지 스킵: {_ddb_e}")
 
     tz_kr = pytz.timezone('Asia/Seoul')
-    today_str = datetime.now(tz_kr).strftime('%Y-%m-%d')
+    today_str = ctx.calendar_today_kst
+    _report_time_header = ctx.global_header_html()
     sys_config = load_system_config()
 
     try:
@@ -136,13 +145,23 @@ def send_comprehensive_daily_report(
         try:
             conn = _open_market_db_ro()
 
-            # [사전 데이터 로드] — market 열 + code 정규화 (오태깅 US/KR 교정)
-            df_all_raw = pd.read_sql("SELECT * FROM forward_trades", conn)
-            df_all = _daily_report_trades_for_market(df_all_raw, market)
-            df_real = _df_long_only(df_all)
-            df_closed = df_real[df_real['status'].str.contains('CLOSED', na=False)]
-            _vm = _reporter_valid_holding_mask(df_real)
-            df_open = df_real.loc[_vm].copy()
+            # [사전 데이터 로드] — Timekeeper 윈도우 [rolling_cutoff, session_anchor]
+            mkt_slice = ctx.load_market_slice(
+                conn,
+                market,
+                df_long_only_fn=_df_long_only,
+                normalize_market_fn=_daily_report_trades_for_market,
+                valid_open_mask_fn=_reporter_valid_holding_mask,
+            )
+            df_real = mkt_slice.df_real
+            df_closed = mkt_slice.df_closed
+            df_open = mkt_slice.df_open
+            _win_hdr = ctx.market_window_header_html(
+                market,
+                n_real=len(df_real),
+                n_closed=mkt_slice.n_closed_window,
+                n_open=mkt_slice.n_open_valid,
+            )
             
             # ---------------------------------------------------------
             # 📑 결과지 1: 거시 국면 & 국고 현황 (ReportStateBinder)
@@ -161,7 +180,8 @@ def send_comprehensive_daily_report(
             lead_in = ""
             if market == "KR":
                 lead_in = (
-                    _unified_open
+                    _report_time_header
+                    + _unified_open
                     + "━━━━━━━━━━━━━━━━━━━━\n"
                     + f"📢 <b>[일일 통합 성과 리포트]</b>\n"
                     + satellite_brief_kr
@@ -195,6 +215,7 @@ def send_comprehensive_daily_report(
                 return clean_sig if clean_sig else str(sig).replace('[', '').replace(']', '').strip()
 
             msg2 = f"{market_icon} <b>[2/9] 로직별 복리 생존 리더보드</b>\n"
+            msg2 += _win_hdr
             if not df_real.empty:
                 df_all_copy = df_real.copy()
                 df_all_copy['group'] = df_all_copy['sig_type'].apply(get_core_group)
@@ -227,7 +248,12 @@ def send_comprehensive_daily_report(
                     if e['bal'] < base_seed * 0.5: m = "💀"
                     msg2 += f"{m} <b>{e['g']}</b>: {e['bal']:,.0f}원\n"
                     msg2 += f"   ↳ 승률 {e['wr']:.0f}% (PF {e['pf']:.2f}) | 누적 {e['tot']}전 | 현재 {e['op']}종목 보유\n"
-            else: msg2 += " ↳ 매매 데이터 없음\n"
+            else:
+                _tk_m = ctx.timekeeper_for(market)
+                msg2 += (
+                    f" ↳ 매매 데이터 없음 (윈도우 {_tk_m.rolling_cutoff}~{_tk_m.session_anchor} · "
+                    f"표본 0 · lag {ctx.lag_for(market)})\n"
+                )
             send_telegram_msg(msg2); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -312,14 +338,23 @@ def send_comprehensive_daily_report(
             # 📑 결과지 5: 티어 및 데스콤보 검증
             # ---------------------------------------------------------
             msg5 = f"{market_icon} <b>[5/9] 티어 및 데스콤보 검증</b>\n"
-            t1_df = df_closed[df_closed['tier'] == '80점대']
-            dc_df = df_closed[df_closed['is_death_combo'] == 1]
+            msg5 += _win_hdr
+            t1_df = filter_tier_80_df(df_closed)
+            dc_df = filter_death_combo_df(df_closed, market=market)
             try:
                 msg5 += _tier80_sync_effective_and_report_line(market, t1_df, sys_config)
             except Exception as _te:
                 print(f"⚠️ [5/9] tier_effective 동기화/표시 예외: {_te}")
             if not dc_df.empty: msg5 += f"💀 데스콤보 승률: {(len(dc_df[dc_df['final_ret']>0])/len(dc_df))*100:.1f}% (필터 작동 중)\n"
-            if t1_df.empty and dc_df.empty: msg5 += " ↳ 검증 표본 부족\n"
+            if t1_df.empty and dc_df.empty:
+                if df_closed.empty:
+                    msg5 += (
+                        f" ↳ 검증 표본 부족 (윈도우 내 청산 0 · lag {ctx.lag_for(market)})\n"
+                    )
+                else:
+                    msg5 += (
+                        f" ↳ 80점대·데스콤보 0건 (청산 {len(df_closed)}건 윈도우 내)\n"
+                    )
             send_telegram_msg(msg5); time.sleep(1)
 
             # ---------------------------------------------------------
@@ -373,7 +408,7 @@ def send_comprehensive_daily_report(
             except Exception as _rot_db_ex:
                 print(f"⚠️ [7/9] sector_rotation DB 블록 스킵: {_rot_db_ex}")
 
-            rot_df = df_real[df_real['entry_date'] >= (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')]
+            rot_df = df_real[df_real['entry_date'] >= ctx.rolling_cutoff_for(market)]
             
             if not _used_rotation_db and not rot_df.empty:
                 # 💡 [픽스] '유망'이 포함된 가짜 데이터를 걸러내고 진짜 섹터만 집계
