@@ -82,6 +82,16 @@ def init_ops_snapshot_table(cursor) -> None:
         )
         """
     )
+    for col in (
+        "kr_exit_watermark",
+        "us_exit_watermark",
+        "staleness_grade_kr",
+        "staleness_grade_us",
+    ):
+        try:
+            cursor.execute(f"ALTER TABLE ops_snapshot ADD COLUMN {col} TEXT")
+        except Exception:
+            pass
 
 
 def insert_ops_snapshot_row(
@@ -164,15 +174,54 @@ def record_ops_snapshot_from_live_state(*, max_retries: int = 5) -> bool:
             ).fetchone()
             long_n = float(row[0] or 0.0) if row else 0.0
             short_n = float(row[1] or 0.0) if row else 0.0
-            insert_ops_snapshot_row(
-                cur,
-                treasury_kr=treasury_kr,
-                treasury_us=treasury_us,
-                tail_fund_kr=tail_fund_kr,
-                tail_fund_us=tail_fund_us,
-                long_notional=long_n,
-                short_notional=short_n,
-                timestamp=ts,
+            kr_wm = cur.execute(
+                """
+                SELECT MAX(substr(TRIM(CAST(exit_date AS TEXT)),1,10))
+                FROM forward_trades
+                WHERE market='KR' AND status LIKE 'CLOSED%'
+                """
+            ).fetchone()
+            us_wm = cur.execute(
+                """
+                SELECT MAX(substr(TRIM(CAST(exit_date AS TEXT)),1,10))
+                FROM forward_trades
+                WHERE market='US' AND status LIKE 'CLOSED%'
+                """
+            ).fetchone()
+            kr_wm_s = str(kr_wm[0] or "")[:10] if kr_wm and kr_wm[0] else None
+            us_wm_s = str(us_wm[0] or "")[:10] if us_wm and us_wm[0] else None
+            st_kr, st_us = "", ""
+            try:
+                from system_config_atomic import load_config
+
+                cfg = load_config() or {}
+                st_kr = str((cfg.get("LAST_REPORT_STALENESS_KR") or {}).get("grade", ""))
+                st_us = str((cfg.get("LAST_REPORT_STALENESS_US") or {}).get("grade", ""))
+            except Exception:
+                pass
+            cur.execute(
+                """
+                INSERT INTO ops_snapshot (
+                    timestamp, treasury_kr, treasury_us,
+                    tail_fund_kr, tail_fund_us, long_notional, short_notional,
+                    kr_exit_watermark, us_exit_watermark,
+                    staleness_grade_kr, staleness_grade_us
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    treasury_kr,
+                    treasury_us,
+                    tail_fund_kr,
+                    tail_fund_us,
+                    long_n,
+                    short_n,
+                    kr_wm_s,
+                    us_wm_s,
+                    st_kr or None,
+                    st_us or None,
+                ),
             )
             conn.commit()
             conn.close()

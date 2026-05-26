@@ -100,33 +100,10 @@ def extra_forward_trade_columns_for_report() -> List[str]:
 
 
 def colosseum_db_path_for_report() -> str:
-    """스냅샷이 오래되면 market_data.sqlite 로 강제 (Stale cache bust)."""
-    from market_db_paths import (
-        MARKET_DATA_DB_PATH,
-        MARKET_DATA_SNAPSHOT_PATH,
-        market_db_read_path,
-    )
+    """리포트 콜로세움 — 딥다이브와 동일하게 메인 DB SSOT."""
+    from market_db_paths import report_db_read_path
 
-    force = str(os.environ.get("REPORT_COLOSSEUM_FORCE_MAIN_DB", "1")).strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    if force:
-        return MARKET_DATA_DB_PATH
-    snap_path = market_db_read_path()
-    if snap_path != MARKET_DATA_SNAPSHOT_PATH:
-        return snap_path
-    try:
-        import time
-
-        age = time.time() - os.path.getmtime(MARKET_DATA_SNAPSHOT_PATH)
-        max_age = float(os.environ.get("REPORT_COLOSSEUM_SNAPSHOT_MAX_AGE_SEC", "1800"))
-        if age > max_age:
-            return MARKET_DATA_DB_PATH
-    except OSError:
-        return MARKET_DATA_DB_PATH
-    return snap_path
+    return report_db_read_path()
 
 
 def colosseum_window_days(sys_config: Optional[Dict[str, Any]] = None) -> int:

@@ -564,6 +564,7 @@ def format_dual_track_micro_dna_html(
     *,
     staleness_banner: str = "",
     anchor_day: str = "",
+    anchor_label: str = "세션 앵커",
     meta_line: str = "",
 ) -> str:
     """듀얼 트랙 Micro-DNA 텔레그램 HTML."""
@@ -572,7 +573,8 @@ def format_dual_track_micro_dna_html(
         out += f"📎 <i>{meta_line}</i>\n"
     if anchor_day:
         out += (
-            f"🗓️ 당일 실전 앵커(KST 영업일): <b>{html.escape(anchor_day, quote=False)}</b>\n"
+            f"🗓️ {html.escape(anchor_label, quote=False)}: "
+            f"<b>{html.escape(anchor_day, quote=False)}</b>\n"
         )
     if staleness_banner:
         out += staleness_banner + "\n"
@@ -607,52 +609,8 @@ def format_dual_track_micro_dna_html(
     return out
 
 
-def format_tier_champion_summary_html(
-    blocks: Sequence[BucketBlock],
-    *,
-    market: str,
-    rolling_days: int,
-    today_str: str,
-) -> str:
-    """
-    BucketBlock SSOT만으로 최고 승률·최고 PF 구간 영수증 요약 (O(#buckets)).
-    WR/PF 1등이 동일 버킷이면 한 줄로 합친다.
-    """
-    if not blocks:
-        return ""
-
-    best_wr = max(blocks, key=lambda b: b.win_rate_pct)
-    best_pf = max(blocks, key=lambda b: b.profit_factor)
-
-    m_esc = html.escape(str(market), quote=False)
-    today_esc = html.escape(today_str, quote=False)
-
-    out = f"🏆 <b>[점수 구간별 최우수 성적표 요약]</b>\n"
-    out += (
-        f"📎 <i>앵커: {m_esc}장 · 최근 <b>{rolling_days}</b>일 청산 롤링 · "
-        f"리포트일 KST <b>{today_esc}</b></i>\n"
-    )
-    if len(blocks) == 1:
-        out += (
-            " ⚠️ <i>단일 구간만 표본 통과 — 구간 간 비교는 불가하며 아래는 해당 구간 영수증입니다.</i>\n"
-        )
-
-    if best_wr.bucket_label == best_pf.bucket_label:
-        out += (
-            f" 🥇💎 최고 승률·손익비 공동 1위: {_format_champion_receipt(best_wr, emphasize='both')}\n"
-        )
-    else:
-        out += (
-            f" 🥇 최고 승률 구간: {_format_champion_receipt(best_wr, emphasize='wr')}\n"
-            f" 💎 최고 손익비 구간: {_format_champion_receipt(best_pf, emphasize='pf')}\n"
-        )
-
-    out += (
-        " ◽ <i>위 영수증은 <b>본 리포트 market·롤링 윈도우·청산일 구간</b>에서만 유효합니다. "
-        "다른 시장·기간 tier 수치와 직접 비교하지 마십시오.</i>\n\n"
-    )
-
-    out += "💡 <b>[관제탑 딥다이브 통찰 및 시너지 지침]</b>\n"
+def _champion_insight_tail(best_wr: BucketBlock, best_pf: BucketBlock) -> str:
+    out = "💡 <b>[관제탑 딥다이브 통찰 및 시너지 지침]</b>\n"
     if best_wr.win_rate_pct < 40.0 or best_pf.profit_factor < 1.0:
         out += (
             "🚨 <b>[시스템 비상]</b> 최우수 구간의 성적조차 승률 40% 미만이거나 손익비가 박살 난 상태입니다. "
@@ -673,5 +631,96 @@ def format_tier_champion_summary_html(
             "⚖️ <b>[혼조세]</b> 최우수 구간의 성적이 압도적이지 않습니다. "
             "방어적인 익절/손절(Hybrid) 라인을 유지하며 시장 방향성이 결정될 때까지 자본을 보존하십시오.\n"
         )
-    out += "\n"
+    return out + "\n"
+
+
+def _format_champion_track_lines(
+    blocks: Sequence[BucketBlock],
+    *,
+    emoji: str,
+    title: str,
+) -> str:
+    if not blocks:
+        return f"- {emoji} <b>{html.escape(title, quote=False)}:</b> <i>표본 부족 (버킷 통과 0)</i>\n"
+    best_wr = max(blocks, key=lambda b: b.win_rate_pct)
+    best_pf = max(blocks, key=lambda b: b.profit_factor)
+    if best_wr.bucket_label == best_pf.bucket_label:
+        return (
+            f"- {emoji} <b>{html.escape(title, quote=False)}:</b> "
+            f"{_format_champion_receipt(best_wr, emphasize='both')}\n"
+        )
+    return (
+        f"- {emoji} <b>{html.escape(title, quote=False)}:</b> "
+        f"{_format_champion_receipt(best_wr, emphasize='wr')}\n"
+        f"   💎 PF 1위: {_format_champion_receipt(best_pf, emphasize='pf')}\n"
+    )
+
+
+def format_dual_track_tier_champion_summary_html(
+    live_blocks: Sequence[BucketBlock],
+    hist_blocks: Sequence[BucketBlock],
+    *,
+    market: str,
+    rolling_days: int,
+    session_anchor: str,
+    calendar_today_kst: str,
+    db_watermark: Optional[str],
+    anchor_label: str,
+    read_source: str = "MAIN",
+    staleness_grade: str = "GREEN",
+) -> str:
+    """최우수 성적표 — LIVE(당일 실전) vs HIST(과거 롤링) 듀얼 트랙."""
+    m_esc = html.escape(str(market), quote=False)
+    out = "🏆 <b>[점수 구간별 최우수 성적표 요약 · Dual-Track]</b>\n"
+    out += (
+        f"📎 <i>{m_esc}장 · 롤링 <b>{rolling_days}</b>일 · "
+        f"리포트일 KST <b>{html.escape(calendar_today_kst, quote=False)}</b> · "
+        f"세션앵커({html.escape(anchor_label, quote=False)}) "
+        f"<b>{html.escape(session_anchor, quote=False)}</b> · "
+        f"DB청산 <b>{html.escape(str(db_watermark or '—'), quote=False)}</b> · "
+        f"읽기 <b>{html.escape(read_source, quote=False)}</b> · "
+        f"Staleness <b>{html.escape(staleness_grade, quote=False)}</b></i>\n"
+    )
+    out += _format_champion_track_lines(
+        live_blocks, emoji="🟢", title="당일 실전(LIVE) 최우수"
+    )
+    out += _format_champion_track_lines(
+        hist_blocks, emoji="🏛️", title="과거 기준(HIST) 최우수"
+    )
+
+    insight_blocks = hist_blocks if hist_blocks else live_blocks
+    if insight_blocks:
+        best_wr = max(insight_blocks, key=lambda b: b.win_rate_pct)
+        best_pf = max(insight_blocks, key=lambda b: b.profit_factor)
+        out += (
+            " ◽ <i>영수증 청산 구간은 각 트랙 LIVE/HIST 쿼리 윈도우를 따릅니다. "
+            "타 시장·기간 tier 절대값 비교 금지.</i>\n\n"
+        )
+        out += _champion_insight_tail(best_wr, best_pf)
+    else:
+        out += " ◽ <i>듀얼 트랙 모두 표본 부족 — 최우수 구간 산출 불가.</i>\n\n"
     return out
+
+
+def format_tier_champion_summary_html(
+    blocks: Sequence[BucketBlock],
+    *,
+    market: str,
+    rolling_days: int,
+    today_str: str,
+) -> str:
+    """레거시 단일 트랙 (내부 호환)."""
+    if not blocks:
+        return ""
+    live_blocks = list(blocks)
+    return format_dual_track_tier_champion_summary_html(
+        live_blocks,
+        live_blocks,
+        market=market,
+        rolling_days=rolling_days,
+        session_anchor=today_str,
+        calendar_today_kst=today_str,
+        db_watermark=None,
+        anchor_label="legacy",
+        read_source="MAIN",
+    )

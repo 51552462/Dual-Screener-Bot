@@ -46,3 +46,25 @@ def market_db_read_path() -> str:
     if age > max_age:
         return MARKET_DATA_DB_PATH
     return MARKET_DATA_SNAPSHOT_PATH
+
+
+def report_db_read_path() -> str:
+    """
+    리포트·딥다이브·듀얼트랙·최우수 성적표 — 항상 메인 DB 우선.
+    스냅샷 mtime 신선도 착시로 청산 워터마크가 멈춘 채 읽는 문제 방지.
+    """
+    force = str(os.environ.get("REPORT_DEEP_DIVE_FORCE_MAIN_DB", "1")).strip().lower()
+    if force in ("1", "true", "yes", "on"):
+        return MARKET_DATA_DB_PATH
+    path = market_db_read_path()
+    if path == MARKET_DATA_SNAPSHOT_PATH and os.path.isfile(MARKET_DATA_DB_PATH):
+        return MARKET_DATA_DB_PATH
+    return path
+
+
+def report_read_source_label(path: str) -> str:
+    if os.path.normpath(path) == os.path.normpath(MARKET_DATA_DB_PATH):
+        return "MAIN"
+    if os.path.normpath(path) == os.path.normpath(MARKET_DATA_SNAPSHOT_PATH):
+        return "SNAPSHOT"
+    return "OTHER"

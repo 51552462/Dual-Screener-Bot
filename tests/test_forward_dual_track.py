@@ -79,8 +79,12 @@ def test_live_hist_query_separation():
     anchor = "2026-05-22"
     live = fetch_live_today_closed(conn, "KR", anchor)
     hist = fetch_hist_baseline_closed(conn, "KR", anchor, "2026-01-01")
+    from forward_dual_track_queries import fetch_champion_rolling_closed
+
+    champ = fetch_champion_rolling_closed(conn, "KR", anchor, "2026-01-01")
 
     assert len(live) == 1
+    assert len(champ) == 8
     assert live.iloc[0]["code"] == "C"
     assert len(hist) == 7
     assert all(h["code"] != "C" for _, h in hist.iterrows())

@@ -36,18 +36,20 @@ from report_feature_analyzer import (
 from forward_flow_tag_deep_dive import build_flow_tag_snapshot, format_flow_tag_report_html
 from forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float, series_mean
 from forward_dual_track_queries import (
-    assess_live_staleness,
     load_dual_track_frames,
-    recent_business_day_kst,
+    query_latest_closed_trade_date,
 )
 from forward_score_bucket_deep_dive import (
     ForwardScoreBucketDeepDive,
     build_dual_track_bucket_blocks,
     build_universal_dna_block,
     format_dual_track_micro_dna_html,
-    format_tier_champion_summary_html,
+    format_dual_track_tier_champion_summary_html,
     format_universal_dna_html,
 )
+from market_db_paths import report_db_read_path, report_read_source_label
+from report_staleness_gate import evaluate_staleness, persist_staleness_to_config
+from report_timekeeper import ReportTimekeeper
 from html import escape as html_escape
 
 from report_state_binder import (
@@ -63,8 +65,8 @@ DB_PATH = MARKET_DATA_DB_PATH
 
 
 def _open_market_db_ro():
-    """무거운 집계 전용: 스냅샷이 있으면 읽기 복제본(uri=ro), 없으면 메인 DB."""
-    uri_path = market_db_read_path().replace("\\", "/")
+    """리포트·딥다이브·듀얼트랙: 메인 DB 강제 (스냅샷 mtime 착시 방지)."""
+    uri_path = report_db_read_path().replace("\\", "/")
     return sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
 
 
@@ -3070,24 +3072,29 @@ def run_deep_dive_analysis(market='KR'):
     대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
     """
     try:
-        # KST 앵커: SQLite date('now') 미사용 — 롤링 컷오프·보조 쿼리 모두 동일 타임존
         kr_tz = pytz.timezone("Asia/Seoul")
-        today_kst = datetime.now(kr_tz).date()
-        today_str = today_kst.strftime("%Y-%m-%d")
+        now_kst = datetime.now(kr_tz)
         _cfg_dd = load_system_config()
         try:
             _rd = int(_cfg_dd.get("FORWARD_DEEP_DIVE_EXIT_WINDOW_DAYS", 90))
         except (TypeError, ValueError):
             _rd = 90
         rolling_days = _rd if _rd in (90, 180) else 90
-        cutoff_rolling = (today_kst - timedelta(days=rolling_days)).strftime("%Y-%m-%d")
-        cutoff_spill_30 = (today_kst - timedelta(days=30)).strftime("%Y-%m-%d")
-        cutoff_rot_60 = (today_kst - timedelta(days=60)).strftime("%Y-%m-%d")
 
-        anchor_biz = recent_business_day_kst(ref=today_kst).strftime("%Y-%m-%d")
+        read_path = report_db_read_path()
+        read_src = report_read_source_label(read_path)
 
         conn = _open_market_db_ro()
         try:
+            wm = query_latest_closed_trade_date(conn, market)
+            _rs: str = "MAIN" if read_src == "MAIN" else "SNAPSHOT"
+            tk = ReportTimekeeper.for_market(
+                market,
+                rolling_days=rolling_days,
+                ref_kst=now_kst,
+                db_watermark_exit=wm,
+                read_source=_rs,  # type: ignore[arg-type]
+            )
             cur = conn.cursor()
             cur.execute(
                 "SELECT COUNT(*) FROM forward_trades WHERE market=? AND status LIKE 'CLOSED%'",
@@ -3103,17 +3110,25 @@ def run_deep_dive_analysis(market='KR'):
                 ORDER BY exit_date DESC
                 """,
                 conn,
-                params=(market, cutoff_rolling),
+                params=(market, tk.rolling_cutoff),
             )
-            df_live_raw, df_hist_raw, dual_meta = load_dual_track_frames(
+            df_live_raw, df_hist_raw, df_champion_raw, dual_meta = load_dual_track_frames(
                 conn,
                 market,
-                rolling_days=rolling_days,
-                anchor_day=anchor_biz,
-                calendar_today=today_str,
+                timekeeper=tk,
             )
         finally:
             conn.close()
+
+        today_str = tk.calendar_today_kst
+        anchor_biz = tk.session_anchor
+        cutoff_rolling = tk.rolling_cutoff
+        cutoff_spill_30 = (now_kst.date() - timedelta(days=30)).strftime("%Y-%m-%d")
+        cutoff_rot_60 = (now_kst.date() - timedelta(days=60)).strftime("%Y-%m-%d")
+        staleness = evaluate_staleness(tk, live_row_count=dual_meta.live_row_count)
+        persist_staleness_to_config(
+            tk, staleness, save_fn=save_system_config, load_fn=load_system_config
+        )
 
         n_rolling = len(df)
         if n_rolling < 10:
@@ -3133,18 +3148,23 @@ def run_deep_dive_analysis(market='KR'):
         df_hist = prepare_forward_trades_df(
             df_hist_raw, context=f"deep_dive_hist:{market}"
         )
+        df_champion = prepare_forward_trades_df(
+            df_champion_raw, context=f"deep_dive_champion:{market}"
+        )
         df["Win"] = np.where(df["final_ret"] > 0, 1, 0)
         m_roll = len(df)
-        staleness = assess_live_staleness(dual_meta)
         report_msg = (
             f"🔬 [{market}장 포워드 테스팅 딥 다이브 분석]\n"
-            f"(최근 {rolling_days}일 청산 {m_roll}건 / 전체 {n_all_closed}건, KST 기준 {today_str})\n"
-            f"🟢 당일 실전(LIVE): <b>{dual_meta.live_row_count}</b>건 · "
-            f"🏛️ 과거 기준(HIST): <b>{dual_meta.hist_row_count}</b>건 · "
-            f"앵커 영업일 <b>{anchor_biz}</b>\n\n"
+            f"(최근 {rolling_days}일 청산 {m_roll}건 / 전체 {n_all_closed}건)\n"
+            f"📎 <i>{tk.header_watermark_line()}</i>\n"
+            f"🟢 LIVE <b>{dual_meta.live_row_count}</b> · "
+            f"🏛️ HIST <b>{dual_meta.hist_row_count}</b> · "
+            f"Staleness <b>{staleness.grade}</b>\n\n"
         )
-        if staleness.is_stale:
+        if staleness.banner_html:
             report_msg += staleness.banner_html + "\n\n"
+        if staleness.fail_safe_html:
+            report_msg += staleness.fail_safe_html
 
         try:
             meta_dd = load_meta_state_resolved()
@@ -3171,16 +3191,19 @@ def run_deep_dive_analysis(market='KR'):
             sys_config=_cfg_dd, meta=meta_dd, analyzer=rfa_dd
         )
         dual_blocks = build_dual_track_bucket_blocks(df_live, df_hist, dive)
-        bucket_blocks = dive.build_bucket_blocks(df_hist if dual_meta.hist_row_count >= 5 else df)
-        report_msg += format_dual_track_micro_dna_html(
-            dual_blocks,
-            staleness_banner="",
-            anchor_day=anchor_biz,
-            meta_line=(
-                f"{market}장 · LIVE/HIST 쿼리 분리 · HIST 롤링 {rolling_days}일 "
-                f"(~{dual_meta.rolling_cutoff})"
-            ),
-        )
+        live_champion_blocks = dive.build_bucket_blocks(df_live)
+        hist_champion_blocks = dive.build_bucket_blocks(df_hist)
+        if staleness.allow_micro_dna:
+            report_msg += format_dual_track_micro_dna_html(
+                dual_blocks,
+                staleness_banner="",
+                anchor_day=anchor_biz,
+                anchor_label=tk.anchor_label,
+                meta_line=(
+                    f"{market}장 · LIVE/HIST 분리 · 롤링 {rolling_days}일 "
+                    f"({dual_meta.rolling_cutoff}~{anchor_biz})"
+                ),
+            )
 
         prep_df = ForwardScoreBucketDeepDive.assign_score_buckets(df)
         for bucket_label, t_df in prep_df.dropna(subset=["_score_bucket"]).groupby("_score_bucket", observed=True, sort=True):
@@ -3219,12 +3242,19 @@ def run_deep_dive_analysis(market='KR'):
                         report_msg += f"⚠️ 인큐베이터 DNA 주입 실패({ud_name}): {_e}\n"
         report_msg += "\n"
 
-        report_msg += format_tier_champion_summary_html(
-            bucket_blocks,
-            market=market,
-            rolling_days=rolling_days,
-            today_str=today_str,
-        )
+        if staleness.allow_tier_champion:
+            report_msg += format_dual_track_tier_champion_summary_html(
+                live_champion_blocks,
+                hist_champion_blocks,
+                market=market,
+                rolling_days=rolling_days,
+                session_anchor=anchor_biz,
+                calendar_today_kst=today_str,
+                db_watermark=tk.db_watermark_exit,
+                anchor_label=tk.anchor_label,
+                read_source=tk.read_source,
+                staleness_grade=staleness.grade,
+            )
 
         tag_snap = build_flow_tag_snapshot(
             df,

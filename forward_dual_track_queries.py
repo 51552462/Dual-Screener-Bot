@@ -1,15 +1,20 @@
 """
-듀얼 트랙 리포팅 — LIVE_TODAY(당일·최근 영업일 실전) vs HIST_BASELINE(과거 롤링 기준) DB 쿼리 분리.
+듀얼 트랙 리포팅 — LIVE_TODAY / HIST_BASELINE / CHAMPION_ROLLING DB 쿼리 분리.
 """
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import pandas as pd
 import pytz
+
+from report_timekeeper import ReportTimekeeper, kr_session_anchor_date
+
+if TYPE_CHECKING:
+    pass
 
 _KR_TZ = pytz.timezone("Asia/Seoul")
 
@@ -28,11 +33,8 @@ def kst_today_str() -> str:
 
 
 def recent_business_day_kst(*, ref: Optional[date] = None) -> date:
-    """토·일이면 직전 금요일, 그 외 당일."""
-    d = ref or kst_today()
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
-    return d
+    """토·일이면 직전 금요일, 그 외 당일 (KR 레거시 호환)."""
+    return kr_session_anchor_date(ref=ref)
 
 
 def trade_date_column_sql() -> str:
@@ -86,6 +88,19 @@ def _hist_where_clause(has_trade_date_col: bool) -> str:
         "status LIKE 'CLOSED%'",
         f"{td_expr} >= ?",
         f"{td_expr} < ?",
+        *_LIVE_EXCLUDE_SIG,
+    ]
+    return " AND ".join(parts)
+
+
+def _champion_rolling_where_clause(has_trade_date_col: bool) -> str:
+    """롤링 윈도우 [cutoff, session_anchor] 양끝 포함 — 최우수 성적표 전용."""
+    td_expr = trade_date_column_sql() if has_trade_date_col else "substr(TRIM(CAST(exit_date AS TEXT)),1,10)"
+    parts = [
+        "market = ?",
+        "status LIKE 'CLOSED%'",
+        f"{td_expr} >= ?",
+        f"{td_expr} <= ?",
         *_LIVE_EXCLUDE_SIG,
     ]
     return " AND ".join(parts)
@@ -166,22 +181,45 @@ def fetch_hist_baseline_closed(
     )
 
 
+def fetch_champion_rolling_closed(
+    conn: sqlite3.Connection,
+    market: str,
+    anchor_day: str,
+    rolling_cutoff: str,
+) -> pd.DataFrame:
+    """최우수 성적표: 세션 앵커일 청산 포함 롤링."""
+    has_td = _table_has_column(conn, "forward_trades", "trade_date")
+    where = _champion_rolling_where_clause(has_td)
+    return pd.read_sql(
+        f"SELECT * FROM forward_trades WHERE {where} ORDER BY exit_date DESC",
+        conn,
+        params=(market, rolling_cutoff, anchor_day),
+    )
+
+
 def load_dual_track_frames(
     conn: sqlite3.Connection,
     market: str,
     *,
+    timekeeper: Optional[ReportTimekeeper] = None,
     rolling_days: int = 90,
     anchor_day: Optional[str] = None,
     calendar_today: Optional[str] = None,
-) -> Tuple[pd.DataFrame, pd.DataFrame, DualTrackQueryMeta]:
-    cal = calendar_today or kst_today_str()
-    anchor = anchor_day or recent_business_day_kst().strftime("%Y-%m-%d")
-    cutoff = (
-        datetime.strptime(anchor, "%Y-%m-%d").date() - timedelta(days=int(rolling_days))
-    ).strftime("%Y-%m-%d")
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, DualTrackQueryMeta]:
+    if timekeeper is not None:
+        cal = timekeeper.calendar_today_kst
+        anchor = timekeeper.session_anchor
+        cutoff = timekeeper.rolling_cutoff
+    else:
+        cal = calendar_today or kst_today_str()
+        anchor = anchor_day or recent_business_day_kst().strftime("%Y-%m-%d")
+        cutoff = (
+            datetime.strptime(anchor, "%Y-%m-%d").date() - timedelta(days=int(rolling_days))
+        ).strftime("%Y-%m-%d")
 
     df_live = fetch_live_today_closed(conn, market, anchor)
     df_hist = fetch_hist_baseline_closed(conn, market, anchor, cutoff)
+    df_champion = fetch_champion_rolling_closed(conn, market, anchor, cutoff)
     latest = query_latest_closed_trade_date(conn, market)
 
     meta = DualTrackQueryMeta(
@@ -193,7 +231,7 @@ def load_dual_track_frames(
         hist_row_count=len(df_hist),
         latest_closed_trade_date=latest,
     )
-    return df_live, df_hist, meta
+    return df_live, df_hist, df_champion, meta
 
 
 def assess_live_staleness(meta: DualTrackQueryMeta) -> LiveStalenessVerdict:

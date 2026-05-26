@@ -128,3 +128,33 @@ sudo systemctl start dante-main dante-streamlit
 
 - `deploy/ubuntu/factory_resource_limits.env.example` — `.env`에 붙여 넣을 `MAX_WORKERS` / `TELEGRAM_CONCURRENCY_LIMIT`
 - `deploy/ubuntu/system_config.resource_limits.fragment.json` — `system_config.json`에 병합할 `MAX_WORKERS` (예: `jq -s '.[0] * .[1]' system_config.json system_config.resource_limits.fragment.json > merged.json` 후 원자 교체)
+
+---
+
+## ReportTimekeeper · 딥다이브 Staleness (배포)
+
+**요약:** 딥다이브·최우수 성적표·듀얼트랙은 `market_data.sqlite` **메인 DB만** 읽는다 (`REPORT_DEEP_DIVE_FORCE_MAIN_DB=1` 기본). US `session_anchor`는 **US Last Trading Day (ET 16:00 근사)**.
+
+**배포 절차**
+
+1. 저장소 갱신: `sudo ./update_factory.sh` (또는 `git pull` + 서비스 재기동).
+2. `.env` 확인 (선택):
+   - `REPORT_DEEP_DIVE_FORCE_MAIN_DB=1` — 메인 DB 강제 (권장, 기본값).
+   - `TZ=Asia/Seoul` — 팩토리 cron·Timekeeper KST 일치.
+3. 스냅샷 타이머 유지: `dante-snapshot.timer` — CQRS 복제는 유지하되 **리포트는 메인 워터마크 기준**.
+4. 검증 (KR 장 마감 후):
+   ```bash
+   cd $INSTALL_ROOT && ./factory.sh --daily-kr
+   ```
+   텔레그램 딥다이브 헤더에 `리포트일 KST` · `세션앵커` · `DB청산워터마크` · `읽기 MAIN` · `Staleness GREEN|YELLOW|RED` 표기 확인.
+5. 검증 (US, KST 06:45 이후):
+   ```bash
+   ./factory.sh --daily-us
+   ```
+   US 리포트의 `세션앵커`가 **직전 US 거래일**(KST 화요일 새벽 → US 월요일)인지 확인.
+6. RED 시: `track_daily_positions` 로그 · `forward_trades` 최신 `exit_date` · `journalctl` factory 로그 점검. `system_config`의 `LAST_REPORT_STALENESS_KR` / `_US` JSON 참고.
+
+**모니터링**
+
+- `ops_events.sqlite` — `event=report.staleness`
+- `ops_snapshot` — `kr_exit_watermark`, `us_exit_watermark`, `staleness_grade_*` (dante-snapshot 주기 기록)
