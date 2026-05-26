@@ -35,10 +35,16 @@ from report_feature_analyzer import (
 )
 from forward_flow_tag_deep_dive import build_flow_tag_snapshot, format_flow_tag_report_html
 from forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float, series_mean
+from forward_dual_track_queries import (
+    assess_live_staleness,
+    load_dual_track_frames,
+    recent_business_day_kst,
+)
 from forward_score_bucket_deep_dive import (
     ForwardScoreBucketDeepDive,
+    build_dual_track_bucket_blocks,
     build_universal_dna_block,
-    format_bucket_blocks_telegram_html,
+    format_dual_track_micro_dna_html,
     format_tier_champion_summary_html,
     format_universal_dna_html,
 )
@@ -3078,6 +3084,8 @@ def run_deep_dive_analysis(market='KR'):
         cutoff_spill_30 = (today_kst - timedelta(days=30)).strftime("%Y-%m-%d")
         cutoff_rot_60 = (today_kst - timedelta(days=60)).strftime("%Y-%m-%d")
 
+        anchor_biz = recent_business_day_kst(ref=today_kst).strftime("%Y-%m-%d")
+
         conn = _open_market_db_ro()
         try:
             cur = conn.cursor()
@@ -3089,11 +3097,20 @@ def run_deep_dive_analysis(market='KR'):
             df = pd.read_sql(
                 """
                 SELECT * FROM forward_trades
-                WHERE market=? AND status LIKE 'CLOSED%' AND exit_date >= ?
+                WHERE market=? AND status LIKE 'CLOSED%'
+                  AND IFNULL(exit_date,'') >= ?
+                  AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
                 ORDER BY exit_date DESC
                 """,
                 conn,
                 params=(market, cutoff_rolling),
+            )
+            df_live_raw, df_hist_raw, dual_meta = load_dual_track_frames(
+                conn,
+                market,
+                rolling_days=rolling_days,
+                anchor_day=anchor_biz,
+                calendar_today=today_str,
             )
         finally:
             conn.close()
@@ -3110,12 +3127,24 @@ def run_deep_dive_analysis(market='KR'):
             return
 
         df = prepare_forward_trades_df(df, context=f"deep_dive:{market}")
+        df_live = prepare_forward_trades_df(
+            df_live_raw, context=f"deep_dive_live:{market}"
+        )
+        df_hist = prepare_forward_trades_df(
+            df_hist_raw, context=f"deep_dive_hist:{market}"
+        )
         df["Win"] = np.where(df["final_ret"] > 0, 1, 0)
         m_roll = len(df)
+        staleness = assess_live_staleness(dual_meta)
         report_msg = (
             f"🔬 [{market}장 포워드 테스팅 딥 다이브 분석]\n"
-            f"(최근 {rolling_days}일 청산 {m_roll}건 / 전체 {n_all_closed}건, KST 기준 {today_str})\n\n"
+            f"(최근 {rolling_days}일 청산 {m_roll}건 / 전체 {n_all_closed}건, KST 기준 {today_str})\n"
+            f"🟢 당일 실전(LIVE): <b>{dual_meta.live_row_count}</b>건 · "
+            f"🏛️ 과거 기준(HIST): <b>{dual_meta.hist_row_count}</b>건 · "
+            f"앵커 영업일 <b>{anchor_biz}</b>\n\n"
         )
+        if staleness.is_stale:
+            report_msg += staleness.banner_html + "\n\n"
 
         try:
             meta_dd = load_meta_state_resolved()
@@ -3141,16 +3170,17 @@ def run_deep_dive_analysis(market='KR'):
         dive = ForwardScoreBucketDeepDive(
             sys_config=_cfg_dd, meta=meta_dd, analyzer=rfa_dd
         )
-        bucket_blocks = dive.build_bucket_blocks(df)
-        report_msg += "👑 <b>[점수대별 Micro-DNA · 동적 피처]</b>\n"
-        if bucket_blocks:
-            report_msg += format_bucket_blocks_telegram_html(bucket_blocks)
-            report_msg += "\n"
-        else:
-            report_msg += (
-                f"<i>표본 부족 (점수 버킷 통과 구간 0개, 롤링 청산 <b>{m_roll}</b>건) 또는 "
-                "total_score/tier 부재로 Micro-DNA 딥다이브 생략.</i>\n\n"
-            )
+        dual_blocks = build_dual_track_bucket_blocks(df_live, df_hist, dive)
+        bucket_blocks = dive.build_bucket_blocks(df_hist if dual_meta.hist_row_count >= 5 else df)
+        report_msg += format_dual_track_micro_dna_html(
+            dual_blocks,
+            staleness_banner="",
+            anchor_day=anchor_biz,
+            meta_line=(
+                f"{market}장 · LIVE/HIST 쿼리 분리 · HIST 롤링 {rolling_days}일 "
+                f"(~{dual_meta.rolling_cutoff})"
+            ),
+        )
 
         prep_df = ForwardScoreBucketDeepDive.assign_score_buckets(df)
         for bucket_label, t_df in prep_df.dropna(subset=["_score_bucket"]).groupby("_score_bucket", observed=True, sort=True):

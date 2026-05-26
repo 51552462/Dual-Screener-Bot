@@ -32,6 +32,16 @@ class BucketBlock:
 
 
 @dataclass(frozen=True)
+class DualTrackBucketBlock:
+    """당일 실전 vs 과거 기준(Sim) — 점수대 1쌍."""
+
+    bucket_label: str
+    live: Optional[BucketBlock]
+    hist: Optional[BucketBlock]
+    drift_comment: str
+
+
+@dataclass(frozen=True)
 class UniversalDnaBlock:
     """점수대 무관 전체 시장 Universal DNA SSOT."""
 
@@ -470,7 +480,7 @@ class ForwardScoreBucketDeepDive:
 
 
 def format_bucket_blocks_telegram_html(blocks: Sequence[BucketBlock]) -> str:
-    """점수대별 1줄 요약(HTML)."""
+    """점수대별 1줄 요약(HTML) — 레거시 단일 트랙."""
     lines: List[str] = []
     for b in blocks:
         lines.append(
@@ -479,6 +489,122 @@ def format_bucket_blocks_telegram_html(blocks: Sequence[BucketBlock]) -> str:
             f"주도주: {b.key_drivers_html} | 대박 DNA: {b.dna_compact_html}\n"
         )
     return "".join(lines)
+
+
+def _format_track_line(
+    b: Optional[BucketBlock],
+    *,
+    prefix: str,
+    empty_label: str,
+) -> str:
+    if b is None or b.n_rows <= 0:
+        return f"{prefix}{empty_label}\n"
+    return (
+        f"{prefix}승률 <b>{b.win_rate_pct:.1f}%</b> | PF <b>{b.profit_factor:.2f}</b> | "
+        f"주도주: {b.key_drivers_html}"
+        f" <i>(n={b.n_rows})</i>\n"
+    )
+
+
+def _compute_drift_comment(
+    live: Optional[BucketBlock],
+    hist: Optional[BucketBlock],
+) -> str:
+    if live is None or live.n_rows <= 0:
+        return "당일 실전 표본 없음 — DNA Drift 판정 보류."
+    if hist is None or hist.n_rows < 5:
+        return "과거 기준 표본 부족 — Drift 대조 불가."
+    wr_gap = abs(live.win_rate_pct - hist.win_rate_pct)
+    live_dna = (live.dna_compact_html or "").strip()
+    hist_dna = (hist.dna_compact_html or "").strip()
+    if wr_gap <= 8.0 and live_dna and hist_dna and live_dna == hist_dna:
+        return "당일 폼이 과거 기준 DNA 궤적과 <b>정합</b> (Drift 낮음)."
+    if wr_gap >= 18.0:
+        direction = "강세" if live.win_rate_pct > hist.win_rate_pct else "약세"
+        return (
+            f"승률 괴리 <b>{wr_gap:.0f}%p</b> — 당일 실전이 과거 기준 대비 <b>{direction}</b> "
+            f"(Drift <b>주의</b>)."
+        )
+    if live_dna and hist_dna and live_dna != hist_dna:
+        return "동적 피처 DNA 브라켓이 과거 기준과 <b>불일치</b> (Drift 감지)."
+    return "승률·DNA가 과거 기준과 <b>근접</b> (Drift 보통)."
+
+
+def build_dual_track_bucket_blocks(
+    live_df: pd.DataFrame,
+    hist_df: pd.DataFrame,
+    dive: "ForwardScoreBucketDeepDive",
+) -> List[DualTrackBucketBlock]:
+    """LIVE·HIST 각각 버킷 후 라벨 합집합으로 Dual-Track 블록 생성."""
+    live_blocks = {b.bucket_label: b for b in dive.build_bucket_blocks(live_df)}
+    hist_blocks = {b.bucket_label: b for b in dive.build_bucket_blocks(hist_df)}
+    labels = sorted(
+        set(live_blocks) | set(hist_blocks),
+        key=lambda x: int(str(x).replace("점대", "").strip() or "0"),
+    )
+    out: List[DualTrackBucketBlock] = []
+    for lbl in labels:
+        live_b = live_blocks.get(lbl)
+        hist_b = hist_blocks.get(lbl)
+        if live_b is None and hist_b is None:
+            continue
+        out.append(
+            DualTrackBucketBlock(
+                bucket_label=lbl,
+                live=live_b,
+                hist=hist_b,
+                drift_comment=_compute_drift_comment(live_b, hist_b),
+            )
+        )
+    return out
+
+
+def format_dual_track_micro_dna_html(
+    blocks: Sequence[DualTrackBucketBlock],
+    *,
+    staleness_banner: str = "",
+    anchor_day: str = "",
+    meta_line: str = "",
+) -> str:
+    """듀얼 트랙 Micro-DNA 텔레그램 HTML."""
+    out = "👑 <b>[점수대별 Micro-DNA · 동적 피처 · Dual-Track]</b>\n"
+    if meta_line:
+        out += f"📎 <i>{meta_line}</i>\n"
+    if anchor_day:
+        out += (
+            f"🗓️ 당일 실전 앵커(KST 영업일): <b>{html.escape(anchor_day, quote=False)}</b>\n"
+        )
+    if staleness_banner:
+        out += staleness_banner + "\n"
+    if not blocks:
+        out += (
+            "<i>표본 부족 — LIVE·HIST 모두 점수 버킷 통과 구간 없음 "
+            "(total_score/tier 확인).</i>\n"
+        )
+        return out
+
+    for dt in blocks:
+        lbl = html.escape(dt.bucket_label, quote=False)
+        out += f"📌 <b>[{lbl} 구간]</b>\n"
+        out += _format_track_line(
+            dt.live,
+            prefix="- 🟢 <b>당일 실전:</b> ",
+            empty_label="<i>청산 0건</i>",
+        )
+        if dt.hist and dt.hist.n_rows > 0:
+            out += (
+                f"- 🏛️ <b>과거 기준(Sim):</b> 기대 승률 <b>{dt.hist.win_rate_pct:.1f}%</b> | "
+                f"PF <b>{dt.hist.profit_factor:.2f}</b> | "
+                f"역대 주도주: {dt.hist.key_drivers_html} | "
+                f"DNA: {dt.hist.dna_compact_html}\n"
+            )
+        else:
+            out += "- 🏛️ <b>과거 기준(Sim):</b> <i>롤링 표본 부족</i>\n"
+        out += (
+            f"- 🧬 <b>DNA 대조:</b> {dt.drift_comment}\n"
+        )
+    out += "\n"
+    return out
 
 
 def format_tier_champion_summary_html(
