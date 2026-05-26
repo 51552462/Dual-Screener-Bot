@@ -1230,8 +1230,8 @@ class MetaGovernor:
         )
         _push(
             "META_GROUP_KELLY_MULT",
-            json.dumps(self._prior.get("META_GROUP_KELLY_MULT") or {}, sort_keys=True),
-            json.dumps(self._working.get("META_GROUP_KELLY_MULT") or {}, sort_keys=True),
+            dict(self._prior.get("META_GROUP_KELLY_MULT") or {}),
+            dict(self._working.get("META_GROUP_KELLY_MULT") or {}),
             "treasury_groups",
         )
         _push(

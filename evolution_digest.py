@@ -1,5 +1,5 @@
 """
-[Δ] 진화·튜닝 요약 — META_CHANGELOG + config 스냅샷 diff (시장 무관·글로벌).
+[Δ] 진화·튜닝 요약 — META_CHANGELOG + config 스냅샷 diff (글로벌 · 1회 송출).
 """
 from __future__ import annotations
 
@@ -9,33 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from config_manager import CONFIG_SNAPSHOTS_DIR, find_latest_config_snapshot_on_or_before
-
-
-def _esc(s: Any) -> str:
-    t = str(s)
-    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _changelog_lines(meta: dict[str, Any], max_lines: int = 3) -> list[str]:
-    log = meta.get("META_CHANGELOG") or []
-    if not isinstance(log, list) or not log:
-        return []
-    recent = log[-max_lines:]
-    lines: list[str] = []
-    for entry in reversed(recent):
-        if not isinstance(entry, dict):
-            continue
-        key = _esc(entry.get("key", "?"))
-        reason = _esc(entry.get("reason", ""))
-        at = str(entry.get("at") or "")[:19]
-        old_v = entry.get("old")
-        new_v = entry.get("new")
-        if isinstance(old_v, (dict, list)):
-            old_v = "…"
-        if isinstance(new_v, (dict, list)):
-            new_v = "…"
-        lines.append(f"• <code>{key}</code> {_esc(old_v)}→{_esc(new_v)} <i>({reason})</i> [{at}]")
-    return lines
+from tuning_digest_formatter import format_meta_changelog_telegram
 
 
 def _snapshot_diff_line() -> Optional[str]:
@@ -70,22 +44,27 @@ def _snapshot_diff_line() -> Optional[str]:
     return f"스냅샷 Δ: {', '.join(parts[:5])}" + ("…" if len(parts) > 5 else "")
 
 
-def build_evolution_digest_html(
-    meta: dict[str, Any],
-    *,
-    market: Optional[str] = None,
-) -> str:
-    """[Δ] 블록 HTML (비어 있으면 빈 문자열)."""
-    lines = _changelog_lines(meta, max_lines=3)
+def build_global_evolution_digest_html(meta: dict[str, Any]) -> str:
+    """[Δ] 글로벌 블록 — KR/US 루프 밖 1회만 송출."""
+    lines = format_meta_changelog_telegram(meta, max_entries=5)
     snap = _snapshot_diff_line()
     if snap:
         lines.append(snap)
     if not lines:
         return ""
-    mkt_tag = f" ({market})" if market else ""
-    body = "\n".join(lines[:4])
+    body = "\n".join(lines[:12])
     return (
         f"\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"📐 <b>[Δ] 진화·튜닝{mkt_tag}</b>\n"
+        f"📐 <b>[Δ] 진화·튜닝</b> <i>(글로벌 · MetaGovernor)</i>\n"
         f"{body}\n"
     )
+
+
+def build_evolution_digest_html(
+    meta: dict[str, Any],
+    *,
+    market: Optional[str] = None,
+) -> str:
+    """레거시 호환 — 시장 태그 없이 글로벌과 동일 본문."""
+    _ = market
+    return build_global_evolution_digest_html(meta)

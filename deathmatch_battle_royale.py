@@ -232,6 +232,7 @@ def run_battle_royal(
     *,
     market: str,
     lookback_days: Optional[int] = None,
+    window_pre_sliced: bool = False,
     meta_health: Optional[Dict[str, Any]] = None,
     persist: bool = True,
 ) -> BattleRoyaleResult:
@@ -250,10 +251,12 @@ def run_battle_royal(
         return out
 
     work = df_closed.copy()
-    lb = lookback_days if lookback_days is not None else int(dmcfg.get("lookback_days", 90))
-    if lb > 0 and "exit_date" in work.columns:
-        cutoff = (pd.Timestamp.now() - pd.Timedelta(days=lb)).strftime("%Y-%m-%d")
-        work = work[work["exit_date"].astype(str) >= cutoff]
+    # DailyReportContext 슬라이스 입력 시 2차 now()-90d 컷 금지 (이중 잣대 제거)
+    if not window_pre_sliced:
+        lb = lookback_days if lookback_days is not None else int(dmcfg.get("lookback_days", 90))
+        if lb > 0 and "exit_date" in work.columns:
+            cutoff = (pd.Timestamp.now() - pd.Timedelta(days=lb)).strftime("%Y-%m-%d")
+            work = work[work["exit_date"].astype(str) >= cutoff]
 
     bench = _market_benchmark(work)
     out.market_benchmark_ret = bench
@@ -459,6 +462,7 @@ def build_nway_deathmatch_registry(
     sys_config: Optional[dict] = None,
     *,
     lookback_days: Optional[int] = None,
+    window_pre_sliced: bool = False,
     market: Optional[str] = None,
     meta_health: Optional[Dict[str, Any]] = None,
 ) -> Tuple[BattleRoyaleResult, NWayDeathmatchResult]:
@@ -467,6 +471,7 @@ def build_nway_deathmatch_registry(
         sys_config,
         market=str(market or "KR").upper(),
         lookback_days=lookback_days,
+        window_pre_sliced=window_pre_sliced,
         meta_health=meta_health,
         persist=True,
     )
@@ -479,13 +484,19 @@ def format_battle_royal_telegram(
     *,
     lookback_label: str = "전체 청산",
     ace_oneliner: str = "",
+    include_title: bool = True,
+    ranked_empty_note: Optional[str] = None,
 ) -> str:
     mk_label = "KR" if br.market == "KR" else "US" if br.market == "US" else br.market
-    lines = [
-        f"{market_icon} <b>[9/9] 시스템 데스매치 — {mk_label} Full Scorecard</b>",
+    lines: list[str] = []
+    if include_title:
+        lines.append(
+            f"{market_icon} <b>[9/9] 시스템 데스매치 — {mk_label} Full Scorecard</b>"
+        )
+    lines.extend([
         f"📎 {html.escape(lookback_label, quote=False)} · arm당 유효 최소 <b>{br.n_min}</b>건",
         "<i>Composite v2 · 지수 MDD · 절대허들(0%↑ 또는 벤치 초과) · Meta mult 연동</i>",
-    ]
+    ])
     if br.market_benchmark_ret is not None and math.isfinite(br.market_benchmark_ret):
         lines.append(f"📊 시장 벤치마크: <b>{br.market_benchmark_ret:+.2f}%</b>")
     lines.append(
@@ -521,7 +532,7 @@ def format_battle_royal_telegram(
     ranked = [a for a in br.arms if a.rank < 999]
     ranked.sort(key=lambda x: x.rank)
     if not ranked:
-        lines.append(" ↳ 유효 표본 충족 arm 없음")
+        lines.append(ranked_empty_note or " ↳ 유효 표본 충족 arm 없음")
     else:
         for a in ranked[:12]:
             ret_s = fmt_deathmatch_ret(a.mean_ret, a.n_closed, n_valid=a.n_valid)

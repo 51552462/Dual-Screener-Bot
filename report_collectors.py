@@ -8,7 +8,10 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from evolution_digest import build_evolution_digest_html
+from evolution_digest import (
+    build_evolution_digest_html,
+    build_global_evolution_digest_html,
+)
 from inverse_etf_sniper import (
     INVERSE_CANDIDATES,
     INVERSE_SIG_MARKER,
@@ -146,4 +149,6 @@ def build_market_evolution_digest(
     market: str,
     meta: dict[str, Any],
 ) -> str:
-    return build_evolution_digest_html(meta, market=market.upper())
+    """레거시 — 시장 인자 무시, 글로벌 [Δ]와 동일."""
+    _ = market
+    return build_global_evolution_digest_html(meta)

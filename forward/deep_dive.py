@@ -71,9 +71,9 @@ def send_comprehensive_daily_report(
 
     from report_collectors import (
         _df_long_only,
-        build_market_evolution_digest,
         build_market_report_opening,
     )
+    from evolution_digest import build_global_evolution_digest_html
     from satellite_intel_brief import (
         build_satellite_intel_for_report,
         build_strategy_insight_html,
@@ -476,56 +476,35 @@ def send_comprehensive_daily_report(
             send_telegram_msg(msg8); time.sleep(1)
 
             # ---------------------------------------------------------
-            # 📑 결과지 9: 시스템 데스매치 결산
+            # 📑 결과지 9: 시스템 데스매치 결산 (DailyReportContext · Tier DM)
             # ---------------------------------------------------------
-            from deathmatch_battle_royale import (
-                build_nway_deathmatch_registry,
-                format_battle_royal_telegram,
-            )
-            from deathmatch_report import maybe_apply_deathmatch_allocation
+            from forward.deathmatch_report_section import build_deathmatch_section
 
-            br, dm = build_nway_deathmatch_registry(df_closed, sys_config, market=market)
-            _cfg_dm = dict(sys_config)
-            if apply_deathmatch_allocation:
-                _cfg_dm["DEATHMATCH_APPLY_ALLOCATION"] = 1
-            maybe_apply_deathmatch_allocation(
-                dm, _cfg_dm, battle_royale=br, market=market
+            msg9 = build_deathmatch_section(
+                ctx,
+                market,
+                df_closed,
+                mkt_slice,
+                sys_config=sys_config,
+                meta=meta_state_daily,
+                market_icon=market_icon,
+                apply_deathmatch_allocation=apply_deathmatch_allocation,
             )
-            _dm_label = f"{market} 청산 전체 · Registry Battle Royal"
-            if not br.arms and n_closed_mkt == 0:
-                _dm_label += " (청산 0 — scan 후 재확인)"
-            ace_line = ""
-            try:
-                from ace_deathmatch_bridge import (
-                    build_ace_deathmatch_comparison,
-                    format_ace_evolution_oneliner,
-                )
-                from ace_evolution_store import load_playbook
-
-                _ace_pb = load_playbook(market, sys_config)
-                _ace_dm = build_ace_deathmatch_comparison(
-                    df_closed, market=market, playbook=_ace_pb
-                )
-                ace_line = format_ace_evolution_oneliner(_ace_dm)
-            except Exception as _adm_ex:
-                ace_line = (
-                    f"<i>⚠️ [진화] 스킵: {html_escape(str(_adm_ex)[:72], quote=False)}</i>"
-                )
-            msg9 = format_battle_royal_telegram(
-                market_icon,
-                br,
-                lookback_label=_dm_label,
-                ace_oneliner=ace_line,
-            )
-            try:
-                msg9 += build_market_evolution_digest(market, meta_state_daily)
-            except Exception as _ev_ex:
-                msg9 += f"\n<i>⚠️ [Δ] 스킵: {html_escape(str(_ev_ex)[:72], quote=False)}</i>"
             send_telegram_msg(msg9); time.sleep(1)
 
             conn.close()
         except Exception as e:
             send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
+
+    try:
+        _delta_global = build_global_evolution_digest_html(meta_state_daily)
+        if _delta_global:
+            send_telegram_msg(_delta_global)
+            time.sleep(1)
+    except Exception as _delta_ex:
+        send_telegram_msg(
+            f"<i>⚠️ [Δ] 진화·튜닝 스킵: {html_escape(str(_delta_ex)[:72], quote=False)}</i>"
+        )
 
 def send_group_practitioner_reports(ctx=None):
     """PIL — 활성 시그널 그룹별 실무자 리포트(Post-Mortem·Vitality·LLM) + 메타 페널티."""
