@@ -508,7 +508,7 @@ def send_comprehensive_daily_report(
         except Exception as e:
             send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
 
-def send_group_practitioner_reports():
+def send_group_practitioner_reports(ctx=None):
     """PIL — 활성 시그널 그룹별 실무자 리포트(Post-Mortem·Vitality·LLM) + 메타 페널티."""
     from practitioner_intelligence import (
         build_practitioner_brief,
@@ -516,10 +516,17 @@ def send_group_practitioner_reports():
         parse_group_from_sig,
     )
     from practitioner_penalty_bridge import apply_pil_vitality_penalties
+    from practitioner_report_context import (
+        PractitionerReportContext,
+        format_practitioner_fail_card,
+    )
 
-    tz_kr = pytz.timezone('Asia/Seoul')
+    if ctx is None:
+        ctx = PractitionerReportContext.build()
+
     sys_config = load_system_config()
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
+    pil_header = ctx.global_timekeeper_header_html()
 
     try:
         _nz = _reporter_cleanup_zombie_forward_trades()
@@ -534,9 +541,11 @@ def send_group_practitioner_reports():
         meta_state = {}
 
     briefs = []
+    n_fail = 0
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        read_path = ctx.db_read_path
+        uri = read_path.replace("\\", "/")
+        conn = sqlite3.connect(f"file:{uri}?mode=ro", uri=True, timeout=60)
         df_all = pd.read_sql(
             "SELECT * FROM forward_trades WHERE IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'",
             conn,
@@ -554,65 +563,108 @@ def send_group_practitioner_reports():
         df_all["group"] = df_all["sig_type"].apply(parse_group_from_sig)
         df_all["mkt_group"] = df_all["market"].astype(str) + "_" + df_all["group"].astype(str)
 
-        recent_cutoff = (datetime.now(tz_kr) - timedelta(days=2)).strftime('%Y-%m-%d')
-        _exit_cal = df_all['exit_date'].map(_exit_date_on_calendar) if 'exit_date' in df_all.columns else ""
-        active_condition = (df_all['status'] == 'OPEN') | (_exit_cal >= recent_cutoff)
-        df_active = df_all[active_condition]
-        active_groups = sorted([g for g in df_active['mkt_group'].dropna().unique() if str(g).strip()])
+        _exit_cal = (
+            df_all["exit_date"].map(_exit_date_on_calendar)
+            if "exit_date" in df_all.columns
+            else pd.Series("", index=df_all.index)
+        )
+        df_all["_exit_cal"] = _exit_cal
+        df_all["_pil_active"] = df_all.apply(
+            lambda r: ctx.is_row_active(
+                str(r.get("market", "")),
+                r.get("status"),
+                str(r.get("_exit_cal", "")),
+            ),
+            axis=1,
+        )
+        active_groups = sorted(
+            g
+            for g, sub in df_all.groupby("mkt_group", dropna=True)
+            if str(g).strip() and sub["_pil_active"].any()
+        )
+        print(
+            f"📋 [PIL] 활성 그룹 {len(active_groups)}개 "
+            f"(KR앵커 {ctx.tk_kr.session_anchor} · US앵커 {ctx.tk_us.session_anchor})"
+        )
 
         for mkt_group in active_groups:
             market, group = _parse_mkt_group_key(mkt_group)
             g_all = df_all[
-                (df_all['mkt_group'] == mkt_group)
-                & (df_all['market'].astype(str).str.upper() == market)
+                (df_all["mkt_group"] == mkt_group)
+                & (df_all["market"].astype(str).str.upper() == market)
             ].copy()
             if market == "KR":
-                g_all = g_all[g_all['code'].astype(str).str.match(r'^\d{5,6}$', na=False)]
+                g_all = g_all[g_all["code"].astype(str).str.match(r"^\d{5,6}$", na=False)]
             else:
-                g_all = g_all[~g_all['code'].astype(str).str.match(r'^\d{5,6}$', na=False)]
+                g_all = g_all[~g_all["code"].astype(str).str.match(r"^\d{5,6}$", na=False)]
 
             if g_all.empty:
                 continue
 
-            tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
-            mkt_today_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
-            market_icon = "🇰🇷" if market == 'KR' else "🇺🇸"
+            market_icon = "🇰🇷" if market == "KR" else "🇺🇸"
             sample_sig = str(g_all["sig_type"].iloc[0] if len(g_all) else group)
+            session_anchor = ctx.session_anchor_str(market)
 
-            g_closed = g_all[g_all['status'].astype(str).str.contains('CLOSED', na=False)].copy()
-            if 'exit_date' in g_closed.columns:
-                g_closed['_exit_day'] = g_closed['exit_date'].map(_exit_date_on_calendar)
-                g_today_closed = g_closed[g_closed['_exit_day'] == mkt_today_str].copy()
-            else:
-                g_today_closed = g_closed.iloc[0:0].copy()
+            try:
+                g_closed = g_all[
+                    g_all["status"].astype(str).str.contains("CLOSED", na=False)
+                ].copy()
+                if "exit_date" in g_closed.columns:
+                    g_closed["_exit_day"] = g_closed["exit_date"].map(_exit_date_on_calendar)
+                    g_today_closed = g_closed[
+                        g_closed["_exit_day"] == session_anchor
+                    ].copy()
+                else:
+                    g_today_closed = g_closed.iloc[0:0].copy()
 
-            valid_open = _reporter_valid_holding_mask(g_all)
-            brief = build_practitioner_brief(
-                market=market,
-                group_key=group,
-                sample_sig=sample_sig,
-                g_all=g_all,
-                g_closed=g_closed,
-                g_today_closed=g_today_closed,
-                sys_config=sys_config,
-                meta=meta_state,
-                base_seed=float(base_seed),
-                market_icon=market_icon,
-                mkt_today_str=mkt_today_str,
-                valid_open_mask=valid_open,
-                format_exit_reason=_format_exit_reason_display,
-                safe_ret_fn=_safe_final_ret_pct,
-                win_loss_fn=_win_loss_flat_counts,
-            )
-            briefs.append(brief)
-            send_telegram_msg(format_practitioner_brief_html(brief))
-            time.sleep(3.5)
+                valid_open = _reporter_valid_holding_mask(g_all)
+                stale_banner = ctx.staleness_banner_html(
+                    market, live_row_count=len(g_today_closed)
+                )
+                brief = build_practitioner_brief(
+                    market=market,
+                    group_key=group,
+                    sample_sig=sample_sig,
+                    g_all=g_all,
+                    g_closed=g_closed,
+                    g_today_closed=g_today_closed,
+                    sys_config=sys_config,
+                    meta=meta_state,
+                    base_seed=float(base_seed),
+                    market_icon=market_icon,
+                    mkt_today_str=session_anchor,
+                    session_anchor=session_anchor,
+                    timekeeper_header=pil_header,
+                    staleness_banner=stale_banner,
+                    valid_open_mask=valid_open,
+                    format_exit_reason=_format_exit_reason_display,
+                    safe_ret_fn=_safe_final_ret_pct,
+                    win_loss_fn=_win_loss_flat_counts,
+                )
+                briefs.append(brief)
+                send_telegram_msg(format_practitioner_brief_html(brief))
+                time.sleep(3.5)
+            except Exception as ex:
+                n_fail += 1
+                print(f"⚠️ [PIL] {mkt_group} 실패: {ex}")
+                send_telegram_msg(
+                    format_practitioner_fail_card(
+                        market=market,
+                        group_key=group,
+                        sample_sig=sample_sig,
+                        error=ex,
+                        ctx=ctx,
+                    )
+                )
+                time.sleep(1.0)
 
         if briefs:
             pen = apply_pil_vitality_penalties(briefs, sys_config)
             print(f"🛡️ [PIL] 메타 페널티: {pen}")
+        if n_fail:
+            print(f"⚠️ [PIL] 그룹 Fail-safe {n_fail}건 (다른 그룹은 정상 송출)")
     except Exception as e:
-        send_telegram_msg(f"⚠️ 실무자 개별 리포트 발송 에러: {e}")
+        send_telegram_msg(f"⚠️ 실무자 리포트 전역 에러: {e}")
 # ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
 # ==========================================

@@ -61,6 +61,9 @@ class PractitionerBrief:
     zombie_streak_days: int = 0
     zombie_retire_after_days: int = 5
     force_retired: bool = False
+    timekeeper_header: str = ""
+    staleness_banner: str = ""
+    session_anchor: str = ""
 
 
 def _exit_day_series(df: pd.DataFrame) -> pd.Series:
@@ -277,6 +280,9 @@ def build_practitioner_brief(
     base_seed: float,
     market_icon: str,
     mkt_today_str: str,
+    session_anchor: str = "",
+    timekeeper_header: str = "",
+    staleness_banner: str = "",
     valid_open_mask: pd.Series,
     format_exit_reason,
     safe_ret_fn,
@@ -412,17 +418,27 @@ def build_practitioner_brief(
         llm_summary=llm_summary,
         penalty_action=penalty_action,
         today_closes_html=closes_html,
+        timekeeper_header=timekeeper_header,
+        staleness_banner=staleness_banner,
+        session_anchor=session_anchor or mkt_today_str,
     )
 
 
 def format_practitioner_brief_html(b: PractitionerBrief) -> str:
     venue = f" · {html.escape(b.venue_label, quote=False)}" if b.venue_label else ""
+    anchor_s = html.escape(b.session_anchor or "—", quote=False)
     lines = [
         f"{b.market_icon} <b>[{b.market} 실무자 리포트 · PIL{venue}]</b> "
         f"{html.escape(b.group_key, quote=False)} "
         f"<i>({html.escape(b.rank_tier, quote=False)} · {html.escape(b.profile.narrative_focus, quote=False)})</i>\n",
-        f"📅 오늘: <b>{b.today_win}승 {b.today_loss}패</b>",
     ]
+    if b.timekeeper_header:
+        lines.append(b.timekeeper_header)
+    if b.staleness_banner:
+        lines.append(b.staleness_banner)
+    lines.append(
+        f"📅 앵커일 <b>{anchor_s}</b> 청산: <b>{b.today_win}승 {b.today_loss}패</b>",
+    )
     if b.today_flat:
         lines[-1] += f" · 무{b.today_flat}"
     lines[-1] += f" (청산 <b>{b.n_today_closed}</b>건)\n"
