@@ -358,40 +358,24 @@ def send_comprehensive_daily_report(
             send_telegram_msg(msg5); time.sleep(1)
 
             # ---------------------------------------------------------
-            # 📑 결과지 6: 4차원 DNA 정밀 부검 (ReportFeatureAnalyzer 승·패 대조)
+            # 📑 결과지 6: 4차원 DNA 정밀 부검 (DailyReportContext + 3단 Fallback)
             # ---------------------------------------------------------
-            msg6 = f"{market_icon} <b>[6/9] 대박주/참사주 4차원 DNA 부검</b>\n"
-            _ret6 = pd.to_numeric(df_closed["final_ret"], errors="coerce")
-            winners = df_closed[_ret6 >= 5.0].head(50)
-            losers = df_closed[_ret6 <= -3.0].head(50)
+            from forward.dna_autopsy import build_dna_autopsy_slice, format_dna_autopsy_section
+
             n_closed_mkt = int(len(df_closed))
-            if n_closed_mkt == 0:
-                msg6 += (
-                    f"<i>⚠️ {market} 청산 표본 0건 — DNA 대조 불가. "
-                    "스캐너·진입 파이프라인을 확인하세요.</i>\n"
-                    f"▪ 복구: <code>./factory.sh --scan-{market.lower()}</code> "
-                    f"→ <code>./factory.sh --daily-{market.lower()}</code>\n"
-                )
-            elif winners.empty and losers.empty:
-                msg6 += (
-                    f"<i>⚠️ {market} 청산 {n_closed_mkt}건 중 대박(≥5%)/참사(≤-3%) 표본 없음 — "
-                    "횡보·소폭 손익 구간. 매매 중단이 아니면 임계 미충족일 수 있습니다.</i>\n"
-                )
-            else:
-                try:
-                    dna_an = ReportFeatureAnalyzer(sys_config=sys_config, meta=meta_state_daily)
-                    dna_lines, _dna_ok, _dna_ins = dna_an.build_winner_loser_dna_contrast(
-                        winners_df=winners,
-                        losers_df=losers,
-                        top_n=2,
-                        min_per_group=2,
-                    )
-                    msg6 += "".join(dna_lines)
-                except Exception as _dna_e:
-                    print(f"⚠️ [6/9] DNA 대조 예외: {_dna_e}")
-                    msg6 += (
-                        "<i>DNA 대조 분석을 일시 생략했습니다 (예외 또는 데이터 부족).</i>\n"
-                    )
+            dna_slice = build_dna_autopsy_slice(
+                ctx, market, df_closed, sys_config=sys_config
+            )
+            msg6 = f"{market_icon} <b>[6/9] 대박주/참사주 4차원 DNA 부검</b>\n"
+            msg6 += _win_hdr
+            msg6 += format_dna_autopsy_section(
+                dna_slice,
+                ctx=ctx,
+                n_real=len(df_real),
+                n_open=mkt_slice.n_open_valid,
+                sys_config=sys_config,
+                meta=meta_state_daily,
+            )
             send_telegram_msg(msg6); time.sleep(1)
 
             # ---------------------------------------------------------
