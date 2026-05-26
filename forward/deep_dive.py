@@ -379,79 +379,17 @@ def send_comprehensive_daily_report(
             send_telegram_msg(msg6); time.sleep(1)
 
             # ---------------------------------------------------------
-            # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버
+            # 📑 결과지 7: 섹터 순환매 궤적 및 스필오버 (Timekeeper · Junk Hard Block)
             # ---------------------------------------------------------
-            msg7 = f"{market_icon} <b>[7/9] 섹터 순환매 궤적 및 스필오버</b>\n"
-            _used_rotation_db = False
-            try:
-                from sector_rotation_store import _load_daily_series, format_rotation_telegram_block
+            from forward.rotation_report_section import build_rotation_spillover_section
 
-                if len(_load_daily_series(market, 60)) >= 3:
-                    msg7 += format_rotation_telegram_block(market, sys_config)
-                    _used_rotation_db = True
-            except Exception as _rot_db_ex:
-                print(f"⚠️ [7/9] sector_rotation DB 블록 스킵: {_rot_db_ex}")
-
-            rot_df = df_real[df_real['entry_date'] >= ctx.rolling_cutoff_for(market)]
-            
-            if not _used_rotation_db and not rot_df.empty:
-                # 💡 [픽스] '유망'이 포함된 가짜 데이터를 걸러내고 진짜 섹터만 집계
-                def get_real_sector(x):
-                    valid_s = [str(s) for s in x if '유망' not in str(s) and '포착' not in str(s)]
-                    return pd.Series(valid_s).mode()[0] if valid_s else None
-                
-                daily_dom = rot_df.groupby('entry_date')['sector'].agg(get_real_sector).dropna()
-                streaks, transitions = {}, {}
-                current_sec, current_streak = None, 0
-                
-                for date, sec in daily_dom.items():
-                    if sec == current_sec: current_streak += 1
-                    else:
-                        if current_sec is not None:
-                            if current_sec not in streaks: streaks[current_sec] = []
-                            streaks[current_sec].append(current_streak)
-                            # 💡 6글자 무식한 절사 폐지, 15글자까지 넉넉하게 출력
-                            t_key = f"{current_sec[:15]}➔{sec[:15]}"
-                            transitions[t_key] = transitions.get(t_key, 0) + 1
-                        current_sec = sec
-                        current_streak = 1
-                if current_sec is not None:
-                    if current_sec not in streaks: streaks[current_sec] = []
-                    streaks[current_sec].append(current_streak)
-
-                msg7 += f"🔥 <b>현재 주도 섹터:</b> {current_sec} ({current_streak}일째 체류 중)\n"
-                # 👇👇 [추가된 모니터링 로직] 👇👇
-                try:
-                    from sector_spillover_refresh import resolve_predicted_sector_display
-
-                    _pred = resolve_predicted_sector_display(sys_config, market)
-                except Exception:
-                    _pred = str(sys_config.get(f"PREDICTED_NEXT_SECTOR_{market}") or "데이터 없음")
-                msg7 += f"🔮 <b>다음 예측 섹터:</b> {_pred}\n"
-                msg7 += f"⚡ <b>베팅 어드밴티지:</b> {'🔥활성화(200%)' if sys_config.get('ROTATION_ADVANTAGE_ACTIVE') else '정상(100%)'}\n\n"
-                
-                msg7 += "▪️ <b>섹터별 자금 체류 시간(수명):</b>\n"
-                for s, lengths in streaks.items():
-                    msg7 += f" - {s[:15]}: 평균 {sum(lengths)/len(lengths):.1f}일\n"
-
-                sorted_trans = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:2]
-                if sorted_trans:
-                    msg7 += "\n▪️ <b>빈번한 자금 이동 궤적:</b>\n"
-                    for p, c in sorted_trans: msg7 += f" - {p} ({c}회 관측)\n"
-            elif not _used_rotation_db:
-                msg7 += " ↳ 순환매 데이터 부족\n"
-
-            if market == 'KR':
-                try:
-                    from cross_market_ssot import format_kr_spillover_telegram_line
-
-                    msg7 += format_kr_spillover_telegram_line(sys_config)
-                except Exception as _cm_ex:
-                    actual_spillover = _resolve_us_spillover_telegram_inner(sys_config)
-                    msg7 += (
-                        f"\n🌐 <b>한미 스필오버 연동:</b> 🇺🇸 [{actual_spillover}] "
-                        f"➔ 🇰🇷 선취매 (fallback · {_cm_ex})\n"
-                    )
+            msg7 = build_rotation_spillover_section(
+                ctx,
+                market,
+                mkt_slice,
+                sys_config=sys_config,
+                market_icon=market_icon,
+            )
             send_telegram_msg(msg7); time.sleep(1)
 
             # ---------------------------------------------------------

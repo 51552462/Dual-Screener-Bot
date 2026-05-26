@@ -17,6 +17,11 @@ import numpy as np
 import pandas as pd
 import pytz
 
+from rotation_sector_filter import (
+    dominant_sector_for_series,
+    filter_eligible_daily_series,
+    is_rotation_eligible_sector,
+)
 from sector_spillover_refresh import map_standard_sector
 
 logger = logging.getLogger(__name__)
@@ -107,18 +112,33 @@ def ensure_sector_rotation_schema(db_path: Optional[str] = None) -> None:
         logger.warning("sector_rotation schema DDL skip: %s", ex)
 
 
-def _sector_row_ok(s: Any) -> bool:
-    t = str(s or "").strip().lower()
-    if not t or t in ("nan", "none"):
+def _sector_row_ok(s: Any, *, market: str = "KR") -> bool:
+    if not is_rotation_eligible_sector(s, market=market):
         return False
+    t = str(s or "").strip().lower()
     return not any(j in t for j in _JUNK_FRAGMENTS)
 
 
-def _load_forward_trades(market: str, lookback_days: int, db_path: Optional[str]) -> pd.DataFrame:
+def _load_forward_trades(
+    market: str,
+    *,
+    rolling_cutoff: Optional[str] = None,
+    session_anchor: Optional[str] = None,
+    lookback_days: Optional[int] = None,
+    db_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """forward_trades entry_date ∈ [rolling_cutoff, session_anchor] (Timekeeper SSOT)."""
     path = db_path or _db_path()
     if not path or not os.path.isfile(path):
         return pd.DataFrame()
-    cutoff = (datetime.now() - timedelta(days=int(lookback_days))).strftime("%Y-%m-%d")
+    mkt = str(market).upper()
+    if rolling_cutoff:
+        cutoff = str(rolling_cutoff)[:10]
+        anchor = str(session_anchor or rolling_cutoff)[:10]
+    else:
+        lb = int(lookback_days if lookback_days is not None else 90)
+        cutoff = (datetime.now() - timedelta(days=lb)).strftime("%Y-%m-%d")
+        anchor = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y-%m-%d")
     try:
         conn = sqlite3.connect(path, timeout=60)
         try:
@@ -126,11 +146,14 @@ def _load_forward_trades(market: str, lookback_days: int, db_path: Optional[str]
                 """
                 SELECT entry_date, sector, status, market
                 FROM forward_trades
-                WHERE market = ? AND entry_date >= ?
+                WHERE market = ?
+                  AND substr(IFNULL(entry_date,''), 1, 10) >= ?
+                  AND substr(IFNULL(entry_date,''), 1, 10) <= ?
+                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
                 ORDER BY entry_date ASC
                 """,
                 conn,
-                params=(str(market).upper(), cutoff),
+                params=(mkt, cutoff, anchor),
             )
         finally:
             conn.close()
@@ -143,14 +166,24 @@ def _load_forward_trades(market: str, lookback_days: int, db_path: Optional[str]
 def ingest_sector_daily_leaders(
     market: str,
     *,
+    rolling_cutoff: Optional[str] = None,
+    session_anchor: Optional[str] = None,
     lookback_days: int = 90,
     db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """forward_trades → sector_daily_leader upsert."""
+    """forward_trades → sector_daily_leader upsert (Junk Hard Block)."""
     mkt = str(market).upper()
     path = db_path or _db_path()
     ensure_sector_rotation_schema(path)
-    df = _load_forward_trades(mkt, lookback_days, path)
+    if rolling_cutoff:
+        df = _load_forward_trades(
+            mkt,
+            rolling_cutoff=rolling_cutoff,
+            session_anchor=session_anchor,
+            db_path=path,
+        )
+    else:
+        df = _load_forward_trades(mkt, lookback_days=lookback_days, db_path=path)
     out: Dict[str, Any] = {"market": mkt, "days_written": 0, "reason": ""}
     if df.empty or "entry_date" not in df.columns:
         out["reason"] = "no_rows"
@@ -159,7 +192,7 @@ def ingest_sector_daily_leaders(
     df = df.copy()
     df["day"] = df["entry_date"].astype(str).str.slice(0, 10)
     df["sector_std"] = df["sector"].apply(map_standard_sector)
-    df = df[df["sector_std"].map(_sector_row_ok)]
+    df = df[df["sector_std"].apply(lambda s: _sector_row_ok(s, market=mkt))]
 
     if df.empty:
         out["reason"] = "no_valid_sectors"
@@ -167,7 +200,7 @@ def ingest_sector_daily_leaders(
 
     daily = (
         df.groupby("day")["sector_std"]
-        .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
+        .agg(lambda x: dominant_sector_for_series(x, market=mkt))
         .dropna()
     )
     counts = df.groupby("day").size()
@@ -320,32 +353,58 @@ def rebuild_transition_rollup(market: str, *, db_path: Optional[str] = None) -> 
     return {"market": mkt, "pairs": len(agg), "reason": "ok"}
 
 
-def _load_daily_series(market: str, days: int = 60, db_path: Optional[str] = None) -> List[Tuple[str, str]]:
+def _load_daily_series(
+    market: str,
+    *,
+    rolling_cutoff: Optional[str] = None,
+    session_anchor: Optional[str] = None,
+    days: Optional[int] = None,
+    db_path: Optional[str] = None,
+) -> List[Tuple[str, str]]:
+    """sector_daily_leader — Timekeeper 윈도우 또는 레거시 days."""
     path = db_path or _db_path()
     if not path:
         return []
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    mkt = str(market).upper()
+    if rolling_cutoff:
+        cutoff = str(rolling_cutoff)[:10]
+        anchor = str(session_anchor or rolling_cutoff)[:10]
+        sql = """
+            SELECT trade_date, dominant_sector_std
+            FROM sector_daily_leader
+            WHERE market = ? AND trade_date >= ? AND trade_date <= ?
+            ORDER BY trade_date ASC
+        """
+        params: Tuple[Any, ...] = (mkt, cutoff, anchor)
+    else:
+        lb = int(days if days is not None else 60)
+        cutoff = (datetime.now() - timedelta(days=lb)).strftime("%Y-%m-%d")
+        sql = """
+            SELECT trade_date, dominant_sector_std
+            FROM sector_daily_leader
+            WHERE market = ? AND trade_date >= ?
+            ORDER BY trade_date ASC
+        """
+        params = (mkt, cutoff)
     try:
         conn = sqlite3.connect(path, timeout=60)
         try:
-            rows = conn.execute(
-                """
-                SELECT trade_date, dominant_sector_std
-                FROM sector_daily_leader
-                WHERE market = ? AND trade_date >= ?
-                ORDER BY trade_date ASC
-                """,
-                (str(market).upper(), cutoff),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         finally:
             conn.close()
     except (OSError, sqlite3.Error):
         return []
-    return [(str(r[0]), str(r[1])) for r in rows]
+    series = [(str(r[0]), str(r[1])) for r in rows]
+    return filter_eligible_daily_series(series, market=mkt)
 
 
-def compute_streaks_from_series(series: List[Tuple[str, str]]) -> Tuple[Optional[str], int, Dict[str, List[int]], Dict[str, int]]:
-    """현재 주도, 체류일, 섹터별 체류 길이 목록, 전이 카운트."""
+def compute_streaks_from_series(
+    series: List[Tuple[str, str]],
+    *,
+    market: str = "KR",
+) -> Tuple[Optional[str], int, Dict[str, List[int]], Dict[str, int]]:
+    """현재 주도, 체류일, 섹터별 체류 길이 목록, 전이 카운트 (Junk 제외)."""
+    series = filter_eligible_daily_series(series, market=market)
     if not series:
         return None, 0, {}, {}
     streaks: Dict[str, List[int]] = {}
@@ -353,6 +412,8 @@ def compute_streaks_from_series(series: List[Tuple[str, str]]) -> Tuple[Optional
     current_sec: Optional[str] = None
     current_streak = 0
     for _day, sec in series:
+        if not is_rotation_eligible_sector(sec, market=market):
+            continue
         if sec == current_sec:
             current_streak += 1
         else:
@@ -417,7 +478,7 @@ def predict_next_sector_markov(
     db_path: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str], float]:
     """rollup + daily series → (predicted, from_state, confidence)."""
-    series = _load_daily_series(market, 90, db_path)
+    series = _load_daily_series(market, days=90, db_path=db_path)
     if not series:
         return None, None, 0.0
 
@@ -532,7 +593,7 @@ def refresh_predicted_sector_via_store(
     key = f"PREDICTED_NEXT_SECTOR_{mkt}"
     out: Dict[str, Any] = {"market": mkt, "updated": False, "predicted": None, "reason": ""}
 
-    series = _load_daily_series(mkt, 90, db_path)
+    series = _load_daily_series(mkt, days=90, db_path=db_path)
     if len(series) >= 2:
         prev_day, prev_pred_sector = series[-2]
         _yesterday_pred = str(cfg.get(key) or cfg.get(f"{key}_LAST_GOOD") or "")
@@ -602,11 +663,31 @@ def run_sector_rotation_pipeline(
     return summary
 
 
-def format_rotation_telegram_block(market: str, sys_config: Optional[Dict[str, Any]] = None) -> str:
-    """[7/9] 순환매 DB 블록 (rollup 기반)."""
+def format_rotation_telegram_block(
+    market: str,
+    sys_config: Optional[Dict[str, Any]] = None,
+    *,
+    rolling_cutoff: Optional[str] = None,
+    session_anchor: Optional[str] = None,
+    db_path: Optional[str] = None,
+    prefiltered_series: Optional[List[Tuple[str, str]]] = None,
+) -> str:
+    """[7/9] 순환매 DB 블록 (rollup 기반, Timekeeper 윈도우)."""
     mkt = str(market).upper()
-    series = _load_daily_series(mkt, 60)
-    current, streak, streaks, _legacy_trans = compute_streaks_from_series(series)
+    if prefiltered_series is not None:
+        series = list(prefiltered_series)
+    elif rolling_cutoff:
+        series = _load_daily_series(
+            mkt,
+            rolling_cutoff=rolling_cutoff,
+            session_anchor=session_anchor,
+            db_path=db_path,
+        )
+    else:
+        series = _load_daily_series(mkt, days=60, db_path=db_path)
+    current, streak, streaks, _legacy_trans = compute_streaks_from_series(
+        series, market=mkt
+    )
     rollups = top_rollup_transitions(mkt, window="30d", min_count=2, limit=5)
 
     lines: List[str] = []
@@ -630,6 +711,8 @@ def format_rotation_telegram_block(market: str, sys_config: Optional[Dict[str, A
     if streaks:
         lines.append("▪️ <b>섹터별 자금 체류(수명, DB):</b>\n")
         for s, lengths in sorted(streaks.items(), key=lambda x: -sum(x[1]) / len(x[1]))[:8]:
+            if not is_rotation_eligible_sector(s, market=mkt):
+                continue
             avg = sum(lengths) / len(lengths)
             lines.append(f" - {s[:15]}: 평균 {avg:.1f}일 ({len(lengths)}구간)\n")
 
