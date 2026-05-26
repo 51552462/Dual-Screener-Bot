@@ -1,5 +1,23 @@
 """Forward reporting — deep dive, comprehensive daily, practitioner."""
 from forward.shared import *  # noqa: F403
+from forward.shared import (  # reporter / DB private helpers — not exported by import *
+    _open_market_db_ro,
+    _normalize_trade_market,
+    _reporter_cleanup_zombie_forward_trades,
+    _reporter_valid_holding_mask,
+    _reporter_deploy_fleet_mask,
+    _daily_report_trades_for_market,
+    _strategy_colosseum_brief,
+    _shadow_performance_brief,
+    _tier80_sync_effective_and_report_line,
+    _parse_mkt_group_key,
+    _exit_date_on_calendar,
+    _format_exit_reason_display,
+    _safe_final_ret_pct,
+    _win_loss_flat_counts,
+    _spillover_fallback_enabled,
+    _format_forward_ledger_error_html,
+)
 from forward_market_guard import enforce_market_frame
 
 
