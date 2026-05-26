@@ -198,6 +198,16 @@ def track_daily_positions(market):
             if is_overdrive_on:
                 dyn_mfe_tp *= 1.10
 
+            _ace_evo = None
+            try:
+                from ace_exit_bridge import ace_exit_overrides
+
+                _ace_evo = ace_exit_overrides(r, market, sys_config)
+                if _ace_evo.active:
+                    dyn_mfe_tp = float(dyn_mfe_tp) + float(_ace_evo.mfe_tp_relax_pct)
+            except Exception:
+                _ace_evo = None
+
             if r.get('sim_stat_status', 'OPEN') == 'OPEN':
                 if low_ret_pct <= dyn_mae_sl: # 장중 손절 터치
                     conn.execute("UPDATE forward_trades SET sim_stat_ret=?, sim_stat_status='CLOSED_LOSS' WHERE id=?", (dyn_mae_sl, r['id']))
@@ -259,6 +269,13 @@ def track_daily_positions(market):
             if holding_edge_score > 1.5:
                 opt_time_stop_effective = opt_time_stop_effective + 2
 
+            if _ace_evo is not None and _ace_evo.active:
+                opt_time_stop_effective = max(
+                    opt_time_stop_effective,
+                    int(round(opt_time_stop_effective * float(_ace_evo.time_stop_mult)))
+                    + int(_ace_evo.min_hold_bars_extra),
+                )
+
             # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산
             if not do_exit:
                 if active_mode == "TECH":
@@ -292,6 +309,9 @@ def track_daily_positions(market):
                 mfe = round(((new_max - ep) / ep) * 100, 2)
                 
                 tags = []
+                if _ace_evo is not None and _ace_evo.active and _ace_evo.flow_tag:
+                    tags.append(f"#{_ace_evo.flow_tag}")
+                    tags.append("#에이스진화_보유연장")
                 if mfe >= 7.0 and new_bars <= 8: tags.append("#빠른슈팅_완벽")
                 elif mfe >= 7.0 and new_bars > 8: tags.append("#지연슈팅_수명연장")
                 elif mfe < 3.0: tags.append("#슈팅실패_조기소멸")

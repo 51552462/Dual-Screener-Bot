@@ -494,10 +494,10 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
         cfg[ENABLE_MACRO_SYNERGY_WEIGHTING_KEY] = False
         added.add(ENABLE_MACRO_SYNERGY_WEIGHTING_KEY)
     if "ENABLE_ACE_EVOLUTION_WEIGHTING" not in cfg:
-        cfg["ENABLE_ACE_EVOLUTION_WEIGHTING"] = False
+        cfg["ENABLE_ACE_EVOLUTION_WEIGHTING"] = True
         added.add("ENABLE_ACE_EVOLUTION_WEIGHTING")
     if "ACE_EVOLUTION_FORCE_OBSERVE" not in cfg:
-        cfg["ACE_EVOLUTION_FORCE_OBSERVE"] = True
+        cfg["ACE_EVOLUTION_FORCE_OBSERVE"] = False
         added.add("ACE_EVOLUTION_FORCE_OBSERVE")
     if "ACE_EVOLUTION_TTL_DAYS_KR" not in cfg:
         cfg["ACE_EVOLUTION_TTL_DAYS_KR"] = 1

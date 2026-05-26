@@ -121,19 +121,31 @@ def _colosseum_kst_cutoff(window_days: int) -> str:
 
 
 def _ace_analysis_frames(
-    df: pd.DataFrame, league: str, logic: str, *, window_days: int
+    df: pd.DataFrame,
+    league: str,
+    logic: str,
+    *,
+    window_days: int,
+    ctx=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     """TOP3 종목이 아닌 로직 전체 수익 청산 코호트로 피처 스캔."""
-    cutoff = _colosseum_kst_cutoff(window_days)
+    if ctx is not None:
+        cutoff = ctx.rolling_cutoff_for_league(league)
+        anchor_cap = ctx.anchor_for_league(league)
+    else:
+        cutoff = _colosseum_kst_cutoff(window_days)
+        anchor_cap = ""
     q = df.loc[
         (df["league"] == league)
         & (df["logic"] == logic)
         & (df["exit_date"].astype(str) >= cutoff)
     ].copy()
+    if anchor_cap:
+        q = q.loc[q["exit_date"].astype(str).str[:10] <= anchor_cap].copy()
     if q.empty:
         return pd.DataFrame(), pd.DataFrame(), cutoff, ""
     ed = q["exit_date"].astype(str).str[:10]
-    anchor = str(ed.max()) if not ed.empty else ""
+    anchor = anchor_cap if anchor_cap else (str(ed.max()) if not ed.empty else "")
     winners = q.loc[pd.to_numeric(q["final_ret"], errors="coerce") > 0].sort_values(
         "final_ret", ascending=False
     )
@@ -146,9 +158,34 @@ def _ace_analysis_frames(
         & (df["logic"] != logic)
         & (df["exit_date"].astype(str) >= cutoff)
     ].copy()
+    if anchor_cap:
+        baseline = baseline.loc[
+            baseline["exit_date"].astype(str).str[:10] <= anchor_cap
+        ].copy()
     if len(baseline) < 5:
         baseline = q.loc[~q.index.isin(ace.index)].copy()
     return ace, baseline, cutoff, anchor
+
+
+def _colosseum_top3_carry_rows(sub_df: pd.DataFrame, esc) -> tuple[list, list]:
+    """TOP3 표시 문자열 + 섹터 raw 목록."""
+    items: list = []
+    sectors_raw: list = []
+    if sub_df is None or sub_df.empty:
+        return items, sectors_raw
+    for _, rr in sub_df.iterrows():
+        cd = str(rr.get("code", "")).strip()
+        nm = str(rr.get("name", "")).strip()
+        label = cd if re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,14}", cd) else (
+            nm if nm and nm.lower() != "nan" else cd
+        )
+        if len(str(label)) > 12:
+            label = str(label)[:10] + "…"
+        items.append(f"<b>{esc(label)}</b>({float(rr['final_ret']):+.1f}%)")
+        raw_sec = str(rr.get("sector", "")).strip()
+        if raw_sec and raw_sec.lower() != "nan":
+            sectors_raw.append(raw_sec)
+    return items, sectors_raw
 
 
 def _strategy_colosseum_brief(db_path=None):
@@ -156,6 +193,8 @@ def _strategy_colosseum_brief(db_path=None):
     가상매매 `forward_trades` 청산 건을 로직명(sig_type 코어)별로 집계해 텔레그램용 랭킹 문자열 생성.
     스냅샷 고착 방지: colosseum_db_path_for_report() + exit_date 롤링 윈도우.
     """
+    from colosseum_report_context import ColosseumReportContext
+
     if db_path is None:
         db_path = colosseum_db_path_for_report()
     try:
@@ -163,7 +202,17 @@ def _strategy_colosseum_brief(db_path=None):
     except Exception:
         sys_cfg = {}
     window_days = colosseum_window_days(sys_cfg)
-    cutoff = _colosseum_kst_cutoff(window_days)
+    try:
+        col_ctx = ColosseumReportContext.build(rolling_days=window_days)
+    except Exception:
+        col_ctx = None
+    if col_ctx is not None:
+        cutoff = min(
+            col_ctx.rolling_cutoff_for_league("KR"),
+            col_ctx.rolling_cutoff_for_league("US"),
+        )
+    else:
+        cutoff = _colosseum_kst_cutoff(window_days)
     try:
         uri_path = db_path.replace("\\", "/")
         conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
@@ -275,13 +324,17 @@ def _strategy_colosseum_brief(db_path=None):
         return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     rows_df = pd.DataFrame(rows)
-    ed_all = df["exit_date"].astype(str).str[:10]
-    data_anchor = str(ed_all.max()) if not ed_all.empty else ""
-    lines = [
-        '\n⚔️ <b>[전략 콜로세움: 리그별 랭킹]</b>\n',
-        f"<i>DB 실시간 · KST 앵커 <b>{_esc(data_anchor)}</b> · 롤링 <b>{window_days}</b>일 · "
-        f"청산 <b>{len(df)}</b>건</i>\n",
-    ]
+    lines = ['\n⚔️ <b>[전략 콜로세움: 리그별 랭킹]</b>\n']
+    if col_ctx is not None:
+        lines.append(col_ctx.global_header_html())
+        lines.append(f"<i>청산 표본 <b>{len(df)}</b>건 (듀얼트랙 TOP3 분리)</i>\n")
+    else:
+        ed_all = df["exit_date"].astype(str).str[:10]
+        data_anchor = str(ed_all.max()) if not ed_all.empty else ""
+        lines.append(
+            f"<i>DB 실시간 · KST 앵커 <b>{_esc(data_anchor)}</b> · 롤링 <b>{window_days}</b>일 · "
+            f"청산 <b>{len(df)}</b>건</i>\n"
+        )
     medals = ["🥇", "🥈", "🥉"]
 
     def _league_top_block(league):
@@ -311,48 +364,72 @@ def _strategy_colosseum_brief(db_path=None):
 
     def _top3_display_and_ace(league, logic):
         if not logic:
-            return [], "섹터 미기록", pd.DataFrame(), "", 0
+            return [], [], "섹터 미기록", pd.DataFrame(), "", 0
         ace_df, base_df, _cut, anchor = _ace_analysis_frames(
-            df, league, logic, window_days=window_days
+            df, league, logic, window_days=window_days, ctx=col_ctx
         )
-        q_disp = df.loc[(df["league"] == league) & (df["logic"] == logic)].copy()
-        q_disp = q_disp.sort_values("final_ret", ascending=False).head(3)
-        items = []
-        sectors_raw: list = []
-        for _, rr in q_disp.iterrows():
-            cd = str(rr.get("code", "")).strip()
-            nm = str(rr.get("name", "")).strip()
-            label = cd if re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,14}", cd) else (
-                nm if nm and nm.lower() != "nan" else cd
+        q_all = df.loc[(df["league"] == league) & (df["logic"] == logic)].copy()
+        anchor_day = (
+            col_ctx.anchor_for_league(league) if col_ctx is not None else ""
+        )
+        roll_cut = (
+            col_ctx.rolling_cutoff_for_league(league)
+            if col_ctx is not None
+            else _colosseum_kst_cutoff(window_days)
+        )
+        q_live = q_all.loc[q_all["exit_date"].astype(str).str[:10] == anchor_day].copy()
+        q_live = q_live.sort_values("final_ret", ascending=False).head(3)
+        q_roll = q_all.loc[
+            (q_all["exit_date"].astype(str).str[:10] >= roll_cut)
+            & (
+                (q_all["exit_date"].astype(str).str[:10] <= anchor_day)
+                if anchor_day
+                else True
             )
-            if len(str(label)) > 12:
-                label = str(label)[:10] + "…"
-            items.append(f"<b>{_esc(label)}</b>({float(rr['final_ret']):+.1f}%)")
-            raw_sec = str(rr.get("sector", "")).strip()
-            if raw_sec and raw_sec.lower() != "nan":
-                sectors_raw.append(raw_sec)
+        ].copy()
+        q_roll = q_roll.sort_values("final_ret", ascending=False).head(3)
+        live_items, live_secs = _colosseum_top3_carry_rows(q_live, _esc)
+        champ_items, champ_secs = _colosseum_top3_carry_rows(q_roll, _esc)
+        sectors_raw = live_secs + champ_secs
         if not sectors_raw and not ace_df.empty and "sector" in ace_df.columns:
             sectors_raw = ace_df["sector"].astype(str).tolist()
         sec_summary = _sector_convergence_summary(sectors_raw)
         n_feat = len(discover_numeric_feature_columns(ace_df, extra_forward_trade_columns_for_report()))
-        return items, sec_summary, ace_df, anchor, n_feat
+        return live_items, champ_items, sec_summary, ace_df, anchor, n_feat
 
-    kr_carry, kr_sec, kr_ace, kr_anchor, kr_nfeat = _top3_display_and_ace("KR", kr_top_logic)
-    us_carry, us_sec, us_ace, us_anchor, us_nfeat = _top3_display_and_ace("US", us_top_logic)
+    kr_live, kr_champ, kr_sec, kr_ace, kr_anchor, kr_nfeat = _top3_display_and_ace(
+        "KR", kr_top_logic
+    )
+    us_live, us_champ, us_sec, us_ace, us_anchor, us_nfeat = _top3_display_and_ace(
+        "US", us_top_logic
+    )
 
     lines.append("\n🔍 <b>[에이스 로직 심층 부검]</b>\n")
+    if col_ctx is not None:
+        lines.append(col_ctx.global_header_html())
+
+    def _ace_top3_block(league: str, logic: str, live_items, champ_items, sec: str) -> None:
+        if not logic:
+            return
+        anchor_s = (
+            col_ctx.anchor_for_league(league) if col_ctx is not None else ""
+        )
+        lines.append(f"📌 {league} <b>{_esc(logic)}</b>\n")
+        lines.append(
+            f" 🟢 당일 실전 TOP3 (앵커 <b>{_esc(anchor_s)}</b>): "
+            + (", ".join(live_items) if live_items else "<i>없음</i>")
+            + "\n"
+        )
+        lines.append(
+            f" 🏛️ 롤링 챔피언 TOP3 (<b>{window_days}</b>일 MAX): "
+            + (", ".join(champ_items) if champ_items else "<i>없음</i>")
+            + f" · 섹터 {sec}\n"
+        )
+
     if kr_top_logic:
-        lines.append(
-            f"📌 KR <b>{_esc(kr_top_logic)}</b> TOP3: "
-            + (", ".join(kr_carry) if kr_carry else "표본 부족")
-            + f" · 섹터 {kr_sec}\n"
-        )
+        _ace_top3_block("KR", kr_top_logic, kr_live, kr_champ, kr_sec)
     if us_top_logic:
-        lines.append(
-            f"📌 US <b>{_esc(us_top_logic)}</b> TOP3: "
-            + (", ".join(us_carry) if us_carry else "표본 부족")
-            + f" · 섹터 {us_sec}\n"
-        )
+        _ace_top3_block("US", us_top_logic, us_live, us_champ, us_sec)
 
     dynamic_kr = False
     dynamic_us = False
@@ -366,16 +443,19 @@ def _strategy_colosseum_brief(db_path=None):
         analyzer = ReportFeatureAnalyzer(sys_config=sys_cfg, meta=meta_st)
         if kr_top_logic and not kr_ace.empty and len(kr_ace) >= 3:
             _, baseline_kr, _, _ = _ace_analysis_frames(
-                df, "KR", kr_top_logic, window_days=window_days
+                df, "KR", kr_top_logic, window_days=window_days, ctx=col_ctx
             )
             kr_insights = analyzer.collect_ace_feature_insights(kr_ace, baseline_kr)
+            _kr_anchor = kr_anchor or (
+                col_ctx.anchor_for_league("KR") if col_ctx is not None else ""
+            )
             part_lines, ok_kr = analyzer.build_ace_deep_dive_lines(
                 league="KR",
                 logic_label=_esc(kr_top_logic),
                 ace_df=kr_ace,
                 baseline_df=baseline_kr,
                 spillover_sector=kr_sec,
-                data_anchor=kr_anchor or data_anchor,
+                data_anchor=_kr_anchor,
                 window_days=window_days,
                 n_features_scanned=kr_nfeat,
             )
@@ -385,16 +465,19 @@ def _strategy_colosseum_brief(db_path=None):
                 dynamic_kr = True
         if us_top_logic and not us_ace.empty and len(us_ace) >= 3:
             _, baseline_us, _, _ = _ace_analysis_frames(
-                df, "US", us_top_logic, window_days=window_days
+                df, "US", us_top_logic, window_days=window_days, ctx=col_ctx
             )
             us_insights = analyzer.collect_ace_feature_insights(us_ace, baseline_us)
+            _us_anchor = us_anchor or (
+                col_ctx.anchor_for_league("US") if col_ctx is not None else ""
+            )
             part_lines, ok_us = analyzer.build_ace_deep_dive_lines(
                 league="US",
                 logic_label=_esc(us_top_logic),
                 ace_df=us_ace,
                 baseline_df=baseline_us,
                 spillover_sector=us_sec,
-                data_anchor=us_anchor or data_anchor,
+                data_anchor=_us_anchor,
                 window_days=window_days,
                 n_features_scanned=us_nfeat,
             )
@@ -407,11 +490,11 @@ def _strategy_colosseum_brief(db_path=None):
         dynamic_us = False
         lines.append(f"<i>⚠️ 동적 필터 연산 스킵: {_esc(str(ex)[:120])}</i>\n")
 
-    if kr_carry and not dynamic_kr:
+    if (kr_live or kr_champ) and not dynamic_kr:
         lines.append(
             f"💡 KR 요약: 섹터 {kr_sec} · 동적 피처 스캔 표본 부족(청산·수익 거래 확대 후 재산출).\n"
         )
-    if us_carry and not dynamic_us:
+    if (us_live or us_champ) and not dynamic_us:
         lines.append(
             f"💡 US 요약: 섹터 {us_sec} · 동적 피처 스캔 표본 부족(청산·수익 거래 확대 후 재산출).\n"
         )
@@ -431,8 +514,10 @@ def _strategy_colosseum_brief(db_path=None):
             us_insights=us_insights,
             kr_sec=kr_sec,
             us_sec=us_sec,
-            kr_anchor=kr_anchor or data_anchor,
-            us_anchor=us_anchor or data_anchor,
+            kr_anchor=kr_anchor
+            or (col_ctx.anchor_for_league("KR") if col_ctx is not None else ""),
+            us_anchor=us_anchor
+            or (col_ctx.anchor_for_league("US") if col_ctx is not None else ""),
             window_days=window_days,
             sys_config=sys_cfg,
             meta=meta_st,
@@ -1384,6 +1469,13 @@ def try_add_virtual_position(
 ):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
+
+    try:
+        from sector_normalize import normalize_sector_for_db
+
+        sector = normalize_sector_for_db(sector, market=market)
+    except Exception:
+        pass
 
     def map_standard_sector(s):
         s_str = str(s).lower()
