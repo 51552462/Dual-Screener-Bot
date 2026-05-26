@@ -27,12 +27,17 @@ def normalize_sector_for_db(raw: Any, *, market: str = "KR") -> str:
     """
     DB 저장 직전 1~2어절 업종 태그. 실패 시 시장별 폴백.
     """
+    raw_s = str(raw or "").strip()
+    if len(raw_s) > 18 or _looks_like_sentence(raw_s):
+        mk = str(market).upper()
+        return "US/EQUITY" if mk == "US" else "기타/혼합"
+
     try:
         from ace_text_sanitize import sanitize_noun_phrase
 
-        s = sanitize_noun_phrase(raw)
+        s = sanitize_noun_phrase(raw_s)
     except Exception:
-        s = str(raw or "").strip()
+        s = raw_s
 
     s = _BRACKET_RE.sub("", s)
     s = _SENTENCE_MARKERS.sub("", s)
