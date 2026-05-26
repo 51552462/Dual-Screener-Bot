@@ -8,6 +8,7 @@ from forward_report_scalar import (
     row_scalar,
     safe_float_cast,
 )
+from network_timeout import fdr_data_reader, yf_download
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,11 @@ def track_daily_positions(market):
     idx_ticker = '069500' if market == 'KR' else 'SPY'
     
     try:
-        idx_df = fdr.DataReader(idx_ticker, start_date) if market == 'KR' else yf.download(idx_ticker, start=start_date, progress=False)
+        idx_df = (
+            fdr_data_reader(idx_ticker, start_date)
+            if market == 'KR'
+            else yf_download(idx_ticker, start=start_date, progress=False)
+        )
         
         # 💡 핵심: 벤치마크 지수의 가장 최근 캔들 날짜가 '해당 국가의 오늘 날짜'와 일치하는지 팩트 체크
         latest_candle_date = idx_df.index[-1].strftime('%Y-%m-%d')
@@ -83,8 +88,22 @@ def track_daily_positions(market):
             if market == 'US':
                 import time, random
                 time.sleep(random.uniform(0.3, 0.7)) # 무호흡 연사로 인한 IP 차단 완벽 방어
-            df = fdr.DataReader(code, start_date) if market == 'KR' else yf.download(code, start=start_date, progress=False)
-            
+            try:
+                df = (
+                    fdr_data_reader(code, start_date)
+                    if market == 'KR'
+                    else yf_download(code, start=start_date, progress=False)
+                )
+            except TimeoutError as te:
+                logger.warning(
+                    "track_daily_positions OHLCV timeout market=%s id=%s code=%s: %s",
+                    market,
+                    r.get('id'),
+                    code,
+                    te,
+                )
+                continue
+
             # 💡 [픽스 1] yfinance MultiIndex 에러 완벽 대응 (미국장 0승 0패 마비 해결)
             if market == 'US' and isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.droplevel(1)

@@ -1677,7 +1677,13 @@ def try_add_virtual_position(
         except:
             # 💡 [V102.4] EMA 224 정상 계산을 위한 300 거래일 데이터 확보 로직 유지
             st_dt = (datetime.now() - timedelta(days=450)).strftime('%Y-%m-%d')
-            hist_df = fdr.DataReader(code_str, st_dt).tail(300) if market == 'KR' else yf.download(code_str, start=st_dt, progress=False).tail(300)
+            from network_timeout import fdr_data_reader, yf_download
+
+            hist_df = (
+                fdr_data_reader(code_str, st_dt).tail(300)
+                if market == 'KR'
+                else yf_download(code_str, start=st_dt, progress=False).tail(300)
+            )
             if isinstance(hist_df.columns, pd.MultiIndex): hist_df.columns = hist_df.columns.droplevel(1)
             hist_df = hist_df.reset_index()
             if 'index' in hist_df.columns: hist_df.rename(columns={'index': 'Date'}, inplace=True)
@@ -1688,7 +1694,13 @@ def try_add_virtual_position(
         except:
             st_dt = (datetime.now() - timedelta(days=450)).strftime('%Y-%m-%d')
             idx_tk = '229200' if market == 'KR' else 'SPY'
-            idx_df = fdr.DataReader(idx_tk, st_dt).tail(300) if market == 'KR' else yf.download(idx_tk, start=st_dt, progress=False).tail(300)
+            from network_timeout import fdr_data_reader, yf_download
+
+            idx_df = (
+                fdr_data_reader(idx_tk, st_dt).tail(300)
+                if market == 'KR'
+                else yf_download(idx_tk, start=st_dt, progress=False).tail(300)
+            )
             if isinstance(idx_df.columns, pd.MultiIndex): idx_df.columns = idx_df.columns.droplevel(1)
             idx_df = idx_df.reset_index()
             if 'index' in idx_df.columns: idx_df.rename(columns={'index': 'Date'}, inplace=True)

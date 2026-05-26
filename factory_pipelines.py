@@ -133,6 +133,7 @@ def _step_comprehensive_daily_report() -> None:
         refresh_sentiment=False,
         refresh_sector_spillover=False,
         refresh_meta_governor=False,
+        cleanup_zombie_trades=False,
     )
 
 
@@ -163,7 +164,7 @@ def _step_pil_practitioner_reports() -> None:
     """PIL 실무자 리포트 + ZOMBIE → Kelly=0 / RETIRED (MetaGovernor 자동 반영)."""
     from auto_forward_tester import send_group_practitioner_reports
 
-    send_group_practitioner_reports()
+    send_group_practitioner_reports(cleanup_zombie_trades=False)
 
 
 _PIL_PRACTITIONER = StepSpec(
@@ -171,6 +172,26 @@ _PIL_PRACTITIONER = StepSpec(
     _step_pil_practitioner_reports,
     critical=False,
     delay_after_sec=2.0,
+)
+
+
+def _step_reporter_cleanup_zombie_forward_trades() -> None:
+    from forward.shared import _reporter_cleanup_zombie_forward_trades
+
+    try:
+        nz = _reporter_cleanup_zombie_forward_trades()
+        if nz:
+            print(f"🧹 [Factory] reporter cleanup: zombie OPEN 정리 {nz}건")
+    except Exception as e:
+        # 원래 deep_dive 내부에서 try/except로 “계속” 처리하던 작업 — 여기서도 치명 실패로 전환하지 않음.
+        print(f"⚠️ [Factory] reporter cleanup zombie 정리 스킵: {e}")
+
+
+_REPORTER_CLEANUP_ZOMBIE = StepSpec(
+    "reporter_cleanup_zombie_forward_trades",
+    _step_reporter_cleanup_zombie_forward_trades,
+    critical=False,
+    delay_after_sec=0.0,
 )
 
 
@@ -359,6 +380,7 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
                 StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
                 StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
                 _DOOMSDAY_BRIDGE,
+                _REPORTER_CLEANUP_ZOMBIE,
                 _PIL_PRACTITIONER,
                 _COMPREHENSIVE_REPORT,
                 StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
@@ -373,6 +395,7 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
             StepSpec("track_daily_positions_us", _step_track_us, critical=True, delay_after_sec=3.0),
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
             _DOOMSDAY_BRIDGE,
+            _REPORTER_CLEANUP_ZOMBIE,
             _PIL_PRACTITIONER,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
@@ -398,6 +421,7 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
                 StepSpec("us_cross_market_publish_combined", _step_us_cross_market_publish, critical=False),
                 StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
                 _DOOMSDAY_BRIDGE,
+                _REPORTER_CLEANUP_ZOMBIE,
                 _PIL_PRACTITIONER,
                 _COMPREHENSIVE_REPORT,
                 StepSpec("ai_overseer", _step_overseer_optional, critical=False),

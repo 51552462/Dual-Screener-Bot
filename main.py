@@ -278,11 +278,23 @@ if __name__ == "__main__":
         "💠 [엔진] DB 자동 갱신": run_db_updater_scheduler,
         "💠 [엔진] US 파이프라인 Heartbeat": run_us_pipeline_heartbeat,
         # 장부·리포트 스케줄 SSOT: cron factory.sh (--daily-kr / --daily-us) only
-        "💠 [엔진] 2주 자율 관제탑": system_auto_pilot.system_main_loop,
+        # P0: 이중 사령탑 제거 — daily/weekly는 factory.sh SSOT로 100% 단일화.
+        # system_auto_pilot.system_main_loop (데몬 스케줄)은 기본 비활성화.
+        # 필요 시 QUANT_ENABLE_SYSTEM_AUTO_PILOT=1로 수동 복구.
         "💠 [엔진] 초신성 역추적기": supernova_hunter.run_scheduler,  # 💡 [추가] 매주 월요일 17시 자동 실행 장착!
         "💠 [엔진] AI 최고 감시자": ai_overseer.overseer_loop,
         "💠 [엔진] 텔레그램 AI 비서": ai_secretary.run_secretary
     })
+
+    if str(os.environ.get("QUANT_ENABLE_SYSTEM_AUTO_PILOT", "") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        bot_targets["💠 [엔진] 2주 자율 관제탑"] = system_auto_pilot.system_main_loop
+    else:
+        print("ℹ️ [엔진] system_auto_pilot.system_main_loop 비활성화 — factory.sh SSOT 사용")
 
     active_threads = {}
 

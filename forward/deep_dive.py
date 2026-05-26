@@ -44,6 +44,7 @@ def send_comprehensive_daily_report(
     refresh_sector_spillover: bool = True,
     refresh_meta_governor: bool = True,
     apply_deathmatch_allocation: bool = True,
+    cleanup_zombie_trades: bool = True,
 ):
     """[V104.1] 국가별 9분할 정밀 리포트 — DailyReportContext 시계 SSOT 필수."""
     from daily_report_context import DailyReportContext
@@ -96,12 +97,13 @@ def send_comprehensive_daily_report(
     _report_time_header = ctx.global_header_html()
     sys_config = load_system_config()
 
-    try:
-        _nz = _reporter_cleanup_zombie_forward_trades()
-        if _nz:
-            print(f"🧹 [일일 통합 리포트] 좀비 OPEN 정리: {_nz}건")
-    except Exception as _ez:
-        print(f"⚠️ [일일 통합 리포트] 좀비 정리 스킵: {_ez}")
+    if cleanup_zombie_trades:
+        try:
+            _nz = _reporter_cleanup_zombie_forward_trades()
+            if _nz:
+                print(f"🧹 [일일 통합 리포트] 좀비 OPEN 정리: {_nz}건")
+        except Exception as _ez:
+            print(f"⚠️ [일일 통합 리포트] 좀비 정리 스킵: {_ez}")
 
     from report_collectors import (
         _df_long_only,
@@ -478,7 +480,7 @@ def send_comprehensive_daily_report(
             f"<i>⚠️ [Δ] 진화·튜닝 스킵: {html_escape(str(_delta_ex)[:72], quote=False)}</i>"
         )
 
-def send_group_practitioner_reports(ctx=None):
+def send_group_practitioner_reports(ctx=None, *, cleanup_zombie_trades: bool = True):
     """PIL — 활성 시그널 그룹별 실무자 리포트(Post-Mortem·Vitality·LLM) + 메타 페널티."""
     from practitioner_intelligence import (
         build_practitioner_brief,
@@ -498,12 +500,13 @@ def send_group_practitioner_reports(ctx=None):
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     pil_header = ctx.global_timekeeper_header_html()
 
-    try:
-        _nz = _reporter_cleanup_zombie_forward_trades()
-        if _nz:
-            print(f"🧹 [실무자 리포트] 좀비 OPEN 정리: {_nz}건")
-    except Exception as _ez:
-        print(f"⚠️ [실무자 리포트] 좀비 정리 스킵: {_ez}")
+    if cleanup_zombie_trades:
+        try:
+            _nz = _reporter_cleanup_zombie_forward_trades()
+            if _nz:
+                print(f"🧹 [실무자 리포트] 좀비 OPEN 정리: {_nz}건")
+        except Exception as _ez:
+            print(f"⚠️ [실무자 리포트] 좀비 정리 스킵: {_ez}")
 
     try:
         meta_state = load_meta_state_resolved()

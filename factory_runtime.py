@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+import signal
 import sys
 import time
 import traceback
@@ -13,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import pytz
 
@@ -62,6 +63,7 @@ class FactoryRunReport:
     finished_at: str
     steps: List[StepResult] = field(default_factory=list)
     skipped_lock: bool = False
+    skipped_lock_detail: Optional[str] = None
 
     @property
     def all_critical_ok(self) -> bool:
@@ -87,6 +89,243 @@ def _default_lock_path() -> str:
     return os.path.join(root, ".factory_runtime.lock")
 
 
+def _lock_max_age_sec() -> float:
+    raw = (os.environ.get("FACTORY_LOCK_MAX_AGE_SEC") or "7200").strip()
+    try:
+        return max(60.0, float(raw))
+    except ValueError:
+        return 7200.0
+
+
+def _lock_break_alive_on_max_age() -> bool:
+    return str(os.environ.get("FACTORY_LOCK_BREAK_ON_MAX_AGE", "0")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+@dataclass(frozen=True)
+class LockMetadata:
+    mode: str
+    started_at: str
+    pid: int
+
+
+def _parse_lock_metadata(path: str) -> Optional[LockMetadata]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
+    except OSError:
+        return None
+    if len(lines) < 2:
+        return None
+    mode = lines[0]
+    started_at = lines[1]
+    pid = 0
+    if len(lines) >= 3:
+        try:
+            pid = int(lines[2])
+        except ValueError:
+            pid = 0
+    return LockMetadata(mode=mode, started_at=started_at, pid=pid)
+
+
+def _lock_file_age_sec(path: str) -> float:
+    try:
+        return max(0.0, time.time() - os.path.getmtime(path))
+    except OSError:
+        return 0.0
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    if sys.platform != "win32":
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("State:"):
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1] == "Z":
+                            return False
+                        break
+        except OSError:
+            pass
+    return True
+
+
+def _write_lock_metadata(lock_f, mode: str) -> None:
+    tz = pytz.timezone("Asia/Seoul")
+    lock_f.seek(0)
+    lock_f.truncate()
+    lock_f.write(f"{mode}\n{datetime.now(tz).isoformat()}\n{os.getpid()}\n")
+    lock_f.flush()
+
+
+def _describe_lock_holder(path: str) -> str:
+    meta = _parse_lock_metadata(path)
+    age = _lock_file_age_sec(path)
+    if meta is None:
+        return f"lock_file={path} age={age:.0f}s (metadata unreadable)"
+    alive = _pid_is_alive(meta.pid)
+    return (
+        f"holder_mode={meta.mode} pid={meta.pid} alive={alive} "
+        f"since={meta.started_at} age={age:.0f}s file={path}"
+    )
+
+
+def _try_nonblocking_acquire(lock_f, fcntl_mod) -> bool:
+    try:
+        fcntl_mod.flock(lock_f.fileno(), fcntl_mod.LOCK_EX | fcntl_mod.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _maybe_purge_stale_lock_file(path: str) -> bool:
+    """Remove lock file when metadata PID is dead (or orphan). Safe before open/reopen."""
+    if not os.path.isfile(path):
+        return False
+    meta = _parse_lock_metadata(path)
+    if meta is not None and _pid_is_alive(meta.pid):
+        return False
+    if meta is None and _lock_file_age_sec(path) < 60.0:
+        return False
+    try:
+        os.unlink(path)
+        logger.warning("purged stale factory lock file: %s", path)
+        return True
+    except OSError as ex:
+        logger.warning("stale lock purge failed %s: %s", path, ex)
+        return False
+
+
+def _emergency_release_factory_lock(
+    path: str,
+    lock_f,
+    fcntl_mod,
+    *,
+    acquired: bool,
+) -> None:
+    if sys.platform == "win32":
+        return
+    if acquired:
+        try:
+            fcntl_mod.flock(lock_f.fileno(), fcntl_mod.LOCK_UN)
+        except Exception:
+            pass
+    try:
+        lock_f.close()
+    except Exception:
+        pass
+    try:
+        if os.path.isfile(path):
+            os.unlink(path)
+            logger.warning("factory lock released on shutdown: %s", path)
+    except OSError as ex:
+        logger.warning("factory lock unlink on shutdown failed %s: %s", path, ex)
+
+
+@contextmanager
+def _factory_lock_shutdown_guard(
+    path: str,
+    lock_f,
+    fcntl_mod,
+    acquired: bool,
+    on_release: Callable[[], None],
+):
+    """SIGINT/SIGTERM — flock 해제 + lock 파일 삭제 후 종료."""
+    if sys.platform == "win32" or not acquired:
+        yield
+        return
+
+    prev_int = signal.getsignal(signal.SIGINT)
+    prev_term = signal.getsignal(signal.SIGTERM)
+
+    def _handler(signum, _frame):
+        logger.warning("factory lock signal %s — releasing %s", signum, path)
+        _emergency_release_factory_lock(path, lock_f, fcntl_mod, acquired=True)
+        on_release()
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise SystemExit(128 + int(signum))
+
+    signal.signal(signal.SIGINT, _handler)
+    signal.signal(signal.SIGTERM, _handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, prev_int)
+        signal.signal(signal.SIGTERM, prev_term)
+
+
+def _attempt_stale_lock_self_heal(
+    path: str,
+    lock_f,
+    *,
+    requesting_mode: str,
+    fcntl_mod,
+) -> Tuple[bool, str]:
+    """
+    Dead/zombie holder PID or max-age stale → retry flock on the same fd (no unlock dance).
+    Returns (healed, reason). Caller must acquire on lock_f after True.
+    """
+    meta = _parse_lock_metadata(path)
+    age = _lock_file_age_sec(path)
+    max_age = _lock_max_age_sec()
+
+    if meta is None:
+        if age < 60.0:
+            return False, "no metadata yet"
+        reason = f"orphan lock file age={age:.0f}s"
+    else:
+        alive = _pid_is_alive(meta.pid)
+        if alive and age <= max_age:
+            return False, _describe_lock_holder(path)
+        if alive and age > max_age and not _lock_break_alive_on_max_age():
+            return (
+                False,
+                f"holder still alive pid={meta.pid} age={age:.0f}s > max={max_age:.0f}s "
+                f"(set FACTORY_LOCK_BREAK_ON_MAX_AGE=1 to SIGTERM)",
+            )
+        if alive and age > max_age and _lock_break_alive_on_max_age():
+            try:
+                os.kill(meta.pid, signal.SIGTERM)
+                time.sleep(2.0)
+            except (ProcessLookupError, PermissionError) as ex:
+                logger.warning("stale lock SIGTERM pid=%s: %s", meta.pid, ex)
+            if _pid_is_alive(meta.pid):
+                return False, f"SIGTERM sent but pid={meta.pid} still alive"
+            reason = f"stale alive holder terminated pid={meta.pid} age={age:.0f}s"
+        elif not alive:
+            reason = f"dead holder pid={meta.pid} mode={meta.mode} age={age:.0f}s"
+        else:
+            reason = f"stale holder pid={meta.pid}"
+
+    if not _try_nonblocking_acquire(lock_f, fcntl_mod):
+        if meta is not None and not _pid_is_alive(meta.pid):
+            try:
+                lock_f.close()
+            except Exception:
+                pass
+            if _maybe_purge_stale_lock_file(path):
+                return False, f"{reason}; lock file purged — retry open"
+        return False, f"{reason}; flock still busy (another live process?)"
+
+    logger.warning("factory lock self-heal: %s → acquiring as %s", reason, requesting_mode)
+    return True, reason
+
+
 @contextmanager
 def factory_job_lock(
     mode: str,
@@ -95,8 +334,9 @@ def factory_job_lock(
     timeout_sec: float = 120.0,
 ):
     """
-    Ubuntu: fcntl flock. Windows 개발 환경: no-op (로컬 dry-run).
-  이미 실행 중이면 JobSkipError.
+    Ubuntu: fcntl flock on `.factory_runtime.lock` (mode, started_at, pid).
+    Windows: no-op (로컬 dry-run).
+    Stale: dead/zombie PID or max-age → non-blocking self-heal retry.
     """
     path = lock_path or _default_lock_path()
     if sys.platform == "win32":
@@ -106,33 +346,79 @@ def factory_job_lock(
     import fcntl
 
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    _maybe_purge_stale_lock_file(path)
     lock_f = open(path, "a+", encoding="utf-8")
     acquired = False
+    released_box: dict[str, bool] = {"done": False}
     deadline = time.monotonic() + max(1.0, float(timeout_sec))
-    try:
-        while time.monotonic() < deadline:
-            try:
-                fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except BlockingIOError:
-                time.sleep(1.0)
-        if not acquired:
-            raise JobSkipError(
-                f"factory lock busy ({path}); mode={mode} — previous job still running"
-            )
-        lock_f.seek(0)
-        lock_f.truncate()
-        lock_f.write(f"{mode}\n{datetime.now(pytz.timezone('Asia/Seoul')).isoformat()}\n")
-        lock_f.flush()
-        yield
-    finally:
+    last_detail = _describe_lock_holder(path)
+
+    def _mark_released() -> None:
+        released_box["done"] = True
+
+    def _release_once() -> None:
+        if released_box["done"]:
+            return
+        _mark_released()
         if acquired:
             try:
                 fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
             except Exception:
                 pass
-        lock_f.close()
+        try:
+            lock_f.close()
+        except Exception:
+            pass
+
+    try:
+        while time.monotonic() < deadline:
+            if _try_nonblocking_acquire(lock_f, fcntl):
+                acquired = True
+                break
+            healed, heal_reason = _attempt_stale_lock_self_heal(
+                path, lock_f, requesting_mode=mode, fcntl_mod=fcntl
+            )
+            if healed:
+                acquired = True
+                logger.info("factory lock acquired after self-heal: %s", heal_reason)
+                break
+            if "lock file purged" in heal_reason:
+                try:
+                    lock_f.close()
+                except Exception:
+                    pass
+                lock_f = open(path, "a+", encoding="utf-8")
+                if _try_nonblocking_acquire(lock_f, fcntl):
+                    acquired = True
+                    logger.info("factory lock acquired after purge reopen")
+                    break
+            last_detail = _describe_lock_holder(path)
+            time.sleep(1.0)
+        if not acquired:
+            raise JobSkipError(
+                f"factory lock busy ({path}); mode={mode} — {last_detail}"
+            )
+        _write_lock_metadata(lock_f, mode)
+        with _factory_lock_shutdown_guard(
+            path, lock_f, fcntl, acquired, on_release=_mark_released
+        ):
+            try:
+                yield
+            except (KeyboardInterrupt, SystemExit):
+                if not released_box["done"]:
+                    _emergency_release_factory_lock(
+                        path, lock_f, fcntl, acquired=True
+                    )
+                    _mark_released()
+                raise
+    finally:
+        if acquired and not released_box["done"]:
+            _release_once()
+        elif not released_box["done"]:
+            try:
+                lock_f.close()
+            except Exception:
+                pass
 
 
 def run_step(spec: StepSpec) -> StepResult:
@@ -168,6 +454,12 @@ def format_factory_run_telegram(report: FactoryRunReport) -> str:
     ]
     if report.skipped_lock:
         lines.append("▪ <i>이전 동일 잡 실행 중 — 이번 회차 스킵 (DB 보호)</i>")
+        if report.skipped_lock_detail:
+            lines.append(
+                "▪ <i>"
+                + html.escape(report.skipped_lock_detail[:500], quote=False)
+                + "</i>"
+            )
         return "\n".join(lines) + "\n"
 
     ok_names = [s.name for s in report.steps if s.ok]
@@ -253,6 +545,7 @@ def dispatch_factory_mode(
                     time.sleep(spec.delay_after_sec)
     except JobSkipError as e:
         report.skipped_lock = True
+        report.skipped_lock_detail = str(e)
         logger.warning("factory job skipped: %s", e)
     except Exception as e:
         logger.exception("factory dispatch outer error")
