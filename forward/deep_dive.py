@@ -47,8 +47,8 @@ def send_comprehensive_daily_report(
     cleanup_zombie_trades: bool = True,
 ):
     """[V104.1] 국가별 9분할 정밀 리포트 — DailyReportContext 시계 SSOT 필수."""
-    from daily_report_context import DailyReportContext
-    from forward_report_tier import filter_death_combo_df, filter_tier_80_df
+    from reports.daily_report_context import DailyReportContext
+    from reports.forward_report_tier import filter_death_combo_df, filter_tier_80_df
 
     if ctx is None:
         ctx = DailyReportContext.build()
@@ -105,7 +105,7 @@ def send_comprehensive_daily_report(
         except Exception as _ez:
             print(f"⚠️ [일일 통합 리포트] 좀비 정리 스킵: {_ez}")
 
-    from report_collectors import (
+    from reports.report_collectors import (
         _df_long_only,
         build_market_report_opening,
     )
@@ -488,7 +488,7 @@ def send_group_practitioner_reports(ctx=None, *, cleanup_zombie_trades: bool = T
         parse_group_from_sig,
     )
     from practitioner_penalty_bridge import apply_pil_vitality_penalties
-    from practitioner_report_context import (
+    from reports.practitioner_report_context import (
         PractitionerReportContext,
         format_practitioner_fail_card,
     )

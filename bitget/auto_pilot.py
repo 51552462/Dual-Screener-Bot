@@ -880,31 +880,31 @@ def system_main_loop():
 
             # 코인 위성 자동 가동 스케줄 (통신망 연결)
             if hour % 2 == 0 and minute == 10 and satellite_flags.get("sentiment") != hm_key:
-                _safe_run_satellite("satellite::sentiment", 7200, "bitget_sentiment_miner", "run_sentiment_mining")
+                _safe_run_satellite("satellite::sentiment", 7200, "bitget.sentiment_miner", "run_sentiment_mining")
                 satellite_flags["sentiment"] = hm_key
             if hour % 2 == 0 and minute == 12 and satellite_flags.get("altdata") != hm_key:
-                _safe_run_satellite("satellite::altdata", 7200, "bitget_alt_data_miner", "run_alternative_data_mining")
+                _safe_run_satellite("satellite::altdata", 7200, "bitget.alt_data_miner", "run_alternative_data_mining")
                 satellite_flags["altdata"] = hm_key
             if hour % 3 == 0 and minute == 18 and satellite_flags.get("blackhole") != hm_key:
-                _safe_run_satellite("satellite::blackhole", 10800, "bitget_blackhole_hunter", "scan_blackhole_targets")
+                _safe_run_satellite("satellite::blackhole", 10800, "bitget.blackhole_hunter", "scan_blackhole_targets")
                 satellite_flags["blackhole"] = hm_key
             if hour % 6 == 0 and minute == 15 and satellite_flags.get("shadow_perf") != hm_key:
-                _safe_run_satellite("satellite::shadow_perf", 21600, "bitget_shadow_performance_tracker", "run_shadow_performance_evaluation")
+                _safe_run_satellite("satellite::shadow_perf", 21600, "bitget.shadow_performance_tracker", "run_shadow_performance_evaluation")
                 satellite_flags["shadow_perf"] = hm_key
             if hour == 0 and minute == 15 and satellite_flags.get("underdog") != hm_key:
-                _safe_run_satellite("satellite::underdog", 86400, "bitget_underdog_miner", "run_underdog_mining")
+                _safe_run_satellite("satellite::underdog", 86400, "bitget.underdog_miner", "run_underdog_mining")
                 satellite_flags["underdog"] = hm_key
             if hour == 0 and minute == 20 and satellite_flags.get("pump_forensics") != hm_key:
-                _safe_run_satellite("satellite::pump_forensics", 86400, "bitget_pump_forensics", "run_pump_forensics")
+                _safe_run_satellite("satellite::pump_forensics", 86400, "bitget.pump_forensics", "run_pump_forensics")
                 satellite_flags["pump_forensics"] = hm_key
             if hour == 0 and minute == 25 and satellite_flags.get("forensics_pioneer") != hm_key:
-                _safe_run_satellite("satellite::forensics_pioneer", 86400, "bitget_forensics_pioneer", "run_forensics_pioneer")
+                _safe_run_satellite("satellite::forensics_pioneer", 86400, "bitget.forensics_pioneer", "run_forensics_pioneer")
                 satellite_flags["forensics_pioneer"] = hm_key
             if now.weekday() == 5 and hour == 1 and minute == 5 and satellite_flags.get("synthetic_lab") != hm_key:
-                _safe_run_satellite("satellite::synthetic_lab", 86400, "bitget_synthetic_data_generator", "stress_test_mutants")
+                _safe_run_satellite("satellite::synthetic_lab", 86400, "bitget.synthetic_data_generator", "stress_test_mutants")
                 satellite_flags["synthetic_lab"] = hm_key
             if now.weekday() == 6 and hour == 1 and minute == 30 and satellite_flags.get("time_machine") != hm_key:
-                _safe_run_satellite("satellite::time_machine", 86400, "bitget_time_machine_backtester", "run_time_machine_backtest", "FTX_COLLAPSE_2022", 3.0)
+                _safe_run_satellite("satellite::time_machine", 86400, "bitget.time_machine_backtester", "run_time_machine_backtest", "FTX_COLLAPSE_2022", 3.0)
                 satellite_flags["time_machine"] = hm_key
 
             # OMS 체결대사: 재기동 직후 1회 + 이후 최소 1시간 간격 (fetch_my_trades · 포지션 · 미체결 주문 · 유령 OPEN 제거)

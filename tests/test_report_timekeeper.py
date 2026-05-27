@@ -5,8 +5,8 @@ from datetime import datetime
 
 import pytz
 
-from report_staleness_gate import evaluate_staleness
-from report_timekeeper import (
+from reports.report_staleness_gate import evaluate_staleness
+from reports.report_timekeeper import (
     ReportTimekeeper,
     business_lag_days,
     kr_session_anchor_date,

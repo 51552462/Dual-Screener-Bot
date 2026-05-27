@@ -12,10 +12,10 @@ import numpy as np
 import pandas as pd
 
 from forward_market_guard import enforce_market_frame
-from forward_report_scalar import col_series, scalar_float
+from reports.forward_report_scalar import col_series, scalar_float
 from forward_score_bucket_deep_dive import _exit_date_span, _resolve_stock_name
-from report_staleness_gate import StalenessVerdict, evaluate_staleness
-from report_timekeeper import ReportTimekeeper
+from reports.report_staleness_gate import StalenessVerdict, evaluate_staleness
+from reports.report_timekeeper import ReportTimekeeper
 
 RegistrySaveFn = Callable[[Dict[str, Any]], Any]
 RegistryLoadFn = Callable[[], Dict[str, Any]]

@@ -16,14 +16,14 @@ from meta_governor_consumer import (
     effective_max_position_pct,
     load_meta_state_resolved,
 )
-from forward_report_scalar import (
+from reports.forward_report_scalar import (
     col_series,
     prepare_forward_trades_df,
     row_scalar,
     scalar_float,
     series_mean,
 )
-from report_state_binder import build_macro_treasury_block, format_macro_treasury_section_html
+from reports.report_state_binder import build_macro_treasury_block, format_macro_treasury_section_html
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
@@ -115,13 +115,13 @@ def _deathmatch_min_n_cfg(cfg: dict) -> int:
 
 
 def _fmt_deathmatch_ret(ret, n_closed: int, *, n_valid=None) -> str:
-    from deathmatch_report import fmt_deathmatch_ret
+    from evolution.deathmatch_report import fmt_deathmatch_ret
 
     return fmt_deathmatch_ret(ret, n_closed, n_valid=n_valid)
 
 
 def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret, sn_ret, n_min: int) -> str:
-    from deathmatch_report import deathmatch_ab_verdict
+    from evolution.deathmatch_report import deathmatch_ab_verdict
 
     return deathmatch_ab_verdict(n_std, n_sn, std_ret, sn_ret, n_min)
 
@@ -2538,7 +2538,7 @@ def send_comprehensive_daily_report():
             send_telegram_msg(msg8)
             time.sleep(1)
 
-            from deathmatch_battle_royale import (
+            from evolution.deathmatch_battle_royale import (
                 build_nway_deathmatch_registry,
                 format_battle_royal_telegram,
             )
@@ -2547,7 +2547,7 @@ def send_comprehensive_daily_report():
                 df_closed, cfg, market="BG"
             )
             try:
-                from deathmatch_report import maybe_apply_deathmatch_allocation
+                from evolution.deathmatch_report import maybe_apply_deathmatch_allocation
 
                 maybe_apply_deathmatch_allocation(
                     dm, cfg, battle_royale=br, market="BG"

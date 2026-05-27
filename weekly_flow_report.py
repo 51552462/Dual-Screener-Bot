@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 import pytz
 
-from report_state_binder import (
+from reports.report_state_binder import (
     LifecycleReportBlock,
     MacroTreasuryReportBlock,
     build_lifecycle_report_block,

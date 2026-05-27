@@ -234,7 +234,7 @@ def load_or_create_config():
         need_save = True
 
     if "DEATHMATCH" not in config or not isinstance(config.get("DEATHMATCH"), dict):
-        from deathmatch_config import DEFAULT_DEATHMATCH
+        from evolution.deathmatch_config import DEFAULT_DEATHMATCH
 
         config["DEATHMATCH"] = dict(DEFAULT_DEATHMATCH)
         need_save = True
@@ -1163,7 +1163,7 @@ def run_autonomous_analysis():
     n_min_dm = max(1, n_min_dm)
 
     try:
-        from deathmatch_report import build_nway_deathmatch
+        from evolution.deathmatch_report import build_nway_deathmatch
 
         df_kr = df
         if "market" in df.columns:

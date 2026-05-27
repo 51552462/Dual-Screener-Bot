@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 import pytz
 
-from deathmatch_battle_royale import ledger_group_key
-from forward_report_scalar import col_series, prepare_forward_trades_df, row_scalar
+from evolution.deathmatch_battle_royale import ledger_group_key
+from reports.forward_report_scalar import col_series, prepare_forward_trades_df, row_scalar
 from practitioner_llm import build_practitioner_llm_summary, format_llm_html_line
 from practitioner_market_profiles import (
     PractitionerMarketProfile,
@@ -24,7 +24,7 @@ from practitioner_market_profiles import (
     resolve_practitioner_profile,
     toxic_rules_for_profile,
 )
-from report_feature_analyzer import ReportFeatureAnalyzer
+from reports.report_feature_analyzer import ReportFeatureAnalyzer
 
 
 @dataclass

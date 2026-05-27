@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import pandas as pd
 import pytz
 
-from report_state_binder import (
+from reports.report_state_binder import (
     LifecycleReportBlock,
     MacroTreasuryReportBlock,
     build_lifecycle_report_block,

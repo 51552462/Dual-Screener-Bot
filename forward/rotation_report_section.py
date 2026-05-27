@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from daily_report_context import DailyReportContext, DailyReportMarketSlice
+from reports.daily_report_context import DailyReportContext, DailyReportMarketSlice
 from rotation_sector_filter import (
     dominant_sector_for_series,
     filter_eligible_daily_series,

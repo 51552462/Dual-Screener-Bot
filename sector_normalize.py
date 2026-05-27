@@ -33,7 +33,7 @@ def normalize_sector_for_db(raw: Any, *, market: str = "KR") -> str:
         return "US/EQUITY" if mk == "US" else "기타/혼합"
 
     try:
-        from ace_text_sanitize import sanitize_noun_phrase
+        from evolution.ace_text_sanitize import sanitize_noun_phrase
 
         s = sanitize_noun_phrase(raw_s)
     except Exception:

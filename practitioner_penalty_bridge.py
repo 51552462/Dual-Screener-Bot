@@ -39,7 +39,7 @@ def apply_pil_vitality_penalties(
     if not _penalties_enabled(sys_config):
         return {"applied": False, "reason": "disabled"}
 
-    from deathmatch_allocation import health_to_group_mult, merge_group_kelly_from_overlay
+    from evolution.deathmatch_allocation import health_to_group_mult, merge_group_kelly_from_overlay
     from meta_governor import save_meta_governor_state_atomic
     from meta_governor_consumer import invalidate_meta_state_cache, load_meta_state_resolved
     from strategy_promotion_engine import stable_strategy_id
@@ -194,7 +194,7 @@ def apply_pil_vitality_penalties(
     max_mult = 1.5
     if isinstance(sys_config, dict):
         try:
-            from deathmatch_config import load_deathmatch_config, market_deathmatch_params
+            from evolution.deathmatch_config import load_deathmatch_config, market_deathmatch_params
 
             dmc = market_deathmatch_params(load_deathmatch_config(sys_config), "KR")
             max_mult = float(dmc.get("allocation_max_group_mult", 1.5))

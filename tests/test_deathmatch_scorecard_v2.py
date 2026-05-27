@@ -4,8 +4,8 @@ from __future__ import annotations
 import math
 import unittest
 
-from deathmatch_config import load_deathmatch_config, market_deathmatch_params
-from deathmatch_scorecard import (
+from evolution.deathmatch_config import load_deathmatch_config, market_deathmatch_params
+from evolution.deathmatch_scorecard import (
     ArmScorecard,
     compute_composite_v2,
     exponential_mdd_penalty,

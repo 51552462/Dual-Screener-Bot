@@ -6,7 +6,7 @@ from datetime import date
 
 import pytz
 
-from report_timekeeper import ReportTimekeeper
+from reports.report_timekeeper import ReportTimekeeper
 from spillover_calendar import SpilloverCalendarContext, _us_session_for_kr_day
 
 

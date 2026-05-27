@@ -5,7 +5,7 @@ import unittest
 
 import pandas as pd
 
-from deathmatch_battle_royale import run_battle_royal
+from evolution.deathmatch_battle_royale import run_battle_royal
 
 
 class TestRunBattleRoyal(unittest.TestCase):

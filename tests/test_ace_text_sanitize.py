@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from ace_text_sanitize import (
+from evolution.ace_text_sanitize import (
     sanitize_human_insight,
     sanitize_noun_phrase,
     sanitize_playbook_text_fields,

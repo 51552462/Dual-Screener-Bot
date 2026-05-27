@@ -14,14 +14,14 @@ import pytz
 
 from forward_flow_tag_deep_dive import FlowTagBlock, build_flow_tag_snapshot
 from forward_market_guard import enforce_market_frame
-from report_staleness_gate import evaluate_staleness
-from report_timekeeper import ReportTimekeeper
+from reports.report_staleness_gate import evaluate_staleness
+from reports.report_timekeeper import ReportTimekeeper
 from forward_score_bucket_deep_dive import (
     UniversalDnaBlock,
     _assemble_universal_governor_insight,
     build_universal_dna_block,
 )
-from report_feature_analyzer import ReportFeatureAnalyzer
+from reports.report_feature_analyzer import ReportFeatureAnalyzer
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from weekly_flow_rollup import WeeklyDnaRollup, WeeklyFlowTagRollup
-from report_state_binder import LifecycleReportBlock, MacroTreasuryReportBlock
+from reports.report_state_binder import LifecycleReportBlock, MacroTreasuryReportBlock
 
 BASELINE_CONFIG_KEY = "WEEKLY_REPORT_BASELINE"
 

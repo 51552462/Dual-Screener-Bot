@@ -2,7 +2,7 @@
 import logging
 
 from forward.shared import *  # noqa: F403
-from forward_report_scalar import (
+from reports.forward_report_scalar import (
     ohlcv_last_floats,
     prepare_forward_trades_df,
     row_scalar,
@@ -251,7 +251,7 @@ def track_daily_positions(market):
 
             _ace_evo = None
             try:
-                from ace_exit_bridge import ace_exit_overrides
+                from evolution.ace_exit_bridge import ace_exit_overrides
 
                 _ace_evo = ace_exit_overrides(r, market, sys_config)
                 if _ace_evo.active:

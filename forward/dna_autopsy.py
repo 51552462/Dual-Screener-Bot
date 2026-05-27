@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from daily_report_context import DailyReportContext
+from reports.daily_report_context import DailyReportContext
 from practitioner_market_profiles import resolve_practitioner_profile
 
 
@@ -155,7 +155,7 @@ def format_dna_autopsy_section(
 
     # Analyzer 경로 (성공 또는 Tier C)
     try:
-        from report_feature_analyzer import ReportFeatureAnalyzer
+        from reports.report_feature_analyzer import ReportFeatureAnalyzer
 
         dna_an = ReportFeatureAnalyzer(sys_config=sys_config or {}, meta=meta)
         dna_lines, ok, _ins = dna_an.build_winner_loser_dna_contrast(

@@ -1,7 +1,7 @@
 """forward_report_tier — 티어 버킷 · 데스콤보 폴백."""
 import pandas as pd
 
-from forward_report_tier import (
+from reports.forward_report_tier import (
     compute_death_combo_flag,
     effective_tier_bucket,
     filter_death_combo_df,

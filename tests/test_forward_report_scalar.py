@@ -5,7 +5,7 @@ import unittest
 
 import pandas as pd
 
-from forward_report_scalar import (
+from reports.forward_report_scalar import (
     col_series,
     dedupe_columns,
     prepare_forward_trades_df,
@@ -14,7 +14,7 @@ from forward_report_scalar import (
     series_mean,
 )
 from practitioner_intelligence import _toxic_hit_line
-from report_feature_analyzer import ReportFeatureAnalyzer
+from reports.report_feature_analyzer import ReportFeatureAnalyzer
 
 
 def _dup_df(*pairs: tuple[str, list]) -> pd.DataFrame:

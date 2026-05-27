@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from daily_report_context import DailyReportContext, DailyReportMarketSlice
+from reports.daily_report_context import DailyReportContext, DailyReportMarketSlice
 
 
 def _esc(s: Any) -> str:
@@ -83,16 +83,16 @@ def build_deathmatch_section(
     apply_deathmatch_allocation: bool = True,
 ) -> str:
     """[9/9] 전문 — ctx 윈도우 슬라이스·3단 Fallback."""
-    from ace_deathmatch_bridge import (
+    from evolution.ace_deathmatch_bridge import (
         build_ace_deathmatch_comparison,
         format_ace_evolution_oneliner,
     )
-    from ace_evolution_store import load_playbook
-    from deathmatch_battle_royale import (
+    from evolution.ace_evolution_store import load_playbook
+    from evolution.deathmatch_battle_royale import (
         build_nway_deathmatch_registry,
         format_battle_royal_telegram,
     )
-    from deathmatch_report import maybe_apply_deathmatch_allocation
+    from evolution.deathmatch_report import maybe_apply_deathmatch_allocation
 
     mk = str(market).upper()
     n_closed = int(len(df_closed)) if df_closed is not None else 0

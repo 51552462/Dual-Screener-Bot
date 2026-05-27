@@ -6,8 +6,8 @@ from datetime import datetime
 
 import pytz
 
-from practitioner_report_context import PractitionerReportContext
-from report_timekeeper import ReportTimekeeper
+from reports.practitioner_report_context import PractitionerReportContext
+from reports.report_timekeeper import ReportTimekeeper
 
 _KR_TZ = pytz.timezone("Asia/Seoul")
 

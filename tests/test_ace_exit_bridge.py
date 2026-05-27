@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from ace_exit_bridge import AceExitOverrides, ace_exit_overrides, evolution_live_enabled
+from evolution.ace_exit_bridge import AceExitOverrides, ace_exit_overrides, evolution_live_enabled
 
 
 class TestAceExitBridge(unittest.TestCase):
@@ -22,8 +22,8 @@ class TestAceExitBridge(unittest.TestCase):
         }
         self.assertTrue(evolution_live_enabled(cfg))
 
-    @patch("ace_exit_bridge.load_playbook")
-    @patch("ace_exit_bridge.compute_ace_evolution_multiplier")
+    @patch("evolution.ace_exit_bridge.load_playbook")
+    @patch("evolution.ace_exit_bridge.compute_ace_evolution_multiplier")
     def test_active_overrides(self, mock_mult, mock_pb) -> None:
         mock_pb.return_value = {"logic_core": "TEST_LOGIC", "observe_only": False}
         mock_mult.return_value = (

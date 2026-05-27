@@ -12,8 +12,8 @@ from forward_flow_tag_deep_dive import (
     build_flow_tag_snapshot,
 )
 from forward_market_guard import MarketContaminationError, enforce_market_frame
-from report_staleness_gate import evaluate_staleness
-from report_timekeeper import ReportTimekeeper
+from reports.report_staleness_gate import evaluate_staleness
+from reports.report_timekeeper import ReportTimekeeper
 
 
 class TestMarketGuard(unittest.TestCase):

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 import pandas as pd
 import pytz
 
-from report_timekeeper import ReportTimekeeper, kr_session_anchor_date
+from reports.report_timekeeper import ReportTimekeeper, kr_session_anchor_date
 
 if TYPE_CHECKING:
     pass

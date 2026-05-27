@@ -1019,7 +1019,7 @@ class MetaGovernor:
         if isinstance(overlay, dict):
             cap = 1.5
             try:
-                from deathmatch_config import load_deathmatch_config, market_deathmatch_params
+                from evolution.deathmatch_config import load_deathmatch_config, market_deathmatch_params
 
                 _dmc = market_deathmatch_params(load_deathmatch_config({}), "KR")
                 cap = float(_dmc.get("allocation_max_group_mult", 1.5))

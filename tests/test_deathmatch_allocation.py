@@ -6,7 +6,7 @@ import unittest
 from dataclasses import dataclass
 from typing import Optional
 
-from deathmatch_allocation import (
+from evolution.deathmatch_allocation import (
     compute_group_allocation_overlay,
     health_to_group_mult,
     merge_group_kelly_from_overlay,

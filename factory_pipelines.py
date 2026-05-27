@@ -315,13 +315,13 @@ def _step_supernova_us() -> None:
 
 
 def _step_kr_bowl_optional() -> None:
-    import kr
+    from legacy_archive.scanners import kr
 
     kr.scan_market_1d()
 
 
 def _step_us_bowl_optional() -> None:
-    import usa
+    from legacy_archive.scanners import usa
 
     usa.scan_market_1d()
 

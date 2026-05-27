@@ -27,7 +27,7 @@ from meta_governor_consumer import (
     load_meta_state_resolved,
 )
 from toxic_antipattern_core import collect_merged_antipattern_rules
-from report_feature_analyzer import (
+from reports.report_feature_analyzer import (
     ReportFeatureAnalyzer,
     colosseum_db_path_for_report,
     colosseum_window_days,
@@ -35,7 +35,7 @@ from report_feature_analyzer import (
     extra_forward_trade_columns_for_report,
 )
 from forward_flow_tag_deep_dive import build_flow_tag_snapshot, format_flow_tag_report_html
-from forward_report_scalar import (
+from reports.forward_report_scalar import (
     col_series,
     prepare_forward_trades_df,
     safe_float_cast,
@@ -55,11 +55,11 @@ from forward_score_bucket_deep_dive import (
     format_universal_dna_html,
 )
 from market_db_paths import report_db_read_path, report_read_source_label
-from report_staleness_gate import evaluate_staleness, persist_staleness_to_config
-from report_timekeeper import ReportTimekeeper
+from reports.report_staleness_gate import evaluate_staleness, persist_staleness_to_config
+from reports.report_timekeeper import ReportTimekeeper
 from html import escape as html_escape
 
-from report_state_binder import (
+from reports.report_state_binder import (
     build_lifecycle_report_block,
     build_macro_treasury_block,
     format_lifecycle_section_html,
@@ -80,7 +80,7 @@ def _open_market_db_ro():
 def _compress_sector_theme(raw: object) -> str:
     """긴 섹터/테마 문자열 → 퀀트 태그 (15자 캡, 서술어 제거)."""
     try:
-        from ace_text_sanitize import sanitize_noun_phrase
+        from evolution.ace_text_sanitize import sanitize_noun_phrase
 
         out = sanitize_noun_phrase(raw)
         return out or "미분류"
@@ -199,7 +199,7 @@ def _strategy_colosseum_brief(db_path=None):
     가상매매 `forward_trades` 청산 건을 로직명(sig_type 코어)별로 집계해 텔레그램용 랭킹 문자열 생성.
     스냅샷 고착 방지: colosseum_db_path_for_report() + exit_date 롤링 윈도우.
     """
-    from colosseum_report_context import ColosseumReportContext
+    from reports.colosseum_report_context import ColosseumReportContext
 
     if db_path is None:
         db_path = colosseum_db_path_for_report()
@@ -506,8 +506,8 @@ def _strategy_colosseum_brief(db_path=None):
         )
 
     try:
-        from ace_evolution_refresh import refresh_ace_evolution_from_colosseum_context
-        from ace_evolution_telegram import format_ace_dna_block
+        from evolution.ace_evolution_refresh import refresh_ace_evolution_from_colosseum_context
+        from evolution.ace_evolution_telegram import format_ace_dna_block
 
         playbooks = refresh_ace_evolution_from_colosseum_context(
             kr_logic=kr_top_logic or "",
@@ -1247,19 +1247,19 @@ def _v28_us_label_with_last_good_cache(
 
 
 def _deathmatch_min_n(sys_config: dict) -> int:
-    from deathmatch_report import deathmatch_min_n
+    from evolution.deathmatch_report import deathmatch_min_n
 
     return deathmatch_min_n(sys_config)
 
 
 def _fmt_deathmatch_ret(ret, n_closed: int, *, n_valid=None) -> str:
-    from deathmatch_report import fmt_deathmatch_ret
+    from evolution.deathmatch_report import fmt_deathmatch_ret
 
     return fmt_deathmatch_ret(ret, n_closed, n_valid=n_valid)
 
 
 def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret, sn_ret, n_min: int) -> str:
-    from deathmatch_report import deathmatch_ab_verdict
+    from evolution.deathmatch_report import deathmatch_ab_verdict
 
     return deathmatch_ab_verdict(n_std, n_sn, std_ret, sn_ret, n_min)
 

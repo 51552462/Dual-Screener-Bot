@@ -55,22 +55,22 @@ def _safe_import(module_name):
         return None
 
 
-updater = _safe_import("bitget_mtf_data_updater")
-scanner = _safe_import("bitget_master_scanner")
-forward_tester = _safe_import("bitget_forward_tester")
-sniper = _safe_import("bitget_supernova_hunter")
-miner = _safe_import("bitget_data_miner")
-auto_pilot = _safe_import("bitget_auto_pilot")
-underdog_miner = _safe_import("bitget_underdog_miner")
-pump_forensics = _safe_import("bitget_pump_forensics")
-forensics_pioneer = _safe_import("bitget_forensics_pioneer")
-sentiment_miner = _safe_import("bitget_sentiment_miner")
-alt_data_miner = _safe_import("bitget_alt_data_miner")
-shadow_perf = _safe_import("bitget_shadow_performance_tracker")
-blackhole_hunter = _safe_import("bitget_blackhole_hunter")
-synthetic_lab = _safe_import("bitget_synthetic_data_generator")
-time_machine = _safe_import("bitget_time_machine_backtester")
-disk_manager = _safe_import("bitget_disk_manager")
+updater = _safe_import("bitget.mtf_data_updater")
+scanner = _safe_import("bitget.master_scanner")
+forward_tester = _safe_import("bitget.forward_tester")
+sniper = _safe_import("bitget.supernova_hunter")
+miner = _safe_import("bitget.data_miner")
+auto_pilot = _safe_import("bitget.auto_pilot")
+underdog_miner = _safe_import("bitget.underdog_miner")
+pump_forensics = _safe_import("bitget.pump_forensics")
+forensics_pioneer = _safe_import("bitget.forensics_pioneer")
+sentiment_miner = _safe_import("bitget.sentiment_miner")
+alt_data_miner = _safe_import("bitget.alt_data_miner")
+shadow_perf = _safe_import("bitget.shadow_performance_tracker")
+blackhole_hunter = _safe_import("bitget.blackhole_hunter")
+synthetic_lab = _safe_import("bitget.synthetic_data_generator")
+time_machine = _safe_import("bitget.time_machine_backtester")
+disk_manager = _safe_import("bitget.disk_manager")
 
 
 def _periodic_runner(target_func, interval_sec, name):
@@ -84,7 +84,9 @@ def _periodic_runner(target_func, interval_sec, name):
 
 
 def _dashboard_runner():
-    root = os.path.dirname(os.path.abspath(__file__))
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(pkg)
+    dash = os.path.join(pkg, "dashboard.py")
     while True:
         try:
             subprocess.run(
@@ -93,20 +95,22 @@ def _dashboard_runner():
                     "-m",
                     "streamlit",
                     "run",
-                    "bitget_dashboard.py",
+                    dash,
                     "--server.port=8501",
                     "--server.headless=true",
                 ],
-                cwd=root,
+                cwd=project_root,
                 check=False,
             )
         except Exception as e:
-            print(f"⚠️ bitget_dashboard 실행 실패: {e}")
+            print(f"⚠️ bitget dashboard 실행 실패: {e}")
         time.sleep(5)
 
 
 def _heatmap_runner():
-    root = os.path.dirname(os.path.abspath(__file__))
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(pkg)
+    heat = os.path.join(pkg, "heatmap_dashboard.py")
     while True:
         try:
             subprocess.run(
@@ -115,15 +119,15 @@ def _heatmap_runner():
                     "-m",
                     "streamlit",
                     "run",
-                    "bitget_heatmap_dashboard.py",
+                    heat,
                     "--server.port=8502",
                     "--server.headless=true",
                 ],
-                cwd=root,
+                cwd=project_root,
                 check=False,
             )
         except Exception as e:
-            print(f"⚠️ bitget_heatmap_dashboard 실행 실패: {e}")
+            print(f"⚠️ bitget heatmap_dashboard 실행 실패: {e}")
         time.sleep(5)
 
 # ==========================================

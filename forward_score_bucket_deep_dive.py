@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float
-from report_feature_analyzer import ContrastInsight, ReportFeatureAnalyzer
+from reports.forward_report_scalar import col_series, prepare_forward_trades_df, scalar_float
+from reports.report_feature_analyzer import ContrastInsight, ReportFeatureAnalyzer
 
 
 @dataclass(frozen=True)

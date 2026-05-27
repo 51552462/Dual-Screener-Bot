@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 import pytz
 
-from daily_report_context import DailyReportContext
+from reports.daily_report_context import DailyReportContext
 from forward.dna_autopsy import (
     build_dna_autopsy_slice,
     format_dna_autopsy_section,

@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytz
 
-from daily_report_context import DailyReportContext
+from reports.daily_report_context import DailyReportContext
 
 
 def test_build_and_calendar_today():

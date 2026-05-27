@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import os
 import subprocess
 import sys
@@ -9,8 +8,8 @@ import requests
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget_logger import get_logger, setup_logging
 
-
-ROOT = os.path.dirname(os.path.abspath(__file__))
+BITGET_PKG = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BITGET_PKG)
 logger = get_logger("bitget.sentinel")
 
 
@@ -31,7 +30,10 @@ def _send_telegram_alert(text):
 
 def _spawn(name):
     if name == "main":
-        return subprocess.Popen([sys.executable, "bitget_main.py"], cwd=ROOT)
+        return subprocess.Popen(
+            [sys.executable, "-m", "bitget.main"],
+            cwd=PROJECT_ROOT,
+        )
     if name == "dashboard":
         return subprocess.Popen(
             [
@@ -39,11 +41,11 @@ def _spawn(name):
                 "-m",
                 "streamlit",
                 "run",
-                "bitget_dashboard.py",
+                os.path.join(BITGET_PKG, "dashboard.py"),
                 "--server.port=8501",
                 "--server.headless=true",
             ],
-            cwd=ROOT,
+            cwd=PROJECT_ROOT,
         )
     if name == "heatmap":
         return subprocess.Popen(
@@ -52,11 +54,11 @@ def _spawn(name):
                 "-m",
                 "streamlit",
                 "run",
-                "bitget_heatmap_dashboard.py",
+                os.path.join(BITGET_PKG, "heatmap_dashboard.py"),
                 "--server.port=8502",
                 "--server.headless=true",
             ],
-            cwd=ROOT,
+            cwd=PROJECT_ROOT,
         )
     raise ValueError(f"unknown process name: {name}")
 
@@ -92,98 +94,3 @@ def run_sentinel():
 
 if __name__ == "__main__":
     run_sentinel()
-=======
-import os
-import subprocess
-import sys
-import time
-
-import requests
-
-from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
-from bitget_logger import get_logger, setup_logging
-
-
-ROOT = os.path.dirname(os.path.abspath(__file__))
-logger = get_logger("bitget.sentinel")
-
-
-def _send_telegram_alert(text):
-    token = bitget_telegram_token()
-    chat_id = bitget_telegram_chat_id()
-    if not token or not chat_id:
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-            timeout=8,
-        )
-    except Exception:
-        pass
-
-
-def _spawn(name):
-    if name == "main":
-        return subprocess.Popen([sys.executable, "bitget_main.py"], cwd=ROOT)
-    if name == "dashboard":
-        return subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "streamlit",
-                "run",
-                "bitget_dashboard.py",
-                "--server.port=8501",
-                "--server.headless=true",
-            ],
-            cwd=ROOT,
-        )
-    if name == "heatmap":
-        return subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "streamlit",
-                "run",
-                "bitget_heatmap_dashboard.py",
-                "--server.port=8502",
-                "--server.headless=true",
-            ],
-            cwd=ROOT,
-        )
-    raise ValueError(f"unknown process name: {name}")
-
-
-def run_sentinel():
-    setup_logging()
-    logger.info("sentinel started")
-    names = ["main", "dashboard", "heatmap"]
-    procs = {}
-    for name in names:
-        try:
-            procs[name] = _spawn(name)
-            logger.info("spawned %s pid=%s", name, procs[name].pid)
-        except Exception as e:
-            logger.exception("initial spawn failed: %s", name)
-            _send_telegram_alert(f"[Bitget Sentinel] {name} launch failed: {e}")
-    while True:
-        for name in names:
-            p = procs.get(name)
-            if p is None or p.poll() is not None:
-                code = None if p is None else p.returncode
-                msg = f"[Bitget Sentinel] {name} died (exit={code}), restarting now."
-                logger.warning(msg)
-                _send_telegram_alert(msg)
-                try:
-                    procs[name] = _spawn(name)
-                    logger.info("restarted %s pid=%s", name, procs[name].pid)
-                except Exception as e:
-                    logger.exception("restart failed: %s", name)
-                    _send_telegram_alert(f"[Bitget Sentinel] {name} restart failed: {e}")
-        time.sleep(5)
-
-
-if __name__ == "__main__":
-    run_sentinel()
->>>>>>> ea01250303302d9ab9f1ff701de741ef2252b6ff
