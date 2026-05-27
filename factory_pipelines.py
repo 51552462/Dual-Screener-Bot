@@ -40,9 +40,15 @@ def _step_artifact_guard() -> None:
     from factory_artifact_guard import ensure_factory_artifacts
 
     result = ensure_factory_artifacts()
-    if result.get("error") == "no_db":
+    err = result.get("error")
+    if err == "no_db":
         raise RuntimeError(
             f"factory_artifact_guard: market DB missing ({result.get('db')})"
+        )
+    if err == "schema_incomplete":
+        raise RuntimeError(
+            f"factory_artifact_guard: required tables missing "
+            f"({(result.get('schema') or {}).get('main')})"
         )
 
 

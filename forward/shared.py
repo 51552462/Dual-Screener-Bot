@@ -669,10 +669,11 @@ def _format_forward_ledger_error_html(context: str, exc: BaseException) -> str:
         f"<code>{html_escape(str(exc), quote=False)}</code>"
     )
 
-def init_forward_db():
-    """장부 테이블 생성 및 V12.0 필수 컬럼 안전 추가"""
+def init_forward_db(db_path: str | None = None):
+    """장부 테이블 생성 및 V12.0 필수 컬럼 안전 추가. db_path 생략 시 메인 market_data.sqlite."""
+    target = db_path or DB_PATH
     # 💡 [V25.0] Timeout 60초 대기열 및 WAL 모드 전면 활성화
-    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn = sqlite3.connect(target, timeout=60)
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")

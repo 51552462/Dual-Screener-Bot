@@ -10,7 +10,9 @@ import os
 import sqlite3
 import sys
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+from factory_data_paths import install_root
+
+_ROOT = install_root()
 
 
 def _backup_market_db() -> None:

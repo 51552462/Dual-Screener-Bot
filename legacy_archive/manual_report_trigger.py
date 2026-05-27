@@ -1,9 +1,13 @@
 import os
 import random
+import sys
 import time
 
+from factory_data_paths import install_root
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = install_root()
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 START_END_MSG = "🚨 [긴급 강제 보고] 전체 시스템 점검 및 리포트를 생성합니다..."
 
 

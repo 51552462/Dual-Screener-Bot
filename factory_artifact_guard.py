@@ -19,9 +19,16 @@ from factory_data_paths import (
     validated_live_mutants_path,
 )
 from flow_csv_rebuilder import rebuild_flow_csv_from_sqlite
-from market_db_paths import market_db_read_path
+from market_db_paths import MARKET_DATA_DB_PATH, market_db_read_path
 
 logger = logging.getLogger(__name__)
+
+
+def verify_market_db_schema(*, heal: bool = True) -> Dict[str, Any]:
+    """DB 파일 + forward_trades 등 필수 테이블 검문·Self-healing."""
+    from sqlite_schema_guard import ensure_market_db_core_schema
+
+    return ensure_market_db_core_schema(heal=heal, heal_snapshot=True)
 
 
 def _max_meta_age_hours() -> float:
@@ -152,15 +159,33 @@ def ensure_factory_artifacts(
         "meta": "skipped",
     }
 
+    schema_out = verify_market_db_schema(heal=True)
+    result["schema"] = schema_out
+    if not (schema_out.get("main") or {}).get("ok"):
+        result["error"] = "schema_incomplete"
+        result["csv"] = "failed"
+        result["meta"] = "failed"
+        logger.error(
+            "factory_artifact_guard: schema incomplete on main DB (%s): %s",
+            MARKET_DATA_DB_PATH,
+            (schema_out.get("main") or {}).get("missing"),
+        )
+        return result
+
     db_path = market_db_read_path()
     result["db"] = db_path
 
     if not db_path or not os.path.isfile(db_path):
-        result["error"] = "no_db"
-        result["csv"] = "failed"
-        result["meta"] = "failed"
-        logger.error("factory_artifact_guard: market DB missing (%s)", db_path)
-        return result
+        if os.path.isfile(MARKET_DATA_DB_PATH):
+            db_path = MARKET_DATA_DB_PATH
+            result["db"] = db_path
+            result["db_fallback"] = "main"
+        else:
+            result["error"] = "no_db"
+            result["csv"] = "failed"
+            result["meta"] = "failed"
+            logger.error("factory_artifact_guard: market DB missing (%s)", db_path)
+            return result
 
     csv_p = flow_csv_path()
     meta_p = meta_governor_state_path()

@@ -161,9 +161,9 @@ def attach_meta_health(
 
 
 def attach_oos_from_mutants(arms: List[ArmScorecard], sys_config: Optional[dict]) -> None:
-    import os
+    from factory_data_paths import validated_live_mutants_path
 
-    path = os.path.join(os.path.dirname(__file__), "validated_live_mutants.json")
+    path = validated_live_mutants_path()
     if not os.path.isfile(path):
         return
     try:

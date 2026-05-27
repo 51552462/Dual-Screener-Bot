@@ -9,14 +9,17 @@ import os
 import runpy
 import sys
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+from factory_data_paths import install_root
+
+_ROOT = install_root()
+_MAIN = os.path.join(_ROOT, "legacy_archive", "scanners", "main.py")
 
 
 def main() -> None:
     os.chdir(_ROOT)
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
-    runpy.run_path(os.path.join(_ROOT, "main.py"), run_name="__main__")
+    runpy.run_path(_MAIN, run_name="__main__")
 
 
 if __name__ == "__main__":
