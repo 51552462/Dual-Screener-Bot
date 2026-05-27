@@ -1,5 +1,5 @@
 [Unit]
-Description=Dante quant factory core (factory_launcher.py -> main.py)
+Description=Dante quant factory core (shell entrypoint wrapper)
 Documentation=file://@@INSTALL_ROOT@@/RUNBOOK.md
 After=network-online.target
 Wants=network-online.target
@@ -14,7 +14,7 @@ WorkingDirectory=@@INSTALL_ROOT@@
 Environment=QUANT_SKIP_INLINE_TELEGRAM_DAEMON=1
 Environment=DANTE_ASYNC_TELEGRAM_DAEMON=1
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/factory_launcher.py
+ExecStart=/bin/bash @@INSTALL_ROOT@@/deploy/entrypoints/run_factory_daemon.sh
 Restart=on-failure
 RestartSec=5
 KillMode=mixed
