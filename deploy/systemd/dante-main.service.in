@@ -1,5 +1,5 @@
 [Unit]
-Description=Dante quant factory — scanners & trading core (main.py)
+Description=Dante quant factory — scanners & trading core (shell entrypoint wrapper)
 Documentation=file://@@INSTALL_ROOT@@/RUNBOOK.md
 After=network-online.target
 Wants=network-online.target
@@ -12,7 +12,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=@@INSTALL_ROOT@@
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
-ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/main.py
+ExecStart=/bin/bash @@INSTALL_ROOT@@/deploy/entrypoints/run_main_service.sh
 Restart=on-failure
 RestartSec=5
 KillMode=mixed
