@@ -1,0 +1,43 @@
+# Dual-Screener-Bot — Factory crontab (paste into /etc/cron.d/dual-screener-factory)
+# Server path: set FACTORY to your clone directory. chmod +x factory.sh first.
+#
+# timedatectl may show UTC; CRON_TZ forces schedule interpretation in KST.
+#
+# US session (NYSE, KST approx.): regular ~23:30–06:00 (DST ±1h). Weekdays 2–6 = Tue–Sat KST
+# aligns with Mon–Fri US cash session.
+
+SHELL=/bin/bash
+CRON_TZ=Asia/Seoul
+PATH=/usr/local/bin:/usr/bin:/bin
+
+FACTORY=/home/ubuntu/Dual-Screener-Bot
+FACTORY_USER=ubuntu
+
+# --- KR live sniper (3× / day, Mon–Fri KST) ---
+25 10 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+0  13 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+0  15 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+
+# --- KR post-close audit (after 15:30 KST settle) ---
+# Pipeline: meta_governor_sync → guard → sentiment → spillover → track → deep_dive → report → overseer
+35 16 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-kr
+
+# --- US live sniper (3× / session, Tue–Sat KST ≈ Mon–Fri US) ---
+#   23:35 — 프리마켓·정규장 개장 부근 (NYSE open ~23:30 KST, DST 시 ±1h)
+#   02:30 — 장중 중반
+#   05:25 — 종가 직전
+35 23 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+30 2  * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+25 5  * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+
+# --- US post-close audit (US close → KST ~06:00; includes us_data_incremental before report) ---
+45 6 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-us
+
+# --- Weekly Flow master (Saturday, after optional brain surgery) ---
+5 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --weekly
+
+# --- Legacy weekend brain surgery (optional, keep separate from weekly) ---
+0 10 * * 6     ${FACTORY_USER}  cd ${FACTORY} && ${FACTORY}/venv/bin/python system_auto_pilot.py --run-autonomous-analysis-only >>${FACTORY}/logs/autonomous_${FACTORY_USER}.log 2>&1
+
+# Manual full daily (not scheduled — use when needed):
+#   cd ${FACTORY} && ./factory.sh --daily
