@@ -24,7 +24,9 @@ import numpy as np
 import pandas as pd
 import requests
 
-CONFIG_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json")
+from factory_data_paths import system_config_json_path
+
+CONFIG_PATH = system_config_json_path()
 
 try:
     import FinanceDataReader as fdr

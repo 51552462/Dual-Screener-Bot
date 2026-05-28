@@ -406,12 +406,16 @@ class ForwardScoreBucketDeepDive:
         없으면 기존 `tier` 열을 `_score_bucket`으로 복사.
         """
         out = df
+        score_src = None
         if "total_score" in df.columns and pd.to_numeric(df["total_score"], errors="coerce").notna().any():
+            score_src = pd.to_numeric(df["total_score"], errors="coerce")
+        elif "final_score" in df.columns and pd.to_numeric(df["final_score"], errors="coerce").notna().any():
+            score_src = pd.to_numeric(df["final_score"], errors="coerce")
+        if score_src is not None:
             out = df.copy()
-            score = pd.to_numeric(out["total_score"], errors="coerce")
             labels = [f"{t}점대" for t in range(10, 100, 10)]
             edges = [-np.inf] + list(range(20, 100, 10)) + [np.inf]
-            out["_score_bucket"] = pd.cut(score, bins=edges, labels=labels, right=False)
+            out["_score_bucket"] = pd.cut(score_src, bins=edges, labels=labels, right=False)
         elif "tier" in df.columns:
             out = df.copy()
             out["_score_bucket"] = out["tier"]

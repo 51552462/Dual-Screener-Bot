@@ -213,7 +213,7 @@ def compute_clamped_synergy_multiplier(
     """
     최종 점수에만 곱하는 클램프 배수. ENABLE_MACRO_SYNERGY_WEIGHTING 가 False 이면 항상 1.0.
     """
-    synergy_on = bool(cfg.get(ENABLE_MACRO_SYNERGY_WEIGHTING_KEY, False))
+    synergy_on = bool(cfg.get(ENABLE_MACRO_SYNERGY_WEIGHTING_KEY, True))
     meta: dict[str, Any] = {
         "synergy_enabled": synergy_on,
         "observe_only": not synergy_on,

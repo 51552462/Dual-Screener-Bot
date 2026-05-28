@@ -40,7 +40,7 @@ def zombie_retire_days_for_market(
                 return max(1, int(legacy))
             except (TypeError, ValueError):
                 pass
-    defaults = {"KR": 5, "US": 7, "BG": 10, "BG_SPOT": 10, "BG_FUT": 10}
+    defaults = {"KR": 14, "US": 21, "BG": 14, "BG_SPOT": 14, "BG_FUT": 21}
     return int(defaults.get(mk, defaults.get("BG", 10)))
 
 

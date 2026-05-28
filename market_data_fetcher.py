@@ -435,3 +435,24 @@ def us_benchmark_close_series(
         return s[~s.index.duplicated(keep="last")]
 
     return _close("SPY"), _close("QQQ"), _close("^VIX")
+
+
+def fetch_us_ticker_sector_industry(symbol: str) -> tuple[str, str]:
+    """
+    US 종목 Sector/Industry — yfinance info (리스트 생존·섹터 로테이션 SSOT 보강).
+    실패 시 ("", "").
+    """
+    sym = str(symbol or "").strip().upper().replace(".", "-")
+    if not sym:
+        return "", ""
+    try:
+        import yfinance as yf
+
+        with _upstream_http_sem:
+            info = yf.Ticker(sym).info or {}
+        sector = str(info.get("sector") or info.get("sectorDisp") or "").strip()
+        industry = str(info.get("industry") or info.get("industryDisp") or "").strip()
+        return sector, industry
+    except Exception as ex:
+        logger.debug("fetch_us_ticker_sector_industry %s: %s", sym, ex)
+        return "", ""

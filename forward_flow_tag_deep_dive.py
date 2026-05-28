@@ -11,8 +11,12 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+import logging
+
 from forward_market_guard import enforce_market_frame
 from reports.forward_report_scalar import col_series, scalar_float
+
+logger = logging.getLogger(__name__)
 from forward_score_bucket_deep_dive import _exit_date_span, _resolve_stock_name
 from reports.report_staleness_gate import StalenessVerdict, evaluate_staleness
 from reports.report_timekeeper import ReportTimekeeper
@@ -184,7 +188,14 @@ def _persist_flow_tag_toxic_registry(
     try:
         save_config_fn(cfg)
         return True, reg_key
-    except Exception:
+    except Exception as ex:
+        logger.error(
+            "FLOW_TAG_TOXIC_REGISTRY persist failed market=%s tag=%s: %s",
+            market,
+            toxic.tag,
+            ex,
+            exc_info=True,
+        )
         return False, reg_key
 
 
@@ -293,7 +304,7 @@ def build_flow_tag_snapshot(
     work = enforce_market_frame(df, market, context="flow_tag_snapshot")
     exit_min, exit_max = _exit_date_span(work) if work is not None and len(work) else (None, None)
 
-    if staleness.grade == "RED":
+    if staleness.grade == "RED" and not getattr(staleness, "allow_flow_tag", False):
         return _empty_snapshot(
             timekeeper,
             staleness,

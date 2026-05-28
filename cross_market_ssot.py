@@ -378,3 +378,56 @@ def build_kr_spillover_prompt_block(sys_config: Optional[Dict[str, Any]] = None)
         },
         ensure_ascii=False,
     )
+
+
+def resolve_kr_spillover_target_std(sys_config: Optional[Dict[str, Any]] = None) -> str:
+    """
+    KR 가상매매·스캐너가 비교해야 할 표준 섹터 (US raw ≠ KR std 버그 방지).
+    CROSS_MARKET_SSOT.kr_sector_std 우선, 없으면 us_kr_theme_bridge 매핑.
+    """
+    ssot = load_cross_market_ssot(sys_config)
+    kr = str(ssot.get("kr_sector_std") or "").strip()
+    if kr and kr != "기타/혼합" and is_valid_sector_label(kr):
+        return kr
+    cfg: Dict[str, Any]
+    if isinstance(sys_config, dict):
+        cfg = sys_config
+    else:
+        try:
+            from config_manager import load_system_config
+
+            cfg = load_system_config() or {}
+        except Exception:
+            cfg = {}
+    us_raw = str(
+        cfg.get("US_SPILLOVER_SECTOR") or cfg.get("US_SPILLOVER_SECTOR_LAST_GOOD") or ""
+    ).strip()
+    if is_valid_sector_label(us_raw):
+        from us_kr_theme_bridge import map_us_sector_to_kr_std
+
+        kr_std, _conf = map_us_sector_to_kr_std(us_raw)
+        if kr_std and kr_std != "기타/혼합":
+            return kr_std
+    return ""
+
+
+def kr_stock_matches_spillover(
+    stock_sector: Any,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """KR 종목 섹터가 US→KR 스필오버 타깃(표준축·playbook)과 정렬되는지."""
+    target = resolve_kr_spillover_target_std(sys_config)
+    if not target:
+        return False
+    from sector_spillover_refresh import map_standard_sector
+
+    std = map_standard_sector(stock_sector)
+    if std == target:
+        return True
+    ssot = load_cross_market_ssot(sys_config)
+    blob = f"{std} {stock_sector}".lower()
+    for play in ssot.get("kr_play_targets") or []:
+        p = str(play or "").strip()
+        if len(p) >= 2 and p.lower() in blob:
+            return True
+    return False

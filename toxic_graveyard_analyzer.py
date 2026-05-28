@@ -13,18 +13,8 @@ from sklearn.inspection import permutation_importance
 from sklearn.tree import DecisionTreeClassifier, _tree
 from datetime import datetime, timedelta
 
-try:
-    from config_manager import CONFIG_PATH
-except Exception:
-    CONFIG_PATH = os.path.join(
-        os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json"
-    )
-
-try:
-    from market_db_paths import market_db_read_path
-except Exception:
-    def market_db_read_path() -> str:
-        return os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
+from config_manager import CONFIG_PATH
+from market_db_paths import market_db_read_path
 
 
 def _forward_trades_db_uri_ro() -> str:

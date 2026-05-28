@@ -99,6 +99,52 @@ def _step_kr_cross_market_hydrate() -> None:
     hydrate_kr_runtime_from_ssot()
 
 
+def _step_cross_market_theme_snapshot() -> None:
+    """
+    US forward DB → spillover KV → us_kr_theme_bridge → CROSS_MARKET_SSOT + sqlite snapshot.
+    KR 스캐너/가상매매가 US 주도 테마를 실제 가중치에 쓰도록 SSOT 재발행.
+    """
+    from cross_market_ssot import (
+        ensure_cross_market_schema,
+        hydrate_kr_runtime_from_ssot,
+        publish_us_market_snapshot,
+    )
+    from sector_spillover_refresh import refresh_sector_spillover_state
+
+    ensure_cross_market_schema()
+    spill = refresh_sector_spillover_state(save=True)
+    ssot = publish_us_market_snapshot(source="factory_theme_snapshot", save=True)
+    hydrate_kr_runtime_from_ssot()
+    print(
+        f"🌐 [Factory] cross_market_theme_snapshot: spill={spill.get('reason')} "
+        f"mode={ssot.get('mode')} kr_std={ssot.get('kr_sector_std')}"
+    )
+
+
+def _step_sync_us_toxic_ml_ssot() -> None:
+    """us_toxic_ml_antipatterns.json → system_config (blackhole/ graveyard 산출물 반영)."""
+    import json
+    import os
+
+    from config_manager import load_system_config, save_system_config
+
+    cfg = load_system_config() or {}
+    root = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(root, "us_toxic_ml_antipatterns.json")
+    if not os.path.isfile(path):
+        print(f"💡 [Factory] us_toxic_ml SSOT skip: missing {path}")
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        cfg["US_TOXIC_ML_ANTIPATTERNS"] = payload
+        save_system_config(cfg)
+        n_rules = len(payload.get("rules", payload)) if isinstance(payload, dict) else 0
+        print(f"🧪 [Factory] US_TOXIC_ML_ANTIPATTERNS synced ({n_rules} rules)")
+    except (OSError, json.JSONDecodeError) as ex:
+        print(f"⚠️ [Factory] us_toxic_ml sync failed: {ex}")
+
+
 _US_CROSS_MARKET_PUBLISH = StepSpec(
     "us_cross_market_publish",
     _step_us_cross_market_publish,
@@ -109,6 +155,20 @@ _US_CROSS_MARKET_PUBLISH = StepSpec(
 _KR_CROSS_MARKET_HYDRATE = StepSpec(
     "kr_cross_market_hydrate",
     _step_kr_cross_market_hydrate,
+    critical=False,
+    delay_after_sec=0.0,
+)
+
+_CROSS_MARKET_THEME_SNAPSHOT = StepSpec(
+    "cross_market_theme_snapshot",
+    _step_cross_market_theme_snapshot,
+    critical=False,
+    delay_after_sec=0.5,
+)
+
+_SYNC_US_TOXIC_ML = StepSpec(
+    "sync_us_toxic_ml_ssot",
+    _step_sync_us_toxic_ml_ssot,
     critical=False,
     delay_after_sec=0.0,
 )
@@ -166,16 +226,41 @@ _COMPREHENSIVE_REPORT = StepSpec(
 )
 
 
-def _step_pil_practitioner_reports() -> None:
+def _step_pil_practitioner_reports(*, markets: tuple[str, ...] = ("KR", "US")) -> None:
     """PIL 실무자 리포트 + ZOMBIE → Kelly=0 / RETIRED (MetaGovernor 자동 반영)."""
     from auto_forward_tester import send_group_practitioner_reports
 
-    send_group_practitioner_reports(cleanup_zombie_trades=False)
+    send_group_practitioner_reports(
+        cleanup_zombie_trades=False,
+        markets=markets,
+    )
+
+
+def _step_pil_kr() -> None:
+    _step_pil_practitioner_reports(markets=("KR",))
+
+
+def _step_pil_us() -> None:
+    _step_pil_practitioner_reports(markets=("US",))
 
 
 _PIL_PRACTITIONER = StepSpec(
     "pil_practitioner_reports",
-    _step_pil_practitioner_reports,
+    lambda: _step_pil_practitioner_reports(markets=("KR", "US")),
+    critical=False,
+    delay_after_sec=2.0,
+)
+
+_PIL_PRACTITIONER_KR = StepSpec(
+    "pil_practitioner_reports_kr",
+    _step_pil_kr,
+    critical=False,
+    delay_after_sec=2.0,
+)
+
+_PIL_PRACTITIONER_US = StepSpec(
+    "pil_practitioner_reports_us",
+    _step_pil_us,
     critical=False,
     delay_after_sec=2.0,
 )
@@ -278,6 +363,7 @@ def _with_kr_spillover_prerequisite(steps: List[StepSpec]) -> List[StepSpec]:
             delay_after_sec=1.0,
         ),
         _US_CROSS_MARKET_PUBLISH,
+        _CROSS_MARKET_THEME_SNAPSHOT,
         _KR_CROSS_MARKET_HYDRATE,
         *steps,
     ]
@@ -299,13 +385,48 @@ def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
         StepSpec("us_health_gate_daily", lambda: _step_us_health_gate("daily"), critical=False, delay_after_sec=0.5),
         StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
         _US_DATA_INCREMENTAL,
-        *_with_us_spillover_tail(steps),
+        _SYNC_US_TOXIC_ML,
+        *_with_us_spillover_tail([*steps, _CROSS_MARKET_THEME_SNAPSHOT]),
     ]
 
 
+_META_SYNC_SCAN = StepSpec(
+    "meta_governor_sync_scan",
+    _step_meta_governor_sync,
+    critical=False,
+    delay_after_sec=0.5,
+)
+
+
 def _with_scan_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
-    """scan-us: guard → health → repair → 증분 OHLCV → supernova."""
-    return [_US_HEALTH_GATE, _US_HEALTH_REPAIR, _US_DATA_INCREMENTAL, *steps]
+    """scan-us: meta → health → repair → 증분 OHLCV → supernova → doomsday (KR scan 대칭)."""
+    return [
+        _META_SYNC_SCAN,
+        _US_HEALTH_GATE,
+        _US_HEALTH_REPAIR,
+        _US_DATA_INCREMENTAL,
+        _SYNC_US_TOXIC_ML,
+        *steps,
+        _CROSS_MARKET_THEME_SNAPSHOT,
+        _DOOMSDAY_BRIDGE,
+    ]
+
+
+def _with_scan_kr_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    """scan-kr: meta → US track/spillover/theme → KR hydrate → supernova → doomsday."""
+    return [
+        _META_SYNC_SCAN,
+        StepSpec(
+            "track_daily_positions_us_prereq_kr_scan",
+            _step_track_us,
+            critical=False,
+            delay_after_sec=2.0,
+        ),
+        _CROSS_MARKET_THEME_SNAPSHOT,
+        _KR_CROSS_MARKET_HYDRATE,
+        *steps,
+        _DOOMSDAY_BRIDGE,
+    ]
 
 
 def _step_supernova_kr() -> None:
@@ -387,7 +508,7 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
                 StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
                 _DOOMSDAY_BRIDGE,
                 _REPORTER_CLEANUP_ZOMBIE,
-                _PIL_PRACTITIONER,
+                _PIL_PRACTITIONER_KR,
                 _COMPREHENSIVE_REPORT,
                 StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
             ]
@@ -402,7 +523,7 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
             _DOOMSDAY_BRIDGE,
             _REPORTER_CLEANUP_ZOMBIE,
-            _PIL_PRACTITIONER,
+            _PIL_PRACTITIONER_US,
             _COMPREHENSIVE_REPORT,
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
         ]
@@ -450,11 +571,12 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
             )
         ),
         "scan_kr": _with_artifact_guard(
-            [
-                _KR_CROSS_MARKET_HYDRATE,
-                StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
-                StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
-            ]
+            _with_scan_kr_prelude(
+                [
+                    StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
+                    StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
+                ]
+            )
         ),
         "daily_audit_kr": daily_kr,
         "daily_audit_us": daily_us,

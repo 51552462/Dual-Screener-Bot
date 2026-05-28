@@ -41,7 +41,8 @@ def _load_time_machine_cache() -> dict:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as ex:
+        logger.warning("time_machine cache load failed: %s", ex)
         return {}
 
 
@@ -581,7 +582,9 @@ def evolve_alpha_factors():
 
     def _forward_elite_gate():
         """알파 융합 태그 청산 건이 장부에서 양호하면 기존 EVOLVED 알파 엘리트 보존."""
-        dbp = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+        from market_db_paths import MARKET_DATA_DB_PATH
+
+        dbp = MARKET_DATA_DB_PATH
         if not os.path.exists(dbp):
             return False
         try:
@@ -719,23 +722,77 @@ def evolve_alpha_factors():
 # ==========================================
 def get_krx_list():
     """FDR → 캐시 CSV → sqlite KR_* 테이블명 역추출 (KIND HTTP 의존 제거)."""
-    from krx_list_survival import DEFAULT_DB_PATH, collect_krx_list_survival
+    from krx_list_survival import collect_krx_list_survival
+    from market_db_paths import MARKET_DATA_DB_PATH
 
     junk_pattern = (
         r"스팩|ETN|ETF|우$|홀딩스|리츠|선물|인버스|제[0-9]+호|신주인수권"
     )
     try:
         df, _src = collect_krx_list_survival(
-            db_path=DEFAULT_DB_PATH,
+            db_path=MARKET_DATA_DB_PATH,
             junk_pattern=junk_pattern,
             fdr_module=fdr,
         )
         if df is None or df.empty:
             return pd.DataFrame(columns=["Code", "Name"])
-        out = df[["Code", "Name"]].drop_duplicates("Code")
-        return out
+        cols = ["Code", "Name"]
+        for c in ("Sector", "Industry", "Market", "Marcap"):
+            if c in df.columns:
+                cols.append(c)
+        return df[cols].drop_duplicates("Code")
     except Exception:
         return pd.DataFrame(columns=["Code", "Name"])
+
+def _resolve_enroll_sector(market: str, code: object, stock_list: "pd.DataFrame") -> str:
+    """
+    가상매매 편입 시 섹터 — 기본값 '유망섹터 포착'만 쓰면 스필오버·순환매 가중이 영구 무력화됨.
+    우선순위: 최근 forward_trades → universe Sector/Industry → placeholder.
+    """
+    import sqlite3
+
+    import auto_forward_tester as aft
+    from sector_spillover_refresh import map_standard_sector
+
+    mk = str(market or "KR").upper()
+    raw_code = str(code).strip()
+    code_key = raw_code.zfill(6) if mk == "KR" else raw_code
+
+    try:
+        conn = sqlite3.connect(aft.DB_PATH, timeout=15)
+        try:
+            row = conn.execute(
+                """
+                SELECT sector FROM forward_trades
+                WHERE market=? AND code=?
+                  AND sector IS NOT NULL AND TRIM(sector) != ''
+                  AND sector NOT LIKE '%유망%' AND sector NOT LIKE '%포착%'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (mk, code_key),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row[0]:
+            return map_standard_sector(str(row[0]))
+    except Exception as ex:
+        logger.debug("enroll sector DB lookup %s %s: %s", mk, code_key, ex)
+
+    if stock_list is not None and not stock_list.empty and "Code" in stock_list.columns:
+        sub = stock_list[stock_list["Code"].astype(str).str.strip() == raw_code]
+        if sub.empty and mk == "KR":
+            sub = stock_list[stock_list["Code"].astype(str).str.strip() == code_key]
+        if not sub.empty:
+            for col in ("Sector", "Industry", "sector", "Market"):
+                if col not in sub.columns:
+                    continue
+                val = sub.iloc[0].get(col)
+                if val is not None and str(val).strip().lower() not in ("", "nan", "none"):
+                    mapped = map_standard_sector(val)
+                    if mapped and mapped != "기타/혼합":
+                        return mapped
+    return "유망섹터 포착"
+
 
 def get_us_list():
     try:
@@ -745,7 +802,11 @@ def get_us_list():
         df, src = collect_us_list_survival(db_path=MARKET_DATA_DB_PATH, fdr_module=fdr)
         if df is not None and len(df) >= 50:
             print(f"🇺🇸 [US universe] {len(df)} rows (source={src})")
-            return df[["Code", "Name"]].drop_duplicates("Code")
+            cols = ["Code", "Name"]
+            for c in ("Sector", "Industry", "Market"):
+                if c in df.columns:
+                    cols.append(c)
+            return df[cols].drop_duplicates("Code")
     except Exception as e:
         print(f"⚠️ get_us_list survival: {e}")
     try:
@@ -755,7 +816,12 @@ def get_us_list():
         df = pd.concat([df_nasdaq, df_nyse, df_amex])
         df = df[df["Symbol"].str.isalpha()]
         df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)
-        return df[["Symbol", "Name"]].rename(columns={"Symbol": "Code"}).drop_duplicates("Code")
+        out = df.rename(columns={"Symbol": "Code"})
+        cols = ["Code", "Name"]
+        for c in ("Sector", "Industry"):
+            if c in out.columns:
+                cols.append(c)
+        return out[cols].drop_duplicates("Code")
     except Exception:
         return pd.DataFrame()
 
@@ -1052,7 +1118,9 @@ def hunt_supernovas(market):
 
     # 👇👇 [수술 지점: V102.0 머신러닝을 위한 순도 100% 팩트 CSV 추출 파이프라인] 👇👇
     try:
-        csv_path = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
+        from factory_data_paths import flow_csv_path
+
+        csv_path = flow_csv_path()
         csv_data = []
         
         # data_miner.py가 정확히 읽을 수 있도록 한글 컬럼명 1:1 완벽 매핑
@@ -1271,6 +1339,13 @@ def execute_supernova_live_scan(market):
     # 관제탑 컷오프(정규직/인큐베이터 기본 밸브에 사용)
     dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
     dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+    try:
+        from scanner_synergy_engine import load_scan_synergy_context
+
+        _scan_synergy_ctx = load_scan_synergy_context(config, market)
+    except Exception as _syn_load_ex:
+        logger.warning("[%s] scan synergy context skip: %s", market, _syn_load_ex)
+        _scan_synergy_ctx = None
 
     # DNA_ALPHA_ / NEW_EVOLUTION_ 정규직 승격 템플릿 — 이상형 3D + 스나이퍼 cos_cutoff 밸브
     ideal_template_cutoffs = {}
@@ -1402,7 +1477,8 @@ def execute_supernova_live_scan(market):
             defcon = int(defcon)
         except (TypeError, ValueError):
             defcon = 5
-        if defcon <= 2:
+        # DEFCON 1만 스캔 전면 중단. 2 이하는 신호 산출 유지(가상매매 gate에서 soft-fail).
+        if defcon <= 1:
             with _doomsday_halt_lock:
                 if not _doomsday_halt_notified[0]:
                     _doomsday_halt_notified[0] = True
@@ -1424,7 +1500,7 @@ def execute_supernova_live_scan(market):
                         'final_score': 0,
                         'current_close': 0,
                         'facts': {},
-                        'msg_type': "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단.",
+                        'msg_type': "🛑 매크로 신용경색 경보 (DEFCON 1). 팩토리 롱 포지션 전면 차단.",
                         'trade_source': "DOOMSDAY_HALT",
                     }
             funnel.drop("DOOMSDAY_HALT")
@@ -1471,44 +1547,48 @@ def execute_supernova_live_scan(market):
             if market == 'KR' and current_close < 1000:
                 funnel.drop("LIQUIDITY")
                 return None
-            if market == 'US' and current_close < 1.0:
+            if market == 'US' and current_close < 0.5:
                 funnel.drop("LIQUIDITY")
                 return None
-            if np.mean(v[-5:]) < 50000:
+            # KR: 5일 평균 거래량(주). US: KRW 5만주 기준을 그대로 쓰면 고가·저유동 미국주 대량 탈락.
+            _min_vol = 50_000.0
+            if market == 'US':
+                _us_dollar_floor = 300_000.0
+                _min_vol = max(2_000.0, _us_dollar_floor / max(float(current_close), 0.01))
+            if np.mean(v[-5:]) < _min_vol:
                 funnel.drop("LIQUIDITY")
                 return None
             
-            # DNA 벡터 3차원 추출
-            v_ma20 = pd.Series(v).rolling(20).mean().values
-            cpv = np.where(h != l, (c - o) / (h - l), 0.5)[-1]
-            
-            # 👇👇 [V102.2 버그 픽스] 장중 시간대별 거래량 동적 외삽법(Extrapolation) 엔진 👇👇
+            # DNA 벡터 3차원 추출 (실패 시 scan_resilience 폴백 — 종목 전체 폐기 방지)
             tz_market = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
             now_mkt = datetime.now(tz_market)
-            
-            # 개장 시간 세팅 (한국장 09:00, 미국장 09:30)
-            open_h = 9
-            open_m = 0 if market == 'KR' else 30
-            
-            # 장 시작 후 몇 분이나 지났는지 계산
-            elapsed_mins = (now_mkt.hour - open_h) * 60 + (now_mkt.minute - open_m)
-            
-            # 정규장 총 시간은 390분 (6.5시간). 에러 방지를 위해 1~390분 사이로 강력한 캡(Cap) 씌우기
-            elapsed_mins = max(1, min(390, elapsed_mins))
-            
-            # 💡 핵심: 현재 거래량을 남은 시간 비율만큼 뻥튀기하여 '오늘 마감 예상 거래량' 산출
-            # (예: 오전 9시 30분이라면 30분 경과 -> 390/30 = 13배 보정)
-            est_daily_volume = v[-1] * (390.0 / elapsed_mins)
-            
-            # 기존의 날것(v[-1]) 대신 보정된 예상 거래량(est_daily_volume)을 20일 평균과 대조!
-            vol_mult = (est_daily_volume / v_ma20[-1]) if v_ma20[-1] > 0 else 1.0
-            # 👆👆 [외삽법 패치 완료] 👆👆
-            
-            tb = vol_mult / max(cpv, 0.01) if cpv > 0 else vol_mult / 0.01
-            bb_std = pd.Series(c).rolling(20).std().values[-1]
-            bb_mid = pd.Series(c).rolling(20).mean().values[-1]
-            bb_width = (4 * bb_std) / bb_mid if bb_mid > 0 else 0.01
-            bbe = (1.0 / bb_width) * vol_mult if bb_width > 0 else 0
+            from scan_resilience import fallback_dna_features, safe_supernova_dna_features
+
+            _dna = safe_supernova_dna_features(df, market=market, now_mkt=now_mkt)
+            if _dna is None:
+                _dna = fallback_dna_features(df)
+                logger.debug("[%s] DNA fallback defaults code=%s", market, code)
+            cpv = float(_dna["cpv"])
+            tb = float(_dna["tb"])
+            bbe = float(_dna["bbe"])
+            current_close = float(_dna.get("current_close", current_close))
+
+            eff_cos_cutoff = float(dynamic_cos_cutoff)
+            eff_ml_cutoff = float(dynamic_ml_cutoff)
+            _scan_bonus_pts = 0.0
+            _sector_live = _resolve_enroll_sector(market, code, stock_list)
+            if _scan_synergy_ctx is not None:
+                try:
+                    from scanner_synergy_engine import per_ticker_scan_adjustments
+
+                    _syn_adj = per_ticker_scan_adjustments(
+                        _scan_synergy_ctx, sector=_sector_live, cfg=config
+                    )
+                    eff_cos_cutoff *= float(_syn_adj.cos_cutoff_mult)
+                    eff_ml_cutoff *= float(_syn_adj.ml_cutoff_mult)
+                    _scan_bonus_pts = float(_syn_adj.score_bonus_pts)
+                except Exception as _syn_tick_ex:
+                    logger.debug("per_ticker synergy %s: %s", code, _syn_tick_ex)
 
             dyn_rs_live = _approx_dyn_rs_vs_benchmark(df, benchmark_close_sr)
             if _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_live, market=market):
@@ -1538,7 +1618,7 @@ def execute_supernova_live_scan(market):
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name
-                t_cut = ideal_template_cutoffs.get(t_name, dynamic_cos_cutoff)
+                t_cut = ideal_template_cutoffs.get(t_name, eff_cos_cutoff)
                 if sim >= t_cut:
                     is_pass_cosine = True
                     # 💡 [핵심] 인큐베이터(돌연변이)는 발견 즉시 우선순위 부여 (일반 템플릿에 이름이 덮어씌워지는 것 방지)
@@ -1584,7 +1664,7 @@ def execute_supernova_live_scan(market):
                         ml_match_count += 1
                 ml_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
                 
-                if ml_score >= dynamic_ml_cutoff:
+                if ml_score >= eff_ml_cutoff:
                     is_pass_ml_box = True
                     ml_pattern_name = c_name
                     break
@@ -1601,7 +1681,7 @@ def execute_supernova_live_scan(market):
                     if bounds.get('v_energy_min', -99) <= bbe <= bounds.get('v_energy_max', 999): ml_match_count += 1
                     
                     ud_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
-                    if ud_score >= dynamic_ml_cutoff:
+                    if ud_score >= eff_ml_cutoff:
                         is_pass_ml_box = True
                         is_underdog = True
                         ml_pattern_name = c_name
@@ -1673,19 +1753,21 @@ def execute_supernova_live_scan(market):
 
                 if is_underdog:
                     final_sig = f"[UNDERDOG_MLBOX] 🧟{ml_pattern_name}"
-                    final_score = ml_score * 100
-                    msg_type = f"🧟 언더독 반란 포착 (기준:{dynamic_ml_cutoff*100:.0f}%)"
+                    final_score = ml_score * 100 + _scan_bonus_pts
+                    msg_type = f"🧟 언더독 반란 포착 (기준:{eff_ml_cutoff*100:.0f}%)"
                 elif is_pass_ml_box:
                     final_sig = f"[SUPERNOVA_MLBOX] 🤖{ml_pattern_name}"
-                    final_score = ml_score * 100
-                    msg_type = f"🤖 ML 클러스터 통과 (기준:{dynamic_ml_cutoff*100:.0f}%)"
+                    final_score = ml_score * 100 + _scan_bonus_pts
+                    msg_type = f"🤖 ML 클러스터 통과 (기준:{eff_ml_cutoff*100:.0f}%)"
                 else:
                     _cos_label = best_pass_name if best_pass_name != "UNKNOWN" else best_pattern_name
                     _cos_sim = best_pass_sim if best_pass_name != "UNKNOWN" else best_sim
                     final_sig = f"[SUPERNOVA_COSINE] {_cos_label}"
-                    final_score = _cos_sim * 100
-                    _cut_used = ideal_template_cutoffs.get(_cos_label, dynamic_cos_cutoff)
+                    final_score = _cos_sim * 100 + _scan_bonus_pts
+                    _cut_used = ideal_template_cutoffs.get(_cos_label, eff_cos_cutoff)
                     msg_type = f"🦅 코사인 컷오프 통과 (기준:{float(_cut_used)*100:.0f}%)"
+                if _scan_bonus_pts > 0:
+                    msg_type = f"🌐시너지+{_scan_bonus_pts:.0f}pt | " + msg_type
 
                 if (not is_pass_ml_box) and str(best_pass_name).startswith("INCUBATOR_"):
                     fdict["incubator_sniper_key"] = str(best_pass_name)[len("INCUBATOR_"):]
@@ -1722,7 +1804,14 @@ def execute_supernova_live_scan(market):
                     'trade_source': "UNDERDOG" if is_underdog else "SUPERNOVA",
                 }
             return None
-        except Exception:
+        except Exception as _live_tick_ex:
+            logger.warning(
+                "process_live_ticker failed market=%s code=%s: %s",
+                market,
+                code,
+                _live_tick_ex,
+                exc_info=True,
+            )
             funnel.drop("DATA_FAIL")
             return None
 
@@ -1755,6 +1844,15 @@ def execute_supernova_live_scan(market):
         if 'TOXIC_TRAP' in str(target.get('final_sig', '')):
             funnel.set_pipeline_result(str(target['code']), "SKIPPED_TOXIC")
             continue
+        enroll_sector = _resolve_enroll_sector(market, target["code"], stock_list)
+        try:
+            from cross_market_ssot import kr_stock_matches_spillover
+
+            if market == "KR" and kr_stock_matches_spillover(enroll_sector, config):
+                target["final_sig"] = str(target.get("final_sig", "")) + " [🌐스필오버 선취매]"
+        except Exception as _sp_tag_ex:
+            logger.debug("spillover tag skip %s: %s", target.get("code"), _sp_tag_ex)
+
         is_success, msg = aft.try_add_virtual_position(
             market=market,
             code=target['code'],
@@ -1763,6 +1861,7 @@ def execute_supernova_live_scan(market):
             score=target['final_score'],
             ep=target['current_close'],
             facts=target['facts'],
+            sector=enroll_sector,
             trade_source=target.get('trade_source', "SUPERNOVA"),
             satellite_tags=shadow_tracking.build_satellite_tags(config),
         )
