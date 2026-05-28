@@ -29,7 +29,9 @@ from yf_download_flatten import flatten_yf_download_df, yf_close_series
 # ==========================================
 TELEGRAM_TOKEN_MAIN = telegram_env.get_report_token()
 TELEGRAM_CHAT_ID = telegram_env.get_report_chat_id()
-DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+from factory_data_paths import market_data_db_path
+
+DB_PATH = market_data_db_path()
 from config_manager import load_system_config as load_system_config_kv
 from inverse_etf_sniper import run_inverse_etf_sniper_cycle
 from shadow_tracking import record_ops_snapshot_from_live_state

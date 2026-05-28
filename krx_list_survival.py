@@ -13,9 +13,10 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-DEFAULT_DB_PATH = os.path.join(
-    os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite"
-)
+from market_db_paths import MARKET_DATA_DB_PATH
+
+# SSOT: factory_data_dir() → market_data.sqlite (ENV-02)
+DEFAULT_DB_PATH = MARKET_DATA_DB_PATH
 KRX_LIST_CACHE_BASENAME = "krx_list_cache.csv"
 
 _CODE_RE = re.compile(r"^KR_(\d{6})$")
@@ -76,7 +77,29 @@ def _normalize_columns(d: pd.DataFrame) -> pd.DataFrame:
             d["Marcap"].astype(str).str.replace(",", "", regex=False)
         )
     d["Marcap"] = pd.to_numeric(d["Marcap"], errors="coerce").fillna(0.0)
+    for src, dst in (
+        ("Sector", "Sector"),
+        ("Industry", "Industry"),
+        ("업종", "Sector"),
+        ("sector", "Sector"),
+        ("industry", "Industry"),
+    ):
+        if src in d.columns and dst not in d.columns:
+            d[dst] = d[src]
+    if "Sector" in d.columns:
+        d["Sector"] = d["Sector"].astype(str).str.strip()
+        d.loc[d["Sector"].isin(("", "nan", "None", "none")), "Sector"] = pd.NA
+    if "Industry" not in d.columns and "Sector" in d.columns:
+        d["Industry"] = d["Sector"]
     return d.drop_duplicates(subset=["Code"], ignore_index=True)
+
+
+def _kr_list_output_columns(df: pd.DataFrame) -> list:
+    base = ["Code", "Name", "Market", "Marcap"]
+    for c in ("Sector", "Industry"):
+        if c in df.columns:
+            base.append(c)
+    return base
 
 
 def _finalize_standard(
@@ -88,7 +111,7 @@ def _finalize_standard(
     out["Marcap"] = pd.to_numeric(out["Marcap"], errors="coerce").fillna(0.0)
     if apply_junk_filter:
         out = filter_krx_equity_universe(out)
-    cols = [c for c in ("Code", "Name", "Market", "Marcap") if c in out.columns]
+    cols = _kr_list_output_columns(out)
     return out[cols].dropna(subset=["Code", "Name", "Market"])
 
 
@@ -122,6 +145,8 @@ def _stage3_sqlite_codes(db_path: str) -> pd.DataFrame | None:
             "Name": uq,
             "Market": "KRX",
             "Marcap": 0.0,
+            "Sector": pd.NA,
+            "Industry": pd.NA,
         }
     )
     return tab
@@ -177,12 +202,17 @@ def _fetch_from_naver_finance() -> pd.DataFrame:
                         except Exception:
                             pass
 
+                    sector = ""
+                    if len(cols) >= 2:
+                        sector = str(cols[1].text or "").strip()
                     result.append(
                         {
                             "Code": code,
                             "Name": name,
                             "Market": mkt,
                             "Marcap": marcap,
+                            "Sector": sector or pd.NA,
+                            "Industry": sector or pd.NA,
                         }
                     )
 

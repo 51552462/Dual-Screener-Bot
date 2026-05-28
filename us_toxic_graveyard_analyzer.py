@@ -21,7 +21,9 @@ from sklearn.inspection import permutation_importance
 from sklearn.tree import DecisionTreeClassifier, _tree
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
+from market_db_paths import MARKET_DATA_DB_PATH
+
+DB_PATH = MARKET_DATA_DB_PATH
 OUTPUT_JSON = os.path.join(_THIS_DIR, "us_toxic_ml_antipatterns.json")
 
 MIN_RULES_REQUIRED = 3

@@ -13,9 +13,12 @@ from sklearn.preprocessing import StandardScaler
 # =====================================================================
 # 1. 환경 설정 및 데이터 로드
 # =====================================================================
-CSV_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'Supernova_Flow_Tracking_Master.csv')
-CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'system_config.json')
-FORWARD_DB_PATH = os.path.join(os.path.expanduser('~'), 'dante_bots', 'Dual-Screener-Bot', 'market_data.sqlite')
+from factory_data_paths import flow_csv_path, system_config_json_path
+from market_db_paths import MARKET_DATA_DB_PATH
+
+CSV_PATH = flow_csv_path()
+CONFIG_PATH = system_config_json_path()
+FORWARD_DB_PATH = MARKET_DATA_DB_PATH
 
 
 def _ohlcv_table_name(market, code) -> str:

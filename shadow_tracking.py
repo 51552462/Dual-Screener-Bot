@@ -12,12 +12,7 @@ from datetime import datetime
 
 import low_ram_sqlite_pragmas
 
-try:
-    from market_db_paths import MARKET_DATA_DB_PATH as DB_PATH
-except ImportError:
-    DB_PATH = os.path.join(
-        os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite"
-    )
+from market_db_paths import MARKET_DATA_DB_PATH as DB_PATH
 
 _OPS_DB_PATH = DB_PATH
 

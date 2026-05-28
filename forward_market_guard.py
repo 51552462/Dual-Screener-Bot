@@ -105,7 +105,7 @@ def enforce_market_frame(
             event="market.contamination.scrub",
             payload={"context": ctx, "market": mkt, "removed": n_leak, "sample": sample},
         )
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug("%s: ops_logger skip: %s", ctx, ex)
 
     return out.loc[~leak_mask].copy()

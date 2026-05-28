@@ -195,7 +195,7 @@ def compute_vitality(
 
     thr = float(profile.zombie_vitality_threshold)
     is_zombie = score < thr or (
-        active_days < max(3, lookback // 10) and open_cnt >= 5 and turnover < 0.12
+        active_days < max(2, lookback // 15) and open_cnt >= 8 and turnover < 0.04
     )
     status = "ZOMBIE" if is_zombie else ("ACTIVE" if score >= 0.55 else "WATCH")
     return score, is_zombie, status, wr_trend_pp, active_days, turnover, stale_ratio

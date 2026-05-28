@@ -69,12 +69,7 @@ US_FINANCE_RSS_URLS = [
 # Naver + BOK + Fed + US 한 블록; 과도한 토큰 방지
 MAX_HEADLINES_FOR_GEMINI = 64
 
-try:
-    from market_db_paths import market_db_read_path
-except Exception:
-
-    def market_db_read_path() -> str:
-        return os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "market_data.sqlite")
+from market_db_paths import market_db_read_path
 
 
 # `toxic_graveyard_analyzer._sector_bucket_for_tree` 와 동일 버킷 라벨 (증권 도메인 테마 프록시).

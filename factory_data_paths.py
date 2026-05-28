@@ -88,3 +88,19 @@ def system_config_json_path() -> str:
 
 def validated_live_mutants_path() -> str:
     return os.path.join(install_root(), "validated_live_mutants.json")
+
+
+def market_data_db_path() -> str:
+    """OHLCV + forward_trades SSOT (`market_db_paths.MARKET_DATA_DB_PATH`)."""
+    from market_db_paths import MARKET_DATA_DB_PATH
+
+    return MARKET_DATA_DB_PATH
+
+
+def short_data_db_path() -> str:
+    """blackhole_hunter 숏 후보 DB."""
+    return os.path.join(factory_data_dir(), "short_data.sqlite")
+
+
+def alt_data_db_path() -> str:
+    return os.path.join(factory_data_dir(), "alt_data.sqlite")

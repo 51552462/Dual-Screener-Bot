@@ -28,8 +28,10 @@ US_TOXIC_ML_JSON = os.path.join(_THIS_DIR, "us_toxic_ml_antipatterns.json")
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json")
-SHORT_DB_PATH = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "short_data.sqlite")
+from factory_data_paths import short_data_db_path, system_config_json_path
+
+CONFIG_PATH = system_config_json_path()
+SHORT_DB_PATH = short_data_db_path()
 
 # 스캔 부하 상한 (yfinance Rate limit 방지)
 DEFAULT_MAX_US_TICKERS = 120

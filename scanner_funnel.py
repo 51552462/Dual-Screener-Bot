@@ -24,6 +24,8 @@ SUPERNOVA_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = (
     ("ANTI_TOXIC", "오답노트 독성"),
     ("DOOMSDAY_HALT", "둠스데이 전면차단"),
 )
+# 스캐너 진입단 시너지(거시·스필오버)는 scanner_synergy_engine → supernova process_live_ticker 에서
+# eff_cos_cutoff / eff_ml_cutoff / final_score 가산으로 반영 (퍼널 단계 키는 별도 미사용).
 
 KR_BOWL_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = (
     ("STATIC_QUOTE", "거래정지·단일가"),

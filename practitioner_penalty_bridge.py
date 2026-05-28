@@ -39,6 +39,29 @@ def apply_pil_vitality_penalties(
     if not _penalties_enabled(sys_config):
         return {"applied": False, "reason": "disabled"}
 
+    try:
+        from factory_recovery_grace import factory_recovery_grace, practitioner_penalties_relaxed
+
+        if practitioner_penalties_relaxed(sys_config):
+            from meta_governor_consumer import invalidate_meta_state_cache, load_meta_state_resolved
+            from meta_governor import save_meta_governor_state_atomic
+
+            meta = dict(load_meta_state_resolved())
+            meta["META_PIL_ZOMBIE_STREAK"] = {}
+            meta["META_PIL_ZOMBIE_GROUPS"] = []
+            meta["META_PIL_PENALTY_AS_OF"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+            meta["META_PIL_PENALTY_MODE"] = "relaxed"
+            save_meta_governor_state_atomic(meta)
+            invalidate_meta_state_cache()
+            for b in briefs:
+                b.penalty_action = "none (PIL relaxed)"
+                b.force_retired = False
+                b.zombie_streak_days = 0
+            logger.info("PIL penalties skipped: relaxed/recovery mode (%d briefs)", len(briefs))
+            return {"applied": False, "reason": "relaxed", "n_briefs": len(briefs)}
+    except ImportError:
+        pass
+
     from evolution.deathmatch_allocation import health_to_group_mult, merge_group_kelly_from_overlay
     from meta_governor import save_meta_governor_state_atomic
     from meta_governor_consumer import invalidate_meta_state_cache, load_meta_state_resolved
@@ -104,17 +127,19 @@ def apply_pil_vitality_penalties(
         }
         sid = stable_strategy_id(mk, gk)
 
-        if b.is_zombie or force_ret:
+        if force_ret:
             zombie_groups.append(gk)
             overlay[gk] = 0.0
+        elif b.is_zombie:
+            zombie_groups.append(gk)
 
         if b.is_zombie:
-            st["penalty"] = "kelly_zero"
+            st["penalty"] = "watch" if not force_ret else "retired"
             if force_ret:
                 st["penalty"] = "retired"
             b.penalty_action = (
-                "Kelly=0 · 연속 "
-                f"{streak_days}/{need_days}일"
+                ("Kelly=0 · 연속 " if force_ret else "관찰 · 연속 ")
+                + f"{streak_days}/{need_days}일"
                 + (" → RETIRED" if force_ret else " (N일 시 강제 퇴역)")
             )
             if not force_ret:

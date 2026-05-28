@@ -1252,7 +1252,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     from market_db_paths import market_db_read_path
 
-    home_cfg = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json")
+    from factory_data_paths import system_config_json_path
+
+    home_cfg = system_config_json_path()
     bg_db = os.path.join(_BASE_DIR, "bitget_market_data.sqlite")
     bg_cfg = os.path.join(_BASE_DIR, "bitget_system_config.json")
     val_json = os.path.join(_BASE_DIR, "validated_live_mutants.json")

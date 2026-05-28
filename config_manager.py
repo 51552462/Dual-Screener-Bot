@@ -491,7 +491,7 @@ def _ensure_spillover_autoinit_keys(cfg: dict[str, Any]) -> set[str]:
         cfg["APPROVE_PENDING_MUTANTS_TO_INCUBATOR"] = False
         added.add("APPROVE_PENDING_MUTANTS_TO_INCUBATOR")
     if ENABLE_MACRO_SYNERGY_WEIGHTING_KEY not in cfg:
-        cfg[ENABLE_MACRO_SYNERGY_WEIGHTING_KEY] = False
+        cfg[ENABLE_MACRO_SYNERGY_WEIGHTING_KEY] = True
         added.add(ENABLE_MACRO_SYNERGY_WEIGHTING_KEY)
     if "ENABLE_ACE_EVOLUTION_WEIGHTING" not in cfg:
         cfg["ENABLE_ACE_EVOLUTION_WEIGHTING"] = True

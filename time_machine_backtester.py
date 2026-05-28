@@ -34,9 +34,9 @@ try:
 
     CONFIG_PATH = os.path.join(factory_data_dir(), "system_config.json")
 except ImportError:
-    CONFIG_PATH = os.path.join(
-        os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot", "system_config.json"
-    )
+    from factory_data_paths import system_config_json_path
+
+    CONFIG_PATH = system_config_json_path()
 
 def load_config(max_retries=5):
     """
