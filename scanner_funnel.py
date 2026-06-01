@@ -51,10 +51,28 @@ FUNNEL_STAGE_PROFILES: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "US_BOWL": US_BOWL_LIVE_FUNNEL,
 }
 
+KR_NULRIM_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = KR_BOWL_LIVE_FUNNEL
+KR_EMA5_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = KR_BOWL_LIVE_FUNNEL
+US_NULRIM_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = US_BOWL_LIVE_FUNNEL
+US_EMA5_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = US_BOWL_LIVE_FUNNEL
+
+FUNNEL_STAGE_PROFILES.update(
+    {
+        "KR_NULRIM": KR_NULRIM_LIVE_FUNNEL,
+        "KR_EMA5": KR_EMA5_LIVE_FUNNEL,
+        "US_NULRIM": US_NULRIM_LIVE_FUNNEL,
+        "US_EMA5": US_EMA5_LIVE_FUNNEL,
+    }
+)
+
 SCANNER_DISPLAY_TITLES: Dict[str, str] = {
     "SUPERNOVA": "초신성 스캔",
     "KR_BOWL": "한국장 밥그릇(4번)",
     "US_BOWL": "미국장 밥그릇(3번)",
+    "KR_NULRIM": "눌림목(8번)",
+    "KR_EMA5": "5일선(9번)",
+    "US_NULRIM": "눌림목(4번)",
+    "US_EMA5": "5일선(10번)",
 }
 
 # KR 밥그릇: ENROLLED = forward_trades 아님 → 텔레그램 관종 발송 완료
@@ -437,3 +455,96 @@ def format_scan_funnel_report(report: ScanFunnelReport) -> str:
 def format_supernova_scan_report(report: ScanFunnelReport) -> str:
     """초신성 라이브 스캔 — format_scan_funnel_report 별칭."""
     return format_scan_funnel_report(report)
+
+
+def notify_equity_scan_zero_hits(
+    *,
+    market: str,
+    label: str,
+    scanned: int = 0,
+    analyzed: int = 0,
+    elapsed_sec: float = 0.0,
+    token_main: str,
+    chat_id: str,
+    send_enabled: bool = True,
+) -> None:
+    """조건 검색 0건 — 침묵 방지용 텔레그램 알림."""
+    if not send_enabled or not token_main or not chat_id:
+        return
+    icon = "🇰🇷" if str(market).upper() == "KR" else "🇺🇸"
+    lbl = html.escape(str(label), quote=False)
+    msg = (
+        f"{icon} <b>[{lbl}]</b>\n"
+        f"오늘 조건에 맞는 종목이 없습니다 (<b>0건</b>)\n"
+        f"<i>스캔 {int(scanned)}종 · 분석 {int(analyzed)}종 · "
+        f"소요 {float(elapsed_sec) / 60.0:.1f}분</i>"
+    )
+    try:
+        from telegram_html_delivery import post_telegram_message
+
+        post_telegram_message(
+            url=f"https://api.telegram.org/bot{token_main}/sendMessage",
+            chat_id=str(chat_id),
+            text=msg,
+            parse_mode="HTML",
+            timeout=15.0,
+        )
+    except Exception:
+        pass
+
+
+def notify_equity_scan_fatal(
+    *,
+    market: str,
+    label: str,
+    exc: BaseException,
+    token_main: str,
+    chat_id: str,
+    send_enabled: bool = True,
+) -> None:
+    if not send_enabled or not token_main or not chat_id:
+        return
+    icon = "🇰🇷" if str(market).upper() == "KR" else "🇺🇸"
+    lbl = html.escape(str(label), quote=False)
+    err = html.escape(str(exc)[:400], quote=False)
+    msg = f"{icon} <b>🚨 [{lbl} 스캔 중단]</b>\n<code>{err}</code>"
+    try:
+        from telegram_html_delivery import post_telegram_message
+
+        post_telegram_message(
+            url=f"https://api.telegram.org/bot{token_main}/sendMessage",
+            chat_id=str(chat_id),
+            text=msg,
+            parse_mode="HTML",
+            timeout=15.0,
+        )
+    except Exception:
+        pass
+
+
+def post_scan_funnel_telegram(
+    funnel: ScanFunnelTracker,
+    *,
+    elapsed_sec: float,
+    token_main: str,
+    chat_id: str,
+    send_enabled: bool = True,
+) -> None:
+    """퍼널 결과지 — HTML 폴백 파이프라인."""
+    if not send_enabled or not token_main or not chat_id:
+        return
+    try:
+        from telegram_html_delivery import post_telegram_message
+
+        body = format_scan_funnel_report(
+            funnel.finalize(elapsed_min=float(elapsed_sec) / 60.0)
+        )
+        post_telegram_message(
+            url=f"https://api.telegram.org/bot{token_main}/sendMessage",
+            chat_id=str(chat_id),
+            text=body,
+            parse_mode="HTML",
+            timeout=15.0,
+        )
+    except Exception:
+        pass

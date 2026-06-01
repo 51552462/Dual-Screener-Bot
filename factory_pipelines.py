@@ -447,6 +447,72 @@ def _step_kr_bowl_optional() -> None:
     kr.scan_market_1d()
 
 
+def _run_equity_scan_module(module_path: str, *, label: str, market: str) -> None:
+    """legacy_archive.scanners.* scan_market_1d — 예외·큐 drain SSOT."""
+    import importlib
+
+    mod = importlib.import_module(module_path)
+    scan_fn = getattr(mod, "scan_market_1d", None)
+    if not callable(scan_fn):
+        raise AttributeError(f"{module_path} has no scan_market_1d")
+    token = str(getattr(mod, "TELEGRAM_TOKEN_MAIN", "") or "")
+    chat_id = str(getattr(mod, "TELEGRAM_CHAT_ID", "") or "")
+    send = bool(getattr(mod, "SEND_TELEGRAM", False))
+    try:
+        scan_fn()
+    except Exception as exc:
+        try:
+            from scanner_funnel import notify_equity_scan_fatal
+
+            notify_equity_scan_fatal(
+                market=market,
+                label=label,
+                exc=exc,
+                token_main=token,
+                chat_id=chat_id,
+                send_enabled=send,
+            )
+        except Exception:
+            pass
+        raise
+    if send:
+        from telegram_message_queue import wait_telegram_queue_drained
+
+        wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
+
+
+def _step_kr_nulrim_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.nulrim",
+        label="KR 눌림목",
+        market="KR",
+    )
+
+
+def _step_kr_ema5_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.ema5",
+        label="KR 5일선",
+        market="KR",
+    )
+
+
+def _step_us_nulrim_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.nulusa",
+        label="US 눌림목",
+        market="US",
+    )
+
+
+def _step_us_ema5_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.us_5ema",
+        label="US 5일선",
+        market="US",
+    )
+
+
 def _step_us_bowl_optional() -> None:
     from legacy_archive.scanners import usa
 
@@ -565,6 +631,8 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
             _with_scan_us_prelude(
                 [
                     StepSpec("supernova_scan_us", _step_supernova_us, critical=True, delay_after_sec=5.0),
+                    StepSpec("us_nulrim_scan", _step_us_nulrim_scan, critical=False, delay_after_sec=2.0),
+                    StepSpec("us_ema5_scan", _step_us_ema5_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("us_bowl_scan", _step_us_bowl_optional, critical=False),
                     _US_CROSS_MARKET_PUBLISH,
                 ]
@@ -574,6 +642,8 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
             _with_scan_kr_prelude(
                 [
                     StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
+                    StepSpec("kr_nulrim_scan", _step_kr_nulrim_scan, critical=False, delay_after_sec=2.0),
+                    StepSpec("kr_ema5_scan", _step_kr_ema5_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
                 ]
             )
