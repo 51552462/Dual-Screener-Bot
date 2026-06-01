@@ -26,7 +26,11 @@ from meta_governor_consumer import (
     effective_max_position_pct,
     load_meta_state_resolved,
 )
-from toxic_antipattern_core import collect_merged_antipattern_rules
+from toxic_antipattern_core import (
+    collect_merged_antipattern_rules,
+    evaluate_toxic_bbox_match,
+)
+from telegram_html_delivery import post_telegram_message
 from reports.report_feature_analyzer import (
     ReportFeatureAnalyzer,
     colosseum_db_path_for_report,
@@ -187,7 +191,7 @@ def _colosseum_top3_carry_rows(sub_df: pd.DataFrame, esc) -> tuple[list, list]:
         )
         if len(str(label)) > 12:
             label = str(label)[:10] + "…"
-        items.append(f"<b>{esc(label)}</b>({float(rr['final_ret']):+.1f}%)")
+        items.append(f"<b>{esc(label)}</b>({scalar_float(rr['final_ret']):+.1f}%)")
         raw_sec = str(rr.get("sector", "")).strip()
         if raw_sec and raw_sec.lower() != "nan":
             sectors_raw.append(raw_sec)
@@ -355,7 +359,7 @@ def _strategy_colosseum_brief(db_path=None):
             out.append(
                 f" {m} {lg}: 승률 {r['wr']:.1f}% / 수익 {r['sum_ret']:+.2f}% (거래 {int(r['n'])}건)\n"
             )
-            top_rows_local.append({"logic": str(r["logic"]), "sum_ret": float(r["sum_ret"])})
+            top_rows_local.append({"logic": str(r["logic"]), "sum_ret": scalar_float(r["sum_ret"])})
         return top_rows_local, out
 
     kr_top, kr_lines = _league_top_block("KR")
@@ -626,11 +630,6 @@ def _shadow_reason_defense_is_opportunity_cost_loss(shadow_perf, reason_key):
         return False
 
 
-def _telegram_plain_from_html(chunk: str) -> str:
-    """HTML parse 실패 시 평문 — 의도한 굵게는 유지하지 않고 태그만 제거."""
-    return re.sub(r"</?([a-zA-Z][a-zA-Z0-9]*)[^>]*>", "", chunk)
-
-
 def send_telegram_msg(text, *, parse_mode: str = "HTML"):
     if not TELEGRAM_TOKEN_MAIN or not TELEGRAM_CHAT_ID:
         print("⚠️ [텔레그램] TELEGRAM_TOKEN_MAIN / TELEGRAM_CHAT_ID 미설정(.env) — 메시지 스킵")
@@ -640,23 +639,19 @@ def send_telegram_msg(text, *, parse_mode: str = "HTML"):
         max_len = 4000
         chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
         use_html = str(parse_mode or "").upper() == "HTML"
+        pm = "HTML" if use_html else None
 
         for chunk in chunks:
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk}
-            if use_html:
-                payload["parse_mode"] = "HTML"
-            res = requests.post(url, json=payload, timeout=10)
-            if res.status_code != 200:
-                print(f"텔레그램 발송 실패: {res.text}")
-            if use_html and res.status_code == 400:
-                plain = _telegram_plain_from_html(chunk)
-                res2 = requests.post(
-                    url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10
-                )
-                if res2.status_code != 200:
-                    print(f"텔레그램 평문 재전송 실패: {res2.text}")
-            import time
-
+            res = post_telegram_message(
+                url=url,
+                chat_id=TELEGRAM_CHAT_ID,
+                text=chunk,
+                parse_mode=pm,
+                timeout=10.0,
+                session=requests,
+            )
+            if getattr(res, "status_code", None) != 200:
+                print(f"텔레그램 발송 실패: {getattr(res, 'text', res)}")
             time.sleep(0.5)
     except Exception:
         pass
@@ -1532,17 +1527,7 @@ def try_add_virtual_position(
                 pass
             return False, "🛑 둠스데이 방어막 작동: 거시경제 발작으로 롱 포지션 진입 차단"
 
-    _ap = pre_sys_config.get("ANTI_PATTERNS")
-    _ml = _toxic_ml_antipatterns_rule_map(pre_sys_config.get("TOXIC_ML_ANTIPATTERNS"))
-    merged_anti = {}
-    if isinstance(_ap, dict):
-        merged_anti.update(_ap)
-    elif isinstance(_ap, list):
-        for _i, _bounds in enumerate(_ap):
-            if isinstance(_bounds, dict):
-                merged_anti[f"PATTERN_{_i}"] = _bounds
-    if isinstance(_ml, dict) and _ml:
-        merged_anti = {**merged_anti, **_ml}
+    merged_anti = collect_merged_antipattern_rules(pre_sys_config)
 
     facts_d = facts if isinstance(facts, dict) else {}
     try:

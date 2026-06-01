@@ -27,9 +27,24 @@ def _coerce_float(x: Any, default: float) -> float:
 
 
 def _neutral_kelly_cap() -> float:
+    return _regime_kelly_cap(NEUTRAL_REGIME_KEY)
+
+
+def _regime_kelly_cap(
+    regime_key: str,
+    meta: Optional[Dict[str, Any]] = None,
+) -> float:
+    """META_REGIME_ACTION.kelly_cap 우선, 없으면 ACTION_BY_REGIME 템플릿."""
+    rk = str(regime_key or "").strip().upper()
+    m = meta if isinstance(meta, dict) else {}
+    ra = m.get("META_REGIME_ACTION")
+    if isinstance(ra, dict) and ra.get("kelly_cap") is not None:
+        cap = _coerce_float(ra.get("kelly_cap"), -1.0)
+        if cap > 0:
+            return cap
     from meta_governor import ACTION_BY_REGIME
 
-    tpl = ACTION_BY_REGIME.get(NEUTRAL_REGIME_KEY) or ACTION_BY_REGIME.get("UNKNOWN") or {}
+    tpl = ACTION_BY_REGIME.get(rk) or ACTION_BY_REGIME.get("UNKNOWN") or {}
     return _coerce_float(tpl.get("kelly_cap"), 0.018)
 
 
@@ -118,11 +133,18 @@ def resolve_graceful_base_kelly(
     unknown_meta = rk_meta in ("", "UNKNOWN")
 
     if not unknown_cfg and not unknown_meta:
+        rk = rk_meta if rk_meta not in ("", "UNKNOWN") else rk_cfg
+        if rk not in ("", "UNKNOWN"):
+            regime_cap = _regime_kelly_cap(rk, m)
+            if regime_cap > raw_base:
+                lifted = max(raw_base, min(regime_cap * 0.85, regime_cap))
+                if lifted > raw_base + 1e-9:
+                    return lifted, "regime_aligned_base"
         return raw_base, "config_ok"
 
     if not unknown_meta and unknown_cfg:
-        # Meta는 확정, config만 미동기 — 메타 국면 기준 NEUTRAL cap으로 하한만 완화
-        cap = _neutral_kelly_cap()
+        # Meta는 확정, config만 미동기 — 메타 국면 ACTION map 기준으로 베이스 상향
+        cap = _regime_kelly_cap(rk_meta, m)
         blended = max(raw_base, min(cap * 0.85, cap))
         return max(DEFAULT_UNKNOWN_FLOOR, min(DEFAULT_UNKNOWN_CAP, blended)), "meta_led_config_unknown"
 

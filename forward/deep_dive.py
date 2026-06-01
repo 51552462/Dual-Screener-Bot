@@ -323,8 +323,8 @@ def send_comprehensive_daily_report(
             recon_mask = _sig_open.str.contains("🛡️차기섹터", na=False) & _unified
             trend_fleet = int(trend_mask.sum())
             recon_fleet = int(recon_mask.sum())
-            trend_invest = float(_sk_open[trend_mask].sum())
-            recon_invest = float(_sk_open[recon_mask].sum())
+            trend_invest = scalar_float(_sk_open[trend_mask].sum())
+            recon_invest = scalar_float(_sk_open[recon_mask].sum())
             total_invest = trend_invest + recon_invest
             if total_invest > 0:
                 trend_weight = (trend_invest / total_invest) * 100.0
@@ -468,7 +468,9 @@ def send_comprehensive_daily_report(
 
             conn.close()
         except Exception as e:
-            send_telegram_msg(f"⚠️ {market} 리포트 에러: {e}")
+            send_telegram_msg(
+                _format_forward_ledger_error_html(f"{market} 일일 통합 리포트", e)
+            )
 
     try:
         _delta_global = build_global_evolution_digest_html(meta_state_daily)
@@ -637,7 +639,9 @@ def send_group_practitioner_reports(ctx=None, *, cleanup_zombie_trades: bool = T
         if n_fail:
             print(f"⚠️ [PIL] 그룹 Fail-safe {n_fail}건 (다른 그룹은 정상 송출)")
     except Exception as e:
-        send_telegram_msg(f"⚠️ 실무자 리포트 전역 에러: {e}")
+        send_telegram_msg(
+            _format_forward_ledger_error_html("실무자 리포트 전역", e)
+        )
 # ==========================================
 # 4. [방향성 5,6,7번] 퀀트 딥 다이브 분석 엔진 (특징 추출 및 티어별 성적표)
 # ==========================================
@@ -819,7 +823,9 @@ def run_deep_dive_analysis(market='KR'):
                 t_int = int(str(bucket_label).replace("점대", "").strip())
             except ValueError:
                 continue
-            winners = t_df[pd.to_numeric(t_df["final_ret"], errors="coerce") > 5.0]
+            winners = t_df[
+                pd.to_numeric(col_series(t_df, "final_ret"), errors="coerce") > 5.0
+            ]
             if t_int <= 50 and len(winners) >= 3:
                 _dna_cols = ("dyn_cpv", "dyn_tb", "v_energy", "dyn_rs")
                 if all(c in winners.columns for c in _dna_cols):
@@ -1001,9 +1007,17 @@ def run_deep_dive_analysis(market='KR'):
             report_msg += f"\n⚖️ <b>[자금 관리 평행우주 대결 — 최근 {rolling_days}일 청산(KST) 기준 실현 손익]</b>\n"
             
             # 💡 [버그 픽스] 과거 투입금 0원 데이터 보정 (기본 40만원)
-            valid_invest_fixed = pd.to_numeric(df["invest_amount"], errors="coerce").replace(0, 400000).fillna(400000)
-            valid_invest_kelly = pd.to_numeric(df["sim_kelly_invest"], errors="coerce").replace(0, 400000).fillna(400000)
-            fr_dd = pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0)
+            valid_invest_fixed = (
+                pd.to_numeric(col_series(df, "invest_amount"), errors="coerce")
+                .replace(0, 400000)
+                .fillna(400000)
+            )
+            valid_invest_kelly = (
+                pd.to_numeric(col_series(df, "sim_kelly_invest"), errors="coerce")
+                .replace(0, 400000)
+                .fillna(400000)
+            )
+            fr_dd = pd.to_numeric(col_series(df, "final_ret"), errors="coerce").fillna(0.0)
 
             total_fixed_profit = scalar_float((valid_invest_fixed * (fr_dd / 100)).sum())
             total_kelly_profit = scalar_float((valid_invest_kelly * (fr_dd / 100)).sum())

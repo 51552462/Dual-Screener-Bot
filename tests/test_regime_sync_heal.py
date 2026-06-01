@@ -61,6 +61,40 @@ class TestKellyFailsafe(unittest.TestCase):
         self.assertGreater(kelly, 0.01)
         self.assertEqual(reason, "meta_led_config_unknown")
 
+    def test_bull_config_ok_lifts_stuck_one_percent(self) -> None:
+        """BULL·config 동기화 시에도 DYNAMIC_KELLY_RISK=1% 고착이면 국면 cap으로 상향."""
+        meta = {
+            "META_REGIME_KEY": "BULL",
+            "META_REGIME_ACTION": {"kelly_cap": 0.028},
+        }
+        cfg = {
+            "DYNAMIC_KELLY_RISK": 0.01,
+            "REGIME_ANALYSIS": {"regime_key": "BULL"},
+            "CURRENT_REGIME_KEY": "BULL",
+        }
+        kelly, reason = resolve_graceful_base_kelly(
+            cfg, meta, config_regime_unknown=False
+        )
+        self.assertGreater(kelly, 0.01)
+        self.assertAlmostEqual(kelly, 0.028 * 0.85, places=4)
+        self.assertEqual(reason, "regime_aligned_base")
+
+    def test_bear_config_ok_keeps_one_percent_cap(self) -> None:
+        meta = {
+            "META_REGIME_KEY": "BEAR",
+            "META_REGIME_ACTION": {"kelly_cap": 0.01},
+        }
+        cfg = {
+            "DYNAMIC_KELLY_RISK": 0.01,
+            "REGIME_ANALYSIS": {"regime_key": "BEAR"},
+            "CURRENT_REGIME_KEY": "BEAR",
+        }
+        kelly, reason = resolve_graceful_base_kelly(
+            cfg, meta, config_regime_unknown=False
+        )
+        self.assertAlmostEqual(kelly, 0.01, places=4)
+        self.assertEqual(reason, "config_ok")
+
     def test_ma_fallback_from_snapshots(self) -> None:
         cfg = {
             "DYNAMIC_KELLY_RISK": 0.01,
