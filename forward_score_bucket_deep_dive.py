@@ -115,7 +115,7 @@ def _format_key_drivers_nlargest(
 ) -> str:
     if t_df.empty or ret_col not in t_df.columns:
         return "—"
-    fr = pd.to_numeric(t_df[ret_col], errors="coerce")
+    fr = pd.to_numeric(col_series(t_df, ret_col), errors="coerce")
     work = t_df.assign(_fr=fr).dropna(subset=["_fr"])
     if work.empty:
         return "—"
@@ -142,7 +142,7 @@ def _format_ranked_extremes(
     """명예의 전당(largest) / 수치의 전당(nsmallest). (HTML, 1등 종목명, 1등 수익률)"""
     if t_df.empty or ret_col not in t_df.columns:
         return "—", None, None
-    fr = pd.to_numeric(t_df[ret_col], errors="coerce")
+    fr = pd.to_numeric(col_series(t_df, ret_col), errors="coerce")
     work = t_df.assign(_fr=fr).dropna(subset=["_fr"])
     if work.empty:
         return "—", None, None
