@@ -30,6 +30,17 @@ def get_safe_data(code, start_date):
     end_date = datetime.now().strftime("%Y-%m-%d")
     return fetch_market_data(str(code).strip(), "KR", start_date, end_date)
 
+
+def _dbg_scalar(dbg: object, key: str, default: float = 0.0) -> float:
+    try:
+        from reports.forward_report_scalar import scalar_float
+
+        if not isinstance(dbg, dict):
+            return float(default)
+        return scalar_float(dbg.get(key, default), default)
+    except Exception:
+        return float(default)
+
 # 💡 [Next Level 2] 동적 백분위 스코어링 함수
 def get_dynamic_score(series_data, higher_is_better=True, window=252):
     if len(series_data) < 20: return 5.0
@@ -725,7 +736,21 @@ def scan_market_1d():
                 logger.error(f"비치명적 에러 발생: {e}", exc_info=True)
 
     stock_list = get_krx_list_kind()
-    if stock_list.empty: return
+    if stock_list.empty:
+        from scanner_funnel import notify_equity_scan_zero_hits
+
+        notify_equity_scan_zero_hits(
+            market="KR",
+            label="KR 눌림목",
+            scanned=0,
+            analyzed=0,
+            elapsed_sec=0.0,
+            token_main=TELEGRAM_TOKEN_MAIN,
+            chat_id=TELEGRAM_CHAT_ID,
+            send_enabled=SEND_TELEGRAM,
+        )
+        print("⚠️ [KR 눌림목] KRX 유니버스 0건 — 텔레그램 0건 알림 발송")
+        return
 
     print(f"\n⚡ [일봉 전용] 한국장 V(눌림목) 스캔 시작!\n(당일 중복 차단 🛡️)")
     t0 = time.time()
@@ -837,7 +862,7 @@ def scan_market_1d():
                         f"🎯 [{dbg.get('sig_type', '')}]\n"
                         f"🎯 추천: 스윙, 추세 홀딩 / 종가배팅\n\n"
                         f"🏢 {name} ({code})\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원\n\n"
+                        f"💰 현재가: {_dbg_scalar(dbg, 'last_close'):,.0f}원\n\n"
                         f"{dbg.get('v11_comment', '')}\n"
                         f"📉 [스마트 매수/청산 전략]\n"
                         f"{dbg.get('recommend', '')}\n\n"
@@ -879,7 +904,7 @@ def scan_market_1d():
                         success, fwd_msg = aft.try_add_virtual_position(
                             market=market_type, code=code, name=name,
                             sig_type=dbg.get('sig_type', ''), score=dbg.get('score', 0),
-                            ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
+                            ep=_dbg_scalar(dbg, "last_close"), facts=entry_facts, sector=sector_info,
                             trade_source="STANDARD"
                         )
                         print(f"   ↳ [오리지널 장부]: {fwd_msg}")
@@ -890,7 +915,7 @@ def scan_market_1d():
                             _, sn_msg = aft.try_add_virtual_position(
                                 market=market_type, code=code, name=name,
                                 sig_type=dbg.get('sig_type', ''), score=max(dbg.get('score', 0), 50.0), # 점수 보정
-                                ep=dbg.get('last_close', 0), facts=entry_facts, sector=sector_info,
+                                ep=_dbg_scalar(dbg, "last_close"), facts=entry_facts, sector=sector_info,
                                 trade_source="SUPERNOVA"
                             )
                             print(f"   ↳ [초신성 장부]: {sn_msg}")
@@ -902,7 +927,7 @@ def scan_market_1d():
                         f"📈 [알고리즘 차트 포착]\n\n"
                         f"🏢 종목: {name} ({code})\n"
                         f"🏷️ 섹터: {sector_info}\n"
-                        f"💰 현재가: {dbg.get('last_close', 0):,.0f}원"
+                        f"💰 현재가: {_dbg_scalar(dbg, 'last_close'):,.0f}원"
                     )
                     enqueue_telegram(
                         "PROMO",
@@ -930,11 +955,28 @@ def scan_market_1d():
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         list(executor.map(worker, list(stock_list.iterrows())))
         
-    if tracker['hits'] > 0:
+    elapsed = time.time() - t0
+    if tracker["hits"] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
+    elif SEND_TELEGRAM:
+        from scanner_funnel import notify_equity_scan_zero_hits
 
-    print(f"\n✅ [한국장 5번 V 눌림목 스캔 완료] 신규 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+        notify_equity_scan_zero_hits(
+            market="KR",
+            label="KR 눌림목",
+            scanned=int(tracker.get("scanned", 0)),
+            analyzed=int(tracker.get("analyzed", 0)),
+            elapsed_sec=elapsed,
+            token_main=TELEGRAM_TOKEN_MAIN,
+            chat_id=TELEGRAM_CHAT_ID,
+            send_enabled=True,
+        )
+
+    print(
+        f"\n✅ [한국장 5번 V 눌림목 스캔 완료] 신규 포착: {tracker['hits']}개 | "
+        f"소요시간: {elapsed / 60:.1f}분\n"
+    )
 
 def run_scheduler():
     kr_tz = pytz.timezone('Asia/Seoul')
