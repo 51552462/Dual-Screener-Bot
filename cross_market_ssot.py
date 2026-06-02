@@ -308,6 +308,19 @@ def hydrate_kr_runtime_from_ssot(sys_config: Optional[Dict[str, Any]] = None) ->
 
         cfg = load_system_config() if sys_config is None else dict(sys_config)
         ssot = load_cross_market_ssot(cfg)
+        # stale 고착 해제: KR hydrate 시점에 US 섹터가 비고 standalone이면 1회 재산출 시도
+        if (
+            str(ssot.get("mode") or "") == MODE_KR_STANDALONE
+            and not str(ssot.get("us_sector_raw") or "").strip()
+        ):
+            try:
+                republished = publish_us_market_snapshot(
+                    cfg=cfg, source="kr_hydrate_republish", save=True
+                )
+                ssot = load_cross_market_ssot(cfg)
+                ssot["republish_mode"] = republished.get("mode")
+            except Exception as rex:
+                logger.warning("hydrate_kr_runtime_from_ssot republish: %s", rex)
         cfg[CROSS_MARKET_SSOT_KEY] = ssot
         cfg["SPILLOVER_RUNTIME_MODE"] = ssot.get("mode")
         save_system_config(cfg)

@@ -15,6 +15,7 @@ from io import StringIO
 import requests
 import logging
 from dotenv import load_dotenv
+from daily_dispatch_cache import mark_dispatched_today, was_dispatched_today
 warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
 import shadow_tracking
@@ -162,7 +163,12 @@ def _approx_dyn_rs_vs_benchmark(stock_df, idx_close_sr):
     try:
         s = stock_df["Close"].astype(float)
         ix = idx_close_sr.reindex(stock_df.index).ffill().bfill()
-        m = pd.concat([s, ix.rename("__ix")], axis=1).dropna()
+        # 위성/벤치 데이터 결측으로 교집합(dropna) 전체가 비는 병목 방지:
+        # 종가는 유지하고, 벤치가 비면 종가를 폴백으로 사용해 종목 자체가 탈락하지 않게 한다.
+        m = pd.concat([s, ix.rename("__ix")], axis=1)
+        m = m.dropna(subset=["Close"])
+        m["__ix"] = pd.to_numeric(m["__ix"], errors="coerce")
+        m["__ix"] = m["__ix"].where(m["__ix"].notna(), m["Close"])
         if len(m) < 21:
             return np.nan
         t = m.tail(21)
@@ -1869,10 +1875,15 @@ def execute_supernova_live_scan(market):
         if is_success:
             funnel.set_pipeline_result(str(target['code']), "ENROLLED")
             scanned_today_cache[market].add(target['code'])
-            send_telegram_msg(
-                f"<b>{target['msg_type']}</b>\n{target['code']} / {target['final_sig']}\n"
-                f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
-            )
+            dispatch_code = str(target.get('code', '')).strip()
+            if was_dispatched_today(market, dispatch_code):
+                print(f"🧯 [{market}] 당일 중복 발송 차단: {dispatch_code}")
+            else:
+                send_telegram_msg(
+                    f"<b>{target['msg_type']}</b>\n{dispatch_code} / {target['final_sig']}\n"
+                    f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
+                )
+                mark_dispatched_today(market, dispatch_code)
         else:
             funnel.record_db_failure(msg or "UNKNOWN")
             funnel.set_pipeline_result(str(target['code']), "FAILED_DB")

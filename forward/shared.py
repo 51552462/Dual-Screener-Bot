@@ -1587,12 +1587,27 @@ def try_add_virtual_position(
     conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
-    
-    # 1. 중복 체크 (이미 포트폴리오에 보유 중인 종목은 제외)
-    cursor.execute("SELECT id FROM forward_trades WHERE code=? AND status='OPEN'", (code_str,))
+
+    tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
+    today_str = datetime.now(tz).strftime('%Y-%m-%d')
+
+    # 1) 현재 OPEN 중복 방지: 같은 시장/티커가 열려 있으면 신규 진입 금지
+    cursor.execute(
+        "SELECT id FROM forward_trades WHERE market=? AND code=? AND status='OPEN' LIMIT 1",
+        (market, code_str),
+    )
     if cursor.fetchone():
         conn.close()
         return False, "중복 보유 중"
+
+    # 2) 당일 재진입(피라미딩) 방지: OPEN/CLOSED 무관하게 오늘 이미 진입한 티커면 금지
+    cursor.execute(
+        "SELECT id FROM forward_trades WHERE market=? AND code=? AND entry_date=? LIMIT 1",
+        (market, code_str, today_str),
+    )
+    if cursor.fetchone():
+        conn.close()
+        return False, f"당일 중복 진입 차단: {market} {code_str} ({today_str})"
 
     cursor.execute("SELECT COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN'", (market,))
     current_open_count = cursor.fetchone()[0] or 0
@@ -1601,9 +1616,6 @@ def try_add_virtual_position(
         return False, f"🚨 시장 쿼터 초과: {market}장 최대 보유 한도(20개)에 도달하여 신규 진입을 차단합니다."
         
     # 2. 👑 [V23.0 포트폴리오 다중화: 주도섹터 폭격(2) + 차기섹터 정찰(2)]
-    tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
-    today_str = datetime.now(tz).strftime('%Y-%m-%d')
-
     # 현재 포트폴리오의 1위 주도 섹터 파악 (자금 쏠림 감지)
     # 💡 [픽스] '유망'이 포함된 임시 섹터명은 주도 섹터 집계에서 제외
     cursor.execute("SELECT sector FROM forward_trades WHERE market=? AND status='OPEN' AND sector NOT LIKE '%유망%' GROUP BY sector ORDER BY COUNT(*) DESC LIMIT 1", (market,))

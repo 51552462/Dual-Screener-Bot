@@ -42,6 +42,7 @@ def _today_kst_header() -> str:
 
 
 def _alt_data_db_path() -> str:
+    from factory_data_paths import ensure_alt_data_db_initialized
     from market_db_paths import MARKET_DATA_DB_PATH
 
     candidates = [
@@ -50,8 +51,8 @@ def _alt_data_db_path() -> str:
     ]
     for p in candidates:
         if os.path.isfile(p):
-            return p
-    return candidates[0]
+            return ensure_alt_data_db_initialized(p)
+    return ensure_alt_data_db_initialized(candidates[0])
 
 
 def _load_macro_daily_row() -> Tuple[Optional[Tuple[Any, ...]], Optional[str]]:

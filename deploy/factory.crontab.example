@@ -13,22 +13,19 @@ PATH=/usr/local/bin:/usr/bin:/bin
 FACTORY=/home/ubuntu/Dual-Screener-Bot
 FACTORY_USER=ubuntu
 
-# --- KR live sniper (3× / day, Mon–Fri KST) ---
-25 10 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
-0  13 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
-0  15 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
+# --- KR live sniper (정규장 30분 주기, Mon–Fri KST 09:00–15:30) ---
+0,30 9-15 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-kr
 
 # --- KR post-close audit (after 15:30 KST settle) ---
 # Pipeline: meta_governor_sync → guard → sentiment → spillover → track → deep_dive → report → overseer
 35 16 * * 1-5  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-kr
 
-# --- US live sniper (3× / session, Tue–Sat KST ≈ Mon–Fri US) ---
-#   23:35 — 프리마켓·정규장 개장 부근 (NYSE open ~23:30 KST, DST 시 ±1h)
-#   02:30 — 장중 중반
-#   05:25 — 종가 직전
-35 23 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
-30 2  * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
-25 5  * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+# --- US live sniper (정규장 대응 30분 주기, Tue–Sat KST ≈ Mon–Fri US) ---
+#   DST(서머타임): KST 22:30~05:00 커버
+30 22 * * 2-6     ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+#   기본 시즌: KST 23:30~06:00 커버 (자정 경계 포함)
+0,30 23 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
+0,30 0-6 * * 2-6  ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --scan-us
 
 # --- US post-close audit (US close → KST ~06:00; includes us_data_incremental before report) ---
 45 6 * * 2-6   ${FACTORY_USER}  cd ${FACTORY} && ./factory.sh --daily-us

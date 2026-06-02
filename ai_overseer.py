@@ -192,9 +192,10 @@ def run_ai_auditor():
                 system_prompt=OVERSEER_LLM_SYSTEM_PROMPT,
                 user_payload=user_prompt,
                 model="gemini-2.5-flash",
-                timeout_sec=45.0,
+                timeout_sec=75.0,
+                max_attempts=2,
             )
-            ai_res = generate_text_sync(spec, max_wait_sec=90.0)
+            ai_res = generate_text_sync(spec, max_wait_sec=180.0)
             ai_text = (ai_res.text or "").strip()
             if ai_text and GEMINI_RAW_FALLBACK_PREFIX not in ai_text:
                 msg += "━━━ <b>[LLM 해석 · Ruthless QA]</b> ━━━\n"

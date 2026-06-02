@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 
 
 def _legacy_factory_dir() -> str:
@@ -103,4 +104,34 @@ def short_data_db_path() -> str:
 
 
 def alt_data_db_path() -> str:
-    return os.path.join(factory_data_dir(), "alt_data.sqlite")
+    path = os.path.join(factory_data_dir(), "alt_data.sqlite")
+    ensure_alt_data_db_initialized(path)
+    return path
+
+
+def ensure_alt_data_db_initialized(path: str | None = None) -> str:
+    """
+    alt_data.sqlite 최소 스키마 보장.
+    파일 미존재/테이블 누락으로 위성망이 전부 '데이터 없음'으로 고착되는 현상 방지.
+    """
+    p = path or os.path.join(factory_data_dir(), "alt_data.sqlite")
+    root = os.path.dirname(p)
+    if root:
+        os.makedirs(root, exist_ok=True)
+    conn = sqlite3.connect(p, timeout=15.0)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS macro_daily (
+                date TEXT PRIMARY KEY,
+                usd_krw REAL,
+                us_10y_yield REAL,
+                vix_index REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_macro_daily_date ON macro_daily(date DESC);
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return p

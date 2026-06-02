@@ -116,8 +116,9 @@ def _audit_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
             return default
 
     return {
-        "kelly_low": _f("OVERSEER_KELLY_LOW_THRESHOLD", 0.05),
-        "kelly_crit": _f("OVERSEER_KELLY_CRIT_THRESHOLD", 0.02),
+        # BULL 국면의 현실적 베이스: 2.0% 이상이면 경고를 만들지 않는다.
+        "kelly_low": _f("OVERSEER_KELLY_LOW_THRESHOLD", 0.02),
+        "kelly_crit": _f("OVERSEER_KELLY_CRIT_THRESHOLD", 0.015),
         "meta_mult_clamp": _f("OVERSEER_META_MULT_CLAMP", 0.92),
         "min_trades_bull_expect": _f("OVERSEER_BULL_MIN_TRADES", 0),
     }
@@ -431,9 +432,14 @@ def detect_audit_anomalies(
             html.escape(dossier.db_error, quote=False),
         )
 
-    # SIGNAL_MISMATCH: bullish regime + ultra-low kelly + zero activity
+    # SIGNAL_MISMATCH: bullish regime + 저 Kelly + zero activity (+ 실제 클램프 근거)
     if _is_bullish_regime(rk_meta) or _is_bullish_regime(rk_cfg):
-        if eff_k <= th["kelly_crit"] and n_closed == 0 and n_entry == 0:
+        if (
+            eff_k < th["kelly_crit"]
+            and n_closed == 0
+            and n_entry == 0
+            and g_mult < th["meta_mult_clamp"]
+        ):
             _add(
                 "SIGNAL_MISMATCH",
                 "CRITICAL",
@@ -442,17 +448,23 @@ def detect_audit_anomalies(
                     f"META_REGIME=<b>{html.escape(rk_meta, quote=False)}</b> "
                     f"(config=<b>{html.escape(rk_cfg, quote=False)}</b>) · "
                     f"유효 Kelly=<b>{eff_k * 100:.2f}%</b> · "
-                    f"청산/진입=<b>0</b>. 방어가 아니라 <b>시그널 단절·과도 클램프</b>를 의심."
+                    f"META_GLOBAL_KELLY_MULT=<b>{g_mult:.3f}</b> · "
+                    f"청산/진입=<b>0</b>. <b>시그널 단절·과도 클램프</b>를 의심."
                 ),
             )
-        elif eff_k <= th["kelly_low"] and n_closed == 0:
+        elif (
+            eff_k < th["kelly_low"]
+            and n_closed == 0
+            and n_entry == 0
+            and g_mult < th["meta_mult_clamp"]
+        ):
             _add(
                 "SIGNAL_MISMATCH",
                 "WARN",
-                "강세 국면 대비 Kelly 낮음 + 당일 청산 0건",
+                "강세 국면 대비 Kelly 낮음 + 당일 매매 0건",
                 (
                     f"유효 Kelly=<b>{eff_k * 100:.2f}%</b> · META_GLOBAL_KELLY_MULT="
-                    f"<b>{g_mult:.3f}</b> · 청산 <b>0</b>건."
+                    f"<b>{g_mult:.3f}</b> · 청산/진입 <b>0/0</b>건."
                 ),
             )
 

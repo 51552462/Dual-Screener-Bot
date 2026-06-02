@@ -482,7 +482,13 @@ def send_comprehensive_daily_report(
             f"<i>⚠️ [Δ] 진화·튜닝 스킵: {html_escape(str(_delta_ex)[:72], quote=False)}</i>"
         )
 
-def send_group_practitioner_reports(ctx=None, *, cleanup_zombie_trades: bool = True):
+def send_group_practitioner_reports(
+    ctx=None,
+    *,
+    cleanup_zombie_trades: bool = True,
+    markets: tuple[str, ...] | list[str] | None = None,
+    **kwargs,
+):
     """PIL — 활성 시그널 그룹별 실무자 리포트(Post-Mortem·Vitality·LLM) + 메타 페널티."""
     from practitioner_intelligence import (
         build_practitioner_brief,
@@ -557,6 +563,23 @@ def send_group_practitioner_reports(ctx=None, *, cleanup_zombie_trades: bool = T
             for g, sub in df_all.groupby("mkt_group", dropna=True)
             if str(g).strip() and sub["_pil_active"].any()
         )
+        market_allow = None
+        if markets:
+            market_allow = {
+                str(m).strip().upper()
+                for m in markets
+                if str(m).strip()
+            }
+            if not market_allow:
+                market_allow = None
+        # 호환성: 과거 호출부가 market="KR" 단일 인자를 넘겨도 동작
+        single_market = str(kwargs.get("market", "")).strip().upper()
+        if single_market:
+            market_allow = (
+                {single_market}
+                if market_allow is None
+                else (market_allow | {single_market})
+            )
         print(
             f"📋 [PIL] 활성 그룹 {len(active_groups)}개 "
             f"(KR앵커 {ctx.tk_kr.session_anchor} · US앵커 {ctx.tk_us.session_anchor})"
@@ -564,6 +587,8 @@ def send_group_practitioner_reports(ctx=None, *, cleanup_zombie_trades: bool = T
 
         for mkt_group in active_groups:
             market, group = _parse_mkt_group_key(mkt_group)
+            if market_allow is not None and market not in market_allow:
+                continue
             g_all = df_all[
                 (df_all["mkt_group"] == mkt_group)
                 & (df_all["market"].astype(str).str.upper() == market)
@@ -709,8 +734,22 @@ def run_deep_dive_analysis(market='KR'):
                 """
                 SELECT * FROM forward_trades
                 WHERE market=? AND status LIKE 'CLOSED%'
-                  AND substr(IFNULL(exit_date,''),1,10) >= ?
-                  AND substr(IFNULL(exit_date,''),1,10) <= ?
+                  AND substr(
+                        IFNULL(
+                            NULLIF(TRIM(CAST(exit_date AS TEXT)), ''),
+                            NULLIF(TRIM(CAST(entry_date AS TEXT)), '')
+                        ),
+                        1,
+                        10
+                  ) >= ?
+                  AND substr(
+                        IFNULL(
+                            NULLIF(TRIM(CAST(exit_date AS TEXT)), ''),
+                            NULLIF(TRIM(CAST(entry_date AS TEXT)), '')
+                        ),
+                        1,
+                        10
+                  ) <= ?
                   AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
                 ORDER BY exit_date DESC
                 """,

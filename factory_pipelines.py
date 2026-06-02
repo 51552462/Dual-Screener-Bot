@@ -112,9 +112,20 @@ def _step_cross_market_theme_snapshot() -> None:
     from sector_spillover_refresh import refresh_sector_spillover_state
 
     ensure_cross_market_schema()
-    spill = refresh_sector_spillover_state(save=True)
-    ssot = publish_us_market_snapshot(source="factory_theme_snapshot", save=True)
-    hydrate_kr_runtime_from_ssot()
+    spill = {"reason": "unknown"}
+    try:
+        spill = refresh_sector_spillover_state(save=True)
+    except Exception as ex:
+        print(f"⚠️ [Factory] spillover refresh degraded: {ex}")
+
+    try:
+        ssot = publish_us_market_snapshot(source="factory_theme_snapshot", save=True)
+    except Exception as ex:
+        print(f"⚠️ [Factory] cross_market publish degraded: {ex}")
+        # publish 실패여도 hydrate는 진행해 stale 고착을 막는다.
+        ssot = hydrate_kr_runtime_from_ssot()
+    else:
+        hydrate_kr_runtime_from_ssot()
     print(
         f"🌐 [Factory] cross_market_theme_snapshot: spill={spill.get('reason')} "
         f"mode={ssot.get('mode')} kr_std={ssot.get('kr_sector_std')}"
