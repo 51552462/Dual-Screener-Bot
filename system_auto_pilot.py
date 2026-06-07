@@ -1734,65 +1734,9 @@ def send_weekly_flow_master_report():
     )
 
 # ==========================================
-# 🛡️ 스케줄러 세이프티 넷
+# 일일 KR/US 종합 리포트(comprehensive_daily_report) SSOT: cron → factory.sh --daily-kr|--daily-us
+# dante-factory --daemon 은 위성·유지보수만 담당 (16:30 하드코딩 알람 제거 — DUAL_EXECUTION_FIX)
 # ==========================================
-def _is_after_kr_close(now):
-    return now.weekday() < 5 and (now.hour > 15 or (now.hour == 15 and now.minute > 40))
-
-
-def _report_flag_sent_today(config_data, day_key):
-    flags = config_data.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
-    if not isinstance(flags, dict):
-        return False
-    return bool(flags.get(day_key))
-
-
-def _mark_report_flag(day_key, reason):
-    cfg = load_config()
-    flags = cfg.get("AUTO_PILOT_DAILY_REPORT_FLAG", {})
-    if not isinstance(flags, dict):
-        flags = {}
-    flags[day_key] = {
-        "sent": True,
-        "sent_at": datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S'),
-        "reason": reason,
-    }
-    # 최근 14일만 유지
-    sorted_days = sorted(flags.keys(), reverse=True)
-    trimmed = {k: flags[k] for k in sorted_days[:14]}
-    update_config({"AUTO_PILOT_DAILY_REPORT_FLAG": trimmed})
-
-
-def _safe_call_ai_modules_for_report():
-    """
-    AI 서버 이슈로 스케줄러 전체가 멈추지 않도록 ai_overseer/auto_forward_tester 호출 보호.
-    """
-    try:
-        import ai_overseer  # noqa: F401
-        # 호출 가능한 엔트리가 있으면 실행, 없으면 import 체크만 수행
-        if hasattr(ai_overseer, "run_ai_auditor"):
-            ai_overseer.run_ai_auditor()
-    except Exception as e:
-        print(f"⚠️ [세이프티 넷] ai_overseer 호출 실패(무시): {e}")
-
-    try:
-        import auto_forward_tester
-        if hasattr(auto_forward_tester, "send_telegram_msg"):
-            auto_forward_tester.send_telegram_msg("🧾 [오토파일럿] 16:30 결과지 발송 파이프라인 점검 완료")
-    except Exception as e:
-        print(f"⚠️ [세이프티 넷] auto_forward_tester 호출 실패(무시): {e}")
-
-
-def _send_daily_close_report(now, reason):
-    msg = (
-        "🧾 <b>[오토파일럿 장마감 결과지]</b>\n"
-        f"📅 {now.strftime('%Y-%m-%d')} / ⏰ {now.strftime('%H:%M')}\n"
-        f"▪️ 발송 트리거: <b>{reason}</b>\n"
-        "▪️ 상태: 스케줄러 생존 / 장마감 후 스캔 위성 차단 적용"
-    )
-    send_telegram_report(msg)
-    _safe_call_ai_modules_for_report()
-    _mark_report_flag(now.strftime('%Y-%m-%d'), reason)
 
 # ==========================================
 # 🛰 위성 비블로킹 기동 (오토파일럿 메인 스레드의 GIL·장시간 블로킹 차단)
@@ -1868,17 +1812,6 @@ def system_main_loop():
                 continue
 
             if (now.date() - first_entry_date).days >= WARMUP_DAYS:
-                day_key = now.strftime('%Y-%m-%d')
-
-                # 🛑 장 마감(15:40) 이후 KR 스캔/검색 위성 스케줄 루프 차단 + 16:30 리포트 세이프티 넷
-                if _is_after_kr_close(now) and now.hour < 22:
-                    cfg = load_config()
-                    sent_today = _report_flag_sent_today(cfg, day_key)
-                    if now.hour == 16 and now.minute == 30 and not sent_today:
-                        _send_daily_close_report(now, "SCHEDULED_1630")
-                    elif (now.hour > 16 or (now.hour == 16 and now.minute >= 31)) and not sent_today:
-                        _send_daily_close_report(now, "SAFETY_NET_RETRY")
-
                 # 🇺🇸 매일 07:00 KST — US 독성 ML (블랙홀 08:30 전 us_toxic_ml_antipatterns.json 갱신)
                 if now.hour == 7 and now.minute == 0:
                     print("🇺🇸 [오토파일럿] US 독성 부검(us_toxic_graveyard_analyzer) 비블로킹 기동…")
@@ -2019,26 +1952,13 @@ def system_main_loop():
                     )
                     time.sleep(60)
 
-                # 4. 매일 16:30 — 장마감 결과지 (텔레그램·동기 유지)
-                elif now.hour == 16 and now.minute == 30:
-                    try:
-                        cfg = load_config()
-                        if not _report_flag_sent_today(cfg, day_key):
-                            _send_daily_close_report(now, "SCHEDULED_1630")
-                        else:
-                            print("🧾 [오토파일럿] 16:30 결과지 이미 발송됨 — 중복 스킵")
-                    except Exception as e:
-                        print(f"⚠️ 16:30 결과지 발송 실패: {e}")
-                    time.sleep(60)
-
-                # 5. 매일 17:00 — 둠스데이 레이더
+                # 4. 매일 17:00 — 둠스데이 레이더 (일일 종합 리포트는 cron factory.sh --daily-kr @ 16:35)
                 elif now.hour == 17 and now.minute == 0:
                     print("🚨 [오토파일럿] macro_doomsday_bot (17:00) 비블로킹 기동…")
                     _spawn_py_script("macro_doomsday_bot.py", "doomsday_1700")
                     time.sleep(60)
 
-                # 센티먼트: factory daily_audit 파이프라인에서 sentiment_mining 동기 실행 (SSOT).
-                # (구 18:30 비동기 spawn 제거 — 16:30 리포트보다 늦게 돌아 과거 DB 고착 유발)
+                # 센티먼트·일일 종합 리포트: factory daily_audit 파이프라인(cron) SSOT.
 
                 # 💀 매주 일요 02:00 — KR 독성 부검 (Graveyard ML)
                 elif now.weekday() == 6 and now.hour == 2 and now.minute == 0:
