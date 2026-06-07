@@ -50,17 +50,17 @@ def trade_date_column_sql() -> str:
 
 def normalize_trade_dates(df: pd.DataFrame) -> pd.Series:
     """DataFrame용 trade_date (YYYY-MM-DD)."""
+    from report_date_utils import closed_event_dates
+
     if df is None or df.empty:
         return pd.Series(dtype=str)
     if "trade_date" in df.columns:
-        base = df["trade_date"].astype(str).str[:10]
-    elif "exit_date" in df.columns:
-        base = df["exit_date"].astype(str).str[:10]
-    elif "entry_date" in df.columns:
-        base = df["entry_date"].astype(str).str[:10]
-    else:
-        return pd.Series([""] * len(df), index=df.index)
-    return base.replace({"nan": "", "None": "", "NaT": ""})
+        from report_date_utils import normalize_date_series
+
+        base = normalize_date_series(df["trade_date"])
+        fallback = closed_event_dates(df)
+        return base.where(base != "", fallback)
+    return closed_event_dates(df)
 
 
 def _live_where_clause(has_trade_date_col: bool) -> str:

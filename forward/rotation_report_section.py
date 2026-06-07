@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from report_date_utils import entry_dates, in_date_window
 from reports.daily_report_context import DailyReportContext, DailyReportMarketSlice
 from rotation_sector_filter import (
     dominant_sector_for_series,
@@ -183,11 +184,9 @@ def build_rotation_spillover_section(
     )
 
     rot_df = mkt_slice.df_real.copy()
-    if "entry_date" in rot_df.columns:
-        rot_df = rot_df[
-            rot_df["entry_date"].astype(str).str[:10] >= cutoff
-        ].copy()
-        rot_df = rot_df[rot_df["entry_date"].astype(str).str[:10] <= anchor]
+    ent = entry_dates(rot_df)
+    if not ent.empty:
+        rot_df = rot_df.loc[in_date_window(ent, cutoff, anchor)].copy()
 
     if rot_df.empty:
         msg += _tier_r_a(ctx, mk, n_real=n_real, n_open=n_open)

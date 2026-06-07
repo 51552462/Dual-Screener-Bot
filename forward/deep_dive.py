@@ -54,6 +54,14 @@ def send_comprehensive_daily_report(
         ctx = DailyReportContext.build()
     elif not isinstance(ctx, DailyReportContext):
         raise TypeError("ctx must be DailyReportContext")
+
+    try:
+        from report_pipeline_hydrate import ensure_report_pipeline_data
+
+        ensure_report_pipeline_data(market=None, refresh_macro=True, refresh_ohlcv=True)
+    except Exception as _hyd_e:
+        print(f"⚠️ [일일 통합 리포트] pipeline hydrate 스킵: {_hyd_e}")
+
     if refresh_meta_governor:
         try:
             from meta_state_store import rebuild_meta_state
@@ -198,6 +206,7 @@ def send_comprehensive_daily_report(
                 n_closed=mkt_slice.n_closed_window,
                 n_open=mkt_slice.n_open_valid,
             )
+            _win_closed = mkt_slice.n_closed_window
             
             # ---------------------------------------------------------
             # 📑 결과지 1: 거시 국면 & 국고 현황 (ReportStateBinder)
@@ -286,10 +295,17 @@ def send_comprehensive_daily_report(
                     msg2 += f"   ↳ 승률 {e['wr']:.0f}% (PF {e['pf']:.2f}) | 누적 {e['tot']}전 | 현재 {e['op']}종목 보유\n"
             else:
                 _tk_m = ctx.timekeeper_for(market)
-                msg2 += (
-                    f" ↳ 매매 데이터 없음 (윈도우 {_tk_m.rolling_cutoff}~{_tk_m.session_anchor} · "
-                    f"표본 0 · lag {ctx.lag_for(market)})\n"
-                )
+                if len(df_real) > 0 and _win_closed == 0:
+                    msg2 += (
+                        f" ↳ 장부 실거래 <b>{len(df_real)}</b>건 · "
+                        f"윈도우({_tk_m.rolling_cutoff}~{_tk_m.session_anchor}) 청산 <b>0</b> · "
+                        f"유효OPEN <b>{mkt_slice.n_open_valid}</b> · lag {ctx.lag_for(market)}\n"
+                    )
+                else:
+                    msg2 += (
+                        f" ↳ 매매 데이터 없음 (윈도우 {_tk_m.rolling_cutoff}~{_tk_m.session_anchor} · "
+                        f"표본 0 · lag {ctx.lag_for(market)})\n"
+                    )
             send_telegram_msg(msg2); time.sleep(1)
 
             # ---------------------------------------------------------

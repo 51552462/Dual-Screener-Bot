@@ -72,6 +72,44 @@ def _load_macro_daily_row() -> Tuple[Optional[Tuple[Any, ...]], Optional[str]]:
         return None, str(ex)[:80]
 
 
+def _refresh_macro_row_if_stale() -> Tuple[Optional[Tuple[Any, ...]], Optional[str], bool]:
+    """
+    DB 행이 없거나 KST 기준 stale이면 yfinance로 즉시 갱신 후 재조회.
+    반환: (row, err, used_live_fallback)
+    """
+    from report_date_utils import is_stale_asof
+
+    row, err = _load_macro_daily_row()
+    asof = str(row[3])[:10] if row and len(row) > 3 and row[3] else ""
+    if row is not None and not is_stale_asof(asof, max_lag_days=2):
+        return row, err, False
+
+    try:
+        from legacy_archive.alt_data_miner import fetch_yfinance_macro, upsert_macro_daily
+
+        yf_vals, yf_date = fetch_yfinance_macro()
+        if not any(v is not None for v in yf_vals.values()):
+            return row, err or "live_fetch_empty", False
+        upsert_macro_daily({"date": yf_date, **yf_vals})
+        row2, err2 = _load_macro_daily_row()
+        if row2 is not None:
+            return row2, None, True
+        return (
+            (
+                yf_vals.get("usd_krw"),
+                yf_vals.get("us_10y_yield"),
+                yf_vals.get("vix_index"),
+                yf_date,
+            ),
+            err2,
+            True,
+        )
+    except Exception as ex:
+        if row is not None:
+            return row, f"stale·live갱신실패:{str(ex)[:40]}", False
+        return None, str(ex)[:80], False
+
+
 def _defcon_level(cfg: Dict[str, Any]) -> int:
     dd = cfg.get("DOOMSDAY_DEFCON") or {}
     if not isinstance(dd, dict):
@@ -249,7 +287,7 @@ def _provider_regime(ctx: SatelliteContext) -> List[SatelliteLine]:
 
 
 def _provider_macro(ctx: SatelliteContext) -> List[SatelliteLine]:
-    row, err = _load_macro_daily_row()
+    row, err, live_fb = _refresh_macro_row_if_stale()
     if row is None:
         msg = "▪ 매크로: 데이터 없음"
         if err:
@@ -260,18 +298,28 @@ def _provider_macro(ctx: SatelliteContext) -> List[SatelliteLine]:
         y10 = float(row[1]) if row[1] is not None else None
         vix = float(row[2]) if row[2] is not None else None
     except (TypeError, ValueError):
-        return [SatelliteLine("GLOBAL", "▪ 매크로: 데이터 없음 (값 파싱 실패)", priority=20)]
+        fx = y10 = vix = None
+
+    # 결측 필드는 0으로 숨기지 않고, 가능한 값만 표시 + stale/live 태그
     parts = []
-    if fx is not None:
+    if fx is not None and fx > 0:
         parts.append(f"FX {fx:,.0f}원")
     if y10 is not None:
         parts.append(f"US10Y {y10:.2f}%")
-    if vix is not None:
+    if vix is not None and vix > 0:
         parts.append(f"VIX {vix:.1f}")
     if not parts:
-        return [SatelliteLine("GLOBAL", "▪ 매크로: 데이터 없음", priority=20)]
+        msg = "▪ 매크로: 데이터 없음 (값 전부 결측)"
+        if err:
+            msg += f" ({_esc(err)})"
+        return [SatelliteLine("GLOBAL", msg, priority=20)]
+
     asof = str(row[3])[:10] if len(row) > 3 and row[3] else ""
     tail = f" [{_esc(asof)}]" if asof else ""
+    if live_fb:
+        tail += " · live"
+    elif err:
+        tail += f" · {_esc(err[:32])}"
     return [SatelliteLine("GLOBAL", f"▪ 매크로: {' · '.join(parts)}{tail}", priority=20)]
 
 

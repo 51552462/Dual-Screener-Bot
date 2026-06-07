@@ -311,6 +311,47 @@ def _update_us_ticker_rows(us_list: pd.DataFrame) -> tuple[int, int]:
     return us_success, n_total
 
 
+def run_kr_benchmark_refresh() -> dict:
+    """
+    daily-kr / comprehensive KR 직전 — KOSPI·KOSDAQ 벤치마크만 경량 갱신.
+    전체 KR 유니버스 갱신은 run_daily_db_update() 유지.
+    """
+    print(f"\n🇰🇷 [KR 벤치마크] 지수 갱신 시작 ({DB_PATH})")
+    out: dict = {"ok": False, "tables": []}
+    try:
+        bm_conn = sqlite3.connect(DB_PATH, timeout=30)
+        bm_conn.execute("PRAGMA journal_mode=WAL;")
+        kr_start = (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime("%Y-%m-%d")
+        for tk, tbl in zip(["069500", "229200"], ["KR_KOSPI_IDX", "KR_KOSDAQ_IDX"]):
+            df_temp = None
+            last_err = None
+            for attempt in range(_DL_MAX_TRIES):
+                try:
+                    df_temp = fdr.DataReader(tk, kr_start).reset_index()
+                    if df_temp is not None and not df_temp.empty:
+                        break
+                except Exception as ex:
+                    last_err = ex
+                    df_temp = None
+                if attempt < _DL_MAX_TRIES - 1:
+                    _dl_backoff(attempt)
+            if df_temp is None or df_temp.empty:
+                print(f"⚠️ [KR 벤치마크] {tbl} 수신 실패: {last_err}")
+                continue
+            df_temp["Date"] = pd.to_datetime(df_temp["Date"]).dt.strftime("%Y-%m-%d")
+            save_data_safely(bm_conn, tbl, df_temp)
+            out["tables"].append(tbl)
+        bm_conn.close()
+        out["ok"] = bool(out["tables"])
+        snap = create_read_only_snapshot()
+        out["snapshot"] = snap
+        print(f"✅ [KR 벤치마크] 완료 tables={out['tables']} snapshot={bool(snap)}")
+    except Exception as ex:
+        out["error"] = str(ex)
+        print(f"🚨 [KR 벤치마크] 치명 실패: {ex}")
+    return out
+
+
 def run_us_incremental_db_update() -> dict:
     """
     daily_audit_us 훅 — US 벤치마크 + US_* 티커만 갱신 (KR 스킵, 리포트 직전 신선도).

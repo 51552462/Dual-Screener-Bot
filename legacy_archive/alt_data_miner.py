@@ -19,9 +19,12 @@ import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
 
-# ── 격리 DB 경로 (메인 팩토리 DB와 분리) ─────────────────────────────────
-ALT_DB_DIR = os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot")
-ALT_DB_PATH = os.path.join(ALT_DB_DIR, "alt_data.sqlite")
+from factory_data_paths import alt_data_db_path, ensure_alt_data_db_initialized
+
+
+def _alt_db_path() -> str:
+    """factory_data_dir SSOT — legacy ~/dante_bots 경로와 분리."""
+    return ensure_alt_data_db_initialized(alt_data_db_path())
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -66,36 +69,14 @@ def _migrate_extra_columns(conn: sqlite3.Connection) -> None:
 
 
 def ensure_db() -> None:
-    os.makedirs(ALT_DB_DIR, exist_ok=True)
-    conn = sqlite3.connect(ALT_DB_PATH, timeout=30)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS macro_daily (
-                date TEXT PRIMARY KEY,
-                usd_krw REAL,
-                us_10y_yield REAL,
-                vix_index REAL,
-                btc_close REAL,
-                t10y2y REAL,
-                dfii10 REAL,
-                walcl REAL,
-                cnn_fear_greed REAL,
-                put_call_ratio REAL
-            )
-            """
-        )
-        _migrate_extra_columns(conn)
-        conn.commit()
-    finally:
-        conn.close()
+    ensure_alt_data_db_initialized(_alt_db_path())
 
 
 def _load_last_row() -> Optional[dict[str, Any]]:
-    if not os.path.exists(ALT_DB_PATH):
+    path = _alt_db_path()
+    if not os.path.exists(path):
         return None
-    conn = sqlite3.connect(ALT_DB_PATH, timeout=30)
+    conn = sqlite3.connect(path, timeout=30)
     try:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM macro_daily ORDER BY date DESC LIMIT 1")
@@ -333,7 +314,8 @@ def collect_one_day() -> dict[str, Any]:
 
 
 def upsert_macro_daily(row: dict[str, Any]) -> None:
-    conn = sqlite3.connect(ALT_DB_PATH, timeout=30)
+    path = _alt_db_path()
+    conn = sqlite3.connect(path, timeout=30)
     try:
         _migrate_extra_columns(conn)
         conn.execute(

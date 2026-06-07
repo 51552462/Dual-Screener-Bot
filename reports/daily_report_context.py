@@ -14,6 +14,7 @@ import pytz
 
 from forward_dual_track_queries import query_latest_closed_trade_date
 from market_db_paths import report_db_read_path, report_read_source_label
+from report_date_utils import closed_event_dates, in_date_window, normalize_date_series
 from reports.report_timekeeper import ReadSource, ReportTimekeeper, business_lag_days
 
 _KR_TZ = pytz.timezone("Asia/Seoul")
@@ -180,46 +181,33 @@ class DailyReportContext:
             params=(mkt,),
         )
         df_norm = normalize_market_fn(df_raw, mkt)
-        df_real = df_long_only_fn(df_norm)
-        if "exit_date" in df_real.columns:
-            df_real["exit_date"] = df_real["exit_date"].astype(str).str[:10]
-        if "entry_date" in df_real.columns:
-            df_real["entry_date"] = df_real["entry_date"].astype(str).str[:10]
-        status_s = df_real["status"].astype(str).str.upper().str.strip()
+        df_all_real = df_long_only_fn(df_norm)
+        if "exit_date" in df_all_real.columns:
+            df_all_real["exit_date"] = normalize_date_series(df_all_real["exit_date"])
+        if "entry_date" in df_all_real.columns:
+            df_all_real["entry_date"] = normalize_date_series(df_all_real["entry_date"])
+
+        status_s = df_all_real["status"].astype(str).str.upper().str.strip()
         closed_mask = status_s.str.contains("CLOSED", na=False)
         open_mask = (status_s == "OPEN") | (status_s == "ACTIVE")
 
-        # CLOSED 윈도우 기준일: exit_date 우선, 없으면 entry_date 폴백.
-        exit_day = (
-            df_real["exit_date"].astype(str).str.slice(0, 10)
-            if "exit_date" in df_real.columns
-            else pd.Series("", index=df_real.index)
-        )
-        entry_day = (
-            df_real["entry_date"].astype(str).str.slice(0, 10)
-            if "entry_date" in df_real.columns
-            else pd.Series("", index=df_real.index)
-        )
-        closed_day = exit_day.where(exit_day.str.len() >= 10, entry_day)
-        window_closed_mask = (
-            closed_mask
-            & (closed_day >= tk.rolling_cutoff)
-            & (closed_day <= tk.session_anchor)
+        closed_day = closed_event_dates(df_all_real)
+        window_closed_mask = closed_mask & in_date_window(
+            closed_day, tk.rolling_cutoff, tk.session_anchor
         )
 
-        # OPEN/ACTIVE 는 기존 마스크를 유지하되, 시장 정규화 이후 집계.
-        open_subset = df_real.loc[open_mask].copy()
+        open_subset = df_all_real.loc[open_mask].copy()
         valid_open = valid_open_mask_fn(open_subset)
         df_open = open_subset.loc[valid_open].copy()
-        df_closed = df_real.loc[window_closed_mask].copy()
+        df_closed = df_all_real.loc[window_closed_mask].copy()
         df_window = pd.concat([df_open, df_closed], axis=0).drop_duplicates(
-            subset=["id"] if "id" in df_real.columns else None
+            subset=["id"] if "id" in df_all_real.columns else None
         )
 
         return DailyReportMarketSlice(
             market=mkt,
             df_window=df_window,
-            df_real=df_window,
+            df_real=df_all_real,
             df_closed=df_closed,
             df_open=df_open,
             n_closed_window=int(len(df_closed)),

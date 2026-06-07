@@ -203,6 +203,46 @@ _DOOMSDAY_BRIDGE = StepSpec(
 )
 
 
+def _step_report_hydrate_kr() -> None:
+    from report_pipeline_hydrate import ensure_report_pipeline_data
+
+    ensure_report_pipeline_data(market="KR", refresh_macro=True, refresh_ohlcv=True)
+
+
+def _step_report_hydrate_us() -> None:
+    from report_pipeline_hydrate import ensure_report_pipeline_data
+
+    ensure_report_pipeline_data(market="US", refresh_macro=True, refresh_ohlcv=True)
+
+
+def _step_report_hydrate_both() -> None:
+    from report_pipeline_hydrate import ensure_report_pipeline_data
+
+    ensure_report_pipeline_data(market=None, refresh_macro=True, refresh_ohlcv=True)
+
+
+_REPORT_HYDRATE_KR = StepSpec(
+    "report_pipeline_hydrate_kr",
+    _step_report_hydrate_kr,
+    critical=False,
+    delay_after_sec=1.0,
+)
+
+_REPORT_HYDRATE_US = StepSpec(
+    "report_pipeline_hydrate_us",
+    _step_report_hydrate_us,
+    critical=False,
+    delay_after_sec=1.0,
+)
+
+_REPORT_HYDRATE_BOTH = StepSpec(
+    "report_pipeline_hydrate_both",
+    _step_report_hydrate_both,
+    critical=False,
+    delay_after_sec=1.0,
+)
+
+
 def _step_comprehensive_daily_report() -> None:
     from auto_forward_tester import send_comprehensive_daily_report
 
@@ -355,6 +395,27 @@ def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     ]
 
 
+def _with_daily_audit_kr_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    return [
+        *_with_daily_audit_prelude([]),
+        _REPORT_HYDRATE_KR,
+        *steps,
+    ]
+
+
+def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    """US 일일 감사: 공통 prelude + US health + OHLCV 증분 + hydrate + track/spillover/publish."""
+    return [
+        *_with_daily_audit_prelude([]),
+        StepSpec("us_health_gate_daily", lambda: _step_us_health_gate("daily"), critical=False, delay_after_sec=0.5),
+        StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
+        _US_DATA_INCREMENTAL,
+        _SYNC_US_TOXIC_ML,
+        _REPORT_HYDRATE_US,
+        *_with_us_spillover_tail([*steps, _CROSS_MARKET_THEME_SNAPSHOT]),
+    ]
+
+
 def _with_kr_spillover_prerequisite(steps: List[StepSpec]) -> List[StepSpec]:
     """
     KR V28 직전: US 장부 갱신 → 스필오버 KV/SSOT → KR hydrate.
@@ -386,18 +447,6 @@ def _with_us_spillover_tail(steps: List[StepSpec]) -> List[StepSpec]:
         *steps,
         _SECTOR_SPILLOVER_REFRESH,
         _US_CROSS_MARKET_PUBLISH,
-    ]
-
-
-def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
-    """US 일일 감사: 공통 prelude + US health + OHLCV 증분 + track/spillover/publish."""
-    return [
-        *_with_daily_audit_prelude([]),
-        StepSpec("us_health_gate_daily", lambda: _step_us_health_gate("daily"), critical=False, delay_after_sec=0.5),
-        StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
-        _US_DATA_INCREMENTAL,
-        _SYNC_US_TOXIC_ML,
-        *_with_us_spillover_tail([*steps, _CROSS_MARKET_THEME_SNAPSHOT]),
     ]
 
 
@@ -578,7 +627,7 @@ def _step_weekly_master() -> None:
 
 
 def _pipeline_daily_audit_kr() -> List[StepSpec]:
-    return _with_daily_audit_prelude(
+    return _with_daily_audit_kr_prelude(
         _with_kr_spillover_prerequisite(
             [
                 StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
@@ -609,8 +658,10 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
 
 def _pipeline_daily_audit_combined() -> List[StepSpec]:
     """수동 ./factory.sh --daily 용 — US 선행 후 KR V28, 이후 US deep_dive."""
-    return _with_daily_audit_prelude(
-        _with_kr_spillover_prerequisite(
+    return [
+        *_with_daily_audit_prelude([]),
+        _REPORT_HYDRATE_BOTH,
+        *_with_kr_spillover_prerequisite(
             [
                 StepSpec("track_daily_positions_kr", _step_track_kr, critical=True, delay_after_sec=3.0),
                 StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=8.0),
@@ -630,8 +681,8 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
                 _COMPREHENSIVE_REPORT,
                 StepSpec("ai_overseer", _step_overseer_optional, critical=False),
             ]
-        )
-    )
+        ),
+    ]
 
 
 def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
