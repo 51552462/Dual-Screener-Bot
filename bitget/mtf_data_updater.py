@@ -16,14 +16,15 @@ except ModuleNotFoundError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "ccxt"])
     import ccxt
 import pandas as pd
+from bitget.infra.data_paths import charts_dir, market_data_db_path
 from bitget.config_hub import load_config as hub_load_config
 from bitget.symbol_utils import normalize_table_symbol
 from bitget.rate_limit_guard import throttle, backoff_sleep
-from bitget_logger import setup_logging, get_logger
+from bitget.infra.logging_setup import setup_logging, get_logger
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
+DB_PATH = market_data_db_path()
 DB_WRITE_MAX_RETRIES = 8
 DB_WRITE_BASE_SLEEP = 0.15
 setup_logging()
@@ -291,7 +292,7 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
     exchange = create_exchange("spot" if market_type == "spot" else "swap")
     symbols = _benchmark_symbols(exchange, market_type)
     if not symbols:
-        print(f"⚠️ [{market_type}] 벤치마크(BTC/ETH) 심볼 탐색 실패")
+        print(f"[WARN] [{market_type}] 벤치마크(BTC/ETH) 심볼 탐색 실패")
         return 0
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -315,7 +316,7 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
                     del ohlcv
                     gc.collect()
                 except Exception as e:
-                    print(f"⚠️ [{market_type}] 벤치마크 {sym} {tf} 수집 실패: {e}")
+                    print(f"[WARN] [{market_type}] 벤치마크 {sym} {tf} 수집 실패: {e}")
             for tf in timeframes:
                 tl = str(tf).lower()
                 try:
@@ -330,7 +331,7 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
                         if ohlcv and save_ohlcv(conn, market_type, sym, tf, ohlcv):
                             ok += 1
                 except Exception as e:
-                    print(f"⚠️ [{market_type}] 벤치마크 {sym} {tf} 저장 실패: {e}")
+                    print(f"[WARN] [{market_type}] 벤치마크 {sym} {tf} 저장 실패: {e}")
     finally:
         conn.close()
     return ok
@@ -356,10 +357,10 @@ def _enforce_benchmark_preload(timeframes, ohlcv_limit: int):
             "symbols": symbols,
         }
         if ok:
-            print(f"🧪 [{market_type}] 벤치마크 선수집 완료: {saved}/{required} TF 저장")
+            print(f"[BENCH] [{market_type}] 벤치마크 선수집 완료: {saved}/{required} TF 저장")
         else:
             print(
-                f"⛔ [{market_type}] 벤치마크 선수집 미완료: {saved}/{required} TF "
+                f"[FAIL] [{market_type}] 벤치마크 선수집 미완료: {saved}/{required} TF "
                 f"(symbols={symbols}) -> 병렬 스캔 차단"
             )
     return preload_status
@@ -389,7 +390,7 @@ def fetch_symbol_ohlcv_payload(
                     ohlcv_by[str(tf).lower()] = ohlcv
                     payloads.append((symbol, tf, ohlcv))
             except Exception as e:
-                print(f"⚠️ [{market_type}] {symbol} {tf} 수집 실패: {e}")
+                print(f"[WARN] [{market_type}] {symbol} {tf} 수집 실패: {e}")
                 backoff_sleep(1)
         if need_2h:
             h2 = _resample_1h_ohlcv_to_2h(ohlcv_by.get("1h") or [])
@@ -404,8 +405,7 @@ def fetch_symbol_ohlcv_payload(
 
 def run_mtf_update():
     config = load_config()
-    os.makedirs(BASE_DIR, exist_ok=True)
-    os.makedirs(os.path.join(BASE_DIR, "charts"), exist_ok=True)
+    os.makedirs(charts_dir(), exist_ok=True)
 
     timeframes = config.get("timeframes", ["1d", "4h", "2h", "1h"])
     ohlcv_limit = int(config.get("ohlcv_limit", 500))
@@ -415,24 +415,24 @@ def run_mtf_update():
     uni_cfg = config.get("universe", {})
 
     started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    print(f"🚀 Bitget MTF 업데이트 시작: {started}")
-    print(f"🧭 타임프레임: {timeframes}")
+    print(f"[START] Bitget MTF 업데이트 시작: {started}")
+    print(f"[INFO] 타임프레임: {timeframes}")
     preload_status = _enforce_benchmark_preload(timeframes, ohlcv_limit)
 
     for market_type in ("spot", "linear"):
         mcfg = uni_cfg.get(market_type, {})
         if not mcfg.get("enabled", True):
-            print(f"⏭️ {market_type} 비활성화 - 스킵")
+            print(f"[SKIP] {market_type} 비활성화 - 스킵")
             continue
         if not preload_status.get(market_type, {}).get("ok", False):
-            print(f"⏭️ [{market_type}] 벤치마크 선수집 실패로 병렬 수집 스킵")
+            print(f"[SKIP] [{market_type}] 벤치마크 선수집 실패로 병렬 수집 스킵")
             continue
 
         min_qv = float(mcfg.get("min_quote_volume_usdt", 0))
         ex = create_exchange("spot" if market_type == "spot" else "swap")
         universe = load_dynamic_universe(ex, market_type, min_qv, default_quote)
         # 💡 [버그 픽스] exchange 객체를 삭제하지 않고 워커들에 재사용하여 API 호출 폭주(IP 차단) 완벽 방어
-        print(f"📦 [{market_type}] 거래대금 필터 통과: {len(universe)}개 (기준: {min_qv:,.0f} USDT)")
+        print(f"[INFO] [{market_type}] 거래대금 필터 통과: {len(universe)}개 (기준: {min_qv:,.0f} USDT)")
 
         if not universe:
             continue
@@ -456,19 +456,19 @@ def run_mtf_update():
                             if save_ohlcv(writer_conn, market_type, p_symbol, p_tf, p_ohlcv):
                                 ok_count += 1
                         except Exception as e:
-                            print(f"⚠️ [{market_type}] 순차 적재 실패 {p_symbol} {p_tf}: {e}")
+                            print(f"[WARN] [{market_type}] 순차 적재 실패 {p_symbol} {p_tf}: {e}")
                         finally:
                             del p_ohlcv
                             gc.collect()
                     done += 1
                     total_tables += ok_count
-                    print(f"✅ [{market_type}] {done}/{len(universe)} {sym} -> {ok_count} TF 저장")
+                    print(f"[OK] [{market_type}] {done}/{len(universe)} {sym} -> {ok_count} TF 저장")
                     time.sleep(0.02)
                     gc.collect()
         finally:
             writer_conn.close()
 
-        print(f"🏁 [{market_type}] 완료: 총 {total_tables}개 테이블 저장")
+        print(f"[DONE] [{market_type}] 완료: 총 {total_tables}개 테이블 저장")
         del universe
         gc.collect()
 

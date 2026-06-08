@@ -6,8 +6,8 @@ import importlib
 import subprocess
 from datetime import datetime
 import pytz
-from bitget_logger import setup_logging, get_logger
-from bitget.schedule_lock import acquire as schedule_acquire
+from bitget.infra.logging_setup import setup_logging, get_logger
+from bitget.infra.data_paths import dashboard_port, heatmap_port
 
 # 💡 터미널 한글 깨짐 방지
 if sys.stdout.encoding != 'utf-8':
@@ -57,30 +57,9 @@ def _safe_import(module_name):
 
 updater = _safe_import("bitget.mtf_data_updater")
 scanner = _safe_import("bitget.master_scanner")
-forward_tester = _safe_import("bitget.forward_tester")
 sniper = _safe_import("bitget.supernova_hunter")
-miner = _safe_import("bitget.data_miner")
 auto_pilot = _safe_import("bitget.auto_pilot")
-underdog_miner = _safe_import("bitget.underdog_miner")
-pump_forensics = _safe_import("bitget.pump_forensics")
-forensics_pioneer = _safe_import("bitget.forensics_pioneer")
-sentiment_miner = _safe_import("bitget.sentiment_miner")
-alt_data_miner = _safe_import("bitget.alt_data_miner")
-shadow_perf = _safe_import("bitget.shadow_performance_tracker")
-blackhole_hunter = _safe_import("bitget.blackhole_hunter")
-synthetic_lab = _safe_import("bitget.synthetic_data_generator")
-time_machine = _safe_import("bitget.time_machine_backtester")
 disk_manager = _safe_import("bitget.disk_manager")
-
-
-def _periodic_runner(target_func, interval_sec, name):
-    while True:
-        try:
-            if schedule_acquire(f"main::{name}", max(30, int(interval_sec) - 3)):
-                target_func()
-        except Exception as e:
-            print(f"⚠️ {name} 주기 실행 실패: {e}")
-        time.sleep(max(5, int(interval_sec)))
 
 
 def _dashboard_runner():
@@ -96,7 +75,7 @@ def _dashboard_runner():
                     "streamlit",
                     "run",
                     dash,
-                    "--server.port=8501",
+                    f"--server.port={dashboard_port()}",
                     "--server.headless=true",
                 ],
                 cwd=project_root,
@@ -120,7 +99,7 @@ def _heatmap_runner():
                     "streamlit",
                     "run",
                     heat,
-                    "--server.port=8502",
+                    f"--server.port={heatmap_port()}",
                     "--server.headless=true",
                 ],
                 cwd=project_root,
@@ -166,27 +145,34 @@ def status_monitor(threads_dict):
 # 🚀 메인 실행부 (컨트롤 타워)
 # ==========================================
 if __name__ == "__main__":
-    print("🚀 비트겟(Bitget) 24/7 멀티 타임프레임 컨트롤 타워 가동 시작...")
-    logger.info("bitget main starting")
+    import warnings
+
+    warnings.warn(
+        "bitget.main is DEPRECATED for production. Use systemd dante-bitget-* + "
+        "bitget/deploy/bitget.sh (cron SSOT). See bitget/RUNBOOK.md",
+        DeprecationWarning,
+        stacklevel=1,
+    )
+    print(
+        "[DEPRECATED] bitget.main — production uses dante-bitget-factory + bitget.sh cron. "
+        "See bitget/RUNBOOK.md"
+    )
+    logger.warning("deprecated entry: use pipeline SSOT (bitget/RUNBOOK.md)")
+    try:
+        from bitget.infra import ops_logger
+
+        ops_logger.record_heartbeat("bitget.main", extra={"event": "startup"})
+    except Exception:
+        pass
 
     bot_targets = {
         "💠 [엔진] MTF 데이터 업데이터": getattr(updater, "run_mtf_update", None),
         "🪙 [스캔] 마스터 스캐너": getattr(scanner, "run_mtf_scheduler", None),
         "💠 [엔진] 가상 장부 & 관제탑": getattr(auto_pilot, "system_main_loop", None),
         "🦅 [스캔] 초신성 실시간 스나이퍼": getattr(sniper, "run_live_sniper_scheduler", None),
-        "🧪 [마이닝] K-Means 데이터 마이너": getattr(miner, "run_cluster_mining", None),  # 1회성 또는 스케줄러
         "📊 [대시보드] Bitget 관제탑": _dashboard_runner,
         "🔥 [대시보드] Bitget 히트맵": _heatmap_runner,
         "🧹 [인프라] 디스크 매니저": getattr(disk_manager, "run_daily_cleanup_loop", None),
-        "🧟 [위성] 언더독 마이너(6h)": (lambda: _periodic_runner(getattr(underdog_miner, "run_underdog_mining", lambda: None), 21600, "언더독 마이너")),
-        "🚀 [위성] 펌프 부검소(4h)": (lambda: _periodic_runner(getattr(pump_forensics, "run_pump_forensics", lambda: None), 14400, "펌프 부검소")),
-        "🔭 [위성] 선취매 파이오니어(3h)": (lambda: _periodic_runner(getattr(forensics_pioneer, "run_forensics_pioneer", lambda: None), 10800, "선취매 파이오니어")),
-        "🧠 [위성] 센티먼트 마이너(2h)": (lambda: _periodic_runner(getattr(sentiment_miner, "run_sentiment_mining", lambda: None), 7200, "센티먼트 마이너")),
-        "📡 [위성] 대체데이터 마이너(2h)": (lambda: _periodic_runner(getattr(alt_data_miner, "run_alternative_data_mining", lambda: None), 7200, "대체데이터 마이너")),
-        "🛡️ [위성] 그림자 성능 추적(6h)": (lambda: _periodic_runner(getattr(shadow_perf, "run_shadow_performance_evaluation", lambda: None), 21600, "그림자 성능 추적")),
-        "🕳️ [위성] 블랙홀 헌터(3h)": (lambda: _periodic_runner(getattr(blackhole_hunter, "scan_blackhole_targets", lambda: None), 10800, "블랙홀 헌터")),
-        "🧪 [위성] 합성 스트레스 연구소(12h)": (lambda: _periodic_runner(getattr(synthetic_lab, "stress_test_mutants", lambda: None), 43200, "합성 스트레스 연구소")),
-        "⏳ [위성] 타임머신 백테스트(24h)": (lambda: _periodic_runner(getattr(time_machine, "run_time_machine_backtest", lambda: None), 86400, "타임머신 백테스트")),
     }
 
     active_threads = {}

@@ -20,18 +20,47 @@ from factory_runtime import StepSpec
 
 def _step_meta_governor_sync() -> None:
     """리포트·감사 전 REGIME_ANALYSIS + MetaGovernor 동기 (degraded 시 자동 복구)."""
-    from meta_state_store import ensure_config_regime_aligned, rebuild_meta_state
+    from meta_governor_consumer import load_meta_state_resolved
+    from meta_state_store import (
+        ensure_config_regime_aligned,
+        is_meta_state_degraded,
+        rebuild_meta_state,
+    )
 
     out = rebuild_meta_state(force=False, refresh_regime=True)
     align = ensure_config_regime_aligned()
     out["config_regime_align"] = align
     print(f"🛰️ [Factory] meta_governor_sync: {out}")
 
+    failures: list[str] = []
+    if out.get("meta") == "failed":
+        failures.append(f"meta_error={out.get('meta_error')}")
+    if out.get("regime") == "failed":
+        failures.append(f"regime_error={out.get('regime_error')}")
+    sync = out.get("config_regime_sync")
+    if isinstance(sync, dict) and sync.get("error"):
+        failures.append(f"config_regime_sync={sync.get('error')}")
+    if isinstance(align, dict) and align.get("error"):
+        failures.append(f"config_regime_align={align.get('error')}")
+
+    meta = load_meta_state_resolved()
+    if is_meta_state_degraded(meta):
+        rk = meta.get("META_REGIME_KEY", "UNKNOWN")
+        st = meta.get("META_GOVERNOR_LAST_RUN_STATUS", "NEVER")
+        at = meta.get("META_GOVERNOR_LAST_RUN_AT", "—")
+        failures.append(f"meta_degraded regime={rk} status={st} last_at={at}")
+
+    if failures:
+        raise RuntimeError(
+            "meta_governor_sync aborted — refusing stale UNKNOWN report: "
+            + "; ".join(failures)
+        )
+
 
 _META_GOVERNOR_SYNC = StepSpec(
     "meta_governor_sync",
     _step_meta_governor_sync,
-    critical=False,
+    critical=True,
     delay_after_sec=0.5,
 )
 
@@ -224,21 +253,21 @@ def _step_report_hydrate_both() -> None:
 _REPORT_HYDRATE_KR = StepSpec(
     "report_pipeline_hydrate_kr",
     _step_report_hydrate_kr,
-    critical=False,
+    critical=True,
     delay_after_sec=1.0,
 )
 
 _REPORT_HYDRATE_US = StepSpec(
     "report_pipeline_hydrate_us",
     _step_report_hydrate_us,
-    critical=False,
+    critical=True,
     delay_after_sec=1.0,
 )
 
 _REPORT_HYDRATE_BOTH = StepSpec(
     "report_pipeline_hydrate_both",
     _step_report_hydrate_both,
-    critical=False,
+    critical=True,
     delay_after_sec=1.0,
 )
 
@@ -453,7 +482,7 @@ def _with_us_spillover_tail(steps: List[StepSpec]) -> List[StepSpec]:
 _META_SYNC_SCAN = StepSpec(
     "meta_governor_sync_scan",
     _step_meta_governor_sync,
-    critical=False,
+    critical=True,
     delay_after_sec=0.5,
 )
 

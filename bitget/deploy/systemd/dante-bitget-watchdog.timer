@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Bitget watchdog every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=dante-bitget-watchdog.service
+
+[Install]
+WantedBy=timers.target

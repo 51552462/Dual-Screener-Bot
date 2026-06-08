@@ -5,11 +5,12 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-st.set_page_config(page_title="Bitget Sector Heatmap", layout="wide")
-st.title("🔥 Bitget 코인 섹터 자금 쏠림 히트맵")
+from bitget.infra.data_paths import market_db_read_path
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
+st.set_page_config(page_title="Bitget Sector Heatmap", layout="wide")
+st.title("Bitget Sector Heatmap")
+
+DB_PATH = market_db_read_path()
 
 
 def _coin_sector(symbol: str) -> str:

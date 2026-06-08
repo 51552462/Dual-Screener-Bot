@@ -9,8 +9,9 @@ import sqlite3
 import time
 from datetime import datetime
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
+from bitget.infra.data_paths import market_data_db_path
+
+DB_PATH = market_data_db_path()
 
 
 def _toxic_ml_antipatterns_rule_map(ml_obj: object) -> dict:

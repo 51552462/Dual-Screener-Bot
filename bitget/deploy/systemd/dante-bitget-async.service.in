@@ -1,0 +1,20 @@
+[Unit]
+Description=Bitget async Telegram queue consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@@INSTALL_ROOT@@
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
+ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_async.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

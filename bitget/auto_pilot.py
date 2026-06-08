@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
-from bitget_logger import setup_logging, get_logger
+from bitget.infra.logging_setup import setup_logging, get_logger
 from bitget.config_hub import load_config as hub_load_config, save_config_atomic as hub_save_config_atomic
 from bitget.schedule_lock import acquire as schedule_acquire
 
@@ -17,6 +17,7 @@ from bitget.forward_tester import (
     send_telegram_msg,
 )
 from bitget.data_miner import run_bitget_data_miner
+from bitget.infra.data_paths import market_data_db_path, system_config_json_path
 
 
 def send_telegram_report(message):
@@ -24,9 +25,8 @@ def send_telegram_report(message):
     send_telegram_msg(message)
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+DB_PATH = market_data_db_path()
+CONFIG_PATH = system_config_json_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 setup_logging()
 logger = get_logger("bitget.auto_pilot")

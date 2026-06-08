@@ -1,0 +1,2 @@
+# Bitget optional deps (shared venv: pip install -r bitget/requirements-bitget.txt)
+# aiohttp is already in root requirements.txt

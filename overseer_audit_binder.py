@@ -172,22 +172,32 @@ def _summarize_vix(meta: Dict[str, Any]) -> str:
     return " · ".join(parts) if parts else "VIX 데이터 수집됨"
 
 
+def _sql_date_prefix(column: str) -> str:
+    """ISO/TZ/공백/슬래시 혼합 날짜 → YYYY-MM-DD 10자리 비교."""
+    c = column.strip()
+    return (
+        f"substr(replace(replace(replace({c}, 'T', ' '), '/', '-'), '.', '-'), 1, 10)"
+    )
+
+
 def _load_trade_frames(
     db_path: str,
     today_str: str,
     rolling_days: int = 90,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[str]]:
-    """(closed_today, entry_today, rolling_closed, error)."""
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[str]]:
+    """(closed_today, entry_today, rolling_closed, open_rows, error)."""
     try:
         conn = sqlite3.connect(db_path, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
+        exit_d = _sql_date_prefix("exit_date")
+        entry_d = _sql_date_prefix("entry_date")
         df_today = pd.read_sql(
-            "SELECT * FROM forward_trades WHERE exit_date = ?",
+            f"SELECT * FROM forward_trades WHERE {exit_d} = ?",
             conn,
             params=(today_str,),
         )
         df_entry = pd.read_sql(
-            "SELECT * FROM forward_trades WHERE entry_date = ?",
+            f"SELECT * FROM forward_trades WHERE {entry_d} = ?",
             conn,
             params=(today_str,),
         )
@@ -195,7 +205,11 @@ def _load_trade_frames(
             datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=rolling_days)
         ).strftime("%Y-%m-%d")
         df_roll = pd.read_sql(
-            "SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%' AND exit_date >= ?",
+            f"""
+            SELECT * FROM forward_trades
+            WHERE status LIKE 'CLOSED%'
+              AND {exit_d} >= ?
+            """,
             conn,
             params=(cutoff,),
         )

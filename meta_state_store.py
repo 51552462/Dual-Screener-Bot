@@ -152,7 +152,7 @@ def sync_config_regime_from_meta(
     meta: Dict[str, Any],
     *,
     force: bool = False,
-    max_retries: int = 5,
+    max_retries: int = 15,
 ) -> Dict[str, Any]:
     """
     MetaGovernor 확정 국면 → config_kv REGIME_ANALYSIS.regime_key + CURRENT_REGIME_KEY 1:1 반영.
@@ -226,7 +226,8 @@ def sync_config_regime_from_meta(
                     e,
                 )
                 raise
-            time.sleep(0.05 + 0.04 * attempt)
+            # SQLite lock/권한 경합 — 최대 ~30초까지 백오프 재시도
+            time.sleep(min(2.5, 0.15 * (attempt + 1)))
 
     if last_exc is not None:
         raise last_exc

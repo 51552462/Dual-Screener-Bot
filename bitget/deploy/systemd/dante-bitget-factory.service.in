@@ -1,0 +1,24 @@
+[Unit]
+Description=Bitget quant factory daemon (auto pilot + satellites)
+After=network-online.target dante-bitget-ws.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@@INSTALL_ROOT@@
+Environment=BITGET_SKIP_INLINE_TELEGRAM=1
+Environment=BITGET_ASYNC_TELEGRAM=1
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
+ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_daemon.sh
+Restart=on-failure
+RestartSec=5
+MemoryMax=2G
+CPUQuota=150%
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

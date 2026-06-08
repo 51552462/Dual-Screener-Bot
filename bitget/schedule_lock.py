@@ -3,9 +3,9 @@ import os
 import threading
 import time
 
+from bitget.infra.data_paths import schedule_lock_state_path
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATE_PATH = os.path.join(BASE_DIR, "bitget_schedule_lock_state.json")
+STATE_PATH = schedule_lock_state_path()
 _LOCK = threading.Lock()
 
 

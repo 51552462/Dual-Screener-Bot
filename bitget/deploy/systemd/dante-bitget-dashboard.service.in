@@ -1,0 +1,27 @@
+[Unit]
+Description=Bitget Streamlit control tower (:8511)
+Documentation=file://@@INSTALL_ROOT@@/bitget/RUNBOOK.md
+After=network-online.target dante-bitget-ws.service
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@@INSTALL_ROOT@@
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
+Environment=BITGET_DASHBOARD_PORT=8511
+ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_dashboard.sh
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=60
+MemoryMax=768M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -59,7 +59,8 @@ class TestKellyFailsafe(unittest.TestCase):
         }
         kelly, reason = resolve_graceful_base_kelly(cfg, meta, config_regime_unknown=True)
         self.assertGreater(kelly, 0.01)
-        self.assertEqual(reason, "meta_led_config_unknown")
+        self.assertIn(reason, ("meta_led_config_unknown", "meta_bull_forced_unlock"))
+        self.assertAlmostEqual(kelly, 0.028 * 0.85, places=4)
 
     def test_bull_config_ok_lifts_stuck_one_percent(self) -> None:
         """BULL·config 동기화 시에도 DYNAMIC_KELLY_RISK=1% 고착이면 국면 cap으로 상향."""

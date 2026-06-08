@@ -6,11 +6,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="Bitget Quant Factory Control Tower", layout="wide")
-st.title("🚀 Bitget 코인 팩토리 관제탑 대시보드")
+from bitget.infra.data_paths import market_db_read_path
+from bitget.dashboard_ops_panel import render_ops_gauge_panel
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
+st.set_page_config(page_title="Bitget Quant Factory Control Tower", layout="wide")
+st.title("Bitget Quant Factory Control Tower")
+
+render_ops_gauge_panel(hours=6.0)
+st.markdown("---")
+
+DB_PATH = market_db_read_path()
 
 
 @st.cache_data(ttl=60)

@@ -1,0 +1,18 @@
+[Unit]
+Description=Bitget CQRS snapshot (bitget_market_data_snapshot.sqlite)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@@INSTALL_ROOT@@
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
+ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_snapshot.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

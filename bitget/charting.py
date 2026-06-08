@@ -10,9 +10,9 @@ import mplfinance as mpf
 import numpy as np
 import pandas as pd
 
+from bitget.infra.data_paths import charts_dir
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CHART_FOLDER = os.path.join(BASE_DIR, "charts")
+CHART_FOLDER = charts_dir()
 DISPLAY_BARS = 150
 os.makedirs(CHART_FOLDER, exist_ok=True)
 chart_lock = threading.Lock()

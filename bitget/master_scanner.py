@@ -26,10 +26,11 @@ from bitget.signal_engines import (
     compute_tv_short_v2,
 )
 
+from bitget.infra.data_paths import logs_dir, market_data_db_path, market_db_read_path, system_config_json_path
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+DB_PATH = market_data_db_path()
+DB_READ_PATH = market_db_read_path()
+CONFIG_PATH = system_config_json_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 BENCHMARK = "BTC_USDT"
 TELEGRAM_TOKEN_MAIN = bitget_telegram_token()
@@ -51,7 +52,7 @@ start_telegram_queue_daemons(
 
 sent_today = set()
 last_run_date = ""
-LOG_FILE = os.path.join(BASE_DIR, "sent_log_bitget_master.txt")
+LOG_FILE = os.path.join(logs_dir(), "sent_log_bitget_master.txt")
 MAX_SCAN_WORKERS = 4
 
 
@@ -268,7 +269,7 @@ def _supernova_hit(df: pd.DataFrame, symbol: str, tf: str):
 
 
 def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int):
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = sqlite3.connect(DB_READ_PATH, timeout=30)
     try:
         time.sleep(0.03)  # DB burst 완화
         df = _load_table(conn, tbl)
@@ -329,7 +330,10 @@ def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int
         conn.close()
 
 
-def run_scan():
+def run_scan(market_filter: str | None = None):
+    """
+    MTF table scan. market_filter: None | 'spot' | 'futures'
+    """
     global sent_today, last_run_date
     if not os.path.exists(DB_PATH):
         print("DB not found. Run bitget_mtf_data_updater.py first.")
@@ -347,14 +351,21 @@ def run_scan():
             except Exception:
                 pass
 
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%__tmp%'").fetchall()
+    conn = sqlite3.connect(DB_READ_PATH, timeout=30)
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%__tmp%'"
+    ).fetchall()
     table_names = [r[0] for r in rows if "__tmp" not in str(r[0])]
     hit_rank = 0
 
     for tf in TIMEFRAMES:
         idx_close = _benchmark_series(conn, tf)
         tf_tables = [t for t in table_names if t.startswith("BITGET_") and t.endswith(f"_{tf}") and BENCHMARK not in t]
+        mf = (market_filter or "").strip().lower()
+        if mf == "spot":
+            tf_tables = [t for t in tf_tables if "_SPOT_" in t]
+        elif mf in ("futures", "fut", "linear"):
+            tf_tables = [t for t in tf_tables if "_FUT_" in t]
         with ThreadPoolExecutor(max_workers=min(MAX_SCAN_WORKERS, max(1, len(tf_tables)))) as pool:
             futures = {pool.submit(_scan_one_table, tbl, tf, idx_close, hit_rank): tbl for tbl in tf_tables}
             for fut in as_completed(futures):

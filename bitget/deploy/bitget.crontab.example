@@ -1,0 +1,35 @@
+# Dual-Screener-Bot — Bitget crontab (paste into /etc/cron.d/dual-screener-bitget)
+# Install: chmod +x bitget/deploy/bitget.sh
+# Set BITGET to repo root on server.
+
+SHELL=/bin/bash
+CRON_TZ=UTC
+PATH=/usr/local/bin:/usr/bin:/bin
+
+BITGET=/home/ubuntu/Dual-Screener-Bot
+BITGET_USER=ubuntu
+BG="${BITGET}/bitget/deploy/bitget.sh"
+
+# --- Position tracking (every 15 min) ---
+*/15 * * * *  ${BITGET_USER}  cd ${BITGET} && ${BG} --track-positions
+
+# --- Incremental data + scan (hourly, 10 min after hour) ---
+10 * * * *    ${BITGET_USER}  cd ${BITGET} && ${BG} --scan-all
+
+# --- Full OHLCV refresh (every 4 hours) ---
+5 */4 * * *   ${BITGET_USER}  cd ${BITGET} && ${BG} --data-refresh
+
+# --- Daily audit (00:20 UTC) ---
+20 0 * * *    ${BITGET_USER}  cd ${BITGET} && ${BG} --daily-audit
+
+# --- OMS reconciliation (hourly) ---
+0 * * * *     ${BITGET_USER}  cd ${BITGET} && ${BG} --reconcile
+
+# --- Weekly evolution (Monday 00:30 UTC) ---
+30 0 * * 1    ${BITGET_USER}  cd ${BITGET} && ${BG} --weekly-evolution
+
+# --- Watchdog (every 5 min) ---
+*/5 * * * *   ${BITGET_USER}  cd ${BITGET} && ${BG} --watchdog
+
+# --- Infra health (daily) ---
+15 0 * * *    ${BITGET_USER}  cd ${BITGET} && ${BG} --health

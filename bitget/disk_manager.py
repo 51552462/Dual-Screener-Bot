@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from bitget_logger import get_logger
+from bitget.infra.logging_setup import get_logger
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

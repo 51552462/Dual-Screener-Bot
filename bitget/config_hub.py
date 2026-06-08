@@ -3,10 +3,14 @@ import os
 from datetime import datetime, timezone
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SYSTEM_CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "bitget_config.json")
-LEGACY_DEPRECATED = os.path.join(BASE_DIR, "bitget_config.json.deprecated")
+from bitget.infra.data_paths import (
+    bitget_pkg_dir,
+    system_config_json_path,
+)
+
+SYSTEM_CONFIG_PATH = system_config_json_path()
+LEGACY_CONFIG_PATH = os.path.join(bitget_pkg_dir(), "bitget_config.json")
+LEGACY_DEPRECATED = os.path.join(bitget_pkg_dir(), "bitget_config.json.deprecated")
 
 
 def _read_json(path):
@@ -45,7 +49,7 @@ def load_config():
 
 
 def save_config_atomic(cfg):
-    os.makedirs(BASE_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(SYSTEM_CONFIG_PATH) or ".", exist_ok=True)
     payload = dict(cfg or {})
     payload["UPDATED_AT_UTC"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     temp_path = f"{SYSTEM_CONFIG_PATH}.tmp"

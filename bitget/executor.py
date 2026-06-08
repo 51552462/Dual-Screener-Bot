@@ -2,13 +2,15 @@ import json
 import os
 from datetime import datetime, timezone
 
-from bitget_logger import get_logger, setup_logging
+from bitget.infra.data_paths import system_config_json_path
+from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.oms import create_trade_exchange, generate_client_oid, oms_place_market_order
 from bitget.rate_limit_guard import backoff_sleep, throttle
 from bitget.symbol_utils import normalize_market_symbol
+from bitget.trading.leverage_manager import prepare_futures_order_params, resolve_leverage, resolve_margin_mode
+from bitget.trading.slippage_guard import run_pre_trade_gate
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+CONFIG_PATH = system_config_json_path()
 setup_logging()
 logger = get_logger("bitget.executor")
 
@@ -21,76 +23,6 @@ def _load_config():
         except Exception:
             return {}
     return {}
-
-
-def _resolve_margin_mode(cfg, strategy_key=None, margin_mode_explicit=None):
-    if margin_mode_explicit:
-        mm = str(margin_mode_explicit).strip().lower()
-    elif strategy_key:
-        by_strat = cfg.get("MARGIN_MODE_BY_STRATEGY") or {}
-        mm = str((by_strat or {}).get(strategy_key, "") or "").strip().lower()
-        if not mm:
-            eng = cfg.get("MARGIN_MODE_BY_ENGINE") or {}
-            mm = str((eng or {}).get(strategy_key, "") or "").strip().lower()
-    else:
-        mm = ""
-    if mm not in ("cross", "isolated"):
-        mm = str(cfg.get("DEFAULT_REAL_EXECUTION_MARGIN_MODE", "cross") or "cross").strip().lower()
-    if mm not in ("cross", "isolated"):
-        mm = "cross"
-    return mm
-
-
-def _current_margin_mode_from_exchange(ex, market_symbol):
-    try:
-        throttle("bitget.fetch_positions", 0.28)
-        rows = ex.fetch_positions([market_symbol])
-    except Exception:
-        return None
-    mode = None
-    for row in rows or []:
-        if row.get("symbol") != market_symbol:
-            continue
-        m = row.get("marginMode")
-        if m is None and isinstance(row.get("info"), dict):
-            m = row["info"].get("marginMode") or row["info"].get("posMode")
-        if m:
-            ms = str(m).lower()
-            if "cross" in ms:
-                mode = "cross"
-            elif "isol" in ms:
-                mode = "isolated"
-            else:
-                mode = ms
-            break
-    return mode
-
-
-def _enforce_margin_mode(ex, market_symbol, desired_mode):
-    """거래소 API로 목표 마진모드 확인·설정 후 재검증."""
-    want = desired_mode.strip().lower()
-    if want not in ("cross", "isolated"):
-        want = "cross"
-
-    cur = _current_margin_mode_from_exchange(ex, market_symbol)
-    need_set = cur is None or cur != want
-    if need_set and hasattr(ex, "set_margin_mode"):
-        try:
-            throttle("bitget.set_margin_mode", 0.4)
-            ex.set_margin_mode(want, market_symbol)
-        except Exception as e:
-            logger.warning("set_margin_mode(%s,%s): %s", want, market_symbol, e)
-
-    cur2 = _current_margin_mode_from_exchange(ex, market_symbol)
-    if cur2 == want:
-        return True, want, cur2
-    if cur2 is None:
-        logger.warning(
-            "margin mode verify skipped (no position/account read); requested=%s",
-            want,
-        )
-        return True, want, None
-    return False, want, cur2
 
 
 def _normalize_order_from_markets(ex, market_symbol, qty, market_type, ref_price=None):
@@ -206,7 +138,7 @@ def execute_real_order(
     margin_mode=None,
 ):
     """
-    비트겟 실전 주문 실행 — OMS(clientOid)·정규화·마진 검증 포함.
+    Bitget live order — OMS(clientOid), normalization, margin/leverage SSOT, slippage gate.
     """
     cfg = _load_config()
     enabled = bool(cfg.get("ENABLE_REAL_EXECUTION", False))
@@ -215,10 +147,10 @@ def execute_real_order(
     side_u = str(side).upper()
     order_side = "buy" if side_u in ("LONG", "BUY") else "sell"
     qty = float(amount or 0.0)
-    lev = float(leverage or 1.0)
-    resolved_mm = _resolve_margin_mode(cfg, strategy_key=str(strategy_key), margin_mode_explicit=margin_mode)
+    lev = resolve_leverage(cfg, strategy_key=strategy_key, leverage_explicit=leverage)
+    resolved_mm = resolve_margin_mode(cfg, strategy_key=strategy_key, margin_mode_explicit=margin_mode)
     market_symbol = normalize_market_symbol(str(symbol).replace("_", "/"), market_type)
-    meta_out = {"margin_mode_requested": resolved_mm}
+    meta_out = {"margin_mode_requested": resolved_mm, "leverage": lev}
 
     if qty <= 0:
         return {
@@ -256,6 +188,21 @@ def execute_real_order(
             "client_order_id": generate_client_oid(dr_prefix),
         }
 
+    slip_ok, slip_meta = run_pre_trade_gate(market_symbol, market_type, cfg)
+    meta_out.update(slip_meta)
+    if not slip_ok:
+        return {
+            "ok": False,
+            "status": "slippage_blocked",
+            "message": slip_meta.get("slippage_reason", "slippage_blocked"),
+            "symbol": market_symbol,
+            "side": order_side,
+            "amount": qty,
+            "leverage": lev,
+            "client_order_id": "",
+            **meta_out,
+        }
+
     try:
         ex = create_trade_exchange(market_type)
         throttle("bitget.balance", 0.2)
@@ -279,14 +226,25 @@ def execute_real_order(
             }
         qty = qty_norm
 
+        params = {}
         if market_type == "futures":
-            ok_mm, mm_req, mm_ver = _enforce_margin_mode(ex, market_symbol, resolved_mm)
-            meta_out.update({"margin_mode_verified_ok": ok_mm, "margin_mode_at_exchange": mm_ver})
-            if not ok_mm:
+            params, fut_meta = prepare_futures_order_params(
+                ex,
+                market_symbol,
+                cfg,
+                strategy_key=strategy_key,
+                leverage=lev,
+                margin_mode=resolved_mm,
+            )
+            meta_out.update(fut_meta)
+            if not fut_meta.get("margin_mode_verified_ok", True):
                 return {
                     "ok": False,
                     "status": "margin_mode_mismatch",
-                    "message": f"desired={mm_req}, exchange={mm_ver}",
+                    "message": (
+                        f"desired={fut_meta.get('margin_mode_requested')}, "
+                        f"exchange={fut_meta.get('margin_mode_at_exchange')}"
+                    ),
                     "symbol": market_symbol,
                     "side": order_side,
                     "amount": qty,
@@ -294,16 +252,6 @@ def execute_real_order(
                     "client_order_id": "",
                     **meta_out,
                 }
-
-        try:
-            throttle("bitget.set_leverage", 0.25)
-            ex.set_leverage(lev, market_symbol)
-        except Exception:
-            pass
-
-        params = {}
-        if market_type == "futures":
-            params["marginMode"] = resolved_mm
 
         prefix = str(cfg.get("EXEC_CLIENT_OID_PREFIX") or "bg")[:12]
         coid = generate_client_oid(prefix)

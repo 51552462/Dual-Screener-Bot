@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic Bitget CQRS snapshot (market_data -> snapshot)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=dante-bitget-snapshot.service
+
+[Install]
+WantedBy=timers.target

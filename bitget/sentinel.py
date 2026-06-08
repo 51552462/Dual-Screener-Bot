@@ -6,7 +6,8 @@ import time
 import requests
 
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
-from bitget_logger import get_logger, setup_logging
+from bitget.infra.data_paths import dashboard_port, heatmap_port
+from bitget.infra.logging_setup import get_logger, setup_logging
 
 BITGET_PKG = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BITGET_PKG)
@@ -42,7 +43,7 @@ def _spawn(name):
                 "streamlit",
                 "run",
                 os.path.join(BITGET_PKG, "dashboard.py"),
-                "--server.port=8501",
+                f"--server.port={dashboard_port()}",
                 "--server.headless=true",
             ],
             cwd=PROJECT_ROOT,
@@ -55,7 +56,7 @@ def _spawn(name):
                 "streamlit",
                 "run",
                 os.path.join(BITGET_PKG, "heatmap_dashboard.py"),
-                "--server.port=8502",
+                f"--server.port={heatmap_port()}",
                 "--server.headless=true",
             ],
             cwd=PROJECT_ROOT,

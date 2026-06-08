@@ -363,7 +363,7 @@ def set_config_value(key: str, value: Any) -> None:
         finally:
             conn.close()
 
-    _retry_on_locked(_write)
+    _retry_on_locked(_write, max_retries=15)
 
 
 def update_config_value(

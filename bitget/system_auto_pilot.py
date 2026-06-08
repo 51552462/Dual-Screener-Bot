@@ -1,3 +1,8 @@
+"""
+DEPRECATED — use `bitget.pipelines.bitget_auto_pilot` or `bitget/auto_pilot.py`.
+
+Legacy duplicate of auto_pilot evolution logic. Kept for import compatibility only.
+"""
 import json
 import os
 import sqlite3
@@ -9,11 +14,10 @@ import pandas as pd
 import requests
 
 from bitget.forward_tester import init_forward_db, send_comprehensive_daily_report, send_telegram_msg
+from bitget.infra.data_paths import market_data_db_path, system_config_json_path
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+DB_PATH = market_data_db_path()
+CONFIG_PATH = system_config_json_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 
 

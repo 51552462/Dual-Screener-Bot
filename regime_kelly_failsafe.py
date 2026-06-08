@@ -17,6 +17,7 @@ DEFAULT_LOOKBACK_DAYS = 3
 DEFAULT_UNKNOWN_FLOOR = 0.005
 DEFAULT_UNKNOWN_CAP = 0.022
 NEUTRAL_REGIME_KEY = "SIDEWAYS"
+BULLISH_REGIME_KEYS = frozenset({"BULL", "RISK_ON", "GOLDILOCKS"})
 
 
 def _coerce_float(x: Any, default: float) -> float:
@@ -143,10 +144,27 @@ def resolve_graceful_base_kelly(
         return raw_base, "config_ok"
 
     if not unknown_meta and unknown_cfg:
-        # Meta는 확정, config만 미동기 — 메타 국면 ACTION map 기준으로 베이스 상향
+        # Meta는 확정, config만 미동기(SQLite lock 등) — 메모리상 Kelly 강제 상향
         cap = _regime_kelly_cap(rk_meta, m)
         blended = max(raw_base, min(cap * 0.85, cap))
-        return max(DEFAULT_UNKNOWN_FLOOR, min(DEFAULT_UNKNOWN_CAP, blended)), "meta_led_config_unknown"
+        forced = max(DEFAULT_UNKNOWN_FLOOR, min(DEFAULT_UNKNOWN_CAP, blended))
+        if rk_meta in BULLISH_REGIME_KEYS and raw_base <= 0.0105:
+            # BULL + DYNAMIC_KELLY 1% 고착 → Regime cap 85% (예: 2.38%) 우선
+            forced = max(forced, min(cap * 0.85, cap))
+            logger.warning(
+                "regime_kelly_failsafe: meta_led BULL unlock base %.4f → %.4f (cap=%.4f)",
+                raw_base,
+                forced,
+                cap,
+            )
+            return forced, "meta_bull_forced_unlock"
+        logger.warning(
+            "regime_kelly_failsafe: meta_led_config_unknown rk=%s base %.4f → %.4f",
+            rk_meta,
+            raw_base,
+            forced,
+        )
+        return forced, "meta_led_config_unknown"
 
     ma = _kelly_ma_from_snapshots(c, lookback_days=lookback_days)
     if ma is not None and ma > DEFAULT_UNKNOWN_FLOOR:
@@ -178,9 +196,28 @@ def apply_graceful_kelly_to_effective(
         meta,
         config_regime_unknown=config_regime_unknown,
     )
-    eff = adj_base * float(global_mult or 1.0)
+    g = float(global_mult or 1.0)
+    eff = adj_base * g
     if floor is not None:
         eff = max(eff, float(floor))
     if cap is not None:
         eff = min(eff, float(cap))
-    return max(0.0, eff), adj_base, reason
+    eff = max(0.0, eff)
+
+    # config 미동기 + Meta BULL: 리포트 eff_k가 1%로 떨어지지 않도록 메모리 floor
+    if meta and reason in ("meta_led_config_unknown", "meta_bull_forced_unlock"):
+        rk_meta = str((meta or {}).get("META_REGIME_KEY") or "").strip().upper()
+        if rk_meta in BULLISH_REGIME_KEYS:
+            regime_cap = _regime_kelly_cap(rk_meta, meta)
+            meta_floor = min(regime_cap * 0.85, regime_cap) * max(g, 0.01)
+            if eff < meta_floor - 1e-9:
+                logger.warning(
+                    "regime_kelly_failsafe: eff_k floor lift %.4f → %.4f (meta=%s)",
+                    eff,
+                    meta_floor,
+                    rk_meta,
+                )
+                eff = meta_floor
+                adj_base = max(adj_base, meta_floor / g if g > 0 else meta_floor)
+
+    return eff, adj_base, reason
