@@ -172,6 +172,23 @@ def run_ai_auditor():
         print(f"⚠️ meta load: {e}")
         meta = {}
 
+    try:
+        from meta_state_store import is_meta_state_degraded
+
+        if is_meta_state_degraded(meta):
+            rk = meta.get("META_REGIME_KEY", "UNKNOWN")
+            st = meta.get("META_GOVERNOR_LAST_RUN_STATUS", "NEVER")
+            at = meta.get("META_GOVERNOR_LAST_RUN_AT", "—")
+            raise RuntimeError(
+                "overseer blocked: meta state degraded "
+                f"(regime={rk} status={st} last_at={at}) — "
+                "fix meta_governor_sync before audit report"
+            )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        print(f"⚠️ meta degraded check skipped: {e}")
+
     dossier = build_overseer_audit_dossier(
         sys_config=cfg,
         meta=meta,

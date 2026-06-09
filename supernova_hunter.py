@@ -15,7 +15,12 @@ from io import StringIO
 import requests
 import logging
 from dotenv import load_dotenv
-from daily_dispatch_cache import mark_dispatched_today, was_dispatched_today
+from daily_dispatch_cache import (
+    mark_dispatched_today,
+    mark_scanned_today,
+    was_dispatched_today,
+    was_scanned_today,
+)
 warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
 import shadow_tracking
@@ -26,7 +31,8 @@ from system_config_atomic import CONFIG_DIR, CONFIG_PATH, load_config, update_co
 
 logger = logging.getLogger(__name__)
 
-scanned_today_cache = {'KR': set(), 'US': set()}
+# 레거시 호환 — 실제 SSOT는 daily_dispatch_cache.scanned_today_cache.json
+scanned_today_cache = {"KR": set(), "US": set()}
 
 
 def _time_machine_cache_path() -> str:
@@ -1293,6 +1299,13 @@ def hunt_supernovas(market):
 # ==========================================
 def execute_supernova_live_scan(market):
     import time as _time
+    from market_session_gate import is_market_open
+
+    ok, gate_msg = is_market_open(market)
+    if not ok:
+        print(f"🛑 [{market}] {gate_msg}")
+        return
+
     _scan_t0 = _time.time()
     print(f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 (15배속 비동기 병렬 스캔)...")
 
@@ -1512,7 +1525,7 @@ def execute_supernova_live_scan(market):
             funnel.drop("DOOMSDAY_HALT")
             return None
 
-        if code in open_positions or code in scanned_today_cache[market]:
+        if code in open_positions or was_scanned_today(market, code):
             funnel.drop("SKIP_POSITION")
             return None
             
@@ -1874,7 +1887,7 @@ def execute_supernova_live_scan(market):
 
         if is_success:
             funnel.set_pipeline_result(str(target['code']), "ENROLLED")
-            scanned_today_cache[market].add(target['code'])
+            mark_scanned_today(market, target['code'])
             dispatch_code = str(target.get('code', '')).strip()
             if was_dispatched_today(market, dispatch_code):
                 print(f"🧯 [{market}] 당일 중복 발송 차단: {dispatch_code}")
@@ -1959,9 +1972,6 @@ def run_live_sniper_scheduler():
     print("🕒 [초신성 실시간 스나이퍼] 대기 중...")
     print(" - 🇰🇷 한국 타격: 09:00, 09:30, 15:00, 16:00 (KST)")
     print(" - 🇺🇸 미국 타격: 10:00, 10:30, 14:30, 15:30 (뉴욕 시간, DST 자동 반영)")
-    
-    global scanned_today_cache
-    last_cleared_day = datetime.now(tz_kr).day
 
     scan_owner = (os.environ.get("FACTORY_SCAN_OWNER") or "both").strip().lower()
 
@@ -1971,11 +1981,6 @@ def run_live_sniper_scheduler():
             time_str = f"{now.hour:02d}:{now.minute:02d}"
             now_ny = datetime.now(pytz.timezone('America/New_York'))
             ny_time_str = f"{now_ny.hour:02d}:{now_ny.minute:02d}"
-            
-            # 날짜가 바뀌면 어제 쐈던 기록(캐시) 초기화
-            if now.day != last_cleared_day:
-                scanned_today_cache = {'KR': set(), 'US': set()}
-                last_cleared_day = now.day
 
             kr_target_times = ["09:00", "09:30", "15:00", "16:00"]
             us_target_times = ["10:00", "10:30", "14:30", "15:30"]

@@ -518,19 +518,28 @@ def _with_scan_kr_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     ]
 
 
+def _require_market_session_for_scan(market: str) -> None:
+    from market_session_gate import require_market_open_for_scan
+
+    require_market_open_for_scan(market)
+
+
 def _step_supernova_kr() -> None:
+    _require_market_session_for_scan("KR")
     from supernova_hunter import execute_supernova_live_scan
 
     execute_supernova_live_scan("KR")
 
 
 def _step_supernova_us() -> None:
+    _require_market_session_for_scan("US")
     from supernova_hunter import execute_supernova_live_scan
 
     execute_supernova_live_scan("US")
 
 
 def _step_kr_bowl_optional() -> None:
+    _require_market_session_for_scan("KR")
     from legacy_archive.scanners import kr
 
     kr.scan_market_1d()
@@ -538,6 +547,7 @@ def _step_kr_bowl_optional() -> None:
 
 def _run_equity_scan_module(module_path: str, *, label: str, market: str) -> None:
     """legacy_archive.scanners.* scan_market_1d — 예외·큐 drain SSOT."""
+    _require_market_session_for_scan(market)
     import importlib
 
     mod = importlib.import_module(module_path)
@@ -603,6 +613,7 @@ def _step_us_ema5_scan() -> None:
 
 
 def _step_us_bowl_optional() -> None:
+    _require_market_session_for_scan("US")
     from legacy_archive.scanners import usa
 
     usa.scan_market_1d()

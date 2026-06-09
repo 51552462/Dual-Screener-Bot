@@ -172,12 +172,66 @@ def _summarize_vix(meta: Dict[str, Any]) -> str:
     return " · ".join(parts) if parts else "VIX 데이터 수집됨"
 
 
-def _sql_date_prefix(column: str) -> str:
-    """ISO/TZ/공백/슬래시 혼합 날짜 → YYYY-MM-DD 10자리 비교."""
+def _sql_date_normalized(column: str) -> str:
+    """
+    exit_date/entry_date → SQLite date() 비교용 (KST today_str 과 '=').
+    substr(…,1,10) 단독보다 date() 파싱이 TZ·공백·슬래시 혼합에 안전.
+    """
     c = column.strip()
-    return (
-        f"substr(replace(replace(replace({c}, 'T', ' '), '/', '-'), '.', '-'), 1, 10)"
-    )
+    cleaned = f"replace(replace(replace({c}, 'T', ' '), '/', '-'), '.', '-')"
+    return f"date({cleaned})"
+
+
+def _resolve_overseer_config_regime(
+    meta: Dict[str, Any],
+    sys_config: Dict[str, Any],
+) -> str:
+    """config UNKNOWN 시 MetaGovernor 국면으로 표시 (comprehensive 리포트 SSOT 정합)."""
+    m = meta if isinstance(meta, dict) else {}
+    c = sys_config if isinstance(sys_config, dict) else {}
+    rk_meta = str(m.get("META_REGIME_KEY") or "").strip().upper()
+    try:
+        from meta_state_store import resolve_config_regime_key
+
+        rk_cfg = resolve_config_regime_key(c)
+    except Exception:
+        rk_cfg = str(c.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN")
+    if rk_cfg in ("", "UNKNOWN") and rk_meta not in ("", "UNKNOWN"):
+        return rk_meta
+    return rk_cfg
+
+
+def _resolve_overseer_kelly_display(
+    meta: Dict[str, Any],
+    sys_config: Dict[str, Any],
+    macro_eff_k: float,
+) -> float:
+    """
+    AI 감사관 Kelly — regime_kelly_failsafe SSOT (comprehensive 와 동일 경로).
+    macro block 결과와 reconcile; UNKNOWN·1% 고착 시 graceful lift.
+    """
+    m = meta if isinstance(meta, dict) else {}
+    c = sys_config if isinstance(sys_config, dict) else {}
+    g = float(m.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
+    try:
+        from meta_state_store import resolve_config_regime_key
+        from regime_kelly_failsafe import apply_graceful_kelly_to_effective
+        from reports.report_state_binder import _resolve_kelly_cap_floor
+
+        rk_cfg = resolve_config_regime_key(c)
+        cap, floor = _resolve_kelly_cap_floor(m)
+        eff, _base, _reason = apply_graceful_kelly_to_effective(
+            float(c.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01),
+            g,
+            cap,
+            floor,
+            sys_config=c,
+            meta=m,
+            config_regime_unknown=rk_cfg in ("", "UNKNOWN"),
+        )
+        return max(float(macro_eff_k), float(eff))
+    except Exception:
+        return float(macro_eff_k)
 
 
 def _load_trade_frames(
@@ -189,15 +243,15 @@ def _load_trade_frames(
     try:
         conn = sqlite3.connect(db_path, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
-        exit_d = _sql_date_prefix("exit_date")
-        entry_d = _sql_date_prefix("entry_date")
+        exit_d = _sql_date_normalized("exit_date")
+        entry_d = _sql_date_normalized("entry_date")
         df_today = pd.read_sql(
-            f"SELECT * FROM forward_trades WHERE {exit_d} = ?",
+            f"SELECT * FROM forward_trades WHERE {exit_d} = date(?)",
             conn,
             params=(today_str,),
         )
         df_entry = pd.read_sql(
-            f"SELECT * FROM forward_trades WHERE {entry_d} = ?",
+            f"SELECT * FROM forward_trades WHERE {entry_d} = date(?)",
             conn,
             params=(today_str,),
         )
@@ -344,10 +398,7 @@ def build_overseer_audit_dossier(
         except Exception as e:
             csv_status = f"Read error: {e}"
 
-    eff_k = macro.effective_kelly_risk
     try:
-        from meta_state_store import sync_config_regime_from_meta, resolve_config_regime_key
-
         if m and not isinstance(sys_config, dict):
             cfg = {}
         if m:
@@ -360,7 +411,6 @@ def build_overseer_audit_dossier(
                 cfg = load_system_config() or cfg
             except Exception:
                 pass
-        cfg_regime = resolve_config_regime_key(cfg)
         try:
             from regime_self_heal import tick_regime_mismatch
 
@@ -368,7 +418,10 @@ def build_overseer_audit_dossier(
         except Exception:
             pass
     except Exception:
-        cfg_regime = str(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN")
+        pass
+
+    cfg_regime = _resolve_overseer_config_regime(m, cfg)
+    eff_k = _resolve_overseer_kelly_display(m, cfg, macro.effective_kelly_risk)
 
     return OverseerAuditDossier(
         as_of_kst=today_str,

@@ -538,9 +538,28 @@ def dispatch_factory_mode(
 
     try:
         with factory_job_lock(mode, timeout_sec=lock_timeout_sec):
+            aborted = False
             for spec in pipeline:
+                if aborted:
+                    report.steps.append(
+                        StepResult(
+                            name=spec.name,
+                            ok=False,
+                            critical=spec.critical,
+                            error="skipped: prior critical step failed (zombie pipeline guard)",
+                        )
+                    )
+                    continue
                 result = run_step(spec)
                 report.steps.append(result)
+                if not result.ok and result.critical:
+                    aborted = True
+                    logger.error(
+                        "factory pipeline aborted at critical step %s — "
+                        "remaining steps (incl. ai_overseer) will not execute",
+                        spec.name,
+                    )
+                    continue
                 if spec.delay_after_sec > 0:
                     time.sleep(spec.delay_after_sec)
     except JobSkipError as e:

@@ -77,5 +77,11 @@ fi
 LOG_FILE="${LOG_DIR}/factory_${MODE}_${STAMP}.log"
 echo "[factory.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ}"
 
-exec python "${ROOT}/system_auto_pilot.py" --mode "$MODE" "${EXTRA_ARGS[@]}" \
+# set -e: non-zero Python exit → shell abort (cron must not reach a manual overseer rerun).
+python "${ROOT}/system_auto_pilot.py" --mode "$MODE" "${EXTRA_ARGS[@]}" \
   >>"$LOG_FILE" 2>&1
+_exit=$?
+if [[ $_exit -ne 0 ]]; then
+  echo "[factory.sh] PIPELINE ABORT exit=${_exit} — critical step failed; ai_overseer skipped. log=${LOG_FILE}" >&2
+  exit "${_exit}"
+fi

@@ -1459,6 +1459,15 @@ def get_smart_money_avg_price_from_ssot(sys_config: dict, code: object) -> float
 # ==========================================
 # 1. 신규 종목 가상매매 편입 엔진 (검색기에서 호출)
 # ==========================================
+
+
+def _sql_entry_date_normalized(column: str = "entry_date") -> str:
+    """레거시 ISO/TZ 혼합 entry_date → SQLite date() 비교."""
+    c = column.strip()
+    cleaned = f"replace(replace(replace({c}, 'T', ' '), '/', '-'), '.', '-')"
+    return f"date({cleaned})"
+
+
 def try_add_virtual_position(
     market,
     code,
@@ -1473,6 +1482,17 @@ def try_add_virtual_position(
 ):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
+
+    try:
+        from market_session_gate import is_market_open
+
+        session_ok, session_msg = is_market_open(market)
+        if not session_ok:
+            print(f"🛑 장외 시간 진입 불가: {session_msg}")
+            return False, session_msg
+    except Exception as _gate_exc:
+        print(f"🛑 장외 시간 진입 불가 (gate error): {_gate_exc}")
+        return False, f"장외 시간 진입 불가: {_gate_exc}"
 
     try:
         from sector_normalize import normalize_sector_for_db
@@ -1600,9 +1620,10 @@ def try_add_virtual_position(
         conn.close()
         return False, "중복 보유 중"
 
-    # 2) 당일 재진입(피라미딩) 방지: OPEN/CLOSED 무관하게 오늘 이미 진입한 티커면 금지
+    # 2) 당일 재진입(피라미딩) 방지: OPEN/CLOSED 무관 — entry_date 정규화 비교
+    entry_d = _sql_entry_date_normalized("entry_date")
     cursor.execute(
-        "SELECT id FROM forward_trades WHERE market=? AND code=? AND entry_date=? LIMIT 1",
+        f"SELECT id FROM forward_trades WHERE market=? AND code=? AND {entry_d} = date(?) LIMIT 1",
         (market, code_str, today_str),
     )
     if cursor.fetchone():
@@ -1624,7 +1645,10 @@ def try_add_virtual_position(
 
     # 👇👇 [V102.7 버그 픽스] 글로벌 쿼터제 ➔ '독립 펀드매니저(로직)'별 쿼터제로 완벽 분리 👇👇
     # '점수 티어'가 아닌, 진입을 요청한 해당 '시그널 로직(sig_type)'만의 오늘 진입 내역을 불러옵니다.
-    cursor.execute("SELECT sector FROM forward_trades WHERE entry_date=? AND market=? AND sig_type LIKE ?", (today_str, market, f"%{sig_type}%"))
+    cursor.execute(
+        f"SELECT sector FROM forward_trades WHERE {entry_d} = date(?) AND market=? AND sig_type LIKE ?",
+        (today_str, market, f"%{sig_type}%"),
+    )
     today_sectors = [r[0] for r in cursor.fetchall()]
 
     if len(today_sectors) >= 4:
