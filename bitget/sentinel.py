@@ -30,11 +30,6 @@ def _send_telegram_alert(text):
 
 
 def _spawn(name):
-    if name == "main":
-        return subprocess.Popen(
-            [sys.executable, "-m", "bitget.main"],
-            cwd=PROJECT_ROOT,
-        )
     if name == "dashboard":
         return subprocess.Popen(
             [
@@ -67,7 +62,8 @@ def _spawn(name):
 def run_sentinel():
     setup_logging()
     logger.info("sentinel started")
-    names = ["main", "dashboard", "heatmap"]
+    # Production daemon: dante-bitget-factory → bitget_auto_pilot (not bitget.main)
+    names = ["dashboard", "heatmap"]
     procs = {}
     for name in names:
         try:

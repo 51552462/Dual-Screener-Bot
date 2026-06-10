@@ -7,8 +7,9 @@ from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.oms import create_trade_exchange, generate_client_oid, oms_place_market_order
 from bitget.rate_limit_guard import backoff_sleep, throttle
 from bitget.symbol_utils import normalize_market_symbol
+from bitget.trading.execution_safety import ExecutionGateOutcome, run_pre_execution_gates
 from bitget.trading.leverage_manager import prepare_futures_order_params, resolve_leverage, resolve_margin_mode
-from bitget.trading.slippage_guard import run_pre_trade_gate
+from bitget.trading.position_manager import ccxt_order_side, normalize_position_side
 
 CONFIG_PATH = system_config_json_path()
 setup_logging()
@@ -138,14 +139,20 @@ def execute_real_order(
     margin_mode=None,
 ):
     """
-    Bitget live order — OMS(clientOid), normalization, margin/leverage SSOT, slippage gate.
+    Bitget live order — safety gates → normalization → leverage (futures) → OMS.
+
+    Gate order (execution_safety SSOT):
+      1. ENABLE_REAL_EXECUTION
+      2. REAL_EXECUTION_DRY_RUN
+      3. MetaGovernor KILL_SWITCH
+      4. Pre-trade slippage gate
+      5. Leverage / margin manager (futures only)
+      6. OMS market order (oms_core)
     """
     cfg = _load_config()
-    enabled = bool(cfg.get("ENABLE_REAL_EXECUTION", False))
-    dry_run = bool(cfg.get("REAL_EXECUTION_DRY_RUN", True))
 
-    side_u = str(side).upper()
-    order_side = "buy" if side_u in ("LONG", "BUY") else "sell"
+    side_u = normalize_position_side(side)
+    order_side = ccxt_order_side(side_u, opening=True)
     qty = float(amount or 0.0)
     lev = resolve_leverage(cfg, strategy_key=strategy_key, leverage_explicit=leverage)
     resolved_mm = resolve_margin_mode(cfg, strategy_key=strategy_key, margin_mode_explicit=margin_mode)
@@ -162,39 +169,56 @@ def execute_real_order(
             "client_order_id": "",
         }
 
-    if not enabled:
+    gate = run_pre_execution_gates(cfg, market_symbol=market_symbol, market_type=market_type)
+    meta_out.update(gate.meta)
+
+    if gate.outcome == ExecutionGateOutcome.EXECUTION_DISABLED:
         return {
             "ok": False,
-            "status": "execution_disabled",
-            "message": "ENABLE_REAL_EXECUTION is false",
+            "status": gate.outcome.value,
+            "message": gate.message,
             "symbol": market_symbol,
             "side": order_side,
             "amount": qty,
             "leverage": lev,
             "margin_mode_requested": resolved_mm,
             "client_order_id": "",
+            **meta_out,
         }
 
-    if dry_run:
+    if gate.is_dry_run:
         dr_prefix = str(cfg.get("EXEC_CLIENT_OID_PREFIX") or "bg")[:12]
         return {
             "ok": True,
             "status": "dry_run",
+            "message": gate.message,
             "symbol": market_symbol,
             "side": order_side,
             "amount": qty,
             "leverage": lev,
             "margin_mode_requested": resolved_mm,
             "client_order_id": generate_client_oid(dr_prefix),
+            **meta_out,
         }
 
-    slip_ok, slip_meta = run_pre_trade_gate(market_symbol, market_type, cfg)
-    meta_out.update(slip_meta)
-    if not slip_ok:
+    if gate.outcome == ExecutionGateOutcome.META_BLOCKED:
         return {
             "ok": False,
-            "status": "slippage_blocked",
-            "message": slip_meta.get("slippage_reason", "slippage_blocked"),
+            "status": gate.outcome.value,
+            "message": gate.message,
+            "symbol": market_symbol,
+            "side": order_side,
+            "amount": qty,
+            "leverage": lev,
+            "client_order_id": "",
+            **meta_out,
+        }
+
+    if gate.outcome == ExecutionGateOutcome.SLIPPAGE_BLOCKED:
+        return {
+            "ok": False,
+            "status": gate.outcome.value,
+            "message": gate.message,
             "symbol": market_symbol,
             "side": order_side,
             "amount": qty,

@@ -77,6 +77,32 @@ class TestExecutorDryRun(unittest.TestCase):
             self.assertTrue(out.get("client_order_id"))
 
 
+class TestExecutionSafety(unittest.TestCase):
+    def test_gate_order_disabled_before_dry_run(self):
+        from bitget.trading.execution_safety import evaluate_config_gates, ExecutionGateOutcome
+
+        cfg = {"ENABLE_REAL_EXECUTION": False, "REAL_EXECUTION_DRY_RUN": True}
+        r = evaluate_config_gates(cfg)
+        self.assertEqual(r.outcome, ExecutionGateOutcome.EXECUTION_DISABLED)
+
+    def test_dry_run_when_enabled(self):
+        from bitget.trading.execution_safety import evaluate_config_gates, ExecutionGateOutcome
+
+        cfg = {"ENABLE_REAL_EXECUTION": True, "REAL_EXECUTION_DRY_RUN": True}
+        r = evaluate_config_gates(cfg)
+        self.assertEqual(r.outcome, ExecutionGateOutcome.DRY_RUN)
+
+    def test_meta_kill_switch_blocks(self):
+        from unittest.mock import patch
+
+        from bitget.trading.execution_safety import evaluate_config_gates, ExecutionGateOutcome
+
+        cfg = {"ENABLE_REAL_EXECUTION": True, "REAL_EXECUTION_DRY_RUN": False}
+        with patch("bitget.trading.execution_safety.meta_kill_switch_active", return_value=True):
+            r = evaluate_config_gates(cfg)
+        self.assertEqual(r.outcome, ExecutionGateOutcome.META_BLOCKED)
+
+
 class TestReconciliationSkip(unittest.TestCase):
     def test_skipped_in_dry_run(self):
         from bitget.trading.reconciliation import run_scheduled_reconciliation

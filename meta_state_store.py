@@ -14,7 +14,7 @@ import logging
 import os
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from meta_governor import default_meta_state, meta_state_path
@@ -37,10 +37,39 @@ def normalize_regime_key(value: Any) -> str:
     return "UNKNOWN"
 
 
+def max_meta_age_hours() -> float:
+    """META_GOVERNOR_LAST_RUN_AT 신선도 상한 (기본 24h, FACTORY_META_MAX_AGE_HOURS)."""
+    raw = (os.environ.get("FACTORY_META_MAX_AGE_HOURS") or "24").strip()
+    try:
+        return max(0.25, float(raw))
+    except ValueError:
+        return 24.0
+
+
+def meta_governor_run_age_hours(state: Optional[Dict[str, Any]]) -> Optional[float]:
+    """META_GOVERNOR_LAST_RUN_AT → UTC 기준 경과 시간(시간). 파싱 실패 시 None."""
+    if not isinstance(state, dict):
+        return None
+    raw = state.get("META_GOVERNOR_LAST_RUN_AT")
+    if not raw:
+        return None
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        return (now - dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+    except (TypeError, ValueError):
+        return None
+
+
 def resolve_config_regime_key(sys_config: Optional[Dict[str, Any]] = None) -> str:
     """
-    system_config SSOT 국면 키 — REGIME_ANALYSIS.regime_key 우선, 없으면 CURRENT_REGIME_KEY.
-  리포트·Ruthless QA의 config_regime_key 와 동일 규칙.
+    system_config SSOT 국면 키.
+    REGIME_ANALYSIS.regime_key 가 유효하면 우선; UNKNOWN/공백이면 CURRENT_REGIME_KEY 우선.
     """
     cfg: Dict[str, Any]
     if isinstance(sys_config, dict):
@@ -52,12 +81,16 @@ def resolve_config_regime_key(sys_config: Optional[Dict[str, Any]] = None) -> st
             cfg = load_system_config() or {}
         except Exception:
             cfg = {}
+    rk_cur = normalize_regime_key(cfg.get("CURRENT_REGIME_KEY"))
     ra = cfg.get("REGIME_ANALYSIS")
+    rk_ra = "UNKNOWN"
     if isinstance(ra, dict):
-        rk = normalize_regime_key(ra.get("regime_key"))
-        if rk not in ("", "UNKNOWN"):
-            return rk
-    return normalize_regime_key(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN"))
+        rk_ra = normalize_regime_key(ra.get("regime_key"))
+    if rk_ra not in ("", "UNKNOWN"):
+        return rk_ra
+    if rk_cur not in ("", "UNKNOWN"):
+        return rk_cur
+    return "UNKNOWN"
 
 
 def reconcile_meta_regime_action(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -258,13 +291,18 @@ def sync_config_regime_from_meta(
 
 
 def is_meta_state_degraded(state: Optional[Dict[str, Any]]) -> bool:
-    """UNKNOWN·NEVER·notes 공백·신뢰도 0 — 리포트 전 동기 복구 트리거."""
+    """UNKNOWN·NEVER·타임스탬프 초과·notes 공백 — 리포트 전 동기 복구 트리거."""
     if not isinstance(state, dict) or not state:
         return True
     status = str(state.get("META_GOVERNOR_LAST_RUN_STATUS") or "").upper()
     if status in ("NEVER", "", "ERROR", "FAILED"):
         return True
     if not state.get("META_GOVERNOR_LAST_RUN_AT"):
+        return True
+    age_h = meta_governor_run_age_hours(state)
+    if age_h is None:
+        return True
+    if age_h > max_meta_age_hours():
         return True
     rk = str(state.get("META_REGIME_KEY") or "").strip().upper()
     if rk in ("", "UNKNOWN"):
@@ -426,10 +464,7 @@ def save_meta_governor_state_unified(state: Dict[str, Any], path: Optional[str] 
     """market_data + config_kv + JSON 삼중 저장."""
     p = path or meta_state_path()
     state = reconcile_meta_regime_action(dict(state))
-    try:
-        sync_config_regime_from_meta(state)
-    except Exception as e:
-        logger.warning("meta_state_store: config regime sync failed: %s", e)
+    sync_config_regime_from_meta(state)
     _save_to_market_db(state)
     _save_to_sqlite(state)
     _save_json_mirror(state, p)
@@ -490,38 +525,33 @@ def rebuild_meta_state(*, force: bool = False, refresh_regime: bool = True) -> D
         except Exception:
             pass
 
-    try:
-        meta_after = load_meta_governor_state_unified(meta_state_path())
-        if not is_meta_state_degraded(meta_after):
-            try:
-                result["config_regime_sync"] = ensure_config_regime_aligned(
-                    meta_after, force=True
-                )
-            except Exception as sync_exc:
-                result["config_regime_sync"] = {"synced": False, "error": str(sync_exc)}
-                logger.warning("rebuild_meta_state: config regime sync failed: %s", sync_exc)
-        elif is_config_regime_misaligned(meta_after):
-            try:
-                result["config_regime_sync"] = sync_config_regime_from_meta(
-                    meta_after, force=True
-                )
-            except Exception as sync_exc:
-                result["config_regime_sync"] = {"synced": False, "error": str(sync_exc)}
-        if is_meta_state_degraded(meta_after) and result.get("meta") != "failed":
-            try:
-                from factory_meta_alerts import send_meta_critical_alert
+    meta_after = load_meta_governor_state_unified(meta_state_path())
+    if not is_meta_state_degraded(meta_after):
+        result["config_regime_sync"] = ensure_config_regime_aligned(
+            meta_after, force=True
+        )
+    elif is_config_regime_misaligned(meta_after):
+        result["config_regime_sync"] = sync_config_regime_from_meta(
+            meta_after, force=True
+        )
+    if is_meta_state_degraded(meta_after) and result.get("meta") != "failed":
+        try:
+            from factory_meta_alerts import send_meta_critical_alert
 
-                rk = str(meta_after.get("META_REGIME_KEY") or "UNKNOWN")
-                st = str(meta_after.get("META_GOVERNOR_LAST_RUN_STATUS") or "NEVER")
-                send_meta_critical_alert(
-                    "Meta state still degraded after rebuild",
-                    f"regime={rk} status={st}",
-                    prefix="META_BRAIN",
-                )
-            except Exception:
-                pass
-    except Exception:
-        pass
+            rk = str(meta_after.get("META_REGIME_KEY") or "UNKNOWN")
+            st = str(meta_after.get("META_GOVERNOR_LAST_RUN_STATUS") or "NEVER")
+            at = str(meta_after.get("META_GOVERNOR_LAST_RUN_AT") or "—")
+            send_meta_critical_alert(
+                "Meta state still degraded after rebuild",
+                f"regime={rk} status={st} last_at={at}",
+                prefix="META_BRAIN",
+            )
+        except Exception:
+            pass
+        raise RuntimeError(
+            "rebuild_meta_state: meta still degraded after heal "
+            f"(regime={rk} status={st} last_at={at})"
+        )
 
     try:
         from meta_governor_consumer import invalidate_meta_state_cache

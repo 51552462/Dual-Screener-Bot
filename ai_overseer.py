@@ -49,19 +49,14 @@ _GEMINI_HEARTBEAT: dict[str, object] = {
 
 
 def load_config(max_retries=5):
-    if not os.path.exists(CONFIG_PATH):
+    """SQLite config_kv SSOT — system_config.json 직접 읽기 금지 (Split-Brain 제거)."""
+    try:
+        from config_manager import load_system_config
+
+        return load_system_config(max_retries=max_retries) or {}
+    except Exception as e:
+        print(f"🚨 [치명적 방어] 관제탑 뇌(SQLite SSOT) 읽기 최종 실패: {e}")
         return {}
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
 
 
 def send_telegram_alert(text):

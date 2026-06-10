@@ -14,9 +14,9 @@ from bitget.infra.data_paths import market_data_db_path
 from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.rate_limit_guard import throttle
 from bitget.symbol_utils import normalize_market_symbol
-from bitget.trading.oms_core import _meta_kill_switch_active, create_trade_exchange
+from bitget.trading.execution_safety import meta_kill_switch_active
+from bitget.trading.oms_core import create_trade_exchange
 from bitget.trading.position_manager import build_open_position_index, row_ccxt_future_symbol
-from bitget.trading.slippage_guard import audit_post_trade_slippage
 from bitget.trading.slippage_guard import audit_post_trade_slippage
 
 setup_logging()
@@ -182,7 +182,35 @@ def _scan_open_orders_and_notify(ex) -> int:
     return len(oo)
 
 
-def _reconcile_futures_opens(ex, conn) -> int:
+def detect_orphan_positions(
+    ex,
+    conn,
+) -> list[str]:
+    """
+    Exchange positions with no matching virtual OPEN row (Orphan).
+    Returns human-readable alert lines.
+    """
+    pos_map = build_open_position_index(ex)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT symbol, position_side FROM bitget_forward_trades WHERE lower(market_type)='futures' AND status='OPEN'"
+    )
+    open_keys = set()
+    for sym, ps in cur.fetchall():
+        open_keys.add((row_ccxt_future_symbol(sym), str(ps or "LONG").upper()))
+
+    orphans: list[str] = []
+    for k, contracts in pos_map.items():
+        if k not in open_keys:
+            orphans.append(f"{k[0]} {k[1]} ~{contracts}")
+    return orphans
+
+
+def reconcile_phantom_opens(ex, conn) -> int:
+    """
+    Virtual OPEN rows with no matching exchange position (Phantom OPEN).
+    Closes ghosts in forward ledger and returns count fixed.
+    """
     pos_map = build_open_position_index(ex)
     cur = conn.cursor()
     cur.execute(
@@ -205,18 +233,12 @@ def _reconcile_futures_opens(ex, conn) -> int:
             )
             n_fixed += 1
     conn.commit()
+    return n_fixed
 
-    cur.execute(
-        "SELECT symbol, position_side FROM bitget_forward_trades WHERE lower(market_type)='futures' AND status='OPEN'"
-    )
-    open_keys = set()
-    for sym, ps in cur.fetchall():
-        open_keys.add((row_ccxt_future_symbol(sym), str(ps or "LONG").upper()))
 
-    orphans = []
-    for k, contracts in pos_map.items():
-        if k not in open_keys:
-            orphans.append(f"{k[0]} {k[1]} ~{contracts}")
+def _reconcile_futures_opens(ex, conn) -> int:
+    n_fixed = reconcile_phantom_opens(ex, conn)
+    orphans = detect_orphan_positions(ex, conn)
     if orphans:
         send_telegram_msg(
             "[OMS] Exchange-only positions (no virtual OPEN)\n"
@@ -239,7 +261,7 @@ def _fetch_my_trades_snapshot(ex) -> tuple[int, list]:
 
 def run_scheduled_reconciliation() -> dict[str, Any]:
     cfg = load_system_config()
-    if _meta_kill_switch_active():
+    if meta_kill_switch_active():
         logger.warning("MetaGovernor KILL_SWITCH: scheduled reconciliation skipped")
         return {"skipped": True, "reason": "meta_kill_switch"}
     if not bool(cfg.get("ENABLE_REAL_EXECUTION", False)):

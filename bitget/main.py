@@ -158,12 +158,6 @@ if __name__ == "__main__":
         "See bitget/RUNBOOK.md"
     )
     logger.warning("deprecated entry: use pipeline SSOT (bitget/RUNBOOK.md)")
-    try:
-        from bitget.infra import ops_logger
-
-        ops_logger.record_heartbeat("bitget.main", extra={"event": "startup"})
-    except Exception:
-        pass
 
     bot_targets = {
         "💠 [엔진] MTF 데이터 업데이터": getattr(updater, "run_mtf_update", None),

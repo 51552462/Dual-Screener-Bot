@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from factory_data_paths import (
@@ -31,14 +30,6 @@ def verify_market_db_schema(*, heal: bool = True) -> Dict[str, Any]:
     return ensure_market_db_core_schema(heal=heal, heal_snapshot=True)
 
 
-def _max_meta_age_hours() -> float:
-    raw = (os.environ.get("FACTORY_META_MAX_AGE_HOURS") or "24").strip()
-    try:
-        return max(0.25, float(raw))
-    except ValueError:
-        return 24.0
-
-
 def _min_csv_bytes() -> int:
     raw = (os.environ.get("FACTORY_CSV_MIN_BYTES") or "128").strip()
     try:
@@ -58,48 +49,15 @@ def _csv_needs_rebuild(csv_path: str) -> bool:
     return False
 
 
-def _meta_age_hours(meta_path: str) -> Optional[float]:
-    if not os.path.isfile(meta_path):
-        return None
-    try:
-        mtime = os.path.getmtime(meta_path)
-        return (datetime.now(timezone.utc).timestamp() - mtime) / 3600.0
-    except OSError:
-        return None
-
-
 def _meta_needs_rebuild(meta_path: str) -> bool:
+    """META_GOVERNOR_LAST_RUN_AT 내용 나이 + degraded 판정 (파일 mtime 아님)."""
     try:
         from meta_state_store import is_meta_state_degraded, load_meta_governor_state_unified
 
         state = load_meta_governor_state_unified(meta_path)
-        if is_meta_state_degraded(state):
-            return True
-    except Exception:
-        if not os.path.isfile(meta_path):
-            return True
-    if not os.path.isfile(meta_path):
-        return True
-    try:
-        from meta_governor import load_meta_governor_state
-
-        state = load_meta_governor_state(meta_path)
-    except Exception:
-        return True
-    status = str(state.get("META_GOVERNOR_LAST_RUN_STATUS") or "").upper()
-    if status in ("NEVER", ""):
-        return True
-    if not state.get("META_GOVERNOR_LAST_RUN_AT"):
-        return True
-    age = _meta_age_hours(meta_path)
-    if age is not None and age > _max_meta_age_hours():
-        return True
-    try:
-        from meta_state_store import is_meta_state_degraded
-
         return is_meta_state_degraded(state)
     except Exception:
-        return False
+        return not os.path.isfile(meta_path)
 
 
 def _run_meta_governor_cycle(db_path: str) -> str:

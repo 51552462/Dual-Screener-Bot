@@ -10,7 +10,7 @@ from typing import Optional
 from bitget.env import bitget_access_key, bitget_passphrase, bitget_secret_key
 from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.rate_limit_guard import backoff_sleep, throttle
-from meta_governor_consumer import load_meta_state_resolved
+from bitget.trading.execution_safety import meta_kill_switch_active
 
 try:
     import ccxt
@@ -20,14 +20,8 @@ except Exception:
 setup_logging()
 logger = get_logger("bitget.trading.oms_core")
 
-
-def _meta_kill_switch_active() -> bool:
-    try:
-        st = load_meta_state_resolved()
-        fl = st.get("META_OPERATOR_FLAGS") or {}
-        return bool(fl.get("KILL_SWITCH"))
-    except Exception:
-        return False
+# Backward-compatible alias for reconciliation imports
+_meta_kill_switch_active = meta_kill_switch_active
 
 
 def create_trade_exchange(market_type="futures"):
@@ -93,7 +87,7 @@ def oms_place_market_order(
     Market order with clientOid idempotency on transient errors.
     Returns ok, order_id, client_order_id, raw, filled, remaining, status, message.
     """
-    if _meta_kill_switch_active():
+    if meta_kill_switch_active():
         return {
             "ok": False,
             "order_id": "",

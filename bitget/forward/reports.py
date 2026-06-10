@@ -13,7 +13,12 @@ from bitget.forward.execution_bridge import (
     sync_real_leaderboard_with_virtual,
 )
 from bitget.forward.gates import _extract_core_group
-from bitget.forward.mutant import _auto_tune_brain_from_closed_df, _coin_asset_group, _pf
+from bitget.forward.mutant import (
+    _auto_tune_brain_from_closed_df,
+    _calculate_metrics,
+    _coin_asset_group,
+    _pf,
+)
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config, send_telegram_msg
 from meta_governor_consumer import load_meta_state_resolved
 from reports.forward_report_scalar import (
@@ -26,7 +31,7 @@ from reports.report_state_binder import build_macro_treasury_block, format_macro
 
 def send_group_practitioner_reports():
     """PIL — Bitget PRACT_01~30 (spot/futures) Post-Mortem · Vitality · LLM · ZOMBIE 페널티."""
-    from practitioner_bitget_adapter import send_bitget_practitioner_reports_pil
+    from bitget.forward.practitioner_bitget_adapter import send_bitget_practitioner_reports_pil
 
     init_forward_db()
     sync_real_leaderboard_with_virtual()
@@ -179,6 +184,7 @@ def run_deep_dive_analysis(market_type="spot"):
         df = pd.read_sql(
             "SELECT * FROM bitget_forward_trades WHERE market_type=? AND status LIKE 'CLOSED%'",
             conn,
+            params=(market_type,),
         )
         conn.close()
 
