@@ -807,7 +807,18 @@ def scan_market_1d():
 
                 if hit:
                     if code in sent_today:
-                        hit = False 
+                        from scanner_funnel import log_equity_scan_dedup_skip
+
+                        log_equity_scan_dedup_skip(
+                            market="KR",
+                            label="KR 5일선",
+                            code=code,
+                            name=name,
+                            token_main=TELEGRAM_TOKEN_MAIN,
+                            chat_id=TELEGRAM_CHAT_ID,
+                            send_enabled=SEND_TELEGRAM,
+                        )
+                        hit = False
                     else:
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']

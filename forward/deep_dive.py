@@ -605,14 +605,11 @@ def send_group_practitioner_reports(
             market, group = _parse_mkt_group_key(mkt_group)
             if market_allow is not None and market not in market_allow:
                 continue
+            # market SSOT: _normalize_trade_market (DB 우선) — code 생김새 2차 검열 제거
             g_all = df_all[
                 (df_all["mkt_group"] == mkt_group)
                 & (df_all["market"].astype(str).str.upper() == market)
             ].copy()
-            if market == "KR":
-                g_all = g_all[g_all["code"].astype(str).str.match(r"^\d{5,6}$", na=False)]
-            else:
-                g_all = g_all[~g_all["code"].astype(str).str.match(r"^\d{5,6}$", na=False)]
 
             if g_all.empty:
                 continue

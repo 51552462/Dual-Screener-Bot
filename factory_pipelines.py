@@ -596,6 +596,14 @@ def _step_kr_ema5_scan() -> None:
     )
 
 
+def _step_kr_master_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.master",
+        label="KR 마스터",
+        market="KR",
+    )
+
+
 def _step_us_nulrim_scan() -> None:
     _run_equity_scan_module(
         "legacy_archive.scanners.nulusa",
@@ -746,6 +754,7 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
                     StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
                     StepSpec("kr_nulrim_scan", _step_kr_nulrim_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("kr_ema5_scan", _step_kr_ema5_scan, critical=False, delay_after_sec=2.0),
+                    StepSpec("kr_master_scan", _step_kr_master_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
                 ]
             )

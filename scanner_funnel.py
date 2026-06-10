@@ -5,6 +5,7 @@ Stage Profile 주입으로 스캐너별 퍼널 단계를 OCP 방식으로 확장
 from __future__ import annotations
 
 import html
+import logging
 import threading
 from collections import Counter
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import pytz
+
+logger = logging.getLogger(__name__)
 
 # --- Stage profiles (drop key → human label) ---
 
@@ -489,8 +492,59 @@ def notify_equity_scan_zero_hits(
             parse_mode="HTML",
             timeout=15.0,
         )
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.error(
+            "notify_equity_scan_zero_hits failed market=%s label=%s: %s",
+            market,
+            label,
+            ex,
+            exc_info=True,
+        )
+
+
+def log_equity_scan_dedup_skip(
+    *,
+    market: str,
+    label: str,
+    code: str,
+    name: str = "",
+    token_main: str = "",
+    chat_id: str = "",
+    send_enabled: bool = False,
+) -> None:
+    """sent_log 당일 dedup — 무음 skip 금지 (콘솔·로그 필수, TG 선택)."""
+    code_s = str(code or "").strip()
+    name_s = str(name or "").strip()
+    detail = f"당일 중복 발송 차단: {code_s}"
+    if name_s:
+        detail += f" ({name_s})"
+    line = f"⏭️ [{label}] {detail}"
+    print(line)
+    logger.info("%s market=%s", line, market)
+    if not send_enabled or not token_main or not chat_id:
+        return
+    icon = "🇰🇷" if str(market).upper() == "KR" else "🇺🇸"
+    lbl = html.escape(str(label), quote=False)
+    body = html.escape(detail, quote=False)
+    msg = f"{icon} <i>[{lbl}]</i> {body}"
+    try:
+        from telegram_html_delivery import post_telegram_message
+
+        post_telegram_message(
+            url=f"https://api.telegram.org/bot{token_main}/sendMessage",
+            chat_id=str(chat_id),
+            text=msg,
+            parse_mode="HTML",
+            timeout=15.0,
+        )
+    except Exception as ex:
+        logger.error(
+            "log_equity_scan_dedup_skip telegram failed market=%s code=%s: %s",
+            market,
+            code_s,
+            ex,
+            exc_info=True,
+        )
 
 
 def notify_equity_scan_fatal(
@@ -518,8 +572,14 @@ def notify_equity_scan_fatal(
             parse_mode="HTML",
             timeout=15.0,
         )
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.error(
+            "notify_equity_scan_fatal failed market=%s label=%s: %s",
+            market,
+            label,
+            ex,
+            exc_info=True,
+        )
 
 
 def post_scan_funnel_telegram(

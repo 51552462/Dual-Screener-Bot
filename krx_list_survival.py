@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from krx_equity_universe import DEFAULT_JUNK_NAME_PATTERN
 from market_db_paths import MARKET_DATA_DB_PATH
 
 # SSOT: factory_data_dir() → market_data.sqlite (ENV-02)
@@ -21,8 +22,7 @@ KRX_LIST_CACHE_BASENAME = "krx_list_cache.csv"
 
 _CODE_RE = re.compile(r"^KR_(\d{6})$")
 _MIN_LIVE_ROWS = 300
-# 레거시 호출부 호환(이름 정규식 필터 비사용 — krx_equity_universe 가 SSOT)
-_DEFAULT_JUNK: str | None = None
+_DEFAULT_JUNK: str | None = DEFAULT_JUNK_NAME_PATTERN
 
 
 def default_krx_list_cache_path(db_path: str | None = None) -> str:
@@ -110,7 +110,7 @@ def _finalize_standard(
     out = df.copy()
     out["Marcap"] = pd.to_numeric(out["Marcap"], errors="coerce").fillna(0.0)
     if apply_junk_filter:
-        out = filter_krx_equity_universe(out)
+        out = filter_krx_equity_universe(out, junk_pattern=junk_pattern)
     cols = _kr_list_output_columns(out)
     return out[cols].dropna(subset=["Code", "Name", "Market"])
 
@@ -354,7 +354,7 @@ def collect_krx_list_survival(
     try:
         tab = _stage3_sqlite_codes(resolved_db)
         if tab is not None and not tab.empty:
-            out = _finalize_standard(tab, junk_pattern, False)
+            out = _finalize_standard(tab, junk_pattern, apply_junk_filter)
             if out is not None and not out.empty:
                 print(f"[KRX listing] 3단계 성공: {len(out)}종목 (KR_###### 테이블명 기준)")
                 return out, "sqlite"
@@ -377,4 +377,5 @@ def collect_krx_list_survival(
             {"Code": "035420", "Name": "NAVER", "Market": "KOSPI", "Marcap": 0.0},
         ]
     )
-    return tier4, "tier4"
+    tier4_out = _finalize_standard(tier4, junk_pattern, apply_junk_filter)
+    return tier4_out, "tier4"

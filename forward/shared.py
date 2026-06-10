@@ -866,17 +866,20 @@ def _format_exit_reason_display(reason: object) -> str:
 
 def _normalize_trade_market(code: object, market: object) -> str:
     """
-    code·market 불일치 교정 — KR 리포트에 US 티커 누수 방지.
-    KR: 5~6자리 숫자 코드 / US: 알파벳 티커.
+    DB forward_trades.market SSOT — code 생김새로 시장을 덮어쓰지 않는다.
+
+    _daily_report_trades_for_market · send_group_practitioner_reports 등
+    리포트 슬라이스가 동일 함수를 공유한다. market 컬럼이 KR/US이면 그대로 사용하고,
+    비어 있을 때만 code 패턴으로 유추한다.
     """
-    c = str(code or "").strip().upper()
     m = str(market or "").strip().upper()
+    if m in ("KR", "US"):
+        return m
+    c = str(code or "").strip().upper()
     if re.fullmatch(r"\d{5,6}", c) or (c.isdigit() and len(c) <= 6):
         return "KR"
     if c and re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,14}", c):
         return "US"
-    if m in ("KR", "US"):
-        return m
     return "KR"
 
 
@@ -958,7 +961,11 @@ def _reporter_deploy_fleet_mask(df_open: pd.DataFrame, market: str) -> pd.Series
 
 
 def _daily_report_trades_for_market(df_all: pd.DataFrame, market: str) -> pd.DataFrame:
-    """일일 통합 리포트 — code 기반 market 정규화 (KR/US 누수·오태깅 방지)."""
+    """
+    시장별 forward_trades 슬라이스 — DB market SSOT (_normalize_trade_market).
+
+    load_market_slice · PIL 실무자 리포트와 동일 정규화. code 생김새로 US→KR 오판 drop 금지.
+    """
     if df_all is None or df_all.empty:
         return df_all.copy() if df_all is not None else pd.DataFrame()
     mkt = str(market or "").upper()
@@ -1482,6 +1489,22 @@ def try_add_virtual_position(
 ):
     init_forward_db()
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
+
+    if str(market or "").upper() == "KR":
+        try:
+            from krx_equity_universe import reject_kr_virtual_entry
+
+            allowed, junk_reason = reject_kr_virtual_entry(
+                code_str, name, entry_price=ep
+            )
+            if not allowed:
+                msg = f"🚫 [KR 거름망] 가상매매 진입 거부 {code_str} ({name}): {junk_reason}"
+                print(msg)
+                return False, msg
+        except Exception as _junk_ex:
+            msg = f"🚫 [KR 거름망] 검증 실패 — 진입 차단: {_junk_ex}"
+            print(msg)
+            return False, msg
 
     try:
         from market_session_gate import is_market_open

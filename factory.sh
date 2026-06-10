@@ -32,7 +32,7 @@ usage() {
   cat <<'EOF'
 Usage: ./factory.sh <flag>
 
-  --scan-kr       supernova KR + nulrim + 5ema + kr bowl
+  --scan-kr       supernova KR + nulrim + 5ema + master + kr bowl
   --scan-us       supernova US + nulusa + us_5ema + usa bowl
   --daily-kr      guard → sentiment → track → deep dive → comprehensive → overseer (KR)
   --daily-us      guard → sentiment → track → deep dive → comprehensive → overseer (US)

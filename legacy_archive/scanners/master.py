@@ -53,9 +53,9 @@ warnings.filterwarnings('ignore')
 # 💡 1. 듀얼 텔레그램 봇 세팅 — .env → telegram_env
 import telegram_env
 
-TELEGRAM_TOKEN_MAIN = telegram_env.get_equity_us_main_token()
-TELEGRAM_TOKEN_PROMO = telegram_env.get_equity_us_promo_token()
-TELEGRAM_CHAT_ID = telegram_env.get_equity_us_factory_chat_id()
+TELEGRAM_TOKEN_MAIN = telegram_env.get_equity_kr_main_token()
+TELEGRAM_TOKEN_PROMO = telegram_env.get_equity_kr_promo_token()
+TELEGRAM_CHAT_ID = telegram_env.get_equity_kr_factory_chat_id()
 SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
 
 from telegram_message_queue import (
@@ -801,7 +801,18 @@ def scan_market_1d():
 
                 if hit:
                     if code in sent_today:
-                        hit = False 
+                        from scanner_funnel import log_equity_scan_dedup_skip
+
+                        log_equity_scan_dedup_skip(
+                            market="KR",
+                            label="KR 마스터",
+                            code=code,
+                            name=name,
+                            token_main=TELEGRAM_TOKEN_MAIN,
+                            chat_id=TELEGRAM_CHAT_ID,
+                            send_enabled=SEND_TELEGRAM,
+                        )
+                        hit = False
                     else:
                         tracker['hits'] += 1
                         hit_rank = tracker['hits']
