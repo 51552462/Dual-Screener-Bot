@@ -447,15 +447,73 @@ def start_async_telegram_daemon_thread(
     return t
 
 
+def _load_dotenv_from_install_root() -> None:
+    """수동 실행 시 systemd EnvironmentFile 없이도 INSTALL_ROOT/.env 로드."""
+    try:
+        from dotenv import load_dotenv
+
+        root = os.path.dirname(os.path.abspath(__file__))
+        load_dotenv(os.path.join(root, ".env"))
+    except Exception:
+        pass
+
+
+def _bootstrap_daemon_registration() -> Optional[tuple[str, str, str, bool]]:
+    """
+    단독 프로세스(systemd·수동) 진입 시 telegram_env → start_telegram_queue_daemons 등록.
+    동일 프로세스 내 선행 등록이 있으면 그대로 재사용.
+    """
+    from telegram_message_queue import get_telegram_daemon_registration, start_telegram_queue_daemons
+
+    reg = get_telegram_daemon_registration()
+    if reg and reg[0] and reg[2] and reg[3]:
+        return reg
+
+    _load_dotenv_from_install_root()
+    import telegram_env
+
+    token_main = (
+        telegram_env.get_main_token()
+        or telegram_env.get_equity_kr_main_token()
+        or telegram_env.get_equity_us_main_token()
+    )
+    token_promo = (
+        telegram_env.get_promo_token()
+        or telegram_env.get_equity_kr_promo_token()
+        or telegram_env.get_equity_us_promo_token()
+        or token_main
+    )
+    chat_id = (
+        telegram_env.get_factory_chat_id()
+        or telegram_env.get_equity_kr_factory_chat_id()
+        or telegram_env.get_equity_us_factory_chat_id()
+    )
+    send_enabled = bool(token_main and chat_id)
+    if not send_enabled:
+        return None
+
+    start_telegram_queue_daemons(
+        token_main,
+        token_promo or token_main,
+        chat_id,
+        send_enabled,
+    )
+    return get_telegram_daemon_registration()
+
+
 def main() -> None:
     """systemd 등 단독 프로세스 진입점."""
     os.environ.setdefault("DANTE_ASYNC_TELEGRAM_DAEMON", "1")
-    from telegram_message_queue import get_telegram_daemon_registration
-
-    reg = get_telegram_daemon_registration()
+    reg = _bootstrap_daemon_registration()
     if not reg:
         print(
-            "⚠️ [async_telegram_daemon] 큐 데몬 등록 없음 — 토큰/채팅 ID 환경변수를 확인하세요.",
+            "⚠️ [async_telegram_daemon] 큐 데몬 등록 없음 — .env 에 아래 키 중 하나 이상 세트를 설정하세요.\n"
+            "  MAIN:  MAIN_BOT_TOKEN (또는 TELEGRAM_TOKEN_MAIN)\n"
+            "         + FACTORY_CHAT_ID (또는 TELEGRAM_CHAT_ID)\n"
+            "  KR:    EQUITY_KR_MAIN_BOT_TOKEN + EQUITY_KR_FACTORY_CHAT_ID\n"
+            "  US:    EQUITY_US_MAIN_BOT_TOKEN + EQUITY_US_FACTORY_CHAT_ID\n"
+            "  선택:  PROMO_BOT_TOKEN / TELEGRAM_TOKEN_PROMO (없으면 MAIN 토큰 사용)\n"
+            "  수동 실행 시: cd <INSTALL_ROOT> && set -a && source .env && set +a 후 재실행",
             file=sys.stderr,
         )
         sys.exit(2)
