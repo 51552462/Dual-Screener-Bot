@@ -6,6 +6,7 @@ US: NYSE regular 09:30–16:00 America/New_York (DST 자동, ≈ KST 22:30–05:
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Tuple
 
@@ -13,6 +14,19 @@ import pytz
 
 _KR_TZ = pytz.timezone("Asia/Seoul")
 _US_ET = pytz.timezone("America/New_York")
+
+
+def force_scan_outside_session() -> bool:
+    """
+    수동 복구·장외 테스트 — FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1 이면 정규장 게이트 우회.
+    factory_pipelines._require_market_session_for_scan · supernova_hunter 공통 SSOT.
+    """
+    return str(os.environ.get("FACTORY_FORCE_SCAN_OUTSIDE_SESSION", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _clock_minutes(hour: int, minute: int) -> int:
@@ -23,6 +37,9 @@ def is_market_open(market: str) -> Tuple[bool, str]:
     """
     정규장 여부. (ok, reason_code_or_detail)
     """
+    if force_scan_outside_session():
+        mk = str(market or "").strip().upper()
+        return True, f"{mk} FORCE_RECOVERY (FACTORY_FORCE_SCAN_OUTSIDE_SESSION)"
     mk = str(market or "").strip().upper()
     if mk == "KR":
         return _kr_regular_open()
@@ -68,6 +85,8 @@ def _us_regular_open() -> Tuple[bool, str]:
 
 def require_market_open_for_scan(market: str) -> None:
     """스캔 파이프라인 — 장외면 RuntimeError."""
+    if force_scan_outside_session():
+        return
     ok, detail = is_market_open(market)
     if not ok:
         raise RuntimeError(detail)

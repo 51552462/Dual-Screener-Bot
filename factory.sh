@@ -38,9 +38,12 @@ Usage: ./factory.sh <flag>
   --daily-us      guard → sentiment → track → deep dive → comprehensive → overseer (US)
   --daily         full daily chain (KR then US, single overseer)
   --weekly        weekly Flow master report + baseline persist
+  --force-scan-outside-session
+                  bypass market_session_gate (manual recovery / off-hours test)
 
 Environment:
   FACTORY_LOG_DIR   log directory (default: ./logs)
+  FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1  same as flag above
   TZ                default Asia/Seoul
 EOF
 }
@@ -56,8 +59,9 @@ while [[ $# -gt 0 ]]; do
     --daily-us)  MODE="daily_audit_us" ;;
     --daily)     MODE="daily_audit" ;;
     --weekly)    MODE="weekly_master" ;;
-    --dry-run)   EXTRA_ARGS+=("--dry-run") ;;
-    --skip-telegram) EXTRA_ARGS+=("--skip-telegram") ;;
+  --dry-run)   EXTRA_ARGS+=("--dry-run") ;;
+  --skip-telegram) EXTRA_ARGS+=("--skip-telegram") ;;
+  --force-scan-outside-session) export FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1 ;;
     -h|--help)   usage; exit 0 ;;
     *)
       echo "Unknown argument: $1" >&2
