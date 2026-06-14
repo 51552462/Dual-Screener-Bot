@@ -114,21 +114,35 @@ def _load_week_closed_df(
     conn: sqlite3.Connection,
     market: str,
     week_start: str,
+    week_end: str,
 ) -> pd.DataFrame:
+    """
+    주간 CLOSED — 일일 리포트와 동일하게 closed_event_dates + in_date_window (Pandas).
+    SQL 단독 exit_date >= ? 는 NULL·포맷·trade_date 폴백 누락으로 False Zero 유발 가능.
+    """
+    from report_date_utils import closed_event_dates, in_date_window, normalize_date_series
+
     df = pd.read_sql(
         """
         SELECT * FROM forward_trades
-        WHERE market=? AND status LIKE 'CLOSED%%' AND exit_date >= ?
+        WHERE market=? AND status LIKE 'CLOSED%%'
           AND IFNULL(sig_type, '') NOT LIKE '%%INCUBATOR%%'
-          AND final_ret IS NOT NULL
         ORDER BY exit_date ASC
         """,
         conn,
-        params=(market, week_start),
+        params=(market,),
     )
     if df is None or df.empty:
         return pd.DataFrame()
     df = df.copy()
+    closed_day = closed_event_dates(df)
+    if "trade_date" in df.columns:
+        trade_d = normalize_date_series(df["trade_date"])
+        closed_day = closed_day.where(closed_day != "", trade_d)
+    window_mask = in_date_window(closed_day, week_start, week_end)
+    df = df.loc[window_mask].copy()
+    if df.empty:
+        return pd.DataFrame()
     df["final_ret"] = pd.to_numeric(df["final_ret"], errors="coerce")
     return df.dropna(subset=["final_ret"])
 
@@ -281,8 +295,8 @@ def build_weekly_flow_snapshot(
         conn = sqlite3.connect(db_path, timeout=60)
         try:
             conn.execute("PRAGMA journal_mode=WAL;")
-            df_kr = _load_week_closed_df(conn, "KR", week_start)
-            df_us = _load_week_closed_df(conn, "US", week_start)
+            df_kr = _load_week_closed_df(conn, "KR", week_start, week_end)
+            df_us = _load_week_closed_df(conn, "US", week_start, week_end)
         finally:
             conn.close()
     except Exception:
