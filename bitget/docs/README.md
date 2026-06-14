@@ -11,6 +11,8 @@
 | **Phase 8 검토** | [07_phase8_feasibility_review.md](./07_phase8_feasibility_review.md) · [루트 요약](../07_phase8_feasibility_review.md) | 계획 |
 | **Phase 8 Track A** | [08_phase8_track_a_execution_report.md](./08_phase8_track_a_execution_report.md) · [루트 요약](../08_phase8_track_a_execution_report.md) | 완료 |
 | **Ubuntu 배포·업데이트** | [09_ubuntu_deployment_and_update_guide.md](./09_ubuntu_deployment_and_update_guide.md) · [루트 요약](../09_ubuntu_deployment_and_update_guide.md) | 가이드 |
+| **단일 서버 리소스** | [10_single_server_resource_management.md](./10_single_server_resource_management.md) · [루트 요약](../10_single_server_resource_management.md) | 가이드 |
+| **update_bitget 백업 수정** | [11_update_bitget_backup_fix.md](./11_update_bitget_backup_fix.md) · [루트 요약](../11_update_bitget_backup_fix.md) | 완료 |
 | 설계 | [../bitget_architecture_upgrade_plan.md](../../bitget_architecture_upgrade_plan.md) (루트) | 완료 |
 | 0–1 | [implementation_phase_0_1_2.md](./implementation_phase_0_1_2.md) | 완료 |
 | 2 | [implementation_phase_2_3_hooking.md](./implementation_phase_2_3_hooking.md) | 완료 |

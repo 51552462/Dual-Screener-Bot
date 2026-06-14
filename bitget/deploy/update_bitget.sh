@@ -6,6 +6,7 @@
 #
 # Steps:
 #   1. Backup bitget *.sqlite + config to /var/backups/bitget-pre-update/
+#      (first deploy: no DB → skip; or BITGET_SKIP_PREUPDATE_BACKUP=1)
 #   2. git pull (DEPLOY_USER)
 #   3. Re-install bitget systemd units
 #   4. Graceful stop → restart bitget services + timers
@@ -32,49 +33,74 @@ if [[ -z "${DANTE_PY:-}" ]]; then
   echo "venv not found under ${INSTALL_ROOT}/venv — abort" >&2
   exit 1
 fi
-echo "[update_bitget] INSTALL_ROOT=$INSTALL_ROOT venv=$DANTE_PY"
+echo "[update_bitget] INSTALL_ROOT=$INSTALL_ROOT venv=$DANTE_PY DEPLOY_USER=$DEPLOY_USER"
 
 _bitget_pre_update_backup() {
-  local stamp dest
-  stamp="$(date -u +%Y%m%d_%H%M%S_utc)"
-  dest="/var/backups/bitget-pre-update/${stamp}"
-  mkdir -p "$dest"
+  if [[ "${BITGET_SKIP_PREUPDATE_BACKUP:-0}" == "1" ]]; then
+    echo "[update_bitget] backup skipped (BITGET_SKIP_PREUPDATE_BACKUP=1)"
+    return 0
+  fi
 
-  sudo -E -u "$DEPLOY_USER" env \
+  local stamp dest backup_root
+  backup_root="/var/backups/bitget-pre-update"
+  stamp="$(date -u +%Y%m%d_%H%M%S_utc)"
+  dest="${backup_root}/${stamp}"
+
+  # Parent may be root:root; each run creates a leaf dir owned by DEPLOY_USER so
+  # the backup Python (sudo -u ubuntu) can write sqlite copies.
+  mkdir -p "$backup_root"
+  mkdir -p "$dest"
+  chown "${DEPLOY_USER}:${DEPLOY_USER}" "$dest"
+
+  if ! sudo -E -u "$DEPLOY_USER" env \
     INSTALL_ROOT="$INSTALL_ROOT" \
     PYTHONPATH="$INSTALL_ROOT" \
     _BG_BACKUP_DEST="$dest" \
     "$DANTE_PY" -c "
-import os, shutil, sqlite3
+import os, shutil, sqlite3, sys
 from bitget.infra.data_paths import bitget_data_dir
+
 dest = os.environ['_BG_BACKUP_DEST']
 data = bitget_data_dir()
-os.makedirs(dest, exist_ok=True)
+
+if not os.access(dest, os.W_OK):
+    print(f'backup dest not writable: {dest}', file=sys.stderr)
+    sys.exit(1)
+
+db_names = (
+    'bitget_market_data.sqlite',
+    'bitget_market_data_snapshot.sqlite',
+    'bitget_system_config.sqlite',
+    'bitget_ops_events.sqlite',
+    'bitget_message_queue.sqlite',
+)
+present = [n for n in db_names if os.path.isfile(os.path.join(data, n))]
+if not present:
+    print(f'  no bitget sqlite in {data} — first deploy, backup skipped')
+    sys.exit(0)
 
 def backup_sqlite(src, out_name):
-    if not os.path.isfile(src):
-        return
     out = os.path.join(dest, out_name)
     try:
-        s = sqlite3.connect(src, timeout=60)
+        s = sqlite3.connect(f'file:{src}?mode=ro', uri=True, timeout=60)
         d = sqlite3.connect(out, timeout=60)
         try:
             s.backup(d)
         finally:
             d.close()
             s.close()
-    except Exception:
-        shutil.copy2(src, out)
+    except Exception as e:
+        try:
+            shutil.copy2(src, out)
+        except Exception as e2:
+            print(f'  backup failed {out_name}: {e}; copy2: {e2}', file=sys.stderr)
+            raise
     print(f'  sqlite: {out_name}')
 
-for name in (
-    'bitget_market_data.sqlite',
-    'bitget_market_data_snapshot.sqlite',
-    'bitget_system_config.sqlite',
-    'bitget_ops_events.sqlite',
-    'bitget_message_queue.sqlite',
-):
-    backup_sqlite(os.path.join(data, name), name)
+for name in db_names:
+    src = os.path.join(data, name)
+    if os.path.isfile(src):
+        backup_sqlite(src, name)
 
 for rel in ('bitget_system_config.json', 'bitget_schedule_lock_state.json'):
     src = os.path.join(data, rel)
@@ -82,7 +108,10 @@ for rel in ('bitget_system_config.json', 'bitget_schedule_lock_state.json'):
         shutil.copy2(src, os.path.join(dest, rel))
         print(f'  file: {rel}')
 print(f'  data_dir={data}')
-"
+"; then
+    echo "[update_bitget] backup failed — set BITGET_SKIP_PREUPDATE_BACKUP=1 to skip on first deploy" >&2
+    return 1
+  fi
   echo "[update_bitget] backup -> $dest"
 }
 
