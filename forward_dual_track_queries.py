@@ -208,7 +208,8 @@ def load_dual_track_frames(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, DualTrackQueryMeta]:
     if timekeeper is not None:
         cal = timekeeper.calendar_today_kst
-        cutoff, anchor = timekeeper.effective_sql_window()
+        cutoff = timekeeper.rolling_cutoff
+        anchor = timekeeper.session_anchor
     else:
         cal = calendar_today or kst_today_str()
         anchor = anchor_day or recent_business_day_kst().strftime("%Y-%m-%d")
