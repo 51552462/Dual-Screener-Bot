@@ -1,12 +1,11 @@
 """
 Bitget mode -> Step pipeline mapping (sequential SSOT).
 
-Phase 2: scan / track / daily / reconcile / data_refresh / weekly_evolution
+scan / track / daily / reconcile / data_refresh / weekly_evolution
+Prelude (scan + daily_audit): meta_governor_sync → artifact_guard → …
 """
 from __future__ import annotations
 
-import os
-import sqlite3
 from typing import Callable, Dict, List, Sequence
 
 from bitget.infra.runtime import StepSpec
@@ -51,29 +50,100 @@ def _step_config_bootstrap() -> None:
     bootstrap_from_json_if_empty()
 
 
+def _step_meta_governor_sync() -> None:
+    """scan/daily 직전 REGIME + MetaGovernor 동기 (degraded 시 자동 복구)."""
+    from bitget.governance.meta_sync import (
+        ensure_config_regime_aligned,
+        is_bitget_meta_degraded,
+        load_bitget_meta_resolved,
+        rebuild_bitget_meta_state,
+    )
+
+    out = rebuild_bitget_meta_state(force=False, refresh_regime=True)
+    align = ensure_config_regime_aligned()
+    out["config_regime_align"] = align
+    print(f"🛰️ [Bitget] meta_governor_sync: {out}")
+
+    failures: list[str] = []
+    if out.get("meta") == "failed":
+        failures.append(f"meta_error={out.get('meta_error')}")
+    if out.get("regime") == "failed":
+        failures.append(f"regime_error={out.get('regime_error')}")
+    sync = out.get("config_regime_sync")
+    if isinstance(sync, dict) and sync.get("error"):
+        failures.append(f"config_regime_sync={sync.get('error')}")
+    if isinstance(align, dict) and align.get("error"):
+        failures.append(f"config_regime_align={align.get('error')}")
+
+    meta = load_bitget_meta_resolved()
+    if is_bitget_meta_degraded(meta):
+        rk = meta.get("META_REGIME_KEY", "UNKNOWN")
+        st = meta.get("META_GOVERNOR_LAST_RUN_STATUS", "NEVER")
+        at = meta.get("META_GOVERNOR_LAST_RUN_AT", "—")
+        failures.append(f"meta_degraded regime={rk} status={st} last_at={at}")
+
+    if failures:
+        raise RuntimeError(
+            "meta_governor_sync aborted — refusing stale UNKNOWN report: "
+            + "; ".join(failures)
+        )
+
+
 def _step_artifact_guard() -> None:
-    from bitget.infra.data_paths import market_data_db_path
+    from bitget.infra.artifact_guard import ensure_bitget_artifacts
 
-    db = market_data_db_path()
-    if not os.path.isfile(db):
-        raise RuntimeError(f"bitget_artifact_guard: market DB missing ({db})")
-    conn = sqlite3.connect(db, timeout=15.0)
-    try:
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' LIMIT 1"
-        ).fetchone()
-        if row is None:
-            raise RuntimeError(f"bitget_artifact_guard: no tables in {db}")
-    finally:
-        conn.close()
+    result = ensure_bitget_artifacts()
+    err = result.get("error")
+    if err == "no_db":
+        raise RuntimeError(
+            f"bitget_artifact_guard: market DB missing ({result.get('db')})"
+        )
+    if err == "schema_incomplete":
+        raise RuntimeError(
+            f"bitget_artifact_guard: required tables missing "
+            f"({(result.get('schema') or {}).get('missing')})"
+        )
+    if result.get("meta") == "failed":
+        raise RuntimeError(
+            f"bitget_artifact_guard: meta heal failed ({result.get('meta_error')})"
+        )
 
 
-_CONFIG_BOOTSTRAP = StepSpec("config_bootstrap", _step_config_bootstrap, critical=False)
+_META_GOVERNOR_SYNC = StepSpec(
+    "meta_governor_sync",
+    _step_meta_governor_sync,
+    critical=True,
+    delay_after_sec=0.5,
+)
+_META_SYNC_SCAN = StepSpec(
+    "meta_governor_sync_scan",
+    _step_meta_governor_sync,
+    critical=True,
+    delay_after_sec=0.5,
+)
 _ARTIFACT_GUARD = StepSpec("artifact_guard", _step_artifact_guard, critical=True)
+_CONFIG_BOOTSTRAP = StepSpec("config_bootstrap", _step_config_bootstrap, critical=False)
 
 
 def _with_guard(steps: List[StepSpec]) -> List[StepSpec]:
+    """Non-scan/daily modes: bootstrap + artifact guard only."""
     return [_CONFIG_BOOTSTRAP, _ARTIFACT_GUARD, *steps]
+
+
+def _with_scan_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    """scan_*: meta sync → guard → bootstrap → scan body (주식 scan-kr/us 패턴)."""
+    return [_META_SYNC_SCAN, _ARTIFACT_GUARD, _CONFIG_BOOTSTRAP, *steps]
+
+
+def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
+    """daily_audit: meta sync → guard → bootstrap → sentiment → body."""
+    return [
+        _META_GOVERNOR_SYNC,
+        _ARTIFACT_GUARD,
+        _CONFIG_BOOTSTRAP,
+        StepSpec("sentiment_mining", _step_sentiment, critical=False),
+        *steps,
+    ]
 
 
 def _step_data_refresh() -> None:
@@ -116,6 +186,12 @@ def _step_deep_dive_futures() -> None:
     from bitget.forward_tester import run_deep_dive_analysis
 
     run_deep_dive_analysis("futures")
+
+
+def _step_pil_practitioner_reports() -> None:
+    from bitget.forward.reports import send_group_practitioner_reports
+
+    send_group_practitioner_reports()
 
 
 def _step_comprehensive_report() -> None:
@@ -208,7 +284,7 @@ def _pipeline_data_refresh() -> List[StepSpec]:
 
 
 def _pipeline_scan_spot() -> List[StepSpec]:
-    return _with_guard(
+    return _with_scan_prelude(
         [
             StepSpec("supernova_spot", _step_supernova_spot, critical=False),
             StepSpec("scan_spot", _step_scan_spot, critical=True),
@@ -218,7 +294,7 @@ def _pipeline_scan_spot() -> List[StepSpec]:
 
 
 def _pipeline_scan_futures() -> List[StepSpec]:
-    return _with_guard(
+    return _with_scan_prelude(
         [
             StepSpec("supernova_futures", _step_supernova_futures, critical=False),
             StepSpec("scan_futures", _step_scan_futures, critical=True),
@@ -228,7 +304,7 @@ def _pipeline_scan_futures() -> List[StepSpec]:
 
 
 def _pipeline_scan_all() -> List[StepSpec]:
-    return _with_guard(
+    return _with_scan_prelude(
         [
             StepSpec("gap_heal", _step_gap_heal, critical=False),
             StepSpec("data_refresh_incremental", _step_data_refresh, critical=False),
@@ -257,14 +333,14 @@ def _pipeline_reconcile() -> List[StepSpec]:
 
 
 def _pipeline_daily_audit() -> List[StepSpec]:
-    return _with_guard(
+    return _with_daily_audit_prelude(
         [
-            StepSpec("sentiment_mining", _step_sentiment, critical=False),
             StepSpec("doomsday_radar", _step_doomsday_radar, critical=False),
             StepSpec("track_spot", _step_track_spot, critical=True),
             StepSpec("track_futures", _step_track_futures, critical=True),
             StepSpec("deep_dive_spot", _step_deep_dive_spot, critical=False, delay_after_sec=0.5),
             StepSpec("deep_dive_futures", _step_deep_dive_futures, critical=False, delay_after_sec=0.5),
+            StepSpec("pil_practitioner_reports", _step_pil_practitioner_reports, critical=False, delay_after_sec=0.5),
             StepSpec("comprehensive_report", _step_comprehensive_report, critical=False),
             StepSpec("ai_overseer", _step_ai_overseer, critical=False),
             StepSpec("reconcile", _step_reconcile, critical=False),

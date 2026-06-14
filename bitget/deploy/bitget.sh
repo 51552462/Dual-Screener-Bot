@@ -47,7 +47,7 @@ Usage: bitget/deploy/bitget.sh <flag>
 
   --health            infra self-check
   --watchdog          heartbeat stale detector (cron/timer)
-  --daemon            24/7 sentinel (python -m bitget.factory_launcher)
+  --daemon            24/7 pipeline daemon (python -m bitget.pipelines.bitget_auto_pilot)
   --scan-all          data refresh + full MTF scan + track
   --scan-spot         spot scan + track
   --scan-futures      futures scan + track
@@ -123,7 +123,7 @@ fi
 if [[ "$MODE" == "daemon" ]]; then
   LOG_FILE="${LOG_DIR}/bitget_daemon_${STAMP}.log"
   echo "[bitget.sh] mode=daemon log=${LOG_FILE} TZ=${TZ}"
-  exec python -m bitget.factory_launcher >>"$LOG_FILE" 2>&1
+  exec python -m bitget.pipelines.bitget_auto_pilot --daemon >>"$LOG_FILE" 2>&1
 fi
 
 if [[ "$MODE" == "ws_supervisor" ]]; then

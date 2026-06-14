@@ -49,36 +49,15 @@ def send_telegram_msg(text, *, parse_mode: str = "HTML"):
 
 
 def load_system_config() -> dict:
-    try:
-        from bitget.infra import config_manager
+    from bitget.infra import config_manager
 
-        cfg = config_manager.load_system_config()
-        if cfg:
-            return cfg
-    except Exception:
-        pass
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    return {}
+    return config_manager.load_system_config() or {}
 
 
 def save_system_config(cfg: dict) -> None:
-    try:
-        from bitget.infra import config_manager
+    from bitget.infra import config_manager
 
-        if config_manager.save_system_config(cfg):
-            return
-    except Exception:
-        pass
-    temp_path = f"{CONFIG_PATH}.temp"
-    os.makedirs(os.path.dirname(CONFIG_PATH) or ".", exist_ok=True)
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(temp_path, CONFIG_PATH)
+    config_manager.save_system_config(cfg)
 
 
 def _ensure_col(cur, col_name, col_type):

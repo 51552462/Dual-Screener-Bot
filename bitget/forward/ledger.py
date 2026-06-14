@@ -30,7 +30,7 @@ from bitget.forward.shared import (
     save_system_config,
     send_telegram_msg,
 )
-from meta_governor_consumer import (
+from bitget.governance.meta_consumer import (
     apply_meta_kelly_merge,
     effective_max_position_pct,
     load_meta_state_resolved,
@@ -163,7 +163,7 @@ def try_add_virtual_position(
 
     fixed_risk_pct = float(cfg.get("FIXED_RISK_PCT", 0.02))
     try:
-        from meta_governor_consumer import load_meta_state_resolved, resolve_trading_kelly_base
+        from bitget.governance.meta_consumer import load_meta_state_resolved, resolve_trading_kelly_base
 
         kelly_risk_pct = resolve_trading_kelly_base(cfg, load_meta_state_resolved())
     except Exception:

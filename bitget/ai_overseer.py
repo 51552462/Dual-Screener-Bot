@@ -13,32 +13,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
+from bitget.governance.meta_consumer import load_meta_state_resolved
+from bitget.infra.data_paths import flow_csv_path, market_data_db_path
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-CSV_PATH = os.path.join(BASE_DIR, "bitget_supernova_flow_tracking_master.csv")
-ALT_CSV_PATH = os.path.join(BASE_DIR, "Supernova_Flow_Tracking_Master.csv")
+DB_PATH = market_data_db_path()
+CSV_PATH = flow_csv_path()
+ALT_CSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Supernova_Flow_Tracking_Master.csv")
 TELEGRAM_TOKEN = bitget_telegram_token()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 
 
 def load_config(max_retries=5):
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] Bitget 설정(JSON) 읽기 최종 실패: {e}")
-                return {}
-    return {}
+    from bitget.infra import config_manager
+
+    return config_manager.load_system_config() or {}
 
 
 def send_telegram_alert(text):
@@ -124,9 +114,14 @@ def gather_daily_system_facts():
 
     try:
         config = load_config()
+        meta = load_meta_state_resolved()
         report_data["config_status"] = {
             "regime": config.get("CURRENT_REGIME_KEY", "UNKNOWN"),
+            "meta_regime": meta.get("META_REGIME_KEY", "UNKNOWN"),
+            "meta_governor_last_run": meta.get("META_GOVERNOR_LAST_RUN_AT"),
+            "meta_governor_status": meta.get("META_GOVERNOR_LAST_RUN_STATUS"),
             "kelly_risk": config.get("DYNAMIC_KELLY_RISK", 0),
+            "meta_kelly_cap": (meta.get("META_REGIME_ACTION") or {}).get("kelly_cap"),
             "treasury_spot": config.get("TREASURY_SPOT_USDT", 0),
             "treasury_futures": config.get("TREASURY_FUTURES_USDT", 0),
             "breadth_status": config.get("CRYPTO_BREADTH_STATUS", "UNKNOWN"),

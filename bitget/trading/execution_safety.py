@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from meta_governor_consumer import load_meta_state_resolved
+from bitget.governance.meta_consumer import load_meta_state_resolved
 
 from bitget.trading.slippage_guard import run_pre_trade_gate
 

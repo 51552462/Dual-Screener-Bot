@@ -90,7 +90,12 @@ echo "  sudo systemctl start dante-bitget-watchdog.timer dante-bitget-snapshot.t
 
 echo ""
 
+echo "[deploy_bitget] ensure bitget/.env (or root .env) contains:"
+echo "  BITGET_WATCHDOG_HEARTBEAT_COMPONENT=bitget_auto_pilot"
+echo "  BITGET_DB_STORAGE_PATH=<optional data root>"
+echo ""
+echo "  template: bitget/deploy/bitget_resource_limits.env.example"
+echo ""
 echo "[deploy_bitget] update after git pull:"
-
 echo "  sudo INSTALL_ROOT=${INSTALL_ROOT} ${INSTALL_ROOT}/bitget/deploy/update_bitget.sh"
-
+echo ""

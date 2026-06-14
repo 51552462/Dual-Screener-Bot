@@ -105,6 +105,7 @@ def send_bitget_practitioner_reports_pil(
     conn.execute("PRAGMA journal_mode=WAL;")
     try:
         for market_type in ("spot", "futures"):
+            mkt = str(market_type).strip().lower()
             df_all = pd.read_sql(
                 """
                 SELECT *
@@ -114,15 +115,15 @@ def send_bitget_practitioner_reports_pil(
                 LIMIT 2500
                 """,
                 conn,
-                params=(market_type,),
+                params=(mkt,),
             )
             if df_all.empty:
                 continue
 
             df_all = _map_bitget_features(df_all)
             df_all["practitioner_key"] = df_all["sig_type"].apply(_extract_practitioner_key)
-            pil_market = f"BG_{market_type.upper()}" if market_type else "BG"
-            icon = "🟢" if market_type == "spot" else "🟠"
+            pil_market = f"BG_{mkt.upper()}" if mkt else "BG"
+            icon = "🟢" if mkt == "spot" else "🟠"
 
             for p_key in sorted(k for k in df_all["practitioner_key"].unique() if k != "UNKNOWN"):
                 g_all = df_all[df_all["practitioner_key"] == p_key].copy()
@@ -156,7 +157,7 @@ def send_bitget_practitioner_reports_pil(
                     safe_ret_fn=_safe_ret,
                     win_loss_fn=_win_loss_flat,
                 )
-                brief.venue_label = market_type.upper()
+                brief.venue_label = mkt.upper()
                 brief.currency_suffix = "USDT"
                 briefs.append(brief)
 
@@ -169,7 +170,7 @@ def send_bitget_practitioner_reports_pil(
                     ORDER BY id DESC LIMIT 200
                     """,
                     conn,
-                    params=(market_type, p_key),
+                    params=(mkt, p_key),
                 )
                 if not real_df.empty:
                     rr = pd.to_numeric(real_df["realized_ret_pct"], errors="coerce").fillna(0.0)

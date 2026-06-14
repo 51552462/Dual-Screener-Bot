@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from bitget.infra.data_paths import system_config_json_path
+from bitget.config_hub import load_config
 from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.oms import create_trade_exchange, generate_client_oid, oms_place_market_order
 from bitget.rate_limit_guard import backoff_sleep, throttle
@@ -11,19 +11,12 @@ from bitget.trading.execution_safety import ExecutionGateOutcome, run_pre_execut
 from bitget.trading.leverage_manager import prepare_futures_order_params, resolve_leverage, resolve_margin_mode
 from bitget.trading.position_manager import ccxt_order_side, normalize_position_side
 
-CONFIG_PATH = system_config_json_path()
 setup_logging()
 logger = get_logger("bitget.executor")
 
 
 def _load_config():
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    return load_config()
 
 
 def _normalize_order_from_markets(ex, market_symbol, qty, market_type, ref_price=None):

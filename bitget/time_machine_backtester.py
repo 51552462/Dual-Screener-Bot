@@ -6,25 +6,16 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+from bitget.config_hub import load_config
+from bitget.infra.data_paths import market_data_db_path
+
+DB_PATH = market_data_db_path()
 
 CRASH_PERIODS = {
     "LUNA_CRASH_2022": {"start": "2022-05-01", "end": "2022-06-15"},
     "FTX_COLLAPSE_2022": {"start": "2022-11-01", "end": "2022-12-20"},
     "COVID_CRASH_2020": {"start": "2020-02-15", "end": "2020-04-30"},
 }
-
-
-def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
 
 
 def _load_tables(conn):

@@ -20,7 +20,7 @@ from bitget.forward.mutant import (
     _pf,
 )
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config, send_telegram_msg
-from meta_governor_consumer import load_meta_state_resolved
+from bitget.governance.meta_consumer import load_meta_state_resolved
 from reports.forward_report_scalar import (
     col_series,
     prepare_forward_trades_df,
@@ -28,6 +28,12 @@ from reports.forward_report_scalar import (
     scalar_float,
 )
 from reports.report_state_binder import build_macro_treasury_block, format_macro_treasury_section_html
+
+
+def _norm_market_type(market_type: str) -> str:
+    """DB SSOT: ledger inserts lowercase spot/futures (bug #2)."""
+    return str(market_type or "spot").strip().lower()
+
 
 def send_group_practitioner_reports():
     """PIL — Bitget PRACT_01~30 (spot/futures) Post-Mortem · Vitality · LLM · ZOMBIE 페널티."""
@@ -38,7 +44,7 @@ def send_group_practitioner_reports():
     cfg = load_system_config()
     seed = float(cfg.get("BITGET_ACCOUNT_SIZE_USDT", 10000) or 10000)
     try:
-        from meta_governor_consumer import load_meta_state_resolved
+        from bitget.governance.meta_consumer import load_meta_state_resolved
     except Exception:
         load_meta_state_resolved = lambda: {}
 
@@ -61,18 +67,19 @@ def send_comprehensive_daily_report():
     conn.execute("PRAGMA journal_mode=WAL;")
 
     for market_type in ["spot", "futures"]:
-        m_icon = "🟢" if market_type == "spot" else "🟠"
+        mkt = _norm_market_type(market_type)
+        m_icon = "🟢" if mkt == "spot" else "🟠"
         df_all = pd.read_sql(
             "SELECT * FROM bitget_forward_trades WHERE market_type=?",
             conn,
-            params=(market_type,),
+            params=(mkt,),
         )
         if df_all.empty:
             continue
         df_closed = df_all[df_all["status"].str.contains("CLOSED", na=False)].copy()
         df_open = df_all[df_all["status"] == "OPEN"].copy()
 
-        treasury_key = "TREASURY_SPOT_USDT" if market_type == "spot" else "TREASURY_FUTURES_USDT"
+        treasury_key = "TREASURY_SPOT_USDT" if mkt == "spot" else "TREASURY_FUTURES_USDT"
         treasury = float(cfg.get(treasury_key, 0.0))
         regime = cfg.get("CURRENT_REGIME_KEY", "UNKNOWN")
         kelly = float(cfg.get("DYNAMIC_KELLY_RISK", 0.01)) * 100.0
@@ -81,7 +88,7 @@ def send_comprehensive_daily_report():
         w4 = float(cfg.get("WEIGHT_S4", 1.0))
 
         # [1/6] 거시+국고
-        msg1 = f"{m_icon} <b>[1/6] {market_type.upper()} 국면/국고 현황</b>\n"
+        msg1 = f"{m_icon} <b>[1/6] {mkt.upper()} 국면/국고 현황</b>\n"
         msg1 += f"📅 {datetime.utcnow().strftime('%Y-%m-%d')} | 국면: <b>{regime}</b>\n"
         msg1 += f"🏦 잔여 국고: <b>{treasury:,.2f} USDT</b>\n"
         msg1 += f"⚖️ 동적 켈리: {kelly:.2f}%\n"
@@ -177,6 +184,7 @@ def run_deep_dive_analysis(market_type="spot"):
     미래 데이터(포워드 테스팅)를 기반으로 내 시스템의 과최적화를 검증하고,
     대박/참사 종목의 DNA와 티어별 진짜 승률을 텔레그램으로 보고합니다.
     """
+    mkt = _norm_market_type(market_type)
     try:
         init_forward_db()
         conn = sqlite3.connect(DB_PATH, timeout=60)
@@ -184,14 +192,14 @@ def run_deep_dive_analysis(market_type="spot"):
         df = pd.read_sql(
             "SELECT * FROM bitget_forward_trades WHERE market_type=? AND status LIKE 'CLOSED%'",
             conn,
-            params=(market_type,),
+            params=(mkt,),
         )
         conn.close()
 
         n_closed = len(df)
         if n_closed < 10:
             skip_msg = (
-                f"⚠️ <b>[{str(market_type).upper()} Bitget 딥 다이브]</b>\n"
+                f"⚠️ <b>[{mkt.upper()} Bitget 딥 다이브]</b>\n"
                 f"표본 부족 (현재 <b>{n_closed}</b>건 / 최소 10건)으로 딥다이브 생략."
             )
             print(skip_msg.replace("<b>", "").replace("</b>", ""))
@@ -199,10 +207,10 @@ def run_deep_dive_analysis(market_type="spot"):
             return
 
         cfg = load_system_config()
-        df = prepare_forward_trades_df(df, context=f"bitget_deep_dive:{market_type}")
+        df = prepare_forward_trades_df(df, context=f"bitget_deep_dive:{mkt}")
 
         df["Win"] = np.where(col_series(df, "final_ret") > 0, 1, 0)
-        report_msg = f"🔬 [{str(market_type).upper()}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
+        report_msg = f"🔬 [{mkt.upper()}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
 
         for t in range(10, 100, 10):
             tier_label = f"{t}점대"
@@ -319,7 +327,7 @@ def run_deep_dive_analysis(market_type="spot"):
             for _, row in fatal_df.iterrows():
                 anti_patterns.append(
                     {
-                        "market_type": str(market_type).lower(),
+                        "market_type": mkt,
                         "symbol": str(row.get("symbol", "")),
                         "sig_type": str(row.get("sig_type", "")),
                         "dyn_cpv": row_scalar(row, "dyn_cpv"),
@@ -343,7 +351,7 @@ def run_deep_dive_analysis(market_type="spot"):
                 report_msg += f"▪️ {m}\n"
 
         send_telegram_msg(report_msg)
-        print(f"✅ [{market_type}] 딥 다이브 분석 리포트 발송 완료.")
+        print(f"✅ [{mkt}] 딥 다이브 분석 리포트 발송 완료.")
     except Exception as e:
         from html import escape as html_escape
 

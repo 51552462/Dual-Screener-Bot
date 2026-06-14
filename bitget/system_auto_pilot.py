@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import requests
 
-from bitget.forward_tester import init_forward_db, send_comprehensive_daily_report, send_telegram_msg
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
 
 DB_PATH = market_data_db_path()
@@ -22,26 +21,15 @@ TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 
 
 def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-    else:
-        cfg = {}
-    if "META_GOVERNOR_WINDOWS" not in cfg or not isinstance(cfg.get("META_GOVERNOR_WINDOWS"), dict):
-        cfg["META_GOVERNOR_WINDOWS"] = {
-            "calibrator_lookback_days": 90,
-            "treasury_lookback_days": 90,
-            "graveyard_rolling_days": 90,
-            "dist_lookback_days": 90,
-        }
-    if "META_GOVERNOR_SKIP_VIX" not in cfg:
-        cfg["META_GOVERNOR_SKIP_VIX"] = False
-    return cfg
+    from bitget.infra import config_manager
+
+    return config_manager.load_system_config() or {}
 
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    from bitget.infra import config_manager
+
+    config_manager.save_system_config(cfg)
 
 
 def _load_btc_1d(conn):
@@ -164,7 +152,7 @@ def detect_regime(cfg):
     cfg["CRYPTO_TOTAL2_BTC_RATIO"] = float(total2_btc)
     cfg["CRYPTO_BREADTH_STATUS"] = breadth_status
     try:
-        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+        from bitget.governance.meta_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
 
         base_w1, base_w4 = apply_meta_weight_bounds_clamp(float(base_w1), float(base_w4), load_meta_state_resolved())
     except Exception:
@@ -403,27 +391,17 @@ def send_weekly_flow_master_report():
     send_telegram_msg(report_msg)
 
 
-def system_main_loop():
-    print("🕒 [Bitget 관제탑] 24/7 뇌수술 루프 가동")
-    print(" - 6시간마다: 국면 판독 + TF별 챔피언 승격 + 알파 반감기")
-    print(" - 매일 00:05 UTC: 9분할 결과지")
-    print(" - 매주 월요일 00:05 UTC: 주간 마스터 리포트")
-    while True:
-        try:
-            now = datetime.utcnow()
-            if now.hour % 6 == 0 and now.minute == 0:
-                run_autonomous_analysis()
-                time.sleep(60)
-            if now.hour == 0 and now.minute == 5:
-                send_comprehensive_daily_report()
-                if now.weekday() == 0:
-                    send_weekly_flow_master_report()
-                time.sleep(60)
-            time.sleep(30)
-        except Exception as e:
-            print(f"auto pilot loop error: {e}")
-            time.sleep(60)
+def system_main_loop() -> None:
+    raise RuntimeError(
+        "bitget.system_auto_pilot is removed. "
+        "Use python -m bitget.pipelines.bitget_auto_pilot --daemon"
+    )
 
 
 if __name__ == "__main__":
-    run_autonomous_analysis()
+    import sys
+
+    sys.stderr.write(
+        "[BLOCKED] bitget.system_auto_pilot — use bitget.pipelines.bitget_auto_pilot\n"
+    )
+    raise SystemExit(2)

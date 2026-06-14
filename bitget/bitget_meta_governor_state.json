@@ -1,0 +1,50 @@
+{
+  "META_SCHEMA_VERSION": "1.0.0",
+  "META_GOVERNOR_LAST_RUN_AT": "2026-06-14T15:35:04.726977+00:00",
+  "META_GOVERNOR_LAST_RUN_STATUS": "OK",
+  "META_GOVERNOR_INPUT_HASH": "bitget:C:\\Users\\GoodLife\\Desktop\\quant\\Dual-Screener-Bot\\bitget\\bitget_market_data.sqlite:1781451304",
+  "META_VOL_ATR_PCT_Q": {},
+  "META_VIX_LEVEL_Q": {},
+  "META_BREADTH_THRESHOLDS": {},
+  "META_TIER_CUTS": {},
+  "META_SCORE_DIST_SNAPSHOT": {},
+  "META_GLOBAL_KELLY_MULT": 1.0,
+  "META_NS_KELLY_MULT": {},
+  "META_GROUP_KELLY_MULT": {},
+  "META_DEATHMATCH_KELLY_OVERLAY": {},
+  "META_DEATHMATCH_ALLOC_AS_OF": null,
+  "META_DEATHMATCH_ALLOC_MARKET": null,
+  "META_PIL_GROUP_STATUS": {},
+  "META_PIL_ZOMBIE_GROUPS": [],
+  "META_PIL_RETIRE_CANDIDATES": [],
+  "META_PIL_PENALTY_AS_OF": null,
+  "META_PIL_ZOMBIE_STREAK": {},
+  "META_PIL_FORCE_RETIRED": [],
+  "META_MAX_POSITION_PCT": null,
+  "META_STRATEGY_HEALTH": {},
+  "META_TREASURY_MODE": "NORMAL",
+  "META_REGIME_KEY": "CHOP",
+  "META_REGIME_CONFIDENCE": 0.85,
+  "META_REGIME_ACTION": {
+    "kelly_cap": 0.018,
+    "kelly_floor": null,
+    "weight_s1_bounds": [
+      0.65,
+      1.25
+    ],
+    "weight_s4_bounds": [
+      0.85,
+      1.45
+    ],
+    "allow_trade_sources": [],
+    "block_trade_sources": [],
+    "notes": "횡보·혼조: 중립 켈리·양 축 밸런스"
+  },
+  "META_STRATEGY_REGISTRY": [],
+  "META_REGISTRY_CYCLE_STATS": {},
+  "META_LIVE_STRATEGY_IDS": [],
+  "META_RETIRED_STRATEGY_IDS": [],
+  "META_CHANGELOG": [],
+  "META_OPERATOR_FLAGS": {},
+  "META_SATELLITE_INTEL": {}
+}

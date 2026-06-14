@@ -1,8 +1,9 @@
 import ast
-import json
 import os
 import random
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime
 
 import numpy as np
@@ -10,27 +11,19 @@ import pandas as pd
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
+try:
+    from sklearn.cluster import KMeans
+except ModuleNotFoundError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "scikit-learn"])
+    from sklearn.cluster import KMeans
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+from bitget.config_hub import load_config, save_config_atomic
+from bitget.infra.data_paths import flow_csv_path, market_data_db_path
+from bitget.supernova_hunter import extract_dna_from_df
+
+DB_PATH = market_data_db_path()
+CSV_PATH = flow_csv_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
-
-
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_config_atomic(cfg):
-    temp_path = f"{CONFIG_PATH}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(temp_path, CONFIG_PATH)
 
 
 def _load_mfe_winners(timeframe: str, mfe_min: float = 8.0) -> pd.DataFrame:
@@ -406,55 +399,6 @@ def evolve_bitget_ast_formulas(timeframe: str = "1D"):
     print(f"✅ Bitget AST alpha evolution complete for {timeframe} (target=MFE_30D).")
 
 
-def run_bitget_data_miner(timeframes=None):
-    tfs = [str(x).upper() for x in (timeframes or TIMEFRAMES)]
-    mine_bitget_dna_templates()
-    for tf in tfs:
-        evolve_bitget_ast_formulas(tf)
-    print("🚀 bitget_data_miner run complete.")
-
-
-if __name__ == "__main__":
-    run_bitget_data_miner()
-import json
-import os
-import sqlite3
-import subprocess
-import sys
-from datetime import datetime
-
-import numpy as np
-import pandas as pd
-try:
-    from sklearn.cluster import KMeans
-    from sklearn.preprocessing import StandardScaler
-except ModuleNotFoundError:
-    # 서버 런타임에서 sklearn 누락 시 즉시 복구
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "scikit-learn"])
-    from sklearn.cluster import KMeans
-    from sklearn.preprocessing import StandardScaler
-
-from bitget.supernova_hunter import extract_dna_from_df
-
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-CSV_PATH = os.path.join(BASE_DIR, "Supernova_Flow_Tracking_Master.csv")
-
-
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-
-
 def build_supernova_csv():
     if not os.path.exists(DB_PATH):
         return 0
@@ -514,7 +458,6 @@ def run_cluster_mining():
         print("Insufficient clean samples for KMeans.")
         return
 
-    # 코인 거래량/변동성 스케일 차이를 흡수하기 위한 필수 정규화.
     X = clean_df[target_features].values
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -543,9 +486,21 @@ def run_cluster_mining():
     cfg = load_config()
     cfg["LIVE_CLUSTER_TEMPLATES"] = mined
     cfg["LIVE_CLUSTER_UPDATED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    save_config(cfg)
+    save_config_atomic(cfg)
     print(f"KMeans mining complete: {len(mined)} clusters")
 
 
+def run_bitget_data_miner(timeframes=None):
+    tfs = [str(x).upper() for x in (timeframes or TIMEFRAMES)]
+    mine_bitget_dna_templates()
+    for tf in tfs:
+        evolve_bitget_ast_formulas(tf)
+    try:
+        run_cluster_mining()
+    except Exception as exc:
+        print(f"⚠️ cluster mining skipped: {exc}")
+    print("🚀 bitget_data_miner run complete.")
+
+
 if __name__ == "__main__":
-    run_cluster_mining()
+    run_bitget_data_miner()

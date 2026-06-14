@@ -85,20 +85,28 @@ def _legacy_main_process_detected() -> bool:
 
 
 def check_cutover_readiness() -> dict[str, Any]:
+    from bitget.validation.architecture_checks import run_architecture_checks
+
     pipeline_ssot = _env_truthy("BITGET_PIPELINE_SSOT", "0")
     parallel = parallel_run_status()
     legacy_main = _legacy_main_process_detected()
+    architecture = run_architecture_checks()
     checks = {
         "pipeline_ssot_env": pipeline_ssot,
         "parallel_run_ready": parallel.get("ready_for_cutover", False),
         "no_legacy_main_process": not legacy_main,
         "async_telegram": _env_truthy("BITGET_ASYNC_TELEGRAM", "0"),
+        "architecture_ok": architecture.get("passed", False),
     }
-    passed = all(checks.values()) if pipeline_ssot else False
+    if pipeline_ssot:
+        passed = all(checks.values())
+    else:
+        passed = False
     return {
         "ok": True,
         "passed": passed,
         "checks": checks,
+        "architecture": architecture,
         "parallel_run": parallel,
         "legacy_main_running": legacy_main,
         "message": (

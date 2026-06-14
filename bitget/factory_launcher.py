@@ -1,24 +1,24 @@
-import os
-from bitget.infra.logging_setup import setup_logging, get_logger
-import bitget.sentinel as bitget_sentinel
+"""
+REMOVED — production SSOT: systemd dante-bitget-factory + dante-bitget-dashboard.
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-setup_logging()
-logger = get_logger("bitget.factory_launcher")
+`python -m bitget.factory_launcher` is disabled (was sentinel subprocess launcher).
+See bitget/RUNBOOK.md
+"""
+from __future__ import annotations
+
+import sys
+
+_LEGACY_MSG = (
+    "[BLOCKED] bitget.factory_launcher is removed. Use:\n"
+    "  systemctl start dante-bitget-factory dante-bitget-dashboard dante-bitget-heatmap\n"
+    "  or: bitget/deploy/bitget.sh --daemon  (→ bitget_auto_pilot)\n"
+    "See bitget/RUNBOOK.md\n"
+)
 
 
-def launch_factory():
-    import warnings
-
-    warnings.warn(
-        "factory_launcher/sentinel is DEPRECATED for production. "
-        "Use dante-bitget-factory + dante-bitget-dashboard systemd units.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    print("[DEPRECATED] factory_launcher — use systemd dante-bitget-* (bitget/RUNBOOK.md)")
-    logger.warning("deprecated sentinel launcher — use systemd")
-    bitget_sentinel.run_sentinel()
+def launch_factory() -> None:
+    sys.stderr.write(_LEGACY_MSG)
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":

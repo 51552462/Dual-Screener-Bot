@@ -26,11 +26,10 @@ from bitget.signal_engines import (
     compute_tv_short_v2,
 )
 
-from bitget.infra.data_paths import logs_dir, market_data_db_path, market_db_read_path, system_config_json_path
+from bitget.infra.data_paths import logs_dir, market_data_db_path, market_db_read_path
 
 DB_PATH = market_data_db_path()
 DB_READ_PATH = market_db_read_path()
-CONFIG_PATH = system_config_json_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 BENCHMARK = "BTC_USDT"
 TELEGRAM_TOKEN_MAIN = bitget_telegram_token()
@@ -117,13 +116,9 @@ def _benchmark_series(conn, timeframe: str):
 
 
 def _load_system_config():
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    from bitget.config_hub import load_config
+
+    return load_config()
 
 
 def _cosine_similarity(a, b):

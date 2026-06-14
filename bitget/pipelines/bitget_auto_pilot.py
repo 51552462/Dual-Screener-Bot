@@ -163,6 +163,13 @@ def system_main_loop() -> None:
 
     setup_logging(default_component="bitget.auto_pilot")
     ops_logger.install_unhandled_exception_hooks()
+    try:
+        from bitget.infra.artifact_guard import ensure_bitget_artifacts
+
+        boot = ensure_bitget_artifacts()
+        logger.info("daemon boot artifact guard: %s", boot)
+    except Exception as e:
+        logger.warning("daemon boot artifact guard skipped: %s", e)
     ops_logger.record_heartbeat(
         HEARTBEAT_COMPONENT,
         extra={"event": "daemon_start", "orchestrator": "pipeline"},

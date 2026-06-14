@@ -143,7 +143,7 @@ def detect_coin_regime(cfg):
         "atr_pct": round(float(atr_pct), 4),
     }
     try:
-        from meta_governor_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
+        from bitget.governance.meta_consumer import apply_meta_weight_bounds_clamp, load_meta_state_resolved
 
         w1, w4 = apply_meta_weight_bounds_clamp(float(w1), float(w4), load_meta_state_resolved())
     except Exception:
@@ -861,99 +861,16 @@ def _safe_run_satellite(lock_key: str, lock_sec: int, module_name: str, func_nam
         print(f"⚠️ [세이프티 넷] {module_name}.{func_name} 호출 실패(무시): {e}")
 
 
-def system_main_loop():
-    print("🕒 [Bitget Auto Pilot] loop started")
-    print(" - 매일 00:00 UTC: 딥다이브 + 켈리조절 + 돌연변이 + 인큐베이터 심판")
-    print(" - 매주 월요일 00:00 UTC (= 월 09:00 KST): 주간(Flow) 마스터 리포트 텔레그램")
-    print(" - 주의: 자율 뇌수술(run_autonomous_analysis)은 과최적화 방지를 위해 하루 1회만 실행")
-    last_daily_key = ""
-    satellite_flags = {}
-    oms_cold_recon_done = False
-    oms_last_recon_mono = 0.0
-    while True:
-        try:
-            now = datetime.now(timezone.utc)
-            daily_key = now.strftime("%Y-%m-%d")
-            hm_key = now.strftime("%Y-%m-%d %H:%M")
-            hour = now.hour
-            minute = now.minute
+def system_main_loop() -> None:
+    """
+    REMOVED — inline daemon loop caused duplicate pipelines with bitget_auto_pilot.
 
-            # 코인 위성 자동 가동 스케줄 (통신망 연결)
-            if hour % 2 == 0 and minute == 10 and satellite_flags.get("sentiment") != hm_key:
-                _safe_run_satellite("satellite::sentiment", 7200, "bitget.sentiment_miner", "run_sentiment_mining")
-                satellite_flags["sentiment"] = hm_key
-            if hour % 2 == 0 and minute == 12 and satellite_flags.get("altdata") != hm_key:
-                _safe_run_satellite("satellite::altdata", 7200, "bitget.alt_data_miner", "run_alternative_data_mining")
-                satellite_flags["altdata"] = hm_key
-            if hour % 3 == 0 and minute == 18 and satellite_flags.get("blackhole") != hm_key:
-                _safe_run_satellite("satellite::blackhole", 10800, "bitget.blackhole_hunter", "scan_blackhole_targets")
-                satellite_flags["blackhole"] = hm_key
-            if hour % 6 == 0 and minute == 15 and satellite_flags.get("shadow_perf") != hm_key:
-                _safe_run_satellite("satellite::shadow_perf", 21600, "bitget.shadow_performance_tracker", "run_shadow_performance_evaluation")
-                satellite_flags["shadow_perf"] = hm_key
-            if hour == 0 and minute == 15 and satellite_flags.get("underdog") != hm_key:
-                _safe_run_satellite("satellite::underdog", 86400, "bitget.underdog_miner", "run_underdog_mining")
-                satellite_flags["underdog"] = hm_key
-            if hour == 0 and minute == 20 and satellite_flags.get("pump_forensics") != hm_key:
-                _safe_run_satellite("satellite::pump_forensics", 86400, "bitget.pump_forensics", "run_pump_forensics")
-                satellite_flags["pump_forensics"] = hm_key
-            if hour == 0 and minute == 25 and satellite_flags.get("forensics_pioneer") != hm_key:
-                _safe_run_satellite("satellite::forensics_pioneer", 86400, "bitget.forensics_pioneer", "run_forensics_pioneer")
-                satellite_flags["forensics_pioneer"] = hm_key
-            if now.weekday() == 5 and hour == 1 and minute == 5 and satellite_flags.get("synthetic_lab") != hm_key:
-                _safe_run_satellite("satellite::synthetic_lab", 86400, "bitget.synthetic_data_generator", "stress_test_mutants")
-                satellite_flags["synthetic_lab"] = hm_key
-            if now.weekday() == 6 and hour == 1 and minute == 30 and satellite_flags.get("time_machine") != hm_key:
-                _safe_run_satellite("satellite::time_machine", 86400, "bitget.time_machine_backtester", "run_time_machine_backtest", "FTX_COLLAPSE_2022", 3.0)
-                satellite_flags["time_machine"] = hm_key
-
-            # OMS 체결대사: 재기동 직후 1회 + 이후 최소 1시간 간격 (fetch_my_trades · 포지션 · 미체결 주문 · 유령 OPEN 제거)
-            try:
-                import bitget.oms as bitget_oms
-
-                mono_now = time.monotonic()
-                if not oms_cold_recon_done:
-                    try:
-                        bitget_oms.run_scheduled_reconciliation()
-                    except Exception as e:
-                        print(f"⚠️ [OMS] cold reconciliation: {e}")
-                    oms_cold_recon_done = True
-                    oms_last_recon_mono = mono_now
-                elif (mono_now - oms_last_recon_mono) >= 3600.0 and schedule_acquire("oms::hourly_recon", 3500):
-                    try:
-                        bitget_oms.run_scheduled_reconciliation()
-                    except Exception as e:
-                        print(f"⚠️ [OMS] hourly reconciliation: {e}")
-                    oms_last_recon_mono = mono_now
-            except Exception as e:
-                print(f"⚠️ [OMS] loader: {e}")
-
-            # 💡 [버그 픽스] 정각 분 단위 체크를 삭제하고, 날짜가 바뀌었을 때 단 1회 실행하도록 견고하게 수정
-            if daily_key != last_daily_key:
-                # 프로그램 켜자마자 바로 실행되는 것을 막기 위해 last_daily_key 초기화만 수행
-                if last_daily_key == "":
-                    last_daily_key = daily_key
-                else:
-                    cfg = load_config()
-                    if not _report_flag_sent_today(cfg, daily_key):
-                        _safe_call_ai_modules_for_report()
-                        _mark_report_flag(daily_key, "DAILY_0000_UTC")
-                    try:
-                        import bitget.macro_doomsday_bot as bitget_macro_doomsday_bot
-                        if hasattr(bitget_macro_doomsday_bot, "run_doomsday_radar"):
-                            bitget_macro_doomsday_bot.run_doomsday_radar()
-                    except Exception as e:
-                        print(f"⚠️ [세이프티 넷] bitget_macro_doomsday_bot 호출 실패(무시): {e}")
-                    _run_daily_evolution_batch()
-                    if now.weekday() == 0:
-                        send_weekly_flow_master_report()
-                    last_daily_key = daily_key
-                    time.sleep(60)
-            time.sleep(20)
-        except Exception as e:
-            print(f"bitget_auto_pilot loop error: {e}")
-            time.sleep(60)
-
-
-if __name__ == "__main__":
-    system_main_loop()
+    SSOT:
+      python -m bitget.pipelines.bitget_auto_pilot --daemon
+      bitget/deploy/bitget.sh --scan-all|--daily-audit|...
+    """
+    raise RuntimeError(
+        "bitget.auto_pilot.system_main_loop is removed. "
+        "Use python -m bitget.pipelines.bitget_auto_pilot --daemon "
+        "and bitget/deploy/bitget.sh for cron pipelines."
+    )
