@@ -12,29 +12,16 @@ import pandas as pd
 import requests
 
 import bitget.shadow_tracking as bitget_shadow_tracking
+from bitget.config_hub import load_config, save_config
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.forward_tester import compute_evolved_alpha_bonus_score, try_add_virtual_position
+from bitget.infra.data_paths import market_data_db_path
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+DB_PATH = market_data_db_path()
 TELEGRAM_TOKEN = bitget_telegram_token()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 scanned_today_cache = {"spot": set(), "futures": set()}
-LOG_FILE_SNIPER = os.path.join(BASE_DIR, "sent_log_bitget_supernova.txt")
-
-
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_config(data):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+LOG_FILE_SNIPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sent_log_bitget_supernova.txt")
 
 
 def send_telegram_msg(text):

@@ -10,40 +10,10 @@ import pandas as pd
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+from bitget.config_hub import load_config, save_config
+from bitget.infra.data_paths import market_data_db_path
 
-
-def load_config(max_retries=5):
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError):
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-    return {}
-
-
-def save_config(cfg, max_retries=5):
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-        except Exception:
-            return False
-    return False
+DB_PATH = market_data_db_path()
 
 
 def run_underdog_mining():

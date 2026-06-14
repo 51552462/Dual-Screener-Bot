@@ -66,6 +66,9 @@ def run_cutover_check() -> dict[str, Any]:
     ops_logger.record_gauge_snapshot("bitget.validation.cutover", report)
     print(f"[cutover] passed={report.get('passed')} message={report.get('message')}")
     print(f"[cutover] checks={report.get('checks')}")
+    arch = report.get("architecture") or {}
+    if arch:
+        print(f"[cutover] architecture_passed={arch.get('passed')} failed={arch.get('failed')}")
     if not report.get("passed"):
         print("[cutover] not ready (informational unless BITGET_PIPELINE_SSOT=1)")
     return report

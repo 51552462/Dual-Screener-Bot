@@ -5,19 +5,7 @@ from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-
-
-def load_system_config() -> Dict:
-    try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
+from bitget.config_hub import load_config as load_system_config
 
 
 SYS_CONFIG = load_system_config()

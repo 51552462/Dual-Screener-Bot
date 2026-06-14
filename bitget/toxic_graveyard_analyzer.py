@@ -9,58 +9,10 @@ import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, _tree
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+from bitget.config_hub import load_config, save_config
+from bitget.infra.data_paths import market_data_db_path
 
-
-def load_config(max_retries=5):
-    """
-    [장갑차 로직] JSONDecodeError 및 파일 잠금(Lock) 방어막 적용
-    """
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 읽기 최종 실패 (동시 쓰기 과부하): {e}")
-                return {}
-    return {}
-
-
-def save_config(config, max_retries=5):
-    """
-    [장갑차 로직] 임시 파일 원자적(Atomic) 덮어쓰기 및 권한 방어막 적용
-    """
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-            else:
-                print(f"🚨 [치명적 방어] 관제탑 뇌(JSON) 쓰기 최종 실패: {e}")
-        except Exception as e:
-            print(f"⚠️ 설정 파일 원자적 저장 중 알 수 없는 에러: {e}")
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-            return False
-    return False
+DB_PATH = market_data_db_path()
 
 
 def get_toxic_rules(tree, feature_names):

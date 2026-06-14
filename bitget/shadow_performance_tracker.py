@@ -13,32 +13,18 @@ from typing import Any, Dict
 
 import pandas as pd
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+from bitget.config_hub import load_config, save_config
+from bitget.infra.data_paths import market_data_db_path
+
+DB_PATH = market_data_db_path()
 
 
-def _load_config() -> Dict[str, Any]:
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+def _load_config():
+    return load_config()
 
 
-def _save_config(cfg: Dict[str, Any]) -> bool:
-    temp_path = f"{CONFIG_PATH}.temp"
-    try:
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CONFIG_PATH)
-        return True
-    except Exception:
-        return False
+def _save_config(cfg):
+    return bool(save_config(cfg))
 
 
 def _calc_ret(entry: float, close: float, side: str) -> float:

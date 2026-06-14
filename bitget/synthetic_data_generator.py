@@ -7,39 +7,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
-
-
-def load_config(max_retries=5):
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    for attempt in range(max_retries):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError):
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-    return {}
-
-
-def save_config(config, max_retries=5):
-    temp_path = f"{CONFIG_PATH}.temp"
-    for attempt in range(max_retries):
-        try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, CONFIG_PATH)
-            return True
-        except PermissionError:
-            if attempt < max_retries - 1:
-                time.sleep(random.uniform(0.05, 0.2))
-        except Exception:
-            return False
-    return False
+from bitget.config_hub import load_config, save_config
 
 
 def generate_synthetic_crypto_ohlcv(n_paths=1000, n_bars=720):

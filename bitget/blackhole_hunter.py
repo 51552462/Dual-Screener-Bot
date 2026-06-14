@@ -5,28 +5,10 @@ from datetime import datetime
 
 import pandas as pd
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bitget_market_data.sqlite")
-CONFIG_PATH = os.path.join(BASE_DIR, "bitget_system_config.json")
+from bitget.config_hub import load_config, save_config
+from bitget.infra.data_paths import market_data_db_path
 
-
-def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_config(cfg):
-    temp_path = f"{CONFIG_PATH}.temp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(temp_path, CONFIG_PATH)
+DB_PATH = market_data_db_path()
 
 
 def scan_blackhole_targets():
