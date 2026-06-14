@@ -1,5 +1,2 @@
-<<<<<<< HEAD
-"""Bitget factory infrastructure (paths, logging, ops, config, runtime)."""
-=======
-"""Bitget factory infrastructure (paths, logging, ops, config, runtime)."""
->>>>>>> a6f17ca59385c6492c35a2f0368a732550fef092
+"""Deprecated shim — use `bitget.infra` (SSOT)."""
+from bitget.infra import *  # noqa: F401,F403
