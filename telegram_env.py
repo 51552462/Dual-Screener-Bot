@@ -179,7 +179,8 @@ def get_main_token() -> str:
     return _first_nonempty(
         "MAIN_BOT_TOKEN",
         "TELEGRAM_TOKEN_MAIN",
-        label="MAIN_BOT_TOKEN / TELEGRAM_TOKEN_MAIN",
+        "TELEGRAM_BOT_TOKEN",
+        label="MAIN_BOT_TOKEN / TELEGRAM_TOKEN_MAIN / TELEGRAM_BOT_TOKEN",
     )
 
 
@@ -199,7 +200,12 @@ def get_factory_chat_id() -> str:
 
 
 def get_report_token() -> str:
-    for n in ("REPORT_BOT_TOKEN", "TELEGRAM_TOKEN_MAIN", "TELEGRAM_TOKEN"):
+    for n in (
+        "REPORT_BOT_TOKEN",
+        "TELEGRAM_TOKEN_MAIN",
+        "TELEGRAM_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+    ):
         v = (os.environ.get(n) or "").strip()
         if v:
             return v
