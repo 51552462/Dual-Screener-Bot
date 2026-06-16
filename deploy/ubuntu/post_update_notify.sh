@@ -8,7 +8,7 @@
 #
 # TELEGRAM 자격 증명은 telegram_env(.env) 통일.
 # =============================================================================
-set -euo pipefail
+set -eu -o pipefail
 
 INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
 export INSTALL_ROOT
@@ -16,7 +16,7 @@ DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
 
 # root 가 호출해도 큐 DB 경로(~ubuntu/...)가 맞도록 동일 유저로 Python 실행
 sudo -E -u "$DEPLOY_USER" bash <<EOS
-set -euo pipefail
+set -eu -o pipefail
 cd "\${INSTALL_ROOT}"
 if [[ -f .env ]]; then
   set -a
