@@ -5,7 +5,7 @@
 #
 # 설치 대상: dante-factory, dante-dashboard, dante-async, dante-snapshot, dante-watchdog, dante-backup (timer)
 # =============================================================================
-set -euo pipefail
+set -eu -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
@@ -118,3 +118,8 @@ systemctl --no-pager --full status dante-factory.service dante-dashboard.service
 echo ""
 echo "=== timers ==="
 systemctl list-timers "${TIMERS[@]}" --no-pager || true
+
+if [[ -f "${REPO_ROOT}/deploy/install_factory_cron.sh" ]]; then
+  INSTALL_ROOT="${INSTALL_ROOT}" bash "${REPO_ROOT}/deploy/install_factory_cron.sh"
+  echo "✓ factory cron → /etc/cron.d/dual-screener-factory"
+fi

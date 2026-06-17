@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Dual-Screener Factory — Ubuntu one-shot wrapper (venv · .env · TZ · logs)
-set -euo pipefail
+set -eu -o pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"

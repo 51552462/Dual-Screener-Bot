@@ -37,6 +37,20 @@ FACTORY_MODES = frozenset(
 class JobSkipError(Exception):
     """동일 mode job이 이미 실행 중 — DB 이중 진입 방지."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        holder_mode: Optional[str] = None,
+        requesting_mode: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.holder_mode = holder_mode
+        self.requesting_mode = requesting_mode
+
+
+_SCAN_SESSION_MODES = frozenset({"scan_kr", "scan_us"})
+
 
 @dataclass(frozen=True)
 class StepSpec:
@@ -64,6 +78,8 @@ class FactoryRunReport:
     steps: List[StepResult] = field(default_factory=list)
     skipped_lock: bool = False
     skipped_lock_detail: Optional[str] = None
+    skipped_session: bool = False
+    skipped_session_detail: Optional[str] = None
 
     @property
     def all_critical_ok(self) -> bool:
@@ -75,6 +91,8 @@ class FactoryRunReport:
 
     @property
     def status_label(self) -> str:
+        if self.skipped_session:
+            return "SKIPPED_SESSION"
         if self.skipped_lock:
             return "SKIPPED_LOCK"
         if not self.any_failure:
@@ -395,8 +413,11 @@ def factory_job_lock(
             last_detail = _describe_lock_holder(path)
             time.sleep(1.0)
         if not acquired:
+            meta = _parse_lock_metadata(path)
             raise JobSkipError(
-                f"factory lock busy ({path}); mode={mode} — {last_detail}"
+                f"factory lock busy ({path}); mode={mode} — {last_detail}",
+                holder_mode=meta.mode if meta else None,
+                requesting_mode=mode,
             )
         _write_lock_metadata(lock_f, mode)
         with _factory_lock_shutdown_guard(
@@ -488,14 +509,23 @@ def notify_factory_run(
     if skip_telegram:
         return
     st = report.status_label
-    if st == "OK":
-        return
-    if st == "SKIPPED_LOCK":
-        if send_fn:
-            send_fn(format_factory_run_telegram(report))
+    if st in ("OK", "SKIPPED_SESSION", "SKIPPED_LOCK"):
         return
     if send_fn:
         send_fn(format_factory_run_telegram(report))
+
+
+def _scan_session_closed_skip(mode: str) -> Tuple[bool, str]:
+    """scan_kr / scan_us — 장외면 락·prelude 없이 즉시 스킵 (cron UTC 오설정 방어)."""
+    if mode not in _SCAN_SESSION_MODES:
+        return False, ""
+    from market_session_gate import is_market_open
+
+    market = "KR" if mode == "scan_kr" else "US"
+    ok, detail = is_market_open(market)
+    if ok:
+        return False, ""
+    return True, detail
 
 
 def _record_ops_heartbeat(mode: str, report: FactoryRunReport) -> None:
@@ -536,6 +566,16 @@ def dispatch_factory_mode(
         report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         return report
 
+    closed, session_detail = _scan_session_closed_skip(mode)
+    if closed:
+        report.skipped_session = True
+        report.skipped_session_detail = session_detail
+        report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        logger.info("factory %s skipped (outside regular session): %s", mode, session_detail)
+        notify_factory_run(report, send_fn=send_fn, skip_telegram=skip_telegram)
+        _record_ops_heartbeat(mode, report)
+        return report
+
     try:
         with factory_job_lock(mode, timeout_sec=lock_timeout_sec):
             aborted = False
@@ -565,7 +605,7 @@ def dispatch_factory_mode(
     except JobSkipError as e:
         report.skipped_lock = True
         report.skipped_lock_detail = str(e)
-        logger.warning("factory job skipped: %s", e)
+        logger.warning("factory job skipped (lock): %s", e)
     except Exception as e:
         logger.exception("factory dispatch outer error")
         report.steps.append(
@@ -584,7 +624,7 @@ def dispatch_factory_mode(
 
 
 def factory_exit_code(report: FactoryRunReport) -> int:
-    if report.skipped_lock:
+    if report.skipped_lock or report.skipped_session:
         return 0
     if report.all_critical_ok:
         return 0

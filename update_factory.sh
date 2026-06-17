@@ -14,7 +14,7 @@
 #   INSTALL_ROOT — git·코드 루트 (기본: 이 스크립트가 있는 디렉터리)
 #   DEPLOY_USER  — git pull 수행 유저 (기본: ubuntu)
 # =============================================================================
-set -euo pipefail
+set -eu -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_ROOT="${INSTALL_ROOT:-$REPO_ROOT}"
@@ -289,6 +289,9 @@ fi
 
 echo "[3/7] systemd 유닛 재배포 (ExecStart → venv) → $INSTALL_ROOT"
 sudo INSTALL_ROOT="$INSTALL_ROOT" "$REPO_ROOT/deploy_quant_factory.sh"
+
+echo "[3b/7] factory cron SSOT → /etc/cron.d/dual-screener-factory (CRON_TZ=Asia/Seoul, LF)"
+sudo INSTALL_ROOT="$INSTALL_ROOT" "$REPO_ROOT/deploy/install_factory_cron.sh"
 
 echo "[4/7] 장기 서비스 graceful stop (데이터 파일 untouched)"
 systemctl stop dante-factory.service dante-dashboard.service dante-async.service 2>/dev/null || true
