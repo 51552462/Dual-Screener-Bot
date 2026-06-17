@@ -21,10 +21,8 @@ INSTALL_ROOT="${INSTALL_ROOT:-$REPO_ROOT}"
 export INSTALL_ROOT
 DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
 
-# CRLF on *.sh breaks "set -o pipefail" when sourced (must run before dante_venv.sh)
-if [[ -f "${REPO_ROOT}/deploy/fix_shell_lf.sh" ]]; then
-  bash "${REPO_ROOT}/deploy/fix_shell_lf.sh" "${REPO_ROOT}" || true
-fi
+# 부트스트랩: source 전 dante_venv CRLF만 제거 (git 상태는 pull 직전에 checkout -- . 로 정리)
+sed -i 's/\r$//' "${REPO_ROOT}/deploy/dante_venv.sh" 2>/dev/null || true
 
 # shellcheck source=deploy/dante_venv.sh
 source "${REPO_ROOT}/deploy/dante_venv.sh"
@@ -287,16 +285,33 @@ _dante_pre_update_sqlite_backup
 
 echo "[2/7] git pull ($DEPLOY_USER) → $INSTALL_ROOT"
 if [[ -d "$INSTALL_ROOT/.git" ]]; then
+  # 이전 sed/수동 패치 잔여물 제거 — pull 거부 방지
+  sudo -u "$DEPLOY_USER" git -C "$INSTALL_ROOT" checkout -- . 2>/dev/null || true
   sudo -u "$DEPLOY_USER" git -C "$INSTALL_ROOT" pull --ff-only
+  if [[ -f "${REPO_ROOT}/deploy/fix_shell_lf.sh" ]]; then
+    bash "${REPO_ROOT}/deploy/fix_shell_lf.sh" "${INSTALL_ROOT}"
+  else
+    find "$INSTALL_ROOT" -type f -name '*.sh' ! -path '*/.git/*' \
+      -exec sed -i 's/\r$//' {} + 2>/dev/null || true
+    find "$INSTALL_ROOT" -type f -name '*.sh' ! -path '*/.git/*' \
+      -exec sed -i 's/set -euo pipefail/set -eu -o pipefail/g' {} + 2>/dev/null || true
+  fi
 else
   echo "  (경고) .git 없음 — pull 생략"
 fi
 
 echo "[3/7] systemd 유닛 재배포 (ExecStart → venv) → $INSTALL_ROOT"
-sudo INSTALL_ROOT="$INSTALL_ROOT" "$REPO_ROOT/deploy_quant_factory.sh"
+sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${REPO_ROOT}/deploy_quant_factory.sh"
 
 echo "[3b/7] factory cron SSOT → /etc/cron.d/dual-screener-factory (CRON_TZ=Asia/Seoul, LF)"
-sudo INSTALL_ROOT="$INSTALL_ROOT" "$REPO_ROOT/deploy/install_factory_cron.sh"
+if [[ -f "${REPO_ROOT}/deploy/install_factory_cron.sh" ]]; then
+  sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${REPO_ROOT}/deploy/install_factory_cron.sh"
+else
+  sudo cp "${REPO_ROOT}/deploy/factory.crontab.example" /etc/cron.d/dual-screener-factory
+  sudo sed -i 's/\r$//' /etc/cron.d/dual-screener-factory
+  sudo chmod 0644 /etc/cron.d/dual-screener-factory
+  echo "  (install_factory_cron.sh 없음 — crontab.example 직접 설치)"
+fi
 
 echo "[4/7] 장기 서비스 graceful stop (데이터 파일 untouched)"
 systemctl stop dante-factory.service dante-dashboard.service dante-async.service 2>/dev/null || true
