@@ -2,7 +2,7 @@
 # Dante 팩토리 — 가상환경 경로 단일 정의 (venv 우선, .venv 레거시 폴백)
 # shellcheck disable=SC2034
 # Usage: source deploy/dante_venv.sh; dante_resolve_python "$INSTALL_ROOT"
-set -euo pipefail
+set -eu -o pipefail
 
 dante_resolve_python() {
   local root="${1:?INSTALL_ROOT required}"

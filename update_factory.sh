@@ -21,6 +21,11 @@ INSTALL_ROOT="${INSTALL_ROOT:-$REPO_ROOT}"
 export INSTALL_ROOT
 DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
 
+# CRLF on *.sh breaks "set -o pipefail" when sourced (must run before dante_venv.sh)
+if [[ -f "${REPO_ROOT}/deploy/fix_shell_lf.sh" ]]; then
+  bash "${REPO_ROOT}/deploy/fix_shell_lf.sh" "${REPO_ROOT}" || true
+fi
+
 # shellcheck source=deploy/dante_venv.sh
 source "${REPO_ROOT}/deploy/dante_venv.sh"
 
