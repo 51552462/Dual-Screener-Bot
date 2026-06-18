@@ -28,6 +28,17 @@ trap 'rm -f "${TMP}"' EXIT
 
 sed "s|${DEFAULT_ROOT}|${INSTALL_ROOT}|g" "${TEMPLATE}" | sed 's/\r$//' >"${TMP}"
 install -m 0644 "${TMP}" "${DEST}"
+chmod +x "${INSTALL_ROOT}/factory.sh" 2>/dev/null || true
+
+if grep -q $'\r' "${DEST}" 2>/dev/null; then
+  echo "ERROR: ${DEST} still contains CRLF — CRON_TZ will be ignored; cron runs on UTC." >&2
+  exit 1
+fi
+if ! grep -q '^CRON_TZ=Asia/Seoul' "${DEST}"; then
+  echo "ERROR: ${DEST} missing CRON_TZ=Asia/Seoul" >&2
+  exit 1
+fi
+
 echo "✓ installed ${DEST} (CRON_TZ=Asia/Seoul, INSTALL_ROOT=${INSTALL_ROOT})"
 
 if command -v systemctl >/dev/null 2>&1; then

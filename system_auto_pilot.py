@@ -2069,6 +2069,10 @@ def run_factory_cli(argv=None) -> int:
     )
     code = factory_exit_code(report)
     print(f"🏭 [Factory] finished status={report.status_label} exit={code}")
+    if report.skipped_session and report.skipped_session_detail:
+        print(f"🏭 [Factory] SKIPPED_SESSION: {report.skipped_session_detail}")
+    if report.skipped_lock and report.skipped_lock_detail:
+        print(f"🏭 [Factory] SKIPPED_LOCK: {report.skipped_lock_detail[:300]}")
     return code
 
 
