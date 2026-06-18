@@ -1806,6 +1806,12 @@ def system_main_loop():
     while True:
         try:
             now = datetime.now(tz)
+            # forward_trades 비어 있어도 watchdog(system_auto_pilot heartbeat) 유지
+            try:
+                ops_logger.record_heartbeat("system_auto_pilot")
+            except Exception as _hb_err:
+                print(f"⚠️ [오토파일럿] heartbeat: {_hb_err}")
+
             first_entry_date = get_first_entry_date()
             if first_entry_date is None:
                 time.sleep(30)
