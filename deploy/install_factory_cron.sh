@@ -40,6 +40,15 @@ if ! grep -q '^CRON_TZ=Asia/Seoul' "${DEST}"; then
 fi
 
 echo "✓ installed ${DEST} (CRON_TZ=Asia/Seoul, INSTALL_ROOT=${INSTALL_ROOT})"
+echo ""
+echo "=== KST schedule (CRON_TZ must be active — CRLF breaks this) ==="
+echo "  scan-kr   : Mon-Fri  09:00-15:30  (Korean regular session)"
+echo "  daily-kr  : Mon-Fri  16:35        (KR post-close report)"
+echo "  scan-us   : Tue-Sat  22:30-06:30  (US NYSE regular ≈ KST night)"
+echo "  daily-us  : Tue-Sat  06:45        (US post-close report)"
+echo ""
+echo "  WRONG if CRON_TZ ignored (UTC): KR fires 18:00-00:30 KST, US fires 09:00-15:30 KST"
+echo "  Verify after next runs: bash ${INSTALL_ROOT}/scripts/verify_schedule_alignment.sh"
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl reload cron 2>/dev/null || systemctl reload crond 2>/dev/null || service cron reload 2>/dev/null || true

@@ -80,6 +80,7 @@ fi
 
 LOG_FILE="${LOG_DIR}/factory_${MODE}_${STAMP}.log"
 echo "[factory.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ}"
+echo "[factory.sh] wall_clock=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S %Z %a')"
 
 # set -e: non-zero Python exit → shell abort (cron must not reach a manual overseer rerun).
 python "${ROOT}/system_auto_pilot.py" --mode "$MODE" "${EXTRA_ARGS[@]}" \

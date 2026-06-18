@@ -307,10 +307,13 @@ echo "[3b/7] factory cron SSOT → /etc/cron.d/dual-screener-factory (CRON_TZ=As
 if [[ -f "${REPO_ROOT}/deploy/install_factory_cron.sh" ]]; then
   sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${REPO_ROOT}/deploy/install_factory_cron.sh"
 else
-  sudo cp "${REPO_ROOT}/deploy/factory.crontab.example" /etc/cron.d/dual-screener-factory
-  sudo sed -i 's/\r$//' /etc/cron.d/dual-screener-factory
-  sudo chmod 0644 /etc/cron.d/dual-screener-factory
-  echo "  (install_factory_cron.sh 없음 — crontab.example 직접 설치)"
+  TMP="$(mktemp)"
+  DEFAULT_ROOT="/home/ubuntu/dante_bots/Dual-Screener-Bot"
+  sed "s|${DEFAULT_ROOT}|${INSTALL_ROOT}|g" "${REPO_ROOT}/deploy/factory.crontab.example" | sed 's/\r$//' >"${TMP}"
+  sudo install -m 0644 "${TMP}" /etc/cron.d/dual-screener-factory
+  rm -f "${TMP}"
+  sudo chmod +x "${INSTALL_ROOT}/factory.sh" 2>/dev/null || true
+  echo "  (install_factory_cron.sh 없음 — crontab.example 직접 설치, INSTALL_ROOT 치환됨)"
 fi
 
 echo "[4/7] 장기 서비스 graceful stop (데이터 파일 untouched)"
