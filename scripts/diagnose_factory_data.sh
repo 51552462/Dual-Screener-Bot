@@ -53,23 +53,30 @@ else:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
-        for t in ("forward_trades", "stock_ohlcv_kr", "stock_ohlcv_us"):
-            if t not in tables:
-                print(f"  ✗ table missing: {t}")
-                continue
-            n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            print(f"  {t}: {n:,} rows")
-        if "forward_trades" in tables:
+        kr_n = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'KR\\_%' ESCAPE '\\'"
+        ).fetchone()[0]
+        us_n = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'US\\_%' ESCAPE '\\'"
+        ).fetchone()[0]
+        print(f"  per-ticker OHLCV tables: KR_*={kr_n:,}  US_*={us_n:,}")
+        if kr_n == 0 and us_n == 0:
+            print("  ✗ KR_/US_ 티커 테이블 없음 — OHLCV 미적재 또는 DB 손상")
+        elif kr_n < 100 or us_n < 100:
+            print("  ⚠ 티커 테이블 수 적음 — 증분 업데이트·유니버스 확인 필요")
+        if "forward_trades" not in tables:
+            print("  ✗ forward_trades table missing — init_forward_db 필요")
+        else:
             row = conn.execute(
                 "SELECT COUNT(*), MIN(entry_date), MAX(entry_date) FROM forward_trades"
             ).fetchone()
             closed = conn.execute(
                 "SELECT COUNT(*) FROM forward_trades WHERE status LIKE 'CLOSED%'"
             ).fetchone()[0]
-            print(f"  forward_trades CLOSED: {closed:,}")
+            print(f"  forward_trades rows: {row[0]:,}  CLOSED: {closed:,}")
             print(f"  forward_trades dates: min={row[1]} max={row[2]}")
             if row[0] == 0:
-                print("  ⚠ forward_trades 비어 있음 → 딥다이브 '표본 0건'·데몬 워밍업 무한 대기 원인")
+                print("  ⚠ forward_trades 비어 있음 → 딥다이브 '표본 0건' (OHLCV와 별개)")
     finally:
         conn.close()
 
