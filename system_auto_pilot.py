@@ -2065,8 +2065,8 @@ def run_factory_cli(argv=None) -> int:
     parser.add_argument(
         "--lock-timeout",
         type=float,
-        default=120.0,
-        help="Seconds to wait for factory_runtime.lock (default 120)",
+        default=None,
+        help="Seconds to wait for factory_runtime.lock (daily_audit*: 7200, else 120)",
     )
     parser.add_argument(
         "--run-autonomous-analysis-only",
@@ -2095,13 +2095,20 @@ def run_factory_cli(argv=None) -> int:
 
     pipeline = get_pipeline(args.mode)
     print(f"🏭 [Factory] mode={args.mode} steps={[s.name for s in pipeline]}")
+    lock_timeout = args.lock_timeout
+    if lock_timeout is None:
+        lock_timeout = (
+            7200.0
+            if str(args.mode or "").startswith("daily_audit")
+            else 120.0
+        )
     report = dispatch_factory_mode(
         args.mode,
         pipeline,
         send_fn=send_telegram_report,
         skip_telegram=args.skip_telegram,
         dry_run=args.dry_run,
-        lock_timeout_sec=args.lock_timeout,
+        lock_timeout_sec=lock_timeout,
     )
     code = factory_exit_code(report)
     print(f"🏭 [Factory] finished status={report.status_label} exit={code}")

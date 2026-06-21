@@ -100,6 +100,19 @@ if [[ -z "$MODE" ]]; then
   exit 2
 fi
 
+# daily_audit* 동시 실행 금지 — 동일 DB 에 US OHLCV 6천+ + KR hydrate 경합 방지
+case "$MODE" in
+  daily_audit|daily_audit_kr|daily_audit_us)
+    other_daily="$(pgrep -af 'system_auto_pilot\.py --mode daily_audit' 2>/dev/null || true)"
+    if [[ -n "$other_daily" ]]; then
+      echo "[factory.sh] SKIP: another daily_audit job is already running (DB lock / OHLCV contention)." >&2
+      echo "$other_daily" >&2
+      echo "[factory.sh] Wait for it to finish, or use --daily for a single combined run." >&2
+      exit 0
+    fi
+    ;;
+esac
+
 LOG_FILE="${LOG_DIR}/factory_${MODE}_${STAMP}.log"
 echo "[factory.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ}"
 echo "[factory.sh] wall_clock=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S %Z %a')"

@@ -74,6 +74,12 @@ def _load_macro_row_lookback(
         path = alt_data_db_path()
         conn = sqlite3.connect(path, timeout=30)
         try:
+            try:
+                from legacy_archive.alt_data_miner import _migrate_extra_columns
+
+                _migrate_extra_columns(conn)
+            except Exception:
+                pass
             conn.row_factory = sqlite3.Row
             cur = conn.execute(
                 "SELECT * FROM macro_daily ORDER BY date DESC LIMIT ?",

@@ -41,6 +41,8 @@ _EXTRA_COLUMNS = [
     ("t10y2y", "REAL"),
     ("dfii10", "REAL"),
     ("walcl", "REAL"),
+    ("cnn_fear_greed", "REAL"),
+    ("put_call_ratio", "REAL"),
 ]
 
 _FLOAT_KEYS = (
@@ -78,6 +80,7 @@ def _load_last_row() -> Optional[dict[str, Any]]:
         return None
     conn = sqlite3.connect(path, timeout=30)
     try:
+        _migrate_extra_columns(conn)
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM macro_daily ORDER BY date DESC LIMIT 1")
         row = cur.fetchone()

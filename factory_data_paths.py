@@ -131,6 +131,18 @@ def ensure_alt_data_db_initialized(path: str | None = None) -> str:
             CREATE INDEX IF NOT EXISTS idx_macro_daily_date ON macro_daily(date DESC);
             """
         )
+        for col, sqlt in (
+            ("btc_close", "REAL"),
+            ("t10y2y", "REAL"),
+            ("dfii10", "REAL"),
+            ("walcl", "REAL"),
+            ("cnn_fear_greed", "REAL"),
+            ("put_call_ratio", "REAL"),
+        ):
+            try:
+                conn.execute(f"ALTER TABLE macro_daily ADD COLUMN {col} {sqlt}")
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     finally:
         conn.close()

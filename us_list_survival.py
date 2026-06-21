@@ -9,7 +9,7 @@ import re
 import sqlite3
 import time
 import warnings
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -21,6 +21,30 @@ US_LIST_CACHE_BASENAME = "us_list_cache.csv"
 _CODE_RE = re.compile(r"^US_([A-Z][A-Z0-9.\-]{0,14})$")
 _BENCH = frozenset({"US_SPY", "US_QQQ", "US_VIX"})
 _MIN_LIVE_ROWS = 400
+# 동일 팩토리 프로세스·당일 CSV — FDR NASDAQ/NYSE/AMEX 3연속 tqdm 폭주 방지
+_SESSION_CACHE: Dict[str, Tuple[pd.DataFrame, str, float]] = {}
+_SESSION_CACHE_TTL_SEC = 300.0
+
+
+def _cache_file_max_age_sec() -> float:
+    raw = (os.environ.get("US_LIST_CACHE_MAX_AGE_SEC") or "86400").strip()
+    try:
+        return max(300.0, float(raw))
+    except ValueError:
+        return 86400.0
+
+
+def _cache_file_is_fresh(path: str, *, min_rows: int) -> bool:
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        age = max(0.0, time.time() - os.path.getmtime(path))
+        if age > _cache_file_max_age_sec():
+            return False
+        snap = _read_cache_csv(path)
+        return snap is not None and len(snap) >= max(50, min_rows // 4)
+    except OSError:
+        return False
 
 
 def default_us_list_cache_path(db_path: str | None = None) -> str:
@@ -184,22 +208,67 @@ def _fetch_fdr_us_list(fdr_module) -> pd.DataFrame:
     return _normalize_us_columns(df)
 
 
+def _session_cache_get(cache_key: str) -> Optional[Tuple[pd.DataFrame, str]]:
+    hit = _SESSION_CACHE.get(cache_key)
+    if not hit:
+        return None
+    df, src, ts = hit
+    if time.time() - ts > _SESSION_CACHE_TTL_SEC:
+        _SESSION_CACHE.pop(cache_key, None)
+        return None
+    return df, src
+
+
+def _session_cache_put(cache_key: str, df: pd.DataFrame, src: str) -> Tuple[pd.DataFrame, str]:
+    out = df, src
+    _SESSION_CACHE[cache_key] = (df, src, time.time())
+    return out
+
+
 def collect_us_list_survival(
     *,
     db_path: str | None = None,
     primary_cache_csv: str | None = None,
     min_live_rows: int = _MIN_LIVE_ROWS,
     fdr_module=None,
+    force_live: bool = False,
 ) -> Tuple[pd.DataFrame, str]:
     """
-    Tier 1: FDR NASDAQ/NYSE/AMEX
-    Tier 2: us_list_cache.csv
+    Tier 0: in-process session cache (동일 daily job 내 중복 호출)
+    Tier 1: us_list_cache.csv (신선하면 FDR 생략)
+    Tier 2: FDR NASDAQ/NYSE/AMEX
     Tier 3: sqlite US_{ticker} tables
     Returns (DataFrame[Code,Name,Market], source) source in live|cache|sqlite|fail
     """
     warnings.filterwarnings("ignore", category=FutureWarning)
     resolved_db = db_path or MARKET_DATA_DB_PATH
     resolved_cache = primary_cache_csv or default_us_list_cache_path(resolved_db)
+    cache_key = f"{resolved_db}|{resolved_cache}"
+
+    if not force_live:
+        sess = _session_cache_get(cache_key)
+        if sess is not None:
+            return sess
+
+    force_env = str(os.environ.get("US_LIST_FORCE_FDR", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    if not force_live and not force_env and _cache_file_is_fresh(
+        resolved_cache, min_rows=min_live_rows
+    ):
+        cached = _read_cache_csv(resolved_cache)
+        if cached is not None:
+            try:
+                norm = _normalize_us_columns(cached)
+                if len(norm) >= max(50, min_live_rows // 4):
+                    norm = enrich_missing_us_sectors(norm, max_fetch=40)
+                    cols = _us_list_columns(norm)
+                    return _session_cache_put(cache_key, norm[cols], "cache")
+            except Exception:
+                pass
 
     if fdr_module is None:
         try:
@@ -207,13 +276,17 @@ def collect_us_list_survival(
         except ImportError:
             fdr_module = None
 
-    if fdr_module is not None:
+    if fdr_module is not None and (force_live or force_env or not _cache_file_is_fresh(
+        resolved_cache, min_rows=min_live_rows
+    )):
         try:
+            logger.info("US listing: FDR live fetch (NASDAQ/NYSE/AMEX)")
             live = _fetch_fdr_us_list(fdr_module)
             if live is not None and len(live) >= min_live_rows:
                 live = enrich_missing_us_sectors(live)
                 _safe_write_cache(live, resolved_cache)
-                return live[_us_list_columns(live)], "live"
+                cols = _us_list_columns(live)
+                return _session_cache_put(cache_key, live[cols], "live")
         except Exception:
             pass
 
@@ -223,18 +296,21 @@ def collect_us_list_survival(
             norm = _normalize_us_columns(cached)
             if len(norm) >= 50:
                 norm = enrich_missing_us_sectors(norm, max_fetch=80)
-                return norm[_us_list_columns(norm)], "cache"
+                cols = _us_list_columns(norm)
+                return _session_cache_put(cache_key, norm[cols], "cache")
         except Exception:
             pass
 
     sqlite_df = _stage3_sqlite_codes(resolved_db)
     if sqlite_df is not None and len(sqlite_df) >= 50:
-        return sqlite_df[_us_list_columns(sqlite_df)], "sqlite"
+        cols = _us_list_columns(sqlite_df)
+        return _session_cache_put(cache_key, sqlite_df[cols], "sqlite")
 
     if cached is not None and not cached.empty:
         try:
             norm = enrich_missing_us_sectors(_normalize_us_columns(cached), max_fetch=60)
-            return norm[_us_list_columns(norm)], "cache"
+            cols = _us_list_columns(norm)
+            return _session_cache_put(cache_key, norm[cols], "cache")
         except Exception:
             pass
 
