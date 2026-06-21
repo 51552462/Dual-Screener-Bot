@@ -78,7 +78,12 @@ class TestScalarHelpers(unittest.TestCase):
         self.assertEqual(out["final_ret"].tolist(), [0.0, 0.0, 5.0])
         self.assertEqual(out["sim_kelly_invest"].iloc[0], 0.0)
 
-    def test_profit_factor_all_wins_no_inf(self):
+    def test_fmt_pct_no_inf(self):
+        from reports.forward_report_scalar import fmt_pct
+
+        self.assertEqual(fmt_pct(float("inf")), "+0.00%")
+        self.assertEqual(fmt_pct(-float("inf")), "+0.00%")
+        self.assertEqual(fmt_pct(12.345), "+12.35%")
         from reports.forward_report_scalar import profit_factor_from_returns
 
         pf = profit_factor_from_returns([1.0, 2.0, 3.0])

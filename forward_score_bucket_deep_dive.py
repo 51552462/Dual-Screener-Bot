@@ -443,7 +443,9 @@ class ForwardScoreBucketDeepDive:
             t_wr = (wins_count / len(t_df)) * 100.0 if len(t_df) else 0.0
             gross_profit = scalar_float(fr_b.loc[wins_mask].sum())
             gross_loss = abs(scalar_float(fr_b.loc[~wins_mask].sum()))
-            t_pf = scalar_float(gross_profit / (gross_loss + 0.1), 1.0)
+            from reports.forward_report_scalar import profit_factor_from_returns
+
+            t_pf = profit_factor_from_returns(fr_b)
 
             sector = _dominant_sector_from_bucket(t_df)
             exit_min, exit_max = _exit_date_span(t_df)

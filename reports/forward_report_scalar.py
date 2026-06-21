@@ -206,6 +206,21 @@ def fmt_amount(value: Any, *, decimals: int = 0, default: float = 0.0) -> str:
     return format(v, spec)
 
 
+def fmt_pct(
+    value: Any,
+    *,
+    decimals: int = 2,
+    signed: bool = True,
+    default: float = 0.0,
+) -> str:
+    """수익률·MDD% 텔레그램 표시 — inf/nan → 0."""
+    v = scalar_float(value, default)
+    v = max(-9999.99, min(9999.99, v))
+    if signed:
+        return f"{v:+.{int(decimals)}f}%"
+    return f"{v:.{int(decimals)}f}%"
+
+
 def prepare_forward_trades_df(
     df: Optional[pd.DataFrame],
     *,

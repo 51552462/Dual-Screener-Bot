@@ -181,6 +181,9 @@ class DailyReportContext:
             params=(mkt,),
         )
         df_norm = normalize_market_fn(df_raw, mkt)
+        from reports.forward_report_scalar import prepare_forward_trades_df
+
+        df_norm = prepare_forward_trades_df(df_norm, context=f"daily_slice:{mkt}")
         df_all_real = df_long_only_fn(df_norm)
         if "exit_date" in df_all_real.columns:
             df_all_real["exit_date"] = normalize_date_series(df_all_real["exit_date"])

@@ -122,7 +122,14 @@ def _equity_mdd_and_return(
     cum_pnl = float(np.sum(pnl))
     end_pnl = float(eq.iloc[-1]) if len(eq) else float(R)
     tot_ret_pct = float(cum_pnl / R * 100.0)
-    return cum_pnl, mdd_pct, end_pnl, tot_ret_pct
+    from reports.forward_report_scalar import scalar_float as _sf
+
+    return (
+        _sf(cum_pnl, 0.0),
+        _sf(mdd_pct, 0.0),
+        _sf(end_pnl, R),
+        _sf(tot_ret_pct, 0.0),
+    )
 
 
 def _avg_deploy_pct(notional: np.ndarray, reference_capital: float) -> float:
@@ -461,15 +468,18 @@ class DeathmatchNarrativeBuilder:
 
         fk = b.fixed
         kk = b.kelly
+        from reports.forward_report_scalar import fmt_money, fmt_pct, scalar_float
+
+        mkt = "US" if "🇺🇸" in str(market_icon) else "KR"
         lines.append(
-            f"🛡️ <b>[고정 비중]</b> 누적 <b>{fk.cum_pnl:+,.0f}</b> 원 | "
-            f"총수익률 {fk.total_return_pct:+.2f}% | MDD <b>{fk.mdd_pct:.2f}%</b> | "
-            f"평균 투입 {fk.avg_deploy_pct:.2f}% | 최대 연패 <b>{fk.max_losing_streak}</b>회\n"
+            f"🛡️ <b>[고정 비중]</b> 누적 <b>{fmt_money(fk.cum_pnl, market=mkt, signed=True)}</b> | "
+            f"총수익률 {fmt_pct(fk.total_return_pct)} | MDD <b>{fmt_pct(fk.mdd_pct, signed=False)}</b> | "
+            f"평균 투입 {scalar_float(fk.avg_deploy_pct):.2f}% | 최대 연패 <b>{fk.max_losing_streak}</b>회\n"
         )
         lines.append(
-            f"💰 <b>[동적 켈리]</b> 누적 <b>{kk.cum_pnl:+,.0f}</b> 원 | "
-            f"총수익률 {kk.total_return_pct:+.2f}% | MDD <b>{kk.mdd_pct:.2f}%</b> | "
-            f"평균 투입 {kk.avg_deploy_pct:.2f}% | 최대 연패 <b>{kk.max_losing_streak}</b>회\n"
+            f"💰 <b>[동적 켈리]</b> 누적 <b>{fmt_money(kk.cum_pnl, market=mkt, signed=True)}</b> | "
+            f"총수익률 {fmt_pct(kk.total_return_pct)} | MDD <b>{fmt_pct(kk.mdd_pct, signed=False)}</b> | "
+            f"평균 투입 {scalar_float(kk.avg_deploy_pct):.2f}% | 최대 연패 <b>{kk.max_losing_streak}</b>회\n"
         )
 
         if b.micro_defense is not None and b.micro_defense.n_trades_in_window > 0:

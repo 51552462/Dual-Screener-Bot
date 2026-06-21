@@ -280,13 +280,13 @@ def send_comprehensive_daily_report(
                     pnl = scalar_float((valid_invest * g_closed['final_ret'] / 100.0).sum())
                     wr = (len(g_closed[g_closed['final_ret'] > 0]) / len(g_closed)) * 100 if len(g_closed) > 0 else 0
                     total_closed = len(g_closed)
-                    from reports.forward_report_scalar import profit_factor_from_returns
+                    from reports.forward_report_scalar import profit_factor_from_returns, fmt_money
 
                     pf = profit_factor_from_returns(g_closed['final_ret'])
                     leaderboard.append({
                         'g': group,
                         'bal': scalar_float(base_seed + pnl),
-                        'wr': wr,
+                        'wr': scalar_float(wr),
                         'op': int(_reporter_valid_holding_mask(g_df).sum()),
                         'tot': total_closed,
                         'pf': pf,
@@ -297,8 +297,11 @@ def send_comprehensive_daily_report(
                     m = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "🏃"
                     if e['bal'] < base_seed * 0.8: m = "📉"
                     if e['bal'] < base_seed * 0.5: m = "💀"
-                    msg2 += f"{m} <b>{e['g']}</b>: {e['bal']:,.0f}원\n"
-                    msg2 += f"   ↳ 승률 {e['wr']:.0f}% (PF {e['pf']:.2f}) | 누적 {e['tot']}전 | 현재 {e['op']}종목 보유\n"
+                    msg2 += f"{m} <b>{e['g']}</b>: {fmt_money(e['bal'], market=market)}\n"
+                    msg2 += (
+                        f"   ↳ 승률 {scalar_float(e['wr']):.0f}% "
+                        f"(PF {scalar_float(e['pf']):.2f}) | 누적 {e['tot']}전 | 현재 {e['op']}종목 보유\n"
+                    )
             else:
                 _tk_m = ctx.timekeeper_for(market)
                 if len(df_real) > 0 and _win_closed == 0:
