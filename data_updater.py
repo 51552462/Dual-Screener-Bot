@@ -1,4 +1,5 @@
 # 1_Data_Pipeline / data_updater.py
+import sys
 import yfinance as yf
 import FinanceDataReader as fdr
 import pandas as pd

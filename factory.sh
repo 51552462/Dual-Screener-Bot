@@ -52,6 +52,8 @@ Usage: ./factory.sh <flag>
 
   --force-scan-outside-session
                   bypass market_session_gate (manual recovery)
+  --lock-timeout SEC
+                  factory job lock wait (default in system_auto_pilot: 120s)
 
 Environment:
   FACTORY_LOG_DIR   log directory (default: ./logs)
@@ -77,6 +79,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)   EXTRA_ARGS+=("--dry-run") ;;
     --skip-telegram) EXTRA_ARGS+=("--skip-telegram") ;;
+    --lock-timeout)
+      shift
+      EXTRA_ARGS+=("--lock-timeout" "${1:?--lock-timeout requires seconds}")
+      ;;
     --force-scan-outside-session) export FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1 ;;
     -h|--help)   usage; exit 0 ;;
     *)
