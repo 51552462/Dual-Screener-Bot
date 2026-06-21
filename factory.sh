@@ -100,14 +100,32 @@ if [[ -z "$MODE" ]]; then
   exit 2
 fi
 
-# daily_audit* 동시 실행 금지 — 동일 DB 에 US OHLCV 6천+ + KR hydrate 경합 방지
+# daily_audit* 동시 실행 금지 — 살아 있는 daily_audit 프로세스만 차단 (zombie/유령 pgrep 제외)
+_factory_live_daily_audit_lines() {
+  local line pid state
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    pid="${line%% *}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if ! kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ' | cut -c1)"
+    if [[ "$state" == "Z" ]]; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done < <(pgrep -af 'system_auto_pilot\.py --mode daily_audit' 2>/dev/null || true)
+}
+
 case "$MODE" in
   daily_audit|daily_audit_kr|daily_audit_us)
-    other_daily="$(pgrep -af 'system_auto_pilot\.py --mode daily_audit' 2>/dev/null || true)"
+    other_daily="$(_factory_live_daily_audit_lines)"
     if [[ -n "$other_daily" ]]; then
       echo "[factory.sh] SKIP: another daily_audit job is already running (DB lock / OHLCV contention)." >&2
       echo "$other_daily" >&2
       echo "[factory.sh] Wait for it to finish, or use --daily for a single combined run." >&2
+      echo "[factory.sh] If stuck: kill -9 <pid>; rm -f ${ROOT}/.factory_runtime.lock; retry." >&2
       exit 0
     fi
     ;;
