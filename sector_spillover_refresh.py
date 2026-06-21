@@ -103,6 +103,25 @@ def refresh_us_spillover_from_db(
         & (pd.to_numeric(df["mfe"], errors="coerce") >= mfe_min)
     ]
     if us_hot.empty:
+        try:
+            from zero_sample_spillover import apply_zero_sample_spillover
+
+            z = apply_zero_sample_spillover(cfg, force_if_closed_zero=True)
+            if z.get("applied"):
+                sector_s = str(z.get("sector") or "").strip()
+                as_of = _today_kst()
+                out.update(
+                    {
+                        "updated": True,
+                        "sector": sector_s,
+                        "as_of": as_of,
+                        "reason": "zero_sample_dark_horse",
+                        "zero_sample": z,
+                    }
+                )
+                return out
+        except Exception:
+            pass
         out["reason"] = "no_hot_sample"
         return out
 

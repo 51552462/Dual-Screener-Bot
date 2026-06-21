@@ -1594,6 +1594,16 @@ def execute_supernova_live_scan(market):
 
             eff_cos_cutoff = float(dynamic_cos_cutoff)
             eff_ml_cutoff = float(dynamic_ml_cutoff)
+            try:
+                from elastic_threshold import ElasticThreshold
+
+                _et = ElasticThreshold.from_system_config(config, market=market)
+                _est = _et.apply_pair(eff_cos_cutoff, eff_ml_cutoff)
+                eff_cos_cutoff = _est.cos_cutoff
+                eff_ml_cutoff = _est.ml_cutoff
+            except Exception as _et_ex:
+                _est = None
+                logger.debug("elastic threshold skip: %s", _et_ex)
             _scan_bonus_pts = 0.0
             _sector_live = _resolve_enroll_sector(market, code, stock_list)
             if _scan_synergy_ctx is not None:
@@ -1610,7 +1620,19 @@ def execute_supernova_live_scan(market):
                     logger.debug("per_ticker synergy %s: %s", code, _syn_tick_ex)
 
             dyn_rs_live = _approx_dyn_rs_vs_benchmark(df, benchmark_close_sr)
-            if _blocked_by_toxic_ml_tree(config, cpv, tb, bbe, dyn_rs_live, market=market):
+            _toxic_forgiveness = False
+            _toxic_forgiveness_rule = ""
+            try:
+                from toxic_decay_bandit import evaluate_toxic_ml_gate
+
+                _tg = evaluate_toxic_ml_gate(
+                    config, cpv, tb, bbe, dyn_rs_live, market=market
+                )
+            except Exception as _tg_ex:
+                logger.debug("toxic_decay_gate skip: %s", _tg_ex)
+                _tg = None
+
+            if _tg is not None and _tg.action == "block":
                 try:
                     try:
                         _bn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
@@ -1623,6 +1645,9 @@ def execute_supernova_live_scan(market):
                     pass
                 funnel.drop("TOXIC_ML_TREE")
                 return None
+            if _tg is not None and _tg.action == "forgiveness_scout":
+                _toxic_forgiveness = True
+                _toxic_forgiveness_rule = str(_tg.rule_name or "")
 
             # 1. 코사인 유사도 연산 (템플릿별 컷: 인큐베이터는 cos_cutoff, 그 외는 DYNAMIC_SUPERNOVA_CUTOFF)
             best_sim = 0.0
@@ -1649,6 +1674,8 @@ def execute_supernova_live_scan(market):
             is_pass_ml_box = False
             ml_match_count = 0 
             ml_pattern_name = "UNKNOWN"
+            ml_score = 0.0
+            best_ml_ratio = 0.0
             
             for c_name, bounds in live_clusters.items():
                 if not isinstance(bounds, dict):
@@ -1682,6 +1709,7 @@ def execute_supernova_live_scan(market):
                     if lo <= aval <= hi:
                         ml_match_count += 1
                 ml_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
+                best_ml_ratio = max(best_ml_ratio, ml_score)
                 
                 if ml_score >= eff_ml_cutoff:
                     is_pass_ml_box = True
@@ -1700,6 +1728,7 @@ def execute_supernova_live_scan(market):
                     if bounds.get('v_energy_min', -99) <= bbe <= bounds.get('v_energy_max', 999): ml_match_count += 1
                     
                     ud_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
+                    best_ml_ratio = max(best_ml_ratio, ud_score)
                     if ud_score >= eff_ml_cutoff:
                         is_pass_ml_box = True
                         is_underdog = True
@@ -1708,12 +1737,62 @@ def execute_supernova_live_scan(market):
                         break
 
             if not (is_pass_ml_box or is_pass_cosine):
+                _scout = None
+                try:
+                    from elastic_threshold import ElasticThreshold, evaluate_scout_candidate
+
+                    if _est is None:
+                        _et2 = ElasticThreshold.from_system_config(config, market=market)
+                        _est = _et2.apply_pair(eff_cos_cutoff, eff_ml_cutoff)
+                    _ml_for_scout = float(best_ml_ratio)
+                    _scout = evaluate_scout_candidate(
+                        is_pass_cosine=is_pass_cosine,
+                        is_pass_ml_box=is_pass_ml_box,
+                        best_cos_sim=float(best_sim),
+                        eff_cos_cutoff=float(eff_cos_cutoff),
+                        ml_score=float(_ml_for_scout if _ml_for_scout else 0.0),
+                        eff_ml_cutoff=float(eff_ml_cutoff),
+                        state=_est,
+                        sys_config=config,
+                    )
+                except Exception as _sc_ex:
+                    logger.debug("scout eval skip: %s", _sc_ex)
+
+                if _scout and _scout.eligible:
+                    is_pass_cosine = _scout.path.startswith("COSINE")
+                    is_pass_ml_box = _scout.path.startswith("MLBOX")
+                    fdict_scout = {"dyn_cpv": cpv, "dyn_tb": tb, "v_energy": bbe, "_fluid_scout": True}
+                    _nm_sc = stock_list[stock_list["Code"] == code]["Name"].values[0]
+                    funnel.add_final_candidate(
+                        code=str(code),
+                        name=str(_nm_sc),
+                        pass_path="SCOUT",
+                        final_sig=f"[🔭SCOUT] NEAR_{_scout.path}",
+                        final_score=float(_scout.best_metric * 100),
+                    )
+                    return {
+                        "code": code,
+                        "name": _nm_sc,
+                        "final_sig": f"[🔭SCOUT] {_scout.path}",
+                        "final_score": float(_scout.best_metric * 100),
+                        "current_close": current_close,
+                        "facts": fdict_scout,
+                        "msg_type": f"🔭 정찰병 진입 (기아지수 {_est.starvation_index:.0%})",
+                        "trade_source": "FLUID_SCOUT",
+                    }
+
                 funnel.drop("DNA_FAIL")
                 return None
 
             # 합격한 종목만 선별하여 데이터 반환 (DB 저장은 여기서 하지 않음 - 락 방어)
             if is_pass_ml_box or is_pass_cosine:
                 fdict = {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe}
+                if _toxic_forgiveness:
+                    fdict["_fluid_scout"] = True
+                    fdict["_toxic_forgiveness"] = _toxic_forgiveness_rule
+                    fdict["_toxic_decay_strength"] = float(
+                        getattr(_tg, "decay_strength", 0.0) or 0.0
+                    )
 
                 # 💡 [방어막 작동] 오답노트(블랙박스) 독성 패턴 검사
                 anti_patterns = config.get('ANTI_PATTERNS', {})

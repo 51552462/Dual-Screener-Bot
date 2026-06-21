@@ -1298,11 +1298,24 @@ def run_autonomous_analysis():
                 report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
         else:
             # 💡 [100년 영속 진화 로직 적용: Cutoff Death-Spiral Relief Valve]
-            current_config[config_key] = round(max(0.40, curr_val - 0.02), 2)
-            report_lines.append(
-                f"▪️ [{tag_key} 타점]: 표본 기아 완화로 커트라인 {curr_val*100:.0f}% ➔ "
-                f"{current_config[config_key]*100:.0f}% (표본 데이터 수집 중)"
-            )
+            try:
+                from elastic_threshold import ElasticThreshold
+
+                _et = ElasticThreshold.from_system_config(current_config, market="KR")
+                new_val, reason = _et.relief_adjust_autonomous_cutoff(
+                    config_key, float(curr_val), n_closed=len(sub_df)
+                )
+                current_config[config_key] = new_val
+                report_lines.append(
+                    f"▪️ [{tag_key} 타점]: 표본 기아 elastic 완화 {curr_val*100:.0f}% ➔ "
+                    f"{new_val*100:.0f}% ({reason})"
+                )
+            except Exception:
+                current_config[config_key] = round(max(0.40, curr_val - 0.02), 2)
+                report_lines.append(
+                    f"▪️ [{tag_key} 타점]: 표본 기아 완화로 커트라인 {curr_val*100:.0f}% ➔ "
+                    f"{current_config[config_key]*100:.0f}% (표본 데이터 수집 중)"
+                )
 
     # ---------------------------------------------------------
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]
@@ -1715,6 +1728,13 @@ def run_autonomous_analysis():
     # ==========================================
     # 🚀 최종 저장 및 발송 (중복 제거 완료)
     # ==========================================
+    try:
+        from evolution.fluid_evolution_bridge import run_fluid_evolution_weekend_hooks
+
+        report_lines.extend(run_fluid_evolution_weekend_hooks(current_config, closed_df=df))
+    except Exception as _fe_ex:
+        report_lines.append(f"⚠️ Fluid evolution hooks skip: {_fe_ex}")
+
     _sync_inverse_mode_switch(current_config, vix_last, regime)
     save_config(current_config)
     send_telegram_report("\n".join(report_lines))

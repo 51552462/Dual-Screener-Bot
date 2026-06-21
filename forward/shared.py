@@ -2109,6 +2109,21 @@ def try_add_virtual_position(
                 else:
                     sim_kelly_invest = raw_invest
                     shares = raw_shares
+
+                if isinstance(facts, dict) and facts.get("_fluid_scout"):
+                    try:
+                        from elastic_threshold import enforce_scout_hard_cap, scout_invest_cap
+
+                        sig_type = f"[🔭SCOUT] {sig_type}"
+                        invest_amount, sim_kelly_invest, shares = enforce_scout_hard_cap(
+                            invest_amount,
+                            sim_kelly_invest,
+                            sys_config=sys_config,
+                            account_size=float(account_size),
+                            entry_price=float(ep),
+                        )
+                    except Exception as _scout_cap_ex:
+                        print(f"⚠️ scout cap skip: {_scout_cap_ex}")
                 
                 # V39.0 딥 다이브 비교를 위한 고정 2% 투입금도 동일한 그룹 시드 기반으로 보정
                 raw_fixed_shares = max(1, int((group_current_seed * fixed_risk_pct) / risk_distance))

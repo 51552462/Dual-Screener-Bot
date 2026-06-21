@@ -59,6 +59,14 @@ def classify_strategy_arm(sig_type: Any) -> Optional[str]:
     s = str(sig_type or "").strip()
     if not s or "INCUBATOR" in s.upper():
         return None
+    try:
+        from evolution.fluid_evolution_bridge import is_fluid_scout_sig
+
+        if is_fluid_scout_sig(s):
+            return None
+    except Exception:
+        if "SCOUT" in s.upper() or "🔭" in s:
+            return None
     su = s.upper()
     if "UNDERDOG" in su:
         return "UD (언더독)"

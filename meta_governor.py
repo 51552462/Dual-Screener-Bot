@@ -393,6 +393,14 @@ def _fetch_kr_ledger_rows(db_path: str, cutoff_iso: str) -> List[Tuple[str, str,
             (cutoff_iso,),
         )
         for mkt, sig, ret, exd in cur.fetchall():
+            try:
+                from evolution.fluid_evolution_bridge import is_fluid_scout_sig
+
+                if is_fluid_scout_sig(sig):
+                    continue
+            except Exception:
+                if "SCOUT" in str(sig or "").upper():
+                    continue
             mp = str(mkt or "KR").upper().strip()
             if mp not in ("KR", "US"):
                 mp = "KR"
@@ -982,6 +990,13 @@ class MetaGovernor:
             rows.extend(_fetch_kr_ledger_rows(ctx.forward_db_path, cutoff))
         if ctx.bitget_db_path:
             rows.extend(_fetch_bitget_ledger_rows(ctx.bitget_db_path, cutoff))
+
+        try:
+            from evolution.fluid_evolution_bridge import filter_treasury_rows_exclude_scouts
+
+            rows = filter_treasury_rows_exclude_scouts(rows)
+        except Exception:
+            pass
 
         health, _mult_unused = _build_treasury_health_and_mult(
             rows,

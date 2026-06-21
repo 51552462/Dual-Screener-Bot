@@ -57,6 +57,13 @@ def _step_meta_governor_sync() -> None:
             + "; ".join(failures)
         )
 
+    try:
+        from evolution.fluid_evolution_bridge import post_meta_governor_fluid_sync
+
+        post_meta_governor_fluid_sync()
+    except Exception as _fluid_ex:
+        print(f"⚠️ [Factory] fluid evolution post-meta sync skip: {_fluid_ex}")
+
 
 _META_GOVERNOR_SYNC = StepSpec(
     "meta_governor_sync",
@@ -179,9 +186,15 @@ def _step_sync_us_toxic_ml_ssot() -> None:
         with open(path, encoding="utf-8") as f:
             payload = json.load(f)
         cfg["US_TOXIC_ML_ANTIPATTERNS"] = payload
+        try:
+            from toxic_decay_bandit import sync_decayed_toxic_to_config
+
+            decay_out = sync_decayed_toxic_to_config(cfg)
+        except Exception as _dec_ex:
+            decay_out = {"error": str(_dec_ex)}
         save_system_config(cfg)
         n_rules = len(payload.get("rules", payload)) if isinstance(payload, dict) else 0
-        print(f"🧪 [Factory] US_TOXIC_ML_ANTIPATTERNS synced ({n_rules} rules)")
+        print(f"🧪 [Factory] US_TOXIC_ML_ANTIPATTERNS synced ({n_rules} rules) decay={decay_out}")
     except (OSError, json.JSONDecodeError) as ex:
         print(f"⚠️ [Factory] us_toxic_ml sync failed: {ex}")
 
@@ -375,6 +388,19 @@ def _step_us_data_incremental_update() -> None:
     print(f"🇺🇸 [Factory] us_data_incremental: {out}")
 
 
+def _step_us_fluid_health_prelude() -> None:
+    from evolution.us_fluid_upstream_bridge import run_us_health_fluid_prelude
+
+    run_us_health_fluid_prelude(context="daily")
+
+
+def _step_us_post_incremental_upstream() -> None:
+    from evolution.us_fluid_upstream_bridge import run_post_us_incremental_upstream
+
+    out = run_post_us_incremental_upstream(context="daily")
+    print(f"🌊 [Factory] us_post_incremental_upstream: {out}")
+
+
 def _step_us_health_gate(context: str = "scan") -> None:
     """US 혈관 검사 — 치명 이슈 시 CRITICAL 알림 (repair는 다음 스텝)."""
     from factory_us_health import assess_us_pipeline_health, format_us_health_log_line
@@ -438,8 +464,10 @@ def _with_daily_audit_us_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     return [
         *_with_daily_audit_prelude([]),
         StepSpec("us_health_gate_daily", lambda: _step_us_health_gate("daily"), critical=False, delay_after_sec=0.5),
+        StepSpec("us_fluid_health_prelude", _step_us_fluid_health_prelude, critical=False, delay_after_sec=0.5),
         StepSpec("us_health_repair_daily", lambda: _step_us_health_repair("daily"), critical=False, delay_after_sec=0.5),
         _US_DATA_INCREMENTAL,
+        StepSpec("us_post_incremental_upstream", _step_us_post_incremental_upstream, critical=False, delay_after_sec=1.0),
         _SYNC_US_TOXIC_ML,
         _REPORT_HYDRATE_US,
         *_with_us_spillover_tail([*steps, _CROSS_MARKET_THEME_SNAPSHOT]),

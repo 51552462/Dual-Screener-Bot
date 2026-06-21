@@ -168,6 +168,29 @@ def assess_us_pipeline_health() -> Dict[str, Any]:
         or universe_rows < 50
     )
     report["critical_failures"] = list(report["issues"])
+
+    try:
+        from config_manager import load_system_config
+        from fluid_time_anchor import resolve_us_with_db_fallback
+
+        cfg = load_system_config() or {}
+        anch = resolve_us_with_db_fallback(cfg)
+        report["fluid_anchor"] = {
+            "mode": anch.mode,
+            "session": anch.session_date,
+            "lag_bd": anch.lag_business_days,
+            "reason": anch.reason,
+        }
+        if anch.mode == "carry_over":
+            report["warnings"].append(f"us_fluid_carry_over:{anch.session_date}")
+        if anch.mode == "halt":
+            report["warnings"].append(f"us_fluid_halt:{anch.reason}")
+        zs = cfg.get("US_ZERO_SAMPLE_SPILLOVER") or {}
+        if isinstance(zs, dict) and zs.get("method"):
+            report["zero_sample_spillover"] = zs
+    except Exception:
+        pass
+
     return report
 
 
@@ -217,11 +240,15 @@ def ensure_us_pipeline_ready_for_scan(*, context: str = "scan", repair: bool = T
 
 
 def format_us_health_log_line(report: Dict[str, Any]) -> str:
+    fa = report.get("fluid_anchor") or {}
+    anchor_bit = ""
+    if fa:
+        anchor_bit = f" anchor={fa.get('mode')}/{fa.get('session')} "
     return (
         f"🇺🇸 US health: universe={report.get('universe_rows')} ({report.get('universe_source')}) "
         f"SPY={report.get('us_spy_rows')} QQQ={report.get('us_qqq_rows')} "
         f"tables={report.get('us_ticker_tables')} "
         f"ledger O/C={report.get('ledger_open')}/{report.get('ledger_closed')} "
-        f"DNA={report.get('dna_us_templates')} "
+        f"DNA={report.get('dna_us_templates')}{anchor_bit}"
         f"issues={len(report.get('issues') or [])}"
     )
