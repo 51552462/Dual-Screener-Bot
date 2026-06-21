@@ -1891,6 +1891,17 @@ def system_main_loop():
                     )
                     time.sleep(60)
 
+                # 🧬 일요일 04:00 — 주간 알파 마이닝 (hunt_supernovas · cluster mining)
+                elif now.weekday() == 6 and now.hour == 4 and now.minute == 0:
+                    print("[오토파일럿] 주간 Alpha Mining Orchestrator 비블로킹 기동...")
+                    try:
+                        from alpha_mining_orchestrator import spawn_weekly_alpha_mining
+
+                        spawn_weekly_alpha_mining(tag="alpha_mining_sun0400")
+                    except Exception as _am_ex:
+                        print(f"⚠️ [Alpha Mining] 기동 실패: {_am_ex}")
+                    time.sleep(60)
+
                 # 🔬 매일 06:00 — 미국 장 마감 직후 DNA 부검 (US 전용)
                 elif now.hour == 6 and now.minute == 0:
                     print("🔬 [오토파일럿] limit_up_forensics US 비블로킹 기동…")

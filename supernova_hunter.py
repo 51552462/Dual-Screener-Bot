@@ -1299,12 +1299,25 @@ def hunt_supernovas(market):
 # ==========================================
 def execute_supernova_live_scan(market):
     import time as _time
-    from market_session_gate import is_market_open
+    from market_session_gate import evaluate_session_deduplication, is_market_open
 
     ok, gate_msg = is_market_open(market)
     if not ok:
         print(f"🛑 [{market}] {gate_msg}")
         return
+
+    dedup_ok, dedup_msg = evaluate_session_deduplication(market)
+    if not dedup_ok:
+        print(f"🛡️ [{market}] SessionDeduplicationGuard ABORT — {dedup_msg}")
+        print(f"   (오픈 포지션 트래킹은 ledger 경로 유지 · 신규 스캔만 차단)")
+        try:
+            from evolution.proprietary_synergy_bridge import run_offline_rnd_on_scan_abort
+            from session_deduplication_guard import SessionDeduplicationGuard
+
+            run_offline_rnd_on_scan_abort(market, SessionDeduplicationGuard().evaluate(market))
+        except Exception as _rnd_ex:
+            print(f"⚠️ [{market}] Offline R&D sandbox 전환 실패: {_rnd_ex}")
+        return {"status": "ABORT_STALE_SESSION", "reason": dedup_msg, "market": market}
 
     _scan_t0 = _time.time()
     print(f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 (15배속 비동기 병렬 스캔)...")
@@ -1365,6 +1378,29 @@ def execute_supernova_live_scan(market):
     except Exception as _syn_load_ex:
         logger.warning("[%s] scan synergy context skip: %s", market, _syn_load_ex)
         _scan_synergy_ctx = None
+
+    try:
+        from proprietary_alpha_consumer import load_hidden_theme_context
+        from meta_governor_consumer import load_meta_state_resolved
+
+        _meta_for_fluid = load_meta_state_resolved()
+        _hidden_theme_ctx = load_hidden_theme_context(
+            config, market, meta=_meta_for_fluid
+        )
+        if _hidden_theme_ctx.active:
+            rk = str((_meta_for_fluid or {}).get("META_REGIME_KEY") or "UNKNOWN")
+            gkm = float((_meta_for_fluid or {}).get("META_GLOBAL_KELLY_MULT") or 1.0)
+            print(
+                f"🔬 [{market}] Alpha Consumer: {_hidden_theme_ctx.theme_key} "
+                f"tickers={len(_hidden_theme_ctx.tickers)} "
+                f"sector={_hidden_theme_ctx.sector_hint or '-'} "
+                f"conf={_hidden_theme_ctx.confidence:.2f} | "
+                f"regime={rk} kelly={gkm:.3f}"
+            )
+    except Exception as _ht_load_ex:
+        logger.warning("[%s] hidden theme context skip: %s", market, _ht_load_ex)
+        _hidden_theme_ctx = None
+        _meta_for_fluid = None
 
     # DNA_ALPHA_ / NEW_EVOLUTION_ 정규직 승격 템플릿 — 이상형 3D + 스나이퍼 cos_cutoff 밸브
     ideal_template_cutoffs = {}
@@ -1866,6 +1902,35 @@ def execute_supernova_live_scan(market):
                     msg_type = f"🦅 코사인 컷오프 통과 (기준:{float(_cut_used)*100:.0f}%)"
                 if _scan_bonus_pts > 0:
                     msg_type = f"🌐시너지+{_scan_bonus_pts:.0f}pt | " + msg_type
+
+                _pre_hidden_score = float(final_score)
+                try:
+                    from proprietary_alpha_consumer import apply_hidden_theme_score_boost
+
+                    final_score, _ht_mult, _ht_tag, _fluid_log = apply_hidden_theme_score_boost(
+                        _pre_hidden_score,
+                        ctx=_hidden_theme_ctx,
+                        ticker_code=str(code),
+                        sector=_sector_live,
+                        market=market,
+                        cfg=config,
+                        meta=_meta_for_fluid,
+                    )
+                    if _ht_tag:
+                        if _fluid_log:
+                            print(f"{_fluid_log} | {market}/{code}")
+                            logger.info("%s | %s/%s", _fluid_log, market, code)
+                        msg_type = (
+                            f"🔬{_ht_tag}×{_ht_mult:.2f} "
+                            f"(+{final_score - _pre_hidden_score:.1f}pt) | "
+                            + msg_type
+                        )
+                        fdict["hidden_theme_boost"] = float(_ht_mult)
+                        fdict["hidden_theme_tag"] = str(_ht_tag)
+                        if _fluid_log:
+                            fdict["fluid_premium_log"] = str(_fluid_log)
+                except Exception as _ht_boost_ex:
+                    logger.debug("[%s] hidden theme boost skip code=%s: %s", market, code, _ht_boost_ex)
 
                 if (not is_pass_ml_box) and str(best_pass_name).startswith("INCUBATOR_"):
                     fdict["incubator_sniper_key"] = str(best_pass_name)[len("INCUBATOR_"):]

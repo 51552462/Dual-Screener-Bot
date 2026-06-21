@@ -255,7 +255,8 @@ def _step_report_hydrate_kr() -> None:
 def _step_report_hydrate_us() -> None:
     from report_pipeline_hydrate import ensure_report_pipeline_data
 
-    ensure_report_pipeline_data(market="US", refresh_macro=True, refresh_ohlcv=True)
+    # daily-us prelude 직전 us_data_incremental 완료 — OHLCV 2회차(3시간+) 방지
+    ensure_report_pipeline_data(market="US", refresh_macro=True, refresh_ohlcv=False)
 
 
 def _step_report_hydrate_both() -> None:
@@ -294,6 +295,8 @@ def _step_comprehensive_daily_report() -> None:
         refresh_sector_spillover=False,
         refresh_meta_governor=False,
         cleanup_zombie_trades=False,
+        refresh_macro=False,
+        refresh_ohlcv=False,
     )
 
 
@@ -451,9 +454,27 @@ def _with_daily_audit_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     ]
 
 
+def _step_kr_fluid_health_prelude() -> None:
+    from config_manager import load_system_config, save_system_config
+    from fluid_time_anchor import persist_anchor_state, resolve_kr_with_db_fallback
+
+    cfg = load_system_config() or {}
+    anchor = resolve_kr_with_db_fallback(cfg)
+    persist_anchor_state(cfg, anchor)
+    try:
+        save_system_config(cfg)
+    except Exception:
+        pass
+    print(
+        f"🌊 [KR Fluid] anchor={anchor.mode} session={anchor.session_date} "
+        f"({anchor.reason}) lag={anchor.lag_business_days}bd"
+    )
+
+
 def _with_daily_audit_kr_prelude(steps: List[StepSpec]) -> List[StepSpec]:
     return [
         *_with_daily_audit_prelude([]),
+        StepSpec("kr_fluid_health_prelude", _step_kr_fluid_health_prelude, critical=False, delay_after_sec=0.5),
         _REPORT_HYDRATE_KR,
         *steps,
     ]

@@ -101,6 +101,65 @@ def passes_live_hard_gate(hv: Dict[str, Any], mp: Dict[str, Any]) -> bool:
     return False
 
 
+_FAST_TRACK_PREFIXES = ("INCUBATOR_", "ACE_", "MUTANT_", "PLAYBOOK_", "HIDDEN_THEME_")
+
+
+def is_fast_track_group(group_key: str) -> bool:
+    """인큐베이터·ACE·뮤턴트 등 하이퍼-패스트트랙 대상 그룹."""
+    gk = str(group_key or "").strip().upper()
+    if not gk:
+        return False
+    if any(gk.startswith(p) for p in _FAST_TRACK_PREFIXES):
+        return True
+    if "ACE" in gk and ("PLAYBOOK" in gk or "EVOLUTION" in gk):
+        return True
+    return False
+
+
+def passes_hard_threshold_auto_promotion(hv: Dict[str, Any], mp: Dict[str, Any]) -> bool:
+    """
+    Hard-Threshold Auto-Promotion — PF≥2.0 · 표본≥N 이면 WR 게이트 생략 LIVE.
+    """
+    if not bool(mp.get("fast_track_enabled", True)):
+        return False
+    n = int(hv.get("n", 0) or 0)
+    n_min = int(mp.get("fast_track_min_trades", mp.get("promote_min_trades", 10)))
+    pf_min = float(mp.get("fast_track_min_pf", 2.0))
+    pf = float(hv.get("rolling_pf", 0) or 0)
+    mult = float(hv.get("mult", 1.0) or 1.0)
+    if mult <= 0.0:
+        return False
+    return n >= n_min and pf >= pf_min
+
+
+def is_group_live_in_registry(
+    meta: Optional[Dict[str, Any]],
+    market: str,
+    group_key: str,
+) -> bool:
+    """META_STRATEGY_REGISTRY 에 LIVE 로 등재된 그룹인지."""
+    if not isinstance(meta, dict):
+        return False
+    mk = str(market or "KR").upper()
+    gk = str(group_key or "").strip()
+    if not gk:
+        return False
+    reg = meta.get("META_STRATEGY_REGISTRY")
+    if not isinstance(reg, list):
+        return False
+    for row in reg:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("state") or "").upper() != "LIVE":
+            continue
+        if str(row.get("market") or "").upper() != mk:
+            continue
+        rg = str(row.get("group_key") or row.get("display_name") or "").strip()
+        if rg == gk or gk in rg or rg in gk:
+            return True
+    return False
+
+
 def is_below_live_threshold(hv: Dict[str, Any], mp: Dict[str, Any]) -> bool:
     """Whipsaw: rolling_wr 또는 rolling_pf 가 LIVE 최소 기준 미만."""
     wr = float(hv.get("rolling_wr", 0) or 0)
@@ -192,6 +251,7 @@ def run_registry_lifecycle(
     stats: Dict[str, Any] = {
         "discovery_new": 0,
         "promoted_live": 0,
+        "fast_track_promoted": 0,
         "demoted_cooled": 0,
         "retired": 0,
         "promoted_live_by_market": {"KR": 0, "US": 0, "BG": 0},
@@ -291,6 +351,29 @@ def run_registry_lifecycle(
             row["health_miss_streak"] = consecutive_below_live_days(sid)
 
         st = str(row.get("state") or "").upper()
+
+        # --- Hard-Threshold Auto-Promotion (인큐베이터·ACE) ---
+        if (
+            hv
+            and is_fast_track_group(gk)
+            and st in ("OBSERVING", "CANDIDATE", "COOLED", "")
+            and passes_hard_threshold_auto_promotion(hv, mp)
+        ):
+            row["state"] = "LIVE"
+            row["capital_mult"] = 1.0
+            row["promoted_at"] = row.get("promoted_at") or now_iso
+            row["last_promoted_at"] = now_iso
+            row["promote_reason"] = "fast_track_pf2"
+            row["updated_at"] = now_iso
+            row["demote_reason"] = None
+            row["observe_only_released"] = True
+            stats["promoted_live"] += 1
+            stats["fast_track_promoted"] += 1
+            mk_stat = mkt if mkt in stats["promoted_live_by_market"] else "KR"
+            stats["promoted_live_by_market"][mk_stat] = (
+                stats["promoted_live_by_market"].get(mk_stat, 0) + 1
+            )
+            continue
 
         if st == "LIVE" and hv:
             # Alpha TTL

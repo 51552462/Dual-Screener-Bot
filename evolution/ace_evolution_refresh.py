@@ -18,7 +18,22 @@ from evolution.ace_playbook_validator import stats_only_playbook
 logger = logging.getLogger(__name__)
 
 
-def _observe_only_flag(sys_config: Optional[Dict[str, Any]]) -> bool:
+def _observe_only_flag(
+    sys_config: Optional[Dict[str, Any]] = None,
+    *,
+    market: Optional[str] = None,
+    logic_core: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """관측 전용 — 단, registry LIVE 승격 시 자동 해제."""
+    if meta and market and logic_core:
+        try:
+            from strategy_promotion_engine import is_group_live_in_registry
+
+            if is_group_live_in_registry(meta, market, logic_core):
+                return False
+        except Exception:
+            pass
     cfg = sys_config if isinstance(sys_config, dict) else {}
     if not bool(cfg.get("ENABLE_ACE_EVOLUTION_WEIGHTING", False)):
         return True
@@ -45,7 +60,9 @@ def refresh_ace_evolution_for_market(
     """
     cfg = sys_config if isinstance(sys_config, dict) else {}
     m = str(market).upper()
-    observe = _observe_only_flag(cfg)
+    observe = _observe_only_flag(
+        cfg, market=m, logic_core=logic_core, meta=meta
+    )
 
     # 전일 playbook fast-decay (KR) / slow (US)
     prev = load_playbook(m, cfg)

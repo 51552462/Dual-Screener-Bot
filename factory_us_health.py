@@ -188,6 +188,9 @@ def assess_us_pipeline_health() -> Dict[str, Any]:
         zs = cfg.get("US_ZERO_SAMPLE_SPILLOVER") or {}
         if isinstance(zs, dict) and zs.get("method"):
             report["zero_sample_spillover"] = zs
+        kr_anch = cfg.get("FLUID_KR_ANCHOR_STATE") or {}
+        if isinstance(kr_anch, dict) and kr_anch.get("mode"):
+            report["fluid_anchor_kr"] = kr_anch
     except Exception:
         pass
 
@@ -198,8 +201,13 @@ def repair_us_pipeline(*, context: str = "scan") -> Dict[str, Any]:
     """증분 OHLCV + 벤치마크 갱신 (가능 시)."""
     result: Dict[str, Any] = {"context": context, "incremental": None}
     try:
-        from data_updater import run_us_incremental_db_update
+        from data_updater import run_us_incremental_db_update, us_ohlcv_is_fresh
 
+        if context == "daily":
+            fresh, reason = us_ohlcv_is_fresh()
+            if fresh:
+                result["incremental"] = {"skipped": True, "skip_reason": reason}
+                return result
         result["incremental"] = run_us_incremental_db_update()
         if result["incremental"].get("error") == "empty_universe":
             from us_list_survival import collect_us_list_survival

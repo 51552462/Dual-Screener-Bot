@@ -312,13 +312,55 @@ def _update_us_ticker_rows(us_list: pd.DataFrame) -> tuple[int, int]:
     return us_success, n_total
 
 
-def run_kr_benchmark_refresh() -> dict:
+def kr_benchmark_is_fresh(*, max_lag_business_days: int = 1) -> tuple[bool, str]:
+    """KR_KOSPI_IDX 최신 일자가 직전 KR 거래일과 맞으면 벤치마크 재다운로드 생략."""
+    try:
+        import sqlite3
+
+        from reports.report_timekeeper import business_lag_days, kr_session_anchor_date
+
+        if not os.path.isfile(DB_PATH):
+            return False, "no_db"
+        conn = sqlite3.connect(DB_PATH, timeout=15)
+        try:
+            row = conn.execute(
+                'SELECT Date FROM "KR_KOSPI_IDX" ORDER BY Date DESC LIMIT 1'
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row or not row[0]:
+            return False, "no_kospi_idx"
+        candle = str(row[0])[:10]
+        expected = kr_session_anchor_date().strftime("%Y-%m-%d")
+        lag = business_lag_days(candle, expected, market="KR")
+        if lag <= int(max_lag_business_days):
+            return True, f"kospi_idx={candle} expected={expected} lag={lag}bd"
+        return False, f"stale_kospi={candle} expected={expected} lag={lag}bd"
+    except Exception as ex:
+        return False, f"fresh_check_error:{ex}"
+
+
+def run_kr_benchmark_refresh(*, force: bool = False) -> dict:
     """
     daily-kr / comprehensive KR 직전 — KOSPI·KOSDAQ 벤치마크만 경량 갱신.
     전체 KR 유니버스 갱신은 run_daily_db_update() 유지.
     """
+    out: dict = {"ok": False, "tables": [], "skipped": False}
+    force_env = str(os.environ.get("FACTORY_KR_BENCHMARK_FORCE", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not force and not force_env:
+        fresh, reason = kr_benchmark_is_fresh()
+        if fresh:
+            print(f"💡 [KR 벤치마크] skip (already fresh) — {reason}")
+            out["skipped"] = True
+            out["skip_reason"] = reason
+            out["ok"] = True
+            return out
+
     print(f"\n🇰🇷 [KR 벤치마크] 지수 갱신 시작 ({DB_PATH})")
-    out: dict = {"ok": False, "tables": []}
     try:
         bm_conn = sqlite3.connect(DB_PATH, timeout=30)
         bm_conn.execute("PRAGMA journal_mode=WAL;")
@@ -353,12 +395,52 @@ def run_kr_benchmark_refresh() -> dict:
     return out
 
 
-def run_us_incremental_db_update() -> dict:
+def us_ohlcv_is_fresh(*, max_lag_business_days: int = 1) -> tuple[bool, str]:
+    """US_SPY 최신 일자가 직전 US 거래일과 맞으면 전체 유니버스 재다운로드 생략 가능."""
+    try:
+        from fluid_time_anchor import load_spy_session_from_db
+        from reports.report_timekeeper import business_lag_days, us_last_trading_session_date
+
+        spy_date = load_spy_session_from_db()
+        if not spy_date:
+            return False, "no_us_spy_table"
+        expected = us_last_trading_session_date().strftime("%Y-%m-%d")
+        lag = business_lag_days(spy_date, expected, market="US")
+        if lag <= int(max_lag_business_days):
+            return True, f"spy={spy_date} expected={expected} lag={lag}bd"
+        return False, f"stale_spy={spy_date} expected={expected} lag={lag}bd"
+    except Exception as ex:
+        return False, f"fresh_check_error:{ex}"
+
+
+def run_us_incremental_db_update(*, force: bool = False) -> dict:
     """
     daily_audit_us 훅 — US 벤치마크 + US_* 티커만 갱신 (KR 스킵, 리포트 직전 신선도).
+    force=False 이고 SPY 가 최신이면 스킵 (daily-us 중복·3시간 폭주 방지).
     """
+    out: dict = {
+        "us_benchmarks": False,
+        "us_tickers_ok": 0,
+        "us_tickers_total": 0,
+        "snapshot": None,
+        "skipped": False,
+    }
+    force_env = str(os.environ.get("FACTORY_US_OHLCV_FORCE", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not force and not force_env:
+        fresh, reason = us_ohlcv_is_fresh()
+        if fresh:
+            print(f"💡 [US 증분] skip (already fresh) — {reason}")
+            out["skipped"] = True
+            out["skip_reason"] = reason
+            snap = create_read_only_snapshot()
+            out["snapshot"] = snap
+            return out
+
     print(f"\n🇺🇸 [US 증분] OHLCV 갱신 시작 ({DB_PATH})")
-    out: dict = {"us_benchmarks": False, "us_tickers_ok": 0, "us_tickers_total": 0, "snapshot": None}
 
     us_list = get_us_tickers()
     if us_list is None or us_list.empty:

@@ -29,7 +29,7 @@ class TestFluidTimeAnchor(unittest.TestCase):
         self.assertEqual(res.mode, "carry_over")
         self.assertLessEqual(res.lag_business_days, int(cfg["FLUID_US_MAX_CARRY_LAG_DAYS"]))
 
-    def test_should_increment_bars_once_per_session(self):
+    def test_us_session_watermark(self):
         res = FluidAnchorResult(
             market="US",
             mode="live",
@@ -40,6 +40,20 @@ class TestFluidTimeAnchor(unittest.TestCase):
             reason="us_live",
         )
         cfg = {"FLUID_TRACK_SESSION_US": "2026-06-10"}
+        self.assertFalse(res.should_increment_bars(cfg))
+        self.assertTrue(res.should_increment_bars({}))
+
+    def test_kr_session_watermark(self):
+        res = FluidAnchorResult(
+            market="KR",
+            mode="carry_over",
+            session_date="2026-06-20",
+            calendar_today="2026-06-21",
+            latest_candle_date="2026-06-20",
+            lag_business_days=1,
+            reason="kr_carry_over",
+        )
+        cfg = {"FLUID_TRACK_SESSION_KR": "2026-06-20"}
         self.assertFalse(res.should_increment_bars(cfg))
         self.assertTrue(res.should_increment_bars({}))
 

@@ -90,3 +90,19 @@ def require_market_open_for_scan(market: str) -> None:
     ok, detail = is_market_open(market)
     if not ok:
         raise RuntimeError(detail)
+
+
+def evaluate_session_deduplication(market: str) -> Tuple[bool, str]:
+    """
+    Stale Session Gate — 동일 session_date 재스캔 차단.
+    (allow_scan, detail) — False 면 신규 스캔 중단(트래킹은 유지).
+    """
+    try:
+        from session_deduplication_guard import SessionDeduplicationGuard
+
+        decision = SessionDeduplicationGuard().evaluate(market)
+        if decision.abort_scan:
+            return False, decision.reason
+        return True, decision.reason
+    except Exception as ex:
+        return True, f"session_dedup_skip:{ex}"

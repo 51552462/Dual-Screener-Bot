@@ -453,23 +453,30 @@ def factory_job_lock(
 
 def run_step(spec: StepSpec) -> StepResult:
     t0 = time.monotonic()
+    logger.info("[Factory] STEP START: %s", spec.name)
+    print(f"⏱️ [Factory] STEP START: {spec.name}", flush=True)
     try:
         spec.fn()
+        elapsed = time.monotonic() - t0
+        logger.info("[Factory] STEP DONE: %s (%.1fs)", spec.name, elapsed)
+        print(f"⏱️ [Factory] STEP DONE: {spec.name} ({elapsed:.1f}s)", flush=True)
         return StepResult(
             name=spec.name,
             ok=True,
             critical=spec.critical,
-            elapsed_sec=time.monotonic() - t0,
+            elapsed_sec=elapsed,
         )
     except Exception as e:
+        elapsed = time.monotonic() - t0
         tb = traceback.format_exc()
         logger.exception("factory step failed: %s", spec.name)
+        print(f"🚨 [Factory] STEP FAIL: {spec.name} ({elapsed:.1f}s) — {e}", flush=True)
         return StepResult(
             name=spec.name,
             ok=False,
             critical=spec.critical,
             error=f"{e}\n{tb[-800:]}",
-            elapsed_sec=time.monotonic() - t0,
+            elapsed_sec=elapsed,
         )
 
 

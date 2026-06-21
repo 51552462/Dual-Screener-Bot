@@ -33,37 +33,37 @@ def track_daily_positions(market):
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     total_open_loss_amount = 0.0
     
-    # 👇👇 [V102.3] 휴장·지연 방어 — KR 엄격 / US Fluid Lookback Anchor 👇👇
+    # 👇👇 [V102.3] 휴장·지연 방어 — KR/US Fluid Lookback Anchor 👇👇
     tz_mkt = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
     today_mkt_str = datetime.now(tz_mkt).strftime('%Y-%m-%d')
     fluid_anchor = None
+    _mk = str(market).upper()
 
-    if str(market).upper() == 'US':
+    try:
+        from fluid_time_anchor import persist_anchor_state, resolve_market_with_db_fallback
+
+        fluid_anchor = resolve_market_with_db_fallback(_mk, sys_config)
+        persist_anchor_state(sys_config, fluid_anchor)
         try:
-            from fluid_time_anchor import resolve_us_with_db_fallback, persist_anchor_state
-
-            fluid_anchor = resolve_us_with_db_fallback(sys_config)
-            persist_anchor_state(sys_config, fluid_anchor)
-            try:
-                save_system_config(sys_config)
-            except Exception:
-                pass
-            if fluid_anchor.mode == 'halt':
-                print(
-                    f"💤 [US] fluid halt ({fluid_anchor.reason}): "
-                    f"candle={fluid_anchor.latest_candle_date} cal={fluid_anchor.calendar_today} "
-                    f"lag={fluid_anchor.lag_business_days}bd"
-                )
-                conn.close()
-                return
-            if fluid_anchor.mode == 'carry_over':
-                print(
-                    f"🌊 [US] fluid carry-over session={fluid_anchor.session_date} "
-                    f"(candle={fluid_anchor.latest_candle_date} cal={today_mkt_str})"
-                )
-        except Exception as _fa_ex:
-            print(f"⚠️ [US] fluid anchor fallback strict: {_fa_ex}")
-            fluid_anchor = None
+            save_system_config(sys_config)
+        except Exception:
+            pass
+        if fluid_anchor.mode == 'halt':
+            print(
+                f"💤 [{_mk}] fluid halt ({fluid_anchor.reason}): "
+                f"candle={fluid_anchor.latest_candle_date} cal={fluid_anchor.calendar_today} "
+                f"lag={fluid_anchor.lag_business_days}bd"
+            )
+            conn.close()
+            return
+        if fluid_anchor.mode == 'carry_over':
+            print(
+                f"🌊 [{_mk}] fluid carry-over session={fluid_anchor.session_date} "
+                f"(candle={fluid_anchor.latest_candle_date} cal={today_mkt_str})"
+            )
+    except Exception as _fa_ex:
+        print(f"⚠️ [{_mk}] fluid anchor fallback: {_fa_ex}")
+        fluid_anchor = None
     
     start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
     idx_ticker = '069500' if market == 'KR' else 'SPY'
@@ -76,12 +76,6 @@ def track_daily_positions(market):
         )
         
         latest_candle_date = idx_df.index[-1].strftime('%Y-%m-%d')
-        
-        if market == 'KR' and latest_candle_date != today_mkt_str:
-            print(f"💤 [{market}] 휴장일 감지 (최신캔들: {latest_candle_date} ≠ 오늘: {today_mkt_str}). 유령 카운팅 방어를 위해 추적을 건너뜁니다.")
-            conn.close()
-            return
-            
         idx_close = idx_df['Close'] if market == 'KR' else idx_df['Close'].squeeze()
     except Exception as e: 
         print(f"⚠️ 벤치마크 로드 에러: {e}")
@@ -481,11 +475,11 @@ def track_daily_positions(market):
             continue
 
     conn.commit()
-    if str(market).upper() == "US" and fluid_anchor is not None:
+    if fluid_anchor is not None:
         try:
-            from evolution.us_fluid_upstream_bridge import finalize_us_track_session
+            from fluid_time_anchor import finalize_fluid_track_session
 
-            finalize_us_track_session(sys_config, fluid_anchor)
+            finalize_fluid_track_session(sys_config, fluid_anchor)
         except Exception:
             fluid_anchor.mark_tracked(sys_config)
             try:

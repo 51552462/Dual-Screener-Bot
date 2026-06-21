@@ -102,6 +102,38 @@ def _kst_calendar_cutoff_iso(days_back: int) -> str:
     return (d - timedelta(days=max(1, int(days_back)))).isoformat()
 
 
+def resolve_asymmetric_treasury_lookback_days(
+    regime_key: str,
+    *,
+    base_days: int = 90,
+    bull_max_days: int = 120,
+    bear_vol_days: int = 18,
+    chop_days: int = 60,
+) -> tuple[int, str]:
+    """
+    비대칭 Treasury 기억력 — 국면별 동적 롤링 윈도우.
+
+    BEAR / HIGH_VOL → 15~20일 (빠른 Kelly 축소)
+    BULL → 최대 120일 (장기 신뢰도)
+    CHOP / SIDEWAYS → 중간 60일
+    """
+    rk = str(regime_key or "UNKNOWN").strip().upper()
+    if rk in ("CHOP", "WHIPSAW"):
+        rk = "SIDEWAYS"
+    base = max(7, int(base_days))
+
+    if rk in ("BEAR", "HIGH_VOL"):
+        days = max(15, min(20, int(bear_vol_days)))
+        return days, f"asymmetric_defense:{rk}→{days}d"
+    if rk == "BULL":
+        days = max(base, min(120, int(bull_max_days)))
+        return days, f"asymmetric_offense:BULL→{days}d"
+    if rk in ("SIDEWAYS",):
+        days = max(30, min(base, int(chop_days)))
+        return days, f"asymmetric_chop:SIDEWAYS→{days}d"
+    return base, f"asymmetric_neutral:{rk}→{base}d"
+
+
 def _quantiles(vals: List[float]) -> Dict[str, float]:
     arr = np.asarray(vals, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -977,7 +1009,27 @@ class MetaGovernor:
         ctx = self._ctx
         assert ctx is not None
         win = dict(ctx.windows or {})
-        t_days = int(win.get("treasury_lookback_days", win.get("calibrator_lookback_days", 90)))
+        base_t_days = int(win.get("treasury_lookback_days", win.get("calibrator_lookback_days", 90)))
+
+        prior_regime = str(self._prior.get("META_REGIME_KEY") or "UNKNOWN")
+        asym_cfg = {}
+        try:
+            sc = _load_system_config_for_governor(ctx)
+            if isinstance(sc, dict):
+                asym_cfg = sc.get("META_TREASURY_ASYMMETRIC") or {}
+        except Exception:
+            pass
+        if asym_cfg.get("enabled", True) is not False:
+            t_days, asym_reason = resolve_asymmetric_treasury_lookback_days(
+                prior_regime,
+                base_days=base_t_days,
+                bull_max_days=int(asym_cfg.get("bull_max_days", 120)),
+                bear_vol_days=int(asym_cfg.get("bear_vol_days", 18)),
+                chop_days=int(asym_cfg.get("chop_days", 60)),
+            )
+        else:
+            t_days, asym_reason = base_t_days, "asymmetric_disabled"
+
         min_trades = int(win.get("treasury_min_trades", 10))
         max_streak = int(win.get("treasury_max_consecutive_losses", 5))
         wr_hard = float(win.get("treasury_wr_hard", 0.34))
@@ -1009,8 +1061,17 @@ class MetaGovernor:
         meta_h = dict(health)
         meta_h["__meta__"] = {
             "window_days_kst": t_days,
+            "base_window_days_kst": base_t_days,
+            "asymmetric_regime": prior_regime,
+            "asymmetric_reason": asym_reason,
             "cutoff_exit_date_gte": cutoff,
             "n_rows": len(rows),
+        }
+        self._working["META_TREASURY_ASYMMETRIC_WINDOW"] = {
+            "regime_key": prior_regime,
+            "lookback_days": t_days,
+            "base_days": base_t_days,
+            "reason": asym_reason,
         }
         self._working["META_STRATEGY_HEALTH"] = meta_h
         # 그룹별 승수: 이번 헬스 스냅샷 전체 반영 (회복 시 mult=1.0 으로 자연 복귀, 누락 그룹은 소비자 측 1.0 취급)

@@ -45,6 +45,8 @@ def send_comprehensive_daily_report(
     refresh_meta_governor: bool = True,
     apply_deathmatch_allocation: bool = True,
     cleanup_zombie_trades: bool = True,
+    refresh_macro: bool = True,
+    refresh_ohlcv: bool = True,
 ):
     """[V104.1] 국가별 9분할 정밀 리포트 — DailyReportContext 시계 SSOT 필수."""
     from reports.daily_report_context import DailyReportContext
@@ -58,7 +60,12 @@ def send_comprehensive_daily_report(
     try:
         from report_pipeline_hydrate import ensure_report_pipeline_data
 
-        ensure_report_pipeline_data(market=None, refresh_macro=True, refresh_ohlcv=True)
+        if refresh_macro or refresh_ohlcv:
+            ensure_report_pipeline_data(
+                market=None,
+                refresh_macro=refresh_macro,
+                refresh_ohlcv=refresh_ohlcv,
+            )
     except Exception as _hyd_e:
         print(f"⚠️ [일일 통합 리포트] pipeline hydrate 스킵: {_hyd_e}")
 

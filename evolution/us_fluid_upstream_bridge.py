@@ -86,11 +86,6 @@ def run_post_us_incremental_upstream(*, context: str = "daily") -> Dict[str, Any
 
 def finalize_us_track_session(sys_config: Dict[str, Any], anchor) -> None:
     """track_daily_positions US 종료 시 session watermark."""
-    if anchor is not None and hasattr(anchor, "mark_tracked"):
-        anchor.mark_tracked(sys_config)
-        try:
-            from config_manager import save_system_config
+    from fluid_time_anchor import finalize_fluid_track_session
 
-            save_system_config(sys_config)
-        except Exception:
-            pass
+    finalize_fluid_track_session(sys_config, anchor)

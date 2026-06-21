@@ -20,6 +20,9 @@ DEFAULT_STRATEGY_LIFECYCLE: Dict[str, Dict[str, Any]] = {
         "alpha_half_life_days": 10,
         "cooloff_days": 3,
         "whipsaw_below_days": 2,
+        "fast_track_enabled": True,
+        "fast_track_min_trades": 10,
+        "fast_track_min_pf": 2.0,
     },
     "US": {
         "candidate_min_wr": 0.42,
@@ -35,6 +38,9 @@ DEFAULT_STRATEGY_LIFECYCLE: Dict[str, Dict[str, Any]] = {
         "alpha_half_life_days": 30,
         "cooloff_days": 7,
         "whipsaw_below_days": 3,
+        "fast_track_enabled": True,
+        "fast_track_min_trades": 8,
+        "fast_track_min_pf": 2.0,
     },
     "BG": {
         "candidate_min_wr": 0.42,
@@ -50,6 +56,9 @@ DEFAULT_STRATEGY_LIFECYCLE: Dict[str, Dict[str, Any]] = {
         "alpha_half_life_days": 21,
         "cooloff_days": 5,
         "whipsaw_below_days": 3,
+        "fast_track_enabled": True,
+        "fast_track_min_trades": 8,
+        "fast_track_min_pf": 2.0,
     },
 }
 

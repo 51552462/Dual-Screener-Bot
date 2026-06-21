@@ -104,9 +104,9 @@ LOG_FILE="${LOG_DIR}/factory_${MODE}_${STAMP}.log"
 echo "[factory.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ}"
 echo "[factory.sh] wall_clock=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S %Z %a')"
 
-# set -e: non-zero Python exit → shell abort (cron must not reach a manual overseer rerun).
+# set -e: non-zero Python exit → shell abort. tee → 터미널 + 로그 동시 (3시간 무발성 방지).
 python "${ROOT}/system_auto_pilot.py" --mode "$MODE" "${EXTRA_ARGS[@]}" \
-  >>"$LOG_FILE" 2>&1
+  2>&1 | tee -a "$LOG_FILE"
 _exit=$?
 if [[ $_exit -ne 0 ]]; then
   echo "[factory.sh] PIPELINE ABORT exit=${_exit} — critical step failed; ai_overseer skipped. log=${LOG_FILE}" >&2
