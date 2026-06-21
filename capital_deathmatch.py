@@ -89,9 +89,9 @@ def _coerce_pnl_columns(
     *,
     zero_invest_fallback: float,
 ) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    ret = pd.to_numeric(df.get("final_ret"), errors="coerce").fillna(0.0)
-    k_inv = pd.to_numeric(df.get("sim_kelly_invest"), errors="coerce").fillna(0.0)
-    f_inv = pd.to_numeric(df.get("invest_amount"), errors="coerce").fillna(0.0)
+    ret = pd.to_numeric(df.get("final_ret"), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    k_inv = pd.to_numeric(df.get("sim_kelly_invest"), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    f_inv = pd.to_numeric(df.get("invest_amount"), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
     if zero_invest_fallback is not None and float(zero_invest_fallback) > 0:
         z = float(zero_invest_fallback)
         k_inv = k_inv.replace(0.0, z)
@@ -346,9 +346,9 @@ class CapitalDeathmatchAnalyzer:
             df,
             zero_invest_fallback=self.zero_invest_fallback,
         )
-        k_pnl = k_pnl_s.to_numpy(dtype=np.float64, copy=False)
-        f_pnl = f_pnl_s.to_numpy(dtype=np.float64, copy=False)
-        ret = ret_s.to_numpy(dtype=np.float64, copy=False)
+        k_pnl = np.nan_to_num(k_pnl_s.to_numpy(dtype=np.float64, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
+        f_pnl = np.nan_to_num(f_pnl_s.to_numpy(dtype=np.float64, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
+        ret = np.nan_to_num(ret_s.to_numpy(dtype=np.float64, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
         k_inv = pd.to_numeric(df.get("sim_kelly_invest"), errors="coerce").fillna(0.0)
         f_inv = pd.to_numeric(df.get("invest_amount"), errors="coerce").fillna(0.0)
         if self.zero_invest_fallback > 0:

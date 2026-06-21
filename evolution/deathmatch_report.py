@@ -104,14 +104,13 @@ def _effective_final_ret_pct(df: pd.DataFrame) -> pd.Series:
 
 
 def _profit_factor_from_ret(ret: pd.Series) -> Optional[float]:
+    from reports.forward_report_scalar import profit_factor_from_returns
+
     r = ret.dropna()
     if r.empty:
         return None
-    wins = r[r > 0].sum()
-    losses = abs(r[r <= 0].sum())
-    if losses < 1e-12:
-        return float(wins) if wins > 0 else None
-    return float(wins / losses)
+    pf = profit_factor_from_returns(r)
+    return float(pf) if pf > 0 else None
 
 
 @dataclass

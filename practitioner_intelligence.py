@@ -16,7 +16,7 @@ import pandas as pd
 import pytz
 
 from evolution.deathmatch_battle_royale import ledger_group_key
-from reports.forward_report_scalar import col_series, prepare_forward_trades_df, row_scalar
+from reports.forward_report_scalar import col_series, prepare_forward_trades_df, row_scalar, scalar_float
 from practitioner_llm import build_practitioner_llm_summary, format_llm_html_line
 from practitioner_market_profiles import (
     PractitionerMarketProfile,
@@ -318,8 +318,8 @@ def build_practitioner_brief(
     if "sim_kelly_invest" in g_closed.columns and "final_ret" in g_closed.columns:
         inv = pd.to_numeric(g_closed["sim_kelly_invest"], errors="coerce").fillna(400000).replace(0, 400000)
         ret_c = pd.to_numeric(g_closed["final_ret"], errors="coerce").fillna(0.0)
-        cum_pnl = float((inv * ret_c / 100.0).sum())
-    compound_seed = float(base_seed) + cum_pnl
+        cum_pnl = scalar_float((inv * ret_c / 100.0).sum())
+    compound_seed = scalar_float(float(base_seed) + cum_pnl)
     open_cnt = int(valid_open_mask.sum())
 
     vit = compute_vitality(

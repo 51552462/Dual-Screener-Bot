@@ -9,7 +9,9 @@ set -eu -o pipefail
 INSTALL_ROOT="${INSTALL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$INSTALL_ROOT"
 
-CRON_PATH="${FACTORY_CRON_PATH:-/etc/cron.d/dual-screener-factory}"
+CRON_KR="${FACTORY_CRON_KR_PATH:-/etc/cron.d/dual-screener-factory-kr}"
+CRON_US="${FACTORY_CRON_US_PATH:-/etc/cron.d/dual-screener-factory-us}"
+LEGACY_CRON="${FACTORY_CRON_PATH:-/etc/cron.d/dual-screener-factory}"
 LOCK="${INSTALL_ROOT}/.factory_runtime.lock"
 LOG_DIR="${FACTORY_LOG_DIR:-${INSTALL_ROOT}/logs}"
 PY="${INSTALL_ROOT}/venv/bin/python"
@@ -25,35 +27,57 @@ echo "time: $(date) ($(timedatectl show -p Timezone --value 2>/dev/null || echo 
 echo ""
 
 # --- 1. Cron SSOT ---
-echo "[1] Cron ($CRON_PATH)"
-if [[ ! -f "$CRON_PATH" ]]; then
-  fail "cron file missing — run: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
+echo "[1] Cron (KR=${CRON_KR}, US=${CRON_US})"
+_cron_ok=0
+if [[ ! -f "$CRON_KR" ]]; then
+  fail "KR cron missing — run: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
 else
-  if grep -q $'\r' "$CRON_PATH" 2>/dev/null; then
-    fail "CRLF in cron file — CRON_TZ ignored, schedules run in UTC"
+  _cron_ok=1
+  if grep -q $'\r' "$CRON_KR" 2>/dev/null; then
+    fail "CRLF in KR cron — CRON_TZ ignored"
   else
-    pass "no CRLF in cron file"
+    pass "KR cron LF ok"
   fi
-  if grep -q '^CRON_TZ=Asia/Seoul' "$CRON_PATH"; then
-    pass "CRON_TZ=Asia/Seoul present"
+  if grep -q '^CRON_TZ=Asia/Seoul' "$CRON_KR"; then
+    pass "CRON_TZ=Asia/Seoul (KR file)"
   else
-    fail "CRON_TZ=Asia/Seoul missing or malformed"
+    fail "CRON_TZ=Asia/Seoul missing in KR cron"
   fi
-  if grep -q 'bash ./factory.sh --scan-kr' "$CRON_PATH"; then
-    pass "scan-kr scheduled"
+  if grep -q 'factory.sh --scan-kr-supernova' "$CRON_KR"; then
+    pass "staggered scan-kr-supernova scheduled"
   else
-    fail "no bash ./factory.sh --scan-kr line"
+    fail "no staggered --scan-kr-supernova (legacy monolithic scan-kr?)"
   fi
-  if grep -q 'bash ./factory.sh --scan-us' "$CRON_PATH"; then
-    pass "scan-us scheduled"
+  if grep -q 'factory.sh --daily-kr' "$CRON_KR"; then
+    pass "daily-kr scheduled"
   else
-    warn "no bash ./factory.sh --scan-us line"
+    warn "no daily-kr line in KR cron"
   fi
-  if grep -q "${INSTALL_ROOT}" "$CRON_PATH"; then
-    pass "cron paths match INSTALL_ROOT"
+  if grep -q "${INSTALL_ROOT}" "$CRON_KR"; then
+    pass "KR cron paths match INSTALL_ROOT"
   else
-    warn "cron paths may not match INSTALL_ROOT (check hardcoded dante_bots path)"
+    warn "KR cron paths may not match INSTALL_ROOT"
   fi
+fi
+
+if [[ ! -f "$CRON_US" ]]; then
+  fail "US cron missing — run: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
+else
+  _cron_ok=1
+  if grep -q '^CRON_TZ=America/New_York' "$CRON_US"; then
+    pass "CRON_TZ=America/New_York (US file)"
+  else
+    fail "CRON_TZ=America/New_York missing in US cron"
+  fi
+  if grep -q 'factory.sh --scan-us-supernova' "$CRON_US"; then
+    pass "staggered scan-us-supernova scheduled"
+  else
+    fail "no staggered --scan-us-supernova"
+  fi
+fi
+
+if [[ -f "$LEGACY_CRON" ]]; then
+  fail "legacy ${LEGACY_CRON} still present — duplicate schedules; reinstall cron"
 fi
 
 if crontab -l -u ubuntu 2>/dev/null | grep -q 'factory\.sh'; then
@@ -198,4 +222,5 @@ echo "=== audit done ==="
 echo "Quick recovery:"
 echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
 echo "  bash scripts/reset_factory_pipeline.sh"
-echo "  bash factory.sh --scan-kr   # during KR 09:00-15:30 KST"
+echo "  bash factory.sh --scan-kr-supernova   # staggered KR slot (cron SSOT)"
+echo "  bash factory.sh --scan-us-supernova   # staggered US slot (ET cron)"

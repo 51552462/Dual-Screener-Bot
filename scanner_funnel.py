@@ -606,5 +606,9 @@ def post_scan_funnel_telegram(
             parse_mode="HTML",
             timeout=15.0,
         )
-    except Exception:
-        pass
+    except Exception as ex:
+        import logging
+
+        logging.getLogger(__name__).error(
+            "post_scan_funnel_telegram failed: %s", ex, exc_info=True
+        )

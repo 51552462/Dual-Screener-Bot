@@ -360,13 +360,9 @@ def _mdd_pct_from_returns(rets: List[float]) -> float:
 
 
 def _profit_factor_from_returns(rets: List[float]) -> float:
-    if not rets:
-        return 0.0
-    wins = sum(float(x) for x in rets if float(x) > 0)
-    losses = sum(float(x) for x in rets if float(x) < 0)
-    if losses >= 0:
-        return float("inf") if wins > 0 else 0.0
-    return wins / abs(losses)
+    from reports.forward_report_scalar import profit_factor_from_returns
+
+    return profit_factor_from_returns(rets)
 
 
 def _tail_loss_streak_returns(rets: List[float]) -> int:
@@ -490,7 +486,7 @@ def _build_treasury_health_and_mult(
             mult_val = 0.35
             reason = "soft_cut"
         pf = _profit_factor_from_returns(rets)
-        pf_out = round(pf, 4) if pf != float("inf") else 99.99
+        pf_out = round(pf, 4)
         health[key] = {
             "n": n,
             "rolling_wr": round(wr, 4),

@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Dict, List, Sequence
 
 from factory_runtime import StepSpec
+from factory_scan_schedule import ALL_SCAN_SLOTS, ScanSlot
 
 
 # --- Step implementations (lazy import) ---
@@ -539,10 +540,19 @@ def _step_supernova_us() -> None:
 
 
 def _step_kr_bowl_optional() -> None:
-    _require_market_session_for_scan("KR")
-    from legacy_archive.scanners import kr
+    _run_equity_scan_module(
+        "legacy_archive.scanners.kr",
+        label="KR 밥그릇",
+        market="KR",
+    )
 
-    kr.scan_market_1d()
+
+def _step_kr_dante_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.dante_krx_reverse_breakout_screener",
+        label="KR 역매공파",
+        market="KR",
+    )
 
 
 def _run_equity_scan_module(module_path: str, *, label: str, market: str) -> None:
@@ -621,10 +631,120 @@ def _step_us_ema5_scan() -> None:
 
 
 def _step_us_bowl_optional() -> None:
-    _require_market_session_for_scan("US")
-    from legacy_archive.scanners import usa
+    _run_equity_scan_module(
+        "legacy_archive.scanners.usa",
+        label="US 밥그릇",
+        market="US",
+    )
 
-    usa.scan_market_1d()
+
+def _step_us_dante_scan() -> None:
+    _run_equity_scan_module(
+        "legacy_archive.scanners.nasdaq_dante_reverse_breakout_screener",
+        label="US 역매공파",
+        market="US",
+    )
+
+
+_SCANNER_STEP_BUILDERS = {
+    "KR": {
+        "supernova": lambda: StepSpec(
+            "supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0
+        ),
+        "nulrim": lambda: StepSpec(
+            "kr_nulrim_scan", _step_kr_nulrim_scan, critical=False, delay_after_sec=2.0
+        ),
+        "dante": lambda: StepSpec(
+            "kr_dante_scan", _step_kr_dante_scan, critical=False, delay_after_sec=2.0
+        ),
+        "ema5": lambda: StepSpec(
+            "kr_ema5_scan", _step_kr_ema5_scan, critical=False, delay_after_sec=2.0
+        ),
+        "master": lambda: StepSpec(
+            "kr_master_scan", _step_kr_master_scan, critical=False, delay_after_sec=2.0
+        ),
+        "bowl": lambda: StepSpec(
+            "kr_bowl_scan", _step_kr_bowl_optional, critical=False, delay_after_sec=0.0
+        ),
+    },
+    "US": {
+        "supernova": lambda: StepSpec(
+            "supernova_scan_us", _step_supernova_us, critical=True, delay_after_sec=5.0
+        ),
+        "nulrim": lambda: StepSpec(
+            "us_nulrim_scan", _step_us_nulrim_scan, critical=False, delay_after_sec=2.0
+        ),
+        "dante": lambda: StepSpec(
+            "us_dante_scan", _step_us_dante_scan, critical=False, delay_after_sec=2.0
+        ),
+        "ema5": lambda: StepSpec(
+            "us_ema5_scan", _step_us_ema5_scan, critical=False, delay_after_sec=2.0
+        ),
+        "bowl": lambda: StepSpec(
+            "us_bowl_scan", _step_us_bowl_optional, critical=False, delay_after_sec=0.0
+        ),
+    },
+}
+
+
+def _kr_prelude_full() -> List[StepSpec]:
+    return [
+        _META_SYNC_SCAN,
+        StepSpec(
+            "track_daily_positions_us_prereq_kr_scan",
+            _step_track_us,
+            critical=False,
+            delay_after_sec=2.0,
+        ),
+        _CROSS_MARKET_THEME_SNAPSHOT,
+        _KR_CROSS_MARKET_HYDRATE,
+    ]
+
+
+def _kr_prelude_light() -> List[StepSpec]:
+    return [_KR_CROSS_MARKET_HYDRATE]
+
+
+def _us_prelude_full() -> List[StepSpec]:
+    return [
+        _META_SYNC_SCAN,
+        _US_HEALTH_GATE,
+        _US_HEALTH_REPAIR,
+        _US_DATA_INCREMENTAL,
+        _SYNC_US_TOXIC_ML,
+    ]
+
+
+def _us_prelude_light() -> List[StepSpec]:
+    return [
+        StepSpec("us_health_gate_light", lambda: _step_us_health_gate("scan"), critical=False),
+        _US_DATA_INCREMENTAL,
+    ]
+
+
+def _build_staggered_scan_pipeline(slot: ScanSlot) -> List[StepSpec]:
+    builders = _SCANNER_STEP_BUILDERS[slot.market]
+    if slot.scanner_key not in builders:
+        raise KeyError(f"no scanner step for {slot.market}/{slot.scanner_key}")
+    scan_step = builders[slot.scanner_key]()
+
+    prelude: List[StepSpec] = []
+    if slot.prelude == "full":
+        prelude = _kr_prelude_full() if slot.market == "KR" else _us_prelude_full()
+    elif slot.prelude == "light":
+        prelude = _kr_prelude_light() if slot.market == "KR" else _us_prelude_light()
+
+    tail: List[StepSpec] = []
+    if slot.tail_doomsday:
+        tail.append(_DOOMSDAY_BRIDGE)
+    if slot.tail_us_publish:
+        tail.extend([_US_CROSS_MARKET_PUBLISH, _CROSS_MARKET_THEME_SNAPSHOT])
+
+    return _with_artifact_guard([*prelude, scan_step, *tail])
+
+
+def _staggered_scan_pipelines() -> Dict[str, List[StepSpec]]:
+    return {slot.mode: _build_staggered_scan_pipeline(slot) for slot in ALL_SCAN_SLOTS}
 
 
 def _step_track_kr() -> None:
@@ -736,12 +856,14 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
 def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
     daily_kr = _pipeline_daily_audit_kr()
     daily_us = _pipeline_daily_audit_us()
-    return {
+    staggered = _staggered_scan_pipelines()
+    pipelines: Dict[str, List[StepSpec]] = {
         "scan_us": _with_artifact_guard(
             _with_scan_us_prelude(
                 [
                     StepSpec("supernova_scan_us", _step_supernova_us, critical=True, delay_after_sec=5.0),
                     StepSpec("us_nulrim_scan", _step_us_nulrim_scan, critical=False, delay_after_sec=2.0),
+                    StepSpec("us_dante_scan", _step_us_dante_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("us_ema5_scan", _step_us_ema5_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("us_bowl_scan", _step_us_bowl_optional, critical=False),
                     _US_CROSS_MARKET_PUBLISH,
@@ -753,6 +875,7 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
                 [
                     StepSpec("supernova_scan_kr", _step_supernova_kr, critical=True, delay_after_sec=5.0),
                     StepSpec("kr_nulrim_scan", _step_kr_nulrim_scan, critical=False, delay_after_sec=2.0),
+                    StepSpec("kr_dante_scan", _step_kr_dante_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("kr_ema5_scan", _step_kr_ema5_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("kr_master_scan", _step_kr_master_scan, critical=False, delay_after_sec=2.0),
                     StepSpec("kr_bowl_scan", _step_kr_bowl_optional, critical=False),
@@ -766,6 +889,8 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
             [StepSpec("weekly_flow_master", _step_weekly_master, critical=True)]
         ),
     }
+    pipelines.update(staggered)
+    return pipelines
 
 
 PIPELINE: Dict[str, List[StepSpec]] = build_factory_pipelines()

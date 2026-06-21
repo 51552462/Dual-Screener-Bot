@@ -321,8 +321,9 @@ def build_macro_treasury_block(
 
 
 def _fmt_amount(value: float, *, decimals: int) -> str:
-    spec = f",.{decimals}f"
-    return format(float(value), spec)
+    from reports.forward_report_scalar import fmt_amount
+
+    return fmt_amount(value, decimals=decimals)
 
 
 def format_macro_treasury_section_html(

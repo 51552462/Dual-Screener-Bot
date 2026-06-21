@@ -411,7 +411,36 @@ def scan_market_1d():
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
-    print(f"\n✅ [미국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {(time.time() - t0)/60:.1f}분\n")
+    elapsed = time.time() - t0
+    print(f"\n✅ [미국장 2번 스캔 완료] 포착: {tracker['hits']}개 | 소요시간: {elapsed/60:.1f}분\n")
+    if SEND_TELEGRAM:
+        if tracker["hits"] > 0:
+            from telegram_html_delivery import post_telegram_message
+
+            post_telegram_message(
+                url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage",
+                chat_id=str(TELEGRAM_CHAT_ID),
+                text=(
+                    f"🇺🇸 <b>[US 역매공파]</b>\n"
+                    f"스캔 완료 — <b>{tracker['hits']}건</b> 포착\n"
+                    f"<i>분석 {tracker['analyzed']}종 · 소요 {elapsed/60:.1f}분</i>"
+                ),
+                parse_mode="HTML",
+                timeout=15.0,
+            )
+        else:
+            from scanner_funnel import notify_equity_scan_zero_hits
+
+            notify_equity_scan_zero_hits(
+                market="US",
+                label="US 역매공파",
+                scanned=int(tracker.get("scanned", 0)),
+                analyzed=int(tracker.get("analyzed", 0)),
+                elapsed_sec=elapsed,
+                token_main=TELEGRAM_TOKEN_MAIN,
+                chat_id=TELEGRAM_CHAT_ID,
+                send_enabled=True,
+            )
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')

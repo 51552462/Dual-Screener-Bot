@@ -35,13 +35,9 @@ def parse_health_key(key: str) -> Tuple[str, str]:
 
 
 def profit_factor_from_returns(rets: List[float]) -> float:
-    if not rets:
-        return 0.0
-    wins = sum(float(x) for x in rets if float(x) > 0)
-    losses = sum(float(x) for x in rets if float(x) < 0)
-    if losses >= 0:
-        return float("inf") if wins > 0 else 0.0
-    return wins / abs(losses)
+    from reports.forward_report_scalar import profit_factor_from_returns as _pf_ssot
+
+    return _pf_ssot(rets)
 
 
 def _health_for_row(health: Dict[str, Any], market: str, group_key: str) -> Optional[Dict[str, Any]]:

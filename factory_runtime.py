@@ -52,6 +52,15 @@ class JobSkipError(Exception):
 _SCAN_SESSION_MODES = frozenset({"scan_kr", "scan_us"})
 
 
+def _scan_session_modes() -> frozenset:
+    try:
+        from factory_scan_schedule import ALL_SCAN_MODES
+
+        return frozenset(ALL_SCAN_MODES)
+    except Exception:
+        return _SCAN_SESSION_MODES
+
+
 @dataclass(frozen=True)
 class StepSpec:
     name: str
@@ -516,12 +525,16 @@ def notify_factory_run(
 
 
 def _scan_session_closed_skip(mode: str) -> Tuple[bool, str]:
-    """scan_kr / scan_us — 장외면 락·prelude 없이 즉시 스킵 (cron UTC 오설정 방어)."""
-    if mode not in _SCAN_SESSION_MODES:
+    """scan_kr* / scan_us* — 장외면 락·prelude 없이 즉시 스킵 (cron UTC 오설정 방어)."""
+    if mode not in _scan_session_modes():
+        return False, ""
+    from factory_scan_schedule import scan_mode_market
+
+    market = scan_mode_market(mode)
+    if not market:
         return False, ""
     from market_session_gate import is_market_open
 
-    market = "KR" if mode == "scan_kr" else "US"
     ok, detail = is_market_open(market)
     if ok:
         return False, ""

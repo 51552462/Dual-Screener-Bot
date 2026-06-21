@@ -270,16 +270,15 @@ def send_comprehensive_daily_report(
                     g_closed = g_df[g_df['status'].str.contains('CLOSED', na=False)]
                     # 💡 과거 에러 데이터(투입금 0원)를 기본 40만원(2%)으로 보정하여 복리 누락 방어
                     valid_invest = g_closed['sim_kelly_invest'].replace(0, 400000)
-                    pnl = (valid_invest * g_closed['final_ret'] / 100.0).sum()
+                    pnl = scalar_float((valid_invest * g_closed['final_ret'] / 100.0).sum())
                     wr = (len(g_closed[g_closed['final_ret'] > 0]) / len(g_closed)) * 100 if len(g_closed) > 0 else 0
                     total_closed = len(g_closed)
-                    pf = (
-                        g_closed[g_closed['final_ret'] > 0]['final_ret'].sum()
-                        / (abs(g_closed[g_closed['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
-                    ) if total_closed > 0 else 0
+                    from reports.forward_report_scalar import profit_factor_from_returns
+
+                    pf = profit_factor_from_returns(g_closed['final_ret'])
                     leaderboard.append({
                         'g': group,
-                        'bal': base_seed + pnl,
+                        'bal': scalar_float(base_seed + pnl),
                         'wr': wr,
                         'op': int(_reporter_valid_holding_mask(g_df).sum()),
                         'tot': total_closed,

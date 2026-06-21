@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 import pandas as pd
+import numpy as np
 
 from reports.forward_report_scalar import (
     col_series,
@@ -55,7 +56,7 @@ class TestScalarHelpers(unittest.TestCase):
 
     def test_dedupe_logs_warning(self):
         df = _dup_df(("a", [1]), ("a", [2]))
-        with self.assertLogs("forward_report_scalar", level="WARNING") as cm:
+        with self.assertLogs("reports.forward_report_scalar", level="WARNING") as cm:
             out = dedupe_columns(df, context="unit_test")
         self.assertEqual(list(out.columns), ["a"])
         self.assertTrue(any("Duplicate columns detected" in m for m in cm.output))
@@ -65,6 +66,31 @@ class TestScalarHelpers(unittest.TestCase):
         df = pd.DataFrame({"final_ret": [None, 1.0]})
         out = prepare_forward_trades_df(df)
         self.assertEqual(out["final_ret"].tolist(), [0.0, 1.0])
+
+    def test_prepare_forward_trades_strips_inf(self):
+        df = pd.DataFrame(
+            {
+                "final_ret": [float("inf"), -float("inf"), 5.0],
+                "sim_kelly_invest": [float("inf"), 0.0, 400000.0],
+            }
+        )
+        out = prepare_forward_trades_df(df)
+        self.assertEqual(out["final_ret"].tolist(), [0.0, 0.0, 5.0])
+        self.assertEqual(out["sim_kelly_invest"].iloc[0], 0.0)
+
+    def test_profit_factor_all_wins_no_inf(self):
+        from reports.forward_report_scalar import profit_factor_from_returns
+
+        pf = profit_factor_from_returns([1.0, 2.0, 3.0])
+        self.assertTrue(np.isfinite(pf))
+        self.assertLessEqual(pf, 99.99)
+        self.assertGreater(pf, 90.0)
+
+    def test_fmt_money_inf_becomes_zero(self):
+        from reports.forward_report_scalar import fmt_money
+
+        self.assertEqual(fmt_money(float("inf"), market="KR"), "0원")
+        self.assertEqual(fmt_money(float("nan"), market="US", signed=True), "$+0")
 
 
 class TestReportFeatureAnalyzerDuplicateCols(unittest.TestCase):

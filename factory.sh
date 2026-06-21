@@ -32,19 +32,31 @@ usage() {
   cat <<'EOF'
 Usage: ./factory.sh <flag>
 
-  --scan-kr       supernova KR + nulrim + 5ema + master + kr bowl
-  --scan-us       supernova US + nulusa + us_5ema + usa bowl
-  --daily-kr      guard → sentiment → track → deep dive → comprehensive → overseer (KR)
-  --daily-us      guard → sentiment → track → deep dive → comprehensive → overseer (US)
-  --daily         full daily chain (KR then US, single overseer)
-  --weekly        weekly Flow master report + baseline persist
+  Staggered intraday scans (30 min slots, one scanner per run — cron SSOT):
+    KR KST 10:00–14:30  supernova → nulrim → dante → ema5 → master → bowl → (2nd pass ×4)
+    US ET  10:00–14:30  supernova → nulrim → dante → ema5 → bowl → (2nd pass ×4)
+    --scan-kr-supernova | --scan-kr-nulrim | --scan-kr-dante | --scan-kr-ema5
+    --scan-kr-master | --scan-kr-bowl
+    --scan-kr-supernova-r2 | --scan-kr-nulrim-r2 | --scan-kr-dante-r2 | --scan-kr-ema5-r2
+    --scan-us-supernova | --scan-us-nulrim | ... (same pattern, no master)
+
+  Legacy full chain (manual only — do not use in cron):
+    --scan-kr       all KR scanners in one job
+    --scan-us       all US scanners in one job
+
+  Daily / weekly:
+    --daily-kr      guard → track → deep dive → report (KR)
+    --daily-us      guard → track → deep dive → report (US)
+    --daily         full daily chain (KR then US)
+    --weekly        weekly Flow master report
+
   --force-scan-outside-session
-                  bypass market_session_gate (manual recovery / off-hours test)
+                  bypass market_session_gate (manual recovery)
 
 Environment:
   FACTORY_LOG_DIR   log directory (default: ./logs)
   FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1  same as flag above
-  TZ                default Asia/Seoul
+  TZ                default Asia/Seoul (US staggered cron uses America/New_York in cron.d)
 EOF
 }
 
@@ -59,9 +71,13 @@ while [[ $# -gt 0 ]]; do
     --daily-us)  MODE="daily_audit_us" ;;
     --daily)     MODE="daily_audit" ;;
     --weekly)    MODE="weekly_master" ;;
-  --dry-run)   EXTRA_ARGS+=("--dry-run") ;;
-  --skip-telegram) EXTRA_ARGS+=("--skip-telegram") ;;
-  --force-scan-outside-session) export FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1 ;;
+    --scan-kr-*|--scan-us-*)
+      MODE="${1#--}"
+      MODE="${MODE//-/_}"
+      ;;
+    --dry-run)   EXTRA_ARGS+=("--dry-run") ;;
+    --skip-telegram) EXTRA_ARGS+=("--skip-telegram") ;;
+    --force-scan-outside-session) export FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1 ;;
     -h|--help)   usage; exit 0 ;;
     *)
       echo "Unknown argument: $1" >&2

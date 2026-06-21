@@ -5,12 +5,16 @@ from __future__ import annotations
 
 import logging
 import struct
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# 리포트·PF 표시 상한 — Telegram "inf" 노출 방지
+DEFAULT_PROFIT_FACTOR_CAP = 99.99
+_MAX_ABS_MONEY_DISPLAY = 9.999e15
 
 
 def col_series(df: Optional[pd.DataFrame], col: str) -> pd.Series:
@@ -142,16 +146,78 @@ def dedupe_columns(
     return df.loc[:, ~cols.duplicated(keep="first")]
 
 
+def _sanitize_numeric_series(s: pd.Series, *, default: float = 0.0) -> pd.Series:
+    out = pd.to_numeric(s, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(default)
+    return out
+
+
+def profit_factor_from_returns(
+    rets: Union[Sequence[float], pd.Series],
+    *,
+    cap: float = DEFAULT_PROFIT_FACTOR_CAP,
+    epsilon: float = 1e-12,
+) -> float:
+    """
+    Profit Factor = 총 이익(%) / 총 손실(%) 절댓값.
+    손실 0건·전승 구간은 cap(기본 99.99) — float('inf') 리포트 노출 금지.
+    """
+    if rets is None:
+        return 0.0
+    if isinstance(rets, pd.Series):
+        vals = pd.to_numeric(rets, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        if vals.empty:
+            return 0.0
+        wins = float(vals[vals > 0].sum())
+        losses = abs(float(vals[vals < 0].sum()))
+    else:
+        seq = list(rets)
+        if not seq:
+            return 0.0
+        wins = sum(float(x) for x in seq if float(x) > 0)
+        losses = abs(sum(float(x) for x in seq if float(x) < 0))
+    if losses < epsilon:
+        return float(cap) if wins > epsilon else 0.0
+    pf = wins / losses
+    if not np.isfinite(pf):
+        return float(cap)
+    return float(min(pf, cap))
+
+
+def fmt_money(
+    value: Any,
+    *,
+    market: str = "KR",
+    signed: bool = False,
+    default: float = 0.0,
+) -> str:
+    """금액 텔레그램 표시 — inf/nan → 0."""
+    v = scalar_float(value, default)
+    v = max(-_MAX_ABS_MONEY_DISPLAY, min(_MAX_ABS_MONEY_DISPLAY, v))
+    if str(market or "").upper() == "US":
+        return f"${v:+,.0f}" if signed else f"${v:,.0f}"
+    return f"{v:+,.0f}원" if signed else f"{v:,.0f}원"
+
+
+def fmt_amount(value: Any, *, decimals: int = 0, default: float = 0.0) -> str:
+    """일반 수치(국고·비율 등) — inf/nan 방어."""
+    v = scalar_float(value, default)
+    v = max(-_MAX_ABS_MONEY_DISPLAY, min(_MAX_ABS_MONEY_DISPLAY, v))
+    spec = f",.{int(decimals)}f"
+    return format(v, spec)
+
+
 def prepare_forward_trades_df(
     df: Optional[pd.DataFrame],
     *,
     context: str = "",
 ) -> pd.DataFrame:
-    """딥다이브 입력 — 컬럼 dedupe + final_ret 수치화·NaN→0."""
+    """딥다이브 입력 — 컬럼 dedupe + 수익·투입금 inf/NaN 정리."""
     if df is None:
         return pd.DataFrame()
     out = dedupe_columns(df.copy(), log_warnings=True, context=context or "prepare_forward_trades_df")
-    if out.empty or "final_ret" not in out.columns:
+    if out.empty:
         return out
-    out["final_ret"] = pd.to_numeric(col_series(out, "final_ret"), errors="coerce").fillna(0.0)
+    for col in ("final_ret", "sim_kelly_invest", "invest_amount", "profit_amount"):
+        if col in out.columns:
+            out[col] = _sanitize_numeric_series(col_series(out, col), default=0.0)
     return out

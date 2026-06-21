@@ -467,29 +467,22 @@ def scan_market_1d():
         if tracker['scanned'] % 500 == 0 or tracker['scanned'] == len(tickers):
             print(f"   진행중... {tracker['scanned']}/{len(tickers)} (정상분석: {tracker['analyzed']}개, 포착: {tracker['hits']}개)")
 
+    dt = time.time() - t0
     if tracker['hits'] > 0:
         print("\n⏳ 텔레그램 결과지 전송 중입니다. 잠시만 대기해 주세요...")
         wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
-    dt = time.time() - t0
     print(f"\n✅ [미국장 3번 B 스캔 완료] 포착: {tracker['hits']}개 | 오류 발생: {tracker['errors']}건 | 데이터 수신 실패: {tracker['fetch_failed']}건 | 소요시간: {dt/60:.1f}분\n")
     if SEND_TELEGRAM:
-        try:
-            _funnel_html = format_scan_funnel_report(
-                funnel.finalize(elapsed_min=dt / 60.0)
-            )
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN_MAIN}/sendMessage",
-                json={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": _funnel_html,
-                    "parse_mode": "HTML",
-                },
-                timeout=15,
-                verify=False,
-            )
-        except Exception:
-            pass
+        from scanner_funnel import post_scan_funnel_telegram
+
+        post_scan_funnel_telegram(
+            funnel,
+            elapsed_sec=dt,
+            token_main=TELEGRAM_TOKEN_MAIN,
+            chat_id=TELEGRAM_CHAT_ID,
+            send_enabled=True,
+        )
 
 def run_scheduler():
     ny_tz = pytz.timezone('America/New_York')

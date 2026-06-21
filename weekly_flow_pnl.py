@@ -25,7 +25,7 @@ def zero_invest_fallback_for_market(market: str) -> Optional[float]:
 def _coerce_float(x: Any, default: float = 0.0) -> float:
     try:
         v = float(x)
-        if np.isnan(v):
+        if np.isnan(v) or not np.isfinite(v):
             return default
         return v
     except (TypeError, ValueError):
@@ -104,6 +104,9 @@ def dataframe_realized_pnl_sum(
     if df is None or df.empty:
         return 0.0
     fb = zero_fallback if zero_fallback is not None else zero_invest_fallback_for_market(market)
-    return float(
+    total = float(
         add_realized_pnl_column(df, market=market, zero_fallback=fb)["_realized_pnl"].sum()
     )
+    if not np.isfinite(total):
+        return 0.0
+    return total

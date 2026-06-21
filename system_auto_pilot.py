@@ -2007,9 +2007,8 @@ def run_factory_cli(argv=None) -> int:
     """Ubuntu cron / factory.sh 단일 진입점."""
     import argparse
 
-    from factory_pipelines import get_pipeline
+    from factory_pipelines import FACTORY_MODES, get_pipeline
     from factory_runtime import (
-        FACTORY_MODES,
         dispatch_factory_mode,
         factory_exit_code,
     )

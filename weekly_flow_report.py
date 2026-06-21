@@ -418,9 +418,9 @@ def build_weekly_flow_report(
 
 
 def _fmt_money(market: str, value: float) -> str:
-    if market == "US":
-        return f"${value:+,.0f}"
-    return f"{value:+,.0f}원"
+    from reports.forward_report_scalar import fmt_money
+
+    return fmt_money(value, market=market, signed=True)
 
 
 def _format_market_section(snap: WeeklyFlowSnapshot) -> str:
