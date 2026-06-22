@@ -30,11 +30,11 @@ check_cron_file "$CRON_US" "America/New_York" "US cron"
 
 echo ""
 echo "--- Expected staggered KR (KST log hour) ---"
-echo "  scan_kr_supernova: ~10:00 · nulrim ~10:30 · … · ema5_r2 ~14:30"
-echo "  daily_kr: Mon-Fri ~16:35 · daily_us: Tue-Sat ~06:45"
+echo "  scan_kr_supernova: ~10:00 · nulrim ~10:50 · … · ema5_r2 ~17:30"
+echo "  daily_kr: Mon-Fri ~18:45 · daily_us: Tue-Sat ~06:45"
 echo ""
 echo "--- Expected staggered US (log filename uses server TZ; US cron = ET) ---"
-echo "  factory_scan_us_supernova_* during US regular session (ET 10:00–14:30)"
+echo "  factory_scan_us_supernova_* during US regular session (ET 10:00–16:40)"
 echo ""
 
 _misaligned=0
@@ -56,7 +56,7 @@ _check_logs() {
 
 # KR staggered: should not run overnight or post-16 except daily
 _check_logs 'factory_scan_kr_supernova_*' 'kr_supernova' '^(0[0-9]|1[67]|1[89]|2[0-3])$'
-_check_logs 'factory_scan_kr_ema5_r2_*' 'kr_ema5_r2' '^(0[0-9]|1[56789]|2[0-3])$'
+_check_logs 'factory_scan_kr_ema5_r2_*' 'kr_ema5_r2' '^(0[0-9]|1[0-6]|1[89]|2[0-3])$'
 
 if [[ "$_misaligned" -eq 0 ]]; then
   echo "✓ No obvious misaligned pattern in recent staggered KR log filenames"

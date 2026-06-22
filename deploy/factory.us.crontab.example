@@ -1,6 +1,6 @@
 # Dual-Screener-Bot — US factory cron (paste → /etc/cron.d/dual-screener-factory-us)
 #
-# Staggered scans: one scanner per slot, 30 min apart, NY 10:00–14:30 ET (before 15:00).
+# Staggered scans: one scanner per slot, 50 min apart, NY from 10:00 ET.
 # CRON_TZ=America/New_York — DST 자동. Mon–Fri = US regular equity session days.
 # SSOT: factory_scan_schedule.py · deploy/install_factory_cron.sh
 #
@@ -10,13 +10,13 @@ SHELL=/bin/bash
 CRON_TZ=America/New_York
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# --- US staggered intraday (Mon–Fri ET, 1회차 5종 + 2회차 4종) ---
+# --- US staggered intraday (Mon–Fri ET, 1회차 5종 + 2회차 4종, 50분 간격) ---
 0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-supernova
-30 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim
-0 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante
-30 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-ema5
-0 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-bowl
-0 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-supernova-r2
-30 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim-r2
-0 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante-r2
-30 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-ema5-r2
+50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim
+40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante
+30 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-ema5
+20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-bowl
+10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-supernova-r2
+0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim-r2
+50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante-r2
+40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-ema5-r2

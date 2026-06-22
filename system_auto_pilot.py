@@ -2097,11 +2097,23 @@ def run_factory_cli(argv=None) -> int:
     print(f"🏭 [Factory] mode={args.mode} steps={[s.name for s in pipeline]}")
     lock_timeout = args.lock_timeout
     if lock_timeout is None:
-        lock_timeout = (
-            7200.0
-            if str(args.mode or "").startswith("daily_audit")
-            else 120.0
-        )
+        if str(args.mode or "").startswith("daily_audit"):
+            lock_timeout = 7200.0
+        else:
+            try:
+                from factory_scan_schedule import (
+                    SCAN_LOCK_WAIT_SEC,
+                    is_staggered_scan_mode,
+                )
+
+                if is_staggered_scan_mode(str(args.mode or "")) or str(
+                    args.mode or ""
+                ).startswith("scan_"):
+                    lock_timeout = SCAN_LOCK_WAIT_SEC
+                else:
+                    lock_timeout = 120.0
+            except Exception:
+                lock_timeout = 120.0
     report = dispatch_factory_mode(
         args.mode,
         pipeline,

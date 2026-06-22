@@ -18,14 +18,17 @@ class TestStaggeredScanSchedule(unittest.TestCase):
         self.assertEqual(len(KR_SCAN_SLOTS), 10)
         hours = [s.hour * 60 + s.minute for s in KR_SCAN_SLOTS]
         self.assertEqual(min(hours), 10 * 60)
-        self.assertEqual(max(hours), 14 * 60 + 30)
+        self.assertEqual(max(hours), 17 * 60 + 30)
         for i in range(1, len(hours)):
-            self.assertGreaterEqual(hours[i] - hours[i - 1], 30)
+            self.assertEqual(hours[i] - hours[i - 1], 50)
 
     def test_us_slot_count_no_master(self):
         self.assertEqual(len(US_SCAN_SLOTS), 9)
         keys = [s.scanner_key for s in US_SCAN_SLOTS if s.cycle == 1]
         self.assertNotIn("master", keys)
+        hours = [s.hour * 60 + s.minute for s in US_SCAN_SLOTS]
+        for i in range(1, len(hours)):
+            self.assertEqual(hours[i] - hours[i - 1], 50)
 
     def test_every_slot_has_pipeline(self):
         pipelines = build_factory_pipelines()

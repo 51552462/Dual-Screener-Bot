@@ -32,9 +32,9 @@ usage() {
   cat <<'EOF'
 Usage: ./factory.sh <flag>
 
-  Staggered intraday scans (30 min slots, one scanner per run — cron SSOT):
-    KR KST 10:00–14:30  supernova → nulrim → dante → ema5 → master → bowl → (2nd pass ×4)
-    US ET  10:00–14:30  supernova → nulrim → dante → ema5 → bowl → (2nd pass ×4)
+  Staggered intraday scans (50 min slots, one scanner per run — cron SSOT):
+    KR KST 10:00–17:30  supernova → nulrim → … → bowl → (2nd pass ×4)
+    US ET  10:00–16:40  supernova → nulrim → … → bowl → (2nd pass ×4)
     --scan-kr-supernova | --scan-kr-nulrim | --scan-kr-dante | --scan-kr-ema5
     --scan-kr-master | --scan-kr-bowl
     --scan-kr-supernova-r2 | --scan-kr-nulrim-r2 | --scan-kr-dante-r2 | --scan-kr-ema5-r2
