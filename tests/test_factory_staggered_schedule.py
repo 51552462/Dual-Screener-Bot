@@ -59,6 +59,25 @@ class TestStaggeredScanSchedule(unittest.TestCase):
         self.assertEqual(len(slots_for_market("KR")), 10)
         self.assertEqual(len(slots_for_market("US")), 9)
 
+    def test_cron_templates_match_ssot(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[1]
+        gen = repo / "deploy" / "generate_factory_crontab.py"
+        proc = subprocess.run(
+            [sys.executable, str(gen), "--check"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            msg=proc.stderr or proc.stdout or "cron template drift",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

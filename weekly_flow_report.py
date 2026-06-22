@@ -564,6 +564,31 @@ def format_weekly_flow_report_html(bundle: WeeklyFlowMasterSnapshot) -> str:
     msg += (
         "<i>시장의 돈의 흐름·MVP 견인·관제탑 SSOT를 한 장으로 증명하는 마스터 결과지입니다.</i>"
     )
+    try:
+        from meta_state_store import load_meta_state_resolved
+        from report_executive_summary import build_weekly_executive_summary_html
+
+        _meta_wk = load_meta_state_resolved()
+    except Exception:
+        _meta_wk = {}
+    try:
+        msg += build_weekly_executive_summary_html(
+            _meta_wk,
+            bundle.sys_config,
+            week_start=bundle.week_start,
+            week_end=bundle.week_end,
+            regime_key=bundle.macro_kr.regime_key,
+            lifecycle_n_retired=sum(
+                1
+                for r in (_meta_wk.get("META_RETIRED_STRATEGY_IDS") or [])
+                if isinstance(r, dict)
+            ),
+            lifecycle_n_cooled=bundle.lifecycle.n_cooled,
+            kr_week_pnl=float(bundle.kr.week_pnl) if bundle.kr else None,
+            us_week_pnl=float(bundle.us.week_pnl) if bundle.us else None,
+        )
+    except Exception:
+        pass
     return msg
 
 

@@ -287,7 +287,7 @@ _REPORT_HYDRATE_BOTH = StepSpec(
 )
 
 
-def _step_comprehensive_daily_report() -> None:
+def _step_comprehensive_daily_report(*, executive_market: str | None = None) -> None:
     from auto_forward_tester import send_comprehensive_daily_report
 
     send_comprehensive_daily_report(
@@ -297,7 +297,16 @@ def _step_comprehensive_daily_report() -> None:
         cleanup_zombie_trades=False,
         refresh_macro=False,
         refresh_ohlcv=False,
+        executive_market=executive_market,
     )
+
+
+def _step_comprehensive_daily_report_kr() -> None:
+    _step_comprehensive_daily_report(executive_market="KR")
+
+
+def _step_comprehensive_daily_report_us() -> None:
+    _step_comprehensive_daily_report(executive_market="US")
 
 
 _SECTOR_SPILLOVER_REFRESH = StepSpec(
@@ -840,7 +849,12 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
                 _DOOMSDAY_BRIDGE,
                 _REPORTER_CLEANUP_ZOMBIE,
                 _PIL_PRACTITIONER_KR,
-                _COMPREHENSIVE_REPORT,
+                StepSpec(
+                    "comprehensive_daily_report",
+                    _step_comprehensive_daily_report_kr,
+                    critical=False,
+                    delay_after_sec=3.0,
+                ),
                 StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
             ]
         )
@@ -855,7 +869,12 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
             _DOOMSDAY_BRIDGE,
             _REPORTER_CLEANUP_ZOMBIE,
             _PIL_PRACTITIONER_US,
-            _COMPREHENSIVE_REPORT,
+            StepSpec(
+                "comprehensive_daily_report",
+                _step_comprehensive_daily_report_us,
+                critical=False,
+                delay_after_sec=3.0,
+            ),
             StepSpec("ai_overseer", _step_overseer_optional, critical=False, delay_after_sec=0),
         ]
     )

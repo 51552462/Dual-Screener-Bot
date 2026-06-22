@@ -1,8 +1,10 @@
-# Dual-Screener-Bot — US factory cron (paste → /etc/cron.d/dual-screener-factory-us)
+# Dual-Screener-Bot — US factory cron (→ /etc/cron.d/dual-screener-factory-us)
 #
-# Staggered scans: one scanner per slot, 50 min apart, NY from 10:00 ET.
+# AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.
+# Regenerate: python deploy/generate_factory_crontab.py
+# Staggered scans: 50 min apart, NY from 10:00 ET.
 # CRON_TZ=America/New_York — DST 자동. Mon–Fri = US regular equity session days.
-# SSOT: factory_scan_schedule.py · deploy/install_factory_cron.sh
+# install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh
 #
 # user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
 
@@ -10,7 +12,7 @@ SHELL=/bin/bash
 CRON_TZ=America/New_York
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# --- US staggered intraday (Mon–Fri ET, 1회차 5종 + 2회차 4종, 50분 간격) ---
+# --- US staggered intraday (Mon–Fri ET, 9 slots, 50 min) ---
 0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-supernova
 50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim
 40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante

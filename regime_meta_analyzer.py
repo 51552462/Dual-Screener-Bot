@@ -288,25 +288,30 @@ def fetch_colosseum_summary(limit_days: int = 45, top_n: int = 4) -> Tuple[str, 
     top = agg[:top_n]
     rows_out = top
 
-    parts = [f"{r['logic'][:40]}: 합산 {r['sum_ret']:+.2f}% (n={r['n']})" for r in top[:3]]
+    from reports.forward_report_scalar import fmt_pct, scalar_float
+
+    parts = [f"{r['logic'][:40]}: 합산 {fmt_pct(scalar_float(r['sum_ret']))} (n={r['n']})" for r in top[:3]]
     summary_line = "최근 청산 기준 상위 기여: " + " | ".join(parts)
     return summary_line, rows_out
 
 
 def _blend_meta_insight(regime_key: str, base_note: str, colosseum_line: str, top_rows: List[Dict[str, Any]]) -> str:
     """규칙 기반 메타 코멘트 + 콜로세움 실측 한 줄 결합."""
+    from reports.forward_report_scalar import fmt_pct, scalar_float
+
     lines = [base_note.strip(), "", colosseum_line]
 
     if top_rows:
         best = top_rows[0]
         worst = min(top_rows, key=lambda x: x["sum_ret"]) if len(top_rows) > 1 else top_rows[0]
         lines.append(
-            f"실측 기준 선두 로직은 「{best['logic'][:60]}」(합산 {best['sum_ret']:+.2f}%). "
+            f"실측 기준 선두 로직은 「{best['logic'][:60]}」(합산 {fmt_pct(scalar_float(best['sum_ret']))}). "
             f"현재 장세 레짐({regime_key})과 엇박일 경우 다음 리밸런싱에서 비중 축소를 검토하세요."
         )
         if worst["sum_ret"] < 0:
             lines.append(
-                f"동일 구간 하위 기여 「{worst['logic'][:50]}」({worst['sum_ret']:+.2f}%)은 레짐과 상관 없이 구조적 개선이 필요할 수 있습니다."
+                f"동일 구간 하위 기여 「{worst['logic'][:50]}」"
+                f"({fmt_pct(scalar_float(worst['sum_ret']))})은 레짐과 상관 없이 구조적 개선이 필요할 수 있습니다."
             )
 
     return "\n".join(lines)

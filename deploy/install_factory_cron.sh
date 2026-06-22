@@ -21,12 +21,27 @@ if [[ "${EUID:-0}" -ne 0 ]]; then
   exit 1
 fi
 
+DEFAULT_ROOT="/home/ubuntu/dante_bots/Dual-Screener-Bot"
+
+echo "=== Generate cron templates from factory_scan_schedule.py (SSOT) ==="
+GEN_PY="${REPO_ROOT}/deploy/generate_factory_crontab.py"
+if [[ ! -f "${GEN_PY}" ]]; then
+  echo "ERROR: ${GEN_PY} missing — cannot install cron without SSOT generator." >&2
+  exit 1
+fi
+if [[ -x "${INSTALL_ROOT}/venv/bin/python" ]]; then
+  "${INSTALL_ROOT}/venv/bin/python" "${GEN_PY}" --install-root "${DEFAULT_ROOT}"
+elif command -v python3 >/dev/null 2>&1; then
+  python3 "${GEN_PY}" --install-root "${DEFAULT_ROOT}"
+else
+  echo "ERROR: python3 required to generate cron templates." >&2
+  exit 1
+fi
+
 if [[ ! -f "${KR_TEMPLATE}" ]] || [[ ! -f "${US_TEMPLATE}" ]]; then
   echo "템플릿 없음: ${KR_TEMPLATE} 또는 ${US_TEMPLATE}" >&2
   exit 1
 fi
-
-DEFAULT_ROOT="/home/ubuntu/dante_bots/Dual-Screener-Bot"
 _install_one() {
   local template="$1"
   local dest="$2"

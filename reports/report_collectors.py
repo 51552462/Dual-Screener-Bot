@@ -29,8 +29,9 @@ def _df_long_only(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df.copy() if df is not None else pd.DataFrame()
     sig = df["sig_type"].astype(str) if "sig_type" in df.columns else pd.Series("", index=df.index)
-    mask = ~sig.str.contains("INCUBATOR", na=False) & ~sig.str.contains(
-        INVERSE_SIG_MARKER, na=False
+    # regex=False — '[INVERSE_ETF]' 는 정규식 character class 로 오인되어 'RANK_C' 등이 탈락함
+    mask = ~sig.str.contains("INCUBATOR", na=False, regex=False) & ~sig.str.contains(
+        INVERSE_SIG_MARKER, na=False, regex=False
     )
     return df.loc[mask].copy()
 

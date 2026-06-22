@@ -168,17 +168,15 @@ class DailyReportContext:
         """
         mkt = str(market).upper()
         tk = self.timekeeper_for(mkt)
-        # SQL 단에서 exit_date만 강제하면 timezone/포맷 차이(T/공백, TZ suffix)나
-        # exit_date 누락(legacy row) 때문에 CLOSED 표본이 0건으로 누락될 수 있다.
-        # market+INCUBATOR만 1차 필터 후, 세션 윈도우는 Pandas에서 안전하게 재평가한다.
+        # market 컬럼이 비어 있거나 legacy 오기입이어도 code+_normalize_trade_market 으로
+        # 슬라이스한다. SQL WHERE market=? 만 쓰면 콜로세움(전체 CLOSED)과 표본이 어긋나
+        # [3/9]~[9/9] 가 전부 0건으로 나올 수 있다.
         df_raw = pd.read_sql(
             """
             SELECT * FROM forward_trades
-            WHERE market = ?
-              AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
+            WHERE IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
             """,
             conn,
-            params=(mkt,),
         )
         df_norm = normalize_market_fn(df_raw, mkt)
         from reports.forward_report_scalar import prepare_forward_trades_df

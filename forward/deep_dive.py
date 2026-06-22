@@ -47,6 +47,7 @@ def send_comprehensive_daily_report(
     cleanup_zombie_trades: bool = True,
     refresh_macro: bool = True,
     refresh_ohlcv: bool = True,
+    executive_market: str | None = None,
 ):
     """[V104.1] 국가별 9분할 정밀 리포트 — DailyReportContext 시계 SSOT 필수."""
     from reports.daily_report_context import DailyReportContext
@@ -505,6 +506,32 @@ def send_comprehensive_daily_report(
     except Exception as _delta_ex:
         send_telegram_msg(
             f"<i>⚠️ [Δ] 진화·튜닝 스킵: {html_escape(str(_delta_ex)[:72], quote=False)}</i>"
+        )
+
+    try:
+        from cross_market_ssot import load_cross_market_ssot
+        from report_executive_summary import build_daily_executive_summary_html
+
+        _ssot_exec = load_cross_market_ssot(sys_config)
+        _exec_markets: tuple[str, ...]
+        _em = str(executive_market or "").strip().upper()
+        if _em in ("KR", "US"):
+            _exec_markets = (_em,)
+        else:
+            _exec_markets = ("KR", "US")
+        for _mkt_exec in _exec_markets:
+            _exec_html = build_daily_executive_summary_html(
+                meta_state_daily,
+                _ssot_exec,
+                market=_mkt_exec,
+                sys_config=sys_config,
+            )
+            if _exec_html:
+                send_telegram_msg(_exec_html)
+                time.sleep(1)
+    except Exception as _exec_ex:
+        send_telegram_msg(
+            f"<i>⚠️ Executive Summary 스킵: {html_escape(str(_exec_ex)[:72], quote=False)}</i>"
         )
 
 def send_group_practitioner_reports(

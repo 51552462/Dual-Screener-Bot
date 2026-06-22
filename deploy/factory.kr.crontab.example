@@ -1,7 +1,9 @@
-# Dual-Screener-Bot — KR factory cron (paste → /etc/cron.d/dual-screener-factory-kr)
+# Dual-Screener-Bot — KR factory cron (→ /etc/cron.d/dual-screener-factory-kr)
 #
-# Staggered scans: one scanner per slot, 50 min apart, KST from 10:00.
-# SSOT: factory_scan_schedule.py · deploy/install_factory_cron.sh
+# AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.
+# Regenerate: python deploy/generate_factory_crontab.py
+# Staggered scans: 50 min apart, KST from 10:00.
+# install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh
 #
 # user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
 
@@ -9,7 +11,7 @@ SHELL=/bin/bash
 CRON_TZ=Asia/Seoul
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# --- KR staggered intraday (Mon–Fri KST, 1회차 6종 + 2회차 4종, 50분 간격) ---
+# --- KR staggered intraday (Mon–Fri KST, 10 slots, 50 min) ---
 0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-supernova
 50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-nulrim
 40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-dante
@@ -21,7 +23,7 @@ PATH=/usr/local/bin:/usr/bin:/bin
 40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-dante-r2
 30 17 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-ema5-r2
 
-# --- KR post-close audit (마지막 스캔 17:30 이후) ---
+# --- KR post-close audit (after last scan 17:30) ---
 45 18 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --daily-kr
 
 # --- US post-close audit (KST morning after NY close) ---

@@ -257,6 +257,15 @@ def _strategy_colosseum_brief(db_path=None):
             "<i>청산 완료 데이터가 없습니다.</i>\n"
         )
 
+    from reports.forward_report_scalar import fmt_pct, prepare_forward_trades_df, scalar_float
+
+    df = prepare_forward_trades_df(df, context="colosseum_brief")
+    if df.empty:
+        return (
+            '\n⚔️ <b>[전략 콜로세움: 리그별 랭킹]</b>\n'
+            "<i>청산 완료 데이터가 없습니다.</i>\n"
+        )
+
     def _core_group(sig):
         clean_sig = re.sub(r"\[.*?\]", "", str(sig)).strip()
         return clean_sig if clean_sig else str(sig).replace("[", "").replace("]", "").strip()
@@ -314,7 +323,7 @@ def _strategy_colosseum_brief(db_path=None):
             continue
         n = int(len(fr))
         wins = int((fr > 0).sum())
-        sum_ret = float(fr.sum())
+        sum_ret = scalar_float(fr.sum())
         wr = (wins / n * 100.0) if n else 0.0
         disp = str(logic).strip()
         if len(disp) > 120:
@@ -357,7 +366,7 @@ def _strategy_colosseum_brief(db_path=None):
             m = medals[i] if i < len(medals) else "🏅"
             lg = _esc(r["logic"])
             out.append(
-                f" {m} {lg}: 승률 {r['wr']:.1f}% / 수익 {r['sum_ret']:+.2f}% (거래 {int(r['n'])}건)\n"
+                f" {m} {lg}: 승률 {r['wr']:.1f}% / 수익 {fmt_pct(scalar_float(r['sum_ret']))} (거래 {int(r['n'])}건)\n"
             )
             top_rows_local.append({"logic": str(r["logic"]), "sum_ret": scalar_float(r["sum_ret"])})
         return top_rows_local, out

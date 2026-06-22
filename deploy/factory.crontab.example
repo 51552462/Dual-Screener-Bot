@@ -1,6 +1,8 @@
-# DEPRECATED — use deploy/factory.kr.crontab.example + deploy/factory.us.crontab.example
-# install: sudo INSTALL_ROOT=/path bash deploy/install_factory_cron.sh
+# DEPRECATED — do not install this file.
 #
-# This file is kept for backward compatibility; install script no longer installs it alone.
-
-# See factory.kr.crontab.example (CRON_TZ=Asia/Seoul) and factory.us.crontab.example (America/New_York).
+# Use deploy/install_factory_cron.sh which generates + installs:
+#   deploy/factory.kr.crontab.example  (CRON_TZ=Asia/Seoul)
+#   deploy/factory.us.crontab.example  (CRON_TZ=America/New_York)
+#
+# SSOT: factory_scan_schedule.py → deploy/generate_factory_crontab.py
+# Manual edits to *.crontab.example are overwritten on every install.
