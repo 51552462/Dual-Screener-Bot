@@ -359,6 +359,20 @@ class ScanFunnelTracker:
         tz_kr = pytz.timezone("Asia/Seoul")
         as_of = datetime.now(tz_kr).strftime("%Y-%m-%d %H:%M")
 
+        pass_rate = (100.0 * n_final / universe) if universe > 0 else 0.0
+        try:
+            from proprietary_friction_store import insert_scan_funnel_snapshot
+
+            insert_scan_funnel_snapshot(
+                ts=as_of,
+                market=self.market,
+                universe_size=universe,
+                survivors=n_final,
+                pass_rate_pct=pass_rate,
+            )
+        except Exception:
+            pass
+
         return ScanFunnelReport(
             scanner_id=self.scanner_id,
             market=self.market,

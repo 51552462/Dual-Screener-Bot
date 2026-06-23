@@ -145,6 +145,16 @@ def build_deathmatch_section(
     msg += hdr
 
     if n_closed == 0:
+        try:
+            from proprietary_friction_store import insert_regime_friction_event
+
+            insert_regime_friction_event(
+                date=ctx.calendar_today_kst,
+                market=mk,
+                event_type="DM_A_ZERO_CLOSED",
+            )
+        except Exception:
+            pass
         msg += _tier_dm_a(ctx, mk, n_real=n_real, n_open=n_open, n_min=br.n_min)
         if ace_line:
             msg += f"\n{ace_line}"

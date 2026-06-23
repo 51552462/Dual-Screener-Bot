@@ -1745,6 +1745,12 @@ def run_autonomous_analysis():
 # ==========================================
 def send_weekly_flow_master_report():
     """WeeklyFlowSnapshot + ReportStateBinder SSOT (weekly_flow_report)."""
+    try:
+        from weekly_proprietary_regime import compute_weekly_proprietary_regime
+
+        compute_weekly_proprietary_regime()
+    except Exception as _pri_ex:
+        print(f"⚠️ [주간 PRI Shadow] skip: {_pri_ex}")
     from weekly_flow_report import send_weekly_flow_master_report as _send_weekly
 
     _send_weekly(

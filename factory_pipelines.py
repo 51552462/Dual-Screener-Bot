@@ -829,6 +829,30 @@ def _step_comprehensive_optional() -> None:
     send_comprehensive_daily_report(refresh_sentiment=True)
 
 
+def _step_macro_matrix_incremental() -> None:
+    """주말 MACRO_EVOLUTION_MATRIX 증분 갱신 (Shadow · MetaGovernor 미연동)."""
+    try:
+        from macro_matrix_incremental import update_macro_matrix_incremental
+        from macro_sentinel_quant import compute_macro_sentinel_snapshot
+
+        snap = compute_macro_sentinel_snapshot()
+        _, stats = update_macro_matrix_incremental(regime_by_date=snap.regime_by_date)
+        print(f"[macro_matrix_incremental] {stats}")
+    except Exception as ex:
+        print(f"[macro_matrix_incremental] skip: {ex}")
+
+
+def _step_weekly_proprietary_regime() -> None:
+    """주간 PRI Shadow 산출 (평일 적재 → 토요일 일괄 연산 · Meta 미연동)."""
+    try:
+        from weekly_proprietary_regime import compute_weekly_proprietary_regime
+
+        out = compute_weekly_proprietary_regime()
+        print(f"[weekly_proprietary_regime] blended={out.get('blended')}")
+    except Exception as ex:
+        print(f"[weekly_proprietary_regime] skip: {ex}")
+
+
 def _step_weekly_master() -> None:
     import system_auto_pilot as sap
     from weekly_flow_report import send_weekly_flow_master_report
@@ -942,7 +966,21 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
         "daily_audit_us": daily_us,
         "daily_audit": _pipeline_daily_audit_combined(),
         "weekly_master": _with_artifact_guard(
-            [StepSpec("weekly_flow_master", _step_weekly_master, critical=True)]
+            [
+                StepSpec(
+                    "macro_matrix_incremental",
+                    _step_macro_matrix_incremental,
+                    critical=False,
+                    delay_after_sec=1.0,
+                ),
+                StepSpec(
+                    "weekly_proprietary_regime",
+                    _step_weekly_proprietary_regime,
+                    critical=False,
+                    delay_after_sec=1.0,
+                ),
+                StepSpec("weekly_flow_master", _step_weekly_master, critical=True),
+            ]
         ),
     }
     pipelines.update(staggered)

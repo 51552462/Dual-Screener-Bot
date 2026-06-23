@@ -589,6 +589,17 @@ def format_weekly_flow_report_html(bundle: WeeklyFlowMasterSnapshot) -> str:
         )
     except Exception:
         pass
+    try:
+        from weekly_proprietary_regime import build_weekly_shadow_pri_html
+
+        msg += build_weekly_shadow_pri_html(
+            week_start=bundle.week_start,
+            week_end=bundle.week_end,
+            kr_week_pnl=float(bundle.kr.week_pnl) if bundle.kr else None,
+            us_week_pnl=float(bundle.us.week_pnl) if bundle.us else None,
+        )
+    except Exception:
+        pass
     return msg
 
 

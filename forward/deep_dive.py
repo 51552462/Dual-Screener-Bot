@@ -490,6 +490,20 @@ def send_comprehensive_daily_report(
                 market_icon=market_icon,
                 apply_deathmatch_allocation=apply_deathmatch_allocation,
             )
+            try:
+                from shadow_macro_validator import append_shadow_macro_block
+
+                msg9 = append_shadow_macro_block(
+                    msg9,
+                    market=market,
+                    df_closed=df_closed,
+                    sys_config=sys_config,
+                )
+            except Exception as _sh_ex:
+                msg9 += (
+                    f"\n👻 <i>[기관급 섀도우 매크로 검증] 스킵: "
+                    f"{html_escape(str(_sh_ex)[:72], quote=False)}</i>\n"
+                )
             send_telegram_msg(msg9); time.sleep(1)
 
             conn.close()

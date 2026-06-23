@@ -1,4 +1,4 @@
-"""factory_runtime — 장외 scan 즉시 스킵 (락·prelude·FAIL 텔레그램 없음)."""
+"""factory_runtime — 장외 scan 즉시 스킵 (락·prelude 없음 · scan_* 는 스킵 통지)."""
 from __future__ import annotations
 
 import unittest
@@ -33,9 +33,10 @@ class TestScanSessionSkip(unittest.TestCase):
         self.assertTrue(report.skipped_session)
         self.assertEqual(report.status_label, "SKIPPED_SESSION")
         self.assertEqual(factory_exit_code(report), 0)
-        self.assertEqual(sent, [])
+        self.assertEqual(len(sent), 1)
+        self.assertIn("SKIPPED_SESSION", sent[0])
 
-    def test_notify_skips_lock_and_session(self):
+    def test_notify_skips_lock_and_session_for_non_scan(self):
         for label, kwargs in (
             ("SKIPPED_LOCK", {"skipped_lock": True}),
             ("SKIPPED_SESSION", {"skipped_session": True}),
@@ -43,7 +44,7 @@ class TestScanSessionSkip(unittest.TestCase):
             with self.subTest(label=label):
                 sent: list[str] = []
                 report = FactoryRunReport(
-                    mode="scan_us",
+                    mode="daily_audit_us",
                     run_id="t",
                     started_at="s",
                     finished_at="f",
@@ -51,6 +52,20 @@ class TestScanSessionSkip(unittest.TestCase):
                 )
                 notify_factory_run(report, send_fn=lambda m: sent.append(m))
                 self.assertEqual(sent, [])
+
+    def test_notify_scan_us_skipped_session_sends_once(self):
+        sent: list[str] = []
+        report = FactoryRunReport(
+            mode="scan_us_supernova",
+            run_id="t",
+            started_at="s",
+            finished_at="f",
+            skipped_session=True,
+            skipped_session_detail="US 장외",
+        )
+        notify_factory_run(report, send_fn=lambda m: sent.append(m))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("SKIPPED_SESSION", sent[0])
 
 
 if __name__ == "__main__":

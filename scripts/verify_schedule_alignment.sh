@@ -54,15 +54,17 @@ _check_logs() {
   done
 }
 
-# KR staggered: should not run overnight or post-16 except daily
-_check_logs 'factory_scan_kr_supernova_*' 'kr_supernova' '^(0[0-9]|1[67]|1[89]|2[0-3])$'
-_check_logs 'factory_scan_kr_ema5_r2_*' 'kr_ema5_r2' '^(0[0-9]|1[0-6]|1[89]|2[0-3])$'
+# US staggered: ET 10:00–16:40 ≈ KST 23:00–05:40 (EDT). KST 08–22 = misaligned (cron TZ broken).
+_check_logs 'factory_scan_us_supernova_*' 'us_supernova' '^(0[89]|1[0-9]|2[0-2])$'
+_check_logs 'factory_scan_us_bowl_*' 'us_bowl' '^(0[89]|1[0-9]|2[0-2])$'
 
 if [[ "$_misaligned" -eq 0 ]]; then
-  echo "✓ No obvious misaligned pattern in recent staggered KR log filenames"
+  echo "✓ No obvious misaligned pattern in recent staggered KR/US log filenames"
 else
   echo ""
+  echo "US logs at KST 08–22h mean CRON_TZ=America/New_York is NOT applied (runs as KST/UTC)."
   echo "Fix: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
+  echo "     bash scripts/verify_schedule_alignment.sh"
 fi
 
 echo ""

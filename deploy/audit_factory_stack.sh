@@ -178,7 +178,7 @@ echo ""
 
 # --- 7. Recent logs ---
 echo "[7] Recent factory logs ($LOG_DIR)"
-for mode in scan_kr scan_us daily_audit_kr; do
+for mode in scan_kr scan_us scan_us_supernova scan_us_nulrim scan_us_bowl daily_audit_kr daily_audit_us; do
   latest="$(ls -t "${LOG_DIR}/factory_${mode}_"* 2>/dev/null | head -1 || true)"
   if [[ -z "$latest" ]]; then
     warn "no logs for factory_${mode}_*"

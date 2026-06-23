@@ -525,6 +525,12 @@ def notify_factory_run(
     if skip_telegram:
         return
     st = report.status_label
+    mode = str(report.mode or "")
+    # 장중 스캔: SKIPPED_* 도 1줄 통지 (무음 스킵 → “한 장도 안 옴” 오해 방지)
+    if mode.startswith("scan_") and st in ("SKIPPED_SESSION", "SKIPPED_LOCK"):
+        if send_fn:
+            send_fn(format_factory_run_telegram(report))
+        return
     if st in ("OK", "SKIPPED_SESSION", "SKIPPED_LOCK"):
         return
     if send_fn:

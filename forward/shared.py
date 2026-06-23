@@ -764,6 +764,13 @@ def init_forward_db(db_path: str | None = None):
     except Exception as e:
         print(f"⚠️ 그림자 장부 스키마 초기화 스킵: {e}")
 
+    try:
+        from proprietary_friction_store import ensure_proprietary_friction_schema
+
+        ensure_proprietary_friction_schema(cursor=cursor)
+    except Exception as e:
+        print(f"⚠️ PRI friction 스키마 초기화 스킵: {e}")
+
     conn.commit()
     conn.close()
 

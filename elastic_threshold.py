@@ -134,31 +134,11 @@ class ElasticThreshold:
         return _clip(0.45 * ent_gap + 0.45 * cl_gap + stagnation, 0.0, 1.0)
 
     def volatility_proxy(self) -> float:
-        """1.0=중립, >1=확대, <1=수축. 실패 시 1.0."""
+        """1.0=중립, >1=확대, <1=수축. forward_trades 내부 마찰만 사용."""
         try:
-            import numpy as np
+            from weekly_proprietary_regime import internal_ledger_volatility_proxy
 
-            if self.market == "US":
-                from network_timeout import yf_download
-
-                df = yf_download("SPY", period="1mo", progress=False)
-                if df is None or df.empty:
-                    return 1.0
-                close = df["Close"].squeeze().pct_change().dropna()
-            else:
-                from network_timeout import fdr_data_reader
-
-                raw = fdr_data_reader("069500", (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d"))
-                if raw is None or raw.empty:
-                    return 1.0
-                close = raw["Close"].pct_change().dropna()
-
-            if len(close) < 5:
-                return 1.0
-            vol = float(close.std())
-            med = float(np.median(np.abs(close)))
-            base = med if med > 1e-9 else 0.01
-            return _clip(vol / base, 0.75, 1.45)
+            return internal_ledger_volatility_proxy(self.market)
         except Exception:
             return 1.0
 
