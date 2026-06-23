@@ -163,7 +163,7 @@ def enrich_missing_us_sectors(
     if "Industry" not in out.columns:
         out["Industry"] = pd.NA
     miss = out["Sector"].isna() | (out["Sector"].astype(str).str.strip() == "")
-    if not miss.any():
+    if not bool(miss.fillna(False).any()):
         return out
     try:
         from market_data_fetcher import fetch_us_ticker_sector_industry
@@ -177,9 +177,9 @@ def enrich_missing_us_sectors(
         if not code:
             continue
         sec, ind = fetch_us_ticker_sector_industry(code)
-        if sec:
+        if sec and str(sec).strip():
             out.at[idx, "Sector"] = sec
-        if ind and "Industry" in out.columns:
+        if ind and str(ind).strip() and "Industry" in out.columns:
             out.at[idx, "Industry"] = ind
         n += 1
         time.sleep(0.08)

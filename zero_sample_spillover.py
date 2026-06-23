@@ -162,7 +162,7 @@ def infer_dark_horse_sector_from_ohlcv(
         df["ret_1d"].clip(-0.15, 0.25) * 2.0
         + np.log1p(df["dv_ratio"].clip(0.5, 10)) * 1.5
         + np.log1p(df["vol_z"].clip(0.5, 20)) * 0.5
-    )
+    ).fillna(0.0)
 
     X = df[["ret_1d", "dv_ratio", "vol_z"]].to_numpy(dtype=float)
     labels = _dbscan_dark_horse_labels(X)
@@ -192,7 +192,9 @@ def infer_dark_horse_sector_from_ohlcv(
 
     top_std = str(sector_scores.index[0])
     top_row = sector_scores.iloc[0]
-    conf = float(min(0.92, 0.45 + top_row["score"] * 0.08 + min(top_row["n"], 8) * 0.03))
+    score_v = float(pd.to_numeric(top_row["score"], errors="coerce") or 0.0)
+    n_v = float(pd.to_numeric(top_row["n"], errors="coerce") or 0.0)
+    conf = float(min(0.92, 0.45 + score_v * 0.08 + min(n_v, 8.0) * 0.03))
 
     out.update(
         {
