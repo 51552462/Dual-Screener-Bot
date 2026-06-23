@@ -17,7 +17,7 @@ from forward_market_guard import enforce_market_frame
 from reports.forward_report_scalar import col_series, scalar_float
 
 logger = logging.getLogger(__name__)
-from forward_score_bucket_deep_dive import _exit_date_span, _resolve_stock_name
+from forward_score_bucket_deep_dive import _exit_date_span
 from reports.report_staleness_gate import StalenessVerdict, evaluate_staleness
 from reports.report_timekeeper import ReportTimekeeper
 
@@ -34,6 +34,10 @@ class FlowTagBlock:
     win_rate_pct: float
     profit_factor: float
     cum_ret_pct: float
+    mean_ret_pct: float
+    n_unique_tickers: int
+    n_unknown_names: int
+    profit_factor_display: str
     carry_stock_html: str
     bleed_stock_html: str
     is_toxic: bool
@@ -106,26 +110,55 @@ def _toxic_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
     }
 
 
+def _row_ticker_key(row: pd.Series) -> str:
+    for k in ("code", "ticker", "symbol"):
+        if k not in row.index:
+            continue
+        v = row.get(k)
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            continue
+        t = str(v).strip().upper()
+        if t and t.lower() not in ("nan", "none"):
+            return t
+    return ""
+
+
+def _display_stock_label(row: pd.Series) -> Tuple[str, bool]:
+    """(표시명, 이름미상 여부) — code/ticker 폴백."""
+    for k in ("name", "stock_name"):
+        if k not in row.index:
+            continue
+        v = row.get(k)
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            continue
+        t = str(v).strip()
+        if t and t.lower() not in ("nan", "none"):
+            return t, False
+    tk = _row_ticker_key(row)
+    if tk:
+        if tk.isdigit() and len(tk) <= 6:
+            return tk.zfill(6), False
+        return tk, False
+    return "종목미상", True
+
+
 def _stock_chip(row: pd.Series, ret_col: str = "_fr") -> str:
-    nm = _resolve_stock_name(row)
-    if nm == "—":
-        for k in ("code", "ticker"):
-            if k not in row.index:
-                continue
-            v = row.get(k)
-            if v is None or (isinstance(v, float) and np.isnan(v)):
-                continue
-            t = str(v).strip()
-            if t and t.lower() not in ("nan", "none"):
-                nm = t
-                break
-        if nm == "—":
-            nm = "종목미상"
+    nm, _ = _display_stock_label(row)
     nm_esc = html.escape(nm, quote=False)
     r = scalar_float(row[ret_col])
     if r >= 0:
         return f"{nm_esc}(+{r:.0f}%)"
     return f"{nm_esc}({r:.0f}%)"
+
+
+def _format_pf_display(pf: float, n: int, n_losses: int) -> str:
+    """극단 PF(분모 손실 거의 없음) — 기관 리포트 왜곡 방지."""
+    p = scalar_float(pf, 1.0)
+    if n < 5 or n_losses == 0:
+        return "— (손실표본 없음)"
+    if p > 99.0:
+        return f">{min(99.0, p):.0f}"
+    return f"{p:.2f}"
 
 
 def _persist_flow_tag_toxic_registry(
@@ -381,22 +414,36 @@ def build_flow_tag_snapshot(
         wins = int(row["wins"])
         wr = (wins / n) * 100.0 if n else 0.0
         cum = scalar_float(row["cum_ret"])
+        mean_ret = cum / float(n) if n else 0.0
         tag_pf = scalar_float(pf.get(tag, 1.0), 1.0) if tag in pf.index else 1.0
         sub = long.loc[long["_tag"] == tag]
+        n_losses = int((col_series(sub, "_fr") <= 0).sum()) if not sub.empty else 0
+        n_unique = int(sub.apply(_row_ticker_key, axis=1).replace("", np.nan).dropna().nunique())
+        n_unknown = 0
+        if not sub.empty:
+            for _, srow in sub.iterrows():
+                _, unk = _display_stock_label(srow)
+                if unk:
+                    n_unknown += 1
         carry_html = "—"
         bleed_html = "—"
         if not sub.empty:
             fr_sub = col_series(sub, "_fr")
             if not fr_sub.empty:
-                carry_html = f"[캐리] {_stock_chip(sub.loc[fr_sub.idxmax()])}"
-                bleed_html = f"[출혈] {_stock_chip(sub.loc[fr_sub.idxmin()])}"
+                carry_html = f"[캐리·대표1건] {_stock_chip(sub.loc[fr_sub.idxmax()])}"
+                bleed_html = f"[출혈·대표1건] {_stock_chip(sub.loc[fr_sub.idxmin()])}"
         row_dicts.append(
             {
                 "tag": str(tag),
                 "n": n,
+                "n_losses": n_losses,
                 "win_rate_pct": wr,
                 "profit_factor": tag_pf,
+                "profit_factor_display": _format_pf_display(tag_pf, n, n_losses),
                 "cum_ret_pct": cum,
+                "mean_ret_pct": mean_ret,
+                "n_unique_tickers": n_unique,
+                "n_unknown_names": n_unknown,
                 "carry_stock_html": carry_html,
                 "bleed_stock_html": bleed_html,
             }
@@ -442,6 +489,10 @@ def build_flow_tag_snapshot(
             win_rate_pct=scalar_float(toxic_rd["win_rate_pct"]),
             profit_factor=scalar_float(toxic_rd["profit_factor"]),
             cum_ret_pct=scalar_float(toxic_rd["cum_ret_pct"]),
+            mean_ret_pct=scalar_float(toxic_rd.get("mean_ret_pct", 0)),
+            n_unique_tickers=int(toxic_rd.get("n_unique_tickers", 0)),
+            n_unknown_names=int(toxic_rd.get("n_unknown_names", 0)),
+            profit_factor_display=str(toxic_rd.get("profit_factor_display", "—")),
             carry_stock_html=str(toxic_rd["carry_stock_html"]),
             bleed_stock_html=str(toxic_rd["bleed_stock_html"]),
             is_toxic=True,
@@ -473,6 +524,10 @@ def build_flow_tag_snapshot(
                 win_rate_pct=scalar_float(rd["win_rate_pct"]),
                 profit_factor=scalar_float(rd["profit_factor"]),
                 cum_ret_pct=scalar_float(rd["cum_ret_pct"]),
+                mean_ret_pct=scalar_float(rd.get("mean_ret_pct", 0)),
+                n_unique_tickers=int(rd.get("n_unique_tickers", 0)),
+                n_unknown_names=int(rd.get("n_unknown_names", 0)),
+                profit_factor_display=str(rd.get("profit_factor_display", "—")),
                 carry_stock_html=str(rd["carry_stock_html"]),
                 bleed_stock_html=str(rd["bleed_stock_html"]),
                 is_toxic=is_t,
@@ -538,6 +593,17 @@ def format_flow_tag_report_html(
             f"~<b>{html.escape(snap.exit_date_max, quote=False)}</b>\n"
         )
 
+    if grade in ("YELLOW", "RED"):
+        out += (
+            f"⚠️ <i>데이터 신뢰도 <b>{grade}</b> — 아래 수치는 <b>기간 내 실제 청산(CLOSED)</b>만 "
+            f"집계합니다. OPEN·당일 미청산·스캔 중단 구간은 반영되지 않을 수 있습니다.</i>\n"
+        )
+    out += (
+        "📐 <i>집계 정의: 승률·PF·건당평균·누적%p = 해당 #태그에 속한 <b>전체 청산건</b> 합산 "
+        "(1건이 여러 태그면 태그별로 분할 집계). 누적%p는 수익률 합(표본수에 비례). "
+        "캐리/출혈 = 그 태그 내 <b>대표 1건</b>(최대↑/최소↓).</i>\n"
+    )
+
     if snap.skipped_red:
         out += (
             "<i>데이터 정체 RED — 태그별 승률·기여도 집계를 생략했습니다. "
@@ -555,10 +621,16 @@ def format_flow_tag_report_html(
                 continue
             tag_esc = html.escape(b.tag, quote=False)
             toxic_mark = " ☠️" if b.is_toxic else ""
+            unk_note = ""
+            if b.n_unknown_names > 0:
+                unk_note = f" · 이름미상 <b>{b.n_unknown_names}</b>건"
             out += (
-                f" ▪️ <b>{tag_esc}</b>{toxic_mark}: 승률 <b>{b.win_rate_pct:.1f}%</b> / "
-                f"PF <b>{b.profit_factor:.2f}</b> / 누적 <b>{b.cum_ret_pct:+.1f}%p</b> "
-                f"(n=<b>{b.n}</b>)\n"
+                f" ▪️ <b>{tag_esc}</b>{toxic_mark}: "
+                f"승률 <b>{b.win_rate_pct:.1f}%</b> / "
+                f"PF <b>{b.profit_factor_display}</b> / "
+                f"건당평균 <b>{b.mean_ret_pct:+.2f}%</b> / "
+                f"누적합 <b>{b.cum_ret_pct:+.1f}%p</b> "
+                f"(n=<b>{b.n}</b>청산·<b>{b.n_unique_tickers}</b>종목{unk_note})\n"
                 f"   ➔ {b.carry_stock_html} · {b.bleed_stock_html}\n"
             )
         out += "\n"

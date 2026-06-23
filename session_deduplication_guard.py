@@ -1,8 +1,8 @@
 """
 Stale Session Gate — 동일 session_date 재스캔으로 forward_trades 과적합 오염 방지.
 
-OHLCV 분석 대상 session_date 가 가상 장부 최근 entry 앵커와 같으면 신규 스캔만 중단.
-오픈 포지션 트래킹(ledger track) 은 별도 경로로 유지.
+OHLCV 분석 대상 session_date 가 **유효 OPEN** 또는 **당일 funnel 적재**가 있을 때만 재스캔 차단.
+CLOSED-only entry_date·좀비 행만 있으면 차단하지 않음 (데이터 drought 복구).
 """
 from __future__ import annotations
 
@@ -36,13 +36,15 @@ class SessionDeduplicationDecision:
     last_entry_anchor: str
     reason: str
     anchor_mode: str = ""
+    open_count_session: int = 0
+    funnel_slots_session: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
 class SessionDeduplicationGuard:
-    """forward_trades entry 앵커 vs fluid session_date 중복 스캔 차단."""
+    """forward_trades OPEN 앵커 · funnel 스냅샷 vs fluid session_date."""
 
     def __init__(self, sys_config: Optional[Dict[str, Any]] = None) -> None:
         self.cfg = sys_config if isinstance(sys_config, dict) else None
@@ -58,8 +60,8 @@ class SessionDeduplicationGuard:
         return resolve_market_with_db_fallback(market, self.cfg)
 
     @staticmethod
-    def get_last_entry_anchor(market: str, *, db_path: Optional[str] = None) -> str:
-        """해당 시장 forward_trades 의 최신 entry_date (YYYY-MM-DD)."""
+    def get_last_open_entry_anchor(market: str, *, db_path: Optional[str] = None) -> str:
+        """해당 시장 OPEN 포지션의 최신 entry_date (YYYY-MM-DD)."""
         mk = str(market or "KR").upper()
         path = db_path or MARKET_DATA_DB_PATH
         if not path or not os.path.isfile(path):
@@ -72,6 +74,7 @@ class SessionDeduplicationGuard:
                     SELECT MAX(substr(CAST(entry_date AS TEXT), 1, 10))
                     FROM forward_trades
                     WHERE UPPER(TRIM(COALESCE(market, ''))) = ?
+                      AND UPPER(TRIM(COALESCE(status, ''))) = 'OPEN'
                       AND entry_date IS NOT NULL
                       AND TRIM(CAST(entry_date AS TEXT)) != ''
                     """,
@@ -84,6 +87,69 @@ class SessionDeduplicationGuard:
         except sqlite3.Error:
             pass
         return ""
+
+    @staticmethod
+    def count_open_on_session(
+        market: str,
+        session: str,
+        *,
+        db_path: Optional[str] = None,
+    ) -> int:
+        mk = str(market or "KR").upper()
+        sess = str(session or "")[:10]
+        if len(sess) != 10:
+            return 0
+        path = db_path or MARKET_DATA_DB_PATH
+        if not path or not os.path.isfile(path):
+            return 0
+        try:
+            conn = sqlite3.connect(path, timeout=15)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM forward_trades
+                    WHERE UPPER(TRIM(COALESCE(market, ''))) = ?
+                      AND UPPER(TRIM(COALESCE(status, ''))) = 'OPEN'
+                      AND substr(CAST(entry_date AS TEXT), 1, 10) = ?
+                    """,
+                    (mk, sess),
+                ).fetchone()
+                return int(row[0] or 0) if row else 0
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return 0
+
+    @staticmethod
+    def funnel_slots_on_session(
+        market: str,
+        session: str,
+        *,
+        db_path: Optional[str] = None,
+    ) -> int:
+        """scan_funnel_snapshot 적재 횟수 — 당일 스캔 실제 수행 여부."""
+        mk = str(market or "KR").upper()
+        sess = str(session or "")[:10]
+        if len(sess) != 10:
+            return 0
+        path = db_path or MARKET_DATA_DB_PATH
+        if not path or not os.path.isfile(path):
+            return 0
+        try:
+            conn = sqlite3.connect(path, timeout=10)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM scan_funnel_snapshot
+                    WHERE market = ? AND substr(ts, 1, 10) = ?
+                    """,
+                    (mk, sess),
+                ).fetchone()
+                return int(row[0] or 0) if row else 0
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return 0
 
     def evaluate(
         self,
@@ -99,14 +165,16 @@ class SessionDeduplicationGuard:
                 market=mk,
                 abort_scan=False,
                 session_date=res.session_date,
-                last_entry_anchor=self.get_last_entry_anchor(mk, db_path=db_path),
+                last_entry_anchor=self.get_last_open_entry_anchor(mk, db_path=db_path),
                 reason="FORCE_RESCAN bypass",
                 anchor_mode=res.mode,
             )
 
         res = anchor or self.resolve_session_date(mk)
         session = str(res.session_date or "")[:10]
-        last_anchor = self.get_last_entry_anchor(mk, db_path=db_path)
+        last_anchor = self.get_last_open_entry_anchor(mk, db_path=db_path)
+        n_open_sess = self.count_open_on_session(mk, session, db_path=db_path)
+        n_funnel = self.funnel_slots_on_session(mk, session, db_path=db_path)
 
         if not session:
             return SessionDeduplicationDecision(
@@ -116,9 +184,11 @@ class SessionDeduplicationGuard:
                 last_entry_anchor=last_anchor,
                 reason="no_session_date",
                 anchor_mode=res.mode,
+                open_count_session=n_open_sess,
+                funnel_slots_session=n_funnel,
             )
 
-        if not last_anchor:
+        if not last_anchor and n_open_sess == 0 and n_funnel == 0:
             return SessionDeduplicationDecision(
                 market=mk,
                 abort_scan=False,
@@ -126,26 +196,49 @@ class SessionDeduplicationGuard:
                 last_entry_anchor="",
                 reason="no_prior_entry_anchor",
                 anchor_mode=res.mode,
+                open_count_session=n_open_sess,
+                funnel_slots_session=n_funnel,
             )
 
-        if session == last_anchor:
+        if session != last_anchor and n_open_sess == 0:
             return SessionDeduplicationDecision(
                 market=mk,
-                abort_scan=True,
+                abort_scan=False,
                 session_date=session,
                 last_entry_anchor=last_anchor,
-                reason=(
-                    f"stale_session_dedup: OHLCV session={session} "
-                    f"== forward_trades last_entry={last_anchor}"
-                ),
+                reason="session_advance_ok",
                 anchor_mode=res.mode,
+                open_count_session=n_open_sess,
+                funnel_slots_session=n_funnel,
             )
+
+        # 동일 session — OPEN 또는 funnel 증거가 있을 때만 차단
+        if session == last_anchor or n_open_sess > 0:
+            if n_open_sess > 0 or n_funnel > 0:
+                return SessionDeduplicationDecision(
+                    market=mk,
+                    abort_scan=True,
+                    session_date=session,
+                    last_entry_anchor=last_anchor or session,
+                    reason=(
+                        f"stale_session_dedup: session={session} "
+                        f"open_on_session={n_open_sess} funnel_slots={n_funnel}"
+                    ),
+                    anchor_mode=res.mode,
+                    open_count_session=n_open_sess,
+                    funnel_slots_session=n_funnel,
+                )
 
         return SessionDeduplicationDecision(
             market=mk,
             abort_scan=False,
             session_date=session,
             last_entry_anchor=last_anchor,
-            reason="session_advance_ok",
+            reason=(
+                f"session_anchor_no_live_book: session={session} "
+                f"last_open_anchor={last_anchor or '—'} — rescan allowed"
+            ),
             anchor_mode=res.mode,
+            open_count_session=n_open_sess,
+            funnel_slots_session=n_funnel,
         )

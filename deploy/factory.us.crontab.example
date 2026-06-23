@@ -13,12 +13,12 @@ CRON_TZ=America/New_York
 PATH=/usr/local/bin:/usr/bin:/bin
 
 # --- US staggered intraday (Mon–Fri ET, 9 slots, 50 min) ---
-0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-supernova
-50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim
-40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante
-30 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-ema5
-20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-bowl
-10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-supernova-r2
-0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-nulrim-r2
-50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-dante-r2
-40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-us-ema5-r2
+0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-supernova
+50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-nulrim
+40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-dante
+30 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-ema5
+20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-bowl
+10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-supernova-r2
+0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-nulrim-r2
+50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-dante-r2
+40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-ema5-r2

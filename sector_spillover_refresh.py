@@ -22,21 +22,7 @@ import pytz
 from market_db_paths import report_db_read_path
 
 
-def map_standard_sector(s: Any) -> str:
-    s_str = str(s).lower()
-    if any(k in s_str for k in ["반도체", "it", "ai", "소프트웨어", "모바일", "테크", "데이터"]):
-        return "반도체/IT"
-    if any(k in s_str for k in ["바이오", "헬스", "의료", "제약"]):
-        return "바이오/헬스케어"
-    if any(k in s_str for k in ["배터리", "2차전지", "화학", "에너지", "정유"]):
-        return "에너지/화학"
-    if any(k in s_str for k in ["금융", "은행", "증권", "지주", "투자"]):
-        return "금융/지주"
-    if any(k in s_str for k in ["기계", "조선", "방산", "산업재", "로봇", "전력"]):
-        return "산업재/기계"
-    if any(k in s_str for k in ["소비", "유통", "식품", "화장품", "엔터", "미디어"]):
-        return "소비재/엔터"
-    return "기타/혼합"
+from sector_taxonomy import map_standard_sector  # noqa: F401 — SSOT re-export
 
 
 def _today_kst() -> str:
@@ -185,7 +171,7 @@ def refresh_predicted_sector_for_market(
         out["reason"] = "no_rows"
         return out
 
-    flow_df["sector"] = flow_df["sector"].apply(map_standard_sector)
+    flow_df["sector"] = flow_df["sector"].apply(lambda s: map_standard_sector(s, market=mkt))
     daily_dom = flow_df.groupby("entry_date")["sector"].agg(
         lambda x: x.mode().iloc[0] if not x.mode().empty else None
     ).dropna()

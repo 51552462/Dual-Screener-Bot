@@ -1,7 +1,7 @@
 """tuning_digest_formatter — 유니코드·1.0 숨김."""
 from tuning_digest_formatter import (
     format_group_kelly_mult_diff,
-    format_meta_changelog_telegram,
+    format_meta_changelog_telegram_flat,
 )
 
 
@@ -35,8 +35,20 @@ def test_meta_changelog_dict_entry():
             }
         ]
     }
-    lines = format_meta_changelog_telegram(meta)
+    lines = format_meta_changelog_telegram_flat(meta)
     text = "\n".join(lines)
     assert "로직A" in text
     assert "0.85" in text
     assert "\\u" not in text
+
+
+def test_group_kelly_mult_splits_pages_no_ellipsis():
+    old = {f"grp_{i}": 1.07 for i in range(20)}
+    new = {f"grp_{i}": 1.0 for i in range(20)}
+    from tuning_digest_formatter import format_group_kelly_mult_diff_pages
+
+    pages = format_group_kelly_mult_diff_pages(old, new, page_size=15)
+    joined = "\n".join("\n".join(p) for p in pages)
+    assert "외 " not in joined
+    assert "grp_0" in joined and "grp_19" in joined
+    assert len(pages) == 2

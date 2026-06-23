@@ -125,7 +125,7 @@ def send_comprehensive_daily_report(
         _df_long_only,
         build_market_report_opening,
     )
-    from evolution_digest import build_global_evolution_digest_html
+    from evolution_digest import build_global_evolution_digest_messages
     from satellite_intel_brief import (
         build_satellite_intel_for_report,
         build_strategy_insight_html,
@@ -214,6 +214,20 @@ def send_comprehensive_daily_report(
                 n_closed=mkt_slice.n_closed_window,
                 n_open=mkt_slice.n_open_valid,
             )
+            try:
+                from forward.forward_book_integrity import (
+                    compute_open_book_stats,
+                    format_open_book_integrity_html,
+                )
+
+                _book_stats = compute_open_book_stats(
+                    df_real,
+                    market=market,
+                    session_anchor=ctx.anchor_for(market),
+                )
+                _win_hdr += format_open_book_integrity_html(_book_stats)
+            except Exception:
+                pass
             _win_closed = mkt_slice.n_closed_window
             
             # ---------------------------------------------------------
@@ -272,6 +286,11 @@ def send_comprehensive_daily_report(
             if not df_real.empty:
                 df_all_copy = df_real.copy()
                 df_all_copy['group'] = df_all_copy['sig_type'].apply(get_core_group)
+                df_open_copy = df_open.copy()
+                if not df_open_copy.empty:
+                    df_open_copy["group"] = df_open_copy["sig_type"].apply(get_core_group)
+                else:
+                    df_open_copy = pd.DataFrame(columns=["group"])
                 leaderboard = []
                 for group in df_all_copy['group'].unique():
                     g_df = df_all_copy[df_all_copy['group'] == group]
@@ -284,11 +303,14 @@ def send_comprehensive_daily_report(
                     from reports.forward_report_scalar import profit_factor_from_returns, fmt_money
 
                     pf = profit_factor_from_returns(g_closed['final_ret'])
+                    n_open_grp = 0
+                    if not df_open_copy.empty and "group" in df_open_copy.columns:
+                        n_open_grp = int((df_open_copy["group"] == group).sum())
                     leaderboard.append({
                         'g': group,
                         'bal': scalar_float(base_seed + pnl),
                         'wr': scalar_float(wr),
-                        'op': int(_reporter_valid_holding_mask(g_df).sum()),
+                        'op': n_open_grp,
                         'tot': total_closed,
                         'pf': pf,
                     })
@@ -513,9 +535,8 @@ def send_comprehensive_daily_report(
             )
 
     try:
-        _delta_global = build_global_evolution_digest_html(meta_state_daily)
-        if _delta_global:
-            send_telegram_msg(_delta_global)
+        for _delta_msg in build_global_evolution_digest_messages(meta_state_daily):
+            send_telegram_msg(_delta_msg)
             time.sleep(1)
     except Exception as _delta_ex:
         send_telegram_msg(
@@ -1008,100 +1029,19 @@ def run_deep_dive_analysis(market='KR'):
 
         # 👑 엔진 8: [V29.0 주도 섹터 순환매(Rotation) 수명 및 전이 추적]
         # ---------------------------------------------------------
-        report_msg += f"\n🔄 <b>[V29.0 {market}장 주도 섹터 순환매 자금 추적]</b>\n"
         try:
-            conn_rt = _open_market_db_ro()
-            try:
-                rot_df = pd.read_sql(
-                    "SELECT entry_date, sector FROM forward_trades WHERE market=? AND entry_date >= ? ORDER BY entry_date ASC",
-                    conn_rt,
-                    params=(market, cutoff_rot_60),
-                )
-            finally:
-                conn_rt.close()
+            from sector_rotation_store import format_v29_rotation_section
 
-            def map_standard_sector(s):
-                s_str = str(s).lower()
-                if any(k in s_str for k in ["반도체", "it", "ai", "소프트웨어", "모바일", "테크", "데이터"]): return "반도체/IT"
-                if any(k in s_str for k in ["바이오", "헬스", "의료", "제약"]): return "바이오/헬스케어"
-                if any(k in s_str for k in ["배터리", "2차전지", "화학", "에너지", "정유"]): return "에너지/화학"
-                if any(k in s_str for k in ["금융", "은행", "증권", "지주", "투자"]): return "금융/지주"
-                if any(k in s_str for k in ["기계", "조선", "방산", "산업재", "로봇", "전력"]): return "산업재/기계"
-                if any(k in s_str for k in ["소비", "유통", "식품", "화장품", "엔터", "미디어"]): return "소비재/엔터"
-                return "기타/혼합"
-
-            rot_df['sector'] = rot_df['sector'].apply(map_standard_sector)
-
-            if not rot_df.empty:
-                # 일자별 대장 섹터 추출
-                # 💡 [픽스] 가짜 섹터 배제
-                def get_real_sector_deep(x):
-                    valid_s = [str(s) for s in x if '유망' not in str(s) and '포착' not in str(s)]
-                    return pd.Series(valid_s).mode()[0] if valid_s else None
-                    
-                daily_dom = rot_df.groupby('entry_date')['sector'].agg(get_real_sector_deep).dropna()
-                
-                streaks = {}      # 섹터별 머무는 기간(수명)
-                transitions = {}  # A -> B 로의 자금 이동 횟수
-                
-                current_sec = None
-                current_streak = 0
-                
-                # 순환매 체인(Markov Chain) 연산
-                for date, sec in daily_dom.items():
-                    if sec == current_sec:
-                        current_streak += 1
-                    else:
-                        if current_sec is not None:
-                            # 수명 기록
-                            if current_sec not in streaks: streaks[current_sec] = []
-                            streaks[current_sec].append(current_streak)
-                            
-                            # 자금 이동 궤적 기록 (A ➔ B)
-                            trans_key = f"{current_sec[:15]} ➔ {sec[:15]}"
-                            transitions[trans_key] = transitions.get(trans_key, 0) + 1
-                        
-                        current_sec = sec
-                        current_streak = 1
-                
-                # 마지막 진행 중인 파동 기록
-                if current_sec is not None:
-                    if current_sec not in streaks: streaks[current_sec] = []
-                    streaks[current_sec].append(current_streak)
-
-                # 1. 섹터별 체류 수명 리포팅
-                report_msg += "▪️ <b>섹터별 자금 체류 시간 (수명):</b>\n"
-                for sec, lengths in streaks.items():
-                    avg_len = sum(lengths) / len(lengths)
-                    max_len = max(lengths)
-                    report_msg += f" - {sec[:15]}: 평균 {avg_len:.1f}일 (최장 {max_len}일)\n"
-                    
-                # 2. 자금 이동 궤적 리포팅
-                report_msg += "\n▪️ <b>가장 빈번한 자금 이동 경로 (최근 60일, KST 진입일 기준):</b>\n"
-                sorted_trans = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:3]
-                if sorted_trans:
-                    for path, count in sorted_trans:
-                        report_msg += f" - {path} ({count}회 관측)\n"
-                else:
-                    report_msg += " - 아직 뚜렷한 전이 패턴이 형성되지 않았습니다.\n"
-                    
-                if current_sec and sorted_trans:
-                    # "A ➔ B" 형태에서 B(다음 섹터) 추출
-                    top_transition = sorted_trans[0][0]
-                    if "➔" in top_transition:
-                        next_sec = top_transition.split("➔")[1].strip()
-                    else:
-                        next_sec = "다음 섹터"
-                    report_msg += f"💡 <b>관제탑 동적 통찰:</b> 현재 주도 섹터인 [{current_sec}]의 수명이 다해갈 경우, 과거 패턴상 자금 이동 확률이 가장 높은 [{next_sec}] 섹터의 선취매를 준비하십시오.\n"
-                else:
-                    report_msg += "💡 <b>관제탑 동적 통찰:</b> 아직 뚜렷한 섹터 전이 패턴이 확보되지 않아 관망을 권장합니다.\n"
-            else:
-                report_msg += (
-                    f"⚠️ 표본 부족 (최근 60일 {market}장 진입 행 0건)으로 순환매 추적 딥다이브 생략.\n"
-                )
+            report_msg += format_v29_rotation_section(
+                market,
+                lookback_days=60,
+                sys_config=load_system_config(),
+                open_db_fn=_open_market_db_ro,
+            )
         except Exception as e:
+            report_msg += f"\n🔄 <b>[V29.0 {market}장 주도 섹터 순환매 자금 추적]</b>\n"
             report_msg += f"⚠️ 순환매 추적 에러: {e}\n"
-            
+
         # ---------------------------------------------------------
         # 👑 엔진 9: [V39.0 자금 관리 시뮬레이션: 고정 리스크 vs 켈리 리스크]
         # ---------------------------------------------------------

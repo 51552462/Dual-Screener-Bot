@@ -526,9 +526,21 @@ def notify_factory_run(
         return
     st = report.status_label
     mode = str(report.mode or "")
-    # 장중 스캔: SKIPPED_* 도 1줄 통지 (무음 스킵 → “한 장도 안 옴” 오해 방지)
+    # 장중 스캔: 예상 장외 SKIPPED_SESSION 은 로그만 (KR주간 US알람 제거)
     if mode.startswith("scan_") and st in ("SKIPPED_SESSION", "SKIPPED_LOCK"):
-        if send_fn:
+        quiet = False
+        try:
+            from factory_schedule_guard import is_quiet_scan_session_skip, us_cron_misalignment_hint
+
+            quiet = is_quiet_scan_session_skip(
+                mode, detail=str(report.skipped_session_detail or "")
+            )
+            mis, hint = us_cron_misalignment_hint(mode)
+            if mis and hint:
+                logger.warning("factory %s: %s", mode, hint)
+        except Exception:
+            quiet = False
+        if not quiet and send_fn:
             send_fn(format_factory_run_telegram(report))
         return
     if st in ("OK", "SKIPPED_SESSION", "SKIPPED_LOCK"):

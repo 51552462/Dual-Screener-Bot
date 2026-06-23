@@ -53,8 +53,8 @@ def _cron_line(minute: int, hour: int, dow: str, command: str, install_root: str
     )
 
 
-def _scan_command(factory_flag: str) -> str:
-    return f"bash ./factory.sh {factory_flag}"
+def _scan_command(factory_flag: str, *, tz: str) -> str:
+    return f"TZ={tz} bash ./factory.sh {factory_flag}"
 
 
 def render_kr_crontab(install_root: str) -> str:
@@ -78,7 +78,7 @@ def render_kr_crontab(install_root: str) -> str:
     ]
     for slot in KR_SCAN_SLOTS:
         lines.append(
-            _cron_line(slot.minute, slot.hour, dow, _scan_command(slot.factory_flag), install_root)
+            _cron_line(slot.minute, slot.hour, dow, _scan_command(slot.factory_flag, tz=tz), install_root)
         )
     lines.append("")
     for minute, hour, extra_dow, flag, comment in _KR_EXTRA_JOBS:
@@ -90,7 +90,7 @@ def render_kr_crontab(install_root: str) -> str:
                 f">>{install_root}/logs/autonomous_ubuntu.log 2>&1"
             )
         else:
-            cmd = _scan_command(flag)
+            cmd = _scan_command(flag, tz=tz)
         lines.append(_cron_line(minute, hour, extra_dow, cmd, install_root))
         lines.append("")
     while lines and lines[-1] == "":
@@ -120,7 +120,7 @@ def render_us_crontab(install_root: str) -> str:
     ]
     for slot in US_SCAN_SLOTS:
         lines.append(
-            _cron_line(slot.minute, slot.hour, dow, _scan_command(slot.factory_flag), install_root)
+            _cron_line(slot.minute, slot.hour, dow, _scan_command(slot.factory_flag, tz=tz), install_root)
         )
     return "\n".join(lines) + "\n"
 

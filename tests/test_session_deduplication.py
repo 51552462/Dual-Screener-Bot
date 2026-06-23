@@ -19,13 +19,13 @@ class TestSessionDeduplicationGuard(unittest.TestCase):
             conn.execute(
                 """
                 CREATE TABLE forward_trades (
-                    market TEXT, entry_date TEXT, ticker TEXT,
+                    market TEXT, entry_date TEXT, ticker TEXT, status TEXT,
                     dyn_cpv REAL, dyn_tb REAL, v_energy REAL
                 )
                 """
             )
             conn.execute(
-                "INSERT INTO forward_trades VALUES (?, ?, 'TEST', 0.7, 10.0, 20.0)",
+                "INSERT INTO forward_trades VALUES (?, ?, 'TEST', 'OPEN', 0.7, 10.0, 20.0)",
                 (market, entry_date),
             )
             conn.commit()
@@ -36,6 +36,10 @@ class TestSessionDeduplicationGuard(unittest.TestCase):
     def test_abort_when_session_matches_last_entry(self):
         db = self._make_db("2026-06-09", "US")
         self.addCleanup(lambda: os.path.exists(db) and os.remove(db))
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE forward_trades SET status='OPEN'")
+        conn.commit()
+        conn.close()
         guard = SessionDeduplicationGuard({})
         with patch.object(
             guard,
@@ -53,6 +57,33 @@ class TestSessionDeduplicationGuard(unittest.TestCase):
         self.assertTrue(d.abort_scan)
         self.assertEqual(d.session_date, "2026-06-09")
         self.assertIn("stale_session_dedup", d.reason)
+
+    def test_allow_when_closed_only_entry_same_session(self):
+        """CLOSED-only entry_date — OPEN=0 이면 재스캔 허용 (drought 복구)."""
+        db = self._make_db("2026-06-09", "KR")
+        self.addCleanup(lambda: os.path.exists(db) and os.remove(db))
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE forward_trades SET status='CLOSED', entry_date='2026-06-09'"
+        )
+        conn.commit()
+        conn.close()
+        guard = SessionDeduplicationGuard({})
+        with patch.object(
+            guard,
+            "resolve_session_date",
+            return_value=type(
+                "R",
+                (),
+                {"session_date": "2026-06-09", "mode": "live"},
+            )(),
+        ):
+            d = guard.evaluate("KR", db_path=db)
+        self.assertFalse(d.abort_scan)
+        self.assertIn(
+            d.reason,
+            ("no_prior_entry_anchor", "session_anchor_no_live_book"),
+        )
 
     def test_allow_when_session_advances(self):
         db = self._make_db("2026-06-08", "KR")

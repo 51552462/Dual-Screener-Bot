@@ -1304,27 +1304,12 @@ def execute_supernova_live_scan(market):
     ok, gate_msg = is_market_open(market)
     if not ok:
         print(f"🛑 [{market}] {gate_msg}")
-        try:
-            send_telegram_msg(
-                f"🛑 <b>[{market} 초신성 스킵]</b> 장외 세션\n"
-                f"<i>{gate_msg}</i>"
-            )
-        except Exception:
-            pass
         return
 
     dedup_ok, dedup_msg = evaluate_session_deduplication(market)
     if not dedup_ok:
         print(f"🛡️ [{market}] SessionDeduplicationGuard ABORT — {dedup_msg}")
         print(f"   (오픈 포지션 트래킹은 ledger 경로 유지 · 신규 스캔만 차단)")
-        try:
-            send_telegram_msg(
-                f"🛡️ <b>[{market} 초신성 스킵]</b> 동일 세션 중복 차단\n"
-                f"<i>{dedup_msg}</i>\n"
-                f"<i>수동 재스캔: FACTORY_ALLOW_SESSION_RESCAN=1</i>"
-            )
-        except Exception:
-            pass
         try:
             from evolution.proprietary_synergy_bridge import run_offline_rnd_on_scan_abort
             from session_deduplication_guard import SessionDeduplicationGuard

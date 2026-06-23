@@ -191,7 +191,7 @@ def ingest_sector_daily_leaders(
 
     df = df.copy()
     df["day"] = df["entry_date"].astype(str).str.slice(0, 10)
-    df["sector_std"] = df["sector"].apply(map_standard_sector)
+    df["sector_std"] = df["sector"].apply(lambda s: map_standard_sector(s, market=mkt))
     df = df[df["sector_std"].apply(lambda s: _sector_row_ok(s, market=mkt))]
 
     if df.empty:
@@ -724,5 +724,176 @@ def format_rotation_telegram_block(
             )
     elif series:
         lines.append("\n▪️ <i>30일 DB 전이 2회 미만 — 표본 축적 중</i>\n")
+
+    return "".join(lines)
+
+
+def format_v29_rotation_section(
+    market: str,
+    *,
+    lookback_days: int = 60,
+    db_path: Optional[str] = None,
+    sys_config: Optional[Dict[str, Any]] = None,
+    open_db_fn: Optional[Any] = None,
+) -> str:
+    """
+    [V29.0] 주도 섹터 순환매 — taxonomy 전 섹터 패널 + DB rollup + 미분류 breakdown.
+    deep_dive 엔진 8 SSOT (레거시 6버킷 인라인 제거).
+    """
+    import html as _html
+
+    from sector_taxonomy import (
+        UNMAPPED_KR,
+        UNMAPPED_US,
+        rollup_sector_entries,
+        standard_sectors_for_market,
+    )
+
+    mkt = str(market).upper()
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    path = db_path or _db_path()
+    unmapped = UNMAPPED_US if mkt == "US" else UNMAPPED_KR
+
+    lines: List[str] = [
+        f"\n🔄 <b>[V29.0 {mkt}장 주도 섹터 순환매 자금 추적]</b>\n",
+        "📐 <i>표준 taxonomy 전 섹터 패널 — 진입건·주도일·체류수명. "
+        "미분류는 원시 라벨 breakdown 별도.</i>\n",
+    ]
+
+    cutoff = (datetime.now() - timedelta(days=int(lookback_days))).strftime("%Y-%m-%d")
+    rot_df = pd.DataFrame()
+    try:
+        if open_db_fn is not None:
+            conn = open_db_fn()
+            try:
+                rot_df = pd.read_sql(
+                    """
+                    SELECT entry_date, sector, status
+                    FROM forward_trades
+                    WHERE market=? AND entry_date >= ?
+                      AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+                    ORDER BY entry_date ASC
+                    """,
+                    conn,
+                    params=(mkt, cutoff),
+                )
+            finally:
+                conn.close()
+        elif path and os.path.isfile(path):
+            conn = sqlite3.connect(path, timeout=60)
+            try:
+                rot_df = pd.read_sql(
+                    """
+                    SELECT entry_date, sector, status
+                    FROM forward_trades
+                    WHERE market=? AND entry_date >= ?
+                      AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+                    ORDER BY entry_date ASC
+                    """,
+                    conn,
+                    params=(mkt, cutoff),
+                )
+            finally:
+                conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        lines.append(f"⚠️ 순환매 데이터 로드 실패: {_html.escape(str(ex)[:80], quote=False)}\n")
+        return "".join(lines)
+
+    if rot_df.empty:
+        lines.append(
+            f"⚠️ 표본 부족 (최근 {lookback_days}일 {mkt}장 진입 0건) — 순환매 추적 생략.\n"
+        )
+        return "".join(lines)
+
+    try:
+        ingest_sector_daily_leaders(mkt, lookback_days=lookback_days, db_path=path)
+        rebuild_transition_rollup(mkt, db_path=path)
+    except Exception as ex:
+        logger.debug("v29 ingest skip: %s", ex)
+
+    panel, unmapped_bd, _raw_map = rollup_sector_entries(rot_df, market=mkt)
+    standards = list(standard_sectors_for_market(mkt))
+    panel_by_name = {p.sector: p for p in panel}
+
+    series = _load_daily_series(mkt, days=lookback_days, db_path=path)
+    current, streak, _streaks, _trans = compute_streaks_from_series(series, market=mkt)
+
+    if current:
+        lines.append(
+            f"🔥 <b>현재 주도:</b> {_html.escape(current, quote=False)} "
+            f"({streak}일째 · DB {lookback_days}일)\n"
+        )
+    try:
+        from sector_spillover_refresh import resolve_predicted_sector_display
+
+        pred = resolve_predicted_sector_display(cfg, mkt)
+        lines.append(f"🔮 <b>다음 예측:</b> {_html.escape(pred, quote=False)}\n")
+    except Exception:
+        pass
+
+    lines.append(f"\n▪️ <b>섹터별 자금 체류·진입 패널 (최근 {lookback_days}일):</b>\n")
+    shown = 0
+    for bucket in standards:
+        p = panel_by_name.get(bucket)
+        if p is None or p.n_entries == 0:
+            continue
+        lines.append(
+            f" - {_html.escape(bucket, quote=False)}: "
+            f"진입 <b>{p.n_entries}</b>건 · 주도일 <b>{p.n_days_dominant}</b> · "
+            f"체류 평균 <b>{p.avg_streak_days:.1f}</b>일 (최장 {p.max_streak_days}일)\n"
+        )
+        shown += 1
+
+    for p in panel:
+        if p.sector in standards or p.n_entries == 0:
+            continue
+        if not is_rotation_eligible_sector(p.sector, market=mkt) and p.sector != unmapped:
+            continue
+        fine = " ·원시보존" if not p.is_standard_bucket else ""
+        lines.append(
+            f" - {_html.escape(p.sector[:18], quote=False)}{fine}: "
+            f"진입 <b>{p.n_entries}</b>건 · 주도일 <b>{p.n_days_dominant}</b> · "
+            f"체류 평균 <b>{p.avg_streak_days:.1f}</b>일\n"
+        )
+        shown += 1
+
+    if shown == 0:
+        lines.append(" - <i>유효 섹터 진입 0건 (섹터 태깅·normalize 점검)</i>\n")
+
+    if unmapped_bd:
+        total_um = sum(unmapped_bd.values())
+        lines.append(
+            f"\n▪️ <b>미분류 원시 라벨 breakdown</b> (taxonomy 미매핑 <b>{total_um}</b>건):\n"
+        )
+        for raw, cnt in sorted(unmapped_bd.items(), key=lambda x: -x[1])[:12]:
+            mapped = _raw_map.get(raw, unmapped)
+            lines.append(
+                f" - {_html.escape(raw[:20], quote=False)} → {_html.escape(mapped, quote=False)} "
+                f"(<b>{cnt}</b>건)\n"
+            )
+
+    rollups = top_rollup_transitions(mkt, window="30d", min_count=1, limit=3, db_path=path)
+    lines.append("\n▪️ <b>빈번한 자금 이동 경로 (30일 DB):</b>\n")
+    if rollups:
+        for r in rollups:
+            lines.append(
+                f" - {_html.escape(r['label'], quote=False)} "
+                f"(<b>{r['count']}</b>회 · 신뢰 {r['confidence']:.0%})\n"
+            )
+        if current and rollups:
+            nxt = rollups[0]["to"]
+            lines.append(
+                f"💡 <b>관제탑:</b> [{_html.escape(current, quote=False)}] 수명 말기 시 "
+                f"[{_html.escape(str(nxt), quote=False)}] 선취매 후보.\n"
+            )
+    else:
+        lines.append(" - <i>전이 패턴 축적 중 (2회 미만)</i>\n")
+
+    dormant = [b for b in standards if panel_by_name.get(b) is None or panel_by_name[b].n_entries == 0]
+    if dormant and shown > 0:
+        preview = ", ".join(_html.escape(d, quote=False) for d in dormant[:8])
+        if len(dormant) > 8:
+            preview += "…"
+        lines.append(f"\n📋 <i>표본 없음(대기): {preview}</i>\n")
 
     return "".join(lines)

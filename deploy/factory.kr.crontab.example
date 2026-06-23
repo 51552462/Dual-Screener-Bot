@@ -12,25 +12,25 @@ CRON_TZ=Asia/Seoul
 PATH=/usr/local/bin:/usr/bin:/bin
 
 # --- KR staggered intraday (Mon–Fri KST, 10 slots, 50 min) ---
-0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-supernova
-50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-nulrim
-40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-dante
-30 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-ema5
-20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-master
-10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-bowl
-0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-supernova-r2
-50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-nulrim-r2
-40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-dante-r2
-30 17 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --scan-kr-ema5-r2
+0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-supernova
+50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-nulrim
+40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-dante
+30 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-ema5
+20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-master
+10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-bowl
+0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-supernova-r2
+50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-nulrim-r2
+40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-dante-r2
+30 17 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-ema5-r2
 
 # --- KR post-close audit (after last scan 17:30) ---
-45 18 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --daily-kr
+45 18 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --daily-kr
 
 # --- US post-close audit (KST morning after NY close) ---
-45 6 * * 2-6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --daily-us
+45 6 * * 2-6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --daily-us
 
 # --- Weekly Flow master (Saturday KST) ---
-5 10 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && bash ./factory.sh --weekly
+5 10 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --weekly
 
 # --- Legacy weekend brain surgery (optional) ---
 0 10 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && /home/ubuntu/dante_bots/Dual-Screener-Bot/venv/bin/python system_auto_pilot.py --run-autonomous-analysis-only >>/home/ubuntu/dante_bots/Dual-Screener-Bot/logs/autonomous_ubuntu.log 2>&1

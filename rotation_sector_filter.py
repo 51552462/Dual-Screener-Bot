@@ -10,6 +10,9 @@ import pandas as pd
 JUNK_SECTOR_LABELS = frozenset(
     {
         "기타/혼합",
+        "미분류(원시)",
+        "Unmapped(raw)",
+        "미분류",
         "기타",
         "혼합",
         "테마혼합",

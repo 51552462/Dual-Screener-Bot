@@ -12,7 +12,7 @@ from forward_flow_tag_deep_dive import (
     build_flow_tag_snapshot,
 )
 from forward_market_guard import MarketContaminationError, enforce_market_frame
-from reports.report_staleness_gate import evaluate_staleness
+from reports.report_staleness_gate import StalenessVerdict, evaluate_staleness
 from reports.report_timekeeper import ReportTimekeeper
 
 
@@ -90,6 +90,45 @@ class TestFlowTagNanFilter(unittest.TestCase):
         self.assertIn("KLAC", chip)
         self.assertIn("-4%", chip)
         self.assertNotIn("(+-", chip)
+
+    def test_stock_chip_kr_code_fallback(self):
+        row = pd.Series({"name": None, "code": "5930", "final_ret": -4.0, "_fr": -4.0})
+        chip = _stock_chip(row)
+        self.assertIn("005930", chip)
+        self.assertNotIn("종목미상", chip)
+
+    def test_format_includes_aggregate_legend(self):
+        from forward_flow_tag_deep_dive import format_flow_tag_report_html
+
+        tk = ReportTimekeeper.for_market("KR", rolling_days=90)
+        rows = [
+            {
+                "code": f"00593{i}",
+                "market": "KR",
+                "name": f"종목{i}",
+                "flow_tags": "#모멘텀",
+                "final_ret": float(i),
+                "exit_date": tk.session_anchor,
+            }
+            for i in range(3)
+        ]
+        df = pd.DataFrame(rows)
+        st = StalenessVerdict(
+            grade="GREEN",
+            lag_business_days=0,
+            live_row_count=3,
+            reason="test",
+            banner_html="",
+            fail_safe_html="",
+            allow_tier_champion=True,
+            allow_micro_dna=True,
+        )
+        snap = build_flow_tag_snapshot(df, timekeeper=tk, staleness=st, persist_toxic=False)
+        html_out = format_flow_tag_report_html(snap, timekeeper=tk, staleness=st)
+        self.assertIn("건당평균", html_out)
+        self.assertIn("누적합", html_out)
+        self.assertIn("대표1건", html_out)
+        self.assertIn("전체 청산건", html_out)
 
 
 class TestSanitizeFlowTags(unittest.TestCase):

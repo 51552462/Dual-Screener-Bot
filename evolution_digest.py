@@ -44,20 +44,43 @@ def _snapshot_diff_line() -> Optional[str]:
     return f"스냅샷 Δ: {', '.join(parts[:5])}" + ("…" if len(parts) > 5 else "")
 
 
-def build_global_evolution_digest_html(meta: dict[str, Any]) -> str:
-    """[Δ] 글로벌 블록 — KR/US 루프 밖 1회만 송출."""
-    lines = format_meta_changelog_telegram(meta, max_entries=5)
+def build_global_evolution_digest_messages(meta: dict[str, Any]) -> list[str]:
+    """[Δ] 글로벌 블록 — KR/US 루프 밖 1회, 켈리 Δ 많으면 다통."""
+    page_groups = format_meta_changelog_telegram(meta, max_entries=5)
     snap = _snapshot_diff_line()
+    if not page_groups and not snap:
+        return []
+
+    messages: list[str] = []
+    for i, lines in enumerate(page_groups):
+        header = (
+            f"\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"📐 <b>[Δ] 진화·튜닝</b> <i>(글로벌 · MetaGovernor)</i>\n"
+        )
+        if i > 0:
+            header = (
+                f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"📐 <b>[Δ] 진화·튜닝</b> <i>(글로벌 · 계속 {i + 1}/{len(page_groups)})</i>\n"
+            )
+        body = "\n".join(lines)
+        messages.append(f"{header}{body}\n")
+
     if snap:
-        lines.append(snap)
-    if not lines:
-        return ""
-    body = "\n".join(lines[:12])
-    return (
-        f"\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"📐 <b>[Δ] 진화·튜닝</b> <i>(글로벌 · MetaGovernor)</i>\n"
-        f"{body}\n"
-    )
+        if messages:
+            messages[-1] = messages[-1].rstrip() + f"\n{snap}\n"
+        else:
+            messages.append(
+                f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"📐 <b>[Δ] 진화·튜닝</b> <i>(글로벌 · MetaGovernor)</i>\n"
+                f"{snap}\n"
+            )
+    return messages
+
+
+def build_global_evolution_digest_html(meta: dict[str, Any]) -> str:
+    """[Δ] 글로벌 블록 — 단일 문자열 (레거시·첫 통만)."""
+    msgs = build_global_evolution_digest_messages(meta)
+    return msgs[0] if msgs else ""
 
 
 def build_evolution_digest_html(

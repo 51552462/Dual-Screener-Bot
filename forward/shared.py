@@ -849,10 +849,10 @@ def _reporter_is_live_open_status(st: pd.Series) -> pd.Series:
 
 
 def _reporter_valid_holding_mask(df: pd.DataFrame) -> pd.Series:
-    """리포트·쿼터 표시용: 살아 있는 오픈 상태이면서 실제 수량 > 0 인 행만 유효 보유."""
-    if df is None or df.empty or "status" not in df.columns:
-        return pd.Series(False, index=df.index if df is not None else [], dtype=bool)
-    return _reporter_is_live_open_status(df["status"]) & (_reporter_qty_numeric(df) > 0)
+    """리포트·쿼터 표시용 — OPEN/ACTIVE + 가상매매 명목(notional) + 비관측."""
+    from forward.forward_book_integrity import reporter_valid_holding_mask
+
+    return reporter_valid_holding_mask(df)
 
 
 # 실무자 리포트·좀비 정리 — 내부 exit_reason 코드 (DB 저장·표시 치환)
@@ -2121,7 +2121,7 @@ def try_add_virtual_position(
                 # 🛡️ 켈리 베팅 안전장치 및 예수금 한도 캡(Cap) 가동
                 if raw_invest > max_invest_limit:
                     sim_kelly_invest = max_invest_limit
-                    shares = int(max_invest_limit / ep)
+                    shares = max(1, int(max_invest_limit / calc_ep)) if calc_ep > 0 else 1
                 else:
                     sim_kelly_invest = raw_invest
                     shares = raw_shares
@@ -2171,6 +2171,20 @@ def try_add_virtual_position(
 
     ep = ep * 1.005
     _facts = facts if isinstance(facts, dict) else {}
+    _sig_s = str(sig_type or "")
+    _is_observe = (
+        "OBSERVE_ONLY" in _sig_s
+        or "INCUBATOR_" in _sig_s
+        or "기각/관찰용" in _sig_s
+    )
+    _has_notional = (
+        int(shares or 0) > 0
+        or float(sim_kelly_invest or 0) > 0
+        or float(invest_amount or 0) > 0
+    )
+    if not _has_notional and not _is_observe:
+        conn.close()
+        return False, "BOOK_REJECT:zero_notional_open"
     # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
     insert_row = {
         "entry_date": today_str,

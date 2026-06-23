@@ -59,6 +59,16 @@ _install_one() {
     echo "ERROR: ${dest} missing CRON_TZ=${expect_tz}" >&2
     exit 1
   fi
+  if ! grep -q 'TZ=America/New_York bash ./factory.sh' "${dest}" 2>/dev/null \
+    && [[ "${expect_tz}" == "America/New_York" ]]; then
+    echo "ERROR: ${dest} missing per-line TZ=America/New_York on factory.sh" >&2
+    exit 1
+  fi
+  if ! grep -q 'TZ=Asia/Seoul bash ./factory.sh' "${dest}" 2>/dev/null \
+    && [[ "${expect_tz}" == "Asia/Seoul" ]]; then
+    echo "ERROR: ${dest} missing per-line TZ=Asia/Seoul on factory.sh" >&2
+    exit 1
+  fi
 }
 
 _install_one "${KR_TEMPLATE}" "${DEST_KR}" "Asia/Seoul"

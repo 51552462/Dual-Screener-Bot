@@ -392,6 +392,50 @@ _REPORTER_CLEANUP_ZOMBIE = StepSpec(
 )
 
 
+def _step_forward_trade_identity_repair(market: str) -> None:
+    """종목명 공백 진단·백필 — 리포트 전. FORWARD_IDENTITY_AUTO_REPAIR=1 시 UPDATE."""
+    from forward.forward_trade_identity import format_repair_log_line, run_identity_repair_for_market
+
+    try:
+        diag, backfill = run_identity_repair_for_market(market)
+        print(f"🏷️ [Factory] {format_repair_log_line(diag, backfill)}")
+        if backfill.sample_updates and not backfill.dry_run:
+            for rid, code, old, new in backfill.sample_updates[:3]:
+                print(f"   ↳ id={rid} {code}: '{old}' → '{new}'")
+    except Exception as ex:
+        print(f"⚠️ [Factory] forward_trade_identity({market}) skip: {ex}")
+
+
+def _step_forward_trade_identity_kr() -> None:
+    _step_forward_trade_identity_repair("KR")
+
+
+def _step_forward_trade_identity_us() -> None:
+    _step_forward_trade_identity_repair("US")
+
+
+_FORWARD_TRADE_IDENTITY_KR = StepSpec(
+    "forward_trade_identity_kr",
+    _step_forward_trade_identity_kr,
+    critical=False,
+    delay_after_sec=0.0,
+)
+
+_FORWARD_TRADE_IDENTITY_US = StepSpec(
+    "forward_trade_identity_us",
+    _step_forward_trade_identity_us,
+    critical=False,
+    delay_after_sec=0.0,
+)
+
+_FORWARD_TRADE_IDENTITY_BOTH = StepSpec(
+    "forward_trade_identity_both",
+    lambda: (_step_forward_trade_identity_kr(), _step_forward_trade_identity_us()),
+    critical=False,
+    delay_after_sec=0.0,
+)
+
+
 def _step_us_data_incremental_update() -> None:
     """daily_audit_us / scan-us — US OHLCV 증분 갱신 (KR 07:00 bulk 대칭)."""
     from data_updater import run_us_incremental_db_update
@@ -793,16 +837,33 @@ def _staggered_scan_pipelines() -> Dict[str, List[StepSpec]]:
     return {slot.mode: _build_staggered_scan_pipeline(slot) for slot in ALL_SCAN_SLOTS}
 
 
+def _log_open_book_snapshot(market: str) -> None:
+    from forward.forward_book_integrity import diagnose_open_book_from_db
+    from reports.report_timekeeper import ReportTimekeeper
+
+    try:
+        tk = ReportTimekeeper.for_market(market)
+        st = diagnose_open_book_from_db(market, session_anchor=tk.session_anchor)
+        print(
+            f"📒 [Factory] open_book/{market}: raw={st.open_raw} valid={st.open_valid} "
+            f"ghost={st.open_ghost} today={st.open_today_valid} · {st.integrity_note}"
+        )
+    except Exception as ex:
+        print(f"⚠️ [Factory] open_book({market}) skip: {ex}")
+
+
 def _step_track_kr() -> None:
     from auto_forward_tester import track_daily_positions
 
     track_daily_positions("KR")
+    _log_open_book_snapshot("KR")
 
 
 def _step_track_us() -> None:
     from auto_forward_tester import track_daily_positions
 
     track_daily_positions("US")
+    _log_open_book_snapshot("US")
 
 
 def _step_deep_dive_kr() -> None:
@@ -872,6 +933,7 @@ def _pipeline_daily_audit_kr() -> List[StepSpec]:
                 StepSpec("deep_dive_kr", _step_deep_dive_kr, critical=True, delay_after_sec=3.0),
                 _DOOMSDAY_BRIDGE,
                 _REPORTER_CLEANUP_ZOMBIE,
+                _FORWARD_TRADE_IDENTITY_KR,
                 _PIL_PRACTITIONER_KR,
                 StepSpec(
                     "comprehensive_daily_report",
@@ -892,6 +954,7 @@ def _pipeline_daily_audit_us() -> List[StepSpec]:
             StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
             _DOOMSDAY_BRIDGE,
             _REPORTER_CLEANUP_ZOMBIE,
+            _FORWARD_TRADE_IDENTITY_US,
             _PIL_PRACTITIONER_US,
             StepSpec(
                 "comprehensive_daily_report",
@@ -925,6 +988,7 @@ def _pipeline_daily_audit_combined() -> List[StepSpec]:
                 StepSpec("deep_dive_us", _step_deep_dive_us, critical=True, delay_after_sec=3.0),
                 _DOOMSDAY_BRIDGE,
                 _REPORTER_CLEANUP_ZOMBIE,
+                _FORWARD_TRADE_IDENTITY_BOTH,
                 _PIL_PRACTITIONER,
                 _COMPREHENSIVE_REPORT,
                 StepSpec("ai_overseer", _step_overseer_optional, critical=False),
