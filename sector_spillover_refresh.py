@@ -53,6 +53,7 @@ def refresh_us_spillover_from_db(
     *,
     lookback_days: int = 7,
     mfe_min: float = 15.0,
+    allow_zero_sample_fallback: bool = True,
 ) -> Dict[str, Any]:
     """최근 US 고MFE 청산 표본 → US_SPILLOVER_* 갱신. 표본 없으면 LAST_GOOD 유지."""
     db = db_path or report_db_read_path()
@@ -89,25 +90,30 @@ def refresh_us_spillover_from_db(
         & (pd.to_numeric(df["mfe"], errors="coerce") >= mfe_min)
     ]
     if us_hot.empty:
-        try:
-            from zero_sample_spillover import apply_zero_sample_spillover
-
-            z = apply_zero_sample_spillover(cfg, force_if_closed_zero=True)
-            if z.get("applied"):
-                sector_s = str(z.get("sector") or "").strip()
-                as_of = _today_kst()
-                out.update(
-                    {
-                        "updated": True,
-                        "sector": sector_s,
-                        "as_of": as_of,
-                        "reason": "zero_sample_dark_horse",
-                        "zero_sample": z,
-                    }
+        if allow_zero_sample_fallback:
+            try:
+                from zero_sample_spillover import (
+                    infer_dark_horse_sector_from_ohlcv,
+                    persist_dark_horse_spillover_cfg,
                 )
-                return out
-        except Exception:
-            pass
+
+                dark = infer_dark_horse_sector_from_ohlcv()
+                if dark.get("ok"):
+                    z = persist_dark_horse_spillover_cfg(cfg, dark, save=False)
+                    sector_s = str(z.get("sector") or "").strip()
+                    as_of = _today_kst()
+                    out.update(
+                        {
+                            "updated": True,
+                            "sector": sector_s,
+                            "as_of": as_of,
+                            "reason": "zero_sample_dark_horse",
+                            "zero_sample": z,
+                        }
+                    )
+                    return out
+            except Exception:
+                pass
         out["reason"] = "no_hot_sample"
         return out
 

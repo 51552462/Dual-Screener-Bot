@@ -16,6 +16,68 @@ import pandas as pd
 from sector_spillover_refresh import map_standard_sector
 
 
+def _cell_str(value: Any, default: str = "") -> str:
+    """pd.NA · NaN · None — `or` 체인 없이 안전한 문자열."""
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except (TypeError, ValueError):
+        pass
+    s = str(value).strip()
+    if not s or s.lower() in ("nan", "none", "<na>"):
+        return default
+    return s
+
+
+def _first_cell_str(row: Any, *keys: str, default: str = "") -> str:
+    for key in keys:
+        raw = row.get(key) if hasattr(row, "get") else None
+        s = _cell_str(raw, "")
+        if s:
+            return s
+    return default
+
+
+def persist_dark_horse_spillover_cfg(
+    cfg: Dict[str, Any],
+    dark: Dict[str, Any],
+    *,
+    save: bool = True,
+) -> Dict[str, Any]:
+    """infer_dark_horse 결과 → US_SPILLOVER_* · ZERO_SAMPLE 메타 (SSOT)."""
+    from config_manager import save_system_config
+
+    sector_s = _first_cell_str(dark, "sector_std", "sector", default="")
+    if not sector_s:
+        return {"applied": False, "reason": "empty_sector"}
+
+    as_of = datetime.now().strftime("%Y-%m-%d")
+    cfg["US_SPILLOVER_SECTOR"] = sector_s
+    cfg["US_SPILLOVER_SECTOR_LAST_GOOD"] = sector_s
+    cfg["US_SPILLOVER_SECTOR_AS_OF"] = as_of
+    cfg["US_ZERO_SAMPLE_SPILLOVER"] = {
+        "method": dark.get("method"),
+        "confidence": dark.get("confidence"),
+        "n_tickers": dark.get("n_tickers"),
+        "as_of": as_of,
+    }
+    if save:
+        try:
+            save_system_config(cfg)
+        except Exception:
+            pass
+
+    return {
+        "applied": True,
+        "sector": sector_s,
+        "confidence": dark.get("confidence"),
+        "method": dark.get("method"),
+        "reason": "zero_sample_dark_horse",
+    }
+
+
 def _db_path() -> str:
     from market_db_paths import MARKET_DATA_DB_PATH
 
@@ -113,8 +175,8 @@ def infer_dark_horse_sector_from_ohlcv(
     code_to_sector: Dict[str, str] = {}
     if not uni.empty:
         for _, row in uni.iterrows():
-            sym = str(row.get("Symbol") or row.get("Code") or "").strip().upper()
-            sec = str(row.get("Sector") or row.get("Industry") or "Unknown").strip()
+            sym = _first_cell_str(row, "Symbol", "Code").upper()
+            sec = _first_cell_str(row, "Sector", "Industry", default="Unknown")
             if sym:
                 code_to_sector[sym] = sec
 
@@ -190,10 +252,12 @@ def infer_dark_horse_sector_from_ohlcv(
         out["reason"] = "no_sector_scores"
         return out
 
-    top_std = str(sector_scores.index[0])
+    top_std = _cell_str(sector_scores.index[0], "Unknown")
     top_row = sector_scores.iloc[0]
-    score_v = float(pd.to_numeric(top_row["score"], errors="coerce") or 0.0)
-    n_v = float(pd.to_numeric(top_row["n"], errors="coerce") or 0.0)
+    from reports.forward_report_scalar import scalar_float
+
+    score_v = scalar_float(top_row["score"], 0.0)
+    n_v = scalar_float(top_row["n"], 0.0)
     conf = float(min(0.92, 0.45 + score_v * 0.08 + min(n_v, 8.0) * 0.03))
 
     out.update(
@@ -218,8 +282,6 @@ def apply_zero_sample_spillover(
     """
     ledger US closed=0 이거나 refresh_us_spillover 실패 시 OHLCV 기반 스필오버 발행.
     """
-    from config_manager import save_system_config
-
     result: Dict[str, Any] = {"applied": False, "reason": "skip"}
     closed = 0
     try:
@@ -240,7 +302,7 @@ def apply_zero_sample_spillover(
 
     from sector_spillover_refresh import refresh_us_spillover_from_db
 
-    spill = refresh_us_spillover_from_db(cfg)
+    spill = refresh_us_spillover_from_db(cfg, allow_zero_sample_fallback=False)
     if spill.get("reason") == "ok" and not force_if_closed_zero:
         result["reason"] = "ledger_spillover_ok"
         return result
@@ -253,31 +315,8 @@ def apply_zero_sample_spillover(
         result["reason"] = f"dark_horse_fail:{dark.get('reason')}"
         return result
 
-    sector_s = str(dark.get("sector_std") or dark.get("sector") or "")
-    as_of = datetime.now().strftime("%Y-%m-%d")
-    cfg["US_SPILLOVER_SECTOR"] = sector_s
-    cfg["US_SPILLOVER_SECTOR_LAST_GOOD"] = sector_s
-    cfg["US_SPILLOVER_SECTOR_AS_OF"] = as_of
-    cfg["US_ZERO_SAMPLE_SPILLOVER"] = {
-        "method": dark.get("method"),
-        "confidence": dark.get("confidence"),
-        "n_tickers": dark.get("n_tickers"),
-        "as_of": as_of,
-    }
-    try:
-        save_system_config(cfg)
-    except Exception:
-        pass
-
-    result.update(
-        {
-            "applied": True,
-            "sector": sector_s,
-            "confidence": dark.get("confidence"),
-            "method": dark.get("method"),
-            "reason": "zero_sample_dark_horse",
-        }
-    )
+    persisted = persist_dark_horse_spillover_cfg(cfg, dark, save=True)
+    result.update(persisted)
     return result
 
 

@@ -9,6 +9,10 @@ export TZ="${TZ:-Asia/Seoul}"
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
+# 유령 락 자동 해제 — daily_audit 장시간 점유 시 다음 크론이 영구 대기하지 않도록
+export FACTORY_LOCK_BREAK_ON_MAX_AGE="${FACTORY_LOCK_BREAK_ON_MAX_AGE:-1}"
+export FACTORY_LOCK_MAX_AGE_SEC="${FACTORY_LOCK_MAX_AGE_SEC:-7200}"
+
 if [[ -f "${ROOT}/.env" ]]; then
   set -a
   # shellcheck disable=SC1091

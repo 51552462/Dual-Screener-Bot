@@ -73,7 +73,7 @@ def run_post_us_incremental_upstream(*, context: str = "daily") -> Dict[str, Any
         except sqlite3.Error:
             pass
 
-    if spill.get("applied") or closed == 0:
+    if bool(spill.get("applied")) or closed == 0:
         try:
             ssot = publish_zero_sample_cross_market(cfg)
             out["cross_market"] = {"mode": ssot.get("mode"), "sector": ssot.get("us_sector_raw")}

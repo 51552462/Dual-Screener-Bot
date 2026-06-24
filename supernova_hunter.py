@@ -1,5 +1,5 @@
 # supernova_hunter.py (V53.2 글로벌 초신성 역추적 & 텔레그램 보고 엔진)
-import os, time, json, sqlite3, ast
+import os, time, json, sqlite3, ast, html
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -1310,6 +1310,14 @@ def execute_supernova_live_scan(market):
     if not dedup_ok:
         print(f"🛡️ [{market}] SessionDeduplicationGuard ABORT — {dedup_msg}")
         print(f"   (오픈 포지션 트래킹은 ledger 경로 유지 · 신규 스캔만 차단)")
+        try:
+            send_telegram_msg(
+                f"🛡️ <b>[{market} 스캔 스킵 · SessionDedup]</b>\n"
+                f"<i>{html.escape(str(dedup_msg)[:320], quote=False)}</i>\n"
+                f"유효 OPEN 없으면 다음 크론 슬롯에서 재시도됩니다."
+            )
+        except Exception:
+            pass
         try:
             from evolution.proprietary_synergy_bridge import run_offline_rnd_on_scan_abort
             from session_deduplication_guard import SessionDeduplicationGuard

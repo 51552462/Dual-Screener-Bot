@@ -102,7 +102,10 @@ class TestZeroSampleSpillover(unittest.TestCase):
         from zero_sample_spillover import apply_zero_sample_spillover
 
         cfg: dict = {}
-        with patch("sector_spillover_refresh.refresh_us_spillover_from_db", return_value={"reason": "no_hot_sample"}):
+        with patch(
+            "sector_spillover_refresh.refresh_us_spillover_from_db",
+            return_value={"reason": "no_hot_sample"},
+        ):
             with patch(
                 "zero_sample_spillover.infer_dark_horse_sector_from_ohlcv",
                 return_value={
@@ -118,6 +121,22 @@ class TestZeroSampleSpillover(unittest.TestCase):
                         out = apply_zero_sample_spillover(cfg, force_if_closed_zero=True)
         self.assertTrue(out.get("applied"))
         self.assertEqual(cfg.get("US_SPILLOVER_SECTOR"), "Technology")
+
+    def test_run_post_us_incremental_upstream_na_safe(self):
+        from evolution.us_fluid_upstream_bridge import run_post_us_incremental_upstream
+
+        with patch("config_manager.load_system_config", return_value={}):
+            with patch(
+                "zero_sample_spillover.apply_zero_sample_spillover",
+                return_value={"applied": True, "sector": "Technology", "reason": "zero_sample_dark_horse"},
+            ):
+                with patch(
+                    "zero_sample_spillover.publish_zero_sample_cross_market",
+                    return_value={"mode": "us_online", "us_sector_raw": "Technology"},
+                ):
+                    with patch("os.path.isfile", return_value=False):
+                        out = run_post_us_incremental_upstream(context="daily")
+        self.assertTrue(out.get("spillover", {}).get("applied"))
 
 
 if __name__ == "__main__":
