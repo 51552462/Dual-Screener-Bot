@@ -138,6 +138,13 @@ _bitget_pre_update_backup
 
 echo "[2/5] git pull ($DEPLOY_USER)"
 if [[ -d "$INSTALL_ROOT/.git" ]]; then
+  # Deploy SSOT: GitHub wins — drop accidental server-side edits to tracked files.
+  if sudo -u "$DEPLOY_USER" git -C "$INSTALL_ROOT" diff --quiet 2>/dev/null; then
+    :
+  else
+    echo "  (warn) local tracked changes detected — restoring before pull"
+    sudo -u "$DEPLOY_USER" git -C "$INSTALL_ROOT" restore .
+  fi
   sudo -u "$DEPLOY_USER" git -C "$INSTALL_ROOT" pull --ff-only
 else
   echo "  (warn) no .git — skip pull"
