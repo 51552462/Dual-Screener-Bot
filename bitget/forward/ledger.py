@@ -26,6 +26,7 @@ from bitget.forward.shared import (
     DB_PATH,
     DEFAULT_MAX_OPEN_POSITIONS,
     _cached_funding_snapshot,
+    init_forward_db,
     load_system_config,
     save_system_config,
     send_telegram_msg,
