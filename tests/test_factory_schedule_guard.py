@@ -31,7 +31,7 @@ class TestFactoryScheduleGuard(unittest.TestCase):
 
 
 class TestNotifyQuietSkip(unittest.TestCase):
-    def test_us_off_hours_no_telegram(self):
+    def test_us_misaligned_kst_daytime_sends_cron_hint(self):
         from factory_runtime import FactoryRunReport, notify_factory_run
 
         sent: list[str] = []
@@ -45,6 +45,24 @@ class TestNotifyQuietSkip(unittest.TestCase):
         )
         noon = _KR.localize(datetime(2026, 6, 23, 12, 30, 0))
         with mock.patch("factory_schedule_guard.kst_now", return_value=noon):
+            notify_factory_run(report, send_fn=lambda m: sent.append(m))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("install_factory_cron", sent[0])
+
+    def test_us_expected_off_hours_weekend_still_quiet(self):
+        from factory_runtime import FactoryRunReport, notify_factory_run
+
+        sent: list[str] = []
+        report = FactoryRunReport(
+            mode="scan_us_ema5",
+            run_id="t",
+            started_at="s",
+            finished_at="f",
+            skipped_session=True,
+            skipped_session_detail="US weekend",
+        )
+        sat = _KR.localize(datetime(2026, 6, 27, 12, 0, 0))
+        with mock.patch("factory_schedule_guard.kst_now", return_value=sat):
             notify_factory_run(report, send_fn=lambda m: sent.append(m))
         self.assertEqual(sent, [])
 

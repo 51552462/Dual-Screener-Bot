@@ -538,10 +538,21 @@ def notify_factory_run(
             mis, hint = us_cron_misalignment_hint(mode)
             if mis and hint:
                 logger.warning("factory %s: %s", mode, hint)
+                # KST 주간 US SKIPPED_SESSION = cron TZ 오설정 — 조용히 넘기지 않음
+                quiet = False
         except Exception:
             quiet = False
         if not quiet and send_fn:
-            send_fn(format_factory_run_telegram(report))
+            msg = format_factory_run_telegram(report)
+            try:
+                from factory_schedule_guard import us_cron_misalignment_hint
+
+                mis, hint = us_cron_misalignment_hint(mode)
+                if mis and hint:
+                    msg = msg.rstrip() + f"\n\n⚠️ {hint}"
+            except Exception:
+                pass
+            send_fn(msg)
         return
     if st in ("OK", "SKIPPED_SESSION", "SKIPPED_LOCK"):
         return

@@ -30,9 +30,9 @@ if [[ ! -f "${GEN_PY}" ]]; then
   exit 1
 fi
 if [[ -x "${INSTALL_ROOT}/venv/bin/python" ]]; then
-  "${INSTALL_ROOT}/venv/bin/python" "${GEN_PY}" --install-root "${DEFAULT_ROOT}"
+  "${INSTALL_ROOT}/venv/bin/python" "${GEN_PY}" --install-root "${INSTALL_ROOT}"
 elif command -v python3 >/dev/null 2>&1; then
-  python3 "${GEN_PY}" --install-root "${DEFAULT_ROOT}"
+  python3 "${GEN_PY}" --install-root "${INSTALL_ROOT}"
 else
   echo "ERROR: python3 required to generate cron templates." >&2
   exit 1

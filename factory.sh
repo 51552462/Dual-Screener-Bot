@@ -5,6 +5,9 @@ set -eu -o pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# cron 줄 TZ=America/New_York / TZ=Asia/Seoul — .env 가 덮어쓰지 못하게 고정
+_FACTORY_TZ_FROM_CALLER="${TZ:-}"
+
 export TZ="${TZ:-Asia/Seoul}"
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -20,6 +23,11 @@ if [[ -f "${ROOT}/.env" ]]; then
   set +a
 fi
 
+# .env 의 TZ=Asia/Seoul 이 US cron TZ 를 망가뜨리는 것 방지 (로그 시각·STAMP SSOT)
+if [[ -n "${_FACTORY_TZ_FROM_CALLER}" ]]; then
+  export TZ="${_FACTORY_TZ_FROM_CALLER}"
+fi
+
 if [[ -f "${ROOT}/venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
   source "${ROOT}/venv/bin/activate"
@@ -27,10 +35,6 @@ elif [[ -f "${ROOT}/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
   source "${ROOT}/.venv/bin/activate"
 fi
-
-LOG_DIR="${FACTORY_LOG_DIR:-${ROOT}/logs}"
-mkdir -p "$LOG_DIR"
-STAMP="$(date +%Y%m%d_%H%M%S)"
 
 usage() {
   cat <<'EOF'
@@ -104,7 +108,19 @@ if [[ -z "$MODE" ]]; then
   exit 2
 fi
 
-# daily_audit* 동시 실행 금지 — 살아 있는 daily_audit 프로세스만 차단 (zombie/유령 pgrep 제외)
+# 시장별 TZ SSOT — 수동 실행·cron 공통 (US=ET, KR=KST)
+case "$MODE" in
+  scan_us|scan_us_*)
+    export TZ="America/New_York"
+    ;;
+  scan_kr|scan_kr_*)
+    export TZ="Asia/Seoul"
+    ;;
+esac
+
+LOG_DIR="${FACTORY_LOG_DIR:-${ROOT}/logs}"
+mkdir -p "$LOG_DIR"
+STAMP="$(date +%Y%m%d_%H%M%S)"
 _factory_live_daily_audit_lines() {
   local line pid state
   while IFS= read -r line; do
