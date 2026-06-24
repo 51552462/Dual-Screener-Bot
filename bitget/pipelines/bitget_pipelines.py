@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Sequence
 
+from bitget.bitget_scan_schedule import ALL_SCAN_SLOTS, ScanSlot
 from bitget.infra.runtime import StepSpec
 
 
@@ -83,9 +84,19 @@ def _step_meta_governor_sync() -> None:
         failures.append(f"meta_degraded regime={rk} status={st} last_at={at}")
 
     if failures:
+        detail = "; ".join(failures)
+        try:
+            from bitget.governance.meta_alerts import send_meta_critical_alert
+
+            send_meta_critical_alert(
+                "meta_governor_sync aborted",
+                detail,
+                prefix="BITGET_PIPELINE",
+            )
+        except Exception:
+            pass
         raise RuntimeError(
-            "meta_governor_sync aborted — refusing stale UNKNOWN report: "
-            + "; ".join(failures)
+            "meta_governor_sync aborted — refusing stale UNKNOWN report: " + detail
         )
 
 
@@ -212,10 +223,41 @@ def _step_doomsday_radar() -> None:
     run_doomsday_radar()
 
 
+def _step_report_pipeline_hydrate() -> None:
+    from bitget.report_pipeline_hydrate import ensure_bitget_report_pipeline_data
+
+    ensure_bitget_report_pipeline_data()
+
+
+def _step_doomsday_bridge_sync() -> None:
+    from bitget.doomsday_bridge import sync_doomsday_to_bitget_config
+
+    sync_doomsday_to_bitget_config()
+
+
+def _step_reporter_cleanup_zombie() -> None:
+    from bitget.forward.shared import reporter_cleanup_zombie_forward_trades
+
+    reporter_cleanup_zombie_forward_trades()
+
+
+def _step_forward_trade_identity() -> None:
+    from bitget.forward.forward_trade_identity import run_identity_repair_all
+
+    run_identity_repair_all()
+
+
 def _step_weekly_evolution() -> None:
     from bitget.auto_pilot import run_autonomous_analysis
 
     run_autonomous_analysis()
+
+
+def _step_weekly_flow_master() -> None:
+    """주식 factory weekly_master → weekly_flow_master 패리티."""
+    from bitget.auto_pilot import send_weekly_flow_master_report
+
+    send_weekly_flow_master_report()
 
 
 def _step_shadow_eval() -> None:
@@ -272,6 +314,99 @@ def _step_start_parallel() -> None:
     from bitget.validation.runner import run_start_parallel_run
 
     run_start_parallel_run(note="pipeline start_parallel")
+
+
+def _step_doomsday_bridge_scan() -> None:
+    from bitget.doomsday_bridge import sync_doomsday_to_bitget_config
+
+    sync_doomsday_to_bitget_config()
+
+
+def _make_engine_scan_step(slot: ScanSlot) -> StepSpec:
+    market_raw = "spot" if slot.market == "SPOT" else "futures"
+
+    def _fn() -> None:
+        from bitget.pipelines.scanner_hooks import run_engine_scan, run_supernova_futures, run_supernova_spot
+
+        if slot.scanner_key == "supernova":
+            if slot.market == "SPOT":
+                run_supernova_spot()
+            else:
+                run_supernova_futures()
+        else:
+            run_engine_scan(market=market_raw, scanner_key=slot.scanner_key)
+
+    return StepSpec(
+        f"scan_{market_raw}_{slot.scanner_key}" + ("" if slot.cycle == 1 else "_r2"),
+        _fn,
+        critical=True,
+        delay_after_sec=2.0 if slot.scanner_key == "supernova" else 0.5,
+    )
+
+
+def _prelude_full() -> List[StepSpec]:
+    return [
+        _META_SYNC_SCAN,
+        _ARTIFACT_GUARD,
+        _CONFIG_BOOTSTRAP,
+        StepSpec("gap_heal", _step_gap_heal, critical=False),
+        StepSpec("data_refresh_incremental", _step_data_refresh, critical=False),
+    ]
+
+
+def _prelude_light() -> List[StepSpec]:
+    return [
+        _ARTIFACT_GUARD,
+        StepSpec("gap_heal", _step_gap_heal, critical=False),
+        StepSpec("data_refresh_incremental", _step_data_refresh, critical=False),
+    ]
+
+
+def _prelude_none() -> List[StepSpec]:
+    return [_ARTIFACT_GUARD]
+
+
+def _build_staggered_scan_pipeline(slot: ScanSlot) -> List[StepSpec]:
+    if slot.prelude == "full":
+        prelude = _prelude_full()
+    elif slot.prelude == "light":
+        prelude = _prelude_light()
+    else:
+        prelude = _prelude_none()
+
+    scan_step = _make_engine_scan_step(slot)
+    tail: List[StepSpec] = []
+    if slot.tail_doomsday:
+        tail.append(
+            StepSpec("doomsday_bridge_sync", _step_doomsday_bridge_scan, critical=False, delay_after_sec=0.3)
+        )
+    if slot.tail_shadow:
+        tail.append(StepSpec("shadow_eval", _step_shadow_eval, critical=False))
+    if slot.tail_track:
+        if slot.market == "SPOT":
+            tail.append(
+                StepSpec("track_spot", _step_track_spot, critical=False, delay_after_sec=0.3)
+            )
+        else:
+            tail.append(
+                StepSpec("track_futures", _step_track_futures, critical=False, delay_after_sec=0.3)
+            )
+
+    return [*prelude, scan_step, *tail]
+
+
+def _staggered_scan_pipelines() -> Dict[str, Callable[[], List[StepSpec]]]:
+    out: Dict[str, Callable[[], List[StepSpec]]] = {}
+
+    def _builder_for(slot: ScanSlot) -> Callable[[], List[StepSpec]]:
+        def _build() -> List[StepSpec]:
+            return _build_staggered_scan_pipeline(slot)
+
+        return _build
+
+    for slot in ALL_SCAN_SLOTS:
+        out[slot.mode] = _builder_for(slot)
+    return out
 
 
 def _pipeline_data_refresh() -> List[StepSpec]:
@@ -336,10 +471,18 @@ def _pipeline_daily_audit() -> List[StepSpec]:
     return _with_daily_audit_prelude(
         [
             StepSpec("doomsday_radar", _step_doomsday_radar, critical=False),
+            StepSpec("report_pipeline_hydrate", _step_report_pipeline_hydrate, critical=False),
             StepSpec("track_spot", _step_track_spot, critical=True),
             StepSpec("track_futures", _step_track_futures, critical=True),
             StepSpec("deep_dive_spot", _step_deep_dive_spot, critical=False, delay_after_sec=0.5),
             StepSpec("deep_dive_futures", _step_deep_dive_futures, critical=False, delay_after_sec=0.5),
+            StepSpec("doomsday_bridge_sync", _step_doomsday_bridge_sync, critical=False, delay_after_sec=0.3),
+            StepSpec(
+                "reporter_cleanup_zombie_forward_trades",
+                _step_reporter_cleanup_zombie,
+                critical=False,
+            ),
+            StepSpec("forward_trade_identity", _step_forward_trade_identity, critical=False),
             StepSpec("pil_practitioner_reports", _step_pil_practitioner_reports, critical=False, delay_after_sec=0.5),
             StepSpec("comprehensive_report", _step_comprehensive_report, critical=False),
             StepSpec("ai_overseer", _step_ai_overseer, critical=False),
@@ -351,7 +494,8 @@ def _pipeline_daily_audit() -> List[StepSpec]:
 def _pipeline_weekly_evolution() -> List[StepSpec]:
     return _with_guard(
         [
-            StepSpec("weekly_evolution", _step_weekly_evolution, critical=True),
+            StepSpec("weekly_evolution", _step_weekly_evolution, critical=True, delay_after_sec=1.0),
+            StepSpec("weekly_flow_master", _step_weekly_flow_master, critical=True),
         ]
     )
 
@@ -393,6 +537,7 @@ PIPELINE_BUILDERS: Dict[str, Callable[[], List[StepSpec]]] = {
         [StepSpec("start_parallel", _step_start_parallel, critical=True)]
     ),
 }
+PIPELINE_BUILDERS.update(_staggered_scan_pipelines())
 
 
 def get_pipeline(mode: str) -> Sequence[StepSpec]:

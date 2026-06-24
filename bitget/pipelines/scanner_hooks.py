@@ -12,11 +12,37 @@ from __future__ import annotations
 from typing import Optional
 
 
-def run_master_scan(*, market_filter: Optional[str] = None) -> None:
+def run_master_scan(
+    *,
+    market_filter: Optional[str] = None,
+    engine_filter: Optional[str] = None,
+    include_embedded_supernova: Optional[bool] = None,
+) -> None:
     """MTF master scan — calls master_scanner.run_scan unchanged."""
     from bitget.master_scanner import run_scan
 
-    run_scan(market_filter=market_filter)
+    run_scan(
+        market_filter=market_filter,
+        engine_filter=engine_filter,
+        include_embedded_supernova=include_embedded_supernova,
+    )
+
+
+def run_engine_scan(*, market: str, scanner_key: str) -> None:
+    """Staggered slot — single engine family per cron invocation."""
+    mkt = str(market or "spot").strip().lower()
+    key = str(scanner_key or "").strip().lower()
+    if key == "shadow":
+        from bitget.shadow_performance_tracker import run_shadow_performance_evaluation
+
+        run_shadow_performance_evaluation()
+        return
+    mf = "spot" if mkt in ("spot", "sp") else "futures"
+    run_master_scan(
+        market_filter=mf,
+        engine_filter=key if key not in ("supernova",) else None,
+        include_embedded_supernova=False,
+    )
 
 
 def run_master_mtf_scheduler() -> None:

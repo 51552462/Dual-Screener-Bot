@@ -35,6 +35,7 @@ def _telegram_send_fn():
 
 
 def run_factory_cli(argv: list[str] | None = None) -> int:
+    from bitget.bitget_scan_schedule import resolve_lock_timeout_sec
     from bitget.infra.logging_setup import setup_logging
     from bitget.infra.runtime import (
         BITGET_MODES,
@@ -53,7 +54,7 @@ def run_factory_cli(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-telegram", action="store_true")
-    parser.add_argument("--lock-timeout", type=float, default=120.0)
+    parser.add_argument("--lock-timeout", type=float, default=None)
     args = parser.parse_args(argv)
 
     if args.mode == "watchdog":
@@ -66,13 +67,14 @@ def run_factory_cli(argv: list[str] | None = None) -> int:
 
     send_fn = None if args.skip_telegram else _telegram_send_fn()
     pipeline = get_pipeline(args.mode)
+    lock_timeout = resolve_lock_timeout_sec(args.mode, explicit=args.lock_timeout)
     report = dispatch_bitget_mode(
         args.mode,
         pipeline,
         send_fn=send_fn,
         skip_telegram=args.skip_telegram,
         dry_run=args.dry_run,
-        lock_timeout_sec=args.lock_timeout,
+        lock_timeout_sec=lock_timeout,
     )
     return bitget_exit_code(report)
 

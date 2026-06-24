@@ -20,6 +20,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 import pytz
 
+from bitget.bitget_scan_schedule import STAGGERED_SCAN_MODES, resolve_lock_timeout_sec
 from bitget.infra.data_paths import runtime_lock_path
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ BITGET_MODES = frozenset(
         "validate_all",
         "start_parallel",
     }
-)
+) | frozenset(STAGGERED_SCAN_MODES)
 
 
 class JobSkipError(Exception):
@@ -79,6 +80,8 @@ class BitgetRunReport:
     steps: List[StepResult] = field(default_factory=list)
     skipped_lock: bool = False
     skipped_lock_detail: Optional[str] = None
+    skipped_session: bool = False
+    skipped_session_detail: Optional[str] = None
 
     @property
     def all_critical_ok(self) -> bool:
@@ -92,6 +95,8 @@ class BitgetRunReport:
     def status_label(self) -> str:
         if self.skipped_lock:
             return "SKIPPED_LOCK"
+        if self.skipped_session:
+            return "SKIPPED_SESSION"
         if not self.any_failure:
             return "OK"
         if self.all_critical_ok:
@@ -482,7 +487,7 @@ def dispatch_bitget_mode(
     send_fn: Optional[SendFn] = None,
     skip_telegram: bool = False,
     dry_run: bool = False,
-    lock_timeout_sec: float = 120.0,
+    lock_timeout_sec: Optional[float] = None,
 ) -> BitgetRunReport:
     tz = pytz.timezone("Asia/Seoul")
     run_id = datetime.now(tz).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8]
@@ -495,10 +500,44 @@ def dispatch_bitget_mode(
         return report
 
     try:
-        with bitget_job_lock(mode, timeout_sec=lock_timeout_sec):
+        from bitget.bitget_schedule_guard import cron_misalignment_hint, evaluate_scan_skip, is_quiet_scan_skip
+
+        skip, skip_reason = evaluate_scan_skip(mode)
+        if skip:
+            report.skipped_session = True
+            report.skipped_session_detail = skip_reason
+            report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+            logger.info("bitget scan skipped (%s): %s", mode, skip_reason)
+            return report
+    except Exception:
+        pass
+
+    effective_lock = resolve_lock_timeout_sec(mode, explicit=lock_timeout_sec)
+
+    try:
+        with bitget_job_lock(mode, timeout_sec=effective_lock):
+            aborted = False
             for spec in pipeline:
+                if aborted:
+                    report.steps.append(
+                        StepResult(
+                            name=spec.name,
+                            ok=False,
+                            critical=spec.critical,
+                            error="skipped: prior critical step failed (zombie pipeline guard)",
+                        )
+                    )
+                    continue
                 result = run_step(spec)
                 report.steps.append(result)
+                if not result.ok and result.critical:
+                    aborted = True
+                    logger.error(
+                        "bitget pipeline aborted at critical step %s — "
+                        "remaining steps will not execute",
+                        spec.name,
+                    )
+                    continue
                 if spec.delay_after_sec > 0:
                     time.sleep(spec.delay_after_sec)
     except JobSkipError as e:
@@ -512,14 +551,25 @@ def dispatch_bitget_mode(
         )
 
     report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-    if send_fn and not skip_telegram and report.status_label not in ("OK",):
+    quiet = False
+    if report.status_label in ("SKIPPED_SESSION", "SKIPPED_LOCK"):
+        try:
+            from bitget.bitget_schedule_guard import cron_misalignment_hint, is_quiet_scan_skip
+
+            quiet = is_quiet_scan_skip(mode, detail=report.skipped_session_detail or "")
+            mis, hint = cron_misalignment_hint(mode)
+            if mis and send_fn and not skip_telegram:
+                send_fn(f"⚠️ <b>Bitget cron drift</b>\n{hint}")
+        except Exception:
+            quiet = report.status_label == "SKIPPED_SESSION"
+    if send_fn and not skip_telegram and report.status_label not in ("OK",) and not quiet:
         send_fn(format_bitget_run_telegram(report))
     _record_ops_heartbeat(mode, report)
     return report
 
 
 def bitget_exit_code(report: BitgetRunReport) -> int:
-    if report.skipped_lock:
+    if report.skipped_lock or report.skipped_session:
         return 0
     if report.all_critical_ok:
         return 0

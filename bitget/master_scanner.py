@@ -55,7 +55,15 @@ LOG_FILE = os.path.join(logs_dir(), "sent_log_bitget_master.txt")
 MAX_SCAN_WORKERS = 4
 
 
-def _build_engine_pool():
+_SCANNER_ENGINE_ALLOWLIST = {
+    "nulrim": frozenset({"NULRIM"}),
+    "dante": frozenset({"TV_SHORT_V1", "TV_SHORT_V2"}),
+    "ema5": frozenset({"EMA5"}),
+    "master": frozenset({"MASTER"}),
+}
+
+
+def _build_engine_pool(engine_filter: str | None = None):
     base_engines = [
         ("EMA5", compute_ema5_signal),
         ("MASTER", compute_master_signal),
@@ -63,12 +71,17 @@ def _build_engine_pool():
         ("TV_SHORT_V1", compute_tv_short_v1),
         ("TV_SHORT_V2", compute_tv_short_v2),
     ]
+    ef = str(engine_filter or "").strip().lower()
+    if ef in _SCANNER_ENGINE_ALLOWLIST:
+        allowed = _SCANNER_ENGINE_ALLOWLIST[ef]
+        base_engines = [(n, e) for n, e in base_engines if n in allowed]
     practitioner_engines = []
-    for i in range(1, 31):
-        fn_name = f"compute_practitioner_{i:02d}"
-        fn = getattr(bse, fn_name, None)
-        if callable(fn):
-            practitioner_engines.append((f"PRACT_{i:02d}", fn))
+    if not ef:
+        for i in range(1, 31):
+            fn_name = f"compute_practitioner_{i:02d}"
+            fn = getattr(bse, fn_name, None)
+            if callable(fn):
+                practitioner_engines.append((f"PRACT_{i:02d}", fn))
     return base_engines + practitioner_engines
 
 
@@ -263,7 +276,15 @@ def _supernova_hit(df: pd.DataFrame, symbol: str, tf: str):
     return None
 
 
-def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int):
+def _scan_one_table(
+    tbl: str,
+    tf: str,
+    idx_close: pd.Series,
+    hit_rank_start: int,
+    *,
+    engine_filter: str | None = None,
+    include_embedded_supernova: bool = True,
+):
     conn = sqlite3.connect(DB_READ_PATH, timeout=30)
     try:
         time.sleep(0.03)  # DB burst 완화
@@ -273,7 +294,7 @@ def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int
         symbol = "_".join(tbl.split("_")[2:-1])
         hits = []
         rank = hit_rank_start
-        engine_pool = _build_engine_pool()
+        engine_pool = _build_engine_pool(engine_filter)
         for engine_name, engine in engine_pool:
             if engine_name in ("TV_SHORT_V1", "TV_SHORT_V2"):
                 hit, sig_type, out_df, dbg = engine(df, idx_close)
@@ -290,8 +311,10 @@ def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int
                 hits.append((engine_name, sig_type, float(dbg.get("score", 0.0)), chart_main, chart_promo, ai, dbg, last_close, rank, signal_side))
                 del out_df
                 gc.collect()
-        # Supernova real-time sniper embedding
-        sn = _supernova_hit(df, symbol, tf)
+        if include_embedded_supernova:
+            sn = _supernova_hit(df, symbol, tf)
+        else:
+            sn = None
         if sn is not None:
             rank += 1
             signal_side = str(sn.get("side", "LONG")).upper()
@@ -325,10 +348,18 @@ def _scan_one_table(tbl: str, tf: str, idx_close: pd.Series, hit_rank_start: int
         conn.close()
 
 
-def run_scan(market_filter: str | None = None):
+def run_scan(
+    market_filter: str | None = None,
+    *,
+    engine_filter: str | None = None,
+    include_embedded_supernova: bool | None = None,
+):
     """
     MTF table scan. market_filter: None | 'spot' | 'futures'
+    engine_filter: nulrim | dante | ema5 | master — staggered slot SSOT.
     """
+    if include_embedded_supernova is None:
+        include_embedded_supernova = not engine_filter
     global sent_today, last_run_date
     if not os.path.exists(DB_PATH):
         print("DB not found. Run bitget_mtf_data_updater.py first.")
@@ -362,7 +393,18 @@ def run_scan(market_filter: str | None = None):
         elif mf in ("futures", "fut", "linear"):
             tf_tables = [t for t in tf_tables if "_FUT_" in t]
         with ThreadPoolExecutor(max_workers=min(MAX_SCAN_WORKERS, max(1, len(tf_tables)))) as pool:
-            futures = {pool.submit(_scan_one_table, tbl, tf, idx_close, hit_rank): tbl for tbl in tf_tables}
+            futures = {
+                pool.submit(
+                    _scan_one_table,
+                    tbl,
+                    tf,
+                    idx_close,
+                    hit_rank,
+                    engine_filter=engine_filter,
+                    include_embedded_supernova=include_embedded_supernova,
+                ): tbl
+                for tbl in tf_tables
+            }
             for fut in as_completed(futures):
                 tbl = futures[fut]
                 hits = fut.result()

@@ -6,6 +6,7 @@ Bootstrap uses BITGET_* credentials only — never equity MAIN/EQUITY_KR keys.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
@@ -33,8 +34,6 @@ def _load_bitget_dotenv() -> None:
 
 def _bootstrap_bitget_daemon_registration():
     """Bitget 전용 토큰·채팅 — equity async_telegram_daemon.main() 과 분리."""
-    import asyncio
-
     import telegram_env
     from telegram_message_queue import get_telegram_daemon_registration, start_telegram_queue_daemons
 
