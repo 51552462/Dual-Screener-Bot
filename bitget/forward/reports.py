@@ -19,8 +19,16 @@ from bitget.forward.mutant import (
     _coin_asset_group,
     _pf,
 )
+from bitget.forward.deathmatch_report_section import build_deathmatch_section
+from bitget.forward.dna_autopsy import build_dna_autopsy_slice, format_dna_autopsy_section
+from bitget.forward.forward_book_integrity import (
+    compute_open_book_stats,
+    format_open_book_integrity_html,
+)
+from bitget.forward.rotation_report_section import build_rotation_spillover_section
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config, send_telegram_msg
 from bitget.governance.meta_consumer import load_meta_state_resolved
+from bitget.reports.bitget_report_context import BitgetReportContext
 from reports.forward_report_scalar import (
     col_series,
     prepare_forward_trades_df,
@@ -63,6 +71,8 @@ def send_group_practitioner_reports():
 def send_comprehensive_daily_report():
     init_forward_db()
     cfg = load_system_config()
+    meta = load_meta_state_resolved() or {}
+    ctx = BitgetReportContext.build()
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
 
@@ -76,8 +86,18 @@ def send_comprehensive_daily_report():
         )
         if df_all.empty:
             continue
-        df_closed = df_all[df_all["status"].str.contains("CLOSED", na=False)].copy()
-        df_open = df_all[df_all["status"] == "OPEN"].copy()
+
+        df_all = prepare_forward_trades_df(df_all, context=f"bitget_comprehensive:{mkt}")
+        mkt_slice = ctx.slice_for_market(df_all, market_type)
+        df_closed = mkt_slice.df_closed
+        df_open = mkt_slice.df_open
+        tk = ctx.timekeeper_for(market_type)
+        book_stats = compute_open_book_stats(
+            df_all,
+            market_type=market_type,
+            session_anchor=tk.session_anchor,
+        )
+        integrity_html = format_open_book_integrity_html(book_stats)
 
         treasury_key = "TREASURY_SPOT_USDT" if mkt == "spot" else "TREASURY_FUTURES_USDT"
         treasury = float(cfg.get(treasury_key, 0.0))
@@ -87,17 +107,23 @@ def send_comprehensive_daily_report():
         w1 = float(cfg.get("WEIGHT_S1", 1.0))
         w4 = float(cfg.get("WEIGHT_S4", 1.0))
 
-        # [1/6] 거시+국고
-        msg1 = f"{m_icon} <b>[1/6] {mkt.upper()} 국면/국고 현황</b>\n"
-        msg1 += f"📅 {datetime.utcnow().strftime('%Y-%m-%d')} | 국면: <b>{regime}</b>\n"
+        msg1 = f"{m_icon} <b>[1/9] {mkt.upper()} 국면/국고 현황</b>\n"
+        msg1 += ctx.market_window_header_html(
+            market_type,
+            n_real=len(mkt_slice.df_real),
+            n_closed=mkt_slice.n_closed_window,
+            n_open=mkt_slice.n_open_valid,
+        )
+        if integrity_html:
+            msg1 += integrity_html
+        msg1 += f"📅 {datetime.utcnow().strftime('%Y-%m-%d')} UTC | 국면: <b>{regime}</b>\n"
         msg1 += f"🏦 잔여 국고: <b>{treasury:,.2f} USDT</b>\n"
         msg1 += f"⚖️ 동적 켈리: {kelly:.2f}%\n"
         msg1 += f"🌊 Breadth: {b_status} | base_w1={w1:.2f}, base_w4={w4:.2f}\n"
         send_telegram_msg(msg1)
         time.sleep(1.0)
 
-        # [2/6] 리더보드
-        msg2 = f"{m_icon} <b>[2/6] 로직별 복리 리더보드</b>\n"
+        msg2 = f"{m_icon} <b>[2/9] 로직별 복리 리더보드</b>\n"
         groups = {}
         for _, r in df_all.iterrows():
             g = _extract_core_group(r.get("sig_type", "UNKNOWN"))
@@ -121,8 +147,7 @@ def send_comprehensive_daily_report():
         send_telegram_msg(msg2)
         time.sleep(1.0)
 
-        # [3/6] 자금관리 결투
-        msg3 = f"{m_icon} <b>[3/6] 자금관리 진검승부</b>\n"
+        msg3 = f"{m_icon} <b>[3/9] 자금관리 진검승부</b>\n"
         if not df_closed.empty:
             kelly_pnl = float((df_closed["sim_kelly_invest"] * df_closed["final_ret"] / 100.0).sum())
             fixed_pnl = float((df_closed["margin_used"] * df_closed["final_ret"] / 100.0).sum())
@@ -135,41 +160,83 @@ def send_comprehensive_daily_report():
         send_telegram_msg(msg3)
         time.sleep(1.0)
 
-        # [4/6] 티어/데스콤보
-        msg4 = f"{m_icon} <b>[4/6] 티어/필터 검증</b>\n"
+        msg4 = f"{m_icon} <b>[4/9] 자산군 포트폴리오 다중화</b>\n"
         if not df_closed.empty:
-            t1 = df_closed[df_closed["total_score"] >= 80]
-            if not t1.empty:
-                msg4 += f"💎 1티어 승률: {(t1['final_ret'] > 0).mean()*100:.1f}% | PF {_pf(t1['final_ret']):.2f}\n"
-            msg4 += f"⚙️ 전체 PF: {_pf(df_closed['final_ret']):.2f}\n"
+            ag_counts = {}
+            for _, r in df_closed.iterrows():
+                ag = _coin_asset_group(str(r.get("symbol", "")))
+                ag_counts[ag] = ag_counts.get(ag, 0) + 1
+            total = sum(ag_counts.values()) or 1
+            for ag, cnt in sorted(ag_counts.items(), key=lambda x: -x[1])[:6]:
+                msg4 += f"▪️ {ag}: {cnt}건 ({cnt / total * 100:.1f}%)\n"
         else:
             msg4 += "표본 부족\n"
         send_telegram_msg(msg4)
         time.sleep(1.0)
 
-        # [5/6] TF별 데스매치
-        msg5 = f"{m_icon} <b>[5/6] TF별 데스매치</b>\n"
-        for tf in ["1D", "4H", "2H", "1H"]:
-            sub = df_closed[df_closed["timeframe"].astype(str).str.upper() == tf]
-            if sub.empty:
-                continue
-            st = sub[sub["sig_type"].astype(str).str.contains("STANDARD", na=False)]
-            sn = sub[sub["sig_type"].astype(str).str.contains("SUPERNOVA", na=False)]
-            st_pf = _pf(st["final_ret"]) if not st.empty else 0.0
-            sn_pf = _pf(sn["final_ret"]) if not sn.empty else 0.0
-            winner = "SUPERNOVA" if sn_pf > st_pf else "STANDARD"
-            msg5 += f"▪️ {tf}: STD {st_pf:.2f} vs SN {sn_pf:.2f} → <b>{winner}</b>\n"
+        msg5 = f"{m_icon} <b>[5/9] 티어 및 데스콤보 검증</b>\n"
+        if not df_closed.empty:
+            t1 = df_closed[df_closed["total_score"] >= 80]
+            if not t1.empty:
+                msg5 += f"💎 1티어 승률: {(t1['final_ret'] > 0).mean()*100:.1f}% | PF {_pf(t1['final_ret']):.2f}\n"
+            msg5 += f"⚙️ 전체 PF: {_pf(df_closed['final_ret']):.2f}\n"
+            for tf in ["1D", "4H", "2H", "1H"]:
+                sub = df_closed[df_closed["timeframe"].astype(str).str.upper() == tf]
+                if sub.empty:
+                    continue
+                st = sub[sub["sig_type"].astype(str).str.contains("STANDARD", na=False)]
+                sn = sub[sub["sig_type"].astype(str).str.contains("SUPERNOVA", na=False)]
+                st_pf = _pf(st["final_ret"]) if not st.empty else 0.0
+                sn_pf = _pf(sn["final_ret"]) if not sn.empty else 0.0
+                winner = "SUPERNOVA" if sn_pf > st_pf else "STANDARD"
+                msg5 += f"▪️ {tf}: STD {st_pf:.2f} vs SN {sn_pf:.2f} → <b>{winner}</b>\n"
+        else:
+            msg5 += "표본 부족\n"
         send_telegram_msg(msg5)
         time.sleep(1.0)
 
-        # [6/6] 오픈포지션 스냅샷
-        msg6 = f"{m_icon} <b>[6/6] 오픈 포지션 스냅샷</b>\n"
-        msg6 += f"📌 OPEN 개수: {len(df_open)}\n"
-        if not df_open.empty:
-            top = df_open.sort_values("total_score", ascending=False).head(5)
-            for _, r in top.iterrows():
-                msg6 += f" - {r['symbol']} [{r['timeframe']}] {float(r['total_score']):.1f}점 / {r['sig_type']}\n"
+        dna_slice = build_dna_autopsy_slice(ctx, market_type, df_closed, sys_config=cfg)
+        msg6 = f"{m_icon} <b>[6/9] 대박주/참사주 4차원 DNA 부검</b>\n"
+        msg6 += format_dna_autopsy_section(
+            dna_slice,
+            ctx=ctx,
+            market_type=market_type,
+            n_real=len(mkt_slice.df_real),
+            n_open=mkt_slice.n_open_valid,
+            sys_config=cfg,
+            meta=meta,
+        )
         send_telegram_msg(msg6)
+        time.sleep(1.0)
+
+        msg7 = build_rotation_spillover_section(
+            ctx, market_type, mkt_slice, sys_config=cfg, market_icon=m_icon
+        )
+        send_telegram_msg(msg7)
+        time.sleep(1.0)
+
+        msg8 = f"{m_icon} <b>[8/9] 메타 최적화 및 알파 반감기</b>\n"
+        health = meta.get("META_STRATEGY_HEALTH") if isinstance(meta, dict) else None
+        if isinstance(health, dict) and health:
+            for arm, h in list(health.items())[:5]:
+                if isinstance(h, dict):
+                    msg8 += f"▪️ {arm}: score={h.get('score', '—')} decay={h.get('half_life_days', '—')}\n"
+        else:
+            msg8 += "<i>메타 헬스 데이터 없음 — governance/meta_consumer 경로 확인</i>\n"
+        send_telegram_msg(msg8)
+        time.sleep(1.0)
+
+        msg9 = build_deathmatch_section(
+            ctx,
+            market_type,
+            df_closed,
+            mkt_slice,
+            sys_config=cfg,
+            meta=meta,
+            market_icon=m_icon,
+            apply_deathmatch_allocation=False,
+        )
+        send_telegram_msg(msg9)
         time.sleep(1.0)
 
     conn.close()
@@ -187,30 +254,50 @@ def run_deep_dive_analysis(market_type="spot"):
     mkt = _norm_market_type(market_type)
     try:
         init_forward_db()
+        cfg = load_system_config()
+        meta = load_meta_state_resolved() or {}
+        ctx = BitgetReportContext.build()
+
         conn = sqlite3.connect(DB_PATH, timeout=60)
         conn.execute("PRAGMA journal_mode=WAL;")
-        df = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE market_type=? AND status LIKE 'CLOSED%'",
+        df_all = pd.read_sql(
+            "SELECT * FROM bitget_forward_trades WHERE market_type=?",
             conn,
             params=(mkt,),
         )
         conn.close()
 
-        n_closed = len(df)
-        if n_closed < 10:
+        if df_all.empty:
             skip_msg = (
                 f"⚠️ <b>[{mkt.upper()} Bitget 딥 다이브]</b>\n"
-                f"표본 부족 (현재 <b>{n_closed}</b>건 / 최소 10건)으로 딥다이브 생략."
+                "표본 부족 (현재 <b>0</b>건 / 최소 10건)으로 딥다이브 생략."
             )
             print(skip_msg.replace("<b>", "").replace("</b>", ""))
             send_telegram_msg(skip_msg)
             return
 
-        cfg = load_system_config()
-        df = prepare_forward_trades_df(df, context=f"bitget_deep_dive:{mkt}")
+        df_all = prepare_forward_trades_df(df_all, context=f"bitget_deep_dive:{mkt}")
+        mkt_slice = ctx.slice_for_market(df_all, mkt)
+        df = mkt_slice.df_closed.copy()
+        tk = ctx.timekeeper_for(mkt)
+
+        n_closed = len(df)
+        if n_closed < 10:
+            skip_msg = (
+                f"⚠️ <b>[{mkt.upper()} Bitget 딥 다이브]</b>\n"
+                f"표본 부족 (롤링 윈도우 <b>{n_closed}</b>건 / 최소 10건)으로 딥다이브 생략.\n"
+                f"📎 <i>{tk.rolling_cutoff}~{tk.session_anchor} · lag {ctx.lag_for(mkt)}d</i>"
+            )
+            print(skip_msg.replace("<b>", "").replace("</b>", ""))
+            send_telegram_msg(skip_msg)
+            return
 
         df["Win"] = np.where(col_series(df, "final_ret") > 0, 1, 0)
-        report_msg = f"🔬 [{mkt.upper()}장 포워드 테스팅 딥 다이브 분석]\n(총 {len(df)}개 실전 검증 데이터 기반)\n\n"
+        report_msg = (
+            f"🔬 [{mkt.upper()}장 포워드 테스팅 딥 다이브 분석]\n"
+            f"(롤링 {ctx.window_days}일 청산 {n_closed}건)\n"
+            f"📎 <i>{tk.rolling_cutoff}~{tk.session_anchor}</i>\n\n"
+        )
 
         for t in range(10, 100, 10):
             tier_label = f"{t}점대"
@@ -219,71 +306,19 @@ def run_deep_dive_analysis(market_type="spot"):
                 continue
             report_msg += f"📌 <b>[{tier_label} 구간 심층 분석]</b>\n"
             t_wr, t_pf = _calculate_metrics(t_df, "final_ret")
-            report_msg += f"▪️ 성적: 승률 {t_wr:.1f}% | PF {t_pf:.2f}\n"
+            report_msg += f"▪️ 성적: 승률 {t_wr:.1f}% | PF {t_pf:.2f}\n\n"
 
-            winners = t_df[pd.to_numeric(t_df["final_ret"], errors="coerce").fillna(0.0) > 5.0]
-            sideways = t_df[
-                (pd.to_numeric(t_df["final_ret"], errors="coerce").fillna(0.0) >= -3.0)
-                & (pd.to_numeric(t_df["final_ret"], errors="coerce").fillna(0.0) <= 5.0)
-            ]
-            losers = t_df[pd.to_numeric(t_df["final_ret"], errors="coerce").fillna(0.0) < -3.0]
-
-            def get_dna(sub_df):
-                if len(sub_df) == 0:
-                    return f"표본 부족 (현재 0건)으로 {tier_label} DNA 생략"
-                rs = pd.to_numeric(col_series(sub_df, "dyn_rs"), errors="coerce").dropna()
-                cpv = pd.to_numeric(col_series(sub_df, "dyn_cpv"), errors="coerce").dropna()
-                eng = pd.to_numeric(col_series(sub_df, "v_energy"), errors="coerce").dropna()
-                if rs.empty or cpv.empty or eng.empty:
-                    return f"표본 부족 (현재 {len(sub_df)}건, DNA 컬럼 결측)으로 {tier_label} DNA 생략"
-                return (
-                    f"RS:{(10 - scalar_float(rs.mean())) * 11.1:.1f}% | "
-                    f"CPV:{(10 - scalar_float(cpv.mean())) * 11.1:.1f}% | "
-                    f"ENG:{scalar_float(eng.mean()):.1f}"
-                )
-
-            report_msg += f" ✅ 대박 DNA: {get_dna(winners)}\n"
-            report_msg += f" ↔️ 횡보 DNA: {get_dna(sideways)}\n"
-            report_msg += f" 💀 참사 DNA: {get_dna(losers)}\n"
-            if len(winners) > 0 and len(losers) > 0:
-                w_eng = pd.to_numeric(winners.get("v_energy", pd.Series(dtype=float)), errors="coerce").dropna()
-                l_eng = pd.to_numeric(losers.get("v_energy", pd.Series(dtype=float)), errors="coerce").dropna()
-                if not w_eng.empty and not l_eng.empty and w_eng.mean() > l_eng.mean() + 1.0:
-                    report_msg += f" 💡 통찰: {tier_label}는 에너지가 높을 때만 날아갑니다. 에너지 낮은 종목은 거르십시오.\n"
-            report_msg += "\n"
-
-        report_msg += "🌍 [전체 티어 통합: 유니버설(Universal) DNA 분석]\n"
-        all_winners = df[pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) > 5.0]
-        all_sideways = df[
-            (pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) >= -3.0)
-            & (pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) <= 5.0)
-        ]
-        all_losers = df[pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0) < -3.0]
-        if len(all_winners) >= 5 and len(all_losers) >= 5:
-            aw_rs = pd.to_numeric(all_winners.get("dyn_rs", pd.Series(dtype=float)), errors="coerce").dropna()
-            aw_eng = pd.to_numeric(all_winners.get("v_energy", pd.Series(dtype=float)), errors="coerce").dropna()
-            as_cpv = pd.to_numeric(all_sideways.get("dyn_cpv", pd.Series(dtype=float)), errors="coerce").dropna()
-            al_cpv = pd.to_numeric(all_losers.get("dyn_cpv", pd.Series(dtype=float)), errors="coerce").dropna()
-            al_tb = pd.to_numeric(all_losers.get("dyn_tb", pd.Series(dtype=float)), errors="coerce").dropna()
-            if not aw_rs.empty and not aw_eng.empty:
-                report_msg += f"✅ [전체 대박주 {len(all_winners)}개 절대 공통점]\n"
-                report_msg += f" ↳ 평균 RS: 상위 {(10-aw_rs.mean())*11.1:.1f}% | 평균 에너지: {aw_eng.mean():.1f}\n"
-            if not as_cpv.empty:
-                report_msg += f"↔️ [전체 횡보주 {len(all_sideways)}개 절대 공통점]\n"
-                report_msg += f" ↳ 평균 캔들지배력(CPV): 상위 {(10-as_cpv.mean())*11.1:.1f}% (애매한 매도세가 횡보를 유발함)\n"
-            if not al_cpv.empty and not al_tb.empty:
-                report_msg += f"💀 [전체 참사주 {len(all_losers)}개 절대 공통점]\n"
-                report_msg += f" ↳ 평균 캔들지배력(CPV): 상위 {(10-al_cpv.mean())*11.1:.1f}% | 찐양봉 빈도 하위 {(al_tb.mean())*11.1:.1f}%\n"
-                report_msg += f"💡 <b>[관제탑 최종 결론]</b>\n"
-                if aw_rs.mean() < al_cpv.mean():
-                    report_msg += "현재 시장은 점수와 무관하게 철저히 '상대강도(RS)'가 주도하는 추세장입니다.\n"
-                else:
-                    report_msg += "현재 시장은 악성 윗꼬리(CPV)에 한 번 걸리면 무조건 계좌가 녹아내리는 변동성 장세입니다.\n"
-        else:
-            report_msg += (
-                f"⚠️ 표본 부족 (대박 {len(all_winners)}건 · 참사 {len(all_losers)}건, "
-                "각 5건 이상 필요)으로 Universal DNA 딥다이브 생략.\n"
-            )
+        dna_slice = build_dna_autopsy_slice(ctx, mkt, df, sys_config=cfg)
+        report_msg += "🌍 <b>[4차원 DNA 정밀 부검 — dna_autopsy SSOT]</b>\n"
+        report_msg += format_dna_autopsy_section(
+            dna_slice,
+            ctx=ctx,
+            market_type=mkt,
+            n_real=len(mkt_slice.df_real),
+            n_open=mkt_slice.n_open_valid,
+            sys_config=cfg,
+            meta=meta,
+        )
         report_msg += "\n"
 
         report_msg += "🏷️ [세부 흐름 태그별 승률 기여도]\n"

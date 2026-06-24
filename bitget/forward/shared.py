@@ -312,3 +312,77 @@ def init_forward_db():
         pass
     conn.close()
 
+
+_EXIT_REASON_ZOMBIE_DB = "REPORTER_ZOMBIE_CLEANUP"
+_EXIT_REASON_FACT_CLOSE_DB = "REPORTER_FACT_CLOSE"
+
+
+def reporter_cleanup_zombie_forward_trades() -> int:
+    """
+    OPEN/ACTIVE 인데 수량·투입 0 → CLOSED_ZOMBIE (주식 forward/shared 동일 규칙).
+    bitget_forward_trades 직접 갱신 — DROP 없음.
+    """
+    from datetime import datetime
+
+    if not os.path.isfile(DB_PATH):
+        return 0
+    init_forward_db()
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    total = 0
+    exit_day = datetime.now().strftime("%Y-%m-%d")
+    try:
+        cur = conn.execute(
+            """
+            SELECT id FROM bitget_forward_trades
+            WHERE (status = 'OPEN' OR UPPER(TRIM(IFNULL(status,''))) = 'ACTIVE')
+              AND COALESCE(quantity,0) <= 0
+              AND COALESCE(sim_kelly_invest,0) <= 0
+              AND COALESCE(margin_used,0) <= 0
+              AND IFNULL(sig_type,'') NOT LIKE '%OBSERVE_ONLY%'
+            """
+        )
+        ids = [int(r[0]) for r in cur.fetchall() if r and r[0] is not None]
+        if ids:
+            conn.executemany(
+                """
+                UPDATE bitget_forward_trades
+                SET status='CLOSED_ZOMBIE', exit_date=?, exit_reason=?,
+                    final_ret=COALESCE(final_ret, 0.0)
+                WHERE id=?
+                """,
+                [(exit_day, _EXIT_REASON_ZOMBIE_DB, i) for i in ids],
+            )
+            total += len(ids)
+
+        cur2 = conn.execute(
+            """
+            SELECT id FROM bitget_forward_trades
+            WHERE (status = 'OPEN' OR UPPER(TRIM(IFNULL(status,''))) = 'ACTIVE')
+              AND COALESCE(quantity,0) <= 0
+              AND (
+                (exit_date IS NOT NULL AND TRIM(CAST(exit_date AS TEXT)) != '')
+                OR final_ret IS NOT NULL
+              )
+            """
+        )
+        ids2 = [int(r[0]) for r in cur2.fetchall() if r and r[0] is not None and int(r[0]) not in set(ids)]
+        if ids2:
+            conn.executemany(
+                """
+                UPDATE bitget_forward_trades
+                SET status='CLOSED_AUTO', exit_reason=?,
+                    final_ret=COALESCE(final_ret, 0.0)
+                WHERE id=?
+                """,
+                [(_EXIT_REASON_FACT_CLOSE_DB, i) for i in ids2],
+            )
+            total += len(ids2)
+
+        if total:
+            conn.commit()
+        print(f"🛰️ [Bitget] reporter_cleanup_zombie_forward_trades: {total}")
+        return total
+    finally:
+        conn.close()
+
