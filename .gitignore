@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+bitget/.env
+
+# Bitget runtime data (SSOT: BITGET_DB_STORAGE_PATH on server, e.g. /var/lib/bitget-factory/data)
+bitget/*.sqlite
+bitget/*.sqlite-shm
+bitget/*.sqlite-wal
+bitget/bitget_meta_governor_state.json
+bitget/logs/
+bitget/data/
+
+# Local IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Accidental home-path junk
+~/
