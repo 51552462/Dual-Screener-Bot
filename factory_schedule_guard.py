@@ -75,5 +75,5 @@ def us_cron_misalignment_hint(
         True,
         "US scan triggered during KST daytime — reinstall cron "
         "(sudo INSTALL_ROOT=$PWD bash deploy/install_factory_cron.sh) "
-        "and verify TZ=America/New_York on each US line.",
+        "to enable factory_slot_dispatcher (ET slots without CRON_TZ=NY).",
     )

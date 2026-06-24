@@ -2,23 +2,28 @@
 #
 # AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.
 # Regenerate: python deploy/generate_factory_crontab.py
-# Staggered scans: 50 min apart, NY from 10:00 ET.
-# CRON_TZ=America/New_York — DST 자동. Mon–Fri = US regular equity session days.
+# Staggered scans: 50 min apart, ET 10:00–16:40 (Mon–Fri).
+# Uses factory_slot_dispatcher.py — ET clock SSOT; does NOT rely on CRON_TZ=America/New_York.
 # install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh
+# diagnose: bash scripts/diag_cron_tz_effective.sh
 #
 # user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
 
 SHELL=/bin/bash
-CRON_TZ=America/New_York
+CRON_TZ=Asia/Seoul
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# --- US staggered intraday (Mon–Fri ET, 9 slots, 50 min) ---
-0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-supernova
-50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-nulrim
-40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-dante
-30 12 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-ema5
-20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-bowl
-10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-supernova-r2
-0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-nulrim-r2
-50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-dante-r2
-40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=America/New_York bash ./factory.sh --scan-us-ema5-r2
+# --- ET slot SSOT (9 slots) — executed by dispatcher, not per-line ET cron ---
+#   10:00 ET  scan_us_supernova
+#   10:50 ET  scan_us_nulrim
+#   11:40 ET  scan_us_dante
+#   12:30 ET  scan_us_ema5
+#   13:20 ET  scan_us_bowl
+#   14:10 ET  scan_us_supernova_r2
+#   15:00 ET  scan_us_nulrim_r2
+#   15:50 ET  scan_us_dante_r2
+#   16:40 ET  scan_us_ema5_r2
+
+# --- US slot dispatcher (KST poll window ≈ ET regular session; DST-safe) ---
+*/5 22,23 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && /home/ubuntu/dante_bots/Dual-Screener-Bot/venv/bin/python factory_slot_dispatcher.py --market US
+*/5 0-6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && /home/ubuntu/dante_bots/Dual-Screener-Bot/venv/bin/python factory_slot_dispatcher.py --market US

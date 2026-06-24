@@ -45,6 +45,11 @@ _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
     ),
 )
 
+# US: KST polling window — covers ET Mon–Fri 10:00–16:40 (DST via factory_slot_dispatcher ET clock)
+_US_DISPATCH_KST_HOURS_EVENING = "22,23"
+_US_DISPATCH_KST_HOURS_MORNING = "0-6"
+_US_DISPATCH_CRON_TZ = "Asia/Seoul"
+
 
 def _cron_line(minute: int, hour: int, dow: str, command: str, install_root: str) -> str:
     return (
@@ -53,8 +58,18 @@ def _cron_line(minute: int, hour: int, dow: str, command: str, install_root: str
     )
 
 
+def _cron_line_schedule(schedule: str, command: str, install_root: str) -> str:
+    """schedule = 'minute hour dom month dow' (five fields)."""
+    return f"{schedule}  {CRON_USER}  cd {install_root} && {command}"
+
+
 def _scan_command(factory_flag: str, *, tz: str) -> str:
     return f"TZ={tz} bash ./factory.sh {factory_flag}"
+
+
+def _dispatcher_command(install_root: str, market: str) -> str:
+    py = f"{install_root}/venv/bin/python"
+    return f"{py} factory_slot_dispatcher.py --market {market}"
 
 
 def render_kr_crontab(install_root: str) -> str:
@@ -99,29 +114,45 @@ def render_kr_crontab(install_root: str) -> str:
 
 
 def render_us_crontab(install_root: str) -> str:
-    tz = SCHEDULE_MARKET_TZ["US"]
-    dow = SCHEDULE_WEEKDAYS["US"]
     lines: List[str] = [
         "# Dual-Screener-Bot — US factory cron (→ /etc/cron.d/dual-screener-factory-us)",
         "#",
         "# AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.",
         "# Regenerate: python deploy/generate_factory_crontab.py",
-        f"# Staggered scans: {SLOT_INTERVAL_MINUTES} min apart, NY from 10:00 ET.",
-        "# CRON_TZ=America/New_York — DST 자동. Mon–Fri = US regular equity session days.",
+        f"# Staggered scans: {SLOT_INTERVAL_MINUTES} min apart, ET 10:00–16:40 (Mon–Fri).",
+        "# Uses factory_slot_dispatcher.py — ET clock SSOT; does NOT rely on CRON_TZ=America/New_York.",
         "# install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh",
+        "# diagnose: bash scripts/diag_cron_tz_effective.sh",
         "#",
         f"# user/path: {CRON_USER} · {install_root}",
         "",
         "SHELL=/bin/bash",
-        f"CRON_TZ={tz}",
+        f"CRON_TZ={_US_DISPATCH_CRON_TZ}",
         "PATH=/usr/local/bin:/usr/bin:/bin",
         "",
-        f"# --- US staggered intraday (Mon–Fri ET, {len(US_SCAN_SLOTS)} slots, {SLOT_INTERVAL_MINUTES} min) ---",
+        f"# --- ET slot SSOT ({len(US_SCAN_SLOTS)} slots) — executed by dispatcher, not per-line ET cron ---",
     ]
     for slot in US_SCAN_SLOTS:
-        lines.append(
-            _cron_line(slot.minute, slot.hour, dow, _scan_command(slot.factory_flag, tz=tz), install_root)
+        lines.append(f"#   {slot.hour:02d}:{slot.minute:02d} ET  {slot.mode}")
+    lines.append("")
+    lines.append(
+        "# --- US slot dispatcher (KST poll window ≈ ET regular session; DST-safe) ---"
+    )
+    disp = _dispatcher_command(install_root, "US")
+    lines.append(
+        _cron_line_schedule(
+            f"*/5 {_US_DISPATCH_KST_HOURS_EVENING} * * *",
+            disp,
+            install_root,
         )
+    )
+    lines.append(
+        _cron_line_schedule(
+            f"*/5 {_US_DISPATCH_KST_HOURS_MORNING} * * *",
+            disp,
+            install_root,
+        )
+    )
     return "\n".join(lines) + "\n"
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 로그 파일명 시각(KST)으로 cron 스케줄 정렬 여부 검사 (staggered scan SSOT)
+# 로그 wall_clock(KST)으로 cron 스케줄 정렬 여부 검사 (staggered scan SSOT)
 set -eu -o pipefail
 
 INSTALL_ROOT="${INSTALL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -20,51 +20,62 @@ check_cron_file() {
     else
       echo "✗ $label missing CRON_TZ=${tz}"
     fi
+    if grep -q 'factory_slot_dispatcher.py --market US' "$f" 2>/dev/null; then
+      echo "✓ $label uses factory_slot_dispatcher (ET slots, KST poll)"
+    elif grep -q 'factory.sh --scan-us-' "$f" 2>/dev/null; then
+      echo "⚠ $label legacy per-slot ET cron — needs working CRON_TZ=America/New_York"
+    fi
   else
     echo "✗ $label missing: $f"
   fi
 }
 
 check_cron_file "$CRON_KR" "Asia/Seoul" "KR cron"
-check_cron_file "$CRON_US" "America/New_York" "US cron"
+check_cron_file "$CRON_US" "Asia/Seoul" "US cron"
 
 echo ""
-echo "--- Expected staggered KR (KST log hour) ---"
+echo "--- Expected staggered KR (KST wall_clock in logs) ---"
 echo "  scan_kr_supernova: ~10:00 · nulrim ~10:50 · … · ema5_r2 ~17:30"
 echo "  daily_kr: Mon-Fri ~18:45 · daily_us: Tue-Sat ~06:45"
 echo ""
-echo "--- Expected staggered US (log filename uses server TZ; US cron = ET) ---"
-echo "  factory_scan_us_supernova_* during US regular session (ET 10:00–16:40)"
+echo "--- Expected staggered US (KST wall_clock ≈ ET session night) ---"
+echo "  factory_scan_us_* wall_clock KST ~23:00–06:00 (EDT) during US Mon–Fri ET slots"
 echo ""
 
 _misaligned=0
 
-_check_logs() {
+# factory.sh logs KST wall_clock on every run — authoritative for trigger time
+_log_kst_hour() {
+  local f="$1"
+  grep -m1 '^\[factory\.sh\] wall_clock=' "$f" 2>/dev/null \
+    | sed -n 's/.*wall_clock=[0-9-]* \([0-9][0-9]\):.*/\1/p'
+}
+
+_check_us_logs() {
   local pattern="$1"
   local desc="$2"
-  local bad_hours_re="$3"
   local f hh
   for f in $(ls -t "${LOG_DIR}/${pattern}" 2>/dev/null | head -20); do
-    hh="$(basename "$f" | sed -n 's/.*_\([0-9][0-9]\)\([0-9][0-9]\)\([0-9][0-9]\)\.log/\2/p')"
+    hh="$(_log_kst_hour "$f")"
     [[ -z "$hh" ]] && continue
-    if [[ "$hh" =~ $bad_hours_re ]]; then
-      echo "  ✗ MISALIGNED $desc: $(basename "$f") (hour=${hh} in filename)"
+    if [[ "$hh" =~ ^(0[89]|1[0-9]|2[0-2])$ ]]; then
+      echo "  ✗ MISALIGNED $desc: $(basename "$f") (KST wall_clock hour=${hh})"
       _misaligned=1
     fi
   done
 }
 
-# US staggered: ET 10:00–16:40 ≈ KST 23:00–05:40 (EDT). KST 08–22 = misaligned (cron TZ broken).
-_check_logs 'factory_scan_us_supernova_*' 'us_supernova' '^(0[89]|1[0-9]|2[0-2])$'
-_check_logs 'factory_scan_us_bowl_*' 'us_bowl' '^(0[89]|1[0-9]|2[0-2])$'
+_check_us_logs 'factory_scan_us_supernova_*' 'us_supernova'
+_check_us_logs 'factory_scan_us_bowl_*' 'us_bowl'
+_check_us_logs 'factory_scan_us_*_r2_*' 'us_r2'
 
 if [[ "$_misaligned" -eq 0 ]]; then
-  echo "✓ No obvious misaligned pattern in recent staggered KR/US log filenames"
+  echo "✓ No US scan logs with KST daytime wall_clock (08–22h) in recent history"
 else
   echo ""
-  echo "US logs at KST 08–22h mean CRON_TZ=America/New_York is NOT applied (runs as KST/UTC)."
-  echo "Fix: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
-  echo "     bash scripts/verify_schedule_alignment.sh"
+  echo "US scans at KST 08–22h → SKIPPED_SESSION + no data. Fix:"
+  echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
+  echo "  bash scripts/diag_cron_tz_effective.sh"
 fi
 
 echo ""

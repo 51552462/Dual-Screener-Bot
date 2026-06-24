@@ -66,13 +66,18 @@ else
   _cron_ok=1
   if grep -q '^CRON_TZ=America/New_York' "$CRON_US"; then
     pass "CRON_TZ=America/New_York (US file)"
+  elif grep -q '^CRON_TZ=Asia/Seoul' "$CRON_US" \
+    && grep -q 'factory_slot_dispatcher.py --market US' "$CRON_US"; then
+    pass "US slot dispatcher + CRON_TZ=Asia/Seoul"
   else
-    fail "CRON_TZ=America/New_York missing in US cron"
+    fail "US cron missing dispatcher or CRON_TZ"
   fi
-  if grep -q 'factory.sh --scan-us-supernova' "$CRON_US"; then
-    pass "staggered scan-us-supernova scheduled"
+  if grep -q 'factory_slot_dispatcher.py --market US' "$CRON_US"; then
+    pass "US factory_slot_dispatcher scheduled"
+  elif grep -q 'factory.sh --scan-us-supernova' "$CRON_US"; then
+    warn "legacy per-slot US cron — CRON_TZ=America/New_York must work on this host"
   else
-    fail "no staggered --scan-us-supernova"
+    fail "no US scan schedule"
   fi
 fi
 
@@ -201,25 +206,31 @@ for mode in scan_kr scan_us scan_us_supernova scan_us_nulrim scan_us_bowl daily_
 done
 echo ""
 
-# --- 8. UTC-vs-KST cron smell test ---
-echo "[8] Cron TZ smell test"
+# --- 8. US scan KST daytime smell test (wall_clock in logs) ---
+echo "[8] US scan KST daytime smell test"
 if [[ -d "$LOG_DIR" ]]; then
-  # If scan_us logs cluster at KST 09:00-15:00, cron likely still on UTC
-  us_morning="$(ls "${LOG_DIR}"/factory_scan_us_* 2>/dev/null | while read -r f; do
-    b=$(basename "$f")
-    hh=$(echo "$b" | sed -n 's/.*_\([0-9][0-9]\)\([0-9][0-9]\)\([0-9][0-9]\)\.log/\2/p')
-    [[ "$hh" =~ ^(09|10|11|12|13|14|15)$ ]] && echo "$b"
-  done | wc -l)"
-  if [[ "${us_morning:-0}" -gt 3 ]]; then
-    fail "many scan_us logs at KST 09-15h — strong sign cron runs in UTC (CRON_TZ broken)"
+  us_daytime=0
+  for f in $(ls -t "${LOG_DIR}"/factory_scan_us_*.log 2>/dev/null | head -30); do
+    hh="$(grep -m1 '^\[factory\.sh\] wall_clock=' "$f" 2>/dev/null \
+      | sed -n 's/.*wall_clock=[0-9-]* \([0-9][0-9]\):.*/\1/p')"
+    [[ -z "$hh" ]] && continue
+    if [[ "$hh" =~ ^(0[89]|1[0-9]|2[0-2])$ ]]; then
+      us_daytime=$((us_daytime + 1))
+    fi
+  done
+  if [[ "${us_daytime:-0}" -gt 2 ]]; then
+    fail "${us_daytime} recent US scan logs at KST 08–22h (wall_clock) — cron TZ or dispatcher broken"
+    echo "       Fix: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
+    echo "            bash scripts/diag_cron_tz_effective.sh"
   else
-    pass "no obvious UTC mis-schedule pattern in scan_us log times"
+    pass "no US scan KST daytime wall_clock pattern in recent logs"
   fi
 fi
 echo ""
 
 echo "=== audit done ==="
 echo "Quick recovery:"
+echo "  bash scripts/diag_cron_tz_effective.sh"
 echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_factory_cron.sh"
 echo "  bash scripts/reset_factory_pipeline.sh"
 echo "  bash factory.sh --scan-kr-supernova   # staggered KR slot (cron SSOT)"

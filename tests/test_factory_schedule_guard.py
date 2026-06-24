@@ -23,7 +23,7 @@ class TestFactoryScheduleGuard(unittest.TestCase):
         noon = _KR.localize(datetime(2026, 6, 23, 13, 20, 0))
         mis, hint = us_cron_misalignment_hint("scan_us_bowl", now_kst=noon)
         self.assertTrue(mis)
-        self.assertIn("install_factory_cron", hint)
+        self.assertIn("factory_slot_dispatcher", hint)
 
     def test_kr_skip_weekend_quiet(self):
         sat = _KR.localize(datetime(2026, 6, 27, 11, 0, 0))
@@ -47,7 +47,7 @@ class TestNotifyQuietSkip(unittest.TestCase):
         with mock.patch("factory_schedule_guard.kst_now", return_value=noon):
             notify_factory_run(report, send_fn=lambda m: sent.append(m))
         self.assertEqual(len(sent), 1)
-        self.assertIn("install_factory_cron", sent[0])
+        self.assertIn("factory_slot_dispatcher", sent[0])
 
     def test_us_expected_off_hours_weekend_still_quiet(self):
         from factory_runtime import FactoryRunReport, notify_factory_run
