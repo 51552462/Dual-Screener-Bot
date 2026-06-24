@@ -1,8 +1,8 @@
 {
   "META_SCHEMA_VERSION": "1.0.0",
-  "META_GOVERNOR_LAST_RUN_AT": "2026-06-14T15:35:04.726977+00:00",
+  "META_GOVERNOR_LAST_RUN_AT": "2026-06-24T12:15:21.913009+00:00",
   "META_GOVERNOR_LAST_RUN_STATUS": "OK",
-  "META_GOVERNOR_INPUT_HASH": "bitget:C:\\Users\\GoodLife\\Desktop\\quant\\Dual-Screener-Bot\\bitget\\bitget_market_data.sqlite:1781451304",
+  "META_GOVERNOR_INPUT_HASH": "bitget:C:\\Users\\최용진\\Desktop\\quant\\Dual-Screener-Bot\\bitget\\bitget_market_data.sqlite:1782303321",
   "META_VOL_ATR_PCT_Q": {},
   "META_VIX_LEVEL_Q": {},
   "META_BREADTH_THRESHOLDS": {},
