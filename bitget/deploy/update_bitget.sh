@@ -2,7 +2,7 @@
 # =============================================================================
 # Bitget stack zero-downtime update (equity dante-* units untouched)
 #
-#   sudo INSTALL_ROOT=/home/ubuntu/Dual-Screener-Bot ./bitget/deploy/update_bitget.sh
+#   sudo INSTALL_ROOT=/home/ubuntu/Dual-Screener-Bot bash ./bitget/deploy/update_bitget.sh
 #
 # Steps:
 #   1. Backup bitget *.sqlite + config to /var/backups/bitget-pre-update/
@@ -151,7 +151,7 @@ else
 fi
 
 echo "[3/5] reinstall bitget systemd units"
-sudo INSTALL_ROOT="$INSTALL_ROOT" "${SCRIPT_DIR}/deploy_bitget_factory.sh"
+sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${SCRIPT_DIR}/deploy_bitget_factory.sh"
 
 echo "[4/5] graceful stop bitget stack"
 _bitget_stop_services
