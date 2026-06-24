@@ -8,9 +8,13 @@ BITGET_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT="$(cd "${BITGET_ROOT}/.." && pwd)"
 cd "$ROOT"
 
+_BITGET_TZ_FROM_CALLER="${TZ:-}"
+
 export TZ="${TZ:-Asia/Seoul}"
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+export BITGET_LOCK_BREAK_ON_MAX_AGE="${BITGET_LOCK_BREAK_ON_MAX_AGE:-1}"
+export BITGET_LOCK_MAX_AGE_SEC="${BITGET_LOCK_MAX_AGE_SEC:-7200}"
 
 if [[ -f "${ROOT}/.env" ]]; then
   set -a
@@ -24,6 +28,10 @@ if [[ -f "${BITGET_ROOT}/.env" ]]; then
   # shellcheck disable=SC1091
   source "${BITGET_ROOT}/.env"
   set +a
+fi
+
+if [[ -n "${_BITGET_TZ_FROM_CALLER}" ]]; then
+  export TZ="${_BITGET_TZ_FROM_CALLER}"
 fi
 
 if [[ -f "${ROOT}/venv/bin/activate" ]]; then
@@ -48,9 +56,20 @@ Usage: bitget/deploy/bitget.sh <flag>
   --health            infra self-check
   --watchdog          heartbeat stale detector (cron/timer)
   --daemon            24/7 pipeline daemon (python -m bitget.pipelines.bitget_auto_pilot)
-  --scan-all          data refresh + full MTF scan + track
-  --scan-spot         spot scan + track
-  --scan-futures      futures scan + track
+  --scan-all          LEGACY: data refresh + full MTF scan + track (manual only)
+  --scan-spot         LEGACY: spot scan + track (manual only)
+  --scan-futures      LEGACY: futures scan + track (manual only)
+
+  Staggered intraday (50 min slots, one scanner per run — cron SSOT):
+    SPOT UTC 01:00–09:20    supernova → nulrim → dante → ema5 → master → shadow → 2nd pass
+    FUTURES UTC 01:00–08:20 supernova → nulrim → dante → ema5 → shadow → 2nd pass
+    --scan-spot-supernova | --scan-spot-nulrim | --scan-spot-dante | --scan-spot-ema5
+    --scan-spot-master | --scan-spot-shadow
+    --scan-spot-supernova-r2 | ... (same pattern)
+    --scan-futures-supernova | --scan-futures-nulrim | ... (no master)
+
+  --lock-timeout SEC    job flock wait (default from bitget_scan_schedule SSOT)
+  --force-scan          bypass BITGET_FACTORY_SCAN_DISABLED / maintenance gate
   --track-positions   virtual position tracking (spot + futures)
   --daily-audit       sentiment + track + deep dive + report + reconcile
   --weekly-evolution  autonomous tuning / brain surgery
@@ -74,6 +93,7 @@ Environment:
   BITGET_LOG_DIR           default: bitget/logs
   BITGET_DASHBOARD_PORT    default 8511
   BITGET_HEATMAP_PORT      default 8512
+  BITGET_DAEMON_SNIPER     daemon 24/7 supernova sniper (default 0; cron staggered is SSOT)
 EOF
 }
 
@@ -88,6 +108,11 @@ while [[ $# -gt 0 ]]; do
     --scan-all)         MODE="scan_all" ;;
     --scan-spot)        MODE="scan_spot" ;;
     --scan-futures)     MODE="scan_futures" ;;
+    --scan-spot-*|--scan-futures-*)
+      MODE="${1#--}"
+      MODE="${MODE//-/_}"
+      export TZ="UTC"
+      ;;
     --track-positions)  MODE="track_positions" ;;
     --daily-audit)      MODE="daily_audit" ;;
     --weekly-evolution) MODE="weekly_evolution" ;;
@@ -102,6 +127,11 @@ while [[ $# -gt 0 ]]; do
     --validate-all)     MODE="validate_all" ;;
     --start-parallel)   MODE="start_parallel" ;;
     --ws-supervisor)    MODE="ws_supervisor" ;;
+    --lock-timeout)
+      shift
+      EXTRA_ARGS+=("--lock-timeout" "${1:?--lock-timeout requires seconds}")
+      ;;
+    --force-scan) export BITGET_FORCE_SCAN=1 ;;
     --dry-run)          EXTRA_ARGS+=("--dry-run") ;;
     --skip-telegram)    EXTRA_ARGS+=("--skip-telegram") ;;
     -h|--help)          usage; exit 0 ;;
@@ -120,6 +150,53 @@ if [[ -z "$MODE" ]]; then
   exit 2
 fi
 
+# --- daily_audit 중복 실행 가드 (주식 factory.sh pgrep 패턴) ---
+_bitget_live_daily_audit_lines() {
+  local line pid state
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    pid="${line%% *}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    # 동시에 두 번 bitget.sh --daily-audit 이 뜨는 경우 자기 자신 제외
+    if [[ "$pid" -eq "$$" ]]; then
+      continue
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ' | cut -c1)"
+    if [[ "$state" == "Z" ]]; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done < <(
+    {
+      pgrep -af 'bitget\.pipelines\.runner --mode daily_audit' 2>/dev/null || true
+      pgrep -af '[/ ]bitget\.sh --daily-audit' 2>/dev/null || true
+      pgrep -af '[/ ]bitget/deploy/bitget\.sh --daily-audit' 2>/dev/null || true
+    } | awk '!seen[$0]++'
+  )
+}
+
+case "$MODE" in
+  daily_audit)
+    other_daily="$(_bitget_live_daily_audit_lines)"
+    if [[ -n "$other_daily" ]]; then
+      _lock_path="${BITGET_DB_STORAGE_PATH:-}"
+      if [[ -n "$_lock_path" ]]; then
+        _lock_path="${_lock_path%/}/.bitget_runtime.lock"
+      else
+        _lock_path="${BITGET_ROOT}/data/.bitget_runtime.lock (default if BITGET_DB_STORAGE_PATH unset)"
+      fi
+      echo "[bitget.sh] SKIP: another daily_audit job is already running (DB lock / OHLCV / RAM contention)." >&2
+      echo "$other_daily" >&2
+      echo "[bitget.sh] Wait for it to finish before starting a second daily_audit." >&2
+      echo "[bitget.sh] If stuck: kill -9 <pid>; rm -f ${_lock_path}; retry." >&2
+      exit 0
+    fi
+    ;;
+esac
+
 if [[ "$MODE" == "daemon" ]]; then
   LOG_FILE="${LOG_DIR}/bitget_daemon_${STAMP}.log"
   echo "[bitget.sh] mode=daemon log=${LOG_FILE} TZ=${TZ}"
@@ -133,6 +210,7 @@ if [[ "$MODE" == "ws_supervisor" ]]; then
 fi
 
 LOG_FILE="${LOG_DIR}/bitget_${MODE}_${STAMP}.log"
-echo "[bitget.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ}"
+WALL_UTC="$(TZ=UTC date '+%Y-%m-%d %H:%M:%S %Z')"
+echo "[bitget.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ} wall_utc=${WALL_UTC}"
 
 exec python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1
