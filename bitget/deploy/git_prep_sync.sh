@@ -60,14 +60,15 @@ if ! git diff --cached --quiet; then
   git commit -m "chore: gitignore bitget runtime DB; stop tracking sqlite in repo"
 fi
 
-# 5) Sync with origin
+# 5) Sync with origin (merge — safer on Windows than rebase when branches diverged)
 git fetch origin
 if git rev-parse --verify origin/main >/dev/null 2>&1; then
   if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
     echo "[git_prep_sync] already contains origin/main"
   else
-    echo "[git_prep_sync] pulling origin/main (rebase)..."
-    git pull --rebase origin main
+    echo "[git_prep_sync] merging origin/main..."
+    git merge origin/main -m "Merge origin/main (git_prep_sync)"
+    echo "If conflicts: keep local bitget/*.py, remove bitget/*.sqlite from index (git rm --cached)"
   fi
 fi
 
