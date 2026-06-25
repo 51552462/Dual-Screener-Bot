@@ -1,8 +1,16 @@
 """
 Bitget 장중 스캐너 슬롯 SSOT — cron · bitget.sh · 파이프라인 동일 순서.
 
-SPOT / FUTURES: UTC 01:00부터 50분 간격 (24/7 · 글로벌 flock).
-각 슬롯은 단일 스캐너만 실행. 1회차 supernova = full prelude, 2회차 = light.
+24/7 분산 스케줄 — 주식(KR/US) 크론과 **같은 분(minute)** 에 절대 안 겹치게 설계:
+  · KR/US 스캔  : 각 시장 정각 기준 :00/:10/:20/:30/:40/:50 (= UTC 기준에서도 5의 배수 분)
+  · KR/US 장후 오딧: 09:45 / 21:45 UTC (5의 배수 분)
+  · bitget ops  : track(*/15)·reconcile·data-refresh·watchdog(*/5) — 모두 5의 배수 분
+  → bitget 스캔을 **5의 배수가 아닌 분** 에만 두면 위 모든 잡과 동일 분에 겹치지 않는다.
+
+SPOT/FUTURES 는 서로 다른 (시,분) 으로 배치해 동시 실행을 금지하고,
+24시간에 걸쳐 ~75분 간격으로 교차(interleave) 배치한다. 1회차 supernova=full
+prelude, 2회차=light. 시간 겹침(중복 실행)으로 인한 4GB 서버 과부하는
+bitget_schedule_guard.factory_heavy_job_active() 의 yield-to-factory 가드가 추가로 방지.
 """
 from __future__ import annotations
 
@@ -12,10 +20,35 @@ from typing import List, Literal, Optional, Tuple
 PreludeKind = Literal["full", "light", "none"]
 Market = Literal["SPOT", "FUTURES"]
 
+# lock-timeout 산정용(스캔 1회 최대 대기). 슬롯 간격 자체는 아래 explicit clock 표가 SSOT.
 SLOT_INTERVAL_MINUTES = 50
-SLOT_START_HOUR = 1
-SLOT_START_MINUTE = 0
 SCAN_LOCK_WAIT_SEC = float(SLOT_INTERVAL_MINUTES * 60 + 300)
+
+# --- 24h explicit clock 표 (UTC) — 모든 분은 5의 배수가 아님(주식/ops 충돌 회피) ---
+# 인덱스 순서 = 스캐너 행 순서(supernova→…→shadow, 그 뒤 2회차). SPOT/FUTURES 교차.
+_SPOT_SLOT_CLOCKS: Tuple[Tuple[int, int], ...] = (
+    (0, 7),    # supernova  (full prelude · 장외 idle 창)
+    (2, 39),   # nulrim
+    (5, 3),    # dante
+    (7, 33),   # ema5
+    (10, 3),   # master     (KR 장후~US 장전 idle 창)
+    (12, 33),  # shadow      (tail: doomsday + track)
+    (15, 3),   # supernova_r2 (light)
+    (17, 33),  # nulrim_r2
+    (20, 3),   # dante_r2
+    (22, 33),  # ema5_r2     (US 장후~KR 장전 idle 창)
+)
+_FUTURES_SLOT_CLOCKS: Tuple[Tuple[int, int], ...] = (
+    (1, 23),   # supernova  (full prelude)
+    (3, 47),   # nulrim
+    (6, 19),   # dante
+    (8, 49),   # ema5
+    (11, 19),  # shadow      (tail: doomsday + track)
+    (13, 49),  # supernova_r2 (light)
+    (16, 19),  # nulrim_r2
+    (18, 49),  # dante_r2
+    (21, 19),  # ema5_r2
+)
 
 # (mode_suffix, scanner_key, human label)
 _SPOT_SCANNER_ROWS: Tuple[Tuple[str, str, str], ...] = (
@@ -38,10 +71,13 @@ _FUTURES_SCANNER_ROWS: Tuple[Tuple[str, str, str], ...] = (
 _CYCLE2_SUFFIXES: Tuple[str, ...] = ("supernova", "nulrim", "dante", "ema5")
 
 
-def _slot_clock(slot_index: int) -> Tuple[int, int]:
-    base = SLOT_START_HOUR * 60 + SLOT_START_MINUTE
-    total = base + int(slot_index) * SLOT_INTERVAL_MINUTES
-    return total // 60, total % 60
+def _market_clocks(market: Market) -> Tuple[Tuple[int, int], ...]:
+    return _SPOT_SLOT_CLOCKS if market == "SPOT" else _FUTURES_SLOT_CLOCKS
+
+
+def _slot_clock(market: Market, slot_index: int) -> Tuple[int, int]:
+    """explicit 24h 표에서 (hour, minute) 조회."""
+    return _market_clocks(market)[int(slot_index)]
 
 
 @dataclass(frozen=True)
@@ -75,7 +111,7 @@ def _build_market_slots(market: Market) -> List[ScanSlot]:
 
     for i, suffix in enumerate(r[0] for r in rows):
         _, step_key, human = row_map[suffix]
-        hour, minute = _slot_clock(i)
+        hour, minute = _slot_clock(market, i)
         slots.append(
             ScanSlot(
                 mode=_mode(market, suffix),
@@ -98,7 +134,7 @@ def _build_market_slots(market: Market) -> List[ScanSlot]:
         if suffix not in row_map:
             continue
         _, step_key, human = row_map[suffix]
-        hour, minute = _slot_clock(cycle2_base + i)
+        hour, minute = _slot_clock(market, cycle2_base + i)
         slots.append(
             ScanSlot(
                 mode=_mode(market, suffix) + "_r2",
@@ -121,6 +157,28 @@ def _build_market_slots(market: Market) -> List[ScanSlot]:
 SPOT_SCAN_SLOTS: Tuple[ScanSlot, ...] = tuple(_build_market_slots("SPOT"))
 FUTURES_SCAN_SLOTS: Tuple[ScanSlot, ...] = tuple(_build_market_slots("FUTURES"))
 ALL_SCAN_SLOTS: Tuple[ScanSlot, ...] = SPOT_SCAN_SLOTS + FUTURES_SCAN_SLOTS
+
+
+def _assert_collision_free() -> None:
+    """import 시 불변식 검증 — 주식/ops 와 같은 분 충돌·SPOT↔FUTURES 동시각 금지."""
+    seen: dict[Tuple[int, int], str] = {}
+    for slot in ALL_SCAN_SLOTS:
+        # 5의 배수 분 = KR/US 스캔(:00..:50)·오딧(:45)·bitget ops(*/5) 와 충돌 가능.
+        if slot.minute % 5 == 0:
+            raise AssertionError(
+                f"bitget scan {slot.mode} at :{slot.minute:02d} is a multiple of 5 — "
+                "collides with stock/ops cron minutes; pick a non-%5 minute."
+            )
+        key = (slot.hour, slot.minute)
+        if key in seen:
+            raise AssertionError(
+                f"bitget scan time {key[0]:02d}:{key[1]:02d} used by both "
+                f"{seen[key]} and {slot.mode} — SPOT/FUTURES must not run simultaneously."
+            )
+        seen[key] = slot.mode
+
+
+_assert_collision_free()
 
 STAGGERED_SCAN_MODES: Tuple[str, ...] = tuple(s.mode for s in ALL_SCAN_SLOTS)
 LEGACY_SCAN_MODES: Tuple[str, ...] = ("scan_spot", "scan_futures", "scan_all")

@@ -1,10 +1,17 @@
 """
 Bitget cron·스캔 가드 — 유지보수 창 스킵 · cron TZ 오설정 힌트 (24/7 코인).
+
+추가: yield-to-factory — 주식(KR/US) factory 가 무거운 잡(scan/daily/weekly)을
+실행 중이면 bitget 의 무거운 잡(scan_*, data_refresh)을 이번 회차만 양보(스킵)한다.
+4GB 우분투 서버에서 두 무거운 잡이 동시에 도는 것을 막아 OOM/서버 다운을 방지하며,
+주식 쪽 크론/타이밍/락은 전혀 건드리지 않는다(읽기 전용).
 """
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, Tuple
 
 import pytz
@@ -13,9 +20,81 @@ from bitget.bitget_scan_schedule import scan_mode_market, slot_for_mode
 
 _UTC = pytz.UTC
 
+# bitget/ 의 부모 = 레포 루트. factory_runtime 의 lock 도 같은 위치(.factory_runtime.lock).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_FACTORY_LOCK_PATH = str(_REPO_ROOT / ".factory_runtime.lock")
+# factory 의 무거운(=GPU/RAM 큰) 모드 prefix. track/reconcile 같은 경량 잡엔 양보 안 함.
+_FACTORY_HEAVY_PREFIXES = ("scan_", "daily_", "weekly")
+# bitget 에서 factory 에 양보할 무거운 모드.
+_YIELD_GATED_MODES = ("scan_", "data_refresh")
+
 
 def utc_now() -> datetime:
     return datetime.now(_UTC)
+
+
+def _factory_yield_disabled() -> bool:
+    return str(os.environ.get("BITGET_YIELD_TO_FACTORY", "1")).strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _factory_yield_max_age_sec() -> float:
+    """factory lock 이 이 시간보다 오래되면(좀비/멈춤 의심) 양보하지 않음 — bitget 기아 방지."""
+    raw = str(os.environ.get("BITGET_FACTORY_YIELD_MAX_AGE_SEC", "5400")).strip()
+    try:
+        return max(60.0, float(raw))
+    except ValueError:
+        return 5400.0
+
+
+def _pid_alive(pid: int) -> bool:
+    """Windows-safe PID 생존 체크. (factory_runtime._pid_is_alive 는 win32 에서
+    os.kill(pid, 0)=CTRL_C_EVENT 을 보내 위험 — 여기선 회피)."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        # dev 전용 환경 — 안전하게 '확인 불가'를 비활성(False)로 처리. 운영은 Linux.
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def factory_heavy_job_active() -> Tuple[bool, str]:
+    """
+    주식 factory 가 무거운 잡을 실제로 실행 중인지 best-effort 판단.
+    (살아있는 PID + heavy mode + lock 나이 < max_age) 일 때만 True.
+    실패/판단불가 시 False(fail-open) — bitget liveness 우선.
+    """
+    if _factory_yield_disabled():
+        return False, ""
+    try:
+        import factory_runtime as fr
+
+        meta = fr._parse_lock_metadata(_FACTORY_LOCK_PATH)
+        if meta is None:
+            return False, ""
+        if not _pid_alive(meta.pid):
+            return False, ""
+        mode = str(meta.mode or "").strip().lower()
+        if not any(mode.startswith(p) for p in _FACTORY_HEAVY_PREFIXES):
+            return False, ""
+        age = fr._lock_file_age_sec(_FACTORY_LOCK_PATH)
+        if age >= _factory_yield_max_age_sec():
+            return False, ""
+        return True, f"factory '{mode}' active pid={meta.pid} age={age:.0f}s"
+    except Exception:
+        return False, ""
 
 
 def _parse_hour_ranges(spec: str) -> list[tuple[int, int]]:
@@ -63,10 +142,13 @@ def evaluate_scan_skip(
     BITGET_FACTORY_SCAN_DISABLED=1 → 전체 스캔 중단.
     """
     m = str(mode or "").strip().lower()
-    if not m.startswith("scan_"):
+    gated = m.startswith("scan_") or m in _YIELD_GATED_MODES
+    if not gated:
         return False, ""
 
-    if os.environ.get("BITGET_FACTORY_SCAN_DISABLED", "").strip() in ("1", "true", "yes"):
+    if m.startswith("scan_") and os.environ.get(
+        "BITGET_FACTORY_SCAN_DISABLED", ""
+    ).strip() in ("1", "true", "yes"):
         return True, "BITGET_FACTORY_SCAN_DISABLED"
 
     if os.environ.get("BITGET_FORCE_SCAN", "").strip() in ("1", "true", "yes"):
@@ -75,6 +157,11 @@ def evaluate_scan_skip(
     maint, why = is_maintenance_window(now_utc=now_utc)
     if maint:
         return True, why
+
+    # 4GB 서버 보호 — 주식 factory 무거운 잡과 동시 실행 회피 (KR/US 는 그대로, bitget 만 양보).
+    busy, detail = factory_heavy_job_active()
+    if busy:
+        return True, f"yield_to_factory: {detail}"
 
     return False, ""
 
