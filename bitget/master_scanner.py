@@ -12,7 +12,6 @@ import pandas as pd
 import requests
 
 import bitget.shadow_tracking as bitget_shadow_tracking
-import bitget.signal_engines as bitget_signal_engines as bse
 from bitget.ai_report import generate_ai_report
 from bitget.charting import save_chart
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token, bitget_telegram_token_promo

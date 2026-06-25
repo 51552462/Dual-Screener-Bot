@@ -86,6 +86,10 @@ def is_quiet_scan_skip(mode: str, *, detail: str = "") -> bool:
         return True
     if "SKIPPED_SESSION" in detail:
         return False
+    # data_refresh가 긴 OHLCV 수집 중이면 다른 잡의 SKIPPED_LOCK은 정상 경합
+    d = str(detail or "")
+    if "bitget lock busy" in d and "holder_mode=data_refresh" in d:
+        return True
     return False
 
 

@@ -108,7 +108,14 @@ def _default_lock_path() -> str:
     return runtime_lock_path()
 
 
-def _lock_max_age_sec() -> float:
+def _lock_max_age_sec(*, holder_mode: Optional[str] = None) -> float:
+    hm = str(holder_mode or "").strip().lower()
+    if hm == "data_refresh":
+        raw = (os.environ.get("BITGET_DATA_REFRESH_LOCK_MAX_SEC") or "3900").strip()
+        try:
+            return max(300.0, float(raw))
+        except ValueError:
+            return 3900.0
     raw = (os.environ.get("BITGET_LOCK_MAX_AGE_SEC") or "7200").strip()
     try:
         return max(60.0, float(raw))
@@ -283,7 +290,7 @@ def _attempt_stale_lock_self_heal(
 ) -> Tuple[bool, str]:
     meta = _parse_lock_metadata(path)
     age = _lock_file_age_sec(path)
-    max_age = _lock_max_age_sec()
+    max_age = _lock_max_age_sec(holder_mode=meta.mode if meta else None)
 
     if meta is None:
         if age < 60.0:
@@ -556,12 +563,17 @@ def dispatch_bitget_mode(
         try:
             from bitget.bitget_schedule_guard import cron_misalignment_hint, is_quiet_scan_skip
 
-            quiet = is_quiet_scan_skip(mode, detail=report.skipped_session_detail or "")
-            mis, hint = cron_misalignment_hint(mode)
-            if mis and send_fn and not skip_telegram:
-                send_fn(f"⚠️ <b>Bitget cron drift</b>\n{hint}")
+            quiet = is_quiet_scan_skip(
+                mode,
+                detail=report.skipped_session_detail or report.skipped_lock_detail or "",
+            )
+            # Lock wait skews wall clock — drift hint is misleading on SKIPPED_LOCK.
+            if report.status_label != "SKIPPED_LOCK":
+                mis, hint = cron_misalignment_hint(mode)
+                if mis and send_fn and not skip_telegram:
+                    send_fn(f"⚠️ <b>Bitget cron drift</b>\n{hint}")
         except Exception:
-            quiet = report.status_label == "SKIPPED_SESSION"
+            quiet = report.status_label in ("SKIPPED_SESSION", "SKIPPED_LOCK")
     if send_fn and not skip_telegram and report.status_label not in ("OK",) and not quiet:
         send_fn(format_bitget_run_telegram(report))
     _record_ops_heartbeat(mode, report)
