@@ -21,7 +21,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 import pytz
 
 from bitget.bitget_scan_schedule import STAGGERED_SCAN_MODES, resolve_lock_timeout_sec
-from bitget.infra.data_paths import runtime_lock_path
+from bitget.infra.data_paths import job_lock_path, runtime_lock_path
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +104,8 @@ class BitgetRunReport:
         return "FAIL"
 
 
-def _default_lock_path() -> str:
-    return runtime_lock_path()
+def _default_lock_path(mode: str = "") -> str:
+    return job_lock_path(mode)
 
 
 def _lock_max_age_sec(*, holder_mode: Optional[str] = None) -> float:
@@ -357,7 +357,7 @@ def bitget_job_lock(
     lock_path: Optional[str] = None,
     timeout_sec: float = 120.0,
 ):
-    path = lock_path or _default_lock_path()
+    path = lock_path or _default_lock_path(mode)
     if sys.platform == "win32":
         yield
         return
@@ -576,6 +576,9 @@ def dispatch_bitget_mode(
 
     report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
     quiet = False
+    if report.status_label == "SKIPPED_LOCK":
+        alert = str(os.environ.get("BITGET_ALERT_SKIPPED_LOCK", "0")).strip().lower()
+        quiet = alert not in ("1", "true", "yes", "on")
     if report.status_label in ("SKIPPED_SESSION", "SKIPPED_LOCK"):
         try:
             from bitget.bitget_schedule_guard import cron_misalignment_hint, is_quiet_scan_skip
@@ -584,13 +587,6 @@ def dispatch_bitget_mode(
                 mode,
                 detail=report.skipped_session_detail or report.skipped_lock_detail or "",
             )
-            # lock 경합 알림 폭주 방지 (옵트인: BITGET_ALERT_SKIPPED_LOCK=1)
-            if report.skipped_lock and os.environ.get("BITGET_ALERT_SKIPPED_LOCK", "").strip() not in (
-                "1",
-                "true",
-                "yes",
-            ):
-                quiet = True
             # Lock wait skews wall clock — drift hint is misleading on SKIPPED_LOCK.
             if report.status_label != "SKIPPED_LOCK":
                 mis, hint = cron_misalignment_hint(mode)
