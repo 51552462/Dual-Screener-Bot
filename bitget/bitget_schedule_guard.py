@@ -86,9 +86,9 @@ def is_quiet_scan_skip(mode: str, *, detail: str = "") -> bool:
         return True
     if "SKIPPED_SESSION" in detail:
         return False
-    # data_refresh가 긴 OHLCV 수집 중이면 다른 잡의 SKIPPED_LOCK은 정상 경합
+    # lock 경합(특히 data_refresh OHLCV)은 cron 정상 동작 — 텔레그램 생략
     d = str(detail or "")
-    if "bitget lock busy" in d and "holder_mode=data_refresh" in d:
+    if "bitget lock busy" in d:
         return True
     return False
 
@@ -112,6 +112,7 @@ def cron_misalignment_hint(
     expected = slot.hour * 60 + slot.minute
     actual = now.hour * 60 + now.minute
     delta = abs(actual - expected)
+    delta = min(delta, 24 * 60 - delta)  # circular minute distance (avoid 955m false positives)
     if delta > 8 and delta < (24 * 60 - 8):
         mk = scan_mode_market(mode) or slot.market
         return (

@@ -213,4 +213,11 @@ LOG_FILE="${LOG_DIR}/bitget_${MODE}_${STAMP}.log"
 WALL_UTC="$(TZ=UTC date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "[bitget.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ} wall_utc=${WALL_UTC}"
 
+if [[ "$MODE" == "data_refresh" ]]; then
+  DR_TIMEOUT="${BITGET_DATA_REFRESH_TIMEOUT_SEC:-3600}"
+  echo "[bitget.sh] data_refresh hard timeout=${DR_TIMEOUT}s"
+  exec timeout --signal=TERM --kill-after=120 "${DR_TIMEOUT}" \
+    python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1
+fi
+
 exec python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1

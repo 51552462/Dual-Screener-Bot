@@ -111,11 +111,11 @@ def _default_lock_path() -> str:
 def _lock_max_age_sec(*, holder_mode: Optional[str] = None) -> float:
     hm = str(holder_mode or "").strip().lower()
     if hm == "data_refresh":
-        raw = (os.environ.get("BITGET_DATA_REFRESH_LOCK_MAX_SEC") or "3900").strip()
+        raw = (os.environ.get("BITGET_DATA_REFRESH_LOCK_MAX_SEC") or "3600").strip()
         try:
             return max(300.0, float(raw))
         except ValueError:
-            return 3900.0
+            return 3600.0
     raw = (os.environ.get("BITGET_LOCK_MAX_AGE_SEC") or "7200").strip()
     try:
         return max(60.0, float(raw))
@@ -156,6 +156,23 @@ def _parse_lock_metadata(path: str) -> Optional[LockMetadata]:
         except ValueError:
             pid = 0
     return LockMetadata(mode=mode, started_at=started_at, pid=pid)
+
+
+def _lock_holder_age_sec(path: str, meta: Optional[LockMetadata] = None) -> float:
+    """Prefer lock metadata timestamp over file mtime (mtime can lie after touch)."""
+    meta = meta if meta is not None else _parse_lock_metadata(path)
+    if meta is not None and meta.started_at:
+        try:
+            tz = pytz.timezone("Asia/Seoul")
+            started = datetime.fromisoformat(meta.started_at)
+            if started.tzinfo is None:
+                started = tz.localize(started)
+            else:
+                started = started.astimezone(tz)
+            return max(0.0, time.time() - started.timestamp())
+        except (ValueError, TypeError, OSError):
+            pass
+    return _lock_file_age_sec(path)
 
 
 def _lock_file_age_sec(path: str) -> float:
@@ -200,7 +217,7 @@ def _write_lock_metadata(lock_f, mode: str) -> None:
 
 def _describe_lock_holder(path: str) -> str:
     meta = _parse_lock_metadata(path)
-    age = _lock_file_age_sec(path)
+    age = _lock_holder_age_sec(path, meta)
     if meta is None:
         return f"lock_file={path} age={age:.0f}s (metadata unreadable)"
     alive = _pid_is_alive(meta.pid)
@@ -224,7 +241,7 @@ def _maybe_purge_stale_lock_file(path: str) -> bool:
     meta = _parse_lock_metadata(path)
     if meta is not None and _pid_is_alive(meta.pid):
         return False
-    if meta is None and _lock_file_age_sec(path) < 60.0:
+    if meta is None and _lock_holder_age_sec(path, meta) < 30.0:
         return False
     try:
         os.unlink(path)
@@ -289,11 +306,11 @@ def _attempt_stale_lock_self_heal(
     fcntl_mod,
 ) -> Tuple[bool, str]:
     meta = _parse_lock_metadata(path)
-    age = _lock_file_age_sec(path)
+    age = _lock_holder_age_sec(path, meta)
     max_age = _lock_max_age_sec(holder_mode=meta.mode if meta else None)
 
     if meta is None:
-        if age < 60.0:
+        if age < 30.0:
             return False, "no metadata yet"
         reason = f"orphan lock file age={age:.0f}s"
     else:
