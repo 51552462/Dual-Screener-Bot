@@ -1,5 +1,5 @@
 """
-[6/9] 대박주/참사주 DNA 부검 — DailyReportContext 슬라이스 · 3단 Fallback · 임계 SSOT.
+[6/9] 대박/참사 DNA 부검 — BitgetReportContext 슬라이스 (주식 dna_autopsy 이식).
 """
 from __future__ import annotations
 
@@ -9,14 +9,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from reports.daily_report_context import DailyReportContext
-from practitioner_market_profiles import resolve_practitioner_profile
+from bitget.reports.bitget_report_context import BitgetReportContext
 
 
 @dataclass(frozen=True)
 class DnaAutopsySlice:
-    """윈도우 내 청산 + 대박/참사 분류 결과."""
-
     market: str
     df_closed: pd.DataFrame
     winners: pd.DataFrame
@@ -30,17 +27,19 @@ class DnaAutopsySlice:
     window_label: str
 
 
+def _market_key(market_type: str) -> str:
+    m = str(market_type or "spot").strip().lower()
+    return "FUT" if m in ("futures", "fut", "future") else "SPOT"
+
+
 def resolve_dna_thresholds(
-    market: str,
+    market_type: str,
     sys_config: Optional[dict[str, Any]] = None,
 ) -> tuple[float, float, int]:
-    """
-    대박/참사 임계 — config 키 우선, 없으면 PractitionerMarketProfile DEFAULT.
-    FORWARD_DNA_JACKPOT_PCT_{KR|US}, FORWARD_DNA_DISASTER_PCT_{KR|US}
-    """
-    mk = str(market or "KR").upper()
+    mk = _market_key(market_type)
     cfg = sys_config if isinstance(sys_config, dict) else {}
-    prof = resolve_practitioner_profile(mk, "DEFAULT", cfg)
+    defaults = {"SPOT": (5.0, -3.0), "FUT": (8.0, -5.0)}
+    dj, dd = defaults.get(mk, (5.0, -3.0))
 
     def _f(key: str, default: float) -> float:
         v = cfg.get(key)
@@ -51,8 +50,8 @@ def resolve_dna_thresholds(
         except (TypeError, ValueError):
             return float(default)
 
-    jackpot = _f(f"FORWARD_DNA_JACKPOT_PCT_{mk}", prof.winner_ret_pct)
-    disaster = _f(f"FORWARD_DNA_DISASTER_PCT_{mk}", prof.loser_ret_pct)
+    jackpot = _f(f"FORWARD_DNA_JACKPOT_PCT_{mk}", dj)
+    disaster = _f(f"FORWARD_DNA_DISASTER_PCT_{mk}", dd)
     try:
         min_pg = int(cfg.get("FORWARD_DNA_MIN_PER_GROUP", 2))
     except (TypeError, ValueError):
@@ -61,17 +60,16 @@ def resolve_dna_thresholds(
 
 
 def build_dna_autopsy_slice(
-    ctx: DailyReportContext,
-    market: str,
+    ctx: BitgetReportContext,
+    market_type: str,
     df_closed: pd.DataFrame,
     *,
     sys_config: Optional[dict[str, Any]] = None,
 ) -> DnaAutopsySlice:
-    """DailyReportContext 윈도우 메타 + 시장별 임계로 승·패 DataFrame 구성."""
-    mk = str(market).upper()
-    tk = ctx.timekeeper_for(mk)
+    mk = _market_key(market_type)
+    tk = ctx.timekeeper_for(market_type)
     window_label = f"{tk.rolling_cutoff}~{tk.session_anchor}"
-    jackpot, disaster, min_pg = resolve_dna_thresholds(mk, sys_config)
+    jackpot, disaster, min_pg = resolve_dna_thresholds(market_type, sys_config)
 
     empty = DnaAutopsySlice(
         market=mk,
@@ -111,49 +109,41 @@ def build_dna_autopsy_slice(
 def format_dna_autopsy_section(
     slice_: DnaAutopsySlice,
     *,
-    ctx: DailyReportContext,
+    ctx: BitgetReportContext,
+    market_type: str,
     n_real: int,
     n_open: int,
     sys_config: Optional[dict[str, Any]] = None,
     meta: Optional[dict[str, Any]] = None,
 ) -> str:
-    """Tier A/B/C Fallback 또는 ReportFeatureAnalyzer 본문."""
     mk = slice_.market
-    tk = ctx.timekeeper_for(mk)
+    tk = ctx.timekeeper_for(market_type)
     wm = tk.db_watermark_exit or "—"
-    lag = ctx.lag_for(mk)
+    lag = ctx.lag_for(market_type)
     wl = html.escape(slice_.window_label)
     j = slice_.jackpot_threshold
     d = slice_.disaster_threshold
 
-    # Tier A — 윈도우 내 청산 0건
     if slice_.n_closed == 0:
         out = (
             f"<i>⚠️ [6/9] {mk} DNA 부검 — 롤링 윈도우 (<b>{wl}</b>) 내 "
             f"청산(CLOSED) <b>0</b>건.</i>\n"
             f"표본 실거래 <b>{n_real}</b>건 · 유효OPEN <b>{n_open}</b>건 · "
-            f"DB청산 워터마크 <b>{html.escape(str(wm))}</b> · lag <b>{lag}</b>일 · "
+            f"DB청산 워터마크 <b>{html.escape(str(wm))}</b> · lag <b>{lag}</b>d · "
             f"롤링 <b>{ctx.window_days}</b>일.\n"
-            f"<i>→ 최근 {ctx.window_days}일 안에 exit_date가 앵커까지 기록된 청산이 없습니다. "
-            f"(OPEN만 있거나 exit_date 미기록 CLOSED는 이 섹션에 포함되지 않습니다.)</i>\n"
         )
         if n_real == 0:
-            out += (
-                "<i>▪ 실거래 표본도 0건 — 포워드 장부 적재·시장 필터를 점검하세요.</i>\n"
-            )
+            out += "<i>▪ 실거래 표본 0건 — 포워드 장부 적재·시장 필터를 점검하세요.</i>\n"
         return out
 
-    # Tier B — 청산은 있으나 극단 수익률 0건
     if slice_.n_winners == 0 and slice_.n_losers == 0:
         return (
             f"<i>ℹ️ {mk} 롤링 윈도우 (<b>{wl}</b>) 내 청산 <b>{slice_.n_closed}</b>건 — "
             f"대박(≥{j:g}%)·참사(≤{d:g}%) 기준에 부합하는 종목이 없습니다.</i>\n"
-            f"<i>중간 손익 구간만 존재합니다 (횡보·소폭 변동). "
-            f"임계: 프로필·<code>FORWARD_DNA_JACKPOT_PCT_{mk}</code> / "
+            f"<i>임계: <code>FORWARD_DNA_JACKPOT_PCT_{mk}</code> / "
             f"<code>FORWARD_DNA_DISASTER_PCT_{mk}</code></i>\n"
         )
 
-    # Analyzer 경로 (성공 또는 Tier C)
     try:
         from reports.report_feature_analyzer import ReportFeatureAnalyzer
 
@@ -166,20 +156,13 @@ def format_dna_autopsy_section(
         )
         body = "".join(dna_lines)
         if ok:
-            hdr = (
-                f"📎 임계 대박 ≥{j:g}% · 참사 ≤{d:g}% · "
-                f"윈도우 <b>{wl}</b>\n"
-            )
+            hdr = f"📎 임계 대박 ≥{j:g}% · 참사 ≤{d:g}% · 윈도우 <b>{wl}</b>\n"
             return hdr + body
 
-        # Tier C — 극단 표본은 있으나 그룹당 min_per_group 미달
         return (
             body
             + f"<i>ℹ️ 대박 <b>{slice_.n_winners}</b>건 · 참사 <b>{slice_.n_losers}</b>건 — "
             f"DNA 대조에는 각 최소 <b>{slice_.min_per_group}</b>건 필요.</i>\n"
-            f"<i>임계 조정: <code>FORWARD_DNA_JACKPOT_PCT_{mk}</code> / "
-            f"<code>FORWARD_DNA_DISASTER_PCT_{mk}</code> · "
-            f"<code>FORWARD_DNA_MIN_PER_GROUP</code></i>\n"
         )
     except Exception as ex:
         return (
