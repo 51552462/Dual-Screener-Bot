@@ -1,5 +1,5 @@
 """
-bitget_forward_trades OPEN 장부 ↔ 리포트 정합 (주식 forward_book_integrity 이식).
+forward_trades OPEN 장부 ↔ 리포트 정합 — 가상매매 notional 기준 SSOT.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from bitget.forward.shared import DB_PATH
+from market_db_paths import MARKET_DATA_DB_PATH
 
 
 @dataclass(frozen=True)
@@ -39,13 +39,17 @@ def _sig_excluded_from_holdings(df: pd.DataFrame) -> pd.Series:
     if df is None or df.empty:
         return pd.Series(dtype=bool)
     sig = df["sig_type"].astype(str) if "sig_type" in df.columns else pd.Series("", index=df.index)
-    return sig.str.contains("INCUBATOR|OBSERVE_ONLY|기각/관찰용", na=False, regex=True)
+    return (
+        sig.str.contains("INCUBATOR", na=False, regex=False)
+        | sig.str.contains("OBSERVE_ONLY", na=False, regex=False)
+        | sig.str.contains("기각/관찰용", na=False, regex=False)
+    )
 
 
 def _qty_numeric(df: pd.DataFrame) -> pd.Series:
     parts = []
-    if "quantity" in df.columns:
-        parts.append(pd.to_numeric(df["quantity"], errors="coerce").fillna(0.0))
+    if "current_qty" in df.columns:
+        parts.append(pd.to_numeric(df["current_qty"], errors="coerce").fillna(0.0))
     if "shares" in df.columns:
         parts.append(pd.to_numeric(df["shares"], errors="coerce").fillna(0.0))
     if not parts:
@@ -57,6 +61,7 @@ def _qty_numeric(df: pd.DataFrame) -> pd.Series:
 
 
 def reporter_notional_mask(df: pd.DataFrame) -> pd.Series:
+    """가상매매 유효 명목: shares/qty 또는 sim_kelly/invest > 0."""
     if df is None or df.empty:
         return pd.Series(dtype=bool)
     qty = _qty_numeric(df) > 0
@@ -66,8 +71,8 @@ def reporter_notional_mask(df: pd.DataFrame) -> pd.Series:
         else pd.Series(0.0, index=df.index)
     )
     inv = (
-        pd.to_numeric(df["margin_used"], errors="coerce").fillna(0.0)
-        if "margin_used" in df.columns
+        pd.to_numeric(df["invest_amount"], errors="coerce").fillna(0.0)
+        if "invest_amount" in df.columns
         else pd.Series(0.0, index=df.index)
     )
     ep = (
@@ -79,32 +84,28 @@ def reporter_notional_mask(df: pd.DataFrame) -> pd.Series:
 
 
 def reporter_valid_holding_mask(df: pd.DataFrame) -> pd.Series:
+    """리포트·리더보드·쿼터 — OPEN + 명목 + 비관측."""
     if df is None or df.empty or "status" not in df.columns:
         return pd.Series(False, index=df.index if df is not None else [], dtype=bool)
-    live = _open_status_mask(df)
+    u = df["status"].astype(str).str.strip().str.upper()
+    live = u.isin(["OPEN", "ACTIVE"])
     return live & reporter_notional_mask(df) & ~_sig_excluded_from_holdings(df)
-
-
-def _normalize_market_filter(market_type: str) -> tuple[str, str]:
-    m = str(market_type or "spot").strip().lower()
-    label = "FUT" if m in ("futures", "fut", "future") else "SPOT"
-    return label, m
 
 
 def compute_open_book_stats(
     df_market: pd.DataFrame,
     *,
-    market_type: str,
+    market: str,
     session_anchor: str,
     valid_mask_fn=None,
 ) -> OpenBookStats:
-    label, _ = _normalize_market_filter(market_type)
+    mk = str(market).upper()
     anchor = str(session_anchor or "")[:10]
     mask_fn = valid_mask_fn or reporter_valid_holding_mask
 
     if df_market is None or df_market.empty:
         return OpenBookStats(
-            market=label,
+            market=mk,
             session_anchor=anchor,
             open_raw=0,
             open_valid=0,
@@ -118,6 +119,7 @@ def compute_open_book_stats(
     raw_m = _open_status_mask(df_market)
     valid_m = mask_fn(df_market)
     ghost_m = raw_m & ~valid_m
+
     ent = (
         df_market["entry_date"].astype(str).str[:10]
         if "entry_date" in df_market.columns
@@ -125,6 +127,7 @@ def compute_open_book_stats(
     )
     today_raw = raw_m & (ent == anchor)
     today_valid = valid_m & (ent == anchor)
+
     st = df_market["status"].astype(str).str.upper()
     closed_n = int(st.str.contains("CLOSED", na=False).sum())
 
@@ -132,12 +135,12 @@ def compute_open_book_stats(
     n_raw = int(raw_m.sum())
     n_val = int(valid_m.sum())
     if n_raw > 0 and n_val == 0:
-        note = "OPEN_RAW_BUT_ZERO_VALID — quantity·sim_kelly·margin 점검 또는 zombie 정리 확인"
+        note = "OPEN_RAW_BUT_ZERO_VALID — shares·sim_kelly·invest 점검 또는 zombie 정리 확인"
     elif n_raw == 0 and today_valid.sum() == 0 and anchor:
-        note = "OPEN_EMPTY — 스캔→try_add·track_daily 청산 경로 점검"
+        note = "OPEN_EMPTY — 스캔→try_add_virtual_position·SessionDedup·track_daily 청산 경로 점검"
 
     return OpenBookStats(
-        market=label,
+        market=mk,
         session_anchor=anchor,
         open_raw=n_raw,
         open_valid=n_val,
@@ -147,6 +150,36 @@ def compute_open_book_stats(
         closed_window=closed_n,
         integrity_note=note,
     )
+
+
+def sql_open_counts(
+    conn: sqlite3.Connection,
+    market: str,
+    *,
+    session_anchor: Optional[str] = None,
+) -> Dict[str, int]:
+    mk = str(market).upper()
+    anchor = str(session_anchor or "")[:10]
+    raw = conn.execute(
+        """
+        SELECT COUNT(*) FROM forward_trades
+        WHERE UPPER(TRIM(COALESCE(market,''))) = ?
+          AND UPPER(TRIM(COALESCE(status,''))) = 'OPEN'
+        """,
+        (mk,),
+    ).fetchone()[0]
+    today = 0
+    if len(anchor) == 10:
+        today = conn.execute(
+            """
+            SELECT COUNT(*) FROM forward_trades
+            WHERE UPPER(TRIM(COALESCE(market,''))) = ?
+              AND UPPER(TRIM(COALESCE(status,''))) = 'OPEN'
+              AND substr(CAST(entry_date AS TEXT),1,10) = ?
+            """,
+            (mk, anchor),
+        ).fetchone()[0]
+    return {"open_raw_sql": int(raw or 0), "open_today_sql": int(today or 0)}
 
 
 def format_open_book_integrity_html(stats: OpenBookStats) -> str:
@@ -164,29 +197,40 @@ def format_open_book_integrity_html(stats: OpenBookStats) -> str:
 
 
 def diagnose_open_book_from_db(
-    market_type: str,
+    market: str,
     *,
     db_path: Optional[str] = None,
     session_anchor: Optional[str] = None,
 ) -> OpenBookStats:
-    label, mkt_raw = _normalize_market_filter(market_type)
-    path = db_path or DB_PATH
+    path = db_path or MARKET_DATA_DB_PATH
+    mk = str(market).upper()
     conn = sqlite3.connect(path, timeout=60)
     try:
         df = pd.read_sql(
             """
-            SELECT id, market_type, symbol, status, entry_date, quantity,
-                   sim_kelly_invest, margin_used, entry_price, sig_type
-            FROM bitget_forward_trades
-            WHERE LOWER(IFNULL(market_type,'')) = ?
+            SELECT id, market, code, name, status, entry_date, shares,
+                   sim_kelly_invest, invest_amount, entry_price, sig_type
+            FROM forward_trades
+            WHERE UPPER(TRIM(COALESCE(market,''))) = ?
             """,
             conn,
-            params=(mkt_raw,),
+            params=(mk,),
         )
+        sql = sql_open_counts(conn, mk, session_anchor=session_anchor)
     finally:
         conn.close()
-    return compute_open_book_stats(
+    stats = compute_open_book_stats(
         df,
-        market_type=market_type,
+        market=mk,
         session_anchor=session_anchor or "",
     )
+    if stats.open_raw != sql.get("open_raw_sql", stats.open_raw):
+        return OpenBookStats(
+            **{
+                **stats.as_dict(),
+                "integrity_note": (
+                    f"{stats.integrity_note}; sql_open_raw={sql.get('open_raw_sql')}"
+                ),
+            }
+        )
+    return stats
