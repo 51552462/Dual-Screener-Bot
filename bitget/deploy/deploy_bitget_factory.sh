@@ -38,6 +38,8 @@ sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/bitget.sh"
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/update_bitget.sh"
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/deploy_bitget_factory.sh"
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/install_bitget_cron.sh"
+sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/reset_bitget_pipeline.sh"
+sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/master_sync_bitget.sh"
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/entrypoints/"*.sh
 
 

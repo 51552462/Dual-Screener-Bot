@@ -24,8 +24,6 @@ from bitget.bitget_scan_schedule import (  # noqa: E402
     FUTURES_SCAN_SLOTS,
     SCHEDULE_MARKET_TZ,
     SCHEDULE_WEEKDAYS,
-    SLOT_INTERVAL_MINUTES,
-    SLOT_START_HOUR,
     SPOT_SCAN_SLOTS,
 )
 
@@ -50,7 +48,11 @@ def render_bitget_crontab(install_root: str) -> str:
         "#",
         "# AUTO-GENERATED from bitget/bitget_scan_schedule.py — do not edit by hand.",
         f"# Regenerate: python bitget/deploy/generate_bitget_crontab.py",
-        f"# Staggered scans: {SLOT_INTERVAL_MINUTES} min apart, UTC from {SLOT_START_HOUR:02d}:00 (24/7).",
+        "# 24/7 scans spread across the day at NON-multiple-of-5 minutes so they never",
+        "# share a wall-clock minute with KR/US stock scans(:00..:50)/audits(:45) or",
+        "# bitget ops(*/5). SPOT/FUTURES are interleaved (never simultaneous).",
+        "# Server-safety: bitget heavy scans yield when the factory job lock is held",
+        "# (BITGET_YIELD_TO_FACTORY=1 default) — KR/US cron/timing is left untouched.",
         "# install: sudo INSTALL_ROOT=... bash bitget/deploy/install_bitget_cron.sh",
         "#",
         f"# user/path: {CRON_USER} · {install_root}",
@@ -59,13 +61,15 @@ def render_bitget_crontab(install_root: str) -> str:
         f"CRON_TZ={tz}",
         "PATH=/usr/local/bin:/usr/bin:/bin",
         "",
-        f"# --- Ops (non-scan) ---",
-        f"# track every 15m · reconcile hourly · daily audit 00:20 UTC",
+        f"# --- Ops (non-scan, 24/7) ---",
+        "# track */15 (light) · watchdog */5 (light) keep running through stock hours.",
+        "# reconcile :53 · data-refresh :43 — off stock :x0/:x5 minutes; data-refresh",
+        "# also yields to factory. daily-audit/health/weekly run in the KST-pre-open idle window.",
         "*/15 * * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --track-positions",
-        "0 * * * *  "
+        "53 * * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --reconcile",
-        "5 */4 * * *  "
+        "43 */4 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --data-refresh",
         "20 0 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --daily-audit",
@@ -76,7 +80,7 @@ def render_bitget_crontab(install_root: str) -> str:
         "15 0 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --health",
         "",
-        f"# --- SPOT staggered intraday ({len(SPOT_SCAN_SLOTS)} slots, {SLOT_INTERVAL_MINUTES} min) ---",
+        f"# --- SPOT staggered (24h, {len(SPOT_SCAN_SLOTS)} slots, non-%5 min) ---",
     ]
     dow_spot = SCHEDULE_WEEKDAYS["SPOT"]
     for slot in SPOT_SCAN_SLOTS:
@@ -91,7 +95,7 @@ def render_bitget_crontab(install_root: str) -> str:
         )
     lines.append("")
     lines.append(
-        f"# --- FUTURES staggered intraday ({len(FUTURES_SCAN_SLOTS)} slots, {SLOT_INTERVAL_MINUTES} min) ---"
+        f"# --- FUTURES staggered (24h, {len(FUTURES_SCAN_SLOTS)} slots, non-%5 min) ---"
     )
     dow_fut = SCHEDULE_WEEKDAYS["FUTURES"]
     for slot in FUTURES_SCAN_SLOTS:

@@ -60,9 +60,11 @@ Usage: bitget/deploy/bitget.sh <flag>
   --scan-spot         LEGACY: spot scan + track (manual only)
   --scan-futures      LEGACY: futures scan + track (manual only)
 
-  Staggered intraday (50 min slots, one scanner per run — cron SSOT):
-    SPOT UTC 01:00–09:20    supernova → nulrim → dante → ema5 → master → shadow → 2nd pass
-    FUTURES UTC 01:00–08:20 supernova → nulrim → dante → ema5 → shadow → 2nd pass
+  Staggered intraday (24h spread, non-%5 minutes, one scanner per run — cron SSOT):
+    SPOT/FUTURES interleaved across 24h UTC; never share a minute with KR/US stock
+    cron (those run at :00..:50 / :45). Heavy scans yield to factory (server-safe).
+    SPOT    supernova → nulrim → dante → ema5 → master → shadow → 2nd pass
+    FUTURES supernova → nulrim → dante → ema5 → shadow → 2nd pass
     --scan-spot-supernova | --scan-spot-nulrim | --scan-spot-dante | --scan-spot-ema5
     --scan-spot-master | --scan-spot-shadow
     --scan-spot-supernova-r2 | ... (same pattern)

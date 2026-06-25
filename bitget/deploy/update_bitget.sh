@@ -4,12 +4,16 @@
 #
 #   sudo INSTALL_ROOT=/home/ubuntu/Dual-Screener-Bot bash ./bitget/deploy/update_bitget.sh
 #
-# Steps:
+# Steps (single command = old locks/scans stopped + new upload + 100% back up):
 #   1. Backup bitget *.sqlite + config to /var/backups/bitget-pre-update/
 #      (first deploy: no DB → skip; or BITGET_SKIP_PREUPDATE_BACKUP=1)
 #   2. git pull (DEPLOY_USER)
 #   3. Re-install bitget systemd units
-#   4. Graceful stop → restart bitget services + timers
+#   4. Graceful stop bitget services
+#   5. Clear stale .bitget_*.lock + kill zombie cron scans (DB/JSON untouched)
+#   6. Restart bitget services + timers
+#
+# Lock-only reset (no git pull): bitget/deploy/reset_bitget_pipeline.sh
 # =============================================================================
 set -euo pipefail
 
@@ -122,6 +126,39 @@ _bitget_stop_services() {
   sleep 2
 }
 
+# 예전 락·cron 으로 뜬 좀비 스캔/러너를 정리한 뒤 재기동 — "100% 다시 돌아가게".
+# (DB/JSON 데이터는 건드리지 않고 .bitget_*.lock + schedule_lock_state 만 정리)
+_bitget_clear_locks_and_stale() {
+  local data runtime_lock dr_lock sched_state lock pid
+  data="$(PYTHONPATH="$INSTALL_ROOT" "$DANTE_PY" -c 'from bitget.infra.data_paths import bitget_data_dir; print(bitget_data_dir())' 2>/dev/null || true)"
+  data="${data:-${BITGET_DB_STORAGE_PATH:-${BITGET_ROOT}}}"
+  runtime_lock="${data}/.bitget_runtime.lock"
+  dr_lock="${data}/.bitget_data_refresh.lock"
+  sched_state="${data}/bitget_schedule_lock_state.json"
+
+  # cron 으로 뜬 잔존 runner / bitget.sh (이 설치 경로 한정) 종료
+  if command -v pkill &>/dev/null; then
+    pkill -f "${BITGET_ROOT}/deploy/bitget.sh" 2>/dev/null || true
+    pkill -f "bitget.pipelines.runner --mode" 2>/dev/null || true
+    sleep 2
+  fi
+
+  # 락 홀더 PID 가 아직 살아있으면 정리
+  for lock in "$runtime_lock" "$dr_lock"; do
+    [[ -f "$lock" ]] || continue
+    pid="$(sed -n '3p' "$lock" 2>/dev/null || true)"
+    if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+
+  rm -f "$runtime_lock" "$dr_lock"
+  [[ -f "$sched_state" ]] && printf '{}\n' >"$sched_state" || true
+  echo "  bitget locks cleared (data_dir=$data) — DB untouched"
+}
+
 _bitget_start_services() {
   systemctl daemon-reload
   systemctl start dante-bitget-ws.service
@@ -153,10 +190,13 @@ fi
 echo "[3/5] reinstall bitget systemd units"
 sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${SCRIPT_DIR}/deploy_bitget_factory.sh"
 
-echo "[4/5] graceful stop bitget stack"
+echo "[4/6] graceful stop bitget stack"
 _bitget_stop_services
 
-echo "[5/5] restart bitget stack"
+echo "[5/6] clear stale locks + zombie cron scans (DB untouched)"
+_bitget_clear_locks_and_stale
+
+echo "[6/6] restart bitget stack"
 _bitget_start_services
 
 echo ""

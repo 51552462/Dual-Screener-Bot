@@ -2,7 +2,11 @@
 #
 # AUTO-GENERATED from bitget/bitget_scan_schedule.py — do not edit by hand.
 # Regenerate: python bitget/deploy/generate_bitget_crontab.py
-# Staggered scans: 50 min apart, UTC from 01:00 (24/7).
+# 24/7 scans spread across the day at NON-multiple-of-5 minutes so they never
+# share a wall-clock minute with KR/US stock scans(:00..:50)/audits(:45) or
+# bitget ops(*/5). SPOT/FUTURES are interleaved (never simultaneous).
+# Server-safety: bitget heavy scans yield when the factory job lock is held
+# (BITGET_YIELD_TO_FACTORY=1 default) — KR/US cron/timing is left untouched.
 # install: sudo INSTALL_ROOT=... bash bitget/deploy/install_bitget_cron.sh
 #
 # user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
@@ -11,38 +15,40 @@ SHELL=/bin/bash
 CRON_TZ=UTC
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# --- Ops (non-scan) ---
-# track every 15m · reconcile hourly · daily audit 00:20 UTC
+# --- Ops (non-scan, 24/7) ---
+# track */15 (light) · watchdog */5 (light) keep running through stock hours.
+# reconcile :53 · data-refresh :43 — off stock :x0/:x5 minutes; data-refresh
+# also yields to factory. daily-audit/health/weekly run in the KST-pre-open idle window.
 */15 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --track-positions
-0 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --reconcile
-5 */4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --data-refresh
+53 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --reconcile
+43 */4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --data-refresh
 20 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --daily-audit
 30 0 * * 1  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --weekly-evolution
 */5 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --watchdog
 15 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --health
 
-# --- SPOT staggered intraday (10 slots, 50 min) ---
-0 1 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova
-50 1 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim
-40 2 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante
-30 3 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5
-20 4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-master
-10 5 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-shadow
-0 6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova-r2
-50 6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim-r2
-40 7 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante-r2
-30 8 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5-r2
+# --- SPOT staggered (24h, 10 slots, non-%5 min) ---
+7 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova
+39 2 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim
+3 5 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante
+33 7 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5
+3 10 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-master
+33 12 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-shadow
+3 15 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova-r2
+33 17 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim-r2
+3 20 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante-r2
+33 22 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5-r2
 
-# --- FUTURES staggered intraday (9 slots, 50 min) ---
-0 1 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova
-50 1 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim
-40 2 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante
-30 3 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-ema5
-20 4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-shadow
-10 5 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova-r2
-0 6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim-r2
-50 6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante-r2
-40 7 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-ema5-r2
+# --- FUTURES staggered (24h, 9 slots, non-%5 min) ---
+23 1 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova
+47 3 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim
+19 6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante
+49 8 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-ema5
+19 11 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-shadow
+49 13 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova-r2
+19 16 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim-r2
+49 18 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante-r2
+19 21 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-ema5-r2
 
 # --- Legacy monolithic scan (manual recovery only — do NOT cron) ---
 # ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-all
