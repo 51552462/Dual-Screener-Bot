@@ -584,6 +584,13 @@ def dispatch_bitget_mode(
                 mode,
                 detail=report.skipped_session_detail or report.skipped_lock_detail or "",
             )
+            # lock 경합 알림 폭주 방지 (옵트인: BITGET_ALERT_SKIPPED_LOCK=1)
+            if report.skipped_lock and os.environ.get("BITGET_ALERT_SKIPPED_LOCK", "").strip() not in (
+                "1",
+                "true",
+                "yes",
+            ):
+                quiet = True
             # Lock wait skews wall clock — drift hint is misleading on SKIPPED_LOCK.
             if report.status_label != "SKIPPED_LOCK":
                 mis, hint = cron_misalignment_hint(mode)
