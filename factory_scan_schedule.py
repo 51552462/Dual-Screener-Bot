@@ -22,6 +22,15 @@ SLOT_START_MINUTE = 0
 # 이전 슬롯이 끝날 때까지 대기 (cron 시각 + 여유 5분)
 SCAN_LOCK_WAIT_SEC = float(SLOT_INTERVAL_MINUTES * 60 + 300)
 
+# --- 2회차(cycle-2) "장 마감 전" 편성 SSOT ---
+# 1회차는 10:00부터 50분 간격(고정). 2회차는 그 간격을 그대로 이어붙이면 슬롯이 마감
+# 이후로 밀려(예: US ema5_r2 16:40 > 16:00) 매일 SKIPPED_SESSION 된다.
+# → 2회차는 "정규장 마감 - margin" 을 마지막 슬롯으로 두고 역산/균등 배치하며,
+#   마감 전에 들어갈 수 있는 스캐너만 편성한다(못 들어가는 후미는 제외 — 가짜 스킵 제거).
+MARKET_CLOSE_LOCAL = {"KR": (15, 30), "US": (16, 0)}  # 정규장 마감(현지시각)
+CYCLE2_CLOSE_MARGIN_MINUTES = 5   # 마지막 r2 는 마감 margin 분 전까지는 시작
+CYCLE2_MIN_INTERVAL_MINUTES = 20  # r2 슬롯 최소 간격(락-스킵 방지 하한)
+
 # (mode_suffix, step_key, human label)
 _KR_SCANNER_ROWS: Tuple[Tuple[str, str, str], ...] = (
     ("supernova", "supernova", "슈퍼노바"),
@@ -40,7 +49,7 @@ _US_SCANNER_ROWS: Tuple[Tuple[str, str, str], ...] = (
     ("bowl", "bowl", "밥그릇"),
 )
 
-# 2회차: 장 마감 전 핵심 4종만 재스캔
+# 2회차: 장 마감 전 핵심 4종 재스캔(마감 전에 들어가는 것만 — 후미는 제외)
 _CYCLE2_SUFFIXES: Tuple[str, ...] = ("supernova", "nulrim", "dante", "ema5")
 
 
@@ -49,6 +58,32 @@ def _slot_clock(slot_index: int) -> Tuple[int, int]:
     base = SLOT_START_HOUR * 60 + SLOT_START_MINUTE
     total = base + int(slot_index) * SLOT_INTERVAL_MINUTES
     return total // 60, total % 60
+
+
+def _cycle2_clocks(market: Market, n_cycle1_rows: int) -> List[Tuple[int, int]]:
+    """
+    2회차 슬롯 시각 — 정규장 마감 전에 모두 시작되도록 역산/균등 배치.
+    마감(- margin) 안에 들어가는 스캐너만 반환(후미 초과분은 제외 → 매일 가짜 스킵 제거).
+    """
+    close_h, close_m = MARKET_CLOSE_LOCAL[market]
+    last_start = close_h * 60 + close_m - CYCLE2_CLOSE_MARGIN_MINUTES
+    cycle1_last = (
+        SLOT_START_HOUR * 60 + SLOT_START_MINUTE
+    ) + (int(n_cycle1_rows) - 1) * SLOT_INTERVAL_MINUTES
+    earliest = cycle1_last + SLOT_INTERVAL_MINUTES  # 1회차 마지막 이후 한 슬롯 비우고 시작
+    n = len(_CYCLE2_SUFFIXES)
+    if n <= 0 or last_start < earliest:
+        return []
+    if n == 1:
+        return [(earliest // 60, earliest % 60)]
+    raw = (last_start - earliest) / (n - 1)
+    spacing = max(float(CYCLE2_MIN_INTERVAL_MINUTES), raw)
+    clocks: List[Tuple[int, int]] = []
+    for i in range(n):
+        t = int(round(earliest + i * spacing))
+        if t <= last_start:
+            clocks.append((t // 60, t % 60))
+    return clocks
 
 
 @dataclass(frozen=True)
@@ -98,12 +133,12 @@ def _build_market_slots(market: Market) -> List[ScanSlot]:
             )
         )
 
-    cycle2_base = len(rows)
-    for i, suffix in enumerate(_CYCLE2_SUFFIXES):
+    cycle2_clocks = _cycle2_clocks(market, len(rows))
+    for i, (hour, minute) in enumerate(cycle2_clocks):
+        suffix = _CYCLE2_SUFFIXES[i]
         if suffix not in row_map:
             continue
         _, step_key, human = row_map[suffix]
-        hour, minute = _slot_clock(cycle2_base + i)
         slots.append(
             ScanSlot(
                 mode=_mode(market, suffix) + "_r2",
