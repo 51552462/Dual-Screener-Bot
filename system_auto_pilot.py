@@ -775,6 +775,13 @@ def run_autonomous_analysis():
         except Exception as _beta_e:
             report_lines.append(f"▪️ TS 베타 파라미터 저장 스킵: {_beta_e}")
         
+        # [M3] 중앙값(50p) 앵커 폐기 — 국면·우측꼬리 팽창도 기반 동적 추적 퍼센타일.
+        try:
+            from meta_governor_consumer import load_meta_state_resolved as _lmsr
+            _tuning_regime = str(_lmsr().get("META_REGIME_KEY") or "UNKNOWN").upper()
+        except Exception:
+            _tuning_regime = "UNKNOWN"
+
         # --- [엔진 4: 독립 앙상블 생성] ---
         def get_period_stats(train_days):
             s_date = (datetime.now() - timedelta(days=14 + train_days)).strftime('%Y-%m-%d')
@@ -811,7 +818,20 @@ def run_autonomous_analysis():
                 opt_alpha, opt_dtw, opt_trap = 0.60, 3.5, 0.85
 
             raw_sl = np.percentile(win_s['mae_pct'].dropna(), 15) if len(win_s) >= 3 else -3.5
-            raw_tp = np.percentile(win_s['mfe_pct'].dropna(), 50) if len(win_s) >= 3 else 10.0
+            # [M3] 우측 꼬리 자가 확장: 국면·팽창도(p90/p50)로 추적 퍼센타일을 끌어올린다.
+            if len(win_s) >= 3:
+                _mfe_clean = win_s['mfe_pct'].dropna()
+                try:
+                    import exit_dynamics as _xd
+                    _ftr = _xd.fat_tail_ratio(
+                        float(np.percentile(_mfe_clean, 90)), float(np.percentile(_mfe_clean, 50))
+                    )
+                    _pctl = _xd.target_percentile(_tuning_regime, _ftr)
+                except Exception:
+                    _pctl = 70.0
+                raw_tp = float(np.percentile(_mfe_clean, _pctl))
+            else:
+                raw_tp = 10.0
             
             return {"sl": raw_sl, "tp": raw_tp, "fatal_cpv": np.percentile(lose_s['v_cpv'].dropna(), 90) if len(lose_s) >= 3 else 0.85, "alpha_limit": opt_alpha, "trap_limit": opt_trap, "dtw_limit": opt_dtw}
 
@@ -918,7 +938,17 @@ def run_autonomous_analysis():
                         recent_14['mfe_pct'] = (recent_14['max_high'] - recent_14['entry_price']) / recent_14['entry_price'] * 100.0
 
                         new_mae = float(recent_14['mae_pct'].mean())
-                        new_mfe = float(recent_14['mfe_pct'].mean())
+                        # [M3] 평균 앵커 폐기 — 챔피언 TP도 동적 우측꼬리 퍼센타일로 끌어올린다.
+                        _rc_mfe = recent_14['mfe_pct'].dropna()
+                        try:
+                            import exit_dynamics as _xd
+                            _ftr_c = _xd.fat_tail_ratio(
+                                float(np.percentile(_rc_mfe, 90)), float(np.percentile(_rc_mfe, 50))
+                            ) if len(_rc_mfe) >= 3 else 1.0
+                            _pctl_c = _xd.target_percentile(_tuning_regime, _ftr_c)
+                            new_mfe = float(np.percentile(_rc_mfe, _pctl_c)) if len(_rc_mfe) >= 1 else float(_rc_mfe.mean())
+                        except Exception:
+                            new_mfe = float(_rc_mfe.mean())
                         old_mae = float(champ_params.get("DYNAMIC_MAE_SL", new_mae))
                         old_mfe = float(champ_params.get("DYNAMIC_MFE_TP", new_mfe))
 
@@ -1268,6 +1298,17 @@ def run_autonomous_analysis():
             report_lines.append(f" ↳ TB: {old_mfe_template.get('tb', real_tb):.1f} ➔ <b>{smoothed_tb:.1f}</b>")
             report_lines.append(f" ↳ BBE: {old_mfe_template.get('bbe', real_bbe):.1f} ➔ <b>{smoothed_bbe:.1f}</b>")
 
+    # ---------------------------------------------------------
+    # 🧬 엔진 8.5: [초월적 진화 — 템플릿 유동화(M1) + 적응형 포렌식 승격(M2)]
+    # ---------------------------------------------------------
+    try:
+        from template_evolution import run_transcendent_template_evolution
+
+        _evo_out = run_transcendent_template_evolution(current_config, df)
+        report_lines.extend(_evo_out.get("report_lines", []))
+    except Exception as _evo_ex:
+        report_lines.append(f"⚠️ [초월적 진화] 스킵: {_evo_ex}")
+
     # 👇👇 [기존 엔진 9 영역을 이걸로 완전히 덮어쓰세요] 👇👇
     # ---------------------------------------------------------
     # 👑 엔진 9: [V56.0 초신성 내부 서브-데스매치 & 컷오프 자율 튜닝]
@@ -1334,8 +1375,7 @@ def run_autonomous_analysis():
         market_templates = current_config[multi_key]
         archive_root = current_config.setdefault("ARCHIVED_TEMPLATES", {})
         market_archive = archive_root.setdefault(mkt, {})
-        treasury_key = f"CENTRAL_TREASURY_{mkt}"
-        current_treasury = current_config.get(treasury_key, 0)
+        # [초월적 진화 M4] CENTRAL_TREASURY 레거시 회계 폐기 — 자본 증감은 100% Live NAV 엔진만 담당.
         culled_list = []
         
         for template_name in list(market_templates.keys()):
@@ -1373,24 +1413,18 @@ def run_autonomous_analysis():
                             "recorded_at": datetime.now().strftime('%Y-%m-%d')
                         }
                     
-                    # 💡 [신규 추가] 해당 로직의 최종 잔고 역산 및 국고 반환
+                    # [M4] 도태 로직의 실현손익 측정값(보고용) — CENTRAL_TREASURY 직접 가감 없음.
+                    # 실제 자본 증감은 청산 시 forward/ledger → live_nav_manager.record_closure 로 이미 NAV 에 복리 반영됨.
                     total_pnl = (t_trades['sim_kelly_invest'] * t_trades['final_ret'] / 100).sum()
-                    final_balance = 20000000 + total_pnl
-                    
-                    # 국고에 잔고 더하기 (Plus)
-                    current_treasury += final_balance 
-                    
-                    culled_list.append(f"{template_name} (회수금: {final_balance:,.0f}원)")
+                    culled_list.append(f"{template_name} (실현손익 {total_pnl:,.0f}원 · NAV 기반영)")
         
         current_config[multi_key] = market_templates
         current_config["ARCHIVED_TEMPLATES"] = archive_root
-        current_config[treasury_key] = current_treasury # 업데이트된 국고 저장
         
         if culled_list:
-            report_lines.append(f"▪️ <b>{mkt}장 도태 집행 및 국고 환수 완료</b>")
+            report_lines.append(f"▪️ <b>{mkt}장 도태 집행 완료</b> <i>(자본 정합성: Live NAV 단일 엔진)</i>")
             for c_name in culled_list: 
                 report_lines.append(f"  ❌ {c_name}")
-            report_lines.append(f"💰 {mkt} 국고 총액: {current_treasury:,.0f}원")
 
     # 최근 1개월 치명적 참사주(-10% 이하) 평균 DNA를 안티 패턴에 축적
     try:
@@ -1751,6 +1785,30 @@ def send_weekly_flow_master_report():
         compute_weekly_proprietary_regime()
     except Exception as _pri_ex:
         print(f"⚠️ [주간 PRI Shadow] skip: {_pri_ex}")
+    # [진화형 메타-러닝] 내부 PRI ↔ 외부 매크로 발산 채점·신뢰 가중치 주간 갱신.
+    try:
+        from meta_learner import run_meta_learning_cycle
+
+        _ml = run_meta_learning_cycle(sys_config=load_or_create_config())
+        print(f"🧠 [Meta-Learner] {_ml}")
+    except Exception as _ml_ex:
+        print(f"⚠️ [Meta-Learner] skip: {_ml_ex}")
+    # [진화형 둠스데이 감쇠] γ(형상) 경사하강 자율 갱신.
+    try:
+        from doomsday_dampener import evolve_gamma
+
+        _gv = evolve_gamma(sys_config=load_or_create_config())
+        print(f"🛰️ [Doomsday-γ] {_gv}")
+    except Exception as _gv_ex:
+        print(f"⚠️ [Doomsday-γ] skip: {_gv_ex}")
+    # [M2] 프리러너 볼록 래칫 κ 곡선의 주간 RL 자율 갱신(조기청산·이익반납 학습).
+    try:
+        from exit_ratchet_rl import evolve_ratchet_kappa
+
+        _kv = evolve_ratchet_kappa()
+        print(f"🪝 [Ratchet-κ] {_kv.get('rates')} → {_kv.get('state')}")
+    except Exception as _kv_ex:
+        print(f"⚠️ [Ratchet-κ] skip: {_kv_ex}")
     from weekly_flow_report import send_weekly_flow_master_report as _send_weekly
 
     _send_weekly(

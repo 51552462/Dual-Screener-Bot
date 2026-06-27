@@ -12,6 +12,90 @@ from network_timeout import fdr_data_reader, yf_download
 
 logger = logging.getLogger(__name__)
 
+
+def _maybe_pyramid_add(conn, r, market, code, cur_price, sys_config, regime, edge_score):
+    """
+    [M4 자가 증식] 프리러너 엣지 폭발 시 유휴 NAV(미사용 자본)로 불타기 추가매수를
+    가상 장부에 자동 편입. 순수 판정은 exit_dynamics.pyramid_decision 사용.
+    """
+    try:
+        import exit_dynamics as _xd
+        from live_nav_manager import live_nav
+    except Exception:
+        return False
+
+    ep_now = safe_float_cast(cur_price, 0.0)
+    if ep_now <= 0:
+        return False
+
+    # 유휴 현금 = Live NAV − 현재 시장 OPEN 노출액 합
+    try:
+        nav = float(live_nav(market))
+    except Exception:
+        nav = 0.0
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(sim_kelly_invest),0) FROM forward_trades WHERE market=? AND status='OPEN'",
+            (market,),
+        ).fetchone()
+        open_exposure = float((row or (0.0,))[0] or 0.0)
+    except Exception:
+        open_exposure = 0.0
+    idle_cash = max(0.0, nav - open_exposure)
+
+    decision = _xd.pyramid_decision(
+        edge_score=float(edge_score),
+        regime=regime,
+        idle_cash=idle_cash,
+        nav=nav,
+        pyramid_adds_done=int(row_scalar(r, 'pyramid_adds', 0.0)),
+        free_runner=True,
+    )
+    if not decision.get("do"):
+        return False
+
+    add_notional = float(decision["add_notional"])
+    parent_id = int(r.get('id') or 0)
+    tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
+    entry_date = datetime.now(tz).strftime('%Y-%m-%d')
+    base_sig = str(r.get('sig_type') or '')
+    pyr_sig = (base_sig + " [PYRAMID]").strip()
+    risk_pct = row_scalar(r, 'sim_kelly_risk_pct', 0.02)
+    entry_atr = row_scalar(r, 'entry_atr', 0.0)
+    v_energy = row_scalar(r, 'v_energy', 0.0)
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO forward_trades
+                (entry_date, market, code, name, sector, sig_type, tier, total_score,
+                 entry_price, v_energy, status, max_high, min_low, bars_held,
+                 sim_kelly_invest, sim_kelly_risk_pct, entry_atr, entry_regime,
+                 free_runner, parent_trade_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                entry_date, market, str(code), str(r.get('name') or code),
+                str(r.get('sector') or '유망섹터'), pyr_sig, str(r.get('tier') or 'PYRAMID'),
+                row_scalar(r, 'total_score', 0.0), ep_now, v_energy, 'OPEN',
+                ep_now, ep_now, 0, add_notional, risk_pct, entry_atr, str(regime),
+                0, parent_id,
+            ),
+        )
+        conn.execute(
+            "UPDATE forward_trades SET pyramid_adds=? WHERE id=?",
+            (int(row_scalar(r, 'pyramid_adds', 0.0)) + 1, parent_id),
+        )
+        logger.info(
+            "pyramid add: parent=%s code=%s notional=%.0f edge=%.2f regime=%s",
+            parent_id, code, add_notional, edge_score, regime,
+        )
+        return True
+    except Exception as ex:
+        logger.warning("pyramid insert fail parent=%s: %s", parent_id, ex)
+        return False
+
+
 # ==========================================
 # 2. 매일 종가 흐름 추적 및 청산 엔진 (DB 기반)
 # ==========================================
@@ -89,6 +173,18 @@ def track_daily_positions(market):
             f"🛡️ [포워드] 시장 폭 붕괴 연동 (breadth={cur_breadth_mkt:.3f} < 0.97): "
             f"기보유 청산 — MAE 손절·타임스탑 0.5배 비상 조임"
         )
+
+    # [초월적 비대칭 청산] 국면 1회 로드(행별 재로딩 방지) + 동적 청산 수식 모듈
+    try:
+        _meta_regime = str(load_meta_state_resolved().get("META_REGIME_KEY") or "UNKNOWN").upper()
+    except Exception:
+        _meta_regime = "UNKNOWN"
+    try:
+        import exit_dynamics as _xdyn
+        _ratchet_state = _xdyn.load_ratchet_state(sys_config)
+    except Exception:
+        _xdyn = None
+        _ratchet_state = None
 
     for _, r in df_active.iterrows():
         try:
@@ -326,16 +422,59 @@ def track_daily_positions(market):
             actual_exit_price = c # 기본 청산가는 종가로 세팅
             
             # 💡 [핵심 교정] 종가가 아닌 '저가(l)'와 '고가(h)'로 실전과 똑같이 슬리피지 청산
+            _scaled_done = row_scalar(r, 'scaled_out_frac', 0.0)
+            _is_free_runner = row_scalar(r, 'free_runner', 0.0) >= 1
+            _realized_partial = row_scalar(r, 'realized_partial_ret', 0.0)
             if low_ret_pct <= dyn_mae_sl:
                 do_exit, exit_rsn, actual_exit_type = True, f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl}%)", "STAT_MAE"
                 actual_exit_price = ep * (1 + (dyn_mae_sl / 100.0)) # 손절선에서 털린 가격
-            elif high_ret_pct >= dyn_mfe_tp:
-                if c >= l + (h - l) * 0.7:
-                    pass
+            elif high_ret_pct >= dyn_mfe_tp and _scaled_done < 1e-6:
+                # [M1] 고정 상한 캡 폐기 — 1차 목표가 도달 시 유동 비율(F_out)만 부분 실현,
+                # 나머지는 캡 없는 '프리러너'로 전환하여 우측 꼬리를 끝까지 추적한다.
+                _vol_pct = (cur_atr / ep * 100.0) if (ep > 0 and np.isfinite(cur_atr)) else 5.0
+                _edge_pre = (current_ret_pct / max(1, int(new_bars))) * (row_scalar(r, 'v_energy', 1.0) / 10.0)
+                if _xdyn is not None:
+                    f_out = _xdyn.fluid_scale_out_fraction(_meta_regime, _vol_pct, _edge_pre)
                 else:
-                    do_exit, exit_rsn, actual_exit_type = True, f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp}%)", "STAT_MFE"
+                    f_out = 0.5
+                if f_out >= 0.999:
+                    # 완전 방어 국면 — 전량 실현(단, 종가가 아닌 TP 지정가 체결)
+                    do_exit, exit_rsn, actual_exit_type = True, f"유동 전량익절 (방어국면 F_out={f_out:.0%})", "STAT_MFE_FULL"
                     actual_exit_price = ep * (1 + (dyn_mfe_tp / 100.0))
+                else:
+                    # 부분 실현분(F_out)은 TP 지정가에서 체결로 적립, 잔여는 러너로 계속 보유
+                    _partial_locked = round(f_out * dyn_mfe_tp, 4)
+                    conn.execute(
+                        "UPDATE forward_trades SET scaled_out_frac=?, realized_partial_ret=?, free_runner=1, max_high=? WHERE id=?",
+                        (round(f_out, 4), _partial_locked, new_max, r['id']),
+                    )
+                    _scaled_done = f_out
+                    _is_free_runner = True
+                    _realized_partial = _partial_locked
             
+            # [M2] 프리러너 볼록 트레일링 래칫 — 부분익절 후 잔여 물량을 MaxHigh×(1-κ)로 끝까지 추적.
+            if not do_exit and _is_free_runner and _xdyn is not None:
+                _run_ret = ((new_max - ep) / ep) * 100.0
+                _kappa = _xdyn.convex_ratchet_kappa(_run_ret, _ratchet_state)
+                _trail_px = _xdyn.trail_stop_price(new_max, _kappa)
+                if l <= _trail_px:
+                    do_exit, exit_rsn, actual_exit_type = (
+                        True,
+                        f"프리러너 볼록 트레일 청산 (κ={_kappa:.3f} · 고점 {_run_ret:.0f}%)",
+                        "RUNNER_TRAIL",
+                    )
+                    actual_exit_price = _trail_px
+
+            # [M4] 엣지 폭발(수급강도×수익속도) 시 유휴 NAV 끌어와 불타기 자가 증식.
+            if not do_exit and _is_free_runner and _xdyn is not None and not _is_observe_only:
+                try:
+                    _edge_now = (current_ret_pct / max(1, int(new_bars))) * (
+                        row_scalar(r, 'v_energy', 1.0) / 10.0
+                    )
+                    _maybe_pyramid_add(conn, r, market, code, c, sys_config, _meta_regime, _edge_now)
+                except Exception as _pyr_ex:
+                    logger.warning("pyramid hook skip id=%s: %s", r.get('id'), _pyr_ex)
+
             # RL 프록시(Q-Value 근사): 2순위 타임스탑 직전에 홀딩 엣지가 높으면 opt_time_stop만 +2일 연장(1순위 MAE/MFE 불변)
             try:
                 _ots = int(round(safe_float_cast(opt_time_stop, 10.0)))
@@ -385,6 +524,9 @@ def track_daily_positions(market):
             if do_exit:
                 # 💡 [핵심] 최종 수익률(ret)은 희망회로 종가(c)가 아니라 '실제 증권사가 던진 가격(actual_exit_price)' 기반으로 계산
                 ret = round(((actual_exit_price - ep) / ep) * 100, 2)
+                # [M1] 부분익절된 포지션은 '부분 실현분 + 잔여 러너 실현분'을 비대칭 합산.
+                if _scaled_done > 1e-6 and actual_exit_type != "STAT_MFE_FULL" and _xdyn is not None:
+                    ret = round(_xdyn.blend_final_return(_realized_partial, _scaled_done, ret), 2)
                 mfe = round(((new_max - ep) / ep) * 100, 2)
                 
                 tags = []
@@ -443,7 +585,31 @@ def track_daily_positions(market):
                     SET status=?, exit_date=?, exit_reason=?, flow_tags=?, final_ret=?, mfe=?, max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?, exit_type=?
                     WHERE id=?
                 ''', ('CLOSED_WIN' if ret > 0 else 'CLOSED_LOSS', exit_date, exit_rsn, flow_tags, ret, mfe, new_max, new_min, new_bars, new_up_vol, new_down_vol, actual_exit_type, r['id']))
-                
+
+                # [Live NAV 동기화] 청산 실현손익을 treasury_state.json NAV 에 즉시 복리 반영.
+                # net_pnl = NAV × 그 거래 켈리(sim_kelly_risk_pct) × (ret/100). 실패해도 장부는 계속.
+                try:
+                    from live_nav_manager import record_closure
+                    _kelly = row_scalar(r, 'sim_kelly_risk_pct', 0.0)
+                    if _kelly and _kelly > 1.0:
+                        _kelly = _kelly / 100.0
+                    record_closure(
+                        market,
+                        final_ret_pct=float(ret),
+                        kelly_pct=(_kelly if _kelly and _kelly > 0 else None),
+                        exit_date=exit_date,
+                    )
+                except Exception:
+                    pass
+
+                # [초월적 진화 M3] 밴딧 베이지안 갱신 — 청산 1건마다 승/패로 Beta(α,β) 업데이트.
+                # 승격 템플릿의 sig_type 일 때만 동작(아니면 무 I/O).
+                try:
+                    from template_bandit import update_bandit_for_closure
+                    update_bandit_for_closure(row_scalar(r, 'sig_type', ''), won=(float(ret) > 0))
+                except Exception:
+                    pass
+
                 icon = "🔥스마트청산" if ret > 0 else "🛡️방어손절"
                 if _is_observe_only:
                     icon = "👁️관측청산" if ret > 0 else "👁️관측손절"

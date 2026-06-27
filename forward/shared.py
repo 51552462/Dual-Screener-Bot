@@ -757,6 +757,19 @@ def init_forward_db(db_path: str | None = None):
     except Exception:
         pass
 
+    # 👇👇 [추가] 초월적 비대칭 청산 — 유동 부분익절·프리러너·피라미딩 상태 👇👇
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN scaled_out_frac REAL DEFAULT 0.0")
+    except Exception: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN realized_partial_ret REAL DEFAULT 0.0")
+    except Exception: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN free_runner INTEGER DEFAULT 0")
+    except Exception: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN pyramid_adds INTEGER DEFAULT 0")
+    except Exception: pass
+    try: cursor.execute("ALTER TABLE forward_trades ADD COLUMN parent_trade_id INTEGER DEFAULT 0")
+    except Exception: pass
+    # 👆👆 [추가 끝] 👆👆
+
     try:
         import shadow_tracking
 
@@ -1472,6 +1485,13 @@ def get_smart_money_avg_price_from_ssot(sys_config: dict, code: object) -> float
                 smart_info = picks.get(str(int(code_str)))
             except (TypeError, ValueError):
                 smart_info = None
+        # US 다크풀 프록시 라다(SMART_MONEY_RADAR_US)도 동일 SSOT 로 조회 — US 티커는
+        # 6자리 KR 코드와 충돌하지 않으므로 병합 조회 안전(US 스캐너도 교차검증 태그 수혜).
+        if smart_info is None:
+            rad_us = sys_config.get("SMART_MONEY_RADAR_US") or {}
+            picks_us = rad_us.get("picks", {}) if isinstance(rad_us, dict) else {}
+            if isinstance(picks_us, dict):
+                smart_info = picks_us.get(code_str) or picks_us.get(str(code))
         if isinstance(smart_info, dict):
             return float(smart_info.get("avg_price", 0) or 0)
     except (TypeError, ValueError, Exception):
@@ -2075,6 +2095,17 @@ def try_add_virtual_position(
                     entry_facts=facts if isinstance(facts, dict) else {},
                     sector_mapped=str(sector),
                 )
+
+                # [초월적 진화 M3] 톰슨 샘플링 밴딧 — 승격 루키 템플릿의 자율 켈리 배수.
+                # 사후평균이 자라면 배수↑(최대 2.0), 부진하면 배수↓(최소 0.1)로 기계가 밸브 조절.
+                try:
+                    from template_bandit import resolve_template_multiplier
+
+                    _bandit_mult = resolve_template_multiplier(sys_config, sig_type)
+                    if _bandit_mult and _bandit_mult != 1.0:
+                        kelly_risk_pct *= float(_bandit_mult)
+                except Exception:
+                    pass
                 
                 # 2. 해당 그룹(로직)이 지금까지 벌어들인 누적 수익금 계산 (실현 손익)
                 cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
