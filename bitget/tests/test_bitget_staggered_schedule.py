@@ -20,21 +20,30 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 class TestBitgetStaggeredSchedule(unittest.TestCase):
-    def test_spot_slot_count_and_window(self):
+    def test_spot_slot_count_and_24h_spread(self):
         self.assertEqual(len(SPOT_SCAN_SLOTS), 10)
-        hours = [s.hour * 60 + s.minute for s in SPOT_SCAN_SLOTS]
-        self.assertEqual(min(hours), 1 * 60)
-        self.assertEqual(max(hours), 8 * 60 + 30)
-        for i in range(1, len(hours)):
-            self.assertEqual(hours[i] - hours[i - 1], 50)
+        mins = sorted(s.hour * 60 + s.minute for s in SPOT_SCAN_SLOTS)
+        # 24h 분산: 첫 슬롯은 자정대, 마지막은 밤 — 한 윈도우(예: 01–08)에 몰리지 않음.
+        self.assertLess(mins[0], 60)
+        self.assertGreaterEqual(mins[-1], 20 * 60)
+        # 모든 분은 5의 배수가 아니어야 주식/ops 크론과 같은 분에 안 겹친다.
+        for s in SPOT_SCAN_SLOTS:
+            self.assertNotEqual(s.minute % 5, 0, f"{s.mode} at :{s.minute:02d} is %5")
 
     def test_futures_slot_count_no_master(self):
         self.assertEqual(len(FUTURES_SCAN_SLOTS), 9)
         keys = [s.scanner_key for s in FUTURES_SCAN_SLOTS if s.cycle == 1]
         self.assertNotIn("master", keys)
-        hours = [s.hour * 60 + s.minute for s in FUTURES_SCAN_SLOTS]
-        for i in range(1, len(hours)):
-            self.assertEqual(hours[i] - hours[i - 1], 50)
+        for s in FUTURES_SCAN_SLOTS:
+            self.assertNotEqual(s.minute % 5, 0, f"{s.mode} at :{s.minute:02d} is %5")
+
+    def test_no_stock_minute_collision_and_no_simultaneous_markets(self):
+        # KR/US 스캔(:00..:50)·오딧(:45) 분 = 5의 배수. bitget 스캔은 전부 비-5배수여야 함.
+        for s in ALL_SCAN_SLOTS:
+            self.assertNotEqual(s.minute % 5, 0)
+        # SPOT/FUTURES 는 같은 (시,분)에 동시 실행되면 안 됨(서버 부하/락 경합).
+        times = [(s.hour, s.minute) for s in ALL_SCAN_SLOTS]
+        self.assertEqual(len(times), len(set(times)))
 
     def test_every_slot_has_pipeline(self):
         for slot in ALL_SCAN_SLOTS:

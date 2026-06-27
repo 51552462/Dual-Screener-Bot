@@ -35,6 +35,21 @@ TELEGRAM_TOKEN_MAIN = bitget_telegram_token()
 TELEGRAM_TOKEN_PROMO = bitget_telegram_token_promo()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 SEND_TELEGRAM = bool(TELEGRAM_TOKEN_MAIN and TELEGRAM_CHAT_ID)
+
+# [코인/주식 텔레그램 방 격리] 루트 telegram_message_queue 는 import 시점에 큐 DB 경로를
+# 주식 factory_data_dir()/message_queue.sqlite 로 고정한다. bitget 스캐너가 이대로
+# enqueue 하면 메시지가 "주식 큐"에 쌓이고, 주식 dante-async 가 (메시지에 챗ID가 없으므로)
+# 자기 바인딩 챗 = 주식방으로 발송해 코인 결과지가 주식방으로 샌다.
+# → bitget 전용 큐(bitget_message_queue.sqlite)로 재바인딩한 뒤 사용한다
+#   (bitget/async_telegram_daemon._patch_bitget_queue_paths 와 동일 규약).
+import telegram_message_queue as _tmq
+from bitget.infra.data_paths import bitget_data_dir as _bitget_data_dir
+from bitget.infra.data_paths import message_queue_db_path as _bitget_message_queue_db_path
+
+_tmq._BOT_DIR = _bitget_data_dir()
+_tmq.MESSAGE_QUEUE_DB_PATH = _bitget_message_queue_db_path()
+_tmq._schema_ready = False
+
 from telegram_message_queue import (
     enqueue_telegram,
     start_telegram_queue_daemons,
