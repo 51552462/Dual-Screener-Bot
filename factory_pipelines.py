@@ -444,6 +444,47 @@ def _step_us_data_incremental_update() -> None:
     print(f"🇺🇸 [Factory] us_data_incremental: {out}")
 
 
+def _step_daily_db_full_refresh() -> None:
+    """KR/US 종목별 OHLCV 전체(bulk) 갱신.
+
+    legacy_archive/scanners/main.py 가 항상-기동 루프에서 매일 07:00 에 돌리던
+    run_daily_db_update() 를 factory 크론으로 복원한 것. 이 잡이 누락되면서
+    종목 OHLCV DB(KR_xxxxxx)가 동결 → 스캐너가 신선 시세를 못 읽어 신규 진입 0 →
+    OPEN 장부 고갈 → 청산 0 → 실무자 리포트 워터마크 영구 RED 가 됐다.
+    factory 런타임 락을 공유하므로 스캔/감사와 직렬화되어 4GB 서버 동시실행·OOM 을 막는다.
+    """
+    from data_updater import run_daily_db_update
+
+    run_daily_db_update()
+    print("🛢️ [Factory] data_refresh: KR/US OHLCV bulk 갱신 완료")
+
+
+def _step_smart_money_refresh() -> None:
+    """스마트머니 라다 갱신 (legacy --daemon 16:10 잡의 factory 일급 이관).
+
+    KR: 외인·기관 순매수 다이버전스(pykrx/네이버) + 칼만 평단.
+    US: 다크풀 프록시(저변동성 거래량 폭증 = 기관 매집 징후).
+    factory 런타임 락으로 스캔/감사와 직렬화되어 4GB 서버 충돌·OOM 을 막는다.
+    """
+    import smart_money_tracker as smt
+
+    smt.run_all_smart_money()
+
+
+def _step_limit_up_forensics_kr() -> None:
+    """KR 상한가 부검 (legacy --daemon 15:40/16:20 잡 이관)."""
+    import limit_up_forensics as L
+
+    L.run_limit_up_forensics(markets=("KR",))
+
+
+def _step_doomsday_radar() -> None:
+    """거시 둠스데이 레이더 (legacy --daemon 17:00 잡 이관)."""
+    import macro_doomsday_bot as D
+
+    D.main()
+
+
 def _step_us_fluid_health_prelude() -> None:
     from evolution.us_fluid_upstream_bridge import run_us_health_fluid_prelude
 
@@ -912,6 +953,30 @@ def _step_weekly_proprietary_regime() -> None:
         print(f"[weekly_proprietary_regime] blended={out.get('blended')}")
     except Exception as ex:
         print(f"[weekly_proprietary_regime] skip: {ex}")
+    # [진화형 메타-러닝] PRI 산출 직후 발산 채점·신뢰 가중치 갱신(주간 cron 경로).
+    try:
+        from meta_learner import run_meta_learning_cycle
+
+        ml = run_meta_learning_cycle()
+        print(f"[meta_learner] {ml}")
+    except Exception as ex:
+        print(f"[meta_learner] skip: {ex}")
+    # [진화형 둠스데이 감쇠] γ(형상) 경사하강 자율 갱신(주간 cron 경로).
+    try:
+        from doomsday_dampener import evolve_gamma
+
+        gv = evolve_gamma()
+        print(f"[doomsday_dampener] {gv}")
+    except Exception as ex:
+        print(f"[doomsday_dampener] skip: {ex}")
+    # [M2] 프리러너 볼록 래칫 κ 곡선 주간 RL 갱신(주간 cron 경로).
+    try:
+        from exit_ratchet_rl import evolve_ratchet_kappa
+
+        kv = evolve_ratchet_kappa()
+        print(f"[ratchet_kappa] {kv.get('rates')} → updated={kv.get('updated')}")
+    except Exception as ex:
+        print(f"[ratchet_kappa] skip: {ex}")
 
 
 def _step_weekly_master() -> None:
@@ -1029,6 +1094,40 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
         "daily_audit_kr": daily_kr,
         "daily_audit_us": daily_us,
         "daily_audit": _pipeline_daily_audit_combined(),
+        "data_refresh": _with_artifact_guard(
+            [
+                StepSpec(
+                    "daily_db_full_refresh",
+                    _step_daily_db_full_refresh,
+                    critical=True,
+                    delay_after_sec=1.0,
+                ),
+            ]
+        ),
+        "smart_money_refresh": [
+            StepSpec(
+                "smart_money_refresh",
+                _step_smart_money_refresh,
+                critical=False,
+                delay_after_sec=0.0,
+            ),
+        ],
+        "limit_up_forensics": [
+            StepSpec(
+                "limit_up_forensics_kr",
+                _step_limit_up_forensics_kr,
+                critical=False,
+                delay_after_sec=0.0,
+            ),
+        ],
+        "doomsday_radar": [
+            StepSpec(
+                "doomsday_radar",
+                _step_doomsday_radar,
+                critical=False,
+                delay_after_sec=0.0,
+            ),
+        ],
         "weekly_master": _with_artifact_guard(
             [
                 StepSpec(
