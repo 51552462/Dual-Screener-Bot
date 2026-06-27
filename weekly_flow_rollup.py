@@ -50,6 +50,9 @@ class WeeklyFlowTagRollup:
     toxic_reason: str
     penalty_mult: Optional[float]
     top_tags_lines: Tuple[str, ...]
+    toxic_n: int = 0
+    toxic_wr_pct: float = 0.0
+    empty_reason_html: str = ""
 
 
 def _strip_html(s: str) -> str:
@@ -170,6 +173,8 @@ def _build_weekly_flow_tag_rollup_inner(
         staleness=staleness,
         sys_config=sys_config,
         persist_toxic=False,
+        force_aggregate=True,  # 주간 회고 — 현재 RED 여도 과거 확정 청산은 강제 집계
+        weekly_window=True,    # 7일 창 동적 임계치(min_n 다운스케일)
     )
     cfg = sys_config if isinstance(sys_config, dict) else {}
     try:
@@ -203,6 +208,8 @@ def _build_weekly_flow_tag_rollup_inner(
             )
 
     toxic = snap.toxic
+    # blocks 가 비면 '왜 비었는지'(RED 스킵/컬럼 없음/태그 0건/임계 미달)를 끝까지 전달.
+    empty_reason_html = "" if blocks else str(snap.synergy_action_html or "")
     return WeeklyFlowTagRollup(
         market=str(market).upper(),
         dominant_tag=dominant_tag,
@@ -213,7 +220,10 @@ def _build_weekly_flow_tag_rollup_inner(
         toxic_cum_ret=float(toxic.cum_ret_pct) if toxic else None,
         toxic_reason=toxic.toxic_reason if toxic else "",
         penalty_mult=penalty_mult if toxic else None,
+        toxic_n=int(toxic.n) if toxic else 0,
+        toxic_wr_pct=float(toxic.win_rate_pct) if toxic else 0.0,
         top_tags_lines=tuple(lines),
+        empty_reason_html=empty_reason_html,
     )
 
 
@@ -262,6 +272,9 @@ def format_weekly_flow_tag_rollup_html(rollup: WeeklyFlowTagRollup) -> str:
             out += f" ↳ 페널티 배수 적용·권고: <b>×{rollup.penalty_mult:.2f}</b>\n"
     elif rollup.top_tags_lines:
         out += " ☠️ <b>독성:</b> <i>주간 임계 미충족</i>\n"
+    elif rollup.empty_reason_html:
+        # 하드코딩 "표본 없음" 대신 실제 사유(RED 스킵/컬럼 없음/태그 0건/임계 미달) 노출.
+        out += f" ↳ {rollup.empty_reason_html}\n"
     else:
         out += " ↳ flow_tags 표본 없음\n"
     if rollup.top_tags_lines:

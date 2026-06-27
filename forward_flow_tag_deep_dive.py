@@ -323,8 +323,14 @@ def build_flow_tag_snapshot(
     persist_toxic: bool = True,
     save_config_fn: Optional[RegistrySaveFn] = None,
     load_config_fn: Optional[RegistryLoadFn] = None,
+    force_aggregate: bool = False,
+    weekly_window: bool = False,
 ) -> FlowTagReportSnapshot:
-    """explode + groupby 1패스 — 태그별 WR/PF/누적·캐리/출혈·독성."""
+    """explode + groupby 1패스 — 태그별 WR/PF/누적·캐리/출혈·독성.
+
+    force_aggregate: True 면 staleness=RED 여도 집계를 강제(주간 회고 — 과거 확정 청산용).
+    weekly_window:   True 면 7일 창 특성에 맞춰 min_n 을 FLOW_TAG_WEEKLY_MIN_N(기본 2)로 다운스케일.
+    """
     market = str(timekeeper.market).upper()
     today = timekeeper.calendar_today_kst
     if staleness is None:
@@ -332,12 +338,25 @@ def build_flow_tag_snapshot(
 
     th = _toxic_thresholds(sys_config)
     min_n = int(th["min_n"])
+    if weekly_window:
+        # 90일 룩백용 min_n(3)을 7일 주간 창에 그대로 쓰면 1~2건 핵심 태그가 전부 탈락한다.
+        # → 주간 전용 동적 임계치로 다운스케일(기본 2, 최소 1).
+        cfg_wk = sys_config if isinstance(sys_config, dict) else {}
+        try:
+            weekly_min_n = int(cfg_wk.get("FLOW_TAG_WEEKLY_MIN_N", 2))
+        except (TypeError, ValueError):
+            weekly_min_n = 2
+        min_n = max(1, min(min_n, weekly_min_n))
     top_k = int(th["top_k"])
 
     work = enforce_market_frame(df, market, context="flow_tag_snapshot")
     exit_min, exit_max = _exit_date_span(work) if work is not None and len(work) else (None, None)
 
-    if staleness.grade == "RED" and not getattr(staleness, "allow_flow_tag", False):
+    if (
+        staleness.grade == "RED"
+        and not force_aggregate
+        and not getattr(staleness, "allow_flow_tag", False)
+    ):
         return _empty_snapshot(
             timekeeper,
             staleness,
@@ -465,7 +484,7 @@ def build_flow_tag_snapshot(
     for rd in row_dicts:
         ok, reason = _is_toxic_candidate(
             rd,
-            min_n=th["min_n"],
+            min_n=min_n,
             toxic_wr=th["toxic_wr_pct"],
             toxic_pf=th["toxic_pf"],
             toxic_cum=th["toxic_cum_ret"],

@@ -2,9 +2,13 @@
 """주간 Flow 표본 0건 — True Zero vs False Zero 교차 검증 (Ubuntu에서 실행)."""
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
+
+# 디렉토리 위치와 무관하게 시스템 루트(상위 폴더)의 모듈을 임포트할 수 있게 경로 주입.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytz
 

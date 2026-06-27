@@ -21,6 +21,8 @@ from reports.report_state_binder import (
 )
 from weekly_flow_pnl import (
     add_realized_pnl_column,
+    compute_virtual_equity_curve,
+    virtual_base_capital_for_market,
     zero_invest_fallback_for_market,
 )
 from weekly_flow_rollup import (
@@ -35,6 +37,7 @@ from weekly_action_plan import (
     WeeklyActionPlan,
     build_weekly_action_plan,
     persist_weekly_baseline,
+    persist_weekly_sector_alpha,
 )
 
 
@@ -153,12 +156,17 @@ def build_weekly_market_snapshot(
     market: str,
     week_start: str,
     week_end: str,
+    effective_kelly_risk: Optional[float] = None,
 ) -> Optional[WeeklyFlowSnapshot]:
     if df is None or df.empty:
         return None
 
-    fb = zero_invest_fallback_for_market(market)
-    wdf = add_realized_pnl_column(df, market=market, zero_fallback=fb)
+    # [가상 자본 곡선] 고정 40만 노출 합산 대신, exit_date 시간순 켈리 복리(E_t = E_{t-1}(1+f·R_t)).
+    # _realized_pnl 에는 각 거래의 복리 자본 증감액(ΔE)이 적재되어, 일자/주간 groupby-sum 이
+    # 텔레스코핑되며 그 구간의 복리 Net PnL(시작↔종료 자본 차)과 일치한다.
+    wdf = compute_virtual_equity_curve(
+        df, market=market, effective_kelly_risk=effective_kelly_risk
+    )
     pnl_col = "_realized_pnl"
 
     daily_rows: List[WeeklyDayPnlRow] = []
@@ -341,13 +349,21 @@ def build_weekly_flow_snapshot(
 
     try:
         kr_snap = build_weekly_market_snapshot(
-            df_kr, market="KR", week_start=week_start, week_end=week_end
+            df_kr,
+            market="KR",
+            week_start=week_start,
+            week_end=week_end,
+            effective_kelly_risk=getattr(macro_kr, "effective_kelly_risk", None),
         )
     except Exception:
         kr_snap = None
     try:
         us_snap = build_weekly_market_snapshot(
-            df_us, market="US", week_start=week_start, week_end=week_end
+            df_us,
+            market="US",
+            week_start=week_start,
+            week_end=week_end,
+            effective_kelly_risk=getattr(macro_us, "effective_kelly_risk", None),
         )
     except Exception:
         us_snap = None
@@ -654,6 +670,12 @@ def send_weekly_flow_master_report(
         persist_weekly_baseline(
             sys_config,
             macro_effective_kelly=float(snap.macro_kr.effective_kelly_risk),
+        )
+        # [알파 반감기] 다음 주 주도 섹터 캐리 프리미엄(월 +5% → 금 +1% 선형 감쇠) 영속화.
+        persist_weekly_sector_alpha(
+            sys_config,
+            top_sectors_kr=tuple(s.sector for s in snap.kr.top_sectors) if snap.kr else (),
+            top_sectors_us=tuple(s.sector for s in snap.us.top_sectors) if snap.us else (),
         )
     except Exception as e:
         print(f"[weekly_flow] 리포트 빌드 예외: {e}")
