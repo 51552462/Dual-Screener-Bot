@@ -82,7 +82,15 @@ def send_telegram_report(message) -> bool:
 
 
 # 1분 주기: ops_snapshot + 인버스 스나이퍼 (모노토닉 시계)
-_OPS_INVERSE_MINUTE_STATE = {"last_mono": 0.0, "inverse_mode": None}
+_OPS_INVERSE_MINUTE_STATE = {
+    "last_mono": 0.0,
+    "inverse_mode": None,
+    "last_skip_reason": None,
+    "last_skip_ts": 0.0,
+}
+
+# 테일 잔액 0 같은 "지속 상태" 거부는 1분 사건이 아니므로 알림 쿨다운(초) 동안 1회만 발송.
+_INVERSE_SKIP_NOTIFY_COOLDOWN_SEC = 6 * 3600
 
 
 def _telegram_inverse_sniper_critical_only(summary: dict, mode_after: bool) -> None:
@@ -106,9 +114,23 @@ def _telegram_inverse_sniper_critical_only(summary: dict, mode_after: bool) -> N
     if isinstance(sk, str) and sk and (
         "테일 30% 캡" in sk or "Reserve OCC" in sk or "테일 잔액 0" in sk
     ):
-        send_telegram_report(
-            f"🚨 <b>[인버스 테일 캡/잔액]</b> 신규 진입 거부: {sk}"
+        # 잔액 0 등 지속 상태는 사유 변경 시 또는 쿨다운 경과 시에만 1회 발송(매분 도배 방지).
+        now_mono = time.monotonic()
+        reason_changed = sk != st.get("last_skip_reason")
+        cooldown_passed = (
+            now_mono - float(st.get("last_skip_ts") or 0.0)
+            >= _INVERSE_SKIP_NOTIFY_COOLDOWN_SEC
         )
+        if reason_changed or cooldown_passed:
+            send_telegram_report(
+                f"🚨 <b>[인버스 테일 캡/잔액]</b> 신규 진입 거부: {sk}"
+            )
+            st["last_skip_reason"] = sk
+            st["last_skip_ts"] = now_mono
+    else:
+        # 거부 사유 해소 → 다음 거부는 즉시 1회 알림되도록 상태 리셋.
+        st["last_skip_reason"] = None
+        st["last_skip_ts"] = 0.0
     st["inverse_mode"] = mode_after
 
 
