@@ -31,6 +31,19 @@ class MacroTreasuryReportBlock:
     ledger_realized_est: float
     oms_equity: Optional[float]
     treasury_footnote: str
+    # --- Live NAV 엔진(treasury_state.json) — 팩트시트 듀얼통화 ---
+    market: str = "KR"
+    nav: Optional[float] = None
+    hwm: Optional[float] = None
+    mdd_pct: Optional[float] = None
+    base_capital: Optional[float] = None
+    currency_symbol: str = "₩"
+    currency_suffix: str = "원"
+    amount_decimals: int = 0
+    # [진화형 둠스데이 감쇠] 브레이크 성향(γ) 메타인지 브리핑 — 빌드 시점 사전계산.
+    dampening_brief_html: Optional[str] = None
+    # [Mission 3] 매크로 데이터 신선도(live/lookback/degraded) — 거시 국면 신선도 태그.
+    macro_freshness: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -242,9 +255,8 @@ def _merge_treasury_policy(
             "이미 손익이 config 국고에 반영된 경우 중복이므로 무시하세요."
         )
     core = (
-        "※ 설정 국고(CENTRAL/TREASURY_*)는 구성 파일 SSOT. "
-        "가상 청산 누적은 해당 시장 축 forward_trades 청산 행만 집계(INCUBATOR 제외는 호출부). "
-        "자동 동기화가 국고를 갱신한다면 두 값을 단순 합산하지 마세요."
+        "※ Live NAV 는 treasury_state.json 의 진짜 누적 복리 자산(청산마다 E=E·(1+f·R) 동기화). "
+        "노출액은 NAV×유효켈리로 산출(40만 평면 폴백 폐기). KR ₩ / US $ 완전 분리."
     )
     oms_line = ""
     if oms_equity is not None:
@@ -298,12 +310,33 @@ def build_macro_treasury_block(
         market=mkt,
     )
     foot = _merge_treasury_policy(raw, led, oms_equity, sys_config)
+    nav_val = hwm_val = mdd_val = base_val = None
+    cur_symbol, cur_suffix, cur_dec = "₩", "원", 0
+    try:
+        from live_nav_manager import currency_for, get_market_state
+
+        _st = get_market_state(mkt)
+        nav_val = float(_st.get("nav")) if _st.get("nav") is not None else None
+        hwm_val = float(_st.get("hwm")) if _st.get("hwm") is not None else None
+        mdd_val = float(_st.get("mdd_pct")) if _st.get("mdd_pct") is not None else None
+        base_val = float(_st.get("base_capital")) if _st.get("base_capital") is not None else None
+        _cur = currency_for(mkt)
+        cur_symbol, cur_suffix, cur_dec = _cur["symbol"], _cur["suffix"], int(_cur["decimals"])
+    except Exception:
+        pass
     try:
         from regime_kelly_failsafe import record_kelly_snapshot
 
         record_kelly_snapshot(eff_k, regime)
     except Exception:
         pass
+    dampening_brief = None
+    try:
+        from doomsday_dampener import build_doomsday_dampening_brief
+
+        dampening_brief = build_doomsday_dampening_brief(sys_config=sys_config, meta=m)
+    except Exception:
+        dampening_brief = None
     return MacroTreasuryReportBlock(
         regime_key=regime,
         regime_confidence=conf,
@@ -317,6 +350,18 @@ def build_macro_treasury_block(
         ledger_realized_est=led,
         oms_equity=oms_equity,
         treasury_footnote=foot,
+        market=mkt,
+        nav=nav_val,
+        hwm=hwm_val,
+        mdd_pct=mdd_val,
+        base_capital=base_val,
+        currency_symbol=cur_symbol,
+        currency_suffix=cur_suffix,
+        amount_decimals=cur_dec,
+        dampening_brief_html=dampening_brief,
+        macro_freshness=(
+            str((sys_config or {}).get("MACRO_DAILY_FRESHNESS") or "") or None
+        ),
     )
 
 
@@ -338,20 +383,50 @@ def format_macro_treasury_section_html(
 ) -> str:
     """Telegram HTML. 사용자 입력(notes)은 이스케이프."""
     rk_esc = html.escape(block.regime_key, quote=False)
-    head = f"{market_icon} <b>[1/9] 거시 국면 및 국고(Treasury) 현황</b>\n"
+    head = f"{market_icon} <b>[1/9] 거시 국면 및 Live NAV 팩트시트</b>\n"
     line_date = f"📅 {today_str} | 국면: <b>{rk_esc}</b>"
     if block.regime_confidence is not None:
         line_date += f" (Meta 신뢰도 {_fmt_amount(float(block.regime_confidence), decimals=2)})"
+    # [Mission 3] 매크로 데이터가 라이브가 아니면 신선도 태그를 명시(관측성).
+    if block.macro_freshness == "lookback":
+        line_date += " <b>(⚠️ 전일 매크로 데이터 재사용 중)</b>"
+    elif block.macro_freshness == "degraded":
+        line_date += " <b>(⚠️ 매크로 데이터 부재 — Degraded)</b>"
     line_date += "\n"
-    t_raw = _fmt_amount(block.treasury_config_raw, decimals=amount_decimals)
-    t_led = _fmt_amount(block.ledger_realized_est, decimals=amount_decimals)
-    if block.ledger_realized_est >= 0:
-        t_led_sign = f"+{t_led}"
-    else:
-        t_led_sign = t_led
     body = head + line_date
-    body += f"🏦 <b>{html.escape(display_label, quote=False)} 국고(설정):</b> {t_raw} {currency_suffix}\n"
-    body += f"📈 <b>가상 청산 누적(켈리 노출):</b> {t_led_sign} {currency_suffix}\n"
+
+    # [Live NAV 팩트시트] treasury_state.json 의 진짜 누적 복리 자산 — 죽은 고정 국고/단순합산 폐기.
+    sym = block.currency_symbol or currency_suffix
+    dec = block.amount_decimals if block.amount_decimals is not None else amount_decimals
+
+    def _money(v: Optional[float]) -> str:
+        if v is None:
+            return "—"
+        return f"{sym}{_fmt_amount(float(v), decimals=dec)}"
+
+    if block.nav is not None:
+        base_v = block.base_capital if block.base_capital is not None else 0.0
+        ret_pct = ((float(block.nav) / base_v - 1.0) * 100.0) if base_v else 0.0
+        hwm_v = float(block.hwm) if block.hwm is not None else float(block.nav)
+        hwm_reach = (float(block.nav) / hwm_v * 100.0) if hwm_v else 100.0
+        mdd_v = float(block.mdd_pct) if block.mdd_pct is not None else 0.0
+        ret_icon = "🟢" if ret_pct >= 0 else "🔴"
+        body += (
+            f"💰 <b>Live NAV:</b> {_money(block.nav)} "
+            f"({ret_icon}{ret_pct:+.2f}% · 기준 {_money(block.base_capital)})\n"
+        )
+        body += (
+            f"🏔️ <b>HWM(최고자산):</b> {_money(block.hwm)} "
+            f"(달성률 {hwm_reach:.1f}%)\n"
+        )
+        body += f"📉 <b>MDD(최대낙폭):</b> -{mdd_v:.2f}%\n"
+    else:
+        # NAV 상태 미초기화 — 소급 복원 안내(고정 국고 텍스트로 회귀하지 않음).
+        body += (
+            "💰 <b>Live NAV:</b> <i>미초기화 — 서버에서 "
+            "<code>python3 scripts/calculate_historical_nav.py</code> 1회 실행으로 "
+            "과거 청산을 복리 복원하십시오.</i>\n"
+        )
     body += (
         f"⚖️ 켈리: 베이스 {_fmt_amount(block.base_dynamic_kelly_risk * 100.0, decimals=2)}% "
         f"× Meta글로벌 <b>{_fmt_amount(block.meta_global_kelly_mult, decimals=3)}</b> "
@@ -363,6 +438,16 @@ def format_macro_treasury_section_html(
         body += f" ◽ 레짐 캡/플로어: cap {cap_s} | floor {fl_s}\n"
     body += "<i>※ 아래 누적 손익·리더보드·순환·DNA 통계는 [INCUBATOR_] 섀도우 제외.</i>\n"
     body += "\n🗣️ <b>[MetaGovernor 근거]</b>\n"
+    # [진화형 메타-러닝] 내부 PRI ↔ 외부 매크로 신뢰 가중치(자가학습) 메타인지 한 줄.
+    try:
+        from meta_learner import build_meta_cognition_line
+
+        body += build_meta_cognition_line() + "\n"
+    except Exception:
+        pass
+    # [진화형 형상변환 감쇠] 둠스데이 브레이크 성향(γ) 메타인지 한 줄(빌드 시점 사전계산).
+    if block.dampening_brief_html:
+        body += block.dampening_brief_html + "\n"
     if block.regime_notes:
         body += html.escape(block.regime_notes, quote=False) + "\n"
     else:

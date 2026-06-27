@@ -58,17 +58,26 @@ def send_comprehensive_daily_report(
     elif not isinstance(ctx, DailyReportContext):
         raise TypeError("ctx must be DailyReportContext")
 
+    # [Mission 3] 매크로 신선도(live/lookback/degraded) 추적 → [1/9] 태그.
+    macro_freshness: str | None = None
     try:
         from report_pipeline_hydrate import ensure_report_pipeline_data
 
         if refresh_macro or refresh_ohlcv:
-            ensure_report_pipeline_data(
+            _hyd_out = ensure_report_pipeline_data(
                 market=None,
                 refresh_macro=refresh_macro,
                 refresh_ohlcv=refresh_ohlcv,
             )
+            _macro_step = (_hyd_out or {}).get("macro") or {}
+            macro_freshness = str(_macro_step.get("source") or "") or None
+            if macro_freshness == "lookback":
+                ctx.add_health_warning("⚠️ 매크로 전일 데이터 재사용(Lookback)")
+            elif macro_freshness == "degraded":
+                ctx.add_health_warning("⚠️ 매크로 데이터 부재(Degraded)")
     except Exception as _hyd_e:
         print(f"⚠️ [일일 통합 리포트] pipeline hydrate 스킵: {_hyd_e}")
+        ctx.add_health_warning("🚨 매크로/OHLCV 하이드레이트 실패")
 
     if refresh_meta_governor:
         try:
@@ -78,6 +87,7 @@ def send_comprehensive_daily_report(
             print(f"🛰️ [일일 통합 리포트] MetaGovernor·REGIME 동기 치유: {_meta_heal}")
         except Exception as _mg_e:
             print(f"⚠️ [일일 통합 리포트] MetaGovernor 치유 실패(리포트는 계속): {_mg_e}")
+            ctx.add_health_warning("⚠️ MetaGovernor/REGIME 갱신 실패")
 
     if refresh_sector_spillover:
         try:
@@ -87,6 +97,7 @@ def send_comprehensive_daily_report(
             print(f"🔄 [일일 통합 리포트] 섹터·스필오버 선행 갱신: {_sec_out}")
         except Exception as _sec_e:
             print(f"⚠️ [일일 통합 리포트] 섹터·스필오버 갱신 실패(리포트는 계속): {_sec_e}")
+            ctx.add_health_warning("⚠️ 섹터/스필오버 갱신 실패")
 
     if refresh_sentiment:
         try:
@@ -96,6 +107,7 @@ def send_comprehensive_daily_report(
             print(f"🧠 [일일 통합 리포트] 센티먼트 선행 갱신: {_sent_out}")
         except Exception as _sent_e:
             print(f"⚠️ [일일 통합 리포트] 센티먼트 선행 갱신 실패(리포트는 계속): {_sent_e}")
+            ctx.add_health_warning("⚠️ 센티먼트 갱신 실패")
 
     try:
         from doomsday_bridge import sync_doomsday_to_system_config
@@ -107,11 +119,14 @@ def send_comprehensive_daily_report(
         print(f"🛰️ [일일 통합 리포트] 둠스데이 브릿지: {_dd_sync}")
     except Exception as _ddb_e:
         print(f"⚠️ [일일 통합 리포트] 둠스데이 브릿지 스킵: {_ddb_e}")
+        ctx.add_health_warning("⚠️ 둠스데이 브릿지 갱신 실패")
 
     tz_kr = pytz.timezone('Asia/Seoul')
     today_str = ctx.calendar_today_kst
-    _report_time_header = ctx.global_header_html()
     sys_config = load_system_config()
+    # [Mission 3] 매크로 신선도를 SSOT 에 실어 [1/9] 렌더가 태그를 붙이게 한다.
+    if macro_freshness:
+        sys_config["MACRO_DAILY_FRESHNESS"] = macro_freshness
 
     if cleanup_zombie_trades:
         try:
@@ -151,6 +166,11 @@ def send_comprehensive_daily_report(
         except Exception as _sent_chk_e:
             sentiment_fresh_warn = True
             print(f"⚠️ [일일 통합 리포트] 센티먼트 검증 스킵: {_sent_chk_e}")
+    if sentiment_fresh_warn:
+        ctx.add_health_warning("⚠️ 당일 센티먼트 미확인")
+
+    # [Mission 1] 글로벌 헤더는 선행 갱신·센티먼트 경고가 모두 누적된 뒤 생성 → 능동 배너 반영.
+    _report_time_header = ctx.global_header_html()
 
     satellite_brief_kr = build_satellite_intel_for_report(
         sys_config, market="KR", sentiment_fresh_warn=sentiment_fresh_warn
@@ -230,6 +250,17 @@ def send_comprehensive_daily_report(
                 pass
             _win_closed = mkt_slice.n_closed_window
             
+            # [Mission 2] 40만 고정 폴백 박멸 — 시장별 Live NAV × 유효 켈리 노출액을 1회 산출,
+            # [1/9]·[3/9] 전 섹션이 '단일 Live NAV 자본 곡선'을 공유하도록 통일.
+            try:
+                from live_nav_manager import live_notional
+
+                _live_fb = float(live_notional(market, sys_config, meta_state_daily))
+                if not (_live_fb and _live_fb > 0):
+                    _live_fb = float(base_seed)
+            except Exception:
+                _live_fb = float(base_seed)
+
             # ---------------------------------------------------------
             # 📑 결과지 1: 거시 국면 & 국고 현황 (ReportStateBinder)
             # ---------------------------------------------------------
@@ -238,7 +269,7 @@ def send_comprehensive_daily_report(
                 sys_config=sys_config,
                 df_closed_real=df_closed,
                 treasury_config_key=f"CENTRAL_TREASURY_{market}",
-                ledger_zero_invest_fallback=400000.0,
+                ledger_zero_invest_fallback=_live_fb,
             )
             try:
                 _unified_open = build_market_report_opening(market, sys_config, conn=conn)
@@ -291,13 +322,16 @@ def send_comprehensive_daily_report(
                     df_open_copy["group"] = df_open_copy["sig_type"].apply(get_core_group)
                 else:
                     df_open_copy = pd.DataFrame(columns=["group"])
+                # [Mission 2] 40만 고정 폴백 폐기 → Live NAV × 유효 켈리 기반 row_notional 복리.
+                from weekly_flow_pnl import dataframe_realized_pnl_sum
+
                 leaderboard = []
                 for group in df_all_copy['group'].unique():
                     g_df = df_all_copy[df_all_copy['group'] == group]
                     g_closed = g_df[g_df['status'].str.contains('CLOSED', na=False)]
-                    # 💡 과거 에러 데이터(투입금 0원)를 기본 40만원(2%)으로 보정하여 복리 누락 방어
-                    valid_invest = g_closed['sim_kelly_invest'].replace(0, 400000)
-                    pnl = scalar_float((valid_invest * g_closed['final_ret'] / 100.0).sum())
+                    pnl = scalar_float(
+                        dataframe_realized_pnl_sum(g_closed, market=market)
+                    )
                     wr = (len(g_closed[g_closed['final_ret'] > 0]) / len(g_closed)) * 100 if len(g_closed) > 0 else 0
                     total_closed = len(g_closed)
                     from reports.forward_report_scalar import profit_factor_from_returns, fmt_money
@@ -343,9 +377,10 @@ def send_comprehensive_daily_report(
             # ---------------------------------------------------------
             # 📑 결과지 3: 통합 계좌 대결 (켈리 vs 고정) — CapitalDeathmatchAnalyzer
             # ---------------------------------------------------------
+            # [Mission 2] 40만 고정 폴백 폐기 → 위에서 산출한 단일 Live NAV 노출액(_live_fb) 재사용.
             dm_analyzer = CapitalDeathmatchAnalyzer(
                 reference_capital=float(base_seed),
-                zero_invest_fallback=400000.0,
+                zero_invest_fallback=_live_fb,
             )
             dm_block = dm_analyzer.analyze(df_closed)
             msg3 = DeathmatchNarrativeBuilder.to_telegram_html(
@@ -1048,16 +1083,30 @@ def run_deep_dive_analysis(market='KR'):
         if 'invest_amount' in df.columns and 'sim_kelly_invest' in df.columns:
             report_msg += f"\n⚖️ <b>[자금 관리 평행우주 대결 — 최근 {rolling_days}일 청산(KST) 기준 실현 손익]</b>\n"
             
-            # 💡 [버그 픽스] 과거 투입금 0원 데이터 보정 (기본 40만원)
+            # [Mission 2] 40만 고정 폴백 박멸 — 0원 투입 보정을 단일 Live NAV 기반으로 통일.
+            #   · 고정 레그 = Live NAV × 2%(원래 40만 = 2,000만×2%의 동적 대체)
+            #   · 켈리 레그 = Live NAV × 유효 켈리(live_notional)
+            _acct_dd = float(_cfg_dd.get("ACCOUNT_SIZE", 20000000) or 20000000)
+            try:
+                from live_nav_manager import live_nav, live_notional
+
+                _nav_dd = float(live_nav(market))
+                _fixed_fill = _nav_dd * 0.02 if _nav_dd > 0 else _acct_dd * 0.02
+                _kelly_fill = float(live_notional(market, _cfg_dd, None))
+                if not (_kelly_fill and _kelly_fill > 0):
+                    _kelly_fill = _fixed_fill
+            except Exception:
+                _fixed_fill = _acct_dd * 0.02
+                _kelly_fill = _acct_dd * 0.02
             valid_invest_fixed = (
                 pd.to_numeric(col_series(df, "invest_amount"), errors="coerce")
-                .replace(0, 400000)
-                .fillna(400000)
+                .replace(0, _fixed_fill)
+                .fillna(_fixed_fill)
             )
             valid_invest_kelly = (
                 pd.to_numeric(col_series(df, "sim_kelly_invest"), errors="coerce")
-                .replace(0, 400000)
-                .fillna(400000)
+                .replace(0, _kelly_fill)
+                .fillna(_kelly_fill)
             )
             fr_dd = pd.to_numeric(col_series(df, "final_ret"), errors="coerce").fillna(0.0)
 

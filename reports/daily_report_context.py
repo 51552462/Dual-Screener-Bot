@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import html
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import pandas as pd
 import pytz
@@ -40,6 +40,13 @@ class DailyReportContext:
     db_read_path: str
     read_source_label: str
     window_days: int
+    # [Anti-Silent-Skip] 선행 갱신 실패 모듈명 누적 → 글로벌 헤더 능동 경고.
+    data_health_warnings: List[str] = field(default_factory=list)
+
+    def add_health_warning(self, label: str) -> None:
+        """선행 갱신 실패/강등을 조용히 넘기지 않고 누적(frozen dataclass의 list는 가변)."""
+        if label and label not in self.data_health_warnings:
+            self.data_health_warnings.append(str(label))
 
     @classmethod
     def build(
@@ -117,13 +124,32 @@ class DailyReportContext:
             tk.db_watermark_exit, tk.session_anchor, market=tk.market
         )
 
+    def data_integrity_banner_html(self) -> str:
+        """🚨 능동 경보 배너 — lag≥2 또는 data_health_warnings 발생 시 최상단 강제 출력."""
+        lag_kr = self.lag_for("KR")
+        lag_us = self.lag_for("US")
+        problems: List[str] = []
+        if max(lag_kr, lag_us) >= 2:
+            problems.append(f"데이터 갱신 지연 (Lag: KR {lag_kr} / US {lag_us})")
+        for w in self.data_health_warnings:
+            problems.append(html.escape(str(w), quote=False))
+        if not problems:
+            return ""
+        return (
+            "🚨 <b>[DATA INTEGRITY WARNING: "
+            + " / ".join(problems)
+            + "]</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+        )
+
     def global_header_html(self) -> str:
         wm_kr = self.tk_kr.db_watermark_exit or "—"
         wm_us = self.tk_us.db_watermark_exit or "—"
         lag_kr = self.lag_for("KR")
         lag_us = self.lag_for("US")
         return (
-            f"📎 리포트일 KST <b>{html.escape(self.calendar_today_kst)}</b> · "
+            self.data_integrity_banner_html()
+            + f"📎 리포트일 KST <b>{html.escape(self.calendar_today_kst)}</b> · "
             f"KR앵커 <b>{html.escape(self.tk_kr.session_anchor)}</b> · "
             f"US앵커(ET) <b>{html.escape(self.tk_us.session_anchor)}</b> · "
             f"DB워터마크 KR <b>{html.escape(str(wm_kr))}</b> · "
