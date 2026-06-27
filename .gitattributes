@@ -1,3 +1,25 @@
-# Shell/deploy scripts must stay LF (Ubuntu cron/systemd)
+# 모든 텍스트 파일은 저장소·체크아웃 모두 LF 로 통일한다.
+# (윈도우 작업 PC ↔ 우분투 서버 간 CRLF/LF 차이로 인한 대량 머지 충돌 방지)
+* text=auto eol=lf
+
+# 셸/배포 스크립트는 우분투 cron/systemd 에서 반드시 LF
 *.sh text eol=lf
 bitget/deploy/* text eol=lf
+
+# 바이너리: 줄바꿈 정규화 금지 (손상 방지)
+*.sqlite binary
+*.sqlite3 binary
+*.db binary
+*.pyc binary
+*.pyd binary
+*.so binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.xlsx binary
+*.parquet binary
