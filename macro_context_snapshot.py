@@ -27,6 +27,62 @@ MACRO_SYNERGY_SHADOW_DELTA_THRESHOLD_KEY = "MACRO_SYNERGY_SHADOW_DELTA_THRESHOLD
 MACRO_SYNERGY_SHADOW_MAX_BONUS_KEY = "MACRO_SYNERGY_SHADOW_MAX_BONUS"
 MACRO_SYNERGY_MULT_MIN_KEY = "MACRO_SYNERGY_MULT_MIN"
 MACRO_SYNERGY_MULT_MAX_KEY = "MACRO_SYNERGY_MULT_MAX"
+MACRO_SYNERGY_SECTOR_ALPHA_MAX_BONUS_KEY = "MACRO_SYNERGY_SECTOR_ALPHA_MAX_BONUS"
+WEEKLY_SECTOR_ALPHA_KEY = "WEEKLY_SECTOR_ALPHA"
+
+
+def resolve_sector_alpha_bonus(
+    cfg: Mapping[str, Any],
+    stock_sector: str,
+    *,
+    ref_date: Optional[datetime] = None,
+) -> Tuple[float, Optional[str]]:
+    """
+    주간 주도 섹터 캐리 프리미엄에 '알파 반감기(Alpha Half-life)'를 적용한 일일 감쇠 보너스.
+
+    WEEKLY_SECTOR_ALPHA(weekly_action_plan.persist_weekly_sector_alpha 가 적재)를 읽어,
+    적용 시작(월)부터 영업일마다 base_bonus − decay_per_day·weekday 로 선형 감쇠한다.
+    예: 월 +5% → 화 +4% → 수 +3% → 목 +2% → 금 +1% → 주말 0% (군집거래 휩쏘 자가 회피).
+
+    반환: (bonus, matched_sector) — 매칭 없으면 (0.0, None).
+    """
+    alpha = cfg.get(WEEKLY_SECTOR_ALPHA_KEY)
+    if not isinstance(alpha, dict):
+        return 0.0, None
+    sectors = []
+    for key in ("sectors_kr", "sectors_us"):
+        v = alpha.get(key)
+        if isinstance(v, (list, tuple)):
+            sectors.extend(str(s) for s in v if str(s).strip())
+    if not sectors:
+        return 0.0, None
+
+    target = str(stock_sector or "").strip()
+    if not target:
+        return 0.0, None
+    matched = None
+    for s in sectors:
+        if _sectors_soft_match(s, target):
+            matched = s
+            break
+    if matched is None:
+        return 0.0, None
+
+    try:
+        base = float(alpha.get("base_bonus", 0.05))
+        decay = float(alpha.get("decay_per_day", 0.01))
+        floor = float(alpha.get("floor", 0.0))
+    except (TypeError, ValueError):
+        base, decay, floor = 0.05, 0.01, 0.0
+
+    if ref_date is None:
+        ref_date = datetime.now(ZoneInfo("Asia/Seoul")) if ZoneInfo else datetime.now()
+    weekday = ref_date.weekday()  # Mon=0 … Sun=6
+    if weekday >= 5:  # 주말은 적용 안 함
+        return floor, matched
+    bonus = base - decay * float(weekday)
+    bonus = max(floor, min(base, bonus))
+    return bonus, matched
 
 
 def _kst_today_str() -> str:
@@ -256,6 +312,17 @@ def compute_clamped_synergy_multiplier(
     if dlt_f is not None and dlt_f >= sh_th:
         mult *= 1.0 + min(max(sh_bonus, 0.0), 0.05)
         meta["components"]["shadow_smart_money_tailwind"] = {"delta_pct_pts": dlt_f, "bonus": sh_bonus}
+
+    # [알파 반감기] 지난주 주도 섹터 프리미엄을 일일 선형 감쇠로 적용(군집거래 휩쏘 자가 회피).
+    alpha_cap = float(cfg.get(MACRO_SYNERGY_SECTOR_ALPHA_MAX_BONUS_KEY, 0.05))
+    alpha_bonus, alpha_sector = resolve_sector_alpha_bonus(cfg, stock_sector)
+    if alpha_bonus > 0.0 and alpha_sector is not None:
+        applied = min(max(alpha_bonus, 0.0), max(alpha_cap, 0.0))
+        mult *= 1.0 + applied
+        meta["components"]["weekly_sector_alpha_halflife"] = {
+            "sector": alpha_sector,
+            "bonus": round(applied, 4),
+        }
 
     mult = max(mmin, min(mmax, mult))
     meta["clamped_multiplier"] = mult

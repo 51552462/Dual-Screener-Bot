@@ -475,13 +475,54 @@ def _provider_us_spillover(ctx: SatelliteContext) -> List[SatelliteLine]:
     ]
 
 
-def _provider_smart_money_us_placeholder(ctx: SatelliteContext) -> List[SatelliteLine]:
+def _provider_smart_money_us(ctx: SatelliteContext) -> List[SatelliteLine]:
+    """US 스마트머니 — 다크풀/기관 유동성 프록시(저변동성 거래량 폭증).
+
+    SSOT: smart_money_tracker.run_us_dark_pool_proxy() 가 적재한 SMART_MONEY_RADAR_US.picks.
+    """
     if ctx.report_market != "US":
         return []
+    radar = ctx.cfg.get("SMART_MONEY_RADAR_US") or {}
+    picks = radar.get("picks", {}) if isinstance(radar, dict) else {}
+    if not isinstance(picks, dict):
+        picks = {}
+    updated = ""
+    if isinstance(radar, dict) and radar.get("updated_at"):
+        updated = f" (갱신 {_esc(radar.get('updated_at'))})"
+
+    n = len(picks)
+    if n == 0:
+        return [
+            SatelliteLine(
+                "US",
+                f"▪ 스마트머니(US·다크풀 프록시): 데이터 없음{updated}",
+                priority=12,
+            )
+        ]
+
+    ranked = sorted(
+        picks.items(),
+        key=lambda kv: float((kv[1] or {}).get("divergence_score") or 0)
+        if isinstance(kv[1], dict)
+        else 0.0,
+        reverse=True,
+    )
+    examples: List[str] = []
+    for code, info in ranked[:2]:
+        if not isinstance(info, dict):
+            continue
+        nm = _esc(str(info.get("name") or code))
+        vr = info.get("volume_ratio")
+        try:
+            vr_f = float(vr) if vr is not None else None
+        except (TypeError, ValueError):
+            vr_f = None
+        examples.append(f"{nm}(거래량×{vr_f:.1f})" if vr_f else nm)
+    ex_s = f"\n   └ 매집 포착: {_esc(' · '.join(examples))}" if examples else ""
     return [
         SatelliteLine(
             "US",
-            "▪ 스마트머니(US): 데이터 없음 — KR pykrx 파이프 전용 (US 위성 P2 예정)",
+            f"▪ 스마트머니(US·다크풀 프록시): <b>{n}</b>종목 저변동성 거래량 폭증(기관 매집 징후){ex_s}",
             priority=12,
         )
     ]
@@ -495,7 +536,7 @@ SATELLITE_PROVIDERS: Sequence[ProviderFn] = (
     _provider_smart_money_kr,
     _provider_sector_rotation,
     _provider_us_spillover,
-    _provider_smart_money_us_placeholder,
+    _provider_smart_money_us,
 )
 
 

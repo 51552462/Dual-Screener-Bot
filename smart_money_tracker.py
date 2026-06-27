@@ -431,12 +431,27 @@ def _kalman_latent_avg_cost_1d(points: List[Tuple[float, float]]) -> Optional[fl
     r0 = r_base * (med_v / v0)
     P = float(np.clip(r0, r_lo, r_hi))
 
+    # [모멘텀 가중] 연속 대량 순매수일(=참 매집 가속)에는 관측 신뢰를 더 높여
+    # 잠재 평단이 최근 체결가로 더 빠르게 수렴하도록 R_t 를 추가 축소한다.
+    # streak: 순매수량이 중앙값을 초과한 연속 일수(최대 4일까지 가중, 최대 R_t≈1/3 로 축소).
+    streak = 1 if vols[0] > med_v else 0
+    momentum_cap = 4
+    momentum_gain = 0.5
+
     for t in range(1, prices.size):
         x_pred = x
         P_pred = P + q_var
         z = float(prices[t])
         vt = float(max(vols[t], 0.2 * med_v))
-        Rt = r_base * (med_v / vt)
+
+        if vols[t] > med_v:
+            streak += 1
+        else:
+            streak = 0
+        # 연속 매집일수록 momentum_factor ↓ → R_t ↓ → 칼만 게인 K ↑ → 평단 반응 가속
+        momentum_factor = 1.0 / (1.0 + momentum_gain * float(min(streak, momentum_cap)))
+
+        Rt = r_base * (med_v / vt) * momentum_factor
         Rt = float(np.clip(Rt, r_lo, r_hi))
         S = P_pred + Rt
         if S <= 1e-18:
@@ -553,10 +568,14 @@ def run_smart_money_tracker():
             "divergence_score": divergence_score,
         }
 
+    # [0건 방어] 픽이 없을 때 예전 값을 남기면 리포트가 stale 라다를 "데이터 있음"으로 오인한다.
+    # 항상 덮어써서(상태를 명시) 리포트가 오늘 상황을 정확히 인지하게 한다.
+    config = load_config()
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M")
     if smart_picks:
-        config = load_config()
         config["SMART_MONEY_RADAR"] = {
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "updated_at": now_s,
+            "status": "ok",
             "picks": smart_picks,
         }
         if save_config(config):
@@ -569,24 +588,174 @@ def run_smart_money_tracker():
                 f"경로 존재 여부를 확인하세요: {CONFIG_PATH}"
             )
     else:
-        print("⚠️ 오늘 시장에서는 조건을 만족하는 외인·기관 매집 다이버전스가 없습니다.")
+        config["SMART_MONEY_RADAR"] = {
+            "updated_at": now_s,
+            "status": "no_smart_money_today",
+            "picks": {},
+        }
+        save_config(config)
+        print(
+            "⚠️ 오늘 조건을 만족하는 외인·기관 매집 다이버전스 0건 — "
+            "SMART_MONEY_RADAR 를 no_smart_money_today 로 명시 초기화했습니다."
+        )
 
 
 # =============================================================================
-# US 확장용 플레이스홀더 (다크풀·블록 대체 불가 신호)
+# US 다크풀 / 기관 유동성 프록시 엔진
+# -----------------------------------------------------------------------------
+# 13F(분기 지연)·유료 다크풀 피드 없이, 야후 파이낸스 일봉 거래량을 쥐어짜
+# "저변동성 거래량 폭증(Volume Anomaly on Low Volatility)"을 기관 매집 징후로 역추적한다.
+#   가설: 다크풀/블록 체결로 기관이 매집하면, 거래량은 폭증하지만 가격은 거의 안 움직인다
+#         (공급을 흡수하며 호가를 밀어올리지 않음) → 신선한 매집 캔들.
+# 산출물은 KR 라다와 동일 스키마로 SMART_MONEY_RADAR_US 에 적재된다.
 # =============================================================================
-# def estimate_us_dark_pool_proxy(ticker: str, start: str, end: str) -> dict:
-#     """
-#     예시: FINRA 일별 Short Volume Ratio(공개 데이터) + 대형 체결(블록) 프록시를
-#     yfinance/증권사 OpenAPI로 받아 체결가 가중 지표를 만드는 자리.
-#     import yfinance as yf
-#     t = yf.Ticker(ticker)
-#     hist = t.history(start=start, end=end, auto_adjust=False)
-#     # short_vol = requests.get(f"https://cdn.finra.org/equity/regsho/daily/{date}FNYCZN.csv")
-#     # → 체결 강도 대비 가격 횡보 여부를 국내 스크립트와 동일한 schema로 매핑 가능
-#     return {"name": ticker, "avg_price": float(hist["Close"].iloc[-1]), "divergence_score": 0.0}
-# =============================================================================
+
+# 메가캡 기술주 + 핵심 ETF (정적 SSOT — 13F 의존 제거, 유동성 상위만)
+US_DARK_POOL_UNIVERSE: List[str] = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "AVGO", "TSLA", "TSM",
+    "ORCL", "ADBE", "CRM", "AMD", "CSCO", "ACN", "INTC", "QCOM", "TXN", "IBM",
+    "INTU", "NOW", "AMAT", "MU", "ADI", "LRCX", "KLAC", "SNPS", "CDNS", "PANW",
+    "ANET", "APH", "MSI", "FTNT", "ADSK", "NXPI", "MCHP", "MRVL", "CTSH", "HPQ",
+    "DELL", "WDAY", "PLTR", "CRWD", "SHOP", "UBER", "ABNB", "NFLX",
+]
+US_DARK_POOL_ETFS: List[str] = ["SPY", "QQQ"]
+
+US_VOLUME_SURGE_MULT = 2.0        # 20일 평균 대비 200% 이상 폭증
+US_LOW_VOLATILITY_ABS_PCT = 2.0   # 당일 가격 변동률 |%| 상한 (저변동성=매집)
+US_LOOKBACK_DAYS = 70             # 야후 페치 윈도(20일 평균 + 여유)
+US_VOL_AVG_WINDOW = 20            # 거래량 기준선 윈도
+US_RECENT_SCAN_CANDLES = 3        # 최근 N거래일 내 이상치 탐색(최근 우선)
+
+
+def _flatten_yf_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """yfinance 단일 티커가 MultiIndex 컬럼을 줄 때 1레벨로 평탄화."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = [c[0] if isinstance(c, tuple) and c else c for c in df.columns]
+    return df
+
+
+def _fetch_us_daily_ohlcv(ticker: str, start: str) -> Optional["pd.DataFrame"]:
+    try:
+        from network_timeout import yf_download
+    except Exception:
+        try:
+            import yfinance as _yf  # 최후 폴백
+
+            def yf_download(t, **kw):  # type: ignore
+                return _yf.download(t, progress=False, **kw)
+        except Exception:
+            return None
+    try:
+        df = yf_download(ticker, start=start, progress=False)
+    except Exception:
+        return None
+    if df is None or len(df) == 0:
+        return None
+    df = _flatten_yf_columns(df)
+    return df
+
+
+def _detect_dark_pool_accumulation(df: "pd.DataFrame", ticker: str) -> Optional[Dict[str, Any]]:
+    """저변동성+거래량 폭증 캔들(가장 최근 우선) → 기관 매집 픽."""
+    if df is None or len(df) < US_VOL_AVG_WINDOW + 2:
+        return None
+    if "Volume" not in df.columns or "Close" not in df.columns:
+        return None
+
+    vol = pd.to_numeric(df["Volume"], errors="coerce").astype(float)
+    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
+    high = pd.to_numeric(df.get("High", close), errors="coerce").astype(float)
+    low = pd.to_numeric(df.get("Low", close), errors="coerce").astype(float)
+    avg_base = vol.shift(1).rolling(US_VOL_AVG_WINDOW).mean()  # 당일 제외 후행 평균
+
+    n = len(df)
+    lo_bound = max(n - 1 - US_RECENT_SCAN_CANDLES, US_VOL_AVG_WINDOW)
+    for i in range(n - 1, lo_bound, -1):
+        base = float(avg_base.iloc[i]) if pd.notna(avg_base.iloc[i]) else 0.0
+        v_i = float(vol.iloc[i]) if pd.notna(vol.iloc[i]) else 0.0
+        if base <= 0 or v_i <= 0:
+            continue
+        ratio = v_i / base
+        if ratio < US_VOLUME_SURGE_MULT:
+            continue
+        prev_close = float(close.iloc[i - 1]) if pd.notna(close.iloc[i - 1]) else 0.0
+        cl = float(close.iloc[i]) if pd.notna(close.iloc[i]) else 0.0
+        if prev_close <= 0 or cl <= 0:
+            continue
+        chg_pct = (cl - prev_close) / prev_close * 100.0
+        if abs(chg_pct) > US_LOW_VOLATILITY_ABS_PCT:
+            continue  # 가격이 크게 움직였으면 매집(흡수)이 아니라 일반 모멘텀
+
+        hi = float(high.iloc[i]) if pd.notna(high.iloc[i]) else cl
+        lw = float(low.iloc[i]) if pd.notna(low.iloc[i]) else cl
+        typ = (hi + lw + cl) / 3.0 if hi > 0 and lw > 0 else cl  # 매집 평단 프록시(typical price)
+
+        # 점수: 거래량 폭증 강도(상한 60) + 저변동성 가점(상한 ~12)
+        flat_component = max(0.0, US_LOW_VOLATILITY_ABS_PCT - abs(chg_pct)) * 6.0
+        surge_component = min(60.0, ratio * 12.0)
+        divergence_score = round(flat_component + surge_component, 2)
+
+        return {
+            "name": ticker,
+            "avg_price": round(typ, 2),
+            "divergence_score": divergence_score,
+            "volume_ratio": round(ratio, 2),
+            "chg_pct": round(chg_pct, 2),
+            "anomaly_date": str(df.index[i])[:10],
+        }
+    return None
+
+
+def run_us_dark_pool_proxy() -> Dict[str, Dict[str, Any]]:
+    print("🕵️ [US 다크풀 프록시] 저변동성 거래량 폭증(기관 매집) 역추적 중...")
+    start = (datetime.now() - timedelta(days=US_LOOKBACK_DAYS + 30)).strftime("%Y-%m-%d")
+    tickers = list(dict.fromkeys(US_DARK_POOL_UNIVERSE + US_DARK_POOL_ETFS))
+
+    picks: Dict[str, Dict[str, Any]] = {}
+    for tk in tickers:
+        df = _fetch_us_daily_ohlcv(tk, start)
+        if df is None:
+            continue
+        try:
+            hit = _detect_dark_pool_accumulation(df, tk)
+        except Exception as ex:
+            print(f"   ↳ {tk} 분석 예외(스킵): {ex}")
+            hit = None
+        if hit:
+            picks[tk] = hit
+        time.sleep(random.uniform(0.12, 0.35))
+
+    config = load_config()
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if picks:
+        config["SMART_MONEY_RADAR_US"] = {"updated_at": now_s, "status": "ok", "picks": picks}
+        save_config(config)
+        top = sorted(picks.values(), key=lambda d: d.get("divergence_score", 0), reverse=True)[:3]
+        ex = ", ".join(f"{d['name']}(vol×{d.get('volume_ratio')})" for d in top)
+        print(f"✅ US 다크풀 프록시: {len(picks)}개 기관 매집 징후 → SMART_MONEY_RADAR_US ({ex})")
+    else:
+        config["SMART_MONEY_RADAR_US"] = {
+            "updated_at": now_s,
+            "status": "no_smart_money_today",
+            "picks": {},
+        }
+        save_config(config)
+        print("⚠️ US 저변동성 거래량 폭증 0건 — SMART_MONEY_RADAR_US 를 no_smart_money_today 로 초기화했습니다.")
+    return picks
+
+
+def run_all_smart_money() -> None:
+    """KR(외인·기관 순매수 다이버전스) + US(다크풀 저변동성 거래량 프록시) 통합 갱신."""
+    try:
+        run_smart_money_tracker()
+    except Exception as ex:
+        print(f"⚠️ [스마트머니] KR 트래커 실패: {ex}")
+    try:
+        run_us_dark_pool_proxy()
+    except Exception as ex:
+        print(f"⚠️ [스마트머니] US 다크풀 프록시 실패: {ex}")
 
 
 if __name__ == "__main__":
-    run_smart_money_tracker()
+    run_all_smart_money()
