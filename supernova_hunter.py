@@ -1359,18 +1359,31 @@ def execute_supernova_live_scan(market):
     for t_name, t_dna in surviving_templates.items():
         ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
     
-    if market == 'KR':
-        ideal_templates['RANK_A_장기매집'] = np.array([0.75, 11.8, 27.15])
-        ideal_templates['RANK_B_중기스윙'] = np.array([0.75, 10.0, 27.35])
-        ideal_templates['RANK_C_단기테마'] = np.array([0.60, 8.0, 19.70])
-        ideal_templates['RANK_D_초단기밈'] = np.array([0.60, 8.0, 24.45])
-    elif market == 'US':
-        # 💡 [100년 영속 진화 로직 적용: US Rank Template Symmetry]
-        ideal_templates['US_RANK_A_장기매집'] = np.array([0.70, 10.5, 25.0])
-        ideal_templates['US_RANK_B_중기스윙'] = np.array([0.66, 9.2, 21.5])
-        ideal_templates['US_RANK_C_단기테마'] = np.array([0.60, 8.1, 17.0])
-        ideal_templates['US_RANK_D_초단기밈'] = np.array([0.55, 7.5, 13.5])
-        ideal_templates['US_MEME_슈팅'] = np.array([0.55, 8.8, 12.80])
+    # [초월적 진화 M1] 고정 RANK 템플릿 폐기 → system_config 의 유동화된 베이스 템플릿 로드.
+    # (실전 승자 DNA 로 EMA 모핑되는 살아있는 벡터. 최초 1회는 DEFAULT 시드로 동작 동일.)
+    try:
+        from template_evolution import load_base_templates
+
+        for _tname, _tvec in load_base_templates(config, market).items():
+            try:
+                ideal_templates[_tname] = np.array(
+                    [float(_tvec[0]), float(_tvec[1]), float(_tvec[2])]
+                )
+            except (TypeError, ValueError, IndexError):
+                continue
+    except Exception as _morph_ex:
+        print(f"⚠️ [{market}] 유동 템플릿 로드 스킵 → 하드코딩 폴백: {_morph_ex}")
+        if market == 'KR':
+            ideal_templates['RANK_A_장기매집'] = np.array([0.75, 11.8, 27.15])
+            ideal_templates['RANK_B_중기스윙'] = np.array([0.75, 10.0, 27.35])
+            ideal_templates['RANK_C_단기테마'] = np.array([0.60, 8.0, 19.70])
+            ideal_templates['RANK_D_초단기밈'] = np.array([0.60, 8.0, 24.45])
+        elif market == 'US':
+            ideal_templates['US_RANK_A_장기매집'] = np.array([0.70, 10.5, 25.0])
+            ideal_templates['US_RANK_B_중기스윙'] = np.array([0.66, 9.2, 21.5])
+            ideal_templates['US_RANK_C_단기테마'] = np.array([0.60, 8.1, 17.0])
+            ideal_templates['US_RANK_D_초단기밈'] = np.array([0.55, 7.5, 13.5])
+            ideal_templates['US_MEME_슈팅'] = np.array([0.55, 8.8, 12.80])
 
     mfe_weighted = config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
     if mfe_weighted:
