@@ -163,6 +163,15 @@ def apply_meta_kelly_merge(
     g = float(meta.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
     out *= g
 
+    # [진화형 둠스데이 형상변환 감쇠] GlobalScore × 동적 γ → 켈리 멱지수 감쇠.
+    if sys_config is not None:
+        try:
+            from doomsday_dampener import apply_doomsday_dampening
+
+            out = apply_doomsday_dampening(out, sys_config=sys_config, meta=meta)
+        except Exception:
+            pass
+
     ns_map = meta.get("META_NS_KELLY_MULT")
     if isinstance(ns_map, dict) and ns_prefix in ns_map:
         try:
