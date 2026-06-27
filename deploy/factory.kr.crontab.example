@@ -2,7 +2,7 @@
 #
 # AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.
 # Regenerate: python deploy/generate_factory_crontab.py
-# Staggered scans: 50 min apart, KST from 10:00.
+# Cycle-1 50 min from 10:00 KST; cycle-2 anchored before 15:30 close.
 # install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh
 #
 # user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
@@ -11,7 +11,7 @@ SHELL=/bin/bash
 CRON_TZ=Asia/Seoul
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# --- KR staggered intraday (Mon–Fri KST, 10 slots, 50 min) ---
+# --- KR staggered intraday (Mon–Fri KST, 8 slots; cycle-1 50 min) ---
 0 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-supernova
 50 10 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-nulrim
 40 11 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-dante
@@ -19,11 +19,24 @@ PATH=/usr/local/bin:/usr/bin:/bin
 20 13 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-master
 10 14 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-bowl
 0 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-supernova-r2
-50 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-nulrim-r2
-40 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-dante-r2
-30 17 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-ema5-r2
+20 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --scan-kr-nulrim-r2
 
-# --- KR post-close audit (after last scan 17:30) ---
+# --- KR/US per-ticker OHLCV bulk (legacy 07:00 bulk restored; before 10:00 KR scans, lock-serialized) ---
+0 8 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --data-refresh
+
+# --- KR limit-up forensics — intraday close DNA (legacy daemon 15:40 → cron) ---
+40 15 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --limit-up
+
+# --- Smart money radar — KR netflow divergence + US dark-pool proxy (legacy daemon 16:10 → cron, lock-serialized) ---
+10 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --smart-money
+
+# --- KR limit-up forensics — post-close (legacy daemon 16:20 → cron) ---
+20 16 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --limit-up
+
+# --- Macro doomsday radar (legacy daemon 17:00 → cron) ---
+0 17 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --doomsday
+
+# --- KR post-close audit (well after intraday scans) ---
 45 18 * * 1-5  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --daily-kr
 
 # --- US post-close audit (KST morning after NY close) ---

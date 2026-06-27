@@ -33,7 +33,42 @@ CRON_USER = "ubuntu"
 
 # KR 파일 전용: 장후·주간 (스캔 슬롯 SSOT와 별도 — 시각만 여기서 관리)
 _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
-    (45, 18, "1-5", "--daily-kr", "KR post-close audit (after last scan 17:30)"),
+    (
+        0,
+        8,
+        "1-5",
+        "--data-refresh",
+        "KR/US per-ticker OHLCV bulk (legacy 07:00 bulk restored; before 10:00 KR scans, lock-serialized)",
+    ),
+    (
+        40,
+        15,
+        "1-5",
+        "--limit-up",
+        "KR limit-up forensics — intraday close DNA (legacy daemon 15:40 → cron)",
+    ),
+    (
+        10,
+        16,
+        "1-5",
+        "--smart-money",
+        "Smart money radar — KR netflow divergence + US dark-pool proxy (legacy daemon 16:10 → cron, lock-serialized)",
+    ),
+    (
+        20,
+        16,
+        "1-5",
+        "--limit-up",
+        "KR limit-up forensics — post-close (legacy daemon 16:20 → cron)",
+    ),
+    (
+        0,
+        17,
+        "1-5",
+        "--doomsday",
+        "Macro doomsday radar (legacy daemon 17:00 → cron)",
+    ),
+    (45, 18, "1-5", "--daily-kr", "KR post-close audit (well after intraday scans)"),
     (45, 6, "2-6", "--daily-us", "US post-close audit (KST morning after NY close)"),
     (5, 10, "6", "--weekly", "Weekly Flow master (Saturday KST)"),
     (
@@ -45,7 +80,7 @@ _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
     ),
 )
 
-# US: KST polling window — covers ET Mon–Fri 10:00–16:40 (DST via factory_slot_dispatcher ET clock)
+# US: KST polling window — covers ET Mon–Fri 10:00–~15:55 (DST via factory_slot_dispatcher ET clock)
 _US_DISPATCH_KST_HOURS_EVENING = "22,23"
 _US_DISPATCH_KST_HOURS_MORNING = "0-6"
 _US_DISPATCH_CRON_TZ = "Asia/Seoul"
@@ -80,7 +115,7 @@ def render_kr_crontab(install_root: str) -> str:
         "#",
         f"# AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.",
         f"# Regenerate: python deploy/generate_factory_crontab.py",
-        f"# Staggered scans: {SLOT_INTERVAL_MINUTES} min apart, KST from 10:00.",
+        f"# Cycle-1 {SLOT_INTERVAL_MINUTES} min from 10:00 KST; cycle-2 anchored before 15:30 close.",
         "# install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh",
         "#",
         f"# user/path: {CRON_USER} · {install_root}",
@@ -89,7 +124,7 @@ def render_kr_crontab(install_root: str) -> str:
         f"CRON_TZ={tz}",
         "PATH=/usr/local/bin:/usr/bin:/bin",
         "",
-        f"# --- KR staggered intraday (Mon–Fri KST, {len(KR_SCAN_SLOTS)} slots, {SLOT_INTERVAL_MINUTES} min) ---",
+        f"# --- KR staggered intraday (Mon–Fri KST, {len(KR_SCAN_SLOTS)} slots; cycle-1 {SLOT_INTERVAL_MINUTES} min) ---",
     ]
     for slot in KR_SCAN_SLOTS:
         lines.append(
@@ -119,7 +154,7 @@ def render_us_crontab(install_root: str) -> str:
         "#",
         "# AUTO-GENERATED from factory_scan_schedule.py — do not edit by hand.",
         "# Regenerate: python deploy/generate_factory_crontab.py",
-        f"# Staggered scans: {SLOT_INTERVAL_MINUTES} min apart, ET 10:00–16:40 (Mon–Fri).",
+        f"# Cycle-1 {SLOT_INTERVAL_MINUTES} min from 10:00 ET; cycle-2 anchored before 16:00 close (Mon–Fri).",
         "# Uses factory_slot_dispatcher.py — ET clock SSOT; does NOT rely on CRON_TZ=America/New_York.",
         "# install: sudo INSTALL_ROOT=... bash deploy/install_factory_cron.sh",
         "# diagnose: bash scripts/diag_cron_tz_effective.sh",

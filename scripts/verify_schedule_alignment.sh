@@ -80,7 +80,7 @@ fi
 
 echo ""
 echo "=== Recent logs (newest 5 each) ==="
-for p in factory_scan_kr_supernova factory_scan_kr_ema5_r2 factory_scan_us_supernova factory_daily_audit_kr factory_daily_audit_us; do
+for p in factory_scan_kr_supernova factory_scan_kr_nulrim_r2 factory_scan_us_supernova factory_scan_us_ema5_r2 factory_daily_audit_kr factory_daily_audit_us; do
   echo "[$p]"
   ls -lt "${LOG_DIR}/${p}_"* 2>/dev/null | head -5 | awk '{print "  "$NF}' || echo "  (none)"
 done

@@ -57,6 +57,12 @@ Usage: ./factory.sh <flag>
     --daily-us      guard → track → deep dive → report (US)
     --daily         full daily chain (KR then US)
     --weekly        weekly Flow master report
+    --data-refresh  KR/US per-ticker OHLCV bulk refresh (legacy 07:00 bulk, lock-serialized)
+
+  Satellite intel (legacy --daemon jobs, now first-class lock-serialized cron):
+    --smart-money   smart money radar (KR netflow divergence + US dark-pool proxy)
+    --limit-up      KR limit-up forensics (DNA back-trace)
+    --doomsday      macro doomsday radar
 
   --force-scan-outside-session
                   bypass market_session_gate (manual recovery)
@@ -81,6 +87,10 @@ while [[ $# -gt 0 ]]; do
     --daily-us)  MODE="daily_audit_us" ;;
     --daily)     MODE="daily_audit" ;;
     --weekly)    MODE="weekly_master" ;;
+    --data-refresh) MODE="data_refresh" ;;
+    --smart-money)  MODE="smart_money_refresh" ;;
+    --limit-up)     MODE="limit_up_forensics" ;;
+    --doomsday)     MODE="doomsday_radar" ;;
     --scan-kr-*|--scan-us-*)
       MODE="${1#--}"
       MODE="${MODE//-/_}"
