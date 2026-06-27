@@ -98,12 +98,12 @@ def _fetch_closed_since(
 ) -> pd.DataFrame:
     floor = lookback_floor if lookback_floor else since_exclusive
     q = """
-        SELECT exit_date, trade_date, sig_type, final_ret, market, status
+        SELECT exit_date, entry_date, sig_type, final_ret, market, status
         FROM forward_trades
         WHERE status LIKE 'CLOSED%'
           AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-          AND COALESCE(NULLIF(TRIM(exit_date), ''), NULLIF(TRIM(trade_date), '')) > ?
-          AND COALESCE(NULLIF(TRIM(exit_date), ''), NULLIF(TRIM(trade_date), '')) >= ?
+          AND COALESCE(NULLIF(TRIM(exit_date), ''), NULLIF(TRIM(entry_date), '')) > ?
+          AND COALESCE(NULLIF(TRIM(exit_date), ''), NULLIF(TRIM(entry_date), '')) >= ?
         ORDER BY exit_date ASC
     """
     df = pd.read_sql(q, conn, params=(since_exclusive, floor))
@@ -112,7 +112,7 @@ def _fetch_closed_since(
     df = df.copy()
     df["_exit"] = df.apply(
         lambda r: _normalize_exit_date(r.get("exit_date"))
-        or _normalize_exit_date(r.get("trade_date")),
+        or _normalize_exit_date(r.get("entry_date")),
         axis=1,
     )
     return df.loc[df["_exit"] != ""].copy()
