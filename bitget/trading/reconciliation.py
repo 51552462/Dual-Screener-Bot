@@ -12,6 +12,7 @@ from typing import Any
 from bitget.forward_tester import init_forward_db, load_system_config, save_system_config, send_telegram_msg
 from bitget.infra.data_paths import market_data_db_path
 from bitget.infra.logging_setup import get_logger, setup_logging
+from bitget.infra.shared_db_connector import get_connection
 from bitget.rate_limit_guard import throttle
 from bitget.symbol_utils import normalize_market_symbol
 from bitget.trading.execution_safety import meta_kill_switch_active
@@ -277,9 +278,7 @@ def run_scheduled_reconciliation() -> dict[str, Any]:
         return {"skipped": True, "reason": str(e)}
 
     db_path = market_data_db_path()
-    conn = sqlite3.connect(db_path, timeout=120)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=15000;")
+    conn = get_connection(db_path)
     max_slip = float(cfg.get("POST_TRADE_MAX_SLIPPAGE_BPS", 50.0))
     report: dict[str, Any] = {
         "phantoms_closed": 0,

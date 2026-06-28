@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from bitget.infra.shared_db_connector import get_connection
 from bitget.forward.gates import (
     _apply_thompson_kelly_multiplier,
     _calc_atr14,
@@ -70,9 +71,8 @@ def try_add_virtual_position(
     tier_label = f"{score_bucket}점대"
     is_incubator_shadow = "[INCUBATOR_" in str(sig_type).upper()
 
-    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn = get_connection(DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
 
     cur.execute(
         "SELECT id FROM bitget_forward_trades WHERE symbol=? AND timeframe=? AND market_type=? AND position_side=? AND status='OPEN'",
@@ -566,8 +566,7 @@ def _force_close_zombie_delist_or_halt(conn, r):
 
 def track_daily_positions(market_type):
     init_forward_db()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH)
     cfg = load_system_config()
     df_active = pd.read_sql(
         "SELECT * FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",

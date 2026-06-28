@@ -12,6 +12,8 @@ import pandas as pd
 import bitget.shadow_tracking as bitget_shadow_tracking
 from bitget.pump_forensics import PATTERN_KEYS, load_config, _extract_flags
 
+from bitget.infra.shared_db_connector import get_connection
+
 DB_PATH = bitget_shadow_tracking.DB_PATH
 STRATEGY_NAME = "bitget_forensics_pioneer"
 
@@ -46,7 +48,7 @@ def run_forensics_pioneer():
         print("⚠️ PUMP_DNA 합의 룰 없음, 스캔 스킵.")
         return
 
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     tables = _load_scan_tables(conn)
     hits = 0
     for tbl in tables:

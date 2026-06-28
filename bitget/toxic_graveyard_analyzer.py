@@ -11,6 +11,7 @@ from sklearn.tree import DecisionTreeClassifier, _tree
 
 from bitget.config_hub import load_config, save_config
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 
@@ -78,7 +79,7 @@ def run_graveyard_autopsy():
 
     config = load_config()
     try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
+        conn = get_connection(DB_PATH, read_only=True, check_same_thread=False)
         query = """
             SELECT market_type, dyn_cpv, dyn_tb, v_energy, dyn_rs, final_ret
             FROM bitget_forward_trades

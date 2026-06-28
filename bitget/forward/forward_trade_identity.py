@@ -17,6 +17,7 @@ import pandas as pd
 
 from bitget.forward.shared import DB_PATH, init_forward_db
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 from bitget.reports.bitget_report_context import BitgetReportContext
 
 IdentityClass = Literal[
@@ -154,7 +155,7 @@ def _load_table_symbol_lookup(market: str) -> Dict[str, str]:
         return out
     want = "SPOT" if _norm_market_type(market) == "spot" else "FUT"
     try:
-        conn = sqlite3.connect(path, timeout=30)
+        conn = get_connection(path, read_only=True)
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
             (f"BITGET_{want}_%",),
@@ -498,7 +499,7 @@ def count_identity_gaps(market: str = "all") -> Dict[str, Any]:
     if not os.path.isfile(DB_PATH):
         return {"market": mk, "blank_symbol": 0, "junk_symbol": 0, "skipped": "no_db"}
     init_forward_db()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn = get_connection(DB_PATH)
     try:
         diag = diagnose_forward_trade_identity(conn, mk if mk != "all" else "spot")
         diag_f = (
@@ -538,7 +539,7 @@ def run_identity_repair_for_market(
         dry_run = auto not in ("1", "true", "yes", "on")
 
     init_forward_db()
-    conn = sqlite3.connect(path, timeout=60)
+    conn = get_connection(path)
     try:
         diag = diagnose_forward_trade_identity(
             conn, market, rolling_days=rolling_days, db_path=path

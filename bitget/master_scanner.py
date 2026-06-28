@@ -26,6 +26,7 @@ from bitget.signal_engines import (
 )
 
 from bitget.infra.data_paths import logs_dir, market_data_db_path, market_db_read_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 DB_READ_PATH = market_db_read_path()
@@ -101,7 +102,7 @@ def _build_engine_pool(engine_filter: str | None = None):
 
 def _lookup_virtual_trade_id(market_type: str, symbol: str, timeframe: str, sig_type: str, side: str):
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20)
+        conn = get_connection(DB_PATH, read_only=True)
         cur = conn.cursor()
         cur.execute(
             """
@@ -299,7 +300,7 @@ def _scan_one_table(
     engine_filter: str | None = None,
     include_embedded_supernova: bool = True,
 ):
-    conn = sqlite3.connect(DB_READ_PATH, timeout=30)
+    conn = get_connection(DB_READ_PATH, read_only=True)
     try:
         time.sleep(0.03)  # DB burst 완화
         df = _load_table(conn, tbl)
@@ -391,7 +392,7 @@ def run_scan(
             except Exception:
                 pass
 
-    conn = sqlite3.connect(DB_READ_PATH, timeout=30)
+    conn = get_connection(DB_READ_PATH, read_only=True)
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%__tmp%'"
     ).fetchall()

@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 
@@ -111,8 +112,7 @@ def record_blocked_trade(
     blocked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for attempt in range(max_retries):
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=60)
-            conn.execute("PRAGMA journal_mode=WAL;")
+            conn = get_connection(DB_PATH)
             cur = conn.cursor()
             init_shadow_tables(cur)
             cur.execute(

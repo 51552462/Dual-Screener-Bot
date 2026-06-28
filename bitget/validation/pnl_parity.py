@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bitget.infra.data_paths import market_data_db_path, validation_state_dir
+from bitget.infra.shared_db_connector import get_connection
 
 PNL_BASELINE_NAME = "pnl_baseline.json"
 
@@ -19,11 +20,7 @@ def _fingerprint_db(db_path: str | None = None) -> dict[str, Any]:
     path = db_path or market_data_db_path()
     if not os.path.isfile(path):
         return {"error": "db_missing", "path": path}
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
-    try:
-        conn.execute("PRAGMA query_only=ON;")
-    except sqlite3.OperationalError:
-        pass
+    conn = get_connection(path, read_only=True)
     try:
         open_rows = conn.execute(
             """

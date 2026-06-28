@@ -7,6 +7,8 @@ import re
 import sqlite3
 import time
 from datetime import datetime, timedelta
+
+from bitget.infra.shared_db_connector import get_connection
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -101,8 +103,7 @@ def send_bitget_practitioner_reports_pil(
     tz = pytz.timezone("UTC")
     today_utc = datetime.now(tz).strftime("%Y-%m-%d")
 
-    conn = sqlite3.connect(db_path, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(db_path)
     try:
         for market_type in ("spot", "futures"):
             mkt = str(market_type).strip().lower()

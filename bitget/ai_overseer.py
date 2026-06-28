@@ -15,6 +15,7 @@ load_dotenv()
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.governance.meta_consumer import load_meta_state_resolved
 from bitget.infra.data_paths import flow_csv_path, market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
@@ -78,8 +79,7 @@ def gather_daily_system_facts():
     }
 
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn = get_connection(DB_PATH, read_only=True)
         df_closed = pd.read_sql(
             "SELECT * FROM bitget_forward_trades WHERE entry_date <= ? AND status LIKE 'CLOSED%' AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'",
             conn,

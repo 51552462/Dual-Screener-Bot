@@ -27,6 +27,7 @@ from bitget.forward.forward_book_integrity import (
 )
 from bitget.forward.rotation_report_section import build_rotation_spillover_section
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config, send_telegram_msg
+from bitget.infra.shared_db_connector import get_connection
 from bitget.governance.meta_consumer import load_meta_state_resolved
 from bitget.reports.bitget_report_context import BitgetReportContext
 from reports.forward_report_scalar import (
@@ -73,8 +74,7 @@ def send_comprehensive_daily_report():
     cfg = load_system_config()
     meta = load_meta_state_resolved() or {}
     ctx = BitgetReportContext.build()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH)
 
     for market_type in ["spot", "futures"]:
         mkt = _norm_market_type(market_type)
@@ -258,8 +258,7 @@ def run_deep_dive_analysis(market_type="spot"):
         meta = load_meta_state_resolved() or {}
         ctx = BitgetReportContext.build()
 
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn = get_connection(DB_PATH)
         df_all = pd.read_sql(
             "SELECT * FROM bitget_forward_trades WHERE market_type=?",
             conn,

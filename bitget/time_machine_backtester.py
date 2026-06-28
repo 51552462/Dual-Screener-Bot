@@ -8,6 +8,7 @@ import pandas as pd
 
 from bitget.config_hub import load_config
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 
@@ -42,7 +43,7 @@ def run_time_machine_backtest(period_key="FTX_COLLAPSE_2022", leverage=3.0):
     mae_sl = float(cfg.get("DYNAMIC_MAE_SL", -3.5))
     mfe_tp = float(cfg.get("DYNAMIC_MFE_TP", 10.0))
 
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     tables = _load_tables(conn)
     results = []
     for tbl in tables:

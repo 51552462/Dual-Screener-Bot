@@ -19,6 +19,7 @@ except ModuleNotFoundError:
 
 from bitget.config_hub import load_config, save_config_atomic
 from bitget.infra.data_paths import flow_csv_path, market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 from bitget.supernova_hunter import extract_dna_from_df
 
 DB_PATH = market_data_db_path()
@@ -27,8 +28,7 @@ TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 
 
 def _load_mfe_winners(timeframe: str, mfe_min: float = 8.0) -> pd.DataFrame:
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH, read_only=True)
     sql = """
         SELECT
             id, entry_date, exit_date, market_type, symbol, timeframe, position_side, sig_type,
@@ -281,8 +281,7 @@ def _table_name(market_type: str, symbol: str, timeframe: str) -> str:
 
 def _load_recent_mfe_training_samples(timeframe: str, days: int = 30):
     tf = str(timeframe).upper()
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH, read_only=True)
     q = """
         SELECT market_type, symbol, timeframe, entry_date, mfe
         FROM bitget_forward_trades
@@ -402,7 +401,7 @@ def evolve_bitget_ast_formulas(timeframe: str = "1D"):
 def build_supernova_csv():
     if not os.path.exists(DB_PATH):
         return 0
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%__tmp%'").fetchall()
     out = []
     for (tbl,) in rows:

@@ -17,6 +17,7 @@ except ModuleNotFoundError:
     import ccxt
 import pandas as pd
 from bitget.infra.data_paths import charts_dir, market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 from bitget.config_hub import load_config as hub_load_config
 from bitget.symbol_utils import normalize_table_symbol
 from bitget.rate_limit_guard import throttle, backoff_sleep
@@ -294,9 +295,7 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
     if not symbols:
         print(f"[WARN] [{market_type}] 벤치마크(BTC/ETH) 심볼 탐색 실패")
         return 0
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=7000;")
+    conn = get_connection(DB_PATH)
     ok = 0
     need_2h = _needs_synth_2h(timeframes)
     api_tfs = _bitget_api_timeframes(timeframes)
@@ -439,9 +438,7 @@ def run_mtf_update():
 
         done = 0
         total_tables = 0
-        writer_conn = sqlite3.connect(DB_PATH, timeout=60)
-        writer_conn.execute("PRAGMA journal_mode=WAL;")
-        writer_conn.execute("PRAGMA busy_timeout=7000;")
+        writer_conn = get_connection(DB_PATH)
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {

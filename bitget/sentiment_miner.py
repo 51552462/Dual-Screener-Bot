@@ -16,6 +16,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15",
 ]
 
+from bitget.infra.shared_db_connector import get_connection
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_DB_PATH = os.path.join(BASE_DIR, "news_data.sqlite")
 FGI_URL = "https://api.alternative.me/fng/?limit=1"
@@ -30,9 +32,8 @@ def _headers():
 
 
 def init_news_db():
-    conn = sqlite3.connect(NEWS_DB_PATH, timeout=60)
+    conn = get_connection(NEWS_DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS daily_sentiment (
@@ -105,9 +106,8 @@ def run_sentiment_mining():
 
     # 탐욕 지수 0~100을 기본 sentiment_score로 사용
     sentiment_score = float(fgi)
-    conn = sqlite3.connect(NEWS_DB_PATH, timeout=60)
+    conn = get_connection(NEWS_DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute(
         """
         INSERT OR REPLACE INTO daily_sentiment

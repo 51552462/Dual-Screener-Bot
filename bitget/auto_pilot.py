@@ -18,6 +18,7 @@ from bitget.forward_tester import (
 )
 from bitget.data_miner import run_bitget_data_miner
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
+from bitget.infra.shared_db_connector import get_connection
 
 
 def send_telegram_report(message):
@@ -71,7 +72,7 @@ def _load_bench_1d(conn, symbol):
 
 
 def detect_coin_regime(cfg):
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     btc = _load_bench_1d(conn, "BTC_USDT")
     eth = _load_bench_1d(conn, "ETH_USDT")
     conn.close()
@@ -481,8 +482,7 @@ def run_autonomous_analysis():
         "",
     ]
 
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH, read_only=True)
     df_closed = pd.read_sql("SELECT * FROM bitget_forward_trades WHERE status LIKE 'CLOSED%'", conn)
     conn.close()
     n_closed = len(df_closed) if df_closed is not None else 0
@@ -605,8 +605,7 @@ def _judge_incubator_templates(cfg):
     if not isinstance(incubator, dict) or not incubator:
         return cfg, "인큐베이터 템플릿 없음"
 
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH, read_only=True)
     closed = pd.read_sql(
         "SELECT sig_type, final_ret FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' AND IFNULL(sig_type,'') LIKE '%INCUBATOR%'",
         conn,
@@ -691,8 +690,7 @@ def send_weekly_flow_master_report():
     )
 
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn = get_connection(DB_PATH, read_only=True)
 
         for market_type in ("spot", "futures"):
             icon = "🟢" if market_type == "spot" else "🟠"

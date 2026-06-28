@@ -15,6 +15,7 @@ import pandas as pd
 
 from bitget.config_hub import load_config, save_config
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 
@@ -36,7 +37,7 @@ def _calc_ret(entry: float, close: float, side: str) -> float:
 
 
 def run_shadow_performance_evaluation(blocked_limit: int = 500) -> Dict[str, Any]:
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH)
     try:
         blocked = pd.read_sql(
             f"""

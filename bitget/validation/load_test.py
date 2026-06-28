@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from bitget.infra.data_paths import market_db_read_path
+from bitget.infra.shared_db_connector import get_connection
 
 
 def _parse_table_names(rows: list[tuple]) -> list[str]:
@@ -43,7 +44,7 @@ def run_load_test(
         return {"ok": False, "passed": False, "reason": "db_missing", "db": db}
 
     t0 = time.perf_counter()
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=60)
+    conn = get_connection(db, read_only=True)
     try:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'BITGET_%'"

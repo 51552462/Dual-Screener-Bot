@@ -7,6 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config
+from bitget.infra.shared_db_connector import get_connection
 
 def _extract_practitioner_key(sig_type: str) -> str:
     s = str(sig_type or "")
@@ -49,8 +50,7 @@ def log_real_execution(
     pnl_usdt = float(ex.get("realized_pnl_usdt", 0.0) or 0.0)
     ret_pct = float(ex.get("realized_ret_pct", 0.0) or 0.0)
 
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH)
     insert_sql = """
         INSERT INTO bitget_real_execution (
             created_at, updated_at, market_type, symbol, timeframe, practitioner_key, engine_name, sig_type,
@@ -87,8 +87,7 @@ def sync_real_leaderboard_with_virtual():
     실전 체결 로그와 가상 청산 결과를 연결해 practitioner별 실전/리서치 비교가 가능하도록 동기화.
     """
     init_forward_db()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH)
     conn.execute(
         """
         UPDATE bitget_real_execution
@@ -132,8 +131,7 @@ def sync_real_leaderboard_with_virtual():
 def build_practitioner_reality_leaderboard(market_type: str = "all", limit_rows: int = 30):
     init_forward_db()
     sync_real_leaderboard_with_virtual()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH)
     where_m = ""
     params = []
     if str(market_type).lower() in ("spot", "futures"):

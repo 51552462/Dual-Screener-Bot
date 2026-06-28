@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.shared_db_connector import get_connection
 
 
 @dataclass(frozen=True)
@@ -171,7 +172,7 @@ def diagnose_open_book_from_db(
 ) -> OpenBookStats:
     label, mkt_raw = _normalize_market_filter(market_type)
     path = db_path or DB_PATH
-    conn = sqlite3.connect(path, timeout=60)
+    conn = get_connection(path, read_only=True)
     try:
         df = pd.read_sql(
             """

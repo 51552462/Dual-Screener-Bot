@@ -35,12 +35,17 @@ def _cron_line(minute: int, hour: int, dow: str, command: str, install_root: str
     return f"{minute} {hour} * * {dow}  {CRON_USER}  cd {install_root} && {command}"
 
 
-def _scan_command(bitget_flag: str, *, tz: str, install_root: str) -> str:
+def _scan_command(
+    bitget_flag: str, *, tz: str, install_root: str, use_queue: bool = False
+) -> str:
     bg = f"{install_root}/bitget/deploy/bitget.sh"
+    if use_queue:
+        # cron→큐 어댑터: 즉시 enqueue 후 종료. queue worker 가 순차 실행한다.
+        return f"TZ={tz} {bg} --enqueue {bitget_flag}"
     return f"TZ={tz} {bg} {bitget_flag}"
 
 
-def render_bitget_crontab(install_root: str) -> str:
+def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
     tz = SCHEDULE_MARKET_TZ["SPOT"]
     bg = f"{install_root}/bitget/deploy/bitget.sh"
     lines: List[str] = [
@@ -52,7 +57,13 @@ def render_bitget_crontab(install_root: str) -> str:
         "# share a wall-clock minute with KR/US stock scans(:00..:50)/audits(:45) or",
         "# bitget ops(*/5). SPOT/FUTURES are interleaved (never simultaneous).",
         "# Server-safety: bitget heavy scans yield when the factory job lock is held",
-        "# (BITGET_YIELD_TO_FACTORY=1 default) — KR/US cron/timing is left untouched.",
+        "# (BITGET_YIELD_TO_FACTORY=1 default) — KR/US cron/timing is left untouched."
+        + (
+            "\n# QUEUE MODE: scans are enqueued (--enqueue) and run by the single "
+            "dante-bitget-queue-worker; conflicts wait (PENDING) instead of skipping."
+            if use_queue
+            else ""
+        ),
         "# install: sudo INSTALL_ROOT=... bash bitget/deploy/install_bitget_cron.sh",
         "#",
         f"# user/path: {CRON_USER} · {install_root}",
@@ -89,7 +100,9 @@ def render_bitget_crontab(install_root: str) -> str:
                 slot.minute,
                 slot.hour,
                 dow_spot,
-                _scan_command(slot.bitget_flag, tz=tz, install_root=install_root),
+                _scan_command(
+                    slot.bitget_flag, tz=tz, install_root=install_root, use_queue=use_queue
+                ),
                 install_root,
             )
         )
@@ -104,7 +117,9 @@ def render_bitget_crontab(install_root: str) -> str:
                 slot.minute,
                 slot.hour,
                 dow_fut,
-                _scan_command(slot.bitget_flag, tz=tz, install_root=install_root),
+                _scan_command(
+                    slot.bitget_flag, tz=tz, install_root=install_root, use_queue=use_queue
+                ),
                 install_root,
             )
         )
@@ -120,17 +135,25 @@ def _deploy_path(repo_root: Path) -> Path:
     return repo_root / "bitget" / "deploy" / "bitget.crontab.example"
 
 
-def write_template(install_root: str, repo_root: Path | None = None) -> None:
+def write_template(
+    install_root: str, repo_root: Path | None = None, *, use_queue: bool = False
+) -> None:
     root = repo_root or _REPO_ROOT
     path = _deploy_path(root)
-    path.write_text(render_bitget_crontab(install_root), encoding="utf-8", newline="\n")
-    print(f"OK wrote {path}")
+    path.write_text(
+        render_bitget_crontab(install_root, use_queue=use_queue),
+        encoding="utf-8",
+        newline="\n",
+    )
+    print(f"OK wrote {path}" + (" (queue mode)" if use_queue else ""))
 
 
-def check_template(install_root: str, repo_root: Path | None = None) -> int:
+def check_template(
+    install_root: str, repo_root: Path | None = None, *, use_queue: bool = False
+) -> int:
     root = repo_root or _REPO_ROOT
     path = _deploy_path(root)
-    want = render_bitget_crontab(install_root)
+    want = render_bitget_crontab(install_root, use_queue=use_queue)
     if not path.is_file():
         print(f"ERROR: missing {path}", file=sys.stderr)
         return 1
@@ -150,10 +173,16 @@ def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate Bitget crontab from schedule SSOT")
     parser.add_argument("--install-root", default=DEFAULT_INSTALL_ROOT)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--use-queue",
+        action="store_true",
+        help="Emit scan lines as `bitget.sh --enqueue <flag>` (cron→queue adapter). "
+        "Default off keeps inline execution (safe rollback).",
+    )
     args = parser.parse_args(argv)
     if args.check:
-        return check_template(args.install_root)
-    write_template(args.install_root)
+        return check_template(args.install_root, use_queue=args.use_queue)
+    write_template(args.install_root, use_queue=args.use_queue)
     return 0
 
 

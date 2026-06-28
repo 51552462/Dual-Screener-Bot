@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from bitget.infra.data_paths import market_db_read_path
+from bitget.infra.shared_db_connector import get_connection
 from bitget.dashboard_ops_panel import render_ops_gauge_panel
 
 st.set_page_config(page_title="Bitget Quant Factory Control Tower", layout="wide")
@@ -23,7 +24,7 @@ def load_factory_data():
     if not os.path.exists(DB_PATH):
         return pd.DataFrame()
     try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
+        conn = get_connection(DB_PATH, read_only=True, check_same_thread=False)
         query = """
             SELECT
                 id, entry_date, exit_date, market_type, symbol, timeframe, sig_type, status,

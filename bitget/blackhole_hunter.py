@@ -7,6 +7,7 @@ import pandas as pd
 
 from bitget.config_hub import load_config, save_config
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 
@@ -22,7 +23,7 @@ def scan_blackhole_targets():
         print("💡 등록된 독성 패턴이 없어 스위칭 없음.")
         return
 
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     q = """
         SELECT symbol, final_ret, dyn_cpv, dyn_tb, v_energy, dyn_rs
         FROM bitget_forward_trades

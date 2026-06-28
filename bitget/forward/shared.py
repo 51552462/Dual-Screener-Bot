@@ -13,6 +13,7 @@ import requests
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.funding_fetcher import fetch_funding_snapshot
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 CONFIG_PATH = system_config_json_path()
@@ -97,9 +98,8 @@ def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret, sn_ret, n_min: int) -
     return deathmatch_ab_verdict(n_std, n_sn, std_ret, sn_ret, n_min)
 
 def init_forward_db():
-    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn = get_connection(DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS bitget_forward_trades (
@@ -327,8 +327,7 @@ def reporter_cleanup_zombie_forward_trades() -> int:
     if not os.path.isfile(DB_PATH):
         return 0
     init_forward_db()
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = get_connection(DB_PATH)
     total = 0
     exit_day = datetime.now().strftime("%Y-%m-%d")
     try:

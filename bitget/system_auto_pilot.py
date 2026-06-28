@@ -14,6 +14,7 @@ import pandas as pd
 import requests
 
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 CONFIG_PATH = system_config_json_path()
@@ -97,7 +98,7 @@ def _calc_market_breadth(conn):
 
 
 def detect_regime(cfg):
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     btc = _load_btc_1d(conn)
     if btc is None or btc.empty:
         conn.close()
@@ -212,7 +213,7 @@ def _smooth_live_params(live, recent_df):
 
 
 def run_tf_brain_surgery(cfg):
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     df = pd.read_sql("SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%'", conn)
     conn.close()
     if df.empty or "sector" not in df.columns:
@@ -309,8 +310,7 @@ def send_weekly_flow_master_report():
     cfg = load_config()
     regime = cfg.get("CURRENT_REGIME_KEY", "UNKNOWN")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn = get_connection(DB_PATH, read_only=True)
         report_msg = f"🗺️ <b>[V100.0 퀀트 팩토리 주간 흐름(Flow) 총결산]</b>\n📅 기간: {week_ago} ~ {today_str}\n"
         report_msg += "<i>※ 일자별 실현·MVP·섹터 궤적: sig_type에 INCUBATOR 포함 건 제외(본계좌만).</i>\n"
         report_msg += "━━━━━━━━━━━━━━━━━━\n"

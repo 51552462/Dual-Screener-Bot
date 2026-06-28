@@ -89,6 +89,7 @@ Usage: bitget/deploy/bitget.sh <flag>
 
   --dry-run           pass through to Python job runner
   --skip-telegram     suppress failure notifications
+  --enqueue           enqueue the job into task_queue.sqlite (queue worker runs it)
 
 Environment:
   BITGET_DB_STORAGE_PATH   data root SSOT
@@ -136,6 +137,7 @@ while [[ $# -gt 0 ]]; do
     --force-scan) export BITGET_FORCE_SCAN=1 ;;
     --dry-run)          EXTRA_ARGS+=("--dry-run") ;;
     --skip-telegram)    EXTRA_ARGS+=("--skip-telegram") ;;
+    --enqueue)          EXTRA_ARGS+=("--enqueue") ;;
     -h|--help)          usage; exit 0 ;;
     *)
       echo "Unknown argument: $1" >&2

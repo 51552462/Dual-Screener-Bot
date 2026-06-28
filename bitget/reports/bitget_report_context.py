@@ -15,6 +15,7 @@ import pandas as pd
 
 from bitget.forward.forward_book_integrity import reporter_valid_holding_mask
 from bitget.infra.data_paths import report_db_read_path
+from bitget.infra.shared_db_connector import get_connection
 
 
 def _market_label(market_type: str) -> str:
@@ -89,8 +90,7 @@ class BitgetReportContext:
         wm_spot: Optional[str] = None
         wm_fut: Optional[str] = None
         try:
-            uri = path.replace("\\", "/")
-            conn = sqlite3.connect(f"file:{uri}?mode=ro", uri=True, timeout=60)
+            conn = get_connection(path, read_only=True)
             for mtype, slot in (("spot", "wm_spot"), ("futures", "wm_fut")):
                 row = conn.execute(
                     """

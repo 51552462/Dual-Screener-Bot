@@ -536,6 +536,23 @@ def dispatch_bitget_mode(
     except Exception:
         pass
 
+    # Mission 3: 스캔 서킷 브레이커 — 연속 실패로 회로가 OPEN 이면 좀비 재시도를 차단.
+    is_scan_mode = str(mode).strip().lower().startswith("scan_")
+    if is_scan_mode:
+        try:
+            from bitget.watchdog import is_circuit_open
+
+            cb_open, cb_detail = is_circuit_open(mode)
+            if cb_open:
+                report.skipped_session = True
+                report.skipped_session_detail = f"circuit_breaker_open: {cb_detail}"
+                report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+                logger.error("bitget scan circuit OPEN — discarding %s: %s", mode, cb_detail)
+                _record_ops_heartbeat(mode, report)
+                return report
+        except Exception:
+            pass
+
     effective_lock = resolve_lock_timeout_sec(mode, explicit=lock_timeout_sec)
 
     try:
@@ -575,6 +592,22 @@ def dispatch_bitget_mode(
         )
 
     report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Mission 3: 스캔 결과를 서킷 브레이커에 반영 (OK→close, FAIL→누적/OPEN).
+    if is_scan_mode:
+        try:
+            from bitget.watchdog import record_job_failure, record_job_success
+
+            if report.status_label == "OK":
+                record_job_success(mode)
+            elif report.status_label in ("FAIL", "PARTIAL_FAIL"):
+                first_err = next((s.error for s in report.steps if not s.ok and s.error), "")
+                opened, cb_label = record_job_failure(mode, first_err or "scan failed")
+                if opened:
+                    logger.error("bitget scan circuit tripped → %s", cb_label)
+        except Exception:
+            pass
+
     quiet = False
     if report.status_label == "SKIPPED_LOCK":
         alert = str(os.environ.get("BITGET_ALERT_SKIPPED_LOCK", "0")).strip().lower()

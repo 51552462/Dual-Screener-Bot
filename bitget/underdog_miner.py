@@ -12,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 
 from bitget.config_hub import load_config, save_config
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 
@@ -19,8 +20,7 @@ DB_PATH = market_data_db_path()
 def run_underdog_mining():
     print("🧟 [Bitget 언더독 마이닝] 60점 이하 고수익 코인 DNA 채굴 중...")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=30)
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn = get_connection(DB_PATH, read_only=True)
         q = """
             SELECT market_type, position_side, dyn_cpv, dyn_tb, v_energy, dyn_rs, final_ret, total_score
             FROM bitget_forward_trades

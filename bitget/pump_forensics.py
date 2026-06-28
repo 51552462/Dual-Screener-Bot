@@ -14,6 +14,7 @@ import pandas as pd
 
 from bitget.config_hub import load_config, save_config
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 PATTERN_KEYS = [
@@ -68,7 +69,7 @@ def _extract_flags(ohlc: pd.DataFrame, t_idx: int) -> Optional[Dict[str, bool]]:
 
 def run_pump_forensics() -> None:
     print("🔬 [Bitget Pump Forensics] +20% 급등 코인 DNA 역추적...")
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'BITGET_%_1D'").fetchall()]
 
     rows: List[Dict[str, bool]] = []

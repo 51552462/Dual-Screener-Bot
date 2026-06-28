@@ -16,6 +16,7 @@ from bitget.config_hub import load_config, save_config
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.forward_tester import compute_evolved_alpha_bonus_score, try_add_virtual_position
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 TELEGRAM_TOKEN = bitget_telegram_token()
@@ -216,7 +217,7 @@ def extract_dna_from_df(df_raw, timeframe="1D"):
 
 
 def evolve_alpha_factors(timeframe="1D"):
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     samples = [df for _, df in _read_tables(conn, timeframe)[:80]]
     conn.close()
     if not samples:
@@ -341,7 +342,7 @@ def execute_supernova_live_scan(market_type, timeframe):
             bbe_c = (float(b.get("bbe_min", 0.0)) + float(b.get("bbe_max", 0.0))) / 2.0
             templates[name] = {"vec": np.array([cpv_c, tb_c, bbe_c], dtype=float), "shape": None}
 
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     tables = _load_tables_for_scan(conn, market_type, tf)
     conn.close()
     if not tables:
@@ -354,7 +355,7 @@ def execute_supernova_live_scan(market_type, timeframe):
             if uniq in scanned_today_cache.get(market_type, set()):
                 return None
 
-            cconn = sqlite3.connect(DB_PATH, timeout=30)
+            cconn = get_connection(DB_PATH, read_only=True)
             df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', cconn)
             cconn.close()
             if df.empty or len(df) < 220:
@@ -549,7 +550,7 @@ def mine_supernova_templates_by_timeframe(timeframe="1D"):
     3) 타임프레임별 템플릿 저장
     """
     tf = str(timeframe).upper()
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_connection(DB_PATH, read_only=True)
     samples = _read_tables(conn, tf)
     conn.close()
     if not samples:

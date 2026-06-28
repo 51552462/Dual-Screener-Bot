@@ -54,6 +54,8 @@ BITGET_SERVICES=(
 
   dante-bitget-factory.service
 
+  dante-bitget-queue-worker.service
+
   dante-bitget-async.service
 
   dante-bitget-dashboard.service
@@ -84,7 +86,7 @@ echo ""
 
 echo "[deploy_bitget] first start:"
 
-echo "  sudo systemctl start dante-bitget-ws dante-bitget-async dante-bitget-factory"
+echo "  sudo systemctl start dante-bitget-ws dante-bitget-async dante-bitget-factory dante-bitget-queue-worker"
 
 echo "  sudo systemctl start dante-bitget-dashboard dante-bitget-heatmap"
 

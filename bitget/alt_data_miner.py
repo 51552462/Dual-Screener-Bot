@@ -6,14 +6,15 @@ import requests
 
 from bitget.rate_limit_guard import throttle
 
+from bitget.infra.shared_db_connector import get_connection
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ALT_DB_PATH = os.path.join(BASE_DIR, "alt_data.sqlite")
 
 
 def init_alt_db():
-    conn = sqlite3.connect(ALT_DB_PATH, timeout=60)
+    conn = get_connection(ALT_DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS macro_daily (
@@ -63,9 +64,8 @@ def run_alternative_data_mining():
         print(f"⚠️ 외부 데이터 수집 실패: {e}")
         return
 
-    conn = sqlite3.connect(ALT_DB_PATH, timeout=60)
+    conn = get_connection(ALT_DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute(
         """
         INSERT OR REPLACE INTO macro_daily

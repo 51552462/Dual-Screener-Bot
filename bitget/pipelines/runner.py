@@ -34,6 +34,16 @@ def _telegram_send_fn():
         return None
 
 
+def _engine_for_mode(mode: str) -> str:
+    """이 러너가 다루는 모드는 전부 코인(Bitget) 측이므로 BITGET 엔진으로 적재.
+
+    (KR/US 엔진은 주식 팩토리 스케줄러가 별도 적재한다.)
+    """
+    from bitget.infra.task_orchestrator import ENGINE_BITGET
+
+    return ENGINE_BITGET
+
+
 def run_factory_cli(argv: list[str] | None = None) -> int:
     from bitget.bitget_scan_schedule import resolve_lock_timeout_sec
     from bitget.infra.logging_setup import setup_logging
@@ -55,6 +65,12 @@ def run_factory_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-telegram", action="store_true")
     parser.add_argument("--lock-timeout", type=float, default=None)
+    parser.add_argument(
+        "--enqueue",
+        action="store_true",
+        help="Enqueue the mode into task_queue.sqlite instead of running it inline "
+        "(cron→queue adapter; a queue worker executes it later).",
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "watchdog":
@@ -64,6 +80,17 @@ def run_factory_cli(argv: list[str] | None = None) -> int:
 
     if not args.mode:
         parser.error("--mode is required (or use bitget.sh --daemon for 24/7)")
+
+    if args.enqueue:
+        from bitget.infra.task_orchestrator import enqueue
+
+        engine = _engine_for_mode(args.mode)
+        task_id = enqueue(engine, args.mode)
+        if task_id is None:
+            print(f"[QUEUE] dedupe — {engine}:{args.mode} already PENDING/RUNNING")
+        else:
+            print(f"[QUEUE] enqueued #{task_id} {engine}:{args.mode}")
+        return 0
 
     send_fn = None if args.skip_telegram else _telegram_send_fn()
     pipeline = get_pipeline(args.mode)
