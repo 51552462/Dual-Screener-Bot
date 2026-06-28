@@ -72,6 +72,13 @@ _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
     (45, 6, "2-6", "--daily-us", "US post-close audit (KST morning after NY close)"),
     (5, 10, "6", "--weekly", "Weekly Flow master (Saturday KST)"),
     (
+        30,
+        23,
+        "*",
+        "--monthly",
+        "Month-end grand report (self-gated; 23:30 KST=14:30 UTC, no KR/US/bitget overlap)",
+    ),
+    (
         0,
         10,
         "6",

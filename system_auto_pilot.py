@@ -2273,6 +2273,16 @@ def system_main_loop():
                     )
                     time.sleep(60)
 
+                # 📒 매일 23:30 — 월말 종합 결산(월 마지막 날에만 자체 게이트로 발송)
+                #   KR/US/bitget 어떤 크론과도 겹치지 않는 슬롯(23:30 KST = 14:30 UTC).
+                elif now.hour == 23 and now.minute == 30:
+                    print("📒 [오토파일럿] 월말 종합 결산 체크(23:30) 비블로킹 기동…")
+                    _satellite_import_run_snippet(
+                        'import weekend_grand_report as G\nG.send_grand_report_if_due()\n',
+                        "monthly_grand_2330",
+                    )
+                    time.sleep(60)
+
                 # 💡 매 루프(최대 1분 간격): ops_snapshot 시계열 + 인버스 스나이퍼
                 _minute_ops_snapshot_and_inverse_cycle()
 

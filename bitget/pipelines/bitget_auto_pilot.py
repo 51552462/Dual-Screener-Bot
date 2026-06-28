@@ -111,7 +111,8 @@ def _satellite_cycle(now: datetime, hm_key: str, flags: dict) -> None:
             "satellite::forensics_pioneer", 86400, "bitget.forensics_pioneer", "run_forensics_pioneer"
         )
         flags["forensics_pioneer"] = hm_key
-    if now.weekday() == 5 and hour == 1 and minute == 5 and flags.get("synthetic_lab") != hm_key:
+    # [크론 비충돌] Sat 03:05 UTC(=12:05 KST). KR 주간 뇌수술·Flow 리포트(Sat 01:00–01:10 UTC)와 분리.
+    if now.weekday() == 5 and hour == 3 and minute == 5 and flags.get("synthetic_lab") != hm_key:
         _safe_run_satellite(
             "satellite::synthetic_lab", 86400, "bitget.synthetic_data_generator", "stress_test_mutants"
         )

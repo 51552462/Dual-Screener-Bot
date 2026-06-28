@@ -2,7 +2,9 @@
 Inverse ETF Sniper — 테일 리스크 전용 슬리브 (롱 팩토리 미사용).
 
 - 자금: TAIL_RISK_FUND_KR / TAIL_RISK_FUND_US 만 OCC(`update_config_value`)로 Reserve/Release.
-- CENTRAL_TREASURY_* 는 읽지도 쓰지도 않는다.
+- 평일 자동 보충(Daily Floor): 진입 직전 하루 1회 국고(CENTRAL_TREASURY_*)에서 테일펀드를
+  국고×TAIL_FUND_FLOOR_PCT 바닥까지 OCC 보충 → 주중 폭락에도 dry powder 보유(섀도우만 쌓던 구간 제거).
+  (토요일 _tail_convexity_shield 의 적립·×30 페이오프와 독립: 여긴 '바닥 유지'만, 페이오프 없음.)
 - 장부: `forward_trades` 에 sig_type 에 `[INVERSE_ETF]` 마커가 포함된 행만 인버스로 간주.
 - 킬 스위치: INVERSE_MODE_ACTIVE=False 인데 OPEN 인버스가 남아 있으면 전량 시장가 청산 후 테일로 반환.
 - 진입: 테일 잔액의 30% 하드캡, OPEN 인버스가 1건이라도 있으면 신규 진입 금지.
@@ -33,6 +35,10 @@ from config_manager import (
 # ---------------------------------------------------------------------------
 INVERSE_SIG_MARKER = "[INVERSE_ETF]"
 INVERSE_HARD_CAP_PCT = 0.30
+
+# [Daily Floor] 평일 자동 보충 목표/바닥(국고 대비). 토요일 적립 목표(TAIL_FUND_ACCRUAL_PCT)와 동일 수준.
+TAIL_FUND_FLOOR_PCT = 0.015
+KST_TZ = pytz.timezone("Asia/Seoul")
 
 INVERSE_CANDIDATES: list[dict[str, str]] = [
     {
@@ -164,6 +170,14 @@ def _tail_fund_key(market: str) -> str:
     return f"TAIL_RISK_FUND_{market.upper()}"
 
 
+def _treasury_key(market: str) -> str:
+    return f"CENTRAL_TREASURY_{market.upper()}"
+
+
+def _topup_date_key(market: str) -> str:
+    return f"TAIL_FUND_TOPUP_DATE_{market.upper()}"
+
+
 def _numeric_tail_balance(key: str) -> float:
     """KV 단독 키 → 없으면 병합 설정 뷰에서 조회."""
     v = get_config_value(key, None)
@@ -276,6 +290,103 @@ def release_tail_amount(market: str, amount: float) -> None:
     except ConfigConcurrencyError:
         # 마지막 시도 실패 시 로그만 — 운영자 재시도
         print(f"🚨 [inverse_etf_sniper] release_tail_amount OCC 실패: {key} +{amount}")
+
+
+def ensure_tail_fund_floor(market: str) -> dict[str, Any]:
+    """
+    [평일 자동 보충 + 최소 잔액 바닥] 하루 1회, 인버스 슬리브가 주중 폭락에도 dry powder 를
+    갖도록 TAIL_RISK_FUND_<MKT> 를 국고(CENTRAL_TREASURY_<MKT>)×TAIL_FUND_FLOOR_PCT 바닥까지
+    OCC 로 보충한다.
+
+    - 국고에서만 끌어오고 목표 초과 보충은 안 한다(idempotent). 국고가 모자라면 가능한 만큼만.
+    - 토요일 _tail_convexity_shield(적립·×30 페이오프)와 독립: 여긴 페이오프 없이 '바닥 유지'만.
+    - 국고 차감→테일 적립 2단계. 적립 OCC 실패 시 국고를 원복(보상 트랜잭션)해 자본 누수 방지.
+    - 전부 config OCC 라 SQLite 원장·앙상블 락과 무관. 예외는 흡수(비침습).
+    반환: {"topped": float, "fund_after": float|None, "skipped": str|None}.
+    """
+    mkt = market.upper()
+    out: dict[str, Any] = {"topped": 0.0, "fund_after": None, "skipped": None}
+
+    try:
+        today = datetime.now(KST_TZ).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.now().strftime("%Y-%m-%d")
+
+    date_key = _topup_date_key(mkt)
+    try:
+        if str(get_config_value(date_key, "") or "") == today:
+            out["skipped"] = "이미 오늘 보충함"
+            return out
+    except Exception:
+        pass
+
+    fund_key = _tail_fund_key(mkt)
+    tre_key = _treasury_key(mkt)
+    try:
+        treasury = _numeric_tail_balance(tre_key)
+        fund = _numeric_tail_balance(fund_key)
+    except Exception:
+        return out
+
+    target = max(0.0, treasury * TAIL_FUND_FLOOR_PCT)
+    need = target - fund
+    if treasury <= 0.0 or need <= 1.0:
+        # 바닥 충족(또는 국고 0) → 날짜만 찍어 하루 1회 보장
+        try:
+            update_config_value(date_key, lambda _old: today)
+        except Exception:
+            pass
+        out["skipped"] = "국고 0" if treasury <= 0.0 else "바닥 충족"
+        out["fund_after"] = round(fund, 2)
+        return out
+
+    transfer = round(min(need, treasury), 2)
+    if transfer <= 0.0:
+        return out
+
+    # 1) 국고 차감(OCC, 잔액 가드)
+    def _debit_treasury(cur: float) -> float:
+        if cur + 1e-9 < transfer:
+            raise _InsufficientTail()
+        return round(cur - transfer, 2)
+
+    try:
+        update_config_value(
+            tre_key,
+            lambda old: _debit_treasury(float(old) if old is not None else treasury),
+        )
+    except (_InsufficientTail, ConfigConcurrencyError):
+        out["skipped"] = "국고 차감 실패(경합/부족)"
+        return out
+
+    # 2) 테일 적립(OCC). 실패 시 국고 원복(보상 트랜잭션).
+    try:
+        new_fund = _occ_modify_tail(fund_key, lambda cur: round(cur + transfer, 2))
+    except ConfigConcurrencyError:
+        try:
+            update_config_value(
+                tre_key,
+                lambda old: round((float(old) if old is not None else 0.0) + transfer, 2),
+            )
+        except Exception:
+            print(
+                f"🚨 [inverse_etf_sniper] 테일 보충 OCC 실패 후 국고 원복 실패: {tre_key} (+{transfer})"
+            )
+        out["skipped"] = "테일 적립 OCC 실패(국고 원복)"
+        return out
+
+    try:
+        update_config_value(date_key, lambda _old: today)
+    except Exception:
+        pass
+
+    out["topped"] = transfer
+    out["fund_after"] = round(float(new_fund), 2)
+    print(
+        f"💧 [inverse_etf_sniper] 테일펀드 평일 보충: {mkt} +{transfer:,.0f} "
+        f"→ {new_fund:,.0f} (목표 {target:,.0f}, 국고 {treasury - transfer:,.0f})"
+    )
+    return out
 
 
 def _inverse_open_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -473,6 +584,16 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
         conn.close()
         return summary
 
+    # [Daily Floor] 진입 직전, 하루 1회 테일펀드를 국고에서 바닥까지 보충해 dry powder 확보.
+    # (OPEN 인버스가 있으면 위에서 이미 return → 보충은 '신규 진입 가능 상태'에서만 수행)
+    floor_topup: dict[str, Any] = {}
+    for _m in ("KR", "US"):
+        try:
+            floor_topup[_m] = ensure_tail_fund_floor(_m)
+        except Exception as _fl_ex:
+            print(f"⚠️ [inverse_etf_sniper] 테일펀드 평일 보충 스킵({_m}): {_fl_ex}")
+    summary["floor_topup"] = floor_topup
+
     # [Sector Pinpoint] US 붕괴 섹터 전용 인버스를 최우선 후보로 정조준 → 실패 시 기존 시장 인버스.
     candidates: list[dict[str, str]] = list(INVERSE_CANDIDATES)
     try:
@@ -614,6 +735,11 @@ def fade_long_to_inverse(
         else:
             price_known = True
 
+        # [Daily Floor] 톡식 페이딩 실진입 직전에도 테일펀드를 바닥까지 보충(하루 1회·idempotent).
+        try:
+            ensure_tail_fund_floor(inv_mkt)
+        except Exception:
+            pass
         tail_bal = _numeric_tail_balance(_tail_fund_key(inv_mkt))
         max_inv = max(0.0, tail_bal * INVERSE_HARD_CAP_PCT)
         fade_sig = (

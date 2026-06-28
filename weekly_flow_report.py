@@ -681,6 +681,20 @@ def send_weekly_flow_master_report(
         print(f"[weekly_flow] 리포트 빌드 예외: {e}")
         send_fn(f"⚠️ <b>주간 Flow 리포트 생성 실패</b>\n{html.escape(str(e), quote=False)}")
 
+    # [주말 종합 결산] 실무자(로직)별 수익·시장 총계·구조 진화 내러티브를 주간 리포트에 덧붙인다.
+    # (월간 심층 결산은 매일 23:30 KST self-gated 트리거가 월 마지막 날에만 별도 발송 → 중복 방지)
+    try:
+        from weekend_grand_report import send_grand_report
+
+        send_grand_report(
+            monthly=False,
+            db_path=db_path,
+            sys_config=sys_config,
+            send_fn=send_fn,
+        )
+    except Exception as _gr_ex:
+        print(f"[weekly_flow] 주말 종합 결산(grand report) 스킵: {_gr_ex}")
+
 
 if __name__ == "__main__":
     import os

@@ -1026,6 +1026,19 @@ def _step_weekly_master() -> None:
     )
 
 
+def _step_monthly_master() -> None:
+    """월 마지막 날에만 월간 종합 결산을 발송(자체 게이트 → 매일 cron 안전)."""
+    import system_auto_pilot as sap
+    from weekend_grand_report import send_grand_report_if_due
+
+    res = send_grand_report_if_due(
+        db_path=sap.DB_PATH,
+        sys_config=sap.load_or_create_config(),
+        send_fn=sap.send_telegram_report,
+    )
+    print(f"[monthly_master] {res}")
+
+
 def _pipeline_daily_audit_kr() -> List[StepSpec]:
     return _with_daily_audit_kr_prelude(
         _with_kr_spillover_prerequisite(
@@ -1187,6 +1200,9 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
                 StepSpec("weekly_flow_master", _step_weekly_master, critical=True),
             ]
         ),
+        "monthly_master": [
+            StepSpec("monthly_grand_report", _step_monthly_master, critical=False),
+        ],
     }
     pipelines.update(staggered)
     return pipelines

@@ -56,7 +56,8 @@ Usage: ./factory.sh <flag>
     --daily-kr      guard → track → deep dive → report (KR)
     --daily-us      guard → track → deep dive → report (US)
     --daily         full daily chain (KR then US)
-    --weekly        weekly Flow master report
+    --weekly        weekly Flow master report (+ 주말 실무자 결산·진화 리포트)
+    --monthly       month-end grand report (self-gated: 월 마지막 날에만 발송)
     --data-refresh  KR/US per-ticker OHLCV bulk refresh (legacy 07:00 bulk, lock-serialized)
 
   Satellite intel (legacy --daemon jobs, now first-class lock-serialized cron):
@@ -87,6 +88,7 @@ while [[ $# -gt 0 ]]; do
     --daily-us)  MODE="daily_audit_us" ;;
     --daily)     MODE="daily_audit" ;;
     --weekly)    MODE="weekly_master" ;;
+    --monthly)   MODE="monthly_master" ;;
     --data-refresh) MODE="data_refresh" ;;
     --smart-money)  MODE="smart_money_refresh" ;;
     --limit-up)     MODE="limit_up_forensics" ;;

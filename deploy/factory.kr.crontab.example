@@ -45,5 +45,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # --- Weekly Flow master (Saturday KST) ---
 5 10 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --weekly
 
+# --- Month-end grand report (self-gated; 23:30 KST=14:30 UTC, no KR/US/bitget overlap) ---
+30 23 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --monthly
+
 # --- Legacy weekend brain surgery (optional) ---
 0 10 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && /home/ubuntu/dante_bots/Dual-Screener-Bot/venv/bin/python system_auto_pilot.py --run-autonomous-analysis-only >>/home/ubuntu/dante_bots/Dual-Screener-Bot/logs/autonomous_ubuntu.log 2>&1
