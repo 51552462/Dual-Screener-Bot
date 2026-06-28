@@ -1,4 +1,6 @@
 """Forward reporting — deep dive, comprehensive daily, practitioner."""
+from typing import Optional
+
 from forward.shared import *  # noqa: F403
 import forward.shared as _forward_shared
 from forward_market_guard import enforce_market_frame
@@ -814,6 +816,39 @@ def _deep_dive_cross_market_isolation_footer(df: pd.DataFrame, market: str) -> s
     return "\n".join(lines) + "\n"
 
 
+def _resolve_data_candle_watermark(market: str, sys_config: dict) -> Optional[str]:
+    """
+    시장 데이터(벤치마크 캔들) 신선도 워터마크.
+
+    'forward 청산 공백'과 '진짜 시장데이터 정체'를 분리하기 위해, 청산 워터마크와
+    무관하게 최신 벤치마크 캔들 날짜(SPY/KOSPI_IDX)를 돌려준다.
+    DB 우선 → 실패 시 FLUID_{KR|US}_ANCHOR_STATE 의 latest_candle 폴백.
+    """
+    mk = str(market or "KR").upper()
+    try:
+        from fluid_time_anchor import (
+            load_kr_kospi_session_from_db,
+            load_spy_session_from_db,
+        )
+
+        db_candle = (
+            load_spy_session_from_db() if mk == "US" else load_kr_kospi_session_from_db()
+        )
+        if db_candle:
+            return str(db_candle)[:10]
+    except Exception:
+        pass
+    try:
+        state = (sys_config or {}).get(f"FLUID_{mk}_ANCHOR_STATE")
+        if isinstance(state, dict):
+            cand = state.get("latest_candle") or state.get("session_date")
+            if cand:
+                return str(cand)[:10]
+    except Exception:
+        pass
+    return None
+
+
 def run_deep_dive_analysis(market='KR'):
     """
     미래 데이터(포워드 테스팅)를 기반으로 내 시스템의 과최적화를 검증하고,
@@ -887,7 +922,12 @@ def run_deep_dive_analysis(market='KR'):
         anchor_biz = tk.session_anchor
         cutoff_rolling = tk.rolling_cutoff
         cutoff_rot_60 = (now_kst.date() - timedelta(days=60)).strftime("%Y-%m-%d")
-        staleness = evaluate_staleness(tk, live_row_count=dual_meta.live_row_count)
+        _candle_wm = _resolve_data_candle_watermark(market, _cfg_dd)
+        staleness = evaluate_staleness(
+            tk,
+            live_row_count=dual_meta.live_row_count,
+            data_candle_watermark=_candle_wm,
+        )
         persist_staleness_to_config(
             tk, staleness, save_fn=save_system_config, load_fn=load_system_config
         )

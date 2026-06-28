@@ -348,7 +348,23 @@ def _pipeline_health(
         mk, rolling_days=rolling_days, ref_kst=ref_kst, db_watermark_exit=wm
     )
     lag = business_lag_days(wm, tk.session_anchor, market=mk)
-    st = evaluate_staleness(tk, live_row_count=_count_live_today(conn, mk, tk.session_anchor))
+    _candle_wm: Optional[str] = None
+    try:
+        from fluid_time_anchor import (
+            load_kr_kospi_session_from_db,
+            load_spy_session_from_db,
+        )
+
+        _candle_wm = (
+            load_spy_session_from_db() if mk == "US" else load_kr_kospi_session_from_db()
+        )
+    except Exception:
+        _candle_wm = None
+    st = evaluate_staleness(
+        tk,
+        live_row_count=_count_live_today(conn, mk, tk.session_anchor),
+        data_candle_watermark=_candle_wm,
+    )
 
     n_open = conn.execute(
         "SELECT COUNT(*) FROM forward_trades WHERE market=? AND UPPER(TRIM(status))='OPEN'",

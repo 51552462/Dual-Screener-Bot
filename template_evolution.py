@@ -124,6 +124,39 @@ def _market_winners(df, market: str):
         return None
 
 
+def _morph_toward_archetype(
+    cfg: Dict[str, Any],
+    base: Dict[str, List[float]],
+    market: str,
+    target: Dict[str, Any],
+    *,
+    alpha: float,
+) -> List[str]:
+    """
+    🕰️ [타임머신 모핑] 모든 베이스 템플릿을 '현재 장세와 가장 닮았던 과거 국면의
+    전설적 승자 DNA' 쪽으로 EMA 미세조정한다. (최근 며칠 승자가 아니라 과거의 '정답')
+    """
+    real = target.get("dna") or []
+    if len(real) < 3:
+        return []
+    episode = str(target.get("episode", "?"))
+    score_pct = round(float(target.get("score", 0.0)) * 100.0, 0)
+    logs: List[str] = []
+    for name, vec in list(base.items()):
+        new = [
+            round((1 - alpha) * float(vec[i]) + alpha * float(real[i]), 4)
+            for i in range(3)
+        ]
+        base[name] = new
+        logs.append(
+            f"  ↳ [🕰️{episode} {score_pct:.0f}%] {name}: "
+            f"cpv {vec[0]:.2f}→{new[0]:.2f} · tb {vec[1]:.1f}→{new[1]:.1f} "
+            f"· bbe {vec[2]:.1f}→{new[2]:.1f}"
+        )
+    cfg.setdefault(BASE_TEMPLATES_KEY, {})[str(market).upper()] = base
+    return logs
+
+
 def morph_templates(
     cfg: Dict[str, Any],
     df,
@@ -132,8 +165,30 @@ def morph_templates(
     alpha: float = MORPH_ALPHA,
     min_n: int = MORPH_MIN_N,
 ) -> List[str]:
-    """각 베이스 템플릿을 그 템플릿의 실전 승자 DNA 센트로이드로 EMA 미세조정."""
+    """각 베이스 템플릿을 그 템플릿의 실전 승자 DNA 센트로이드로 EMA 미세조정.
+
+    단, 현재 장세가 '선취매 유리 과거 국면' 과 고유사도(REGIME_ANALOG_MORPH_MIN_SCORE)면
+    최근 승자 대신 그 과거 국면의 전설적 승자 DNA 쪽으로 타깃을 동적 전환한다(타임머신 모핑).
+    """
     base = seed_base_templates(cfg, market)
+
+    # 🕰️ 타임머신 모핑 우선 판정 (미래형 자가진화 폐루프)
+    try:
+        from regime_analog_engine import resolve_morph_target_dna
+
+        tm_target = resolve_morph_target_dna(cfg, market)
+    except Exception:
+        tm_target = None
+    if tm_target is not None:
+        tm_alpha = MORPH_ALPHA
+        try:
+            tm_alpha = float(cfg.get("REGIME_ANALOG_MORPH_ALPHA", 0.3))
+        except (TypeError, ValueError):
+            tm_alpha = 0.3
+        tm_logs = _morph_toward_archetype(cfg, base, market, tm_target, alpha=tm_alpha)
+        if tm_logs:
+            return tm_logs
+
     winners = _market_winners(df, market)
     logs: List[str] = []
     if winners is None or len(winners) == 0:

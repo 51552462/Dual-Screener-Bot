@@ -935,11 +935,18 @@ def _step_macro_matrix_incremental() -> None:
     """주말 MACRO_EVOLUTION_MATRIX 증분 갱신 (Shadow · MetaGovernor 미연동)."""
     try:
         from macro_matrix_incremental import update_macro_matrix_incremental
-        from macro_sentinel_quant import compute_macro_sentinel_snapshot
+        from macro_sentinel_quant import compute_macro_sentinel_snapshot, snapshot_to_dict
 
         snap = compute_macro_sentinel_snapshot()
         _, stats = update_macro_matrix_incremental(regime_by_date=snap.regime_by_date)
         print(f"[macro_matrix_incremental] {stats}")
+        # 국면 유사도 벡터의 거시(macro_z) 입력으로 재사용하도록 스냅샷을 config 에 캐시.
+        try:
+            from config_manager import set_config_value
+
+            set_config_value("MACRO_SENTINEL_SNAPSHOT", snapshot_to_dict(snap))
+        except Exception:
+            pass
     except Exception as ex:
         print(f"[macro_matrix_incremental] skip: {ex}")
 
@@ -951,6 +958,19 @@ def _step_weekly_proprietary_regime() -> None:
 
         out = compute_weekly_proprietary_regime()
         print(f"[weekly_proprietary_regime] blended={out.get('blended')}")
+        # 🛰️ 갓 산출한 PRI(내부 마찰)를 거시·외부 지수와 융합해 국면 유사도 재산출.
+        try:
+            from regime_analog_engine import compute_regime_analog
+
+            blended = out.get("blended") if isinstance(out, dict) else None
+            pri_z = float(blended.get("composite_z")) if isinstance(blended, dict) else None
+            analog = compute_regime_analog(pri_blend_z=pri_z)
+            print(
+                f"[regime_analog] best={analog.get('best_episode')} "
+                f"score={analog.get('score_pct')}% favorable={analog.get('front_run_favorable')}"
+            )
+        except Exception as ex:
+            print(f"[regime_analog] skip: {ex}")
     except Exception as ex:
         print(f"[weekly_proprietary_regime] skip: {ex}")
     # [진화형 메타-러닝] PRI 산출 직후 발산 채점·신뢰 가중치 갱신(주간 cron 경로).
@@ -977,6 +997,22 @@ def _step_weekly_proprietary_regime() -> None:
         print(f"[ratchet_kappa] {kv.get('rates')} → updated={kv.get('updated')}")
     except Exception as ex:
         print(f"[ratchet_kappa] skip: {ex}")
+
+
+def _step_regime_deep_archive() -> None:
+    """🧠 [주말 장기기억] 예약된 블랙스완 심층분석(DTW 10년+)을 Priority 3·능동형 스로틀로 처리.
+
+    코인(Bitget) 스캔과 절대 충돌하지 않도록 regime 전용 큐에서 직렬 처리하며, 에피소드마다
+    메인 큐를 폴링해 코인 작업이 있으면 os.nice(19)+sleep 으로 CPU 를 완전 양보한다.
+    심층탐색 성공 시 과거 전설적 승자 DNA 를 단기 캐시+실전 템플릿에 즉시 병합(크로스 진화).
+    """
+    try:
+        from regime_memory import run_deep_archive_worker
+
+        out = run_deep_archive_worker()
+        print(f"[regime_deep_archive] {out}")
+    except Exception as ex:
+        print(f"[regime_deep_archive] skip: {ex}")
 
 
 def _step_weekly_master() -> None:
@@ -1139,6 +1175,12 @@ def build_factory_pipelines() -> Dict[str, List[StepSpec]]:
                 StepSpec(
                     "weekly_proprietary_regime",
                     _step_weekly_proprietary_regime,
+                    critical=False,
+                    delay_after_sec=1.0,
+                ),
+                StepSpec(
+                    "regime_deep_archive",
+                    _step_regime_deep_archive,
                     critical=False,
                     delay_after_sec=1.0,
                 ),
