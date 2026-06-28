@@ -50,3 +50,38 @@ def test_staleness_green_when_watermark_current():
     )
     v = evaluate_staleness(tk, live_row_count=3)
     assert v.grade == "GREEN"
+
+
+def test_staleness_downgrades_to_yellow_when_candle_fresh():
+    """청산 워터마크는 ≥2영업일 지연이나 시장 캔들은 신선 → 데이터 정체 아님(YELLOW)."""
+    tk = ReportTimekeeper.for_market(
+        "KR",
+        rolling_days=90,
+        ref_kst=_KR.localize(datetime(2026, 5, 26, 17, 0, 0)),
+        db_watermark_exit="2026-05-17",
+        read_source="MAIN",
+    )
+    assert business_lag_days("2026-05-17", tk.session_anchor, market="KR") >= 2
+    # 캔들 워터마크 = 세션 앵커 당일 (신선)
+    v = evaluate_staleness(
+        tk, live_row_count=0, data_candle_watermark=tk.session_anchor
+    )
+    assert v.grade == "YELLOW"
+    assert v.allow_tier_champion  # 최우수 성적표 차단 안 함
+    assert not v.fail_safe_html
+
+
+def test_staleness_stays_red_when_candle_also_stale():
+    """청산 워터마크·시장 캔들 모두 지연 → 진짜 데이터 정체(RED)."""
+    tk = ReportTimekeeper.for_market(
+        "KR",
+        rolling_days=90,
+        ref_kst=_KR.localize(datetime(2026, 5, 26, 17, 0, 0)),
+        db_watermark_exit="2026-05-17",
+        read_source="MAIN",
+    )
+    v = evaluate_staleness(
+        tk, live_row_count=0, data_candle_watermark="2026-05-17"
+    )
+    assert v.grade == "RED"
+    assert not v.allow_tier_champion
