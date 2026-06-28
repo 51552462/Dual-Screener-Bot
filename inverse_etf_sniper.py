@@ -59,6 +59,107 @@ INVERSE_CANDIDATES: list[dict[str, str]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# [Sector Pinpoint Inverse] US 섹터별 전용 인버스 ETF 매핑 (붕괴 섹터 정조준)
+# ---------------------------------------------------------------------------
+FADE_SIG_MARKER = "[TOXIC_FADE]"  # 톡식 역배팅 시그널 마커(INVERSE 마커와 병기)
+
+US_SECTOR_INVERSE_MAP: dict[str, dict[str, str]] = {
+    "SEMI":       {"code": "SOXS", "name": "Direxion Daily Semiconductor Bear 3X", "hedge": "SOXX"},
+    "TECH":       {"code": "SQQQ", "name": "ProShares UltraPro Short QQQ", "hedge": "QQQ"},
+    "FINANCIAL":  {"code": "FAZ",  "name": "Direxion Daily Financial Bear 3X", "hedge": "XLF"},
+    "SMALLCAP":   {"code": "SRTY", "name": "ProShares UltraPro Short Russell2000", "hedge": "IWM"},
+    "ENERGY":     {"code": "ERY",  "name": "Direxion Daily Energy Bear 2X", "hedge": "XLE"},
+    "BROAD":      {"code": "SPXS", "name": "Direxion Daily S&P500 Bear 3X", "hedge": "SPY"},
+}
+# 섹터 문자열 → 매핑 키 (KR 표준 버킷·US 영문 모두 커버). 우선순위 순서대로 첫 매칭 승.
+_US_SECTOR_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
+    (("반도체", "semi", "soxx", "chip"), "SEMI"),
+    (("금융", "은행", "증권", "지주", "financ", "bank", "broker"), "FINANCIAL"),
+    (("에너지", "정유", "화학", "energy", "oil", "gas"), "ENERGY"),
+    (("러셀", "스몰", "small", "russell"), "SMALLCAP"),
+    (("반도체/it", "테크", "tech", "software", "소프트", "nasdaq", "qqq", "데이터", " ai", "it"), "TECH"),
+]
+KR_DEFAULT_INVERSE: dict[str, str] = {"code": "252670", "name": "KODEX 200선물인버스2X", "hedge": "069500"}
+
+
+def _sector_inverse_key(sector: str) -> str:
+    s = str(sector or "").strip().lower()
+    for keys, label in _US_SECTOR_KEYWORDS:
+        if any(k in s for k in keys):
+            return label
+    return "BROAD"
+
+
+def resolve_sector_inverse(market: str, sector: str) -> dict[str, str]:
+    """섹터 문자열 → 전용 인버스 ETF 후보(dict: market, code, name, hedge, sector_key)."""
+    mkt = str(market or "").upper()
+    if mkt == "KR":
+        d = dict(KR_DEFAULT_INVERSE)
+        d.update({"market": "KR", "sector_key": "KR_BROAD"})
+        return d
+    key = _sector_inverse_key(sector)
+    base = US_SECTOR_INVERSE_MAP.get(key, US_SECTOR_INVERSE_MAP["BROAD"])
+    d = dict(base)
+    d.update({"market": "US", "sector_key": key})
+    return d
+
+
+def find_collapsing_sector(market: str, *, lookback_days: int = 20, min_trades: int = 5) -> Optional[str]:
+    """
+    최근 청산 원장에서 평균수익이 가장 나쁜(붕괴 중인) 섹터 반환. RO 조회·실패 시 None.
+    sector_rotation_store 의 '주도(최고)' 관점과 반대로, 여기선 '최악 폼' 섹터를 정조준한다.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            conn.execute("PRAGMA query_only=ON;")
+            cutoff = (datetime.now() - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+            df = pd.read_sql(
+                """
+                SELECT sector, final_ret FROM forward_trades
+                WHERE UPPER(TRIM(market))=? AND status LIKE 'CLOSED%'
+                  AND final_ret IS NOT NULL
+                  AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+                  AND IFNULL(sig_type,'') NOT LIKE ?
+                  AND COALESCE(NULLIF(TRIM(exit_date),''), entry_date) >= ?
+                """,
+                conn,
+                params=(str(market).upper(), f"%{INVERSE_SIG_MARKER}%", cutoff),
+            )
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if df is None or df.empty or "sector" not in df.columns:
+        return None
+    df = df.dropna(subset=["sector"])
+    if df.empty:
+        return None
+    g = df.groupby("sector")["final_ret"].agg(["count", "mean"])
+    g = g[g["count"] >= int(min_trades)]
+    if g.empty:
+        return None
+    return str(g.sort_values("mean").index[0])
+
+
+def _sector_pinpoint_candidate(market: str) -> Optional[dict[str, str]]:
+    """붕괴 섹터 → 전용 인버스 ETF 후보(INVERSE_CANDIDATES 호환 dict). US 전용, 없으면 None."""
+    if str(market or "").upper() != "US":
+        return None
+    sector = find_collapsing_sector("US")
+    if not sector:
+        return None
+    inv = resolve_sector_inverse("US", sector)
+    return {
+        "market": "US",
+        "code": inv["code"],
+        "name": f"{inv['name']} (붕괴섹터 {sector}→{inv['sector_key']})",
+        "hedge": inv["hedge"],
+        "trigger_ret_5d": "-2.0",
+    }
+
+
 def _tail_fund_key(market: str) -> str:
     return f"TAIL_RISK_FUND_{market.upper()}"
 
@@ -265,14 +366,18 @@ def _insert_inverse_forward_trade(
     entry_price: float,
     invest_amount: float,
     shares: int,
+    status: str = "OPEN",
+    sig_type: Optional[str] = None,
+    sector: str = "InverseETF-TailSleeve",
+    entry_regime: str = "INVERSE_HEDGE",
 ) -> None:
     init_forward_db()
     tz_kr = pytz.timezone("Asia/Seoul")
     tz_us = pytz.timezone("America/New_York")
     mkt = market.upper()
     today_str = datetime.now(tz_us if mkt == "US" else tz_kr).strftime("%Y-%m-%d")
-    sig_type = f"Dante_INVERSE_ETF_Sniper[V1]{INVERSE_SIG_MARKER}"
-    sector = "InverseETF-TailSleeve"
+    if not sig_type:
+        sig_type = f"Dante_INVERSE_ETF_Sniper[V1]{INVERSE_SIG_MARKER}"
     tier = "INVERSE"
     score = 0.0
     ep = float(entry_price)
@@ -283,8 +388,8 @@ def _insert_inverse_forward_trade(
         (entry_date, market, code, name, sector, sig_type, tier, total_score,
          dyn_rs, dyn_cpv, dyn_tb, entry_price, v_cpv, v_yang, v_energy, v_rs,
          max_high, min_low, market_breadth, entry_breadth, entry_cos_score, entry_dtw_score,
-         entry_atr, invest_amount, shares, sim_kelly_invest, entry_regime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 1.0, 1.0, 0.0, 99.0, 0.0, ?, ?, ?, 'INVERSE_HEDGE')
+         entry_atr, invest_amount, shares, sim_kelly_invest, entry_regime, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 1.0, 1.0, 0.0, 99.0, 0.0, ?, ?, ?, ?, ?)
         """,
         (
             today_str,
@@ -304,8 +409,43 @@ def _insert_inverse_forward_trade(
             round(invest_amount, 2),
             int(shares),
             round(invest_amount, 2),
+            entry_regime,
+            status,
         ),
     )
+
+
+def _insert_inverse_shadow(
+    conn: sqlite3.Connection,
+    *,
+    market: str,
+    code: str,
+    name: str,
+    entry_price: float,
+    reason: str = "",
+    sig_type: Optional[str] = None,
+) -> None:
+    """
+    [Shadow Inverse Ledger] 실자본 0 가상거래 기록.
+    테일 잔액 부족·30% 캡 거부 시에도 인버스 로직의 승률·표본을 계속 축적한다.
+    status='OPEN_SHADOW', invest_amount=0, shares=0.
+    """
+    if not sig_type:
+        sig_type = f"Dante_INVERSE_ETF_Sniper[V1][SHADOW]{INVERSE_SIG_MARKER}"
+    _insert_inverse_forward_trade(
+        conn,
+        market=market,
+        code=code,
+        name=name,
+        entry_price=entry_price,
+        invest_amount=0.0,
+        shares=0,
+        status="OPEN_SHADOW",
+        sig_type=sig_type,
+        entry_regime="INVERSE_SHADOW",
+    )
+    if reason:
+        print(f"👻 [inverse_etf_sniper] 섀도우 기록: {market} {code} (invest=0) — {reason}")
 
 
 def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
@@ -314,7 +454,7 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
     """
     init_forward_db()
     cfg = load_system_config()
-    summary: dict[str, Any] = {"kill_closed": 0, "entered": None, "skipped": None}
+    summary: dict[str, Any] = {"kill_closed": 0, "entered": None, "skipped": None, "shadow": None}
 
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
@@ -333,7 +473,16 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
         conn.close()
         return summary
 
-    for cand in INVERSE_CANDIDATES:
+    # [Sector Pinpoint] US 붕괴 섹터 전용 인버스를 최우선 후보로 정조준 → 실패 시 기존 시장 인버스.
+    candidates: list[dict[str, str]] = list(INVERSE_CANDIDATES)
+    try:
+        pinpoint = _sector_pinpoint_candidate("US")
+        if pinpoint and not any(c["code"] == pinpoint["code"] for c in candidates):
+            candidates.insert(0, pinpoint)
+    except Exception as _pp_ex:
+        print(f"⚠️ [inverse_etf_sniper] 섹터 정조준 스킵: {_pp_ex}")
+
+    for cand in candidates:
         mkt = cand["market"].upper()
         thr = float(cand["trigger_ret_5d"])
         r5 = _fetch_hedge_5d_return_pct(mkt, cand["hedge"])
@@ -349,7 +498,18 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
         tail_bal = _numeric_tail_balance(key)
         max_inv = max(0.0, tail_bal * INVERSE_HARD_CAP_PCT)
         if max_inv <= 0:
-            summary["skipped"] = "테일 30% 캡: 잔액 0으로 진입 불가"
+            # [Shadow Inverse Ledger] 잔액 0 → return False 대신 가상거래로 표본 축적
+            try:
+                _insert_inverse_shadow(
+                    conn, market=mkt, code=code, name=cand["name"], entry_price=px,
+                    reason="테일 30% 캡: 잔액 0(실진입 거부)",
+                )
+                conn.commit()
+                summary["shadow"] = {"market": mkt, "code": code, "entry_price": px, "reason": "tail_balance_zero"}
+            except Exception as _sh_ex:
+                conn.rollback()
+                print(f"🚨 [inverse_etf_sniper] 섀도우 INSERT 실패: {_sh_ex}")
+            summary["skipped"] = "테일 30% 캡: 잔액 0으로 실진입 불가 → 섀도우 기록"
             break
 
         invest = round(min(max_inv, tail_bal), 2)
@@ -359,7 +519,18 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
             continue
 
         if not reserve_tail_amount(mkt, invest):
-            summary["skipped"] = "테일 30% 캡: Reserve OCC 실패(잔액·경합)"
+            # [Shadow Inverse Ledger] Reserve 거부 → 가상거래로 표본 축적
+            try:
+                _insert_inverse_shadow(
+                    conn, market=mkt, code=code, name=cand["name"], entry_price=px,
+                    reason="테일 30% 캡: Reserve OCC 실패(실진입 거부)",
+                )
+                conn.commit()
+                summary["shadow"] = {"market": mkt, "code": code, "entry_price": px, "reason": "reserve_failed"}
+            except Exception as _sh_ex:
+                conn.rollback()
+                print(f"🚨 [inverse_etf_sniper] 섀도우 INSERT 실패: {_sh_ex}")
+            summary["skipped"] = "테일 30% 캡: Reserve OCC 실패(잔액·경합) → 섀도우 기록"
             break
 
         try:
@@ -385,6 +556,115 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
 
     conn.close()
     return summary
+
+
+# ---------------------------------------------------------------------------
+# [Toxic Alpha Fading Engine] 톡식 롱 시그널 → 섹터 인버스 역매매 브릿지
+# ---------------------------------------------------------------------------
+def match_toxic_fade_target(sig_type: Any, sys_config: Optional[dict[str, Any]] = None) -> bool:
+    """
+    스캔된 시그널이 TOXIC_FADE_TARGET(승률<30%·심각한 마이너스 평균수익) 그룹에 속하는지 판정.
+    config["TOXIC_FADE_TARGETS"] 키(그룹키)가 sig_type 에 포함되면 True.
+    핫 패스(스캐너)용 — 무거운 import 없이 부분문자열 매칭으로 가볍게 동작.
+    """
+    s = str(sig_type or "")
+    if not s:
+        return False
+    # 인버스·페이드 자기 시그널은 절대 페이드 대상으로 보지 않음(피드백 루프 차단)
+    if INVERSE_SIG_MARKER in s or FADE_SIG_MARKER in s:
+        return False
+    cfg = sys_config if isinstance(sys_config, dict) else load_system_config()
+    targets = cfg.get("TOXIC_FADE_TARGETS") if isinstance(cfg, dict) else None
+    if not isinstance(targets, dict) or not targets:
+        return False
+    su = s.upper()
+    for key in targets.keys():
+        k = str(key or "").strip().upper()
+        if k and k in su:
+            return True
+    return False
+
+
+def fade_long_to_inverse(
+    market: str,
+    sector: str,
+    src_code: str,
+    src_name: str,
+    src_sig: str,
+    ref_price: float,
+    sys_config: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """
+    톡식 롱 시그널을 '해당 종목 섹터의 인버스 ETF 매수'로 역전.
+    테일 자금 가용 시 실진입(LIVE), 부족/캡이면 OPEN_SHADOW 로 표본만 축적.
+    실거래 NAV·5-Factor 앙상블과 독립 — 테일 펀드 KV 만 사용. 모든 단계 방어적.
+    """
+    out: dict[str, Any] = {"ok": False, "summary": "", "mode": None, "code": None}
+    try:
+        cand = resolve_sector_inverse(market, sector)
+        inv_mkt = cand["market"]
+        code = cand["code"]
+        name = cand["name"]
+        out["code"] = code
+
+        px = _fetch_last_close(inv_mkt, code) or 0.0
+        if px <= 0:
+            px = float(ref_price or 0.0) or 1.0
+            price_known = False
+        else:
+            price_known = True
+
+        tail_bal = _numeric_tail_balance(_tail_fund_key(inv_mkt))
+        max_inv = max(0.0, tail_bal * INVERSE_HARD_CAP_PCT)
+        fade_sig = (
+            f"Dante_TOXIC_FADE[{cand.get('sector_key')}]{FADE_SIG_MARKER}{INVERSE_SIG_MARKER}"
+            f" ◀{str(src_code)[:8]}/{str(src_sig)[:32]}"
+        )
+
+        init_forward_db()
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        try:
+            if price_known and max_inv > 0:
+                invest = round(min(max_inv, tail_bal), 2)
+                shares = max(1, int(invest / px))
+                invest = round(min(shares * px, max_inv), 2)
+                if invest > 0 and reserve_tail_amount(inv_mkt, invest):
+                    try:
+                        _insert_inverse_forward_trade(
+                            conn, market=inv_mkt, code=code, name=name, entry_price=px,
+                            invest_amount=invest, shares=shares, status="OPEN",
+                            sig_type=fade_sig, entry_regime="TOXIC_FADE",
+                        )
+                        conn.commit()
+                        out.update(
+                            ok=True, mode="LIVE",
+                            summary=f"{inv_mkt} {code} 실진입 {invest:,.0f} (섹터 {sector}→{code})",
+                        )
+                        print(f"🔻 [toxic_fade] LIVE {inv_mkt} {code} invest={invest:,.0f} ◀{src_code}")
+                        return out
+                    except Exception:
+                        conn.rollback()
+                        release_tail_amount(inv_mkt, invest)
+            # 자금 부족·캡·가격미상 → 섀도우 기록
+            _insert_inverse_forward_trade(
+                conn, market=inv_mkt, code=code, name=name, entry_price=px,
+                invest_amount=0.0, shares=0, status="OPEN_SHADOW",
+                sig_type=fade_sig, entry_regime="TOXIC_FADE_SHADOW",
+            )
+            conn.commit()
+            out.update(
+                ok=True, mode="SHADOW",
+                summary=f"{inv_mkt} {code} 섀도우 기록(invest=0) (섹터 {sector}→{code})",
+            )
+            print(f"👻 [toxic_fade] SHADOW {inv_mkt} {code} ◀{src_code}")
+            return out
+        finally:
+            conn.close()
+    except Exception as e:
+        out["summary"] = f"fade_error: {e}"
+        return out
 
 
 if __name__ == "__main__":

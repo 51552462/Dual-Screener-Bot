@@ -191,5 +191,46 @@ def build_deathmatch_section(
         ace_oneliner=ace_line,
         include_title=False,
     )
-    return msg + body
+
+    # ── [부가] 국면(Regime)별 로직 수익·방어 교차 랭킹 ──────────────────────
+    #   글로벌 데스매치는 위 본문 그대로 유지하고, 그 아래에 상승/횡보/하락(+고변동)
+    #   국면별 리더보드를 분리 출력한다. Composite v2 재활용 + 베이지안 수축.
+    #   메인 매매·메타 파이프라인 미접촉(관측 전용), 실패 시 안전 스킵.
+    regime_xrank = ""
+    if str(sys_config.get("REGIME_XRANK_ENABLED", "1")).strip().lower() in (
+        "1", "true", "yes", "on"
+    ):
+        try:
+            from evolution.regime_logic_crossmatrix import (
+                compute_regime_leaderboards,
+                format_regime_leaderboards_telegram,
+            )
+
+            _boards = compute_regime_leaderboards(df_closed, sys_config, market=mk)
+            if _boards:
+                regime_xrank = "\n" + format_regime_leaderboards_telegram(
+                    market_icon, mk, _boards, lookback_label=lookback_label
+                )
+        except Exception as ex:
+            regime_xrank = f"\n<i>⚠️ [국면별 교차랭킹] 스킵: {_esc(str(ex)[:72])}</i>"
+
+    # ── [전조현상] 챔피언/독성 로직의 점화일(T0) 역추적 → 30일 전 환경 벡터 박제 ──
+    #   읽기 전용(RO URI) + 신규 테이블(champion_precursor_genesis)에만 기록한다.
+    #   데스매치/앙상블/NAV 경로 미접촉. 실패해도 리포트에 영향 0(안전 스킵).
+    if str(sys_config.get("GENESIS_PRECURSOR_ENABLED", "1")).strip().lower() in (
+        "1", "true", "yes", "on"
+    ):
+        try:
+            from evolution.champion_genesis import capture_champion_precursors
+
+            _g = capture_champion_precursors(br, sys_config, market=mk)
+            if not _g.get("skipped") and (_g.get("captured") or _g.get("toxic")):
+                regime_xrank += (
+                    f"\n<i>🧬 [전조 축적] 챔피언 {_g.get('captured', 0)} · "
+                    f"독성 {_g.get('toxic', 0)} 전조 박제</i>"
+                )
+        except Exception as ex:
+            regime_xrank += f"\n<i>⚠️ [전조 축적] 스킵: {_esc(str(ex)[:64])}</i>"
+
+    return msg + body + regime_xrank
 

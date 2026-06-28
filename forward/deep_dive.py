@@ -565,6 +565,30 @@ def send_comprehensive_daily_report(
                 )
             send_telegram_msg(msg9); time.sleep(1)
 
+            # ---------------------------------------------------------
+            # 🚀 [부가] 챔피언 탄생 전조(Genesis Precursor) 레이더 — 평일 경량
+            #   ① 현재 환경벡터 vs confirmed 전조 경량 스캔(후행 PnL 없음)
+            #   ② 고유사 시 어드밴티지 플래그 ON(내일 해당 섹터 선취매 켈리 가산)
+            #   ③ KR/US 독립 섹션으로 '예비 챔피언 섹터 + 적중률' 출력
+            #   무거운 인과검증/감가는 주말(run_autonomous_analysis)에서만.
+            try:
+                from evolution.champion_genesis import (
+                    genesis_radar_report_block,
+                    run_daily_genesis_radar,
+                )
+
+                run_daily_genesis_radar(sys_config, market=market)
+                _genesis_html = genesis_radar_report_block(
+                    sys_config, market=market, market_icon=market_icon
+                )
+                if _genesis_html:
+                    send_telegram_msg(_genesis_html); time.sleep(1)
+            except Exception as _gen_ex:
+                send_telegram_msg(
+                    f"<i>⚠️ [전조 레이더 · {market}] 스킵: "
+                    f"{html_escape(str(_gen_ex)[:72], quote=False)}</i>"
+                )
+
             conn.close()
         except Exception as e:
             send_telegram_msg(

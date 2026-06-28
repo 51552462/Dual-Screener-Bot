@@ -26,11 +26,16 @@ HALL_OF_FAME_JSON = os.path.join(_THIS_DIR, "mutant_hall_of_fame.json")
 VALIDATED_JSON = os.path.join(_THIS_DIR, "validated_live_mutants.json")
 TELEGRAM_ERROR_LOG = os.path.join(_THIS_DIR, "telegram_error_log.txt")
 
+# [Mission 1] 361행 NameError 수정: market_db_paths 의 단일 경로 SSOT 를 모듈 상수로 노출.
+MARKET_DB = market_db_read_path()
+
 # 최근 약 6개월 영업일(여유)
 OOS_MIN_BARS = 130
 MAX_TICKERS_SAMPLE = 100
-PROMOTE_MIN_WIN_RATE = 0.60
-PROMOTE_MIN_AVG_RETURN = 0.0
+# [Mission 5] 합격 기준 지능화: '실데이터 무조건 드리프트(baseline)' 대비 초과 알파로 게이트.
+PROMOTE_MIN_WIN_RATE = 0.50
+PROMOTE_MIN_EXCESS_ALPHA = float(os.environ.get("OOS_MIN_EXCESS_ALPHA", "0.00005") or "0.00005")
+PROMOTE_MIN_SIGNALS = int(os.environ.get("OOS_MIN_SIGNALS", "30") or "30")
 
 
 def _atomic_write_json(path: str, obj: Mapping[str, Any]) -> None:
@@ -156,7 +161,10 @@ def _read_ohlcv_table(conn: sqlite3.Connection, table: str) -> Optional[pd.DataF
 
 
 def _prepare_eval_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """incubator_engine 표현식: 소문자 open,high,low,close,volume + vol_ma5, vol_lag1"""
+    """
+    genetic_expr_builder.VARIABLES 표준 변수 집합을 실데이터로 동일 구성.
+    (인큐베이터·라이브와 변수 정의가 1:1 이어야 OOS 가 공정하다.)
+    """
     out = pd.DataFrame(
         {
             "open": df["Open"].astype(np.float64),
@@ -166,9 +174,29 @@ def _prepare_eval_frame(df: pd.DataFrame) -> pd.DataFrame:
             "volume": df["Volume"].astype(np.float64),
         }
     )
+    eps = 1e-9
     out["vol_ma5"] = out["volume"].rolling(5, min_periods=1).mean()
     out["vol_lag1"] = out["volume"].shift(1)
+    out["ma5"] = out["close"].rolling(5, min_periods=1).mean()
+    out["ma10"] = out["close"].rolling(10, min_periods=1).mean()
+    out["ma20"] = out["close"].rolling(20, min_periods=1).mean()
+    out["ret1"] = out["close"] / out["close"].shift(1) - 1.0
+    out["body"] = (out["close"] - out["open"]) / (out["open"] + eps)
+    out["hl_range"] = (out["high"] - out["low"]) / (out["close"] + eps)
+    out["vol_ratio"] = out["volume"] / (out["vol_ma5"] + eps)
     return out
+
+
+def _panel_baseline_drift(frames_by_key: dict[str, pd.DataFrame]) -> float:
+    """실데이터 패널의 무조건(랜덤) 익일 수익 평균 = '시장 중력' 기준선."""
+    allr: list[float] = []
+    for raw in frames_by_key.values():
+        c = pd.to_numeric(raw["Close"], errors="coerce").astype(np.float64)
+        fwd = (c.shift(-1) / c - 1.0).to_numpy()
+        fwd = fwd[np.isfinite(fwd)]
+        if fwd.size:
+            allr.extend(fwd.tolist())
+    return float(np.mean(np.array(allr))) if allr else 0.0
 
 
 def _eval_engine() -> str:
@@ -183,15 +211,7 @@ def _eval_engine() -> str:
 def _oos_forward_returns_at_signals(expr: str, ev: pd.DataFrame) -> Optional[np.ndarray]:
     """단일 종목: 시그널 발생일 익일 수익률 벡터. pd.eval 실패 시 None (시그널 0건과 구분)."""
     eng = _eval_engine()
-    local_base = {
-        "open": ev["open"],
-        "high": ev["high"],
-        "low": ev["low"],
-        "close": ev["close"],
-        "volume": ev["volume"],
-        "vol_ma5": ev["vol_ma5"],
-        "vol_lag1": ev["vol_lag1"],
-    }
+    local_base = {col: ev[col] for col in ev.columns}
     try:
         sig = pd.eval(expr, local_dict=local_base, engine=eng)
     except Exception:
@@ -238,7 +258,7 @@ def _fdr_fallback_panel() -> dict[str, pd.DataFrame]:
 
 def load_champions_from_hall_of_fame(
     path: str = HALL_OF_FAME_JSON,
-    top_n: int = 5,
+    top_n: int = 10,
 ) -> list[dict[str, Any]]:
     if not os.path.isfile(path):
         return []
@@ -259,7 +279,7 @@ def load_champions_from_hall_of_fame(
 
 def run_oos_validation(
     champions: Sequence[Mapping[str, Any]] | None = None,
-    top_n: int = 5,
+    top_n: int = 10,
     rng_seed: int = 42,
 ) -> dict[str, Any]:
     champs = list(champions) if champions is not None else load_champions_from_hall_of_fame(top_n=top_n)
@@ -285,6 +305,8 @@ def run_oos_validation(
 
     if len(frames_by_key) < 5:
         frames_by_key = _fdr_fallback_panel()
+
+    baseline = _panel_baseline_drift(frames_by_key)
 
     promoted: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
@@ -338,15 +360,25 @@ def run_oos_validation(
 
         oos_wr = float(np.mean(np.array(all_win)))
         oos_ar = float(np.mean(np.array(all_r)))
-        passed = oos_wr > PROMOTE_MIN_WIN_RATE and oos_ar > PROMOTE_MIN_AVG_RETURN
+        excess_alpha = oos_ar - baseline
+        n_sig = int(len(all_r))
+        # [Mission 5] 합격 = 실데이터 베이스라인 대비 초과 알파 + 최소 승률 + 최소 표본.
+        passed = (
+            excess_alpha > PROMOTE_MIN_EXCESS_ALPHA
+            and oos_wr > PROMOTE_MIN_WIN_RATE
+            and n_sig >= PROMOTE_MIN_SIGNALS
+        )
         rec = {
             "name": name,
             "expr": expr,
             "synthetic_win_rate": c.get("win_rate"),
             "synthetic_avg_return": c.get("avg_return"),
+            "synthetic_sharpe": c.get("sharpe"),
             "oos_win_rate": round(oos_wr, 6),
             "oos_avg_return": round(oos_ar, 8),
-            "n_signals": int(len(all_r)),
+            "oos_baseline_drift": round(baseline, 8),
+            "oos_excess_alpha": round(excess_alpha, 8),
+            "n_signals": n_sig,
             "n_tickers_used": len(frames_by_key),
             "pass": passed,
         }
@@ -360,9 +392,11 @@ def run_oos_validation(
         "validated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "data_source": "market_data.sqlite_ro" if os.path.exists(MARKET_DB) else "fdr_fallback",
         "n_tickers_panel": len(frames_by_key),
+        "baseline_drift": round(baseline, 8),
         "thresholds": {
             "min_win_rate": PROMOTE_MIN_WIN_RATE,
-            "min_avg_return": PROMOTE_MIN_AVG_RETURN,
+            "min_excess_alpha": PROMOTE_MIN_EXCESS_ALPHA,
+            "min_signals": PROMOTE_MIN_SIGNALS,
         },
         "promoted": promoted,
         "all_results": summaries,
@@ -378,18 +412,25 @@ def _format_telegram_top1(payload: dict[str, Any]) -> str:
     wr = top.get("oos_win_rate")
     passed = bool(top.get("pass"))
     reason = str(top.get("reason") or "")
+    ex = top.get("oos_excess_alpha")
     if reason == "eval_error":
         body = f"실전 OOS: 표현식 평가 실패(eval_error) — {name} → 불합격"
     elif wr is None:
         body = "실전 OOS: 시그널 없음 또는 데이터 부족 → 불합격"
     else:
         wr_pct = float(wr) * 100.0
+        ex_pct = float(ex or 0.0) * 100.0
         verdict = "최종 합격" if passed else "최종 불합격"
-        body = f"가상 1등({name}) 실데이터 테스트: 실전 승률 {wr_pct:.2f}% → [{verdict}]"
+        body = (
+            f"가상 1등({name}) 실데이터: 승률 {wr_pct:.2f}% · "
+            f"초과알파 {ex_pct:+.4f}% → [{verdict}]"
+        )
     n_promo = len(payload.get("promoted") or [])
+    base_pct = float(payload.get("baseline_drift", 0.0)) * 100.0
     return (
         "🛡️ [실전 OOS 검증 완료]\n"
         f"{body}\n"
+        f"· 시장 베이스라인: {base_pct:+.4f}% (이걸 이겨야 합격)\n"
         f"· 합격 승격 전략 수: {n_promo}\n"
         f"· 패널 종목 수: {payload.get('n_tickers_panel', 0)}"
     )
@@ -421,7 +462,22 @@ def main() -> None:
         print(f"[mutant_pending_bridge] {sync_msg} (신규 {n_add})")
     except Exception as sync_e:
         print(f"⚠️ [mutant_pending_bridge] PENDING 동기화 스킵: {sync_e}")
-    send_telegram_report(_format_telegram_top1(out))
+
+    # [Mission 5] 수동 승인 게이트 우회 — OOS 통과 유전자 수식을 INCUBATOR_TEMPLATES 에
+    # 즉시 자동 병합하고, 최소 켈리(탐색 모드) 밴딧 밸브로만 실전 투입.
+    auto_msg = ""
+    try:
+        from mutant_pending_bridge import auto_merge_validated_into_incubator
+
+        n_auto, auto_msg = auto_merge_validated_into_incubator()
+        print(f"[auto_promote] {auto_msg} (자동 병합 {n_auto})")
+    except Exception as auto_e:
+        print(f"⚠️ [auto_promote] 자동 병합 스킵: {auto_e}")
+
+    msg = _format_telegram_top1(out)
+    if auto_msg:
+        msg += f"\n🚀 자동 승격(탐색 켈리): {auto_msg}"
+    send_telegram_report(msg)
 
 
 if __name__ == "__main__":

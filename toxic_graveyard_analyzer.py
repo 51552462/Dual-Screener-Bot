@@ -345,6 +345,93 @@ def _permutation_vectors(
         return pm, np.zeros_like(pm, dtype=float)
 
 
+def label_toxic_fade_targets(
+    *,
+    min_trades: int = 8,
+    wr_max: float = 0.30,
+    mean_ret_max: float = -1.0,
+    persist: bool = True,
+) -> dict:
+    """
+    [Toxic Alpha Fading] 승률<wr_max & 평균수익<mean_ret_max 인 '최악 로직/템플릿'을
+    그룹키 단위로 라벨링 → config_kv['TOXIC_FADE_TARGETS'] 에 기록(SQLite, OCC).
+
+    스캐너(try_add_virtual_position)는 이 키를 읽어 해당 시그널 롱을 즉시 거부하고
+    종목 섹터의 인버스 ETF 로 역배팅(Fading)한다. 인버스/페이드/스카웃/인큐베이터
+    시그널은 집계에서 제외해 피드백 루프(인버스의 인버스)를 원천 차단한다.
+    """
+    try:
+        uri = _forward_trades_db_uri_ro()
+        conn = sqlite3.connect(uri, uri=True, timeout=30)
+        try:
+            df = pd.read_sql(
+                """
+                SELECT sig_type, sector, final_ret FROM forward_trades
+                WHERE status LIKE 'CLOSED%' AND final_ret IS NOT NULL
+                  AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+                  AND IFNULL(sig_type,'') NOT LIKE '%[INVERSE_ETF]%'
+                  AND IFNULL(sig_type,'') NOT LIKE '%[TOXIC_FADE]%'
+                  AND IFNULL(sig_type,'') NOT LIKE '%SCOUT%'
+                """,
+                conn,
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ [toxic_fade] 원장 로드 실패: {e}")
+        return {}
+    if df is None or df.empty:
+        return {}
+
+    def _group_key(s) -> str:
+        raw = str(s or "")
+        no_lead = re.sub(r"^\s*\[[^\]]*\]\s*", "", raw)  # 선행 [TAG] 제거
+        head = re.split(r"\s*\[", no_lead, maxsplit=1)[0].strip()
+        return head or "UNKNOWN"
+
+    df = df.copy()
+    df["__gk"] = df["sig_type"].map(_group_key)
+    df["__sec"] = df["sector"].astype(str)
+    fr_all = pd.to_numeric(df["final_ret"], errors="coerce")
+    df = df[fr_all.notna()]
+    today = datetime.now().strftime("%Y-%m-%d")
+    targets: dict = {}
+    for gk, grp in df.groupby("__gk"):
+        if not gk or gk == "UNKNOWN":
+            continue
+        r = pd.to_numeric(grp["final_ret"], errors="coerce").dropna()
+        n = int(len(r))
+        if n < int(min_trades):
+            continue
+        wr = float((r > 0).sum()) / n if n else 0.0
+        mret = float(r.mean())
+        if wr < float(wr_max) and mret < float(mean_ret_max):
+            sec_mode = grp["__sec"].mode()
+            sector = str(sec_mode.iloc[0]) if not sec_mode.empty else ""
+            targets[str(gk)] = {
+                "win_rate": round(wr, 4),
+                "mean_ret": round(mret, 4),
+                "n": n,
+                "sector": sector,
+                "as_of": today,
+            }
+
+    if persist:
+        try:
+            from config_manager import update_config_value
+
+            update_config_value("TOXIC_FADE_TARGETS", lambda _old: targets)
+            print(f"🔻 [toxic_fade] TOXIC_FADE_TARGET {len(targets)}건 라벨링 → config_kv 반영")
+            for k, v in targets.items():
+                print(
+                    f"   ↳ {k}: wr={v['win_rate']:.0%} mret={v['mean_ret']:.2f}% "
+                    f"n={v['n']} sec={v['sector']}"
+                )
+        except Exception as e:
+            print(f"⚠️ [toxic_fade] config_kv 반영 실패: {e}")
+    return targets
+
+
 def run_graveyard_autopsy():
     print("💀 [오답노트 블랙박스 부검소] 참사주 독성 패턴(Anti-Pattern) 머신러닝 추출 중...")
 
@@ -483,6 +570,12 @@ def run_graveyard_autopsy():
     else:
         print("💡 현재 데이터에서는 뚜렷한 맹독성 다중 조건이 발견되지 않았습니다.")
         save_config(config)
+
+    # [Toxic Alpha Fading] 최악 로직 그룹 → TOXIC_FADE_TARGET 라벨링(역배팅 타겟 갱신)
+    try:
+        label_toxic_fade_targets()
+    except Exception as e:
+        print(f"⚠️ [toxic_fade] 라벨링 단계 스킵: {e}")
 
 
 if __name__ == "__main__":

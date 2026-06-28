@@ -331,16 +331,29 @@ def run_meta_learning_cycle(
             m["history"] = m["history"][-200:]
         save_trust_matrix(m)
 
-        return {
-            "today": today,
-            "internal_dir": idir,
-            "external_dir": edir,
-            "divergence_recorded": recorded,
-            "events_evaluated": evaluated,
-            "w_internal": m["w_internal"],
-            "w_external": m["w_external"],
-            "pending": len(m["pending_events"]),
-        }
+    # ── [예측형 자율 진화 앙상블] 팩터 가중치 강화학습 동반 갱신 ──────────────
+    #   meta_learner(내부 PRI↔외부 매크로 2원 신뢰)와 같은 사이클에서, 5개 팩터
+    #   (단기·장기추세·VIX·시장폭·PRI)의 미래 5일 PnL 보상으로 가중치를 자가 진화.
+    #   Macro Anchor Floor(15%)·PRI Cap(85%) 안전망은 엔진 내부에서 강제.
+    ensemble_evo: Optional[Dict[str, Any]] = None
+    try:
+        import predictive_regime_ensemble as pre
+
+        ensemble_evo = pre.evolve_weights(db_path=db_path)
+    except Exception:
+        ensemble_evo = None
+
+    return {
+        "today": today,
+        "internal_dir": idir,
+        "external_dir": edir,
+        "divergence_recorded": recorded,
+        "events_evaluated": evaluated,
+        "w_internal": m["w_internal"],
+        "w_external": m["w_external"],
+        "pending": len(m["pending_events"]),
+        "ensemble_evolution": ensemble_evo,
+    }
 
 
 # ---------------------------------------------------------------------------

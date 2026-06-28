@@ -1583,6 +1583,29 @@ def try_add_virtual_position(
     if pre_sys_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") == "ON":
         return False, "🚫 글로벌 서킷 브레이커 ON: 블랙스완 방어 모드로 신규 진입이 차단되었습니다."
 
+    # 🔻 [톡식 알파 역배팅] TOXIC_FADE_TARGET 시그널이면 롱 거부 → 종목 섹터 인버스 ETF 역매매
+    #   - 기존 5-Factor 앙상블·NAV 산출과 독립(테일 펀드 KV 만 사용). 모든 단계 방어적.
+    try:
+        from inverse_etf_sniper import fade_long_to_inverse, match_toxic_fade_target
+
+        if match_toxic_fade_target(sig_type, pre_sys_config):
+            _fade = fade_long_to_inverse(
+                market, sector, code_str, name, str(sig_type), ep, pre_sys_config
+            )
+            try:
+                import shadow_tracking
+
+                shadow_tracking.record_blocked_trade(code_str, name, "TOXIC_FADE_TARGET", ep)
+            except Exception:
+                pass
+            return (
+                False,
+                f"🔻 [톡식 역배팅] 롱 거부 → 섹터 인버스 페이드"
+                f"({_fade.get('mode')}): {_fade.get('summary', '')}",
+            )
+    except Exception as _fade_ex:
+        print(f"⚠️ [톡식 역배팅] 브릿지 스킵(롱 진행): {_fade_ex}")
+
     # 🛰️ [통합 방어막] 둠스데이 / 오답노트(bbox) / 스마트머니 교차검증 (모든 검색기 공통 관문)
     _sp_perf = pre_sys_config.get("SHADOW_PERFORMANCE")
     if not isinstance(_sp_perf, dict):
@@ -2075,9 +2098,23 @@ def try_add_virtual_position(
                 if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
                     kelly_risk_pct *= 2.0 
 
-            # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배 (게이트 통과 시)
-            if spillover_prebuy_active:
+            # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배.
+            # [자가 증명 잠금] 게이트 통과 + 주말 PnL 폐루프(SPILLOVER_ADVANTAGE_ACTIVE)가
+            # 스필오버 그룹의 PF 우위(≥1.3배)를 증명했을 때만 증액(돈 벌 때만 베팅↑).
+            if spillover_prebuy_active and sys_config.get("SPILLOVER_ADVANTAGE_ACTIVE", False):
                 kelly_risk_pct *= 1.5
+            # 🧬 [전조현상 얼리버드] 과거 confirmed 챔피언 전조와 현재 국면이 고유사
+            # (GENESIS_PRECURSOR_ADVANTAGE.active) + 해당 섹터 일치 시 초기 진입 켈리 소폭 가산.
+            # 읽기 전용 플래그 소비(증명된 전조 섹터만), 예외/부재 시 1.0 폴백.
+            try:
+                from evolution.champion_genesis import genesis_kelly_boost
+
+                _g_boost = genesis_kelly_boost(sys_config, sector, market)
+                if _g_boost and _g_boost != 1.0:
+                    kelly_risk_pct *= float(_g_boost)
+                    sig_type += " #전조선취매"
+            except Exception:
+                pass
             if synthetic_survival_buff:
                 kelly_risk_pct *= 1.5
             # 👆👆 [수정 완료] 👆👆

@@ -163,6 +163,19 @@ def apply_meta_kelly_merge(
     g = float(meta.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
     out *= g
 
+    # [켈리 클러치] 예측형 앙상블이 변곡점(1위 국면확률<임계)으로 판단하면, 전역 켈리를
+    #   기하급수 축소(0.1~0.3)해 시스템이 스스로 리스크를 닫고 관망(Clutch)한다.
+    #   앙상블이 REGIME_TRANSITION_CLUTCH 키에 기록 → 여기서 곱셈 1회만 적용(모듈 독립).
+    if sys_config is not None:
+        try:
+            clutch = sys_config.get("REGIME_TRANSITION_CLUTCH")
+            if isinstance(clutch, dict) and clutch.get("active"):
+                cm = float(clutch.get("mult", 1.0) or 1.0)
+                if 0.0 < cm < 1.0:
+                    out *= cm
+        except (TypeError, ValueError):
+            pass
+
     # [진화형 둠스데이 형상변환 감쇠] GlobalScore × 동적 γ → 켈리 멱지수 감쇠.
     if sys_config is not None:
         try:

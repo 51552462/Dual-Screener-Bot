@@ -41,7 +41,21 @@ def ledger_group_key(sig: str) -> str:
             return f"INCUBATOR_{m.group(1).strip()}"
     s = raw.replace("💀[기각/관찰용] ", "").replace("💀[기각] ", "")
     s = re.sub(r"^\[.*?\]\s*", "", s)
-    return (s.split(" [")[0].strip() or "UNKNOWN")
+    base = (s.split(" [")[0].strip() or "UNKNOWN")
+    # 선취매 버프 해시태그가 base 에 섞여 들어오는 엣지케이스 방어(브래킷 없는 시그널)
+    base = (base.split(" #")[0].strip() or "UNKNOWN")
+
+    # [선취매 Arm 데스매치 독립] 버프 시그널을 모(母)전략과 분리해, 데스매치/MAB 에서
+    # "일반 로직" vs "선취매 버프 로직"이 별도 Arm 으로 경쟁하도록 접미사를 박제한다.
+    #   · #순환매_선취매      → _PREBUY
+    #   · [🌐스필오버 선취매]  → _SPILLOVER
+    # 둘 다 보유 시 _PREBUY_SPILLOVER 로 완전 분리(결정적 순서).
+    suffix = ""
+    if "#순환매_선취매" in raw:
+        suffix += "_PREBUY"
+    if "스필오버 선취매" in raw:
+        suffix += "_SPILLOVER"
+    return base + suffix
 
 
 def mdd_pct_from_returns(rets: List[float]) -> float:

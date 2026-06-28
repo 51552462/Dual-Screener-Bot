@@ -299,6 +299,102 @@ def _sync_inverse_mode_switch(current_config: dict, vix_last=0.0, regime_display
     current_config["INVERSE_MODE_ACTIVE"] = bool(defcon_crash or meta_crash or vix_crash)
 
 
+def _unified_regime_key(regime_display: str, config: dict | None = None) -> str:
+    """
+    통합 국면 키 해석기.
+    1순위: 예측형 자율 진화 앙상블(REGIME_ENSEMBLE.blended_regime) — 단일 진실원천.
+    2순위: 로컬 텍스트 판정. [Mission 4] 'Bear(하락)'를 CHOP가 아닌 BEAR로 정확히 분리.
+    내부 어휘는 라이브 표준(BULL/BEAR/HIGH_VOL/CHOP)으로 정규화한다(SIDEWAYS→CHOP).
+    """
+    cfg = config or {}
+    ens = cfg.get("REGIME_ENSEMBLE") if isinstance(cfg, dict) else None
+    blended = ""
+    if isinstance(ens, dict):
+        blended = str(ens.get("blended_regime") or "").strip().upper()
+    if blended in ("BULL", "BEAR", "HIGH_VOL"):
+        return blended
+    if blended == "SIDEWAYS":
+        return "CHOP"
+
+    txt = str(regime_display or "")
+    if "Bull" in txt:
+        return "BULL"
+    # '극단적 공포장' 및 일반 '하락장(Bear ...)' 모두 BEAR로 분리(버그 수정)
+    if "극단적" in txt or "Bear" in txt:
+        return "BEAR"
+    return "CHOP"
+
+
+# ── 테일 리스크 볼록 헤지(유체 방어 #2) 상수/헬퍼 ───────────────────────────
+TAIL_FUND_ACCRUAL_PCT = 0.015      # 주간 국고 대비 테일 적립 목표
+TAIL_FUND_PAYOFF_MULT = 30.0       # VIX≥35 공황장 페이오프 배수
+TAIL_PAYOFF_VIX_TRIGGER = 35.0
+TAIL_PAYOFF_NAV_MAX_FRAC = 0.50    # True NAV 1회 반영 상한(폭주 방지)
+
+
+def _inject_tail_payoff_to_nav(market: str, payoff: float, capital_anchor: float) -> str:
+    """
+    [유체 방어 #2] 테일 ×30 페이오프를 True NAV(treasury_state.json)에 '보험 수익'으로 실반영.
+
+    레거시 국고(₩) ↔ Live NAV(시장별 통화) 통화 불일치를 피하기 위해, 절대액이 아니라
+    '자본 대비 비율(payoff/capital_anchor)'로 환산해 NAV × 비율 만큼을 실현손익으로 꽂는다.
+    → 폭락장에 복리 시드가 커져 바닥 매수 켈리 베팅이 확대된다.
+
+    방어적: live_nav_manager 는 자체 RLock + 별도 JSON 상태라 SQLite 원장·앙상블과 락 무관.
+    """
+    try:
+        anchor = float(capital_anchor or 0.0)
+        pay = float(payoff or 0.0)
+        if anchor <= 0 or pay <= 0:
+            return ""
+        ret_frac = min(TAIL_PAYOFF_NAV_MAX_FRAC, max(0.0, pay / anchor))
+        if ret_frac <= 0:
+            return ""
+        import live_nav_manager as _lnm
+        from datetime import datetime as _dt
+
+        nav = float(_lnm.live_nav(market))
+        net = nav * ret_frac
+        _lnm.apply_realized_pnl(market, net, exit_date=_dt.now().strftime("%Y-%m-%d"))
+        return f" · True NAV +{ret_frac*100:.1f}% 보험수익 실반영(+{net:,.0f})"
+    except Exception:
+        return ""
+
+
+def _tail_convexity_shield(market: str, treasury, fund, vix_last) -> tuple:
+    """
+    주간 테일 적립 + VIX≥35 ×30 페이오프 + True NAV 실반영을 한 곳에서 처리.
+    반환: (treasury, fund, report_msg). KR/US 두 블록이 공유(중복 제거·일관성).
+    """
+    try:
+        treasury = float(treasury or 0.0)
+        fund = float(fund or 0.0)
+    except (TypeError, ValueError):
+        return treasury, fund, None
+
+    target_fund = max(0.0, treasury * TAIL_FUND_ACCRUAL_PCT)
+    transfer = min(max(0.0, target_fund - fund), treasury)
+    treasury -= transfer
+    fund += transfer
+    capital_anchor = treasury + fund  # 페이오프 직전 자본 베이스(통화중립 분모)
+
+    try:
+        vx = float(vix_last or 0.0)
+    except (TypeError, ValueError):
+        vx = 0.0
+
+    if vx >= TAIL_PAYOFF_VIX_TRIGGER and fund > 0:
+        payoff = fund * TAIL_FUND_PAYOFF_MULT
+        treasury += payoff
+        nav_note = _inject_tail_payoff_to_nav(market, payoff, capital_anchor)
+        msg = f"▪️ {market} 테일리스크 펀드 발동: {fund:,.0f} ×30 => {payoff:,.0f} 국고 복원{nav_note}"
+        fund = 0.0
+    else:
+        msg = f"▪️ {market} 테일리스크 적립: {transfer:,.0f} (누적 {fund:,.0f} / 목표 {target_fund:,.0f})"
+
+    return round(max(0.0, treasury), 2), round(max(0.0, fund), 2), msg
+
+
 def get_first_entry_date():
     """forward_trades 장부의 최초 진입일(MIN(entry_date))을 조회한다."""
     try:
@@ -442,12 +538,17 @@ def run_autonomous_analysis():
             breadth_ratio = (rsp_c.iloc[-1] / spy_c.iloc[-1]) / (rsp_c.rolling(50).mean().iloc[-1] / spy_c.rolling(50).mean().iloc[-1])
 
             # 1. 기본 국면 및 비중 설정 (지수 위치 기준)
+            #   [Mission 4 버그 수정] 평범한 하락장(지수 < EMA200)을 'Chop'으로 뭉뚱그리지 않고
+            #   'Bear(하락)'와 'Chop(변동성 횡보)'으로 정확히 분리한다.
             if spy_last > spy_ema200 and vix_last < 18:
                 regime = "Bull (상승장)"
                 base_w1, base_w4 = 1.2, 0.8
+            elif spy_last < spy_ema200:
+                regime = "Bear (하락장)"
+                base_w1, base_w4 = 0.4, 1.6
             else:
-                regime = "Bear/Chop (하락/횡보)"
-                base_w1, base_w4 = 0.5, 1.5
+                regime = "Chop (변동성 횡보)"
+                base_w1, base_w4 = 0.6, 1.3
 
             # 2. 🚨 [V24.0 핵심] 시장 폭에 따른 비중 패널티/보너스 (지수 착시 방어)
             breadth_status = "건강 (Broad)"
@@ -492,27 +593,19 @@ def run_autonomous_analysis():
     if len(df) < 10:
         # 표본 부족이어도 관제탑 핵심 키는 갱신해 UNKNOWN 뇌사 상태를 방지
         current_config = load_or_create_config()
-        # 💡 [100년 영속 진화 로직 적용: Tail Risk Convexity Treasury Shield]
+        # 💡 [Tail Risk Convexity Shield + 유체 방어 #2] 적립·×30 페이오프·True NAV 실반영
         try:
             for _mkt in ["KR", "US"]:
                 t_key = f"CENTRAL_TREASURY_{_mkt}"
                 f_key = f"TAIL_RISK_FUND_{_mkt}"
-                treasury = float(current_config.get(t_key, 0.0) or 0.0)
-                fund = float(current_config.get(f_key, 0.0) or 0.0)
-                # 💡 [100년 영속 진화 로직 적용: Tail Fund Target Cap Guard]
-                target_fund = max(0.0, treasury * 0.015)
-                transfer = max(0.0, target_fund - fund)
-                transfer = min(transfer, treasury)
-                treasury -= transfer
-                fund += transfer
-                if float(vix_last) >= 35.0 and fund > 0:
-                    treasury += fund * 30.0
-                    fund = 0.0
-                current_config[t_key] = round(max(0.0, treasury), 2)
-                current_config[f_key] = round(max(0.0, fund), 2)
+                _tre, _fnd, _ = _tail_convexity_shield(
+                    _mkt, current_config.get(t_key, 0.0), current_config.get(f_key, 0.0), vix_last
+                )
+                current_config[t_key] = _tre
+                current_config[f_key] = _fnd
         except Exception:
             pass
-        regime_key = "BULL" if "Bull" in regime else ("BEAR" if "극단적" in regime else "CHOP")
+        regime_key = _unified_regime_key(regime, current_config)
         optimal_risk = 0.01
         current_config["CURRENT_REGIME_KEY"] = regime_key
         current_config["DYNAMIC_KELLY_RISK"] = round(optimal_risk, 4)
@@ -522,29 +615,16 @@ def run_autonomous_analysis():
         return
 
     current_config = load_or_create_config()
-    # 💡 [100년 영속 진화 로직 적용: Tail Risk Convexity Treasury Shield]
+    # 💡 [Tail Risk Convexity Shield + 유체 방어 #2] 적립·×30 페이오프·True NAV 실반영
     try:
         for _mkt in ["KR", "US"]:
             t_key = f"CENTRAL_TREASURY_{_mkt}"
             f_key = f"TAIL_RISK_FUND_{_mkt}"
-            treasury = float(current_config.get(t_key, 0.0) or 0.0)
-            fund = float(current_config.get(f_key, 0.0) or 0.0)
-            # 💡 [100년 영속 진화 로직 적용: Tail Fund Target Cap Guard]
-            target_fund = max(0.0, treasury * 0.015)
-            transfer = max(0.0, target_fund - fund)
-            transfer = min(transfer, treasury)
-            treasury -= transfer
-            fund += transfer
-            # VIX 공황장: 테일 리스크 펀드 30배 수익 시뮬레이션 후 국고 복원, 펀드 리셋
-            if float(vix_last) >= 35.0 and fund > 0:
-                payoff = fund * 30.0
-                treasury += payoff
-                report_tail = f"▪️ {_mkt} 테일리스크 펀드 발동: {fund:,.0f}원 ×30 => {payoff:,.0f}원 국고 복원"
-                fund = 0.0
-            else:
-                report_tail = f"▪️ {_mkt} 테일리스크 적립: {transfer:,.0f}원 (누적 {fund:,.0f}원 / 목표 {target_fund:,.0f}원)"
-            current_config[t_key] = round(max(0.0, treasury), 2)
-            current_config[f_key] = round(max(0.0, fund), 2)
+            _tre, _fnd, report_tail = _tail_convexity_shield(
+                _mkt, current_config.get(t_key, 0.0), current_config.get(f_key, 0.0), vix_last
+            )
+            current_config[t_key] = _tre
+            current_config[f_key] = _fnd
             # report_lines 선언 전이라 임시 변수로 보관
             if _mkt == "KR":
                 _tail_msg_kr = report_tail
@@ -641,7 +721,7 @@ def run_autonomous_analysis():
     # ---------------------------------------------------------
     # 👑 엔진 1.8: [V32.0 국면별 독립 기억소(Regime Memory) 로드]
     # ---------------------------------------------------------
-    regime_key = "BULL" if "Bull" in regime else ("BEAR" if "극단적" in regime else "CHOP")
+    regime_key = _unified_regime_key(regime, current_config)
     last_analysed_regime = current_config.get("LAST_ANALYSED_REGIME", "")
 
     if last_analysed_regime != regime_key:
@@ -1524,6 +1604,62 @@ def run_autonomous_analysis():
         report_lines.append(" ▪️ 표본 부족으로 순환매 자율 검증 스킵")
 
     # ---------------------------------------------------------
+    # 🌐 엔진 12-b: [스필오버 선취매 PnL 폐루프] — 순환매 검증 루프를 복제·독립 측정
+    #   '[🌐스필오버 선취매]' 태그 그룹의 PF 가 일반 그룹 대비 1.3배 이상일 때만
+    #   SPILLOVER_ADVANTAGE_ACTIVE=True → forward/shared 가 스필오버 켈리 1.5배를 잠금 해제.
+    # ---------------------------------------------------------
+    report_lines.append("\n🌐 <b>[스필오버 선취매 PnL 자율 검증]</b>")
+    try:
+        spill_mask = df['sig_type'].str.contains('스필오버 선취매', na=False)
+        spill_df = df[spill_mask]
+        spill_std_df = df[~spill_mask]
+        if len(spill_df) >= 3:
+            spill_pf = get_pf(spill_df)
+            spill_std_pf = get_pf(spill_std_df)
+            report_lines.append(f" ▪️ 스필오버그룹 PF: {spill_pf:.2f} vs 일반그룹 PF: {spill_std_pf:.2f}")
+            if spill_pf > spill_std_pf * 1.3:
+                current_config["SPILLOVER_ADVANTAGE_ACTIVE"] = True
+                report_lines.append("🚀 <b>[검증 성공]</b> 스필오버 선취매 우위 증명 ➔ 다음 주 <b>켈리 1.5배</b> 잠금 해제")
+            else:
+                current_config["SPILLOVER_ADVANTAGE_ACTIVE"] = False
+                report_lines.append("🛡️ <b>[검증 실패]</b> 스필오버 우위 부족 ➔ 켈리 증액 잠금(일반 베팅)")
+        else:
+            # 표본 부족 시 기존 특권을 보수적으로 잠금(없으면 False 유지)
+            current_config["SPILLOVER_ADVANTAGE_ACTIVE"] = bool(
+                current_config.get("SPILLOVER_ADVANTAGE_ACTIVE", False)
+            )
+            report_lines.append(" ▪️ 표본 부족으로 스필오버 자율 검증 스킵(기존 플래그 유지)")
+    except Exception as _spill_ex:
+        report_lines.append(f" ▪️ 스필오버 검증 에러(스킵): {_spill_ex}")
+
+    # ---------------------------------------------------------
+    # 🧬 엔진 12-c: [챔피언 전조현상 — 주말 심층 자가 진화(Weekend Deep Evolution)]
+    #   여기서는 '무거운' 작업만 집중(주말 DB I/O 집중, 평일 런타임 병목 차단):
+    #     · backfill_and_learn : 이번 주 평일에 쌓인 예측 로그의 T+N일 실현 PnL 전수 계산
+    #       → pending 전조 confirmed/failed 라벨 + (실패) 신뢰도 베이지안 수축 감가
+    #       → 적중률로 마할라노비스/DTW 유사도 임계값 자가 상향(더 깐깐하게)/하향.
+    #   선행 예측(경량 레이더)은 평일 일일 리포트(send_comprehensive_daily_report)에서 수행.
+    #   데스매치/앙상블/NAV 경로 미접촉. 예외는 전부 내부 흡수.
+    # ---------------------------------------------------------
+    report_lines.append("\n🧬 <b>[챔피언 전조현상 주말 심층 자가 진화]</b>")
+    try:
+        from evolution.champion_genesis import backfill_and_learn
+
+        for _mk in ("KR", "US"):
+            _bf = backfill_and_learn(current_config, market=_mk)
+            _thr = _bf.get("new_threshold")
+            _hr = _bf.get("hit_rate")
+            _line = (
+                f" ▪️ {_mk}: 전조 인과검증 {_bf.get('resolved', 0)}건 · "
+                f"예측 적중검증 {_bf.get('predictions_resolved', 0)}건"
+            )
+            if _thr is not None:
+                _line += f" · 유사도 임계 자가튜닝→{_thr} (적중률 {_hr})"
+            report_lines.append(_line)
+    except Exception as _gen_ex:
+        report_lines.append(f" ▪️ 전조 심층 진화 에러(스킵): {_gen_ex}")
+
+    # ---------------------------------------------------------
     # 🔮 엔진 12.5: transitions 1위 기반 다음 섹터 예측 저장
     # ---------------------------------------------------------
     report_lines.append("\n🔮 <b>[V105.1 transitions 기반 다음 섹터 예측 저장]</b>")
@@ -1987,6 +2123,20 @@ def system_main_loop():
                         )
                         % (_FACTORY_ROOT, _FACTORY_ROOT),
                         "mutant_pending_bridge_sat0310",
+                    )
+                    time.sleep(60)
+
+                # 🦠 토요일 03:20 — 군집 면역 백신 유지보수 (ANTI_PATTERNS 용량 압축, Priority 3)
+                elif now.weekday() == 5 and now.hour == 3 and now.minute == 20:
+                    print("🦠 [오토파일럿] clustered_immune_vaccine (면역 용량 압축) 비블로킹 기동…")
+                    _spawn_python_exec(
+                        (
+                            "import sys, os; sys.path.insert(0, %r); os.chdir(%r); "
+                            "from clustered_immune_vaccine import run_clustered_immune_maintenance as _v; "
+                            "print(_v())"
+                        )
+                        % (_FACTORY_ROOT, _FACTORY_ROOT),
+                        "clustered_immune_vaccine_sat0320",
                     )
                     time.sleep(60)
 

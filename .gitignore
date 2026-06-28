@@ -23,6 +23,16 @@ bitget/bitget_meta_governor_state.json
 bitget/logs/
 bitget/data/
 
+# Hyperbolic Time Chamber (정신과 시간의 방) runtime artifacts — regenerated weekly on server
+synthetic_market.sqlite
+synthetic_market.sqlite-shm
+synthetic_market.sqlite-wal
+mutant_hall_of_fame.json
+validated_live_mutants.json
+telegram_error_log.txt
+predictive_regime_ensemble_state.json
+meta_trust_matrix.json
+
 # Local IDE / OS
 .DS_Store
 Thumbs.db

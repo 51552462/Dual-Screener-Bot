@@ -78,6 +78,33 @@ def init_bandit(
     return rec
 
 
+def init_exploration_arm(
+    cfg: Dict[str, Any],
+    name: str,
+    *,
+    mult: float = MULT_MIN,
+) -> Dict[str, Any]:
+    """
+    [Mission 5] 갓 승격된 유전자 돌연변이를 '탐색 모드 최소 켈리'로만 실전 투입.
+    초기 켈리 배수를 하한(MULT_MIN)으로 잠가두고, 실전 청산이 쌓이면 update_bandit 이
+    베이지안 사후평균으로 배수를 스스로 끌어올린다(가치 증명 시 자본 확대).
+    """
+    if not isinstance(cfg, dict) or not name:
+        return {}
+    st = _state(cfg)
+    rec = {
+        "alpha": PRIOR_A,
+        "beta": PRIOR_B,
+        "n": 0,
+        "mult": round(max(MULT_MIN, float(mult)), 4),
+        "exploration": True,
+        "graduated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    st[name] = rec
+    return rec
+
+
 def resolve_template_multiplier(cfg: Optional[Dict[str, Any]], sig_type: Any) -> float:
     """sig_type 에 포함된 모든 밴딧 관리 템플릿의 배수 곱(없으면 1.0). 무 I/O — sizing 훅용."""
     if not isinstance(cfg, dict):

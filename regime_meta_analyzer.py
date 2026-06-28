@@ -342,6 +342,31 @@ def analyze_market_regime() -> None:
 
         regime_key, regime_name, regime_note = _classify_regime(spx_snap, ks_snap, vix_close)
 
+        # 🧬 [예측형 자율 진화 앙상블] 파편화된 3개 판별기를 단일 스코어링 엔진으로 통합.
+        #   팩터(단기·장기추세·VIX·시장폭·PRI)가 투표 → 가중합 → BULL/SIDEWAYS/BEAR.
+        #   가중치는 5일 미래 PnL 보상으로 자가 진화(Macro Anchor Floor·PRI Cap 보호).
+        ensemble_block: Optional[Dict[str, Any]] = None
+        try:
+            import predictive_regime_ensemble as pre
+
+            _res = pre.run_and_evolve(persist=True)
+            ensemble_block = _res.get("ensemble") if isinstance(_res, dict) else None
+            blended = (ensemble_block or {}).get("blended_regime")
+            if blended and blended != "UNKNOWN":
+                # 앙상블이 최종 권위 — 레거시 라벨은 설명용으로 병기
+                regime_key = blended
+                _emoji = {"BULL": "🔥", "BEAR": "🧊", "HIGH_VOL": "🌪️", "SIDEWAYS": "⚖️"}.get(blended, "🧬")
+                regime_name = f"{_emoji} {blended} (앙상블) · {regime_name}"
+                _mkts = (ensemble_block or {}).get("markets") or {}
+                _kr = (_mkts.get('KR') or {}).get('regime', '-')
+                _us = (_mkts.get('US') or {}).get('regime', '-')
+                print(
+                    f"🧬 [앙상블] blended={blended} (KR={_kr}/US={_us}) "
+                    f"PRI가중치={ensemble_block.get('pri_weight')} 매크로닻={ensemble_block.get('macro_anchor_sum')}"
+                )
+        except Exception as _en_ex:
+            print(f"⚠️ [앙상블] 스킵(레거시 판정 유지): {_en_ex}")
+
         colosseum_line, top_rows = fetch_colosseum_summary()
         meta_full = _blend_meta_insight(regime_key, regime_note, colosseum_line, top_rows)
 
@@ -361,6 +386,7 @@ def analyze_market_regime() -> None:
             },
             "colosseum_cross_summary": colosseum_line,
             "top_strategies_recent": top_rows,
+            "regime_ensemble": ensemble_block,
         }
 
         try:

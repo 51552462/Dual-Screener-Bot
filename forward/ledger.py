@@ -12,6 +12,93 @@ from network_timeout import fdr_data_reader, yf_download
 
 logger = logging.getLogger(__name__)
 
+# ── 스마트 서킷 브레이커(유체 방어) 상수 ────────────────────────────────────
+#   트립: OPEN 미실현 손실/시드 ≤ −5%. 자율 해제: 손실 회복(>−2%) 또는 3거래일 쿨다운.
+CB_TRIP_LOSS_RATIO = -0.05
+CB_RELEASE_LOSS_RATIO = -0.02
+CB_COOLDOWN_TRADING_DAYS = 3
+
+
+def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_seed):
+    """
+    [유체 방어 #1] 전역 서킷 브레이커 트립 + 자율 해제(Sticky-ON 고착 방지).
+
+    - OFF 상태: loss_ratio ≤ −5% 면 ON 트립(발동 시각·날짜·시장 기록).
+    - ON  상태: (a) 트립 시장의 OPEN 손실이 −2% 이내로 회복 OR (b) 3거래일 쿨다운 경과 시 OFF.
+
+    방어적: config(KV) 1회 load/save, 모든 단계 try/except. 메인 SQLite 원장 커넥션과
+    무관(track 종료 후 호출)하며, 5-Factor 앙상블 상태와도 별도 저장소라 락 경합 없음.
+    """
+    from datetime import datetime
+    import numpy as _np
+
+    try:
+        cfg = load_system_config()
+    except Exception:
+        return
+    state = str(cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # ── OFF → 트립 평가 ──────────────────────────────────────────────────
+    if state != "ON":
+        if loss_ratio <= CB_TRIP_LOSS_RATIO:
+            cfg["GLOBAL_CIRCUIT_BREAKER"] = "ON"
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGER_DATE"] = today
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGER_MARKET"] = str(market or "")
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGERED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            cfg["GLOBAL_CIRCUIT_BREAKER_LAST_LOSS_RATIO"] = round(float(loss_ratio), 6)
+            try:
+                save_system_config(cfg)
+            except Exception:
+                return
+            try:
+                send_telegram_msg(
+                    f"🚨 <b>[GLOBAL CIRCUIT BREAKER 발동]</b>\n"
+                    f"시장: {market}\n"
+                    f"당일 보유 손실 합계: {open_loss_amount:,.0f}\n"
+                    f"기준 시드: {base_seed:,.0f}\n"
+                    f"손실률: {loss_ratio*100:.2f}% (한계 ≤ −5.0%)\n"
+                    f"조치: 신규 진입 전면 차단 · 회복(>−2%)·3거래일 쿨다운 시 자율 해제"
+                )
+            except Exception:
+                pass
+        return
+
+    # ── ON → 자율 해제 평가 ──────────────────────────────────────────────
+    trig_market = str(cfg.get("GLOBAL_CIRCUIT_BREAKER_TRIGGER_MARKET") or "")
+    # 회복 경로: 트립 시장이 재확인할 때만(다른 시장의 깨끗한 장부로 오해제 방지). 미상이면 허용.
+    can_confirm_recovery = (not trig_market) or (str(market or "") == trig_market)
+    recovered = bool(can_confirm_recovery and float(loss_ratio) > CB_RELEASE_LOSS_RATIO)
+
+    cooled = False
+    trig_date = str(cfg.get("GLOBAL_CIRCUIT_BREAKER_TRIGGER_DATE") or "")
+    if trig_date:
+        try:
+            td = int(_np.busday_count(trig_date, today))
+            cooled = td >= CB_COOLDOWN_TRADING_DAYS
+        except Exception:
+            cooled = False
+
+    if recovered or cooled:
+        reason = "OPEN 손실 −2% 이내 회복" if recovered else f"{CB_COOLDOWN_TRADING_DAYS}거래일 쿨다운 경과"
+        cfg["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
+        cfg["GLOBAL_CIRCUIT_BREAKER_RELEASED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        cfg["GLOBAL_CIRCUIT_BREAKER_RELEASE_REASON"] = reason
+        try:
+            save_system_config(cfg)
+        except Exception:
+            return
+        try:
+            send_telegram_msg(
+                f"🟢 <b>[GLOBAL CIRCUIT BREAKER 자율 해제]</b>\n"
+                f"평가 시장: {market}\n"
+                f"사유: {reason}\n"
+                f"현재 손실률: {loss_ratio*100:.2f}%\n"
+                f"조치: 신규 진입 재개(유체 방어 — Sticky-ON 고착 방지)"
+            )
+        except Exception:
+            pass
+
 
 def _maybe_pyramid_add(conn, r, market, code, cur_price, sys_config, regime, edge_score):
     """
@@ -458,12 +545,52 @@ def track_daily_positions(market):
                 _kappa = _xdyn.convex_ratchet_kappa(_run_ret, _ratchet_state)
                 _trail_px = _xdyn.trail_stop_price(new_max, _kappa)
                 if l <= _trail_px:
-                    do_exit, exit_rsn, actual_exit_type = (
-                        True,
-                        f"프리러너 볼록 트레일 청산 (κ={_kappa:.3f} · 고점 {_run_ret:.0f}%)",
-                        "RUNNER_TRAIL",
-                    )
-                    actual_exit_price = _trail_px
+                    # [거래량 확증 게이트] 트레일 하향 돌파라도 '거래량 없는 페이크 하락'이면 청산 유예.
+                    #   · DB 무접근 — 이미 로드된 v·up/down_vol_sum·new_bars 재사용(O(1), 추가 쿼리 0).
+                    #   · 양봉/도지(c>=o)는 추세 이탈로 보지 않고 즉시 유예(홀드).
+                    #   · 음봉(c<o)일 때만 ICR/RVOL 평가 → 하나라도 충족이면 확증 청산, 둘 다 미달이면 유예.
+                    #   · 1순위 MAE/MFE·2순위 타임스탑·κ RL 엔진은 일절 불변(P1b 내부에서만 분기).
+                    if c < o:
+                        _icr = v / max(1.0, row_scalar(r, 'up_vol_sum', 1.0))
+                        _avg_vol = (
+                            row_scalar(r, 'up_vol_sum', 0.0) + row_scalar(r, 'down_vol_sum', 0.0)
+                        ) / max(1, int(new_bars))
+                        _rvol = v / max(1.0, _avg_vol)
+                        _vol_confirmed = (_icr >= 0.25) or (_rvol >= 1.5)
+                    else:
+                        # 양봉·도지에서 트레일 터치 = 거래량 동반 투매로 보기 어려움 → 유예
+                        _icr = _rvol = 0.0
+                        _vol_confirmed = False
+
+                    if _vol_confirmed:
+                        do_exit, exit_rsn, actual_exit_type = (
+                            True,
+                            f"프리러너 볼록 트레일 청산 (κ={_kappa:.3f} · 고점 {_run_ret:.0f}% "
+                            f"· ICR {_icr:.2f}/RVOL {_rvol:.2f})",
+                            "RUNNER_TRAIL",
+                        )
+                        actual_exit_price = _trail_px
+                    else:
+                        # 거래량 없는 페이크 하락 — 청산 유예, 러너 보존(RL 표본은 자연 연장돼 자가학습).
+                        try:
+                            _prev_ft = r.get('flow_tags')
+                            _prev_ft = (
+                                '' if _prev_ft is None
+                                or (isinstance(_prev_ft, float) and pd.isna(_prev_ft))
+                                else str(_prev_ft)
+                            )
+                            _gtag = "#RUNNER_유예_거래량페이크"
+                            if _gtag not in _prev_ft:
+                                conn.execute(
+                                    "UPDATE forward_trades SET flow_tags=? WHERE id=?",
+                                    ((f"{_prev_ft} {_gtag}").strip(), r['id']),
+                                )
+                        except Exception:
+                            pass
+                        print(
+                            f"⏸️ [RUNNER 유예] {code} 거래량 페이크 하락 "
+                            f"(l={l:.2f}≤trail={_trail_px:.2f} · ICR {_icr:.2f}/RVOL {_rvol:.2f} 미달) — 러너 유지"
+                        )
 
             # [M4] 엣지 폭발(수급강도×수익속도) 시 유휴 NAV 끌어와 불타기 자가 증식.
             if not do_exit and _is_free_runner and _xdyn is not None and not _is_observe_only:
@@ -654,19 +781,7 @@ def track_daily_positions(market):
                 pass
     conn.close()
 
-    # 블랙스완 붕괴 감지 시 전역 서킷 브레이커 ON
+    # 블랙스완 붕괴 감지 → 서킷 트립 / 회복·쿨다운 → 자율 해제 (스마트 서킷, 유체 방어 #1)
     if base_seed > 0:
         loss_ratio = total_open_loss_amount / safe_float_cast(base_seed, 20000000.0)
-        if loss_ratio <= -0.05:
-            latest_config = load_system_config()
-            if latest_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") != "ON":
-                latest_config["GLOBAL_CIRCUIT_BREAKER"] = "ON"
-                save_system_config(latest_config)
-                send_telegram_msg(
-                    f"🚨 <b>[GLOBAL CIRCUIT BREAKER 발동]</b>\n"
-                    f"시장: {market}\n"
-                    f"당일 보유 손실 합계: {total_open_loss_amount:,.0f}원\n"
-                    f"기준 시드: {base_seed:,.0f}원\n"
-                    f"손실률: {loss_ratio*100:.2f}%\n"
-                    f"조치: 신규 진입 전면 차단(현금 관망) 모드로 전환"
-                )
+        _update_global_circuit_breaker(market, loss_ratio, total_open_loss_amount, base_seed)

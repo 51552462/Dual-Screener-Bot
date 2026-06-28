@@ -482,6 +482,13 @@ def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Option
 def run_smart_money_tracker():
     print("🕵️ [스마트 머니 레이더] 외인·기관 실제 순매수(상위 랭킹) + 가격 다이버전스 스캔 중...")
 
+    _thr = resolve_stealth_thresholds()
+    kr_price_cut = float(_thr["kr_price_cut"])
+    print(
+        f" ↳ 국면={_thr['regime']} → KR 매집 다이버전스 컷 +{kr_price_cut:.1f}% "
+        f"({'방어적(데드캣 차단)' if _thr['defensive'] else '평시'})"
+    )
+
     trade_dates = _recent_trade_dates_yyyymmdd(12)
     if len(trade_dates) < 5:
         print("🚨 최근 영업일 캘린더를 만들 수 없습니다.")
@@ -535,7 +542,7 @@ def run_smart_money_tracker():
             continue
 
         price_change_pct = (p1 - p0) / p0 * 100.0
-        if price_change_pct > 1.8:
+        if price_change_pct > kr_price_cut:
             continue
 
         vwap_flow: Optional[float] = None
@@ -620,11 +627,60 @@ US_DARK_POOL_UNIVERSE: List[str] = [
 ]
 US_DARK_POOL_ETFS: List[str] = ["SPY", "QQQ"]
 
-US_VOLUME_SURGE_MULT = 2.0        # 20일 평균 대비 200% 이상 폭증
-US_LOW_VOLATILITY_ABS_PCT = 2.0   # 당일 가격 변동률 |%| 상한 (저변동성=매집)
+US_VOLUME_SURGE_MULT = 2.0        # 20일 평균 대비 200% 이상 폭증 (평시 기준)
+US_LOW_VOLATILITY_ABS_PCT = 2.0   # 당일 가격 변동률 |%| 상한 (저변동성=매집, 평시 기준)
 US_LOOKBACK_DAYS = 70             # 야후 페치 윈도(20일 평균 + 여유)
 US_VOL_AVG_WINDOW = 20            # 거래량 기준선 윈도
 US_RECENT_SCAN_CANDLES = 3        # 최근 N거래일 내 이상치 탐색(최근 우선)
+
+# [장세 적응형 매집 임계값] BEAR/HIGH_VOL 에서는 데드캣 바운스(가짜 매수세)를 거르기 위해
+# 거래량 폭증 기준을 높이고(3.0), 가격 변동 컷오프를 더 보수적으로 조인다.
+US_VOLUME_SURGE_MULT_DEFENSIVE = 3.0      # BEAR/HIGH_VOL: 300% 이상만 진성 매집 인정
+US_LOW_VOLATILITY_ABS_PCT_DEFENSIVE = 1.2  # BEAR/HIGH_VOL: 변동 ±1.2% 이내만(더 엄격)
+KR_DIVERGENCE_PRICE_CUT = 1.8             # KR 평시: 최근 5일 +1.8% 이하만(매집 다이버전스)
+KR_DIVERGENCE_PRICE_CUT_DEFENSIVE = 0.8   # BEAR/HIGH_VOL: +0.8% 이하만(데드캣 차단)
+_DEFENSIVE_REGIMES = {"BEAR", "HIGH_VOL"}
+
+
+def _resolve_current_regime() -> str:
+    """system_config(SQLite SSOT)에서 현재 국면 키를 읽는다(무 네트워크·실패 시 UNKNOWN)."""
+    try:
+        from config_manager import get_config_value
+
+        rk = get_config_value("CURRENT_REGIME_KEY", None)
+        if rk:
+            return str(rk).strip().upper()
+    except Exception:
+        pass
+    try:
+        cfg = load_config()
+        return str(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN") or "UNKNOWN").strip().upper()
+    except Exception:
+        return "UNKNOWN"
+
+
+def resolve_stealth_thresholds(regime: Optional[str] = None) -> Dict[str, float]:
+    """
+    국면별 매집 탐지 임계값 번들. BEAR/HIGH_VOL → 방어적(엄격), 그 외 → 평시 기준.
+    반환: us_surge_mult, us_lowvol_pct, kr_price_cut, defensive(bool 0/1).
+    """
+    reg = (regime or _resolve_current_regime() or "UNKNOWN").strip().upper()
+    defensive = reg in _DEFENSIVE_REGIMES
+    if defensive:
+        return {
+            "regime": reg,
+            "us_surge_mult": US_VOLUME_SURGE_MULT_DEFENSIVE,
+            "us_lowvol_pct": US_LOW_VOLATILITY_ABS_PCT_DEFENSIVE,
+            "kr_price_cut": KR_DIVERGENCE_PRICE_CUT_DEFENSIVE,
+            "defensive": 1.0,
+        }
+    return {
+        "regime": reg,
+        "us_surge_mult": US_VOLUME_SURGE_MULT,
+        "us_lowvol_pct": US_LOW_VOLATILITY_ABS_PCT,
+        "kr_price_cut": KR_DIVERGENCE_PRICE_CUT,
+        "defensive": 0.0,
+    }
 
 
 def _flatten_yf_columns(df: "pd.DataFrame") -> "pd.DataFrame":
@@ -656,8 +712,14 @@ def _fetch_us_daily_ohlcv(ticker: str, start: str) -> Optional["pd.DataFrame"]:
     return df
 
 
-def _detect_dark_pool_accumulation(df: "pd.DataFrame", ticker: str) -> Optional[Dict[str, Any]]:
-    """저변동성+거래량 폭증 캔들(가장 최근 우선) → 기관 매집 픽."""
+def _detect_dark_pool_accumulation(
+    df: "pd.DataFrame",
+    ticker: str,
+    *,
+    surge_mult: float = US_VOLUME_SURGE_MULT,
+    lowvol_pct: float = US_LOW_VOLATILITY_ABS_PCT,
+) -> Optional[Dict[str, Any]]:
+    """저변동성+거래량 폭증 캔들(가장 최근 우선) → 기관 매집 픽. 임계값은 국면 적응형."""
     if df is None or len(df) < US_VOL_AVG_WINDOW + 2:
         return None
     if "Volume" not in df.columns or "Close" not in df.columns:
@@ -677,14 +739,14 @@ def _detect_dark_pool_accumulation(df: "pd.DataFrame", ticker: str) -> Optional[
         if base <= 0 or v_i <= 0:
             continue
         ratio = v_i / base
-        if ratio < US_VOLUME_SURGE_MULT:
+        if ratio < surge_mult:
             continue
         prev_close = float(close.iloc[i - 1]) if pd.notna(close.iloc[i - 1]) else 0.0
         cl = float(close.iloc[i]) if pd.notna(close.iloc[i]) else 0.0
         if prev_close <= 0 or cl <= 0:
             continue
         chg_pct = (cl - prev_close) / prev_close * 100.0
-        if abs(chg_pct) > US_LOW_VOLATILITY_ABS_PCT:
+        if abs(chg_pct) > lowvol_pct:
             continue  # 가격이 크게 움직였으면 매집(흡수)이 아니라 일반 모멘텀
 
         hi = float(high.iloc[i]) if pd.notna(high.iloc[i]) else cl
@@ -692,7 +754,7 @@ def _detect_dark_pool_accumulation(df: "pd.DataFrame", ticker: str) -> Optional[
         typ = (hi + lw + cl) / 3.0 if hi > 0 and lw > 0 else cl  # 매집 평단 프록시(typical price)
 
         # 점수: 거래량 폭증 강도(상한 60) + 저변동성 가점(상한 ~12)
-        flat_component = max(0.0, US_LOW_VOLATILITY_ABS_PCT - abs(chg_pct)) * 6.0
+        flat_component = max(0.0, lowvol_pct - abs(chg_pct)) * 6.0
         surge_component = min(60.0, ratio * 12.0)
         divergence_score = round(flat_component + surge_component, 2)
 
@@ -709,6 +771,13 @@ def _detect_dark_pool_accumulation(df: "pd.DataFrame", ticker: str) -> Optional[
 
 def run_us_dark_pool_proxy() -> Dict[str, Dict[str, Any]]:
     print("🕵️ [US 다크풀 프록시] 저변동성 거래량 폭증(기관 매집) 역추적 중...")
+    _thr = resolve_stealth_thresholds()
+    _surge = float(_thr["us_surge_mult"])
+    _lowvol = float(_thr["us_lowvol_pct"])
+    print(
+        f" ↳ 국면={_thr['regime']} → US 매집 임계 vol×{_surge:.1f}·|chg|≤{_lowvol:.1f}% "
+        f"({'방어적(데드캣 차단)' if _thr['defensive'] else '평시'})"
+    )
     start = (datetime.now() - timedelta(days=US_LOOKBACK_DAYS + 30)).strftime("%Y-%m-%d")
     tickers = list(dict.fromkeys(US_DARK_POOL_UNIVERSE + US_DARK_POOL_ETFS))
 
@@ -718,7 +787,7 @@ def run_us_dark_pool_proxy() -> Dict[str, Dict[str, Any]]:
         if df is None:
             continue
         try:
-            hit = _detect_dark_pool_accumulation(df, tk)
+            hit = _detect_dark_pool_accumulation(df, tk, surge_mult=_surge, lowvol_pct=_lowvol)
         except Exception as ex:
             print(f"   ↳ {tk} 분석 예외(스킵): {ex}")
             hit = None
