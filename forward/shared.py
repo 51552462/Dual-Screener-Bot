@@ -1906,13 +1906,26 @@ def try_add_virtual_position(
             dyn_trap_limit = sys_config.get("DYNAMIC_TRAP_LIMIT", 0.75) # 자율 참사주 방어선
             dyn_dtw_limit = sys_config.get("DYNAMIC_DTW_LIMIT", 2.5)    # 자율 궤적 허용 거리
 
-            # 순환매 예측 섹터 선취매는 컷오프를 15% 완화
-            if is_rotation_prebuy:
+            # 🛡️ [국면 유사도 안전 게이트] 현재 장세가 '선취매 유리 과거 국면' 과
+            # 통계적으로 충분히 유사(REGIME_ANALOG_SCORE)할 때만 선취매(컷오프 완화·켈리
+            # 증액)를 허용한다. 안 닮았으면(국면 불일치) 섣부른 선취매를 차단한다.
+            try:
+                from regime_analog_engine import frontrun_gate as _fr_gate
+                frontrun_allowed, analog_gate_info = _fr_gate(sys_config)
+            except Exception:
+                frontrun_allowed, analog_gate_info = True, {"reason": "gate_error_fail_open"}
+
+            rotation_prebuy_active = is_rotation_prebuy and frontrun_allowed
+            spillover_prebuy_active = is_spillover_prebuy and frontrun_allowed
+            frontrun_blocked = (is_rotation_prebuy or is_spillover_prebuy) and not frontrun_allowed
+
+            # 순환매 예측 섹터 선취매는 컷오프를 15% 완화 (게이트 통과 시에만)
+            if rotation_prebuy_active:
                 dyn_cos_limit *= 0.85
                 dyn_ml_cutoff *= 0.85
 
-            # 글로벌 스필오버 선취매는 컷오프를 10% 완화
-            if is_spillover_prebuy:
+            # 글로벌 스필오버 선취매는 컷오프를 10% 완화 (게이트 통과 시에만)
+            if spillover_prebuy_active:
                 dyn_cos_limit *= 0.90
                 dyn_ml_cutoff *= 0.90
 
@@ -1932,10 +1945,12 @@ def try_add_virtual_position(
             cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and (min_alpha_dtw <= dyn_dtw_limit)
             if cutoff_passed:
                 sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos_effective*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
-                if is_rotation_prebuy:
+                if rotation_prebuy_active:
                     sig_type += " [순환매 컷오프 특권 패스]"
-                if is_spillover_prebuy:
+                if spillover_prebuy_active:
                     sig_type += " [🌐스필오버 선취매]"
+                if frontrun_blocked:
+                    sig_type += f" [🔒선취매보류:국면불일치 {analog_gate_info.get('reason','')}]"
                 if alpha_bonus_score > 0:
                     sig_type += " [🧬알파 융합 합격]"
 
@@ -2052,15 +2067,16 @@ def try_add_virtual_position(
             except Exception:
                 pass
             
-            # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 로직 👇👇
-            if is_rotation_prebuy:
+            # 👇👇 [V105.0 자율 진화 + 국면 유사도 게이트] 순환매 선취매 베팅 어드밴티지 👇👇
+            # 게이트 통과(현재 장세 ≈ 선취매 유리 과거 국면) 시에만 태깅·켈리 증액한다.
+            if rotation_prebuy_active:
                 sig_type += " #순환매_선취매" # 장부 기록용 태그 박제
                 # 관제탑이 주말 데스매치를 통해 우위를 증명(1.5배)했다면 켈리 비중 2배 뻥튀기
                 if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
                     kelly_risk_pct *= 2.0 
 
-            # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배
-            if is_spillover_prebuy:
+            # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배 (게이트 통과 시)
+            if spillover_prebuy_active:
                 kelly_risk_pct *= 1.5
             if synthetic_survival_buff:
                 kelly_risk_pct *= 1.5
