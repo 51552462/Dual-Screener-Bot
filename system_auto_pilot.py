@@ -1479,6 +1479,19 @@ def run_autonomous_analysis():
     current_config["ANTI_PATTERNS"] = anti_patterns
 
     # ---------------------------------------------------------
+    # 🧬 엔진 10.5: [Mission 8 — 실패 기반 자가 교정 & 면역 학습]
+    #   자동 배포(Mission 7)된 진화 템플릿의 실전 성과를 계측해, 실패분에 즉각 처벌(Capital
+    #   Strangle)·면역화(ANTI_PATTERNS + RL 국면 페널티)·평일 긴급 재탐색(Plan B)을 집행.
+    # ---------------------------------------------------------
+    try:
+        from immune_evolution import run_immune_self_correction
+
+        _imm = run_immune_self_correction(current_config, db_path=DB_PATH, persist=False)
+        report_lines.extend(_imm.get("report_lines", []))
+    except Exception as _imm_ex:
+        report_lines.append(f"⚠️ [면역 자가교정] 스킵: {_imm_ex}")
+
+    # ---------------------------------------------------------
     # 👑 엔진 12: [V105.0 순환매 예측 로직 자율 검증 및 가중치 부여]
     # ---------------------------------------------------------
     report_lines.append("\n🔄 <b>[V105.0 순환매 예측 로직 자율 검증]</b>")

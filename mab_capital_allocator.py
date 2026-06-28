@@ -22,8 +22,12 @@ MABMode = Literal["thompson", "ucb"]
 
 def _parse_group_key(sig_type: Any) -> str:
     s = str(sig_type or "").strip()
+    # 🧬 신형 병렬 진화 템플릿은 버전별로 독립 Arm 이어야 하므로 마커를 보존한다.
+    deep = re.findall(r"DEEP_EVOLVED_v\d+", s)
     s = re.sub(r"\[.*?\]", "", s).strip()
     s = re.sub(r"\s+", " ", s)
+    if deep:
+        s = (s + " " + deep[-1]).strip()
     return s[:64] if s else "UNKNOWN"
 
 
@@ -137,6 +141,16 @@ def _seed_explore_arms(
             gk = f"ARCHIVED_{name}"[:64]
             if gk not in arms:
                 arms[gk] = ArmStats(group_key=gk, is_archived=True, n=0)
+
+    # 🧬 신형 병렬 진화 템플릿(DEEP_EVOLVED) — 거래 표본이 없어도 독립 탐험 Arm 으로 시드.
+    deep_reg = sys_config.get("DEEP_EVOLVED_DEPLOYED")
+    if isinstance(deep_reg, dict):
+        for name, meta in deep_reg.items():
+            if not isinstance(meta, dict) or str(meta.get("market", "")).upper() != mk:
+                continue
+            gk = _parse_group_key(name)
+            if gk not in arms:
+                arms[gk] = ArmStats(group_key=gk, is_incubator=True, n=0)
 
 
 def _thompson_sample(arm: ArmStats, *, prior_a: float = 1.0, prior_b: float = 1.0) -> float:

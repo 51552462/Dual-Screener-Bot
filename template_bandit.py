@@ -116,6 +116,57 @@ def update_bandit(cfg: Dict[str, Any], sig_type: Any, won: bool) -> Optional[Dic
     return updated
 
 
+def strangle_template(
+    cfg: Dict[str, Any],
+    name: str,
+    *,
+    reason: str = "fail_fast",
+    mult: float = MULT_MIN,
+) -> Optional[Dict[str, Any]]:
+    """
+    [즉각 처벌 — Capital Strangle] 해당 템플릿의 켈리 배수를 즉시 하한(0.1)으로 잠근다.
+    밴딧 레코드가 없으면 새로 만들어 잠금 상태로 기록(스캐너가 해당 sig 를 들고 와도 자본 차단).
+    """
+    if not isinstance(cfg, dict) or not name:
+        return None
+    st = _state(cfg)
+    rec = st.get(name)
+    if not isinstance(rec, dict):
+        rec = {"alpha": PRIOR_A, "beta": PRIOR_B, "n": 0}
+        st[name] = rec
+    rec["mult"] = round(float(mult), 4)
+    rec["strangled"] = True
+    rec["strangle_reason"] = str(reason)
+    rec["strangled_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rec["updated_at"] = rec["strangled_at"]
+    return rec
+
+
+def enforce_capital_strangle(
+    cfg: Dict[str, Any],
+    name: str,
+    *,
+    n: int,
+    wins: int,
+    profit_factor: float,
+    min_samples: int = 5,
+    wr_floor: float = 0.40,
+    pf_floor: float = 1.0,
+) -> Optional[Dict[str, Any]]:
+    """
+    실전 표본 ≥ min_samples 이고 (승률 < wr_floor 또는 PF < pf_floor) 면 즉각 Capital Strangle.
+    반환: 처벌된 레코드(처벌 안 하면 None).
+    """
+    if int(n) < int(min_samples):
+        return None
+    wr = (float(wins) / float(n)) if n else 0.0
+    if wr < float(wr_floor) or float(profit_factor) < float(pf_floor):
+        return strangle_template(
+            cfg, name, reason=f"wr={wr:.2f}<{wr_floor} or pf={profit_factor:.2f}<{pf_floor}"
+        )
+    return None
+
+
 def update_bandit_for_closure(sig_type: Any, won: bool) -> Optional[Dict[str, Any]]:
     """ledger 청산 훅 — config 로드→갱신→원자 저장(밴딧 템플릿이 없으면 무동작)."""
     try:

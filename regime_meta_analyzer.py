@@ -371,6 +371,32 @@ def analyze_market_regime() -> None:
         except Exception:
             cfg["CURRENT_REGIME_KEY"] = regime_key
 
+        # 🛰️ [국면 유사도 엔진] 방금 갱신한 REGIME_ANALYSIS 를 토대로 현재 국면이 과거
+        # 어떤 국면과 얼마나 닮았는지(마할라노비스+DTW) 산출 → REGIME_ANALOG_SCORE 기록.
+        try:
+            from regime_analog_engine import compute_regime_analog
+
+            _analog = compute_regime_analog(cfg)
+            print(
+                f"🛰️ [국면 유사도] 현재 ≈ {_analog.get('best_episode')} "
+                f"({_analog.get('score_pct')}%) · 선취매유리={_analog.get('front_run_favorable')}"
+            )
+            # 🦢 [평일 단기기억] 블랙스완(과거 어떤 국면으로도 설명 안 됨)이면 무거운 연산을
+            # 즉시 돌리지 말고 주말 심층분석(Priority 3)으로 예약만 하고 빠져나온다.
+            try:
+                from regime_memory import maybe_enqueue_black_swan
+
+                _bs = maybe_enqueue_black_swan(_analog, cfg=cfg)
+                if _bs is not None:
+                    print(
+                        f"🦢 [블랙스완 감지] 단기기억 해석 실패(일치도 {_analog.get('score_pct')}%) "
+                        f"→ 주말 심층분석 예약 #{_bs}"
+                    )
+            except Exception as _bs_ex:
+                print(f"⚠️ [블랙스완 예약] 스킵: {_bs_ex}")
+        except Exception as _an_ex:
+            print(f"⚠️ [국면 유사도] 산출 스킵: {_an_ex}")
+
         if save_config(cfg):
             print(f"✅ [판독 완료] 현재 장세: {regime_name}")
         else:
