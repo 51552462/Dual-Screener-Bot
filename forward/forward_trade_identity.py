@@ -24,7 +24,11 @@ from forward_dual_track_queries import query_latest_closed_trade_date
 from market_db_paths import MARKET_DATA_DB_PATH
 from report_date_utils import closed_event_dates, in_date_window, normalize_date_series
 from reports.report_staleness_gate import evaluate_staleness
-from reports.report_timekeeper import ReportTimekeeper, business_lag_days
+from reports.report_timekeeper import (
+    ReportTimekeeper,
+    business_lag_days,
+    resolve_data_candle_watermark,
+)
 
 _KR_TZ = pytz.timezone("Asia/Seoul")
 _BLANK_NAMES = frozenset({"", "nan", "none", "null", "nat", "—", "-", "종목미상", "unknown"})
@@ -348,18 +352,7 @@ def _pipeline_health(
         mk, rolling_days=rolling_days, ref_kst=ref_kst, db_watermark_exit=wm
     )
     lag = business_lag_days(wm, tk.session_anchor, market=mk)
-    _candle_wm: Optional[str] = None
-    try:
-        from fluid_time_anchor import (
-            load_kr_kospi_session_from_db,
-            load_spy_session_from_db,
-        )
-
-        _candle_wm = (
-            load_spy_session_from_db() if mk == "US" else load_kr_kospi_session_from_db()
-        )
-    except Exception:
-        _candle_wm = None
+    _candle_wm: Optional[str] = resolve_data_candle_watermark(mk)
     st = evaluate_staleness(
         tk,
         live_row_count=_count_live_today(conn, mk, tk.session_anchor),

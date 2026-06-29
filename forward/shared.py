@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytz
 import sqlite3
 import json
+from low_ram_sqlite_pragmas import apply_busy_timeout
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -78,7 +79,9 @@ DB_PATH = MARKET_DATA_DB_PATH
 def _open_market_db_ro():
     """리포트·딥다이브·듀얼트랙: 메인 DB 강제 (스냅샷 mtime 착시 방지)."""
     uri_path = report_db_read_path().replace("\\", "/")
-    return sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
+    conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
+    apply_busy_timeout(conn)
+    return conn
 
 
 def _compress_sector_theme(raw: object) -> str:
@@ -226,6 +229,7 @@ def _strategy_colosseum_brief(db_path=None):
     try:
         uri_path = db_path.replace("\\", "/")
         conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, check_same_thread=False)
+        apply_busy_timeout(conn)
         try:
             cols = pd.read_sql("PRAGMA table_info(forward_trades)", conn)
             col_names = set(cols["name"].astype(str).tolist()) if cols is not None and not cols.empty else set()
@@ -681,6 +685,7 @@ def init_forward_db(db_path: str | None = None):
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")
+    apply_busy_timeout(conn)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS forward_trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, entry_date TEXT, market TEXT, code TEXT, name TEXT, sector TEXT,    
@@ -1020,6 +1025,7 @@ def _reporter_cleanup_zombie_forward_trades() -> int:
     init_forward_db()
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
+    apply_busy_timeout(conn)
     total = 0
     try:
         colnames = {row[1] for row in conn.execute("PRAGMA table_info(forward_trades)").fetchall()}
@@ -1157,6 +1163,7 @@ def _tier80_sync_effective_and_report_line(
     init_forward_db()
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL;")
+    apply_busy_timeout(conn)
     _tier80_where = (
         "market = ? AND (tier = '80점대' OR (total_score >= 80 AND total_score < 90))"
     )
@@ -1689,6 +1696,7 @@ def try_add_virtual_position(
     conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
+    apply_busy_timeout(conn)
 
     tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
     today_str = datetime.now(tz).strftime('%Y-%m-%d')

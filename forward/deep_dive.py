@@ -39,6 +39,98 @@ def _verify_deep_dive_private_bindings() -> None:
 _verify_deep_dive_private_bindings()
 
 
+def _canary_hedge_stance_html(market_icon: str, market: str) -> str:
+    """[🚀 100% 가동중] 코인 카나리아 헷지 스탠스 — 파일 기반(무DB락) 실시간 흡수 상태.
+
+    bitget_canary_state.json 을 read-only 로 읽어 주식 국면 엔진이 실제로 어떤 헷지
+    스탠스를 취하는지(스트레스/전염/이중게이트/VIX 페널티 적용 여부)를 수치로 보고한다.
+    파일 부재·노후·파싱 실패 시 빈 문자열 → 리포트는 그대로 진행(무해).
+    """
+    try:
+        import json as _json
+        import os as _os
+        import time as _time
+
+        from predictive_regime_ensemble import (
+            CANARY_MAX_STALE_SEC,
+            CRYPTO_STRESS_GATE,
+            CRYPTO_VIX_PENALTY_MAX,
+            _canary_penalty_enabled,
+        )
+
+        path = (_os.environ.get("BITGET_CANARY_STATE_PATH") or "").strip()
+        if not path:
+            try:
+                from bitget.infra.data_paths import canary_state_path
+
+                path = canary_state_path()
+            except Exception:
+                return ""
+        if not path or not _os.path.isfile(path):
+            return ""
+
+        age = _time.time() - _os.path.getmtime(path)
+        fresh = age <= CANARY_MAX_STALE_SEC
+        with open(path, encoding="utf-8") as f:
+            d = _json.load(f)
+        if not isinstance(d, dict):
+            return ""
+
+        stress = float(d.get("crypto_liquidity_stress") or 0.0)
+        contagion = bool(d.get("macro_contagion_risk"))
+        comp = d.get("components") if isinstance(d.get("components"), dict) else {}
+
+        # 이중 게이트 → 페널티(주식 국면 엔진과 동일 수식 SSOT)
+        pen = 0.0
+        if fresh and contagion and stress >= CRYPTO_STRESS_GATE:
+            ramp = min(1.0, (stress - CRYPTO_STRESS_GATE) / max(1e-9, 1.0 - CRYPTO_STRESS_GATE))
+            pen = float(CRYPTO_VIX_PENALTY_MAX * ramp)
+        enabled = _canary_penalty_enabled()
+        applied = bool(pen > 0.0 and enabled)
+
+        if not fresh:
+            stance = f"⚪ 데이터 노후({age / 60:.0f}분) — 국면 미반영(무해)"
+        elif applied:
+            stance = "🛡️ 방어(헷지) 발동 — VIX 팩터에 하방 페널티 실차감 중"
+        elif pen > 0.0 and not enabled:
+            stance = "👀 SHADOW — 게이트 통과했으나 미적용(ENABLED=0)"
+        elif contagion or stress > 0.0:
+            stance = "🟢 관망 — 이중 게이트 미충족(정상)"
+        else:
+            stance = "🟢 정상 — 코인發 유동성/전염 신호 없음"
+
+        def _fmt_pct(x, mul=100.0, suf="%"):
+            try:
+                return f"{float(x) * mul:+.2f}{suf}"
+            except (TypeError, ValueError):
+                return "N/A"
+
+        oi_chg = comp.get("oi_total_24h_change_pct")
+        fund = comp.get("avg_funding_rate")
+        btc3d = comp.get("btc_ret_3d")
+        syms = comp.get("symbols_used") or []
+        src = comp.get("oi_change_source") or "—"
+
+        html = (
+            f"{market_icon} <b>[🚀 100% 가동중] 코인 카나리아 헷지 스탠스 · {market}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f" ▪️ <b>스탠스</b>: {stance}\n"
+            f" ▪️ 유동성 스트레스: <b>{stress:.3f}</b> / 게이트 {CRYPTO_STRESS_GATE:.2f}"
+            f" · 거시전염 {'🔴 ON' if contagion else '⚪ OFF'}\n"
+            f" ▪️ VIX 페널티: <b>{pen:.3f}</b> (상한 {CRYPTO_VIX_PENALTY_MAX:.2f})"
+            f" · 실적용 {'✅' if applied else '❌'}\n"
+            f" ▪️ OI 24h: {_fmt_pct(oi_chg)} <i>({src})</i>"
+            f" · 평균펀딩: {_fmt_pct(fund)}"
+            f" · BTC 3일: {_fmt_pct(btc3d)}\n"
+            f" ▪️ 관측대상(거래대금 상위): {html_escape(', '.join([str(s).split(':')[0] for s in syms[:5]]) or '—', quote=False)}\n"
+            f" ▪️ 신선도: {'🟢 ' if fresh else '🔴 '}{age / 60:.0f}분 전 갱신\n"
+            f"<i>※ 파일 기반(JSON) 비동기 흡수 — 주식 DB 락 무접촉.</i>"
+        )
+        return html
+    except Exception:
+        return ""
+
+
 def send_comprehensive_daily_report(
     *,
     ctx=None,
@@ -440,7 +532,26 @@ def send_comprehensive_daily_report(
             )
             msg4 += "🗣️ <b>[관제탑 동적 시선]</b>\n"
             if total_invest == 0:
-                msg4 += "현재 시장에 투입된 자본이 없습니다. 완벽한 현금 관망 상태입니다.\n"
+                # '투입 0'이 진짜 현금 관망인지, 명목 결측(유령)·미태그 레거시 때문인지 구분.
+                # df_open(유효 보유)·df_real(원시 전체)을 대조해 다른 섹션과의 불일치(보유 N vs 관망)를 방지.
+                try:
+                    _st_real = df_real["status"].astype(str).str.upper().str.strip()
+                    _n_open_raw = int(_st_real.isin(["OPEN", "ACTIVE"]).sum())
+                except Exception:
+                    _n_open_raw = 0
+                if n_legacy_open > 0:
+                    msg4 += (
+                        f"VIP 편대 투입은 0이나 레거시 OPEN <b>{n_legacy_open}건</b>이 보관 중입니다 "
+                        "(섹터 트랙 🔥/🛡️ 미태그 또는 투입금 0). <b>완전한 현금 관망은 아닙니다.</b>\n"
+                    )
+                elif _n_open_raw > 0 and df_open.empty:
+                    msg4 += (
+                        f"⚠️ 원시 OPEN <b>{_n_open_raw}건</b>이 있으나 유효 명목(shares·invest·entry_price)이 "
+                        "0이라 집계에서 제외됐습니다(<b>유령 포지션 의심</b>). "
+                        "track_daily_positions·진입 기록(try_add_virtual_position)을 점검하십시오.\n"
+                    )
+                else:
+                    msg4 += "현재 시장에 투입된 자본이 없습니다. 완벽한 현금 관망 상태입니다.\n"
             elif trend_weight >= 70.0:
                 msg4 += (
                     f"전체 투자금의 {trend_weight:.1f}%가 주도 섹터에 강력하게 집중(Synergy)되어 있습니다. "
@@ -589,6 +700,17 @@ def send_comprehensive_daily_report(
                     f"{html_escape(str(_gen_ex)[:72], quote=False)}</i>"
                 )
 
+            # 🚀 [100% 가동] 코인 카나리아 헷지 스탠스 — 파일 기반 실시간 흡수 현황
+            try:
+                _canary_html = _canary_hedge_stance_html(market_icon, market)
+                if _canary_html:
+                    send_telegram_msg(_canary_html); time.sleep(1)
+            except Exception as _can_ex:
+                send_telegram_msg(
+                    f"<i>⚠️ [코인 카나리아 · {market}] 스킵: "
+                    f"{html_escape(str(_can_ex)[:72], quote=False)}</i>"
+                )
+
             conn.close()
         except Exception as e:
             send_telegram_msg(
@@ -655,6 +777,16 @@ def send_group_practitioner_reports(
     sys_config = load_system_config()
     base_seed = sys_config.get("ACCOUNT_SIZE", 20000000)
     pil_header = ctx.global_timekeeper_header_html()
+
+    # 시장별 '시장데이터(벤치마크 캔들) 워터마크'를 1회 해석해 캐시.
+    #   staleness gate 가 '청산 공백(보유 지속·무청산)'과 '진짜 데이터 정체'를 분리하려면
+    #   캔들 신선도가 필요하다(미전달 시 청산 lag≥2 만으로 오탐 RED 발생).
+    _candle_wm_by_market: dict[str, Optional[str]] = {}
+    for _mk in ("KR", "US"):
+        try:
+            _candle_wm_by_market[_mk] = _resolve_data_candle_watermark(_mk, sys_config)
+        except Exception:
+            _candle_wm_by_market[_mk] = None
 
     if cleanup_zombie_trades:
         try:
@@ -764,7 +896,9 @@ def send_group_practitioner_reports(
 
                 valid_open = _reporter_valid_holding_mask(g_all)
                 stale_banner = ctx.staleness_banner_html(
-                    market, live_row_count=len(g_today_closed)
+                    market,
+                    live_row_count=len(g_today_closed),
+                    data_candle_watermark=_candle_wm_by_market.get(market),
                 )
                 brief = build_practitioner_brief(
                     market=market,
@@ -841,36 +975,13 @@ def _deep_dive_cross_market_isolation_footer(df: pd.DataFrame, market: str) -> s
 
 
 def _resolve_data_candle_watermark(market: str, sys_config: dict) -> Optional[str]:
-    """
-    시장 데이터(벤치마크 캔들) 신선도 워터마크.
+    """시장 데이터(벤치마크 캔들) 신선도 워터마크 — SSOT(report_timekeeper)에 위임.
 
-    'forward 청산 공백'과 '진짜 시장데이터 정체'를 분리하기 위해, 청산 워터마크와
-    무관하게 최신 벤치마크 캔들 날짜(SPY/KOSPI_IDX)를 돌려준다.
-    DB 우선 → 실패 시 FLUID_{KR|US}_ANCHOR_STATE 의 latest_candle 폴백.
+    '청산 공백'과 '진짜 데이터 정체'를 분리하기 위한 단일 해석 경로. 과거 호환 래퍼.
     """
-    mk = str(market or "KR").upper()
-    try:
-        from fluid_time_anchor import (
-            load_kr_kospi_session_from_db,
-            load_spy_session_from_db,
-        )
+    from reports.report_timekeeper import resolve_data_candle_watermark
 
-        db_candle = (
-            load_spy_session_from_db() if mk == "US" else load_kr_kospi_session_from_db()
-        )
-        if db_candle:
-            return str(db_candle)[:10]
-    except Exception:
-        pass
-    try:
-        state = (sys_config or {}).get(f"FLUID_{mk}_ANCHOR_STATE")
-        if isinstance(state, dict):
-            cand = state.get("latest_candle") or state.get("session_date")
-            if cand:
-                return str(cand)[:10]
-    except Exception:
-        pass
-    return None
+    return resolve_data_candle_watermark(market, sys_config)
 
 
 def run_deep_dive_analysis(market='KR'):
