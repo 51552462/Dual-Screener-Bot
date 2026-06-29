@@ -20,6 +20,8 @@ bitget/*.sqlite
 bitget/*.sqlite-shm
 bitget/*.sqlite-wal
 bitget/bitget_meta_governor_state.json
+bitget/bitget_canary_state.json
+bitget/bitget_canary_oi_history.json
 bitget/logs/
 bitget/data/
 
