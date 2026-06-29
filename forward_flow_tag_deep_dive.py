@@ -19,7 +19,7 @@ from reports.forward_report_scalar import col_series, scalar_float
 logger = logging.getLogger(__name__)
 from forward_score_bucket_deep_dive import _exit_date_span
 from reports.report_staleness_gate import StalenessVerdict, evaluate_staleness
-from reports.report_timekeeper import ReportTimekeeper
+from reports.report_timekeeper import ReportTimekeeper, resolve_data_candle_watermark
 
 RegistrySaveFn = Callable[[Dict[str, Any]], Any]
 RegistryLoadFn = Callable[[], Dict[str, Any]]
@@ -334,7 +334,11 @@ def build_flow_tag_snapshot(
     market = str(timekeeper.market).upper()
     today = timekeeper.calendar_today_kst
     if staleness is None:
-        staleness = evaluate_staleness(timekeeper, live_row_count=0)
+        staleness = evaluate_staleness(
+            timekeeper,
+            live_row_count=0,
+            data_candle_watermark=resolve_data_candle_watermark(market, sys_config),
+        )
 
     th = _toxic_thresholds(sys_config)
     min_n = int(th["min_n"])
@@ -585,7 +589,11 @@ def format_flow_tag_report_html(
     rolling_days: Optional[int] = None,
 ) -> str:
     if staleness is None:
-        staleness = evaluate_staleness(timekeeper, live_row_count=0)
+        staleness = evaluate_staleness(
+            timekeeper,
+            live_row_count=0,
+            data_candle_watermark=resolve_data_candle_watermark(timekeeper.market),
+        )
 
     rd = int(rolling_days if rolling_days is not None else timekeeper.rolling_days)
     m_esc = html.escape(str(timekeeper.market), quote=False)

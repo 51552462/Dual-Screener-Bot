@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import sqlite3
 import threading
@@ -41,6 +42,93 @@ _MAX_TRIES = 3
 # 저 RAM / 공인 IP 환경: 업스트림(FDR·yfinance) 동시 연결 폭주로 429·빈 응답·차단 방지
 _MAX_CONCURRENT_UPSTREAM = 2
 _upstream_http_sem = threading.BoundedSemaphore(_MAX_CONCURRENT_UPSTREAM)
+
+
+# ---------------------------------------------------------------------------
+# 업스트림 저하 서킷 브레이커 (2026-06-29)
+# ---------------------------------------------------------------------------
+# [문제] FDR/yfinance 가 429·timeout 으로 흔들리면, 종목마다 3회 재시도(+백오프) ×
+#   2개 네트워크 핸들러를 전부 소진한 뒤에야 로컬 SQLite 로 폴백한다. 2-동시 세마포어와
+#   곱해져 2483종 스캔이 ~57분까지 늘어지고, 글로벌 factory 락을 60분 점유 → 뒤 슬롯 증발.
+#
+# [해결] 프로세스 전역으로 최근 '일시적(transient)' 실패를 센다. 윈도 내 임계 초과 시
+#   cooldown 동안 네트워크 핸들러를 '즉시 빈 응답'으로 단락(short-circuit)시켜, 체인이
+#   곧바로 로컬 SQLite 로 폴백하게 만든다 → 스캔이 빠르게 끝나고 락을 짧게 쥔다.
+#
+# [방어성] 정상일 때는 절대 트립하지 않으므로 동작 불변(네트워크 우선 유지).
+#   장애가 지속될 때만 작동하며 cooldown 후 자동 half-open 복구한다.
+#   끄려면 MARKET_DATA_UPSTREAM_BREAKER=0.
+#
+# [트레이드오프] 트립 시 로컬 SQLite(장중엔 보통 전일 종가까지)로 폴백 → 그 슬롯은
+#   다소 stale 한 데이터로 판정될 수 있다. 단, 현 상태(57분 폭풍+0건+스케줄 붕괴)보다
+#   '빠르게 끝나고 다음 슬롯/2회차에서 신선 데이터 복구'가 운영상 안전하다.
+_BREAKER_LOCK = threading.Lock()
+_breaker_fail_ts: list[float] = []
+_breaker_tripped_until: float = 0.0
+
+
+def _breaker_enabled() -> bool:
+    return str(os.environ.get("MARKET_DATA_UPSTREAM_BREAKER", "1")).strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _breaker_threshold() -> int:
+    try:
+        return max(1, int(os.environ.get("MARKET_DATA_UPSTREAM_BREAKER_FAILS", "40")))
+    except ValueError:
+        return 40
+
+
+def _breaker_window_sec() -> float:
+    try:
+        return max(5.0, float(os.environ.get("MARKET_DATA_UPSTREAM_BREAKER_WINDOW_SEC", "60")))
+    except ValueError:
+        return 60.0
+
+
+def _breaker_cooldown_sec() -> float:
+    try:
+        return max(5.0, float(os.environ.get("MARKET_DATA_UPSTREAM_BREAKER_COOLDOWN_SEC", "120")))
+    except ValueError:
+        return 120.0
+
+
+def _upstream_breaker_tripped() -> bool:
+    """현재 네트워크 핸들러를 단락해야 하는지(쿨다운 중인지)."""
+    if not _breaker_enabled():
+        return False
+    with _BREAKER_LOCK:
+        return time.monotonic() < _breaker_tripped_until
+
+
+def _record_upstream_transient() -> None:
+    """일시적 실패 1건 기록. 윈도 내 임계 초과 시 브레이커 트립(cooldown 설정)."""
+    if not _breaker_enabled():
+        return
+    global _breaker_tripped_until
+    now = time.monotonic()
+    win = _breaker_window_sec()
+    with _BREAKER_LOCK:
+        _breaker_fail_ts.append(now)
+        cutoff = now - win
+        # 윈도 밖 오래된 기록 제거
+        while _breaker_fail_ts and _breaker_fail_ts[0] < cutoff:
+            _breaker_fail_ts.pop(0)
+        if now >= _breaker_tripped_until and len(_breaker_fail_ts) >= _breaker_threshold():
+            _breaker_tripped_until = now + _breaker_cooldown_sec()
+            _breaker_fail_ts.clear()
+            logger.warning(
+                "market_data_fetcher: UPSTREAM BREAKER TRIPPED — "
+                "network handlers short-circuit to SQLite for %.0fs "
+                "(transient failures >= %d within %.0fs)",
+                _breaker_cooldown_sec(),
+                _breaker_threshold(),
+                win,
+            )
 
 # 배치 스캐너용: 청크 단위로 끊어 호출 후 휴지 (IP 레이트리밋·OOM 완화)
 _BATCH_CHUNK_SIZE = 50
@@ -75,7 +163,14 @@ def _retrying_call(
     """
     업스트림 호출. 성공 시 (비어 있지 않은 DF, None).
     재시도 후에도 비어 있거나 예외면 (None, 사유 문자열).
+
+    업스트림 저하 브레이커가 트립된 동안에는 네트워크 핸들러(SQLite 제외)를
+    재시도·백오프·세마포어 없이 즉시 단락(빈 응답)하여 체인이 곧장 SQLite 로 폴백한다.
     """
+    is_network = "SQLite" not in str(label)
+    if is_network and _upstream_breaker_tripped():
+        return None, f"{label}:upstream_breaker_open"
+
     last: Optional[BaseException] = None
     for attempt in range(_MAX_TRIES):
         try:
@@ -88,6 +183,11 @@ def _retrying_call(
             return None, f"{label}:empty_or_invalid_after_{_MAX_TRIES}_tries"
         except Exception as e:
             last = e
+            if is_network and _is_transient_error(e):
+                _record_upstream_transient()
+                # 트립되었으면 남은 재시도를 즉시 포기하고 다음(로컬) 핸들러로.
+                if _upstream_breaker_tripped():
+                    return None, f"{label}:upstream_breaker_open:{type(e).__name__}"
             if _is_transient_error(e) or attempt < _MAX_TRIES - 1:
                 _sleep_backoff(attempt)
                 continue
@@ -218,7 +318,7 @@ def _fetch_sqlite(code: str, market: str, start_date: str, end_date: str) -> pd.
         return pd.DataFrame()
     path = market_db_read_path()
     try:
-        conn = sqlite3.connect(path, timeout=30.0)
+        conn = sqlite3.connect(path, timeout=60.0)
         try:
             low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
             raw = pd.read_sql(f'SELECT * FROM "{table}"', conn)

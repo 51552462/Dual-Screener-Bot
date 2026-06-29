@@ -13,6 +13,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from yf_download_flatten import flatten_yf_download_df
+from low_ram_sqlite_pragmas import apply_busy_timeout
 
 from market_db_paths import MARKET_DATA_DB_PATH, MARKET_DATA_SNAPSHOT_PATH
 
@@ -239,6 +240,7 @@ def update_single_ticker(row, country):
         local_conn = sqlite3.connect(DB_PATH, timeout=30)
         local_conn.execute("PRAGMA journal_mode=WAL;")       # 동시 읽기/쓰기 허용
         local_conn.execute("PRAGMA synchronous=NORMAL;")     # WAL 모드 최적화 (속도 향상)
+        apply_busy_timeout(local_conn)                       # 락 경합 시 60s 대기(증발 방지)
         
         try:
             local_conn.execute(f'DELETE FROM "{table_name}"')
@@ -322,6 +324,7 @@ def kr_benchmark_is_fresh(*, max_lag_business_days: int = 1) -> tuple[bool, str]
         if not os.path.isfile(DB_PATH):
             return False, "no_db"
         conn = sqlite3.connect(DB_PATH, timeout=15)
+        apply_busy_timeout(conn)
         try:
             row = conn.execute(
                 'SELECT Date FROM "KR_KOSPI_IDX" ORDER BY Date DESC LIMIT 1'
@@ -364,6 +367,7 @@ def run_kr_benchmark_refresh(*, force: bool = False) -> dict:
     try:
         bm_conn = sqlite3.connect(DB_PATH, timeout=30)
         bm_conn.execute("PRAGMA journal_mode=WAL;")
+        apply_busy_timeout(bm_conn)
         kr_start = (pd.Timestamp.now() - pd.Timedelta(days=1000)).strftime("%Y-%m-%d")
         for tk, tbl in zip(["069500", "229200"], ["KR_KOSPI_IDX", "KR_KOSDAQ_IDX"]):
             df_temp = None
@@ -451,6 +455,7 @@ def run_us_incremental_db_update(*, force: bool = False) -> dict:
     try:
         bm_conn = sqlite3.connect(DB_PATH, timeout=30)
         bm_conn.execute("PRAGMA journal_mode=WAL;")
+        apply_busy_timeout(bm_conn)
         out["us_benchmarks"] = _update_us_benchmark_indices(bm_conn)
         bm_conn.close()
     except Exception as e:
@@ -480,6 +485,7 @@ def run_daily_db_update():
     try:
         bm_conn = sqlite3.connect(DB_PATH, timeout=30)
         bm_conn.execute("PRAGMA journal_mode=WAL;")
+        apply_busy_timeout(bm_conn)
 
         if not _update_us_benchmark_indices(bm_conn):
             raise RuntimeError("벤치마크 US 지수 yfinance 빈 응답")
@@ -541,6 +547,7 @@ def run_daily_db_update():
     try:
         oc = sqlite3.connect(DB_PATH, timeout=60)
         oc.execute("PRAGMA journal_mode=WAL;")
+        apply_busy_timeout(oc)
         n_drop = cleanup_orphan_tables(oc, us_list, kr_list)
         oc.close()
         n_us = len(us_list) if us_list is not None and not us_list.empty else 0
@@ -572,9 +579,11 @@ def create_read_only_snapshot():
         src = sqlite3.connect(MARKET_DATA_DB_PATH, timeout=60.0)
         try:
             src.execute("PRAGMA journal_mode=WAL;")
+            apply_busy_timeout(src)
             dst = sqlite3.connect(tmp_path, timeout=60.0)
             try:
                 dst.execute("PRAGMA journal_mode=WAL;")
+                apply_busy_timeout(dst)
                 src.backup(dst)
             finally:
                 dst.close()

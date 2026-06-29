@@ -15,7 +15,7 @@ import pytz
 from forward_flow_tag_deep_dive import FlowTagBlock, build_flow_tag_snapshot
 from forward_market_guard import enforce_market_frame
 from reports.report_staleness_gate import evaluate_staleness
-from reports.report_timekeeper import ReportTimekeeper
+from reports.report_timekeeper import ReportTimekeeper, resolve_data_candle_watermark
 from forward_score_bucket_deep_dive import (
     UniversalDnaBlock,
     _assemble_universal_governor_insight,
@@ -166,7 +166,11 @@ def _build_weekly_flow_tag_rollup_inner(
     mkt = str(market).upper()
     tk = _timekeeper_for_weekly_rollup(mkt, today_str)
     scrubbed = enforce_market_frame(df, mkt, context=f"weekly_flow_tag:{mkt}")
-    staleness = evaluate_staleness(tk, live_row_count=0)
+    staleness = evaluate_staleness(
+        tk,
+        live_row_count=0,
+        data_candle_watermark=resolve_data_candle_watermark(mkt, sys_config),
+    )
     snap = build_flow_tag_snapshot(
         scrubbed,
         timekeeper=tk,
