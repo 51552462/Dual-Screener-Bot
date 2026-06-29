@@ -76,6 +76,10 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         "# track */15 (light) · watchdog */5 (light) keep running through stock hours.",
         "# reconcile :53 · data-refresh :43 — off stock :x0/:x5 minutes; data-refresh",
         "# also yields to factory. daily-audit/health/weekly run in the KST-pre-open idle window.",
+        "# canary */15 (light, public API only, no DB/lock): keeps bitget_canary_state.json",
+        "# fresh (<=15min) so the stock regime engine's 90-min staleness gate always passes.",
+        "*/15 * * * *  "
+        + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --canary",
         "*/15 * * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --track-positions",
         "53 * * * *  "

@@ -77,6 +77,7 @@ Usage: bitget/deploy/bitget.sh <flag>
   --weekly-evolution  autonomous tuning / brain surgery
   --reconcile         OMS reconciliation
   --data-refresh      full MTF OHLCV update
+  --canary            export crypto canary state JSON (file bridge → stock regime)
   --gap-heal          WS stale -> REST backfill
   --snapshot          CQRS market DB backup (read replica)
   --record-baseline   save signal + PnL validation baselines
@@ -121,6 +122,7 @@ while [[ $# -gt 0 ]]; do
     --weekly-evolution) MODE="weekly_evolution" ;;
     --reconcile)        MODE="reconcile" ;;
     --data-refresh)     MODE="data_refresh" ;;
+    --canary)           MODE="canary" ;;
     --gap-heal)         MODE="gap_heal" ;;
     --snapshot)         MODE="snapshot" ;;
     --record-baseline)  MODE="record_baseline" ;;
@@ -211,6 +213,13 @@ if [[ "$MODE" == "ws_supervisor" ]]; then
   LOG_FILE="${LOG_DIR}/bitget_ws_${STAMP}.log"
   echo "[bitget.sh] mode=ws_supervisor log=${LOG_FILE}"
   exec python -m bitget.data.ws_supervisor >>"$LOG_FILE" 2>&1
+fi
+
+# canary 선행 레이더: 경량 공개 API 만 사용 → 파이프라인/락 무접촉, 단독 실행(독립 */15 cron).
+if [[ "$MODE" == "canary" ]]; then
+  LOG_FILE="${LOG_DIR}/bitget_canary_${STAMP}.log"
+  echo "[bitget.sh] mode=canary log=${LOG_FILE} TZ=${TZ}"
+  exec python -m bitget.canary_exporter >>"$LOG_FILE" 2>&1
 fi
 
 LOG_FILE="${LOG_DIR}/bitget_${MODE}_${STAMP}.log"

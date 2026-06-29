@@ -19,6 +19,9 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # track */15 (light) · watchdog */5 (light) keep running through stock hours.
 # reconcile :53 · data-refresh :43 — off stock :x0/:x5 minutes; data-refresh
 # also yields to factory. daily-audit/health/weekly run in the KST-pre-open idle window.
+# canary */15 (light, public API only, no DB/lock): keeps bitget_canary_state.json
+# fresh (<=15min) so the stock regime engine's 90-min staleness gate always passes.
+*/15 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --canary
 */15 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --track-positions
 53 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --reconcile
 43 */4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --data-refresh
