@@ -164,6 +164,19 @@ def schedule_lock_state_path() -> str:
     return os.path.join(bitget_data_dir(), "bitget_schedule_lock_state.json")
 
 
+def canary_state_path() -> str:
+    """코인→주식 선행 레이더 산출물(유동성/전염 지표) JSON. 주식측이 read-only 로 흡수."""
+    env = (os.environ.get("BITGET_CANARY_STATE_PATH") or "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    return os.path.join(bitget_data_dir(), "bitget_canary_state.json")
+
+
+def canary_oi_history_path() -> str:
+    """OI 24h 변화율 산출용 경량 링버퍼(거래소 OI 히스토리 미지원 환경 대비)."""
+    return os.path.join(bitget_data_dir(), "bitget_canary_oi_history.json")
+
+
 def runtime_lock_path() -> str:
     return os.path.join(bitget_data_dir(), ".bitget_runtime.lock")
 

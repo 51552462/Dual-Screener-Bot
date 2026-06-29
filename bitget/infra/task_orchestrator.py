@@ -165,6 +165,24 @@ def init_queue(db_path: Optional[str] = None) -> None:
         )
 
 
+class TaskDeferred(Exception):
+    """작업을 '실패'가 아니라 '나중에 다시(대기)' 로 처리하라는 신호.
+
+    executor 가 이 예외를 던지면 process_one 이 attempts 를 소모하지 않고
+    available_in_sec 뒤 PENDING 으로 되돌린다(주식 factory 바쁠 때 코인 대기용).
+    """
+
+    def __init__(self, message: str = "", *, available_in_sec: float = 60.0) -> None:
+        super().__init__(message)
+        self.available_in_sec = max(0.0, float(available_in_sec))
+
+
+def _future_iso(seconds: float) -> str:
+    from datetime import timedelta
+
+    return (datetime.now(_KST) + timedelta(seconds=max(0.0, seconds))).isoformat()
+
+
 def enqueue(
     engine: str,
     mode: str,
@@ -173,6 +191,7 @@ def enqueue(
     priority: Optional[int] = None,
     max_attempts: int = 3,
     dedupe: bool = True,
+    available_in_sec: float = 0.0,
     db_path: Optional[str] = None,
 ) -> Optional[int]:
     """
@@ -180,6 +199,7 @@ def enqueue(
 
     dedupe=True 면 동일 (engine, mode) 가 이미 PENDING/RUNNING 이면 재적재하지 않는다.
     priority 미지정 시 현재 시각 기준 권력 이양 규칙으로 자동 산정.
+    available_in_sec>0 이면 그 시간 뒤부터 픽업 가능(지연 적재).
     반환: 새 task id (dedupe 로 건너뛰면 None).
     """
     eng = str(engine or "").strip().upper()
@@ -195,15 +215,44 @@ def enqueue(
             if row:
                 return None
         now = _now_iso()
+        avail = _future_iso(available_in_sec) if available_in_sec > 0 else now
         cur = conn.execute(
             "INSERT INTO task_queue "
             "(engine, mode, payload, priority, status, attempts, max_attempts, "
             " enqueued_at, available_at) "
             "VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?, ?)",
             (eng, mode, json.dumps(payload or {}, ensure_ascii=False), prio,
-             int(max_attempts), now, now),
+             int(max_attempts), now, avail),
         )
         return int(cur.lastrowid)
+
+
+def defer(
+    task_id: int,
+    *,
+    available_in_sec: float = 60.0,
+    reason: str = "",
+    db_path: Optional[str] = None,
+) -> str:
+    """작업을 attempts 소모 없이 available_in_sec 뒤 PENDING 으로 되돌린다.
+
+    claim_next 가 픽업 시 attempts+1 한 것을 되돌려(−1) 차수를 중립으로 유지한다 →
+    주식 factory 가 바쁜 동안 코인 스캔이 '실패 폐기' 없이 무한정 대기 후 실행되게 한다.
+    반환: 'DEFERRED' | 'MISSING'.
+    """
+    with _raw_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT attempts FROM task_queue WHERE id=?", (int(task_id),)
+        ).fetchone()
+        if row is None:
+            return "MISSING"
+        new_attempts = max(0, int(row["attempts"]) - 1)
+        conn.execute(
+            "UPDATE task_queue SET status='PENDING', available_at=?, attempts=?, "
+            "picked_at=NULL, worker=NULL, last_error=? WHERE id=?",
+            (_future_iso(available_in_sec), new_attempts, str(reason)[:1000], int(task_id)),
+        )
+        return "DEFERRED"
 
 
 def _worker_id() -> str:
@@ -349,6 +398,15 @@ def process_one(
         executor(task)
         complete(task.id, db_path=db_path)
         return "DONE"
+    except TaskDeferred as d:
+        # '실패'가 아니라 '대기 후 재시도' — attempts 소모 없이 PENDING 복귀.
+        defer(
+            task.id,
+            available_in_sec=d.available_in_sec,
+            reason=str(d) or "deferred",
+            db_path=db_path,
+        )
+        return "DEFERRED"
     except Exception as e:  # noqa: BLE001
         state = fail(task.id, f"{type(e).__name__}: {e}", backoff_sec=backoff_sec, db_path=db_path)
         return state

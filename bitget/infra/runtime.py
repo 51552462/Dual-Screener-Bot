@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 SendFn = Callable[[str], None]
 
+
+def _enqueue_on_yield_enabled() -> bool:
+    """[#2] 주식 factory 양보 스킵을 Drop 대신 큐 적재(대기 후 실행)로 전환할지(기본 OFF)."""
+    return str(os.environ.get("BITGET_ENQUEUE_ON_YIELD", "0")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
 BITGET_MODES = frozenset(
     {
         "scan_spot",
@@ -532,6 +542,19 @@ def dispatch_bitget_mode(
             report.skipped_session_detail = skip_reason
             report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
             logger.info("bitget scan skipped (%s): %s", mode, skip_reason)
+            # [#2] 주식 factory 양보(yield)로 인한 스킵이면 Drop 대신 큐 적재(대기 후 실행).
+            #   BITGET_ENQUEUE_ON_YIELD=1 + 큐 워커 가동 시에만 효과(기본 OFF → 동작 불변).
+            #   인라인 cron 경로에서 적재 → 워커가 주식 락 풀린 뒤 픽업. 워커 경로에서
+            #   호출되면 dedupe(현재 RUNNING)로 무해하게 no-op 되고, 워커가 defer 처리한다.
+            if "yield_to_factory" in str(skip_reason) and _enqueue_on_yield_enabled():
+                try:
+                    from bitget.infra.task_orchestrator import ENGINE_BITGET, enqueue
+
+                    qid = enqueue(ENGINE_BITGET, mode)
+                    if qid is not None:
+                        logger.info("bitget yield → enqueued #%s %s (await factory free)", qid, mode)
+                except Exception:
+                    logger.warning("bitget yield enqueue failed (mode=%s)", mode, exc_info=True)
             return report
     except Exception:
         pass
