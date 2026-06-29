@@ -229,6 +229,13 @@ def _step_report_pipeline_hydrate() -> None:
     ensure_bitget_report_pipeline_data()
 
 
+def _step_canary_export() -> None:
+    """코인 선행 레이더 산출 → bitget_canary_state.json 원자적 기록 (data_refresh tail)."""
+    from bitget.canary_exporter import run_canary_export
+
+    run_canary_export()
+
+
 def _step_doomsday_bridge_sync() -> None:
     from bitget.doomsday_bridge import sync_doomsday_to_bitget_config
 
@@ -414,6 +421,8 @@ def _pipeline_data_refresh() -> List[StepSpec]:
         [
             StepSpec("gap_heal", _step_gap_heal, critical=False),
             StepSpec("data_refresh", _step_data_refresh, critical=True),
+            # 선행 레이더: OHLCV 갱신 직후 OI/펀딩/BTC·VIX 로 canary JSON 원자적 기록.
+            StepSpec("canary_export", _step_canary_export, critical=False, delay_after_sec=0.3),
         ]
     )
 

@@ -16,10 +16,30 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 
 # 기본 폴링 간격(초): PENDING 이 없을 때 다음 확인까지 대기.
 DEFAULT_POLL_SEC = 5.0
+# [#2] yield 양보 시 재시도까지 기본 대기(초). 주식 슬롯이 풀리길 기다리는 간격.
+DEFAULT_YIELD_DEFER_BACKOFF_SEC = 60.0
+
+
+def _enqueue_on_yield_enabled() -> bool:
+    """주식 factory 양보 스킵을 Drop 대신 '대기 후 재시도'로 전환할지(기본 OFF)."""
+    return str(os.environ.get("BITGET_ENQUEUE_ON_YIELD", "0")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _yield_defer_backoff_sec() -> float:
+    try:
+        return max(5.0, float(os.environ.get("BITGET_YIELD_DEFER_BACKOFF_SEC", "60")))
+    except ValueError:
+        return DEFAULT_YIELD_DEFER_BACKOFF_SEC
 # 한 번의 drain 에서 연속 처리할 최대 작업 수(폭주 방지·주기적 폴링 복귀).
 DEFAULT_DRAIN_BATCH = 50
 # 실패 작업 재시도까지의 backoff(초).
@@ -64,7 +84,23 @@ def _make_executor(*, skip_telegram: bool, dry_run: bool):
             lock_timeout_sec=lock_timeout,
         )
         logger.info("queue exec done id=%s mode=%s status=%s", task.id, task.mode, report.status_label)
-        # OK / PARTIAL_FAIL(critical ok) / SKIPPED_* → DONE(완료, 재시도 안 함).
+
+        # [#2] 주식 factory 가 바빠 '양보(yield)'로 스킵된 경우: Drop 하지 말고 대기 후 재시도.
+        #   BITGET_ENQUEUE_ON_YIELD=1 일 때만 활성(기본 OFF → 기존 동작 보존).
+        #   attempts 를 소모하지 않는 TaskDeferred 로 신호 → 주식 락 풀리면 순차 실행.
+        if _enqueue_on_yield_enabled():
+            detail = str(report.skipped_session_detail or "")
+            if report.skipped_session and "yield_to_factory" in detail:
+                from bitget.infra.task_orchestrator import TaskDeferred
+
+                backoff = _yield_defer_backoff_sec()
+                logger.info(
+                    "queue defer id=%s mode=%s — yield_to_factory; retry in %.0fs",
+                    task.id, task.mode, backoff,
+                )
+                raise TaskDeferred(detail[:300], available_in_sec=backoff)
+
+        # OK / PARTIAL_FAIL(critical ok) / SKIPPED_*(yield 제외) → DONE(완료, 재시도 안 함).
         # FAIL(critical 실패) → 예외 → 큐 fail()(backoff 재시도 or FAILED).
         if report.status_label == "FAIL":
             raise RuntimeError(f"{task.mode} -> FAIL")
