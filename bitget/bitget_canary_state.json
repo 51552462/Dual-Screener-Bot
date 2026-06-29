@@ -1,0 +1,25 @@
+{
+  "schema": "bitget_canary.v1",
+  "updated_at": "2026-06-29T08:43:07.113239+00:00",
+  "crypto_liquidity_stress": 0.0,
+  "macro_contagion_risk": false,
+  "components": {
+    "oi_total_usdt": 1688235997.14,
+    "oi_total_24h_change_pct": null,
+    "oi_change_source": null,
+    "avg_funding_rate": 7.9e-05,
+    "btc_ret_3d": -0.004,
+    "vix_3d_change": null,
+    "macro_up": false,
+    "oi_drop_component": 0.0,
+    "funding_neg_component": 0.0,
+    "symbols_used": [
+      "ETH/USDT:USDT",
+      "SOL/USDT:USDT",
+      "VELVET/USDT:USDT",
+      "XRP/USDT:USDT",
+      "SKHYNIX/USDT:USDT"
+    ]
+  },
+  "source": "bitget_canary_exporter"
+}
