@@ -130,6 +130,43 @@ def previous_business_day(d: date, *, market: str) -> date:
     return p
 
 
+def resolve_data_candle_watermark(
+    market: str, sys_config: Optional[dict] = None
+) -> Optional[str]:
+    """시장 데이터(벤치마크 캔들) 신선도 워터마크 — '청산 공백'과 '진짜 데이터 정체' 분리용 SSOT.
+
+    청산 워터마크와 무관하게 최신 벤치마크 캔들 날짜(SPY/KOSPI_IDX)를 돌려준다.
+    DB(세션) 우선 → 실패 시 FLUID_{KR|US}_ANCHOR_STATE.latest_candle 폴백 → None.
+
+    모든 staleness gate 호출부가 이 함수를 공유해야 한 곳만 고치고 다른 곳이 누락되는
+    오탐(예: 실무자 리포트 RED 오탐)을 원천 차단한다. fluid_time_anchor 는 순환참조 회피
+    위해 함수 내부에서 지연 import.
+    """
+    mk = str(market or "KR").upper()
+    try:
+        from fluid_time_anchor import (
+            load_kr_kospi_session_from_db,
+            load_spy_session_from_db,
+        )
+
+        db_candle = (
+            load_spy_session_from_db() if mk == "US" else load_kr_kospi_session_from_db()
+        )
+        if db_candle:
+            return str(db_candle)[:10]
+    except Exception:
+        pass
+    try:
+        state = (sys_config or {}).get(f"FLUID_{mk}_ANCHOR_STATE")
+        if isinstance(state, dict):
+            cand = state.get("latest_candle") or state.get("session_date")
+            if cand:
+                return str(cand)[:10]
+    except Exception:
+        pass
+    return None
+
+
 def business_lag_days(watermark: Optional[str], anchor: str, *, market: str) -> int:
     """워터마크가 anchor보다 몇 영업일 뒤처졌는지 (0=동일 또는 최신)."""
     if not watermark or not anchor:

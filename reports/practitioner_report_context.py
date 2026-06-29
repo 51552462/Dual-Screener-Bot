@@ -111,9 +111,21 @@ class PractitionerReportContext:
             f"읽기 <b>{html.escape(self.read_source_label)}</b>\n"
         )
 
-    def staleness_banner_html(self, market: str, *, live_row_count: int) -> str:
+    def staleness_banner_html(
+        self,
+        market: str,
+        *,
+        live_row_count: int,
+        data_candle_watermark: Optional[str] = None,
+    ) -> str:
+        # 캔들 워터마크를 함께 전달해야 '청산 공백(보유 지속)'과 '진짜 데이터 정체'를
+        # 분리할 수 있다(미전달 시 캔들 신선 여부 미상 → 보수적으로 RED 가능).
         tk = self.timekeeper_for(market)
-        verdict = evaluate_staleness(tk, live_row_count=live_row_count)
+        verdict = evaluate_staleness(
+            tk,
+            live_row_count=live_row_count,
+            data_candle_watermark=data_candle_watermark,
+        )
         if verdict.grade == "GREEN":
             return ""
         return verdict.banner_html

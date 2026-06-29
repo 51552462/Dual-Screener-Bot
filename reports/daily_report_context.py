@@ -15,7 +15,12 @@ import pytz
 from forward_dual_track_queries import query_latest_closed_trade_date
 from market_db_paths import report_db_read_path, report_read_source_label
 from report_date_utils import closed_event_dates, in_date_window, normalize_date_series
-from reports.report_timekeeper import ReadSource, ReportTimekeeper, business_lag_days
+from reports.report_timekeeper import (
+    ReadSource,
+    ReportTimekeeper,
+    business_lag_days,
+    resolve_data_candle_watermark,
+)
 
 _KR_TZ = pytz.timezone("Asia/Seoul")
 
@@ -125,12 +130,29 @@ class DailyReportContext:
         )
 
     def data_integrity_banner_html(self) -> str:
-        """🚨 능동 경보 배너 — lag≥2 또는 data_health_warnings 발생 시 최상단 강제 출력."""
-        lag_kr = self.lag_for("KR")
-        lag_us = self.lag_for("US")
+        """🚨 능동 경보 배너 — '진짜' 데이터 갱신 지연 또는 data_health_warnings 발생 시 최상단 출력.
+
+        핵심: 청산 워터마크 lag≥2 라도 시장캔들이 신선하면 '보유 지속·무청산'일 뿐 데이터
+        정체가 아니다(staleness gate 와 동일 분리). 캔들도 지연(또는 미상)인 시장만 경보한다.
+        """
         problems: List[str] = []
-        if max(lag_kr, lag_us) >= 2:
-            problems.append(f"데이터 갱신 지연 (Lag: KR {lag_kr} / US {lag_us})")
+        stale_bits: List[str] = []
+        for mk in ("KR", "US"):
+            lag = self.lag_for(mk)
+            if lag < 2:
+                continue
+            tk = self.timekeeper_for(mk)
+            candle = resolve_data_candle_watermark(mk)
+            candle_lag = (
+                business_lag_days(candle, tk.session_anchor, market=mk)
+                if candle
+                else None
+            )
+            data_fresh = candle_lag is not None and candle_lag <= 1
+            if not data_fresh:
+                stale_bits.append(f"{mk} {lag}")
+        if stale_bits:
+            problems.append("데이터 갱신 지연 (Lag: " + " / ".join(stale_bits) + ")")
         for w in self.data_health_warnings:
             problems.append(html.escape(str(w), quote=False))
         if not problems:
