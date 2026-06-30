@@ -36,6 +36,30 @@ OI_HISTORY_MAX_AGE_SEC = 26 * 3600
 OI_LOOKBACK_TARGET_SEC = 24 * 3600
 OI_LOOKBACK_TOLERANCE_SEC = 3 * 3600   # 24h±3h 범위의 과거 포인트로 비교
 
+# ── 비-크립토 네이티브 자산 제외(코인 유동성 스트레스 신호 오염원) ────────────
+# 거래대금 상위 동적 선정에 끼어들면 신호를 왜곡하므로 base 기준으로 거른다.
+#   · 금속/원자재: 위험회피 자산 → 코인 급락 시 역방향 → 스트레스 희석
+#   · 토큰화 주식/지수/RWA: 주식과 동조 → "코인으로 주식 예측"의 순환논리(circularity)
+#   · 스테이블/법정화폐: 변동 신호 없음
+# 운영 중 새 RWA 가 상위에 끼면 CANARY_EXCLUDE_BASES="FOO,BAR" 로 코드수정 없이 확장.
+_NON_CRYPTO_BASES = frozenset({
+    "XAU", "XAG", "XPT", "XPD", "XAUT", "PAXG",          # 귀금속 / 금토큰(RWA)
+    "WTI", "OIL", "USOIL", "UKOIL", "BRENT",             # 원유
+    "NGAS", "NATGAS", "COPPER",                          # 기타 원자재
+    "USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE",      # 스테이블
+    "USDD", "PYUSD", "USD1", "EUR", "GBP", "JPY",        # 스테이블 / 법정화폐
+    "SPCX",                                              # 사전IPO·토큰화 주식(예: SpaceX)
+})
+
+
+def _excluded_bases() -> frozenset:
+    """기본 비-크립토 denylist + 환경변수 확장(CANARY_EXCLUDE_BASES, 콤마구분)."""
+    extra = (os.environ.get("CANARY_EXCLUDE_BASES") or "").strip()
+    if not extra:
+        return _NON_CRYPTO_BASES
+    add = {b.strip().upper() for b in extra.split(",") if b.strip()}
+    return _NON_CRYPTO_BASES | add
+
 
 def _clip01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
@@ -82,14 +106,15 @@ def _top_alt_swaps(n: int = TOP_N_ALTS) -> List[str]:
 
     rows: List[Tuple[str, float]] = []
     markets = getattr(ex, "markets", {}) or {}
+    excluded = _excluded_bases()
     for sym, t in (tickers or {}).items():
         try:
             m = markets.get(sym) or {}
-            # USDT 선형 무기한 스왑만, BTC 제외
+            # USDT 선형 무기한 스왑만, BTC·비-크립토(금속/원자재/토큰화주식/스테이블) 제외
             if not (m.get("swap") and m.get("linear") and str(m.get("quote")) == "USDT"):
                 continue
             base = str(m.get("base") or "").upper()
-            if not base or base == "BTC":
+            if not base or base == "BTC" or base in excluded:
                 continue
             qv = t.get("quoteVolume")
             if qv is None and isinstance(t.get("info"), dict):
