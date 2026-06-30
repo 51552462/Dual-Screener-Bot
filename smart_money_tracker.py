@@ -479,6 +479,37 @@ def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Option
     return num / den
 
 
+def _persist_investor_flow_timeseries(trade_dates: List[str]) -> None:
+    """[P0-1] 단일거래일 외인+기관 순매수 리더보드를 일별 시계열(kr_investor_flow)로 영속화.
+
+    최근 5영업일 중 미적재분만 백필 → 5일 누적 모멘텀/다이버전스 팩터가 콜드스타트 없이
+    가동된다. 전부 방어적(pykrx 부재/실패 시 조용히 스킵, 기존 라다 산출에 무영향).
+    """
+    if not trade_dates:
+        return
+    try:
+        from kr_flow_factor import existing_flow_dates, persist_daily_flow
+    except Exception as ex:
+        print(f"⚠️ [수급 시계열] 모듈 로드 실패 — 적재 스킵: {ex}")
+        return
+    try:
+        have = existing_flow_dates()
+        recent = trade_dates[-5:]
+        total = 0
+        for d in recent:
+            d_norm = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+            if d_norm in have:
+                continue
+            acc, ok = _try_pykrx_flow_leaderboard(d, d, per_market_head=200)
+            if not ok or not acc:
+                continue
+            total += persist_daily_flow(d_norm, acc)
+        if total:
+            print(f"🗄️ [수급 시계열] kr_investor_flow 적재/갱신: {total}행 (최근 {len(recent)}영업일 백필)")
+    except Exception as ex:
+        print(f"⚠️ [수급 시계열] 적재 스킵(비치명적): {ex}")
+
+
 def run_smart_money_tracker():
     print("🕵️ [스마트 머니 레이더] 외인·기관 실제 순매수(상위 랭킹) + 가격 다이버전스 스캔 중...")
 
@@ -605,6 +636,35 @@ def run_smart_money_tracker():
             "⚠️ 오늘 조건을 만족하는 외인·기관 매집 다이버전스 0건 — "
             "SMART_MONEY_RADAR 를 no_smart_money_today 로 명시 초기화했습니다."
         )
+
+    # [P0-1] 라다 JSON 산출과 독립적으로, 외인+기관 순매수를 일별 시계열로 영속화한다.
+    # (진입 관문 try_add_virtual_position 의 '수급 모멘텀/다이버전스' 가산 팩터 소비원)
+    _persist_investor_flow_timeseries(trade_dates)
+
+    # [P1-4] 같은 KR 일일 잡에 공매도/대차잔고 시계열 백필을 피기백(별도 크론 불필요).
+    #   (진입 관문의 '숏스퀴즈 가산 / 크라우디드 숏 경계' 팩터 소비원). 전부 방어적.
+    try:
+        from short_interest_fetcher import backfill_recent as _backfill_short
+
+        _backfill_short()
+    except Exception as ex:
+        print(f"⚠️ [공매도 시계열] 백필 스킵(비치명적): {ex}")
+
+    # [P1-3a] 펀더멘털(PER/PBR/EPS/BPS) 스냅샷 백필 — 키 불필요(pykrx). 진입 가치·퀄리티 교차검증.
+    try:
+        from fundamentals_fetcher import backfill_recent as _backfill_fund
+
+        _backfill_fund()
+    except Exception as ex:
+        print(f"⚠️ [펀더멘털] 백필 스킵(비치명적): {ex}")
+
+    # [P1-3b] DART 공시 이벤트 백필 — OPENDART_API_KEY 있을 때만 동작(없으면 no-op).
+    try:
+        from dart_fetcher import backfill_recent as _backfill_dart
+
+        _backfill_dart()
+    except Exception as ex:
+        print(f"⚠️ [DART] 백필 스킵(비치명적): {ex}")
 
 
 # =============================================================================

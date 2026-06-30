@@ -39,6 +39,85 @@ def _verify_deep_dive_private_bindings() -> None:
 _verify_deep_dive_private_bindings()
 
 
+def _risk_dashboard_html(df_closed, market: str, market_icon: str) -> str:
+    """[P0-3] 위험조정 성과 대시보드 — Sharpe/Sortino/Calmar/MDD/최대연속손실 + 수익귀속.
+
+    청산 트레이드 원장(df_closed)에서만 산출되는 **리포팅 전용** 패널. 표본<5건이면 빈
+    문자열(스킵). 예외/데이터부족 시에도 호출부가 try-except 로 감싸 무해하게 진행.
+    """
+    try:
+        from reports.forward_report_scalar import (
+            attribution_table,
+            risk_adjusted_metrics,
+        )
+    except Exception:
+        return ""
+    if df_closed is None or getattr(df_closed, "empty", True):
+        return ""
+
+    try:
+        m = risk_adjusted_metrics(df_closed)
+    except Exception:
+        return ""
+    if int(m.get("n", 0)) < 5:
+        return ""
+
+    def _f(v, dec=2, signed=False):
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            x = 0.0
+        return f"{x:+.{dec}f}" if signed else f"{x:.{dec}f}"
+
+    html = (
+        f"{market_icon} <b>[리스크 대시보드] 위험조정 성과</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"청산 <b>{int(m['n'])}건</b> · 기간 {int(m['span_days'])}일 "
+        f"(연환산 {_f(m['trades_per_year'],1)}건/년)\n"
+        f"📐 <b>샤프 {_f(m['sharpe'])}</b> · 소르티노 {_f(m['sortino'])} · "
+        f"칼마 {_f(m['calmar'])}\n"
+        f"📈 누적 {_f(m['total_return_pct'],1,True)}% · CAGR {_f(m['cagr_pct'],1,True)}% · "
+        f"MDD {_f(m['mdd_pct'],1)}%\n"
+        f"🎯 승률 {_f(m['win_rate'],1)}% · PF {_f(m['pf'])} · "
+        f"최대연속손실 {int(m['max_consec_losses'])}회\n"
+        f"🌊 일변동성 {_f(m['daily_vol_pct'])}% · 수익표준편차 {_f(m['std_ret_pct'])}%\n"
+    )
+
+    def _attr_block(title: str, rows) -> str:
+        if not rows:
+            return ""
+        out = f"\n<b>{title}</b>\n"
+        for r in rows[:5]:
+            key = html_escape(str(r.get("key", ""))[:18], quote=False)
+            out += (
+                f"• {key}: 기여 {_f(r['contribution_pct'],1,True)}% "
+                f"(평균 {_f(r['mean_ret_pct'],1,True)}% · {int(r['n'])}건 · "
+                f"승{_f(r['win_rate'],0)}%)\n"
+            )
+        return out
+
+    try:
+        html += _attr_block("🏷️ 섹터별 수익귀속", attribution_table(df_closed, "sector"))
+    except Exception:
+        pass
+    try:
+        html += _attr_block(
+            "⚙️ 전략별 수익귀속",
+            attribution_table(df_closed, "sig_type", derive_strategy=True),
+        )
+    except Exception:
+        pass
+    try:
+        if "entry_regime" in getattr(df_closed, "columns", []):
+            html += _attr_block(
+                "🧭 국면별 수익귀속", attribution_table(df_closed, "entry_regime")
+            )
+    except Exception:
+        pass
+
+    return html
+
+
 def _canary_hedge_stance_html(market_icon: str, market: str) -> str:
     """[🚀 100% 가동중] 코인 카나리아 헷지 스탠스 — 파일 기반(무DB락) 실시간 흡수 상태.
 
@@ -709,6 +788,17 @@ def send_comprehensive_daily_report(
                 send_telegram_msg(
                     f"<i>⚠️ [코인 카나리아 · {market}] 스킵: "
                     f"{html_escape(str(_can_ex)[:72], quote=False)}</i>"
+                )
+
+            # 📐 [P0-3] 위험조정 성과 대시보드 — Sharpe/Sortino/Calmar/MDD + 수익귀속
+            try:
+                _risk_html = _risk_dashboard_html(df_closed, market, market_icon)
+                if _risk_html:
+                    send_telegram_msg(_risk_html); time.sleep(1)
+            except Exception as _risk_ex:
+                send_telegram_msg(
+                    f"<i>⚠️ [리스크 대시보드 · {market}] 스킵: "
+                    f"{html_escape(str(_risk_ex)[:72], quote=False)}</i>"
                 )
 
             conn.close()

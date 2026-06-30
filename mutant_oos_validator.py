@@ -362,6 +362,13 @@ def run_oos_validation(
         oos_ar = float(np.mean(np.array(all_r)))
         excess_alpha = oos_ar - baseline
         n_sig = int(len(all_r))
+        # [P2-1] 챔피언별 OOS Sharpe(per-signal) 기록 → 이후 다중검정(DSR) 보정에 사용.
+        try:
+            _arr = np.asarray(all_r, dtype=float)
+            _sd = float(np.std(_arr, ddof=1)) if _arr.size >= 2 else 0.0
+            oos_sharpe = float(np.mean(_arr) / _sd) if _sd > 1e-12 else 0.0
+        except Exception:
+            oos_sharpe = 0.0
         # [Mission 5] 합격 = 실데이터 베이스라인 대비 초과 알파 + 최소 승률 + 최소 표본.
         passed = (
             excess_alpha > PROMOTE_MIN_EXCESS_ALPHA
@@ -378,13 +385,64 @@ def run_oos_validation(
             "oos_avg_return": round(oos_ar, 8),
             "oos_baseline_drift": round(baseline, 8),
             "oos_excess_alpha": round(excess_alpha, 8),
+            "oos_sharpe": round(oos_sharpe, 6),
+            "_oos_returns": all_r,  # DSR 보정용 임시(페이로드 직전 제거)
             "n_signals": n_sig,
             "n_tickers_used": len(frames_by_key),
             "pass": passed,
         }
         summaries.append(rec)
-        if passed:
-            row = {k: v for k, v in rec.items() if k != "pass"}
+
+    # [P2-1] 다중검정 보정(Deflated Sharpe) — 전 챔피언 OOS 수익률을 '시도(trials)'로 보고
+    # 각 챔피언의 DSR(우연한 최대샤프 임계 초과확률)을 주석. OOS_DSR_MIN>0 일 때만 승격 게이트로
+    # 작동(기본 0=보고만 → 라이브 무영향). 실패해도 기존 합격 로직 유지.
+    try:
+        from validation import walk_forward as _wf
+
+        _series = [
+            np.asarray(r.get("_oos_returns"), dtype=float)
+            for r in summaries
+            if r.get("_oos_returns") and len(r.get("_oos_returns")) >= 2
+        ]
+        n_trials = len(_series)
+        if n_trials >= 2:
+            _srs = [_wf.sharpe_ratio(s) for s in _series]
+            _sr_var = float(np.var(np.asarray(_srs), ddof=1))
+            for r in summaries:
+                rr = r.get("_oos_returns")
+                if not rr or len(rr) < 2:
+                    r["oos_dsr"] = None
+                    continue
+                arr = np.asarray(rr, dtype=float)
+                _sk, _ku = _wf._skew_kurt(arr)
+                _d = _wf.deflated_sharpe_ratio(
+                    _wf.sharpe_ratio(arr),
+                    sr_variance_trials=_sr_var,
+                    n_trials=n_trials,
+                    n_samples=int(arr.size),
+                    skew=_sk,
+                    kurt=_ku,
+                )
+                r["oos_dsr"] = round(_d["dsr"], 6)
+        try:
+            _dsr_min = float(os.environ.get("OOS_DSR_MIN", "0") or "0")
+        except (TypeError, ValueError):
+            _dsr_min = 0.0
+        if _dsr_min > 0:
+            for r in summaries:
+                if r.get("pass") and (
+                    r.get("oos_dsr") is None or float(r.get("oos_dsr") or 0.0) < _dsr_min
+                ):
+                    r["pass"] = False
+                    r["reason"] = f"dsr<{_dsr_min}"
+    except Exception as _dsr_ex:
+        print(f"⚠️ [DSR] 다중검정 보정 스킵(비치명적): {_dsr_ex}")
+
+    # 승격 목록 재구성(DSR 게이트 반영) + 임시 필드(_oos_returns) 제거
+    for r in summaries:
+        r.pop("_oos_returns", None)
+        if r.get("pass"):
+            row = {k: v for k, v in r.items() if k != "pass"}
             row["validated_at"] = datetime.now(timezone.utc).isoformat()
             promoted.append(row)
 

@@ -1687,6 +1687,92 @@ def try_add_virtual_position(
     except Exception:
         pass
     
+    # 🚀 [P0-1 스마트 수급 가산] KR 한정 — 최근 5일 외인+기관 누적 순매수(모멘텀) 및
+    # 수급 다이버전스(주가 횡보 + 매집 증가)가 강하면 진입 스코어를 가산해 컷오프를 완화한다.
+    #   · 전부 방어적: kr_investor_flow 테이블/데이터 부재 시 bonus=0 → 기존 점수 그대로.
+    #   · score 가산은 아래 10점 버킷·이후 켈리 스케일에 자연 반영(별도 엔진 훼손 없음).
+    flow_entry_tag = ""
+    if str(market or "").upper() == "KR":
+        try:
+            from kr_flow_factor import get_flow_score
+
+            _flow = get_flow_score(code_str)
+            _flow_bonus = float(_flow.get("bonus", 0.0) or 0.0)
+            if _flow.get("found") and _flow_bonus > 0:
+                try:
+                    score = float(score) + _flow_bonus
+                except (TypeError, ValueError):
+                    pass
+                _div = float(_flow.get("divergence", 0.0) or 0.0)
+                _tag = "수급다이버전스" if _div >= 0.4 else "수급모멘텀"
+                flow_entry_tag = f" #{_tag}(+{_flow_bonus:.1f})"
+        except Exception as _flow_ex:
+            print(f"⚠️ [수급 가산] 스킵(중립 진행): {_flow_ex}")
+
+    # 🩳 [P1-4 공매도 팩터] KR 한정 — 숏스퀴즈 후보(공매도 비중 급감+주가 반등) 가산,
+    # 크라우디드 숏(공매도 비중 급증) 경계 감점. 상한가/슈퍼노바 전략과 시너지.
+    #   · 데이터/테이블 부재 시 net=0 → 점수 무변동. tag 는 sig_type 확정 후 병합.
+    if str(market or "").upper() == "KR":
+        try:
+            from short_interest_fetcher import get_short_score
+
+            _si = get_short_score(code_str)
+            if _si.get("found"):
+                _net = float(_si.get("net", 0.0) or 0.0)
+                if abs(_net) > 1e-9:
+                    try:
+                        score = float(score) + _net
+                    except (TypeError, ValueError):
+                        pass
+                    if _si.get("squeeze"):
+                        flow_entry_tag += f" #숏스퀴즈(+{float(_si.get('bonus',0.0)):.1f})"
+                    elif _si.get("crowded"):
+                        flow_entry_tag += f" #크라우디드숏(-{float(_si.get('penalty',0.0)):.1f})"
+        except Exception as _si_ex:
+            print(f"⚠️ [공매도 팩터] 스킵(중립 진행): {_si_ex}")
+
+    # 📚 [P1-3a 펀더멘털 교차검증] KR 한정 — 저평가(저PBR/적정PER)+흑자/고ROE 가산,
+    # 적자/거품(고PBR) 경계. 기술적 신호와 멀티팩터 교차검증(부실주 급등 함정 회피). 키 불필요.
+    if str(market or "").upper() == "KR":
+        try:
+            from fundamentals_fetcher import get_fundamental_score
+
+            _fd = get_fundamental_score(code_str)
+            if _fd.get("found"):
+                _fnet = float(_fd.get("net", 0.0) or 0.0)
+                if abs(_fnet) > 1e-9:
+                    try:
+                        score = float(score) + _fnet
+                    except (TypeError, ValueError):
+                        pass
+                    if _fnet > 0:
+                        flow_entry_tag += f" #펀더가치(+{_fnet:.1f})"
+                    else:
+                        flow_entry_tag += f" #펀더경계({_fnet:.1f})"
+        except Exception as _fd_ex:
+            print(f"⚠️ [펀더멘털 팩터] 스킵(중립 진행): {_fd_ex}")
+
+    # 📰 [P1-3b DART 공시 교차검증] KR 한정 — 최근 호재(자사주/공급계약/흑자전환) 가산,
+    # 악재(증자·CB·감자·횡령/배임·감사비적정) 경계. OPENDART_API_KEY 없으면 이벤트 0 → 무영향.
+    if str(market or "").upper() == "KR":
+        try:
+            from dart_fetcher import get_dart_event_score
+
+            _dt = get_dart_event_score(code_str)
+            if _dt.get("found"):
+                _dnet = float(_dt.get("net", 0.0) or 0.0)
+                if abs(_dnet) > 1e-9:
+                    try:
+                        score = float(score) + _dnet
+                    except (TypeError, ValueError):
+                        pass
+                    if _dnet > 0:
+                        flow_entry_tag += f" #공시호재(+{_dnet:.1f})"
+                    else:
+                        flow_entry_tag += f" #공시악재({_dnet:.1f})"
+        except Exception as _dt_ex:
+            print(f"⚠️ [DART 팩터] 스킵(중립 진행): {_dt_ex}")
+
     # 💡 [V13.0 가상매매] 10점 단위 정밀 버킷 생성 (예: 85점 -> 80점대)
     score_bucket = int(score // 10) * 10
     if score_bucket >= 100: score_bucket = 90 # 100점은 90점대 최상위 티어로 병합
@@ -1763,6 +1849,9 @@ def try_add_virtual_position(
 
     # 시그널 타입에 트랙 태그(편대/정찰) 병합하여 기록
     sig_type = f"[{trade_source}] {sig_type} {track_tag}"
+    # [P0-1] 수급 가산이 적용됐으면 장부에 박제(브래킷 없는 #태그 → core_group_name 추출 무영향)
+    if flow_entry_tag:
+        sig_type += flow_entry_tag
 
     # 👇👇 [수정] V34.0 DTW 투트랙 + V35.0 동적 커트라인 자율 매칭 👇👇
     max_alpha_cos, min_alpha_dtw = 0.0, 99.0
@@ -2167,7 +2256,56 @@ def try_add_virtual_position(
                         kelly_risk_pct *= float(_bandit_mult)
                 except Exception:
                     pass
-                
+
+                # 🛡️ [P1-1 상관관계 캡] 현재 OPEN 포지션들과 신규 후보의 60일 수익률 상관이
+                # 0.7 이상이면 집중 리스크 → 켈리 비중 0.5배 축소(거부 대신 방어적 축소).
+                #   · 읽기 전용(KR_/US_ 일봉)·데이터 부족 시 무충돌로 수렴 → 켈리 무영향.
+                try:
+                    from portfolio_risk_overlay import (
+                        check_portfolio_correlation,
+                        corr_kelly_mult,
+                    )
+
+                    cursor.execute(
+                        "SELECT code FROM forward_trades WHERE market=? AND status='OPEN'",
+                        (market,),
+                    )
+                    _open_codes = [r[0] for r in cursor.fetchall() if r and r[0]]
+                    _corr = check_portfolio_correlation(
+                        conn, market, code_str, _open_codes
+                    )
+                    if _corr.get("conflict"):
+                        _cm = float(corr_kelly_mult())
+                        kelly_risk_pct *= _cm
+                        _mx = float(_corr.get("max_corr", 0.0) or 0.0)
+                        sig_type += f" #상관캡(ρ{_mx:.2f}x{_cm:g})"
+                        print(
+                            f"🛡️ [상관관계 캡] {market} {code_str}: "
+                            f"{_corr.get('reason', '')} → 켈리 ×{_cm:g}"
+                        )
+                except Exception as _corr_ex:
+                    print(f"⚠️ [상관관계 캡] 스킵(중립 진행): {_corr_ex}")
+
+                # 🌊 [P1-2 변동성 타게팅] 현재 OPEN 북의 실현 변동성으로 전역 켈리 배수 스케일링
+                #   (σ_target/σ_realized, [0.5,1.5] 클램프). 변동성 급등기 자동 디그로싱.
+                #   · 읽기 전용·포지션<2/데이터부족 시 scalar=1.0 → 무영향. 상방은 포지션 비중
+                #     캡(effective_max_position_pct)이 추가로 막아 폭주 불가.
+                try:
+                    from portfolio_risk_overlay import portfolio_vol_target_scalar
+
+                    _vt = portfolio_vol_target_scalar(conn, market)
+                    _vt_s = float(_vt.get("scalar", 1.0) or 1.0)
+                    if abs(_vt_s - 1.0) > 1e-6:
+                        kelly_risk_pct *= _vt_s
+                        _rv = float(_vt.get("realized_vol", 0.0) or 0.0)
+                        sig_type += f" #변동성타게팅(x{_vt_s:g})"
+                        print(
+                            f"🌊 [변동성 타게팅] {market}: 실현σ {_rv*100:.1f}% / "
+                            f"목표 {float(_vt.get('target_vol',0.0))*100:.0f}% → 켈리 ×{_vt_s:g}"
+                        )
+                except Exception as _vt_ex:
+                    print(f"⚠️ [변동성 타게팅] 스킵(중립 진행): {_vt_ex}")
+
                 # 2. 해당 그룹(로직)이 지금까지 벌어들인 누적 수익금 계산 (실현 손익)
                 cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
                 realized_pnl = cursor.fetchone()[0]

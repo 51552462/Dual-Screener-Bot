@@ -1168,6 +1168,16 @@ class MetaGovernor:
         action_template = dict(ACTION_BY_REGIME.get(rk, ACTION_BY_REGIME["UNKNOWN"]))
         base_ra = {**default_meta_state()["META_REGIME_ACTION"], **action_template}
         base_ra["notes"] = (note or "").strip()
+        # [P2-2] 국면별 kelly_cap 자가조정 + floor 도입(기본 OFF). META_KELLY_LEARN_ENABLED=1
+        # 일 때만 실현 Sharpe 로 cap 을 0.5~1.5× 클램프 조정하고 floor 를 부여(0 락아웃 방지).
+        # 비활성/데이터부족/오류 시 제자리 무변경 → 기존 하드코딩 동작과 완전 동일(라이브 무영향).
+        try:
+            from regime_kelly_learner import overlay_action_for_regime
+
+            fdb = getattr(self._ctx, "forward_db_path", None) if self._ctx else None
+            overlay_action_for_regime(rk, base_ra, fdb)
+        except Exception:
+            pass
         self._working["META_REGIME_ACTION"] = base_ra
 
     # --- 5 Lifecycle (Discovery · Hard Gate LIVE · Whipsaw · Alpha TTL) ---

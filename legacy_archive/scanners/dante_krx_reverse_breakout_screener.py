@@ -417,7 +417,41 @@ def scan_market_1d():
                         enabled=SEND_TELEGRAM,
                         send_profile="html_ro",
                     )
-           
+
+                    # 🛠️ [결함 수정] DANTE(역매공파) 시그널을 가상매매 원장에 기록 — 그동안 텔레그램
+                    # 발송만 하고 try_add_virtual_position 호출이 누락돼 성과 추적/켈리/국면 학습에서
+                    # 통째로 빠져 있었다. 모든 공통 관문(둠스데이·안티패턴·수급가산·상관캡)을 그대로 통과.
+                    try:
+                        import auto_forward_tester as aft
+
+                        try:
+                            _marcap_eok = float(row.get("Marcap", 0) or 0) / 1e8
+                        except Exception:
+                            _marcap_eok = 0.0
+                        _dante_facts = {
+                            "marcap_eok": _marcap_eok,
+                            "p_count": dbg.get("p_count", 0),
+                        }
+                        # trust_score(0~10) → 가상매매 점수 스케일(0~100)로 환산
+                        try:
+                            _dante_score = min(100.0, float(dbg.get("score", 0) or 0) * 10.0)
+                        except (TypeError, ValueError):
+                            _dante_score = 0.0
+                        _ok, _fwd_msg = aft.try_add_virtual_position(
+                            market="KR",
+                            code=code,
+                            name=name,
+                            sig_type=dbg.get("sig_type", "P (역매공파)"),
+                            score=_dante_score,
+                            ep=float(dbg.get("last_close", 0) or 0),
+                            facts=_dante_facts,
+                            sector=sector_info,
+                            trade_source="DANTE",
+                        )
+                        print(f"   ↳ [DANTE 장부]: {_fwd_msg}")
+                    except Exception as _dante_fwd_ex:
+                        print(f"   ↳ [DANTE 장부 에러]: {_dante_fwd_ex}")
+
                     print(f"\n✅ [{name}] 본캐 1개 + 홍보용 1개 (총 2개) 전송 대기열 추가 완료!")
         except Exception as e:
             pass

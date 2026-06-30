@@ -828,6 +828,137 @@ def _pri_z_by_market() -> Dict[str, Optional[float]]:
     return out
 
 
+def _fetch_vkospi() -> Tuple[Optional[float], Optional[float]]:
+    """[국지화] KR 전용 변동성(VKOSPI) 최근값 + 60d p90. 수집 실패 시 (None, None) →
+    호출부가 글로벌 VIX 로 폴백(기존 동작, 무회귀). 여러 소스를 방어적으로 시도한다.
+
+    VKOSPI 는 VIX 와 동일 스케일대(대략 15~30)라 기존 VIX_MID/SCALE 변환을 그대로 재사용한다.
+    """
+    # 1) pykrx — VKOSPI 지수(코드 '1009': 코스피 변동성지수). 환경 부재/오류 시 조용히 폴백.
+    #    pykrx 내부의 stdout 에러 출력(로그인 실패 등)을 삼켜 일일 로그 오염을 막는다.
+    try:
+        import contextlib
+        import io
+        from pykrx import stock as _krx  # type: ignore
+        import numpy as _np
+
+        _to = datetime.now().strftime("%Y%m%d")
+        _from = (datetime.now() - timedelta(days=120)).strftime("%Y%m%d")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            df = _krx.get_index_ohlcv(_from, _to, "1009")
+        if df is not None and not df.empty:
+            col = "종가" if "종가" in df.columns else df.columns[-1]
+            ser = df[col].astype(float).dropna()
+            if len(ser) >= 10:
+                last = float(ser.iloc[-1])
+                p90 = float(_np.quantile(ser.tail(60).to_numpy(), 0.90))
+                if last > 0:
+                    return last, p90
+    except Exception:
+        pass
+
+    # 2) FinanceDataReader 폴백(심볼 가용 시).
+    try:
+        import FinanceDataReader as _fdr  # type: ignore
+        import numpy as _np
+
+        for sym in ("VKOSPI", "KRX:VKOSPI"):
+            try:
+                df = _fdr.DataReader(sym)
+            except Exception:
+                df = None
+            if df is not None and not df.empty and "Close" in df.columns:
+                ser = df["Close"].astype(float).dropna()
+                if len(ser) >= 10:
+                    last = float(ser.iloc[-1])
+                    p90 = float(_np.quantile(ser.tail(60).to_numpy(), 0.90))
+                    if last > 0:
+                        return last, p90
+    except Exception:
+        pass
+
+    return None, None
+
+
+def _compute_kr_breadth(max_sample: int = 600) -> Optional[float]:
+    """[국지화] KR 시장폭 — 표본 종목의 'MA20 상회 비율' → 1.0 중심 breadth_ratio 로 환산.
+
+    market_data.sqlite 의 KR_<code> 일봉을 **읽기 전용**(busy_timeout)으로 표본 조사한다.
+    매핑: ratio = 1.0 + (pct_above_ma20 - 0.5) * 0.2  (50% 상회 → 1.0 중립; 기존 breadth
+    스코어 공식 _t((ratio-1)/0.03) 와 스케일 정합). 데이터 부족/오류 시 None → KR breadth 미투표.
+    """
+    try:
+        from market_db_paths import MARKET_DATA_DB_PATH as _DB
+    except Exception:
+        return None
+    if not _DB:
+        return None
+
+    conn = None
+    try:
+        conn = sqlite3.connect(_DB, timeout=60)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+        except Exception:
+            pass
+        try:
+            conn.execute("PRAGMA busy_timeout=60000;")
+        except Exception:
+            pass
+
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'KR\\_%' ESCAPE '\\'"
+        ).fetchall()
+        tables = [
+            r[0] for r in rows
+            if r and r[0] and not str(r[0]).endswith("_IDX")
+        ]
+        if len(tables) < 30:
+            return None
+        # 표본 상한 — 균등 샘플링(전 구간 대표성 유지하며 비용 제한).
+        if len(tables) > max_sample:
+            step = len(tables) / float(max_sample)
+            tables = [tables[int(i * step)] for i in range(max_sample)]
+
+        above = 0
+        total = 0
+        for tbl in tables:
+            try:
+                px = conn.execute(
+                    f'SELECT Close FROM "{tbl}" ORDER BY Date DESC LIMIT 20'
+                ).fetchall()
+            except Exception:
+                continue
+            if not px or len(px) < 20:
+                continue
+            try:
+                closes = [float(p[0]) for p in px if p and p[0] is not None]
+            except (TypeError, ValueError):
+                continue
+            if len(closes) < 20:
+                continue
+            last = closes[0]
+            ma20 = sum(closes) / len(closes)
+            if ma20 <= 0:
+                continue
+            total += 1
+            if last > ma20:
+                above += 1
+
+        if total < 30:
+            return None
+        pct_above = above / float(total)
+        return 1.0 + (pct_above - 0.5) * 0.2
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def collect_live_snapshots() -> Dict[str, FactorSnapshot]:
     """yfinance 로 US(SPY/RSP/^VIX)·KR(^KS11) + 내부 PRI 를 모아 스냅샷 구성."""
     snaps: Dict[str, FactorSnapshot] = {}
@@ -877,12 +1008,18 @@ def collect_live_snapshots() -> Dict[str, FactorSnapshot]:
 
         ks = _close("^KS11")
         if not ks.empty:
+            # [국지화] 미국 VIX 의존도 ↓ — VKOSPI(한국 변동성) 우선, 실패 시 글로벌 VIX 폴백.
+            kr_vix, kr_vix_p90 = _fetch_vkospi()
+            if kr_vix is None:
+                kr_vix, kr_vix_p90 = vix_last, vix_p90
+            # [국지화] 미투표였던 KR 시장폭(breadth) 활성화 — 로컬 일봉 표본 MA20 상회 비율.
+            kr_breadth = _compute_kr_breadth()
             snaps["KR"] = FactorSnapshot(
                 close=float(ks.iloc[-1]),
                 ma20=float(ks.rolling(20, min_periods=10).mean().iloc[-1]),
                 ma200=float(ks.ewm(span=200, adjust=False).mean().iloc[-1]),
-                vix=vix_last, vix_p90=vix_p90,  # KR 전용 변동성 미가용 → 글로벌 VIX 공유
-                breadth_ratio=None, pri_z=pri.get("KR"),
+                vix=kr_vix, vix_p90=kr_vix_p90,
+                breadth_ratio=kr_breadth, pri_z=pri.get("KR"),
                 crypto_liquidity_stress=crypto_stress, macro_contagion_risk=crypto_contagion,
             )
     except Exception:
