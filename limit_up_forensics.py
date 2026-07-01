@@ -499,6 +499,25 @@ def _rank_us_top_symbols(top_n: int = US_TOP_N, universe: int = US_UNIVERSE_SCAN
     return out
 
 
+
+# [P3-3] 무정보 기준선 — 패턴 하나가 순전히 우연으로 관측될 확률의 가정치.
+# 실제 상한가 코호트에서의 관측 비율(hit_rate)을 이 기준선과 비교해 Lift(>1이면
+# 우연보다 더 자주 선행 관측됨)를 산출하고, 정규화된 가중치로 변환한다.
+_LIFT_BASELINE_RATE = 0.5
+
+
+def _pattern_lift_weights(hit_counts: Dict[str, int], n: int) -> Dict[str, float]:
+    """패턴별 과거 상한가 예측력을 확률 기반 가중치(Lift 정규화)로 환산한다."""
+    if n <= 0:
+        return {k: round(1.0 / len(PATTERN_KEYS), 6) for k in PATTERN_KEYS}
+    hit_rates = {k: (hit_counts.get(k, 0) / n) for k in PATTERN_KEYS}
+    raw_lifts = {k: (hit_rates[k] / _LIFT_BASELINE_RATE) for k in PATTERN_KEYS}
+    lift_sum = sum(raw_lifts.values())
+    if lift_sum <= 0:
+        return {k: round(1.0 / len(PATTERN_KEYS), 6) for k in PATTERN_KEYS}
+    return {k: round(raw_lifts[k] / lift_sum, 6) for k in PATTERN_KEYS}
+
+
 def _cohort_to_payload(
     pattern_rows: List[Dict[str, bool]],
     codes_used: List[str],
@@ -519,6 +538,12 @@ def _cohort_to_payload(
     consensus_flags = {k: hit_counts[k] >= threshold_votes for k in PATTERN_KEYS}
     consensus_hits = sum(1 for k in PATTERN_KEYS if consensus_flags[k])
 
+    # [P3-3] 이진(AND) 게이트 폐기 대비 — 패턴별 확률 기반 가중치(Lift) 영속화.
+    # forensics_pioneer.py 는 이 가중합 스코어로 통과 여부를 판단한다(하나 틀리면
+    # 즉시 탈락하는 all() 방식 대신, 예측력이 높은 패턴에 더 큰 표를 준다).
+    pattern_hit_rates = {k: round(hit_counts[k] / n, 4) for k in PATTERN_KEYS}
+    pattern_lift_weights = _pattern_lift_weights(hit_counts, n)
+
     return {
         "region": region,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -528,6 +553,8 @@ def _cohort_to_payload(
         "vote_threshold_count": threshold_votes,
         "vote_threshold_ratio": 0.7,
         "pattern_hit_counts": hit_counts,
+        "pattern_hit_rates": pattern_hit_rates,
+        "pattern_lift_weights": pattern_lift_weights,
         "consensus_pattern_hits": consensus_hits,
         "consensus_met": consensus_hits >= 7,
         "pre_emptive_rule": {k: consensus_flags[k] for k in PATTERN_KEYS},

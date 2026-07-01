@@ -32,11 +32,26 @@ TELEGRAM_TOKEN = telegram_env.get_overseer_token()
 TELEGRAM_CHAT_ID = telegram_env.get_overseer_chat_id()
 
 from factory_data_paths import flow_csv_path, system_config_json_path
-from market_db_paths import market_db_read_path
+from market_db_paths import market_db_read_path, report_db_read_path
 
+# ⚠️ [진단·수정] 과거 DB_PATH = market_db_read_path() 는 모듈 최초 import 시점에
+# '단 한 번' 스냅샷/메인 여부를 확정해 그 프로세스 수명 내내 고정시켰다.
+# market_db_read_path() 는 스냅샷(market_data_snapshot.sqlite)이 신선(<30분)하면
+# 그쪽을 반환하는데, 이 감사 리포트는 정확히 '오늘 신규 진입 반영 여부'가 핵심이라
+# 리포트 전용 SSOT인 report_db_read_path() (항상 메인 DB 우선, ENV
+# REPORT_DEEP_DIVE_FORCE_MAIN_DB 기본 on)를 매 호출 시점에 새로 evaluate 해야 한다.
+# 그렇지 않으면 '보유 종목수 0' 처럼 날짜(datetime.now 기반, 항상 최신)와
+# DB 파생 필드(스냅샷 캡처 시점에 고정)가 한 리포트 안에서 서로 어긋나는
+# 유령 정합성 문제가 발생한다. 하위 호환을 위해 상수도 남기되(레거시 참조 대비),
+# 실제 감사 경로는 아래 _audit_db_path() 를 통해 매번 새로 읽는다.
 DB_PATH = market_db_read_path()
 CONFIG_PATH = system_config_json_path()
 CSV_PATH = flow_csv_path()
+
+
+def _audit_db_path() -> str:
+    """감사 리포트가 실제로 읽을 DB 경로 — 호출 시점마다 새로 계산(캐시 금지)."""
+    return report_db_read_path()
 
 GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 규칙 감사 본문은 이미 전송되었습니다."
 
@@ -133,7 +148,7 @@ def gather_daily_system_facts():
     d = build_overseer_audit_dossier(
         sys_config=cfg,
         meta=meta,
-        db_path=DB_PATH,
+        db_path=_audit_db_path(),
         csv_path=CSV_PATH,
     )
     return {
@@ -187,7 +202,7 @@ def run_ai_auditor():
     dossier = build_overseer_audit_dossier(
         sys_config=cfg,
         meta=meta,
-        db_path=DB_PATH,
+        db_path=_audit_db_path(),
         csv_path=CSV_PATH,
     )
     anomalies = detect_audit_anomalies(dossier, sys_config=cfg)

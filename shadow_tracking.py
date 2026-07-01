@@ -58,6 +58,22 @@ def init_shadow_tables(cursor) -> None:
         cursor.execute("ALTER TABLE virtual_trade_history ADD COLUMN satellite_tags TEXT")
     except sqlite3.OperationalError:
         pass
+    # [P3-2] 다중 엔진 합의(Convergence) 신호 로그 — 중복 진입 차단 자체는 그대로 유지한 채,
+    # 이미 OPEN/당일 보유 중인 종목을 '다른' sig_type이 또 짚어낸 사실만 방어적으로 기록한다.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS convergence_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            detected_at TEXT,
+            market TEXT,
+            code TEXT,
+            name TEXT,
+            existing_sig_type TEXT,
+            attempted_sig_type TEXT,
+            existing_entry_date TEXT
+        )
+        """
+    )
     init_ops_snapshot_table(cursor)
 
 
@@ -332,5 +348,43 @@ def insert_virtual_trade_row(
             str(sig_type)[:800],
             str(satellite_tags)[:2000] if satellite_tags else "",
             logged_at,
+        ),
+    )
+
+
+def insert_convergence_log_row(
+    cursor,
+    *,
+    market: str,
+    code: str,
+    name: str,
+    existing_sig_type: str,
+    attempted_sig_type: str,
+    existing_entry_date: str,
+    logged_at: str,
+) -> None:
+    """
+    [P3-2] 다중 엔진 합의(Convergence) 신호 1행 기록.
+
+    try_add_virtual_position 트랜잭션 안에서(동일 cursor)만 호출된다. 중복 진입
+    차단으로 폐기되기 '직전'에, 이미 보유 중인 종목을 다른 전략(sig_type)이 또
+    짚어냈다는 사실만 기록하며 차단 로직 자체(가상매매 영향)에는 관여하지 않는다.
+    """
+    cursor.execute(
+        """
+        INSERT INTO convergence_log (
+            detected_at, market, code, name,
+            existing_sig_type, attempted_sig_type, existing_entry_date
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            logged_at,
+            market,
+            str(code)[:32],
+            str(name)[:200],
+            str(existing_sig_type)[:800],
+            str(attempted_sig_type)[:800],
+            str(existing_entry_date)[:32],
         ),
     )

@@ -446,6 +446,114 @@ def maybe_apply_deathmatch_allocation(
     apply_allocation_proposal_to_config(sys_config, prop, save=True)
 
 
+# ---------------------------------------------------------------------------
+# [P4-3] 초신성 DNA 그룹별 전용 수익 기여도 서브테이블
+#
+# 기존 arm 분류(classify_strategy_arm)는 SUPERNOVA 전체를 "B (초신성)" 하나로
+# 뭉뚱그린다. 이 서브테이블은 그 안을 다시 RANK_A~D(학습 코호트)·
+# MFE_진화형_황금타점(엔진8 EMA 수렴 템플릿)·BEAST·COSINE/MLBOX 기타로 쪼개서
+# "자가진화 루프(엔진6/8/9/10)가 실제로 어느 DNA 그룹을 밀어주고 있고, 그게
+# 돈을 벌고 있는지"를 사람이 직접 관측할 수 있게 한다. 읽기 전용 집계이며
+# 매매/사이징 경로에는 어떤 영향도 주지 않는다.
+# ---------------------------------------------------------------------------
+
+_SUPERNOVA_RANK_RE = re.compile(r"RANK_([A-D])")
+
+
+def classify_supernova_dna_group(sig_type: Any) -> Optional[str]:
+    """
+    SUPERNOVA 청산을 서브 DNA 그룹으로 분류. SUPERNOVA·INCUBATOR 아니면 None.
+    우선순위: MFE_진화형_황금타점(엔진8 실전수렴 템플릿) → BEAST(야수, RANK 태그를
+    동반해도 야수 트랙 자체가 더 상위 분류) → RANK_A~D(학습 코호트)
+    → COSINE_기타 → MLBOX_기타 → SUPERNOVA_기타.
+    """
+    s = str(sig_type or "").strip()
+    if not s:
+        return None
+    su = s.upper()
+    if "SUPERNOVA" not in su or "INCUBATOR" in su:
+        return None
+    if "MFE_진화형_황금타점" in s or "MFE_GOLDEN" in su:
+        return "MFE_진화형_황금타점"
+    if "BEAST" in su:
+        return "BEAST(야수)"
+    m = _SUPERNOVA_RANK_RE.search(su)
+    if m:
+        return f"RANK_{m.group(1)}"
+    if "COSINE" in su:
+        return "COSINE_기타(비RANK)"
+    if "MLBOX" in su:
+        return "MLBOX_기타"
+    return "SUPERNOVA_기타"
+
+
+def build_supernova_dna_subtable(
+    df_closed: pd.DataFrame,
+    sys_config: Optional[dict] = None,
+    *,
+    market: Optional[str] = None,
+) -> NWayDeathmatchResult:
+    """[P4-3] 초신성 전용 — RANK/MFE황금타점/BEAST 등 DNA 서브그룹별 청산 성과."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    n_closed = len(df_closed) if df_closed is not None else 0
+    n_min = deathmatch_min_n_for_market(cfg, market or "", n_closed=n_closed)
+    out = NWayDeathmatchResult(n_min=n_min)
+
+    if df_closed is None or df_closed.empty or "sig_type" not in df_closed.columns:
+        out.verdict = "초신성 청산 표본 없음"
+        return out
+
+    work = df_closed.copy()
+    work["_dna"] = work["sig_type"].map(classify_supernova_dna_group)
+    work = work[work["_dna"].notna()]
+    if work.empty:
+        out.verdict = "이 윈도우엔 초신성(SUPERNOVA) 청산 없음"
+        return out
+
+    arms: List[ArmDeathmatchRow] = []
+    for label, grp in work.groupby("_dna", sort=False):
+        arms.append(build_arm_row(str(label), grp.drop(columns=["_dna"], errors="ignore")))
+
+    def _sort_key(a: ArmDeathmatchRow) -> Tuple[int, float]:
+        if a.mean_ret is None or not math.isfinite(a.mean_ret):
+            return (0, -1e18)
+        return (1, float(a.mean_ret))
+
+    arms.sort(key=_sort_key, reverse=True)
+    for i, a in enumerate(arms, start=1):
+        a.rank = i
+    out.arms = arms
+    out.verdict = nway_deathmatch_verdict(arms, n_min)
+    return out
+
+
+def format_supernova_dna_subtable_telegram(
+    market_icon: str,
+    result: NWayDeathmatchResult,
+    *,
+    lookback_label: str = "청산 전체",
+) -> str:
+    """[P4-3] 초신성 DNA 그룹별 기여도 서브테이블 — 자가진화(엔진6/8/9/10) 관측용."""
+    lines = [
+        f"{market_icon} <b>🧬 [초신성 DNA 그룹별 수익 기여도]</b>",
+        f"📎 기준: {html.escape(lookback_label, quote=False)} · 그룹당 최소 <b>{result.n_min}</b>건",
+    ]
+    if not result.arms:
+        lines.append(f" ↳ {html.escape(result.verdict or '표본 없음', quote=False)}")
+        return "\n".join(lines) + "\n"
+    for a in result.arms:
+        ret_s = fmt_deathmatch_ret(a.mean_ret, a.n_closed, n_valid=a.n_valid)
+        wr_s = f"{a.win_rate_pct:.1f}%" if a.win_rate_pct is not None else "—"
+        pf_s = f"{a.profit_factor:.2f}" if a.profit_factor is not None else "—"
+        rank_icon = "🥇" if a.rank == 1 else f"{a.rank}."
+        lines.append(
+            f" {rank_icon} <b>{html.escape(a.label, quote=False)}</b>: "
+            f"{ret_s} · N={a.n_closed}(유효{a.n_valid}) · 승률 {wr_s} · PF {pf_s}"
+        )
+    lines.append(f"💡 {html.escape(result.verdict, quote=False)}")
+    return "\n".join(lines) + "\n"
+
+
 # --- 레거시 A/B API (bitget·구 호출자 호환) ---
 
 def arm_mean_final_ret(df_arm: pd.DataFrame) -> Tuple[Optional[float], int, int]:

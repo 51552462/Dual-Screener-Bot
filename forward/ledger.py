@@ -655,7 +655,15 @@ def track_daily_positions(market):
                 if _scaled_done > 1e-6 and actual_exit_type != "STAT_MFE_FULL" and _xdyn is not None:
                     ret = round(_xdyn.blend_final_return(_realized_partial, _scaled_done, ret), 2)
                 mfe = round(((new_max - ep) / ep) * 100, 2)
-                
+
+                # ⚡ [P3-5 텔레메트리 결선] is_overdrive_on(v_energy≥od_hurdle → 익절목표 ×1.10)은
+                # 지금까지 dyn_mfe_tp 계산에만 관여하고 exit_reason/flow_tags 어디에도 기록되지
+                # 않아 AI 감사관의 "오버드라이브 건수" 집계가 항상 0으로 죽어 있던 단선을 해소한다.
+                # 청산 판정(do_exit/exit_rsn/ret) 로직 자체는 절대 건드리지 않고, 이미 결정된
+                # exit_rsn 문자열 끝에 사실만 덧붙인다(순수 텔레메트리, 매매 결과 불변).
+                if is_overdrive_on:
+                    exit_rsn = f"{exit_rsn} [오버드라이브가속:v_energy≥{od_hurdle:g}]"
+
                 tags = []
                 if _ace_evo is not None and _ace_evo.active and _ace_evo.flow_tag:
                     tags.append(f"#{_ace_evo.flow_tag}")

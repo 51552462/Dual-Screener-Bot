@@ -121,6 +121,9 @@ def _audit_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
         "kelly_crit": _f("OVERSEER_KELLY_CRIT_THRESHOLD", 0.015),
         "meta_mult_clamp": _f("OVERSEER_META_MULT_CLAMP", 0.92),
         "min_trades_bull_expect": _f("OVERSEER_BULL_MIN_TRADES", 0),
+        # [P3-6] 당일 승률 붕괴 감지 — 최소 표본 이상 청산됐는데 사실상 전패인 날.
+        "win_rate_catastrophic_pct": _f("OVERSEER_WIN_RATE_CATASTROPHIC_PCT", 5.0),
+        "win_rate_min_n": _f("OVERSEER_WIN_RATE_MIN_N", 5),
     }
 
 
@@ -637,6 +640,26 @@ def detect_audit_anomalies(
             "CRITICAL",
             "차단 trade_source 설정인데 진입 발생",
             f"block_trade_sources=[{src}] · 진입 <b>{n_entry}</b>건.",
+        )
+
+    # CATASTROPHIC_LOSS_DAY — 표본 충분한데 승률이 사실상 0%인 날 (기존엔 규칙 없이
+    # dossier 수치로만 노출되어 LLM 자유서술에서만 스쳐 지나갔다).
+    if (
+        dossier.win_rate_today_pct is not None
+        and n_closed >= th["win_rate_min_n"]
+        and dossier.win_rate_today_pct <= th["win_rate_catastrophic_pct"]
+    ):
+        _add(
+            "CATASTROPHIC_LOSS_DAY",
+            "CRITICAL",
+            "당일 승률 붕괴 — 청산 다수인데 사실상 전패",
+            (
+                f"청산 <b>{n_closed}</b>건 · 승률 <b>{dossier.win_rate_today_pct:.1f}%</b> "
+                f"(임계 ≤<b>{th['win_rate_catastrophic_pct']:.0f}%</b>, 최소표본 "
+                f"<b>{int(th['win_rate_min_n'])}</b>). 국면(META_REGIME_KEY="
+                f"<b>{html.escape(rk_meta, quote=False)}</b>)/전략 미스매치 또는 "
+                "청산 엔진 결함 가능성 — 즉시 원인 규명 필요."
+            ),
         )
 
     # Overdrive sanity

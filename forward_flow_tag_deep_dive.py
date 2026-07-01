@@ -26,6 +26,15 @@ RegistryLoadFn = Callable[[], Dict[str, Any]]
 
 _INVALID_TAGS = frozenset({"", "nan", "none", "null", "nat"})
 
+# [P3-4] FLOW_TAG_TOXIC_DEFAULT_MULT 미설정 시 공용 폴백 — weekly_flow_rollup.py 와
+# 반드시 동일해야 한다(과거엔 0.0/0.85로 서로 달라 "완전 차단"과 "약한 페널티"가
+# 무작위로 뒤섞이는 설정 드리프트 버그가 있었다). 베이지안 하한(compute_bayesian_toxic_penalty)
+# 의 강한(구조적) 임계치와 동일 수준으로 통일.
+FLOW_TAG_TOXIC_DEFAULT_MULT_FALLBACK = 0.5
+
+# [P3-4] 켈리 가드 유효기간(일) — 이 기간이 지난 등록 항목은 자동으로 무시(자가 치유).
+FLOW_TAG_TOXIC_GUARD_DECAY_DAYS_DEFAULT = 5
+
 
 @dataclass(frozen=True)
 class FlowTagBlock:
@@ -105,7 +114,7 @@ def _toxic_thresholds(sys_config: Optional[Dict[str, Any]]) -> Dict[str, float]:
         "toxic_wr_pct": _f("FLOW_TAG_TOXIC_WR_PCT", 30.0),
         "toxic_pf": _f("FLOW_TAG_TOXIC_PF", 0.85),
         "toxic_cum_ret": _f("FLOW_TAG_TOXIC_CUM_RET", -15.0),
-        "penalty_mult": _f("FLOW_TAG_TOXIC_DEFAULT_MULT", 0.0),
+        "penalty_mult": _f("FLOW_TAG_TOXIC_DEFAULT_MULT", FLOW_TAG_TOXIC_DEFAULT_MULT_FALLBACK),
         "top_k": float(_i("FLOW_TAG_REPORT_TOP_K", 5)),
     }
 
@@ -230,6 +239,73 @@ def _persist_flow_tag_toxic_registry(
             exc_info=True,
         )
         return False, reg_key
+
+
+def resolve_flow_tag_toxic_kelly_mult(
+    sys_config: Optional[Dict[str, Any]],
+    market: str,
+    *,
+    now_dt: Optional[datetime] = None,
+) -> Tuple[float, str]:
+    """
+    [P3-4] FLOW_TAG_TOXIC_REGISTRY → 실제 진입 켈리 사이징 연결 SSOT.
+
+    과거에는 이 레지스트리가 리포트(주간 액션플랜·AI 감사관) 문구로만 소비되고
+    실거래 경로에는 전혀 반영되지 않던 "죽은 스위치"였다. 이 함수가 유일한 소비
+    지점으로, 해당 market 에 대해 유효기간(FLOW_TAG_TOXIC_GUARD_DECAY_DAYS, 기본
+    5일) 이내에 등록된 항목 중 가장 강한(가장 낮은) kelly_mult 를 반환한다.
+
+    - 데이터 없음/만료/시장 불일치 → (1.0, "") 완전 중립(무영향).
+    - 반환된 mult 는 켈리 리스크 비중에 곱해질 뿐, 진입 자체를 차단하지 않는다
+      (방어적 축소 — try_add_virtual_position 의 다른 차단 로직과 독립).
+    """
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    reg = cfg.get("FLOW_TAG_TOXIC_REGISTRY")
+    if not isinstance(reg, dict) or not reg:
+        return 1.0, ""
+
+    try:
+        decay_days = int(
+            cfg.get("FLOW_TAG_TOXIC_GUARD_DECAY_DAYS", FLOW_TAG_TOXIC_GUARD_DECAY_DAYS_DEFAULT)
+        )
+    except (TypeError, ValueError):
+        decay_days = FLOW_TAG_TOXIC_GUARD_DECAY_DAYS_DEFAULT
+
+    now = (now_dt or datetime.now()).replace(tzinfo=None)
+    mkt = str(market or "").upper()
+
+    worst_mult = 1.0
+    worst_tag = ""
+    worst_age: Optional[int] = None
+    for entry in reg.values():
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("market", "")).upper() != mkt:
+            continue
+        registered_at = str(entry.get("registered_at", "")).strip()[:10]
+        if not registered_at:
+            continue
+        try:
+            reg_dt = datetime.strptime(registered_at, "%Y-%m-%d")
+        except ValueError:
+            continue
+        age_days = (now - reg_dt).days
+        if age_days < 0 or age_days > decay_days:
+            continue
+        try:
+            mult = float(entry.get("kelly_mult", 1.0))
+        except (TypeError, ValueError):
+            continue
+        mult = max(0.0, min(1.0, mult))
+        if mult < worst_mult:
+            worst_mult = mult
+            worst_tag = str(entry.get("tag", ""))
+            worst_age = age_days
+
+    if worst_tag and worst_mult < 1.0:
+        age_s = str(worst_age) if worst_age is not None else "?"
+        return worst_mult, f"{worst_tag}(D+{age_s})"
+    return 1.0, ""
 
 
 def _is_toxic_candidate(

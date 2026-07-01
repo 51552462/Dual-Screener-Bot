@@ -19,10 +19,8 @@ from inverse_etf_sniper import (
     _numeric_tail_balance,
     _tail_fund_key,
 )
-from market_db_paths import market_db_read_path
+from market_db_paths import report_db_read_path
 from reports.report_formatter import format_doomsday_banner_html, format_short_sleeve_html
-
-DB_PATH = market_db_read_path()
 
 
 def _df_long_only(df: pd.DataFrame) -> pd.DataFrame:
@@ -85,7 +83,9 @@ def collect_short_sleeve_context(
 
     own_conn = conn is None
     if own_conn:
-        conn = sqlite3.connect(DB_PATH, timeout=30)
+        # [수정] market_db_read_path() 모듈-레벨 캐시(스냅샷 고착 위험) 대신
+        # report_db_read_path() 를 호출 시점에 새로 evaluate — 항상 메인 DB 우선.
+        conn = sqlite3.connect(report_db_read_path(), timeout=30)
     try:
         opens = _inverse_open_for_market(conn, mkt)
     finally:

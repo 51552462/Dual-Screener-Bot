@@ -232,5 +232,28 @@ def build_deathmatch_section(
         except Exception as ex:
             regime_xrank += f"\n<i>⚠️ [전조 축적] 스킵: {_esc(str(ex)[:64])}</i>"
 
-    return msg + body + regime_xrank
+    # ── [P4-3] 초신성 DNA 그룹별 전용 수익 기여도 서브테이블 ──────────────
+    #   RANK_A~D(학습 코호트)·MFE_진화형_황금타점(엔진8 EMA 수렴)·BEAST 등으로
+    #   세분화해, 자가진화 루프(엔진6/8/9/10)가 실제로 어느 DNA를 밀어주고
+    #   있고 그게 돈을 벌고 있는지 관측한다. 읽기 전용 집계 — 매매/사이징
+    #   경로 미접촉, 실패해도 본문에 영향 0(안전 스킵).
+    sn_dna_section = ""
+    if str(sys_config.get("SUPERNOVA_DNA_SUBTABLE_ENABLED", "1")).strip().lower() in (
+        "1", "true", "yes", "on"
+    ):
+        try:
+            from evolution.deathmatch_report import (
+                build_supernova_dna_subtable,
+                format_supernova_dna_subtable_telegram,
+            )
+
+            _sn_dna = build_supernova_dna_subtable(df_closed, sys_config, market=mk)
+            if _sn_dna.arms:
+                sn_dna_section = "\n" + format_supernova_dna_subtable_telegram(
+                    market_icon, _sn_dna, lookback_label=lookback_label
+                )
+        except Exception as ex:
+            sn_dna_section = f"\n<i>⚠️ [초신성 DNA 서브테이블] 스킵: {_esc(str(ex)[:72])}</i>"
+
+    return msg + body + regime_xrank + sn_dna_section
 

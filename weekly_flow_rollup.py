@@ -12,7 +12,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import pytz
 
-from forward_flow_tag_deep_dive import FlowTagBlock, build_flow_tag_snapshot
+from forward_flow_tag_deep_dive import (
+    FLOW_TAG_TOXIC_DEFAULT_MULT_FALLBACK,
+    FlowTagBlock,
+    build_flow_tag_snapshot,
+)
 from forward_market_guard import enforce_market_frame
 from reports.report_staleness_gate import evaluate_staleness
 from reports.report_timekeeper import ReportTimekeeper, resolve_data_candle_watermark
@@ -182,9 +186,13 @@ def _build_weekly_flow_tag_rollup_inner(
     )
     cfg = sys_config if isinstance(sys_config, dict) else {}
     try:
-        penalty_mult = float(cfg.get("FLOW_TAG_TOXIC_DEFAULT_MULT", 0.85))
+        # [P3-4] forward_flow_tag_deep_dive.py 와 동일 폴백 상수 사용(과거 0.85 하드코딩은
+        # 일일 등록 경로(0.0)와 불일치해 설정 드리프트를 유발했다).
+        penalty_mult = float(
+            cfg.get("FLOW_TAG_TOXIC_DEFAULT_MULT", FLOW_TAG_TOXIC_DEFAULT_MULT_FALLBACK)
+        )
     except (TypeError, ValueError):
-        penalty_mult = 0.85
+        penalty_mult = FLOW_TAG_TOXIC_DEFAULT_MULT_FALLBACK
     reg = cfg.get("FLOW_TAG_PENALTY_MULT")
     if isinstance(reg, dict) and snap.toxic is not None:
         try:

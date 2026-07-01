@@ -43,8 +43,12 @@ STRATEGY_NAME = "forensics_pioneer"
 MAX_SCAN_KR = 220
 MAX_SCAN_US = 220
 
+# [P3-3] 가중 리프트 스코어 통과 임계치 (system_config LIMIT_UP_DNA_LIFT_THRESHOLD 로 override 가능)
+DEFAULT_LIFT_PASS_THRESHOLD = 0.7
+
 
 def _required_rules_from_dna(dna_block: Optional[Dict[str, Any]]) -> List[str]:
+    """[레거시] 하위 호환 조회용으로만 유지 — 게이팅에는 더 이상 사용하지 않는다."""
     if not isinstance(dna_block, dict):
         return []
     rules = dna_block.get("pre_emptive_rule") or {}
@@ -55,9 +59,55 @@ def _required_rules_from_dna(dna_block: Optional[Dict[str, Any]]) -> List[str]:
 
 
 def _flags_match_required(flags: Dict[str, bool], required: List[str]) -> bool:
+    """
+    [DEPRECATED — P3-3] 10개 패턴 중 하나라도 틀리면 탈락시키는 가혹한 이진(AND) 게이트.
+    `_weighted_lift_score` 기반 가중 스코어링으로 대체되었다. 하위 호환을 위해서만 유지.
+    """
     if not required:
         return False
     return all(flags.get(k) for k in required)
+
+
+def _pattern_weights_from_dna(dna_block: Optional[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    [P3-3] 지역 DNA 블록에서 패턴별 확률 기반 가중치(Lift)를 읽어온다.
+
+    신규 스키마(`pattern_lift_weights`)가 있으면 그대로 사용하고, 구버전 설정
+    (`pre_emptive_rule` 합의 플래그만 존재)만 있으면 합의된 패턴에 균등 가중치를
+    부여하는 방식으로 안전하게 폴백한다.
+    """
+    if not isinstance(dna_block, dict):
+        return {}
+    weights = dna_block.get("pattern_lift_weights")
+    if isinstance(weights, dict) and weights:
+        out: Dict[str, float] = {}
+        for k in PATTERN_KEYS:
+            try:
+                out[k] = max(0.0, float(weights.get(k, 0.0) or 0.0))
+            except (TypeError, ValueError):
+                out[k] = 0.0
+        if sum(out.values()) > 0:
+            return out
+    # 레거시 폴백: 가중치 정보가 없는 구버전 설정 → 합의 플래그만 균등 가중
+    required = _required_rules_from_dna(dna_block)
+    if not required:
+        return {}
+    w = 1.0 / len(required)
+    return {k: w for k in required}
+
+
+def _weighted_lift_score(flags: Dict[str, bool], weights: Dict[str, float]) -> float:
+    """[P3-3] 라이브 후보의 패턴 플래그 × 패턴별 Lift 가중치 합산 (가중합 스코어, 0~1)."""
+    if not flags or not weights:
+        return 0.0
+    return float(sum(weights.get(k, 0.0) for k in PATTERN_KEYS if flags.get(k)))
+
+
+def _lift_pass_threshold(cfg: Dict[str, Any]) -> float:
+    try:
+        return float(cfg.get("LIMIT_UP_DNA_LIFT_THRESHOLD", DEFAULT_LIFT_PASS_THRESHOLD))
+    except (TypeError, ValueError):
+        return DEFAULT_LIFT_PASS_THRESHOLD
 
 
 def _kr_scan_codes(max_codes: int) -> List[str]:
@@ -170,10 +220,11 @@ def run_forensics_pioneer(market: str) -> None:
             return
 
         region_block = limit_up_cohort_dna.get(mkt)
-        required = _required_rules_from_dna(region_block if isinstance(region_block, dict) else None)
-        if not required:
-            print(f"⚠️ {mkt} pre_emptive_rule 비어 있음 또는 DNA 미합의 — 스킵")
+        weights = _pattern_weights_from_dna(region_block if isinstance(region_block, dict) else None)
+        if not weights:
+            print(f"⚠️ {mkt} pattern_lift_weights/pre_emptive_rule 비어 있음 또는 DNA 미합의 — 스킵")
             return
+        pass_threshold = _lift_pass_threshold(cfg)
 
         hits: List[str] = []
 
@@ -196,7 +247,7 @@ def run_forensics_pioneer(market: str) -> None:
                     continue
                 T_idx = len(ohlc) - 1
                 flags = compute_dna_window_flags(ohlc, T_idx)
-                if not flags or not _flags_match_required(flags, required):
+                if not flags or _weighted_lift_score(flags, weights) < pass_threshold:
                     continue
                 name = name_map.get(code, str(code))
                 ep = float(ohlc["Close"].iloc[-1])
@@ -211,7 +262,7 @@ def run_forensics_pioneer(market: str) -> None:
                     continue
                 T_idx = len(ohlc) - 1
                 flags = compute_dna_window_flags(ohlc, T_idx)
-                if not flags or not _flags_match_required(flags, required):
+                if not flags or _weighted_lift_score(flags, weights) < pass_threshold:
                     continue
                 name = sym
                 ep = float(ohlc["Close"].iloc[-1])

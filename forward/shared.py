@@ -775,6 +775,16 @@ def init_forward_db(db_path: str | None = None):
     except Exception: pass
     # 👆👆 [추가 끝] 👆👆
 
+    # 👇👇 [P3-1 추가] 교차검증 팩터 숫자 컬럼 영속화 (Data Mining Ready) 👇👇
+    # 기존에는 "#수급다이버전스(+3.2)" 처럼 sig_type 텍스트에만 박제되던 교차검증
+    # 점수들을 별도 REAL 컬럼으로 그대로 보존해 데이터 마이닝(피처 스캔·회귀 등)에 사용한다.
+    for col in ("flow_bonus", "flow_divergence", "short_net", "fund_net", "dart_net"):
+        try:
+            cursor.execute(f"ALTER TABLE forward_trades ADD COLUMN {col} REAL DEFAULT 0.0")
+        except Exception:
+            pass
+    # 👆👆 [추가 끝] 👆👆
+
     try:
         import shadow_tracking
 
@@ -823,6 +833,12 @@ _FORWARD_TRADE_INSERT_COLS: tuple[str, ...] = (
     "shares",
     "sim_kelly_invest",
     "entry_regime",
+    # [P3-1] 교차검증 팩터 숫자 컬럼 (Data Mining Ready)
+    "flow_bonus",
+    "flow_divergence",
+    "short_net",
+    "fund_net",
+    "dart_net",
 )
 
 
@@ -1518,6 +1534,55 @@ def _sql_entry_date_normalized(column: str = "entry_date") -> str:
     return f"date({cleaned})"
 
 
+def _core_signal_name(sig: object) -> str:
+    """
+    [P3-2] sig_type에서 브래킷 태그·해시 태그를 제거해 핵심 로직명만 추출한다.
+    합의(Convergence) 비교 전용 — 실매매/가상매매 로직에는 관여하지 않는다.
+    """
+    s = re.sub(r"\[.*?\]", "", str(sig or "")).strip()
+    s = re.sub(r"\s+", " ", s)
+    core = s.split(" #")[0].strip()
+    return core
+
+
+def _log_convergence_signal_if_diverse(
+    cursor: sqlite3.Cursor,
+    market: str,
+    code: str,
+    name: str,
+    attempted_sig_type: object,
+    existing_sig_type: object,
+    existing_entry_date: object,
+) -> None:
+    """
+    [P3-2] 다중 엔진 합의(Convergence) 신호 로깅.
+
+    중복 진입으로 차단되어 폐기되기 '직전', 이미 진입해 있는 종목을 다른 전략
+    (sig_type)이 또 짚어냈다면 shadow_tracking.convergence_log 에 1행 남긴다.
+    완전 방어적: 어떤 예외가 나도 호출부의 중복 차단(가상매매 반환값)에는
+    영향을 주지 않는다(흡수 후 로그만 남기고 통과).
+    """
+    try:
+        existing_core = _core_signal_name(existing_sig_type)
+        attempted_core = _core_signal_name(attempted_sig_type)
+        if not existing_core or not attempted_core or existing_core == attempted_core:
+            return
+        import shadow_tracking
+
+        shadow_tracking.insert_convergence_log_row(
+            cursor,
+            market=str(market or ""),
+            code=str(code or ""),
+            name=str(name or ""),
+            existing_sig_type=str(existing_sig_type or ""),
+            attempted_sig_type=str(attempted_sig_type or ""),
+            existing_entry_date=str(existing_entry_date or ""),
+            logged_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+    except Exception as _conv_ex:
+        print(f"⚠️ [P3-2 합의신호 로깅] 스킵(차단 로직 무영향): {_conv_ex}")
+
+
 def try_add_virtual_position(
     market,
     code,
@@ -1692,12 +1757,21 @@ def try_add_virtual_position(
     #   · 전부 방어적: kr_investor_flow 테이블/데이터 부재 시 bonus=0 → 기존 점수 그대로.
     #   · score 가산은 아래 10점 버킷·이후 켈리 스케일에 자연 반영(별도 엔진 훼손 없음).
     flow_entry_tag = ""
+    # [P3-1] 교차검증 숫자 컬럼 누적기 — sig_type 텍스트 태그와 별개로 DB REAL 컬럼에 그대로 보존
+    flow_bonus_val = 0.0
+    flow_divergence_val = 0.0
+    short_net_val = 0.0
+    fund_net_val = 0.0
+    dart_net_val = 0.0
     if str(market or "").upper() == "KR":
         try:
             from kr_flow_factor import get_flow_score
 
             _flow = get_flow_score(code_str)
             _flow_bonus = float(_flow.get("bonus", 0.0) or 0.0)
+            if _flow.get("found"):
+                flow_bonus_val = _flow_bonus
+                flow_divergence_val = float(_flow.get("divergence", 0.0) or 0.0)
             if _flow.get("found") and _flow_bonus > 0:
                 try:
                     score = float(score) + _flow_bonus
@@ -1719,6 +1793,7 @@ def try_add_virtual_position(
             _si = get_short_score(code_str)
             if _si.get("found"):
                 _net = float(_si.get("net", 0.0) or 0.0)
+                short_net_val = _net
                 if abs(_net) > 1e-9:
                     try:
                         score = float(score) + _net
@@ -1740,6 +1815,7 @@ def try_add_virtual_position(
             _fd = get_fundamental_score(code_str)
             if _fd.get("found"):
                 _fnet = float(_fd.get("net", 0.0) or 0.0)
+                fund_net_val = _fnet
                 if abs(_fnet) > 1e-9:
                     try:
                         score = float(score) + _fnet
@@ -1761,6 +1837,7 @@ def try_add_virtual_position(
             _dt = get_dart_event_score(code_str)
             if _dt.get("found"):
                 _dnet = float(_dt.get("net", 0.0) or 0.0)
+                dart_net_val = _dnet
                 if abs(_dnet) > 1e-9:
                     try:
                         score = float(score) + _dnet
@@ -1789,20 +1866,38 @@ def try_add_virtual_position(
 
     # 1) 현재 OPEN 중복 방지: 같은 시장/티커가 열려 있으면 신규 진입 금지
     cursor.execute(
-        "SELECT id FROM forward_trades WHERE market=? AND code=? AND status='OPEN' LIMIT 1",
+        "SELECT id, sig_type, entry_date FROM forward_trades WHERE market=? AND code=? AND status='OPEN' LIMIT 1",
         (market, code_str),
     )
-    if cursor.fetchone():
+    _open_dup_row = cursor.fetchone()
+    if _open_dup_row:
+        # [P3-2] 폐기 직전 — 다른 전략이 이미 보유 종목을 또 짚었는지 방어적으로 기록(차단 로직 불변)
+        _log_convergence_signal_if_diverse(
+            cursor, market, code_str, name, sig_type, _open_dup_row[1], _open_dup_row[2]
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
         conn.close()
         return False, "중복 보유 중"
 
     # 2) 당일 재진입(피라미딩) 방지: OPEN/CLOSED 무관 — entry_date 정규화 비교
     entry_d = _sql_entry_date_normalized("entry_date")
     cursor.execute(
-        f"SELECT id FROM forward_trades WHERE market=? AND code=? AND {entry_d} = date(?) LIMIT 1",
+        f"SELECT id, sig_type FROM forward_trades WHERE market=? AND code=? AND {entry_d} = date(?) LIMIT 1",
         (market, code_str, today_str),
     )
-    if cursor.fetchone():
+    _today_dup_row = cursor.fetchone()
+    if _today_dup_row:
+        # [P3-2] 폐기 직전 — 다른 전략이 당일 이미 짚은 종목을 또 짚었는지 방어적으로 기록(차단 로직 불변)
+        _log_convergence_signal_if_diverse(
+            cursor, market, code_str, name, sig_type, _today_dup_row[1], today_str
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
         conn.close()
         return False, f"당일 중복 진입 차단: {market} {code_str} ({today_str})"
 
@@ -2149,6 +2244,28 @@ def try_add_virtual_position(
                 kelly_risk_pct *= w_s1
             if "S4" in sig_type or "눌림" in sig_type:
                 kelly_risk_pct *= w_s4
+
+            # 🧬 [P4-1 초신성 연속 켈리 스케일러] 이진 컷오프 통과 여부만으로 전원
+            # 동일 비중을 태우던 것을, "커트라인 대비 얼마나 압도적으로 닮았는가"
+            # (score/100 ÷ cutoff, [0.8,1.5] 클램프)에 비례한 연속 스케일로 대체.
+            # 부합도 1위가 자연스럽게 더 큰 자본을 받고, 턱걸이 합격은 축소된다.
+            # 데이터 이상 시 scaler=1.0 → 완전 무영향(중립).
+            if "SUPERNOVA" in sig_type:
+                try:
+                    from supernova_fluid_capital import supernova_continuous_kelly_scaler
+
+                    _sn_scaler, _sn_cutoff = supernova_continuous_kelly_scaler(
+                        score, sys_config, sig_type
+                    )
+                    if abs(_sn_scaler - 1.0) > 1e-6:
+                        kelly_risk_pct *= _sn_scaler
+                        sig_type += f" #부합도스케일(x{_sn_scaler:.2f})"
+                        print(
+                            f"🧬 [초신성 연속켈리스케일러] score={score} cutoff={_sn_cutoff:g} "
+                            f"→ 켈리 ×{_sn_scaler:.2f}"
+                        )
+                except Exception as _sn_scale_ex:
+                    print(f"⚠️ [초신성 연속켈리스케일러] 스킵(중립 진행): {_sn_scale_ex}")
             try:
                 from meta_state_store import normalize_regime_key, resolve_config_regime_key
 
@@ -2306,6 +2423,26 @@ def try_add_virtual_position(
                 except Exception as _vt_ex:
                     print(f"⚠️ [변동성 타게팅] 스킵(중립 진행): {_vt_ex}")
 
+                # ☠️ [P3-4 톡식 플로우태그 켈리 가드] 리포트 전용으로만 소비되던
+                # FLOW_TAG_TOXIC_REGISTRY/FLOW_TAG_PENALTY_MULT를 실제 진입 켈리 사이징에
+                # 최초로 연결한다. 최근(decay 윈도우 이내) 등록된 시장 단위 독성 태그가
+                # 있으면 켈리를 그 배수만큼 축소한다(0.0=완전 정지 방어). 데이터 없거나
+                # 만료 시 mult=1.0 → 완전 무영향(중립). 진입 자체를 막지 않고 비중만 조절.
+                if sys_config.get("ENABLE_FLOW_TAG_TOXIC_KELLY_GUARD", True):
+                    try:
+                        from forward_flow_tag_deep_dive import resolve_flow_tag_toxic_kelly_mult
+
+                        _ft_mult, _ft_reason = resolve_flow_tag_toxic_kelly_mult(sys_config, market)
+                        if _ft_reason and abs(_ft_mult - 1.0) > 1e-6:
+                            kelly_risk_pct *= _ft_mult
+                            sig_type += f" #독성태그방어(x{_ft_mult:g}:{_ft_reason})"
+                            print(
+                                f"☠️ [톡식 플로우태그 방어] {market}: 등록 독성 태그 {_ft_reason} "
+                                f"→ 켈리 ×{_ft_mult:g}"
+                            )
+                    except Exception as _ft_ex:
+                        print(f"⚠️ [톡식 플로우태그 방어] 스킵(중립 진행): {_ft_ex}")
+
                 # 2. 해당 그룹(로직)이 지금까지 벌어들인 누적 수익금 계산 (실현 손익)
                 cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
                 realized_pnl = cursor.fetchone()[0]
@@ -2335,8 +2472,38 @@ def try_add_virtual_position(
                     return False, f"💸 예수금 부족: [{core_group_name}] 엔진의 가용 자산이 없습니다 (시드: {group_current_seed:,.0f}원 / 묶인돈: {locked_cash:,.0f}원)"
 
                 # 4. 베팅 한도 설정 (그룹 시드의 최대 비중 vs 남은 현금 중 작은 것; MetaGovernor 가 META_MAX_POSITION_PCT 로 추가 캡)
+                # 🌊 [P4-2 초신성 유동적 자본 캡] SUPERNOVA 거래에 한해 고정
+                # MAX_POSITION_PCT(예: 25%) 대신, 국면(cur_regime) 베이스 캡 ×
+                # 최근 5일 실현 승률 피드백(≥60%→1.2배 확장, <40%→0.5배 축소)으로
+                # 매 순간 재계산되는 유동 캡을 쓴다. 비-SUPERNOVA 전략은 기존 정적
+                # 로직(effective_max_position_pct)을 100% 그대로 사용 — 무변화.
+                # 실패 시 즉시 기존 정적 캡으로 안전 폴백.
+                position_pct_for_cap = effective_max_position_pct(sys_config, _meta_state)
+                if "SUPERNOVA" in sig_type:
+                    try:
+                        from supernova_fluid_capital import supernova_fluid_max_cap_mult
+
+                        _fluid_cap_pct, _fluid_reason = supernova_fluid_max_cap_mult(
+                            sys_config, cursor, market, cur_regime
+                        )
+                        _meta_ceiling = (
+                            _meta_state.get("META_MAX_POSITION_PCT")
+                            if isinstance(_meta_state, dict)
+                            else None
+                        )
+                        if _meta_ceiling is not None:
+                            try:
+                                _fluid_cap_pct = min(_fluid_cap_pct, float(_meta_ceiling))
+                            except (TypeError, ValueError):
+                                pass
+                        position_pct_for_cap = _fluid_cap_pct
+                        sig_type += f" #유동캡({_fluid_reason})"
+                        print(f"🌊 [초신성 유동자본캡] {market}: {_fluid_reason}")
+                    except Exception as _fluid_cap_ex:
+                        print(f"⚠️ [초신성 유동자본캡] 스킵(정적캡 폴백): {_fluid_cap_ex}")
+
                 max_invest_limit = min(
-                    group_current_seed * effective_max_position_pct(sys_config, _meta_state),
+                    group_current_seed * position_pct_for_cap,
                     available_cash,
                 )
                 
@@ -2446,6 +2613,12 @@ def try_add_virtual_position(
         "shares": shares,
         "sim_kelly_invest": sim_kelly_invest,
         "entry_regime": cur_regime,
+        # [P3-1] 교차검증 팩터 숫자 컬럼 — sig_type 텍스트 태그와 별개로 그대로 보존
+        "flow_bonus": round(flow_bonus_val, 4),
+        "flow_divergence": round(flow_divergence_val, 4),
+        "short_net": round(short_net_val, 4),
+        "fund_net": round(fund_net_val, 4),
+        "dart_net": round(dart_net_val, 4),
     }
     try:
         _insert_forward_trade_row(cursor, insert_row)
