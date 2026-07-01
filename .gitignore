@@ -35,6 +35,16 @@ telegram_error_log.txt
 predictive_regime_ensemble_state.json
 meta_trust_matrix.json
 
+# 핵심 파생/런타임 상태 파일 — update_factory.sh 가 pull 이전에 별도 백업하는
+# 배포별 SSOT 데이터. git 에 커밋되면 서버의 실시간 상태를 정적 스냅샷으로
+# 덮어쓰거나(운영 사고 위험), "untracked working tree files would be
+# overwritten by merge" 로 git pull 자체를 막는다 — 절대 버전관리 대상 아님.
+meta_governor_state.json
+system_config.json
+system_config.sqlite
+Supernova_Flow_Tracking_Master.csv
+news_data.sqlite
+
 # Local IDE / OS
 .DS_Store
 Thumbs.db
