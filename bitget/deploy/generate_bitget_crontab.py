@@ -56,8 +56,8 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         "# 24/7 scans spread across the day at NON-multiple-of-5 minutes so they never",
         "# share a wall-clock minute with KR/US stock scans(:00..:50)/audits(:45) or",
         "# bitget ops(*/5). SPOT/FUTURES are interleaved (never simultaneous).",
-        "# Server-safety: bitget heavy scans yield when the factory job lock is held",
-        "# (BITGET_YIELD_TO_FACTORY=1 default) — KR/US cron/timing is left untouched."
+        "# Two-Track air-gap: cgroup·독립 락/큐로 병렬 가동. yield 기본 OFF "
+        "(BITGET_YIELD_TO_FACTORY=0). 레거시 단일 서버만 1 로 재활성."
         + (
             "\n# QUEUE MODE: scans are enqueued (--enqueue) and run by the single "
             "dante-bitget-queue-worker; conflicts wait (PENDING) instead of skipping."

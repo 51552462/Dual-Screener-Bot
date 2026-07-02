@@ -15,8 +15,9 @@ EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
 ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_daemon.sh
 Restart=on-failure
 RestartSec=5
-MemoryMax=2G
+MemoryMax=1.5G
 CPUQuota=150%
+Environment=BITGET_YIELD_TO_FACTORY=0
 StandardOutput=journal
 StandardError=journal
 

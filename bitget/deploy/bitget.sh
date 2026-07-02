@@ -90,10 +90,11 @@ Usage: bitget/deploy/bitget.sh <flag>
 
   --dry-run           pass through to Python job runner
   --skip-telegram     suppress failure notifications
-  --enqueue           enqueue the job into task_queue.sqlite (queue worker runs it)
+  --enqueue           enqueue the job into bitget_task_queue.sqlite (queue worker runs it)
 
 Environment:
   BITGET_DB_STORAGE_PATH   data root SSOT
+  BITGET_TASK_QUEUE_DB_PATH  coin task queue (default: bitget_data_dir/bitget_task_queue.sqlite)
   BITGET_LOG_DIR           default: bitget/logs
   BITGET_DASHBOARD_PORT    default 8511
   BITGET_HEATMAP_PORT      default 8512

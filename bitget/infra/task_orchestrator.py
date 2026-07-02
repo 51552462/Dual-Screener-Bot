@@ -4,8 +4,9 @@ Zero-Dependency 무중단 우선순위 큐 (Task Orchestrator).
 [문제] 파일 락(`.factory_runtime.lock`) 공유로 우선순위가 밀리면 작업이
 대기하지 못하고 증발(Yield/Skip)했다. (코인 스캔이 주식 잡에 양보하며 사라짐)
 
-[해결] 외부 라이브러리 없이 내장 `sqlite3` 만으로 `task_queue.sqlite` 를 구축한다.
-  - 주식/코인 일정이 겹치면 Drop 하지 않고 PENDING 으로 대기 → 순차 실행.
+[해결] 외부 라이브러리 없이 내장 `sqlite3` 로 엔진별 큐 DB를 분리한다.
+  - 주식: `factory_data_dir()/task_queue.sqlite`
+  - 코인: `bitget_data_dir()/bitget_task_queue.sqlite`
   - `BEGIN EXCLUSIVE TRANSACTION` 으로 다중 프로세스 동시 픽업(Race) 차단(원자성).
   - [타임존 기반 권력 이양] 큐에서 작업을 꺼낼 때 서버 시간으로 우선순위 부여:
         KST 09:00~15:30  → KR  Priority 1
@@ -49,16 +50,27 @@ _KST = pytz.timezone("Asia/Seoul")
 _ET = pytz.timezone("America/New_York")
 
 
-def _queue_db_path() -> str:
-    env = (os.environ.get("TASK_QUEUE_DB_PATH") or "").strip()
-    if env:
-        return os.path.abspath(os.path.expanduser(env))
-    try:
-        from bitget.infra.data_paths import bitget_data_dir
+def queue_db_path_for_engine(engine: Optional[str] = None) -> str:
+    """엔진별 큐 DB — KR/US·BITGET 물리 분리 (Two-Track air-gap)."""
+    eng = str(engine or ENGINE_BITGET).strip().upper()
+    if eng in (ENGINE_KR, ENGINE_US):
+        try:
+            from factory_data_paths import task_queue_db_path
 
-        return os.path.join(bitget_data_dir(), "task_queue.sqlite")
+            return task_queue_db_path()
+        except Exception:
+            return os.path.join(os.getcwd(), "task_queue.sqlite")
+    try:
+        from bitget.infra.data_paths import task_queue_db_path
+
+        return task_queue_db_path()
     except Exception:
-        return os.path.join(os.getcwd(), "task_queue.sqlite")
+        return os.path.join(os.getcwd(), "bitget_task_queue.sqlite")
+
+
+def _queue_db_path() -> str:
+    """Bitget 큐 워커·모니터 기본 경로 (코인 전용 큐)."""
+    return queue_db_path_for_engine(ENGINE_BITGET)
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +216,9 @@ def enqueue(
     """
     eng = str(engine or "").strip().upper()
     prio = int(priority) if priority is not None else engine_priority(eng)
-    init_queue(db_path)
-    with _raw_conn(db_path) as conn:
+    path = db_path or queue_db_path_for_engine(eng)
+    init_queue(path)
+    with _raw_conn(path) as conn:
         if dedupe:
             row = conn.execute(
                 "SELECT id FROM task_queue WHERE engine=? AND mode=? "

@@ -1,5 +1,5 @@
 """
-큐 워커 데몬 — task_queue.sqlite 의 PENDING 작업을 단일 직렬로 실행.
+큐 워커 데몬 — bitget_task_queue.sqlite 의 PENDING 작업을 단일 직렬로 실행.
 
 [역할] cron 이 `runner.py --enqueue <mode>` 로 적재만 하고 즉시 종료하면,
 이 워커가 `task_orchestrator` 큐에서 권력 이양(KST/ET/Bitget) 우선순위대로

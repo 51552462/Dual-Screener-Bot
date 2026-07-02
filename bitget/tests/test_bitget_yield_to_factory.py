@@ -41,6 +41,7 @@ class TestYieldToFactory(unittest.TestCase):
         self.assertFalse(g.evaluate_scan_skip("scan_spot_supernova")[0])
 
     def test_active_factory_scan_makes_bitget_scan_yield(self):
+        os.environ["BITGET_YIELD_TO_FACTORY"] = "1"
         self._write_lock("scan_kr_supernova")
         self.assertTrue(g.factory_heavy_job_active()[0])
         skip, reason = g.evaluate_scan_skip("scan_spot_supernova")
@@ -48,6 +49,7 @@ class TestYieldToFactory(unittest.TestCase):
         self.assertIn("yield_to_factory", reason)
 
     def test_data_refresh_also_yields(self):
+        os.environ["BITGET_YIELD_TO_FACTORY"] = "1"
         self._write_lock("daily_audit_kr")
         skip, _ = g.evaluate_scan_skip("data_refresh")
         self.assertTrue(skip)

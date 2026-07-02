@@ -84,9 +84,10 @@ def send_comprehensive_daily_report():
             conn,
             params=(mkt,),
         )
-        if df_all.empty:
-            continue
-
+        # 표본 0건이어도 주식 daily_report 패리티대로 "0건" 리포트를 발송한다 —
+        # 여기서 continue 하면 스캔이 아직 진입 기록을 쌓지 못한 시장은 텔레그램에
+        # 아무 알림도 뜨지 않아(원인불명 침묵) 장애 감지가 불가능해진다.
+        # 아래 슬라이스/집계 함수들은 모두 빈 DataFrame을 안전하게 처리한다.
         df_all = prepare_forward_trades_df(df_all, context=f"bitget_comprehensive:{mkt}")
         mkt_slice = ctx.slice_for_market(df_all, market_type)
         df_closed = mkt_slice.df_closed
@@ -141,6 +142,8 @@ def send_comprehensive_daily_report():
             wr = float((s > 0).mean() * 100.0) if len(s) else 0.0
             board.append((g, bal, wr, v["open"]))
         board.sort(key=lambda x: x[1], reverse=True)
+        if not board:
+            msg2 += "표본 부족 — 아직 로직별 진입 기록이 없습니다.\n"
         for i, (g, bal, wr, op) in enumerate(board[:7]):
             medal = "🥇" if i == 0 else ("🥈" if i == 1 else ("🥉" if i == 2 else "🏃"))
             msg2 += f"{medal} <b>{g}</b>: {bal:,.2f} USDT (승률 {wr:.1f}% / OPEN {op})\n"

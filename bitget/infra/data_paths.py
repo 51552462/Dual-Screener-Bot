@@ -142,6 +142,14 @@ def ops_events_db_path() -> str:
     return os.path.join(bitget_data_dir(), "bitget_ops_events.sqlite")
 
 
+def task_queue_db_path() -> str:
+    """코인(Bitget) 팩토리 작업 큐 — 주식 큐와 물리 분리 (`bitget_task_queue.sqlite`)."""
+    env = (os.environ.get("BITGET_TASK_QUEUE_DB_PATH") or "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    return os.path.join(bitget_data_dir(), "bitget_task_queue.sqlite")
+
+
 def message_queue_db_path() -> str:
     return os.path.join(bitget_data_dir(), "bitget_message_queue.sqlite")
 

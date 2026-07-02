@@ -1,5 +1,5 @@
 [Unit]
-Description=Bitget task queue worker (single serial drain of task_queue.sqlite)
+Description=Bitget task queue worker (single serial drain of bitget_task_queue.sqlite)
 After=network-online.target dante-bitget-ws.service
 Wants=network-online.target
 

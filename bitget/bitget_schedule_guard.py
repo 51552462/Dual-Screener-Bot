@@ -1,10 +1,9 @@
 """
 Bitget cron·스캔 가드 — 유지보수 창 스킵 · cron TZ 오설정 힌트 (24/7 코인).
 
-추가: yield-to-factory — 주식(KR/US) factory 가 무거운 잡(scan/daily/weekly)을
-실행 중이면 bitget 의 무거운 잡(scan_*, data_refresh)을 이번 회차만 양보(스킵)한다.
-4GB 우분투 서버에서 두 무거운 잡이 동시에 도는 것을 막아 OOM/서버 다운을 방지하며,
-주식 쪽 크론/타이밍/락은 전혀 건드리지 않는다(읽기 전용).
+Two-Track air-gap: yield-to-factory 는 기본 OFF. cgroup·독립 락/큐로 병렬 가동하며,
+주식 factory 락은 읽기 전용으로만 참조한다(양보 스킵 비활성). 레거시 4GB 단일 서버만
+`BITGET_YIELD_TO_FACTORY=1` 로 재활성화 가능.
 """
 from __future__ import annotations
 
@@ -34,11 +33,12 @@ def utc_now() -> datetime:
 
 
 def _factory_yield_disabled() -> bool:
-    return str(os.environ.get("BITGET_YIELD_TO_FACTORY", "1")).strip().lower() in (
-        "0",
-        "false",
-        "no",
-        "off",
+    """Two-Track air-gap: 기본값 0(양보 무효화). 1/true 로만 레거시 yield 활성."""
+    return str(os.environ.get("BITGET_YIELD_TO_FACTORY", "0")).strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 

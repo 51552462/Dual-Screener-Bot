@@ -91,6 +91,14 @@ def validated_live_mutants_path() -> str:
     return os.path.join(install_root(), "validated_live_mutants.json")
 
 
+def task_queue_db_path() -> str:
+    """주식(KR/US) 팩토리 작업 큐 — 코인 큐와 물리 분리 (`task_queue.sqlite`)."""
+    env = (os.environ.get("TASK_QUEUE_DB_PATH") or "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    return os.path.join(factory_data_dir(), "task_queue.sqlite")
+
+
 def market_data_db_path() -> str:
     """OHLCV + forward_trades SSOT (`market_db_paths.MARKET_DATA_DB_PATH`)."""
     from market_db_paths import MARKET_DATA_DB_PATH
