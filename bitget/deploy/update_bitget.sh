@@ -121,6 +121,7 @@ print(f'  data_dir={data}')
 
 _bitget_stop_services() {
   systemctl stop dante-bitget-factory.service 2>/dev/null || true
+  systemctl stop dante-bitget-queue-worker.service 2>/dev/null || true
   systemctl stop dante-bitget-dashboard.service dante-bitget-heatmap.service 2>/dev/null || true
   systemctl stop dante-bitget-ws.service dante-bitget-async.service 2>/dev/null || true
   sleep 2
@@ -160,13 +161,22 @@ _bitget_clear_locks_and_stale() {
 }
 
 _bitget_start_services() {
+  # 4GB coin-only servers: keep dashboard/heatmap off unless explicitly enabled.
+  local start_ui="${BITGET_START_UI_SERVICES:-0}"
+
   systemctl daemon-reload
   systemctl start dante-bitget-ws.service
   sleep 1
   systemctl start dante-bitget-async.service
   systemctl start dante-bitget-factory.service
-  systemctl start dante-bitget-dashboard.service
-  systemctl start dante-bitget-heatmap.service
+  systemctl start dante-bitget-queue-worker.service
+  if [[ "$start_ui" == "1" || "$start_ui" == "true" || "$start_ui" == "yes" ]]; then
+    systemctl start dante-bitget-dashboard.service
+    systemctl start dante-bitget-heatmap.service
+  else
+    systemctl stop dante-bitget-dashboard.service dante-bitget-heatmap.service 2>/dev/null || true
+    echo "  UI services skipped (BITGET_START_UI_SERVICES=${start_ui})"
+  fi
   systemctl restart dante-bitget-watchdog.timer dante-bitget-snapshot.timer 2>/dev/null || true
 }
 
@@ -205,11 +215,12 @@ systemctl is-active \
   dante-bitget-ws.service \
   dante-bitget-factory.service \
   dante-bitget-async.service \
+  dante-bitget-queue-worker.service \
   dante-bitget-dashboard.service \
   dante-bitget-heatmap.service \
   2>/dev/null || true
 echo ""
 echo "=== logs ==="
-echo "sudo journalctl -u dante-bitget-factory -u dante-bitget-ws -u dante-bitget-dashboard -f"
+echo "sudo journalctl -u dante-bitget-factory -u dante-bitget-ws -u dante-bitget-async -u dante-bitget-queue-worker -f"
 echo ""
 echo "[update_bitget] done — equity dante-* untouched"

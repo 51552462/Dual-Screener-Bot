@@ -1,0 +1,10 @@
+# Allow ubuntu watchdog (cron) to restart Bitget units without a password prompt.
+# Install once on Bot-2:
+#   sudo cp bitget/deploy/ubuntu/bitget-watchdog-sudoers.example /etc/sudoers.d/bitget-watchdog
+#   sudo chmod 440 /etc/sudoers.d/bitget-watchdog
+#   sudo visudo -c
+Defaults:ubuntu !requiretty
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-factory
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-ws
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-async
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-queue-worker
