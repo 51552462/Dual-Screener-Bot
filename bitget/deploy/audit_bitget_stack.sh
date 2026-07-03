@@ -126,7 +126,7 @@ for u in dante-bitget-factory dante-bitget-ws dante-bitget-async dante-bitget-qu
   if [[ "$st" == "active" ]]; then
     pass "$u active (enabled=$en)"
   else
-    if [[ "$u" == "dante-bitget-queue-worker" && ! grep -q '\-\-enqueue' "$CRON_BITGET" 2>/dev/null ]]; then
+    if [[ "$u" == "dante-bitget-queue-worker" ]] && ! grep -q '\-\-enqueue' "$CRON_BITGET" 2>/dev/null; then
       warn "$u is $st (optional unless cron uses --enqueue)"
     else
       fail "$u is $st (enabled=$en) — Telegram/scans need this"
