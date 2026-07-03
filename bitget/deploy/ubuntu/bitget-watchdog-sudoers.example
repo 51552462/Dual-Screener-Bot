@@ -3,8 +3,14 @@
 #   sudo cp bitget/deploy/ubuntu/bitget-watchdog-sudoers.example /etc/sudoers.d/bitget-watchdog
 #   sudo chmod 440 /etc/sudoers.d/bitget-watchdog
 #   sudo visudo -c
+#
+# Both /bin and /usr/bin paths — Ubuntu resolves `systemctl` to /usr/bin/systemctl.
 Defaults:ubuntu !requiretty
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-factory
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dante-bitget-factory
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-ws
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dante-bitget-ws
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-async
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dante-bitget-async
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart dante-bitget-queue-worker
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dante-bitget-queue-worker

@@ -391,7 +391,8 @@ def main() -> int:
     miss_threshold = int(os.environ.get("BITGET_WATCHDOG_MISS_THRESHOLD", "3") or 3)
     cooldown = float(os.environ.get("BITGET_WATCHDOG_ALERT_COOLDOWN_SEC", "900") or 900)
     restart_cmd = (
-        os.environ.get("BITGET_WATCHDOG_RESTART_CMD") or "sudo systemctl restart dante-bitget-factory"
+        os.environ.get("BITGET_WATCHDOG_RESTART_CMD")
+        or "sudo -n systemctl restart dante-bitget-factory"
     ).strip()
     state_dir = _state_dir()
     components = _resolve_watchdog_components()

@@ -7,7 +7,13 @@ cd "$ROOT"
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 if [[ -f "${ROOT}/.env" ]]; then set -a; source "${ROOT}/.env"; set +a; fi
 if [[ -f "${BITGET_ROOT}/.env" ]]; then set -a; source "${BITGET_ROOT}/.env"; set +a; fi
-if [[ -f "${ROOT}/venv/bin/activate" ]]; then source "${ROOT}/venv/bin/activate"; fi
+if [[ -f "${ROOT}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT}/venv/bin/activate"
+elif [[ -f "${ROOT}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT}/.venv/bin/activate"
+fi
 WS_EXTRA=()
 # 가상매매(기본): private WS 불필요. 실거래 켤 때만 BITGET_WS_PRIVATE=1 + 유효 API 키.
 _ws_priv="$(echo "${BITGET_WS_PRIVATE:-0}" | tr '[:upper:]' '[:lower:]')"
