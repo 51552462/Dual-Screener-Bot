@@ -12,7 +12,6 @@ INSTALL_ROOT="${INSTALL_ROOT:-$(cd "${BITGET_ROOT}/.." && pwd)}"
 cd "$INSTALL_ROOT"
 
 CRON_BITGET="${BITGET_CRON_PATH:-/etc/cron.d/dual-screener-bitget}"
-LOG_DIR="${BITGET_LOG_DIR:-${BITGET_ROOT}/logs}"
 PY="${INSTALL_ROOT}/venv/bin/python"
 [[ -x "$PY" ]] || PY="${INSTALL_ROOT}/.venv/bin/python"
 
@@ -25,7 +24,7 @@ echo "INSTALL_ROOT=$INSTALL_ROOT"
 echo "time: $(date) ($(timedatectl show -p Timezone --value 2>/dev/null || echo '?'))"
 echo ""
 
-# --- env ---
+# --- env (LOG_DIR는 source 이후에 확정) ---
 if [[ -f "${INSTALL_ROOT}/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -38,6 +37,7 @@ if [[ -f "${BITGET_ROOT}/.env" ]]; then
   source "${BITGET_ROOT}/.env"
   set +a
 fi
+LOG_DIR="${BITGET_LOG_DIR:-${BITGET_ROOT}/logs}"
 
 DATA_DIR=""
 if [[ -x "$PY" ]]; then
@@ -215,10 +215,19 @@ p = message_queue_db_path()
 if not os.path.isfile(p):
     print('  ⚠ message_queue DB missing — no messages queued yet')
 else:
+    import telegram_message_queue as tmq
+    from bitget.infra.data_paths import message_queue_db_path as _mq_path
+    tmq.MESSAGE_QUEUE_DB_PATH = _mq_path()
+    tmq._schema_ready = False
+    tmq.ensure_message_queue_schema()
     conn = sqlite3.connect(p, timeout=5)
     try:
-        pending = conn.execute(\"SELECT COUNT(*) FROM message_queue WHERE status='pending'\").fetchone()[0]
-        failed = conn.execute(\"SELECT COUNT(*) FROM message_queue WHERE status='failed'\").fetchone()[0]
+        pending = conn.execute(
+            \"SELECT COUNT(*) FROM msg_queue WHERE UPPER(status)='PENDING'\"
+        ).fetchone()[0]
+        failed = conn.execute(
+            \"SELECT COUNT(*) FROM msg_queue WHERE UPPER(status) IN ('FAILED','ERROR')\"
+        ).fetchone()[0]
         print(f'  pending={pending} failed={failed}')
         if pending > 10:
             print('  ⚠ large backlog — is dante-bitget-async running?')
