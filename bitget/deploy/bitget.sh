@@ -60,14 +60,14 @@ Usage: bitget/deploy/bitget.sh <flag>
   --scan-spot         LEGACY: spot scan + track (manual only)
   --scan-futures      LEGACY: futures scan + track (manual only)
 
-  Staggered intraday (24h spread, non-%5 minutes, one scanner per run — cron SSOT):
-    SPOT/FUTURES interleaved across 24h UTC; never share a minute with KR/US stock
-    cron (those run at :00..:50 / :45). Heavy scans yield to factory (server-safe).
-    SPOT    supernova → nulrim → dante → ema5 → master → shadow → 2nd pass
-    FUTURES supernova → nulrim → dante → ema5 → shadow → 2nd pass
+  Staggered intraday (24h spread, ~53min interval, one scanner per run — cron SSOT):
+    SPOT/FUTURES interleaved across 24h UTC. 3-cycle, 27 total slots.
+    Dedicated coin server (Bot-2) — no KR/US stock collision avoidance needed.
+    SPOT    supernova → nulrim → dante → ema5 → master → shadow → r2 → r3
+    FUTURES supernova → nulrim → dante → ema5 → shadow → r2 → r3
     --scan-spot-supernova | --scan-spot-nulrim | --scan-spot-dante | --scan-spot-ema5
     --scan-spot-master | --scan-spot-shadow
-    --scan-spot-supernova-r2 | ... (same pattern)
+    --scan-spot-supernova-r2 | --scan-spot-supernova-r3 | ... (same pattern)
     --scan-futures-supernova | --scan-futures-nulrim | ... (no master)
 
   --lock-timeout SEC    job flock wait (default from bitget_scan_schedule SSOT)
@@ -75,6 +75,7 @@ Usage: bitget/deploy/bitget.sh <flag>
   --track-positions   virtual position tracking (spot + futures)
   --daily-audit       sentiment + track + deep dive + report + reconcile
   --weekly-evolution  autonomous tuning / brain surgery
+  --monthly-grand     monthly grand settlement report (self-gated: month-end only)
   --reconcile         OMS reconciliation
   --data-refresh      full MTF OHLCV update
   --canary            export crypto canary state JSON (file bridge → stock regime)
@@ -121,6 +122,7 @@ while [[ $# -gt 0 ]]; do
     --track-positions)  MODE="track_positions" ;;
     --daily-audit)      MODE="daily_audit" ;;
     --weekly-evolution) MODE="weekly_evolution" ;;
+    --monthly-grand)   MODE="monthly_grand" ;;
     --reconcile)        MODE="reconcile" ;;
     --data-refresh)     MODE="data_refresh" ;;
     --canary)           MODE="canary" ;;
