@@ -263,6 +263,16 @@ def sync_config_regime_from_meta(
     if not force and rk_ra == rk_meta and rk_cur == rk_meta:
         return {"synced": False, "reason": "already_aligned", "regime": rk_meta}
 
+    # [블랙스완 방어] 실제 국면 전환(UNKNOWN 초기 부트스트랩 제외) 감지 시,
+    # 탐험 예산을 즉시 안전선으로 강제 리셋 — CURRENT_REGIME_KEY 덮어쓰기 직전에 훅.
+    if rk_cur not in ("", "UNKNOWN") and rk_cur != rk_meta:
+        try:
+            from bitget.governance.exploration_budget import trigger_regime_shift_reset
+
+            trigger_regime_shift_reset(previous_regime=rk_cur, new_regime=rk_meta)
+        except Exception as ex:
+            logger.warning("exploration_budget regime-shift hook failed: %s", ex)
+
     ra_out = {**ra_dict, "regime_key": rk_meta, "source": "bitget_meta_sync"}
     config_manager.set_config_value("REGIME_ANALYSIS", ra_out)
     config_manager.set_config_value("CURRENT_REGIME_KEY", rk_meta)

@@ -280,7 +280,12 @@ def run_battle_royal(
     from strategy_registry_store import load_registry_rows
 
     reg_rows = load_registry_rows()
-    reg_mkt = [r for r in reg_rows if str(r.get("market") or "KR").upper() == mk]
+    # [시장 키 동기화] Bitget 은 SPOT/FUT 서브마켓으로 데스매치를 돌리지만
+    # MetaGovernor/strategy_registry 는 스팟+선물을 "BG" 로 통합 등록한다.
+    # mk in ("SPOT","FUT") 인 경우 "BG" 로 저장된 레지스트리 행도 매칭시켜
+    # registry_state 가 항상 UNREGISTERED 로만 보이는 불일치를 제거한다.
+    _reg_mk_aliases = {mk, "BG"} if mk in ("SPOT", "FUT") else {mk}
+    reg_mkt = [r for r in reg_rows if str(r.get("market") or "KR").upper() in _reg_mk_aliases]
 
     by_arm: Dict[str, List[int]] = {}
     arm_meta: Dict[str, Dict[str, Any]] = {}

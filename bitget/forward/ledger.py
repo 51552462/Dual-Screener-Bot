@@ -27,6 +27,7 @@ from bitget.forward.shared import (
     DB_PATH,
     DEFAULT_MAX_OPEN_POSITIONS,
     _cached_funding_snapshot,
+    get_exploration_role_scaler,
     init_forward_db,
     load_system_config,
     save_system_config,
@@ -240,6 +241,13 @@ def try_add_virtual_position(
         entry_facts=facts if isinstance(facts, dict) else {},
         sector_mapped=str(sector),
     )
+
+    # [동적 탐험예산 — 7일 롤링 MAB] 최종 Kelly 비중에 챔피언(LIVE)/탐험
+    # (OBSERVING·CANDIDATE) 역할 스케일러를 곱한다. 국면전환 방어 중이거나
+    # 미분류(NEUTRAL) 그룹은 스케일러 1.0(무변경). 실패 시 항상 안전 폴백.
+    _explore_scaler, _explore_role = get_exploration_role_scaler(cfg, core_group)
+    kelly_risk_pct *= _explore_scaler
+
     account_size = float(cfg.get("ACCOUNT_SIZE_USDT", 100000))
     max_position_pct = float(effective_max_position_pct(cfg, _meta_state))
 

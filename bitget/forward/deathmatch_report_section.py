@@ -83,7 +83,7 @@ def build_deathmatch_section(
     sys_config: dict,
     meta: Optional[dict[str, Any]],
     market_icon: str,
-    apply_deathmatch_allocation: bool = False,
+    apply_deathmatch_allocation: bool = True,
 ) -> str:
     from evolution.ace_deathmatch_bridge import (
         build_ace_deathmatch_comparison,

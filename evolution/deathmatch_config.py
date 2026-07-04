@@ -56,6 +56,17 @@ MARKET_DEATHMATCH_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "lookback_days": 90,
         "mdd_exp_threshold_pct": -18.0,
     },
+    # Bitget 은 SPOT/FUT 서브마켓 단위로 데스매치를 별도 실행하지만, MetaGovernor
+    # Treasury/Registry 는 "BG" 로 통합 관리한다. 여기서도 동일 파라미터를 쓰도록
+    # 별칭을 등록해 시장 키 불일치로 override 가 누락되는 것을 방지한다.
+    "SPOT": {
+        "lookback_days": 90,
+        "mdd_exp_threshold_pct": -18.0,
+    },
+    "FUT": {
+        "lookback_days": 90,
+        "mdd_exp_threshold_pct": -18.0,
+    },
 }
 
 

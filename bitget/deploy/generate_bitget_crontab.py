@@ -53,11 +53,10 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         "#",
         "# AUTO-GENERATED from bitget/bitget_scan_schedule.py — do not edit by hand.",
         f"# Regenerate: python bitget/deploy/generate_bitget_crontab.py",
-        "# 24/7 scans spread across the day at NON-multiple-of-5 minutes so they never",
-        "# share a wall-clock minute with KR/US stock scans(:00..:50)/audits(:45) or",
-        "# bitget ops(*/5). SPOT/FUTURES are interleaved (never simultaneous).",
-        "# Two-Track air-gap: cgroup·독립 락/큐로 병렬 가동. yield 기본 OFF "
-        "(BITGET_YIELD_TO_FACTORY=0). 레거시 단일 서버만 1 로 재활성."
+        "# 전용 코인 서버(Bot-2) 최적화: 3사이클 27슬롯, ~53분 간격 교차 배치.",
+        "# SPOT/FUTURES are interleaved (never simultaneous). %5 minute constraint removed",
+        "# (dedicated server — no KR/US stock collision risk).",
+        "# Two-Track air-gap: cgroup·독립 락/큐로 병렬 가동. yield OFF (BITGET_YIELD_TO_FACTORY=0)."
         + (
             "\n# QUEUE MODE: scans are enqueued (--enqueue) and run by the single "
             "dante-bitget-queue-worker; conflicts wait (PENDING) instead of skipping."
@@ -94,8 +93,10 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --watchdog",
         "15 0 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --health",
+        "50 23 * * *  "
+        + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --monthly-grand",
         "",
-        f"# --- SPOT staggered (24h, {len(SPOT_SCAN_SLOTS)} slots, non-%5 min) ---",
+        f"# --- SPOT staggered (24h, {len(SPOT_SCAN_SLOTS)} slots, ~53min interval) ---",
     ]
     dow_spot = SCHEDULE_WEEKDAYS["SPOT"]
     for slot in SPOT_SCAN_SLOTS:
@@ -112,7 +113,7 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         )
     lines.append("")
     lines.append(
-        f"# --- FUTURES staggered (24h, {len(FUTURES_SCAN_SLOTS)} slots, non-%5 min) ---"
+        f"# --- FUTURES staggered (24h, {len(FUTURES_SCAN_SLOTS)} slots, ~53min interval) ---"
     )
     dow_fut = SCHEDULE_WEEKDAYS["FUTURES"]
     for slot in FUTURES_SCAN_SLOTS:
