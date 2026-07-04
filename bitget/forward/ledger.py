@@ -40,6 +40,35 @@ from bitget.governance.meta_consumer import (
 
 _DEFAULT_BITGET_MAX_OPEN_POSITIONS = DEFAULT_MAX_OPEN_POSITIONS
 
+
+def _execute_retry(conn, sql, params, *, context="", max_retry=5):
+    """`database is locked` 재시도(지수 백오프). 커밋은 호출자 책임(같은 트랜잭션 유지용)."""
+    for attempt in range(max_retry):
+        try:
+            return conn.execute(sql, params)
+        except sqlite3.OperationalError as e:
+            em = str(e).lower()
+            if "database is locked" in em and attempt < max_retry - 1:
+                wait_s = 0.5 * (2 ** attempt)
+                print(f"⏳ [DB LOCK 재시도] {context} #{attempt + 1}/{max_retry} wait={wait_s:.2f}s")
+                time.sleep(wait_s)
+                continue
+            raise
+
+
+def _execute_commit_retry(conn, sql, params, *, context="", max_retry=5):
+    """`database is locked` 재시도 후 즉시 커밋.
+
+    track_daily_positions 처럼 여러 포지션을 순회하며 쓰는 루프에서, 각 행마다
+    바로 커밋해 writer 락 점유 시간을 한 문장(statement) 수준으로 최소화한다.
+    (과거엔 루프 전체가 끝날 때까지 커밋을 미뤄 락을 길게 물고 있었고, 그 사이
+    다른 프로세스의 scan INSERT 가 busy_timeout(60s)을 넘겨 `database is locked`
+    로 전체 스캔 작업이 통째로 실패하는 원인이었다.)
+    """
+    _execute_retry(conn, sql, params, context=context, max_retry=max_retry)
+    conn.commit()
+
+
 def try_add_virtual_position(
     market_type,
     symbol,
@@ -301,7 +330,8 @@ def try_add_virtual_position(
                 fts0 = str(_s.get("next_funding_iso") or _s.get("next_funding_ts") or "").strip()
         except Exception:
             pass
-    cur.execute(
+    _execute_retry(
+        conn,
         """
         INSERT INTO bitget_forward_trades
         (entry_date, market_type, symbol, timeframe, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb,
@@ -354,6 +384,7 @@ def try_add_virtual_position(
             fts0,
             acc0,
         ),
+        context=f"신규진입 {symbol}",
     )
     satellite_tags = None
     try:
@@ -532,23 +563,7 @@ def _force_close_zombie_delist_or_halt(conn, r):
         flow_tags,
         int(r["id"]),
     )
-    max_retry = 5
-    for attempt in range(max_retry):
-        try:
-            conn.execute(update_sql, params)
-            break
-        except sqlite3.OperationalError as e:
-            em = str(e).lower()
-            if "database is locked" in em:
-                if attempt >= max_retry - 1:
-                    raise
-                wait_s = 0.5 * (2 ** attempt)
-                print(
-                    f"⏳ [DB LOCK 재시도] 좀비청산 {r['symbol']} #{attempt + 1}/{max_retry} wait={wait_s:.2f}s"
-                )
-                time.sleep(wait_s)
-                continue
-            raise
+    _execute_commit_retry(conn, update_sql, params, context=f"좀비청산 {r['symbol']}")
 
     treasury_key = "TREASURY_SPOT_USDT" if r["market_type"] == "spot" else "TREASURY_FUTURES_USDT"
     cur_cfg = load_system_config()
@@ -660,9 +675,11 @@ def track_daily_positions(market_type):
             entry_atr = r.get("entry_atr", 0.0)
             if entry_atr == 0.0 or pd.isna(entry_atr):
                 entry_atr = float(cur_atr)
-                conn.execute(
+                _execute_commit_retry(
+                    conn,
                     "UPDATE bitget_forward_trades SET entry_atr=? WHERE id=?",
                     (round(entry_atr, 6), int(r["id"])),
+                    context=f"entry_atr백필 {r['symbol']}",
                 )
             else:
                 entry_atr = float(entry_atr)
@@ -914,24 +931,7 @@ def track_daily_positions(market_type):
                     int(r["id"]),
                 )
 
-                max_retry = 5
-                for attempt in range(max_retry):
-                    try:
-                        conn.execute(update_sql, update_params)
-                        break
-                    except sqlite3.OperationalError as e:
-                        em = str(e).lower()
-                        if "database is locked" in em:
-                            if attempt >= max_retry - 1:
-                                raise
-                            wait_s = 0.5 * (2 ** attempt)
-                            print(
-                                f"⏳ [DB LOCK 재시도] {r['symbol']} #{attempt + 1}/{max_retry} "
-                                f"wait={wait_s:.2f}s"
-                            )
-                            time.sleep(wait_s)
-                            continue
-                        raise
+                _execute_commit_retry(conn, update_sql, update_params, context=f"청산 {r['symbol']}")
 
                 # 국고 환입
                 treasury_key = "TREASURY_SPOT_USDT" if r["market_type"] == "spot" else "TREASURY_FUTURES_USDT"
@@ -984,24 +984,7 @@ def track_daily_positions(market_type):
                     int(r["id"]),
                 )
 
-                max_retry = 5
-                for attempt in range(max_retry):
-                    try:
-                        conn.execute(update_sql, update_params)
-                        break
-                    except sqlite3.OperationalError as e:
-                        em = str(e).lower()
-                        if "database is locked" in em:
-                            if attempt >= max_retry - 1:
-                                raise
-                            wait_s = 0.5 * (2 ** attempt)
-                            print(
-                                f"⏳ [DB LOCK 재시도] {r['symbol']} #{attempt + 1}/{max_retry} "
-                                f"wait={wait_s:.2f}s"
-                            )
-                            time.sleep(wait_s)
-                            continue
-                        raise
+                _execute_commit_retry(conn, update_sql, update_params, context=f"추적갱신 {r['symbol']}")
         except Exception as e:
             try:
                 print(f"🚨 [청산 추적 에러] {r['symbol']}: {e}")

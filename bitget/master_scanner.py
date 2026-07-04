@@ -437,123 +437,25 @@ def run_scan(
                                 f.write(k + "\n")
                     except Exception:
                         pass
-
-                    market_type = "futures" if "_FUT_" in tbl else "spot"
-                    facts = {
-                        "v_cpv": dbg.get("v_cpv", 0.0),
-                        "v_yang": dbg.get("v_yang", 0.0),
-                        "v_energy": dbg.get("v_energy", 0.0),
-                        "v_rs": dbg.get("v_rs", 0.0),
-                        "dyn_rs": dbg.get("dyn_rs_score", 0.0),
-                        "dyn_cpv": dbg.get("dyn_cpv_score", 0.0),
-                        "dyn_tb": dbg.get("dyn_tb_score", 0.0),
-                        "sn_score": dbg.get("sn_score", 0.0),
-                        "dtw_score": dbg.get("dtw_score", 0.0),
-                        "trade_value_24h": float(dbg.get("trade_value_24h", 0.0) or 0.0),
-                        "marcap_eok": float(dbg.get("marcap_eok", 0.0) or 0.0),
-                    }
-                    sig_for_db = sig_type if str(engine_name).startswith("SUPERNOVA_") else f"[STANDARD][{engine_name}] {sig_type}"
-                    time.sleep(0.04)  # DB/API 연속 호출 완화
-                    ok, db_msg = try_add_virtual_position(
-                        market_type=market_type,
-                        symbol=symbol,
-                        timeframe=tf,
-                        sig_type=sig_for_db,
-                        score=score,
-                        entry_price=float(dbg.get("last_close", last_close)),
-                        facts=facts,
-                        side=dbg.get("side", "LONG"),
-                        entry_high=dbg.get("entry_high", float(dbg.get("last_close", last_close))),
-                    )
-                    if not ok:
-                        rsn = str(db_msg)
-                        if ("ANTI_PATTERNS" in rsn) or ("TOXIC" in rsn) or ("DOOMSDAY" in rsn):
-                            try:
-                                bitget_shadow_tracking.record_blocked_trade(
-                                    symbol=symbol,
-                                    reason=rsn,
-                                    entry_price=float(dbg.get("last_close", last_close) or 0.0),
-                                    market_type=market_type,
-                                    name=symbol,
-                                    position_side=str(dbg.get("side", "LONG")).upper(),
-                                    timeframe=tf,
-                                )
-                            except Exception:
-                                pass
-                    if ok:
-                        try:
-                            order_side = str(dbg.get("side", "LONG")).upper()
-                            order_amount = float(dbg.get("order_amount", 0.0) or 0.0)
-                            if order_amount <= 0:
-                                # fallback: 가상 장부 quantity를 쓰지 못하는 경우 최소 notional 기반 근사
-                                px = float(dbg.get("last_close", last_close) or 0.0)
-                                default_notional = 20.0
-                                order_amount = (default_notional / px) if px > 0 else 0.0
-                            order_lev = float(dbg.get("leverage", 3.0) or 3.0)
-                            exec_result = execute_real_order(
-                                symbol=symbol,
-                                side=order_side,
-                                amount=order_amount,
-                                leverage=order_lev,
-                                market_type=market_type,
-                                strategy_key=str(engine_name or ""),
-                            )
-                            vt_id = _lookup_virtual_trade_id(
-                                market_type=market_type,
-                                symbol=symbol,
-                                timeframe=tf,
-                                sig_type=sig_for_db,
-                                side=order_side,
-                            )
-                            log_real_execution(
-                                market_type=market_type,
-                                symbol=symbol,
-                                timeframe=tf,
-                                engine_name=engine_name,
-                                sig_type=sig_for_db,
-                                side=order_side,
-                                amount=order_amount,
-                                leverage=order_lev,
-                                entry_price=float(dbg.get("last_close", last_close) or 0.0),
-                                exec_result=exec_result,
-                                virtual_trade_id=vt_id,
-                            )
-                            if exec_result.get("ok"):
-                                db_msg = f"{db_msg} | 실전주문:{exec_result.get('status')}"
-                            else:
-                                db_msg = f"{db_msg} | 실전주문실패:{exec_result.get('status')}"
-                        except Exception as e:
-                            db_msg = f"{db_msg} | 실전주문예외:{e}"
-
-                    main_caption = (
-                        f"🎯 [{signal_side}] [{sig_type}]\n"
-                        f"🪙 {symbol} | TF {tf} | 엔진 {engine_name}\n"
-                        f"📈 점수: {score:.1f}\n\n"
-                        f"{dbg.get('v11_comment', '')}\n"
-                        f"📒 장부 기록: {db_msg}\n\n"
-                        f"💡 [AI 코인 브리핑]\n{ai}"
-                    )
-                    promo_caption = (
-                        f"📈 [Bitget Signal]\n\n"
-                        f"🪙 {symbol}\n"
-                        f"🧭 TF: {tf} | {engine_name}\n"
-                        f"⭐ 점수: {score:.1f}"
-                    )
-                    enqueue_telegram(
-                        "MAIN",
-                        chart_main,
-                        main_caption,
-                        enabled=SEND_TELEGRAM,
-                        send_profile="html",
-                    )
-                    enqueue_telegram(
-                        "PROMO",
-                        chart_promo,
-                        promo_caption,
-                        enabled=SEND_TELEGRAM,
-                        send_profile="html",
-                    )
-                    print(f"[{engine_name}] {symbol} {tf} -> {db_msg} | charts queued")
+                    try:
+                        _process_scan_hit(
+                            tbl=tbl,
+                            tf=tf,
+                            symbol=symbol,
+                            engine_name=engine_name,
+                            sig_type=sig_type,
+                            score=score,
+                            chart_main=chart_main,
+                            chart_promo=chart_promo,
+                            ai=ai,
+                            dbg=dbg,
+                            last_close=last_close,
+                            signal_side=signal_side,
+                        )
+                    except Exception as e:
+                        # DB 락(락 재시도 소진) 등 단일 히트 처리 실패가 전체 스캔(다른 심볼/TF)을
+                        # 통째로 죽이지 않도록 격리한다. (2026-07-04 scan_spot_dante FAIL 원인)
+                        print(f"[{engine_name}] {symbol} {tf} -> 처리 실패(격리됨): {e}")
                     del dbg
                     gc.collect()
                 del hits
@@ -562,6 +464,144 @@ def run_scan(
     del table_names
     gc.collect()
     wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
+
+
+def _process_scan_hit(
+    *,
+    tbl: str,
+    tf: str,
+    symbol: str,
+    engine_name: str,
+    sig_type: str,
+    score: float,
+    chart_main,
+    chart_promo,
+    ai,
+    dbg: dict,
+    last_close: float,
+    signal_side: str,
+) -> None:
+    """단일 스캔 히트(신호) 처리 — 장부 기록 + 실주문 + 텔레그램 큐잉.
+
+    run_scan 의 히트 루프에서 분리해, 이 함수 안에서 예외(예: DB 락 재시도 소진)가
+    나도 호출부에서 격리·로깅만 하고 나머지 심볼/타임프레임 스캔은 계속 진행되게 한다.
+    """
+    market_type = "futures" if "_FUT_" in tbl else "spot"
+    facts = {
+        "v_cpv": dbg.get("v_cpv", 0.0),
+        "v_yang": dbg.get("v_yang", 0.0),
+        "v_energy": dbg.get("v_energy", 0.0),
+        "v_rs": dbg.get("v_rs", 0.0),
+        "dyn_rs": dbg.get("dyn_rs_score", 0.0),
+        "dyn_cpv": dbg.get("dyn_cpv_score", 0.0),
+        "dyn_tb": dbg.get("dyn_tb_score", 0.0),
+        "sn_score": dbg.get("sn_score", 0.0),
+        "dtw_score": dbg.get("dtw_score", 0.0),
+        "trade_value_24h": float(dbg.get("trade_value_24h", 0.0) or 0.0),
+        "marcap_eok": float(dbg.get("marcap_eok", 0.0) or 0.0),
+    }
+    sig_for_db = sig_type if str(engine_name).startswith("SUPERNOVA_") else f"[STANDARD][{engine_name}] {sig_type}"
+    time.sleep(0.04)  # DB/API 연속 호출 완화
+    ok, db_msg = try_add_virtual_position(
+        market_type=market_type,
+        symbol=symbol,
+        timeframe=tf,
+        sig_type=sig_for_db,
+        score=score,
+        entry_price=float(dbg.get("last_close", last_close)),
+        facts=facts,
+        side=dbg.get("side", "LONG"),
+        entry_high=dbg.get("entry_high", float(dbg.get("last_close", last_close))),
+    )
+    if not ok:
+        rsn = str(db_msg)
+        if ("ANTI_PATTERNS" in rsn) or ("TOXIC" in rsn) or ("DOOMSDAY" in rsn):
+            try:
+                bitget_shadow_tracking.record_blocked_trade(
+                    symbol=symbol,
+                    reason=rsn,
+                    entry_price=float(dbg.get("last_close", last_close) or 0.0),
+                    market_type=market_type,
+                    name=symbol,
+                    position_side=str(dbg.get("side", "LONG")).upper(),
+                    timeframe=tf,
+                )
+            except Exception:
+                pass
+    if ok:
+        try:
+            order_side = str(dbg.get("side", "LONG")).upper()
+            order_amount = float(dbg.get("order_amount", 0.0) or 0.0)
+            if order_amount <= 0:
+                # fallback: 가상 장부 quantity를 쓰지 못하는 경우 최소 notional 기반 근사
+                px = float(dbg.get("last_close", last_close) or 0.0)
+                default_notional = 20.0
+                order_amount = (default_notional / px) if px > 0 else 0.0
+            order_lev = float(dbg.get("leverage", 3.0) or 3.0)
+            exec_result = execute_real_order(
+                symbol=symbol,
+                side=order_side,
+                amount=order_amount,
+                leverage=order_lev,
+                market_type=market_type,
+                strategy_key=str(engine_name or ""),
+            )
+            vt_id = _lookup_virtual_trade_id(
+                market_type=market_type,
+                symbol=symbol,
+                timeframe=tf,
+                sig_type=sig_for_db,
+                side=order_side,
+            )
+            log_real_execution(
+                market_type=market_type,
+                symbol=symbol,
+                timeframe=tf,
+                engine_name=engine_name,
+                sig_type=sig_for_db,
+                side=order_side,
+                amount=order_amount,
+                leverage=order_lev,
+                entry_price=float(dbg.get("last_close", last_close) or 0.0),
+                exec_result=exec_result,
+                virtual_trade_id=vt_id,
+            )
+            if exec_result.get("ok"):
+                db_msg = f"{db_msg} | 실전주문:{exec_result.get('status')}"
+            else:
+                db_msg = f"{db_msg} | 실전주문실패:{exec_result.get('status')}"
+        except Exception as e:
+            db_msg = f"{db_msg} | 실전주문예외:{e}"
+
+    main_caption = (
+        f"🎯 [{signal_side}] [{sig_type}]\n"
+        f"🪙 {symbol} | TF {tf} | 엔진 {engine_name}\n"
+        f"📈 점수: {score:.1f}\n\n"
+        f"{dbg.get('v11_comment', '')}\n"
+        f"📒 장부 기록: {db_msg}\n\n"
+        f"💡 [AI 코인 브리핑]\n{ai}"
+    )
+    promo_caption = (
+        f"📈 [Bitget Signal]\n\n"
+        f"🪙 {symbol}\n"
+        f"🧭 TF: {tf} | {engine_name}\n"
+        f"⭐ 점수: {score:.1f}"
+    )
+    enqueue_telegram(
+        "MAIN",
+        chart_main,
+        main_caption,
+        enabled=SEND_TELEGRAM,
+        send_profile="html",
+    )
+    enqueue_telegram(
+        "PROMO",
+        chart_promo,
+        promo_caption,
+        enabled=SEND_TELEGRAM,
+        send_profile="html",
+    )
+    print(f"[{engine_name}] {symbol} {tf} -> {db_msg} | charts queued")
 
 
 def datetime_now_utc_date():
