@@ -237,12 +237,27 @@ def send_comprehensive_daily_report():
             sys_config=cfg,
             meta=meta,
             market_icon=m_icon,
-            apply_deathmatch_allocation=False,
+            apply_deathmatch_allocation=True,
         )
         send_telegram_msg(msg9)
         time.sleep(1.0)
 
     conn.close()
+
+    # [동적 탐험예산 — 7일 롤링 MAB] 챔피언/탐험 자본배분 현황 패널.
+    # 하루 1회 여기서 갱신(무거운 DB 롤링 집계) → 이후 Kelly 사이징 핫패스는
+    # system_config 에 저장된 상태만 읽어 스케일러를 곱한다(추가 I/O 없음).
+    try:
+        from bitget.governance.exploration_budget import (
+            format_exploration_budget_panel_html,
+            refresh_exploration_budget_state,
+        )
+
+        _budget_state = refresh_exploration_budget_state()
+        send_telegram_msg(format_exploration_budget_panel_html(_budget_state))
+    except Exception as e:
+        send_telegram_msg(f"⚠️ [자본 배분] exploration_budget 갱신 실패: {e}")
+
     # 일일 종합 리포트와 실무자 30인 개별 리포트를 연동 실행
     try:
         send_group_practitioner_reports()
@@ -386,6 +401,16 @@ def run_deep_dive_analysis(market_type="spot"):
             report_msg += "\n🧠 [자율 튜닝 적용]\n"
             for m in tune_msgs:
                 report_msg += f"▪️ {m}\n"
+
+        # [동적 탐험예산] 참고용 스냅샷(하루 1회 갱신은 comprehensive_report 에서 수행).
+        try:
+            from bitget.governance.exploration_budget import (
+                format_exploration_budget_panel_html,
+            )
+
+            report_msg += "\n" + format_exploration_budget_panel_html()
+        except Exception:
+            pass
 
         send_telegram_msg(report_msg)
         print(f"✅ [{mkt}] 딥 다이브 분석 리포트 발송 완료.")

@@ -385,3 +385,20 @@ def reporter_cleanup_zombie_forward_trades() -> int:
     finally:
         conn.close()
 
+
+def get_exploration_role_scaler(sys_config: dict, group_key: str):
+    """[동적 탐험예산] Kelly 최종 비중에 곱할 챔피언/탐험 역할 스케일러.
+
+    실제 로직은 bitget.governance.exploration_budget 에 있다 — 여기서는
+    ledger.py 등 forward 경로에서 편하게 임포트할 수 있도록 얇게 재노출한다.
+    실패 시 항상 (1.0, "NEUTRAL") 폴백 — 기존 Kelly 동작 무변경 보장.
+    """
+    try:
+        from bitget.governance.exploration_budget import (
+            get_exploration_role_scaler as _impl,
+        )
+
+        return _impl(sys_config, group_key)
+    except Exception:
+        return 1.0, "NEUTRAL"
+
