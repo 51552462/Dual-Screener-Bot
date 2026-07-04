@@ -58,6 +58,12 @@ BITGET_SERVICES=(
 
   dante-bitget-async.service
 
+)
+
+# 4GB coin-only 서버 기본값: UI(dashboard/heatmap)는 끈 채로 설치 — enable 하지 않으면
+# 부팅 시 자동 기동 시도 자체가 없어 크래시 → failed 고착(update_bitget.sh is-active 오탐) 방지.
+BITGET_UI_SERVICES=(
+
   dante-bitget-dashboard.service
 
   dante-bitget-heatmap.service
@@ -76,11 +82,25 @@ BITGET_TIMERS=(
 
 sudo systemctl enable "${BITGET_SERVICES[@]}" "${BITGET_TIMERS[@]}"
 
+_start_ui="${BITGET_START_UI_SERVICES:-0}"
+if [[ "$_start_ui" == "1" || "$_start_ui" == "true" || "$_start_ui" == "yes" ]]; then
+  sudo systemctl enable "${BITGET_UI_SERVICES[@]}"
+else
+  sudo systemctl disable "${BITGET_UI_SERVICES[@]}" 2>/dev/null || true
+  sudo systemctl reset-failed "${BITGET_UI_SERVICES[@]}" 2>/dev/null || true
+fi
+
 
 
 echo "[deploy_bitget] enabled units:"
 
 printf '  %s\n' "${BITGET_SERVICES[@]}" "${BITGET_TIMERS[@]}"
+
+if [[ "$_start_ui" == "1" || "$_start_ui" == "true" || "$_start_ui" == "yes" ]]; then
+  printf '  %s\n' "${BITGET_UI_SERVICES[@]}"
+else
+  echo "  (UI dashboard/heatmap: disabled — BITGET_START_UI_SERVICES=${_start_ui})"
+fi
 
 echo ""
 
@@ -88,7 +108,7 @@ echo "[deploy_bitget] first start:"
 
 echo "  sudo systemctl start dante-bitget-ws dante-bitget-async dante-bitget-factory dante-bitget-queue-worker"
 
-echo "  sudo systemctl start dante-bitget-dashboard dante-bitget-heatmap"
+echo "  sudo systemctl start dante-bitget-dashboard dante-bitget-heatmap   # BITGET_START_UI_SERVICES=1 일 때만"
 
 echo "  sudo systemctl start dante-bitget-watchdog.timer dante-bitget-snapshot.timer"
 

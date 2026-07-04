@@ -171,11 +171,17 @@ _bitget_start_services() {
   systemctl start dante-bitget-factory.service
   systemctl start dante-bitget-queue-worker.service
   if [[ "$start_ui" == "1" || "$start_ui" == "true" || "$start_ui" == "yes" ]]; then
+    systemctl enable dante-bitget-dashboard.service dante-bitget-heatmap.service 2>/dev/null || true
     systemctl start dante-bitget-dashboard.service
     systemctl start dante-bitget-heatmap.service
   else
+    # 꺼둔 UI 서비스는 stop만으로는 부팅 시 자동 재기동을 막지 못하고(WantedBy=multi-user.target),
+    # 과거에 한 번이라도 크래시했다면 systemd가 failed 상태를 영구 보존해 매 배포마다
+    # `is-active`에 failed로 잡혀 오탐 알람을 유발한다 — disable + reset-failed로 정리.
     systemctl stop dante-bitget-dashboard.service dante-bitget-heatmap.service 2>/dev/null || true
-    echo "  UI services skipped (BITGET_START_UI_SERVICES=${start_ui})"
+    systemctl disable dante-bitget-dashboard.service dante-bitget-heatmap.service 2>/dev/null || true
+    systemctl reset-failed dante-bitget-dashboard.service dante-bitget-heatmap.service 2>/dev/null || true
+    echo "  UI services skipped (BITGET_START_UI_SERVICES=${start_ui}) — disabled + failed-state cleared"
   fi
   systemctl restart dante-bitget-watchdog.timer dante-bitget-snapshot.timer 2>/dev/null || true
 }
