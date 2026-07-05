@@ -16,6 +16,7 @@ class TestBitgetWeeklyEvolutionPipeline(unittest.TestCase):
                 "artifact_guard",
                 "weekly_evolution",
                 "weekly_flow_master",
+                "genesis_backfill_weekly",
                 "weekend_grand_report",
                 "weekly_action_plan",
                 "weekly_executive_summary",

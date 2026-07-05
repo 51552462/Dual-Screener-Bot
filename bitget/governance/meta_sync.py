@@ -356,6 +356,12 @@ def _refresh_coin_regime() -> Dict[str, Any]:
     }
     cfg["REGIME_ANALYSIS"] = ra
     config_manager.save_system_config(cfg)
+    try:
+        from bitget.evolution.coin_regime_vector import append_coin_regime_vector_history
+
+        append_coin_regime_vector_history(cfg)
+    except Exception as ex:
+        logger.debug("coin_regime_vector history append skip: %s", ex)
     return {"regime_key": rk, "REGIME_ANALYSIS": ra}
 
 

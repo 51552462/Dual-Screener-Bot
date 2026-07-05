@@ -58,8 +58,8 @@
 |---|---|---|
 | Deathmatch 랭킹 | 매일 자동 실행 | **Bitget은 `apply_deathmatch_allocation=False`로 명시적으로 자본배분을 꺼둠** — 랭킹은 정보성일 뿐, 나쁜 전략이 자동으로 굶지 않음 |
 | 시장 키 불일치 | `market="BG"` vs `market="SPOT"/"FUT"` | Deathmatch와 MetaGovernor 레지스트리가 서로 다른 키로 나뉘어 있어 정합성 약함 |
-| Champion genesis(전조 학습) | 코드는 있으나 **Bitget 일일 리포트 경로에 연결 안 됨** | "무엇이 통했는지" 전조 라이브러리가 축적되지 않음 |
-| 전략 레지스트리 수명주기 | OBSERVING→CANDIDATE→LIVE→COOLED→RETIRED 자동 전환 | 양호 |
+| Champion genesis(전조 학습) | ✅ (2026-07) `bitget/evolution/champion_genesis_bg.py` 신설, Bitget 자체 DB(`champion_precursor_genesis`)에 격리 저장 | 데스매치 사이클 직후(`deathmatch_report_section.py`) 자동 캡처 + 평일 레이더/주말 백필 파이프라인 연결 완료 |
+| 전략 레지스트리 수명주기 | ✅ (2026-07) 버그 수정: `meta_governor._step_lifecycle`이 Bitget 단독 사이클에서 `forward_db_path=None`일 때 주식 `market_data.sqlite`로 폴백해 코인 레지스트리 행이 주식 DB에 오염되고 있었음(레지스트리 자체는 Bitget DB에 한 번도 채워지지 않아 RETIRED/COOLED 카운트·탐험예산 MAB가 항상 0/기본값) | `ctx.forward_db_path or ctx.bitget_db_path` 폴백으로 Bitget 단독 사이클은 Bitget 자체 DB에 격리 |
 | 과최적화 방지 | 최소 표본수 게이트 존재, 14일 OOS(engine6 한정) | **Bitget 파이프라인 전체에 걸친 walk-forward 검증은 없음** — 90일 롤링 윈도우가 사실상 in-sample |
 | 시그널 유니버스 | 코어 5개 + 실무자룰 30개 + 인큐베이터 뮤턴트 | **고정된 코드 기반** — 새 "규칙 종류" 추가는 코드 수정 필요, 파라미터 변이만 자동 |
 | 레짐 적응 | Kelly/가중치엔 영향 O | **어떤 엔진을 돌릴지는 레짐과 무관하게 고정 크론** |
@@ -134,7 +134,7 @@
 | P1-5 | **전체 명목 노출 한도** | 오픈 포지션 총 명목가 합이 Treasury 대비 일정 % 초과 시 신규 진입 차단 |
 | P1-6 | **가격 이상치(배드틱/플래시크래시) 필터** | 캔들 진입 전 이전 N봉 대비 극단적 이격 체크 후 스킵/보류 |
 | P1-7 | **Watchdog을 WS/queue-worker까지 확장** | 현재 factory만 자동 재시작 → WS·async·queue-worker 데드락도 자동 복구 |
-| P1-8 | **Champion genesis를 Bitget 일일 리포트에 연결** | `capture_champion_precursors` 호출 추가하여 전조 라이브러리 축적 시작 |
+| P1-8 | ~~Champion genesis를 Bitget 일일 리포트에 연결~~ | ✅ 완료(2026-07) — `bitget/evolution/champion_genesis_bg.py` + `deathmatch_report_section.py` 훅 + daily/weekly 파이프라인 연결 |
 
 ### P2 — 3~12개월 (기관급으로 가는 길)
 

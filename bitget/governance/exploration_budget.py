@@ -117,7 +117,10 @@ def _load_registry_role_map(*, force: bool = False) -> Dict[str, str]:
     try:
         from strategy_registry_store import load_registry_rows
 
-        rows = load_registry_rows()
+        from bitget.infra.data_paths import market_data_db_path
+
+        # 코인 전용 strategy_registry는 Bitget 자체 DB에 격리 저장된다(주식 DB 미참조).
+        rows = load_registry_rows(market_data_db_path())
         for r in rows:
             mkt = str(r.get("market") or "").strip().upper()
             if mkt not in ("BG", "SPOT", "FUT"):

@@ -1204,12 +1204,18 @@ class MetaGovernor:
             if "rolling_pf" not in hv:
                 hv["rolling_pf"] = 0.0
 
+        # 레지스트리 DB 대상: forward_db_path(주식) 우선. Bitget 단독 사이클
+        # (forward_db_path=None, bitget_db_path만 세팅)에서는 코인 전용 레지스트리를
+        # Bitget 자체 DB에 격리 — 주식 forward_db_path 미설정 시 stock market_data.sqlite
+        # 로 폴백되어 코인 파생 레지스트리 행이 주식 운영 DB에 오염되는 것을 방지한다.
+        registry_db_path = ctx.forward_db_path or ctx.bitget_db_path
+
         reg, cycle_stats = run_registry_lifecycle(
             prior_registry=prior_list,
             health=health,
             system_cfg=self._system_cfg_snapshot,
             validated_mutants_path=ctx.validated_mutants_path,
-            forward_db_path=ctx.forward_db_path,
+            forward_db_path=registry_db_path,
         )
 
         pil_cands = self._prior.get("META_PIL_RETIRE_CANDIDATES")

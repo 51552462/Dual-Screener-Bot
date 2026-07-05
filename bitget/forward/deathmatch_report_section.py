@@ -127,6 +127,15 @@ def build_deathmatch_section(
     )
     dm = battle_royal_to_nway(br)
 
+    # 챔피언 탄생 전조(Genesis) 축적 — Bitget 자체 DB에만 기록(주식 SSOT 미참조).
+    # 데스매치 랭킹 산출 직후 훅(비침습·항상 안전 폴백).
+    try:
+        from bitget.evolution.champion_genesis_bg import capture_champion_precursors
+
+        capture_champion_precursors(br, sys_config, market=market_type)
+    except Exception:
+        pass
+
     hdr = ctx.market_window_header_html(
         market_type, n_real=n_real, n_closed=n_closed, n_open=n_open
     )

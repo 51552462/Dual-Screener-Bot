@@ -267,6 +267,28 @@ def _step_weekly_flow_master() -> None:
     send_weekly_flow_master_report()
 
 
+def _step_genesis_radar_daily() -> None:
+    """[평일 경량] 챔피언 탄생 전조 유사도 스캔(SPOT/FUTURES) — 예측만, 백필은 주말에."""
+    from bitget.evolution.champion_genesis_bg import run_daily_genesis_radar
+
+    for mk in ("spot", "futures"):
+        try:
+            run_daily_genesis_radar(market=mk)
+        except Exception:
+            pass
+
+
+def _step_genesis_backfill_weekly() -> None:
+    """[주말] 전조 사후 인과 검증(confirmed/failed) + 유사도 임계값 자가학습(SPOT/FUTURES)."""
+    from bitget.evolution.champion_genesis_bg import backfill_and_learn
+
+    for mk in ("spot", "futures"):
+        try:
+            backfill_and_learn(market=mk)
+        except Exception:
+            pass
+
+
 def _step_executive_summary_daily() -> None:
     """일일 리포트 말미 [최종 요약: 1분 브리핑]."""
     from bitget.report_executive_summary import build_daily_executive_summary_html
@@ -723,6 +745,7 @@ def _pipeline_daily_audit() -> List[StepSpec]:
             StepSpec("pil_practitioner_reports", _step_pil_practitioner_reports, critical=False, delay_after_sec=0.5),
             StepSpec("comprehensive_report", _step_comprehensive_report, critical=False),
             StepSpec("executive_summary_daily", _step_executive_summary_daily, critical=False, delay_after_sec=0.5),
+            StepSpec("genesis_radar_daily", _step_genesis_radar_daily, critical=False),
             StepSpec("ai_overseer", _step_ai_overseer, critical=False),
             StepSpec("reconcile", _step_reconcile, critical=False),
         ]
@@ -734,6 +757,7 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
         [
             StepSpec("weekly_evolution", _step_weekly_evolution, critical=True, delay_after_sec=1.0),
             StepSpec("weekly_flow_master", _step_weekly_flow_master, critical=True),
+            StepSpec("genesis_backfill_weekly", _step_genesis_backfill_weekly, critical=False),
             StepSpec("weekend_grand_report", _step_weekend_grand_report, critical=False, delay_after_sec=1.0),
             StepSpec("weekly_action_plan", _step_weekly_action_plan, critical=False, delay_after_sec=0.5),
             StepSpec("weekly_executive_summary", _step_weekly_executive_summary, critical=False),
