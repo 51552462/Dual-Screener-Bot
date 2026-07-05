@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import time
 
 import pandas as pd
@@ -22,6 +23,15 @@ TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 
 DEFAULT_MAX_OPEN_POSITIONS = 20
 _FUNDING_SNAP_CACHE: dict = {}
+
+# init_forward_db()는 거의 모든 forward 함수 호출 시작부에서 호출된다.
+# 스키마 DDL(CREATE TABLE/ALTER/DROP+CREATE VIEW)을 매번 재실행하면, 배포 후
+# 여러 bitget 서비스(ws/factory/async/queue-worker)가 동시에 기동하는 순간
+# DDL 락 경합("database is locked")이 폭증한다. DB 경로별로 프로세스당 1회만
+# 실행하도록 메모이즈한다(신규 컬럼/뷰는 재기동 시 각 프로세스의 첫 호출에서
+# 반영됨; 경로별 캐시라 테스트에서 DB_PATH 를 바꿔도 매번 정상 초기화된다).
+_FORWARD_DB_SCHEMA_READY_PATHS: set = set()
+_FORWARD_DB_INIT_LOCK = threading.Lock()
 
 
 def _telegram_plain_from_html(chunk: str) -> str:
@@ -99,6 +109,31 @@ def _deathmatch_ab_verdict(n_std: int, n_sn: int, std_ret, sn_ret, n_min: int) -
 
 def init_forward_db():
     conn = get_connection(DB_PATH)
+    path_key = os.path.abspath(str(DB_PATH))
+    if path_key not in _FORWARD_DB_SCHEMA_READY_PATHS:
+        with _FORWARD_DB_INIT_LOCK:
+            if path_key not in _FORWARD_DB_SCHEMA_READY_PATHS:
+                _init_forward_db_schema(conn)
+                _FORWARD_DB_SCHEMA_READY_PATHS.add(path_key)
+    # 실시간 뇌수술: 최근 청산 데이터를 기반으로 실제 설정을 자율 튜닝/저장
+    try:
+        df_recent_closed = pd.read_sql(
+            "SELECT * FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' ORDER BY id DESC LIMIT 120",
+            conn,
+        )
+        if not df_recent_closed.empty:
+            from bitget.forward.mutant import _auto_tune_brain_from_closed_df
+
+            cfg_live = load_system_config()
+            cfg_live, _ = _auto_tune_brain_from_closed_df(cfg_live, df_recent_closed)
+            save_system_config(cfg_live)
+    except Exception:
+        pass
+    conn.close()
+
+
+def _init_forward_db_schema(conn):
+    """프로세스당 1회만 실행되는 스키마 부트스트랩/마이그레이션 본체."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -232,8 +267,12 @@ def init_forward_db():
     )
     _ensure_col(cur, "client_order_id", "TEXT DEFAULT ''")
 
-    cur.execute("DROP VIEW IF EXISTS forward_trades")
     try:
+        # DROP/CREATE 를 하나의 try 로 묶어야 한다: 다른 프로세스가 동시에 같은
+        # 시퀀스를 실행 중이면 DROP 단계에서도 "database is locked" 이 날 수 있다
+        # (기존엔 CREATE 만 보호되어 DROP 실패가 그대로 상위로 전파돼 파이프라인이
+        # 크래시했다).
+        cur.execute("DROP VIEW IF EXISTS forward_trades")
         cur.execute(
             """
             CREATE VIEW forward_trades AS
@@ -293,24 +332,10 @@ def init_forward_db():
             """
         )
     except sqlite3.OperationalError:
-        # 멀티스레드 동시 초기화 시 뷰 생성 경합(table/view already exists) 무시
+        # 멀티스레드/멀티프로세스 동시 초기화 시 DROP/CREATE VIEW 경합 무시
+        # (다음 프로세스 재기동 때 다시 시도되므로 안전)
         pass
     conn.commit()
-    # 실시간 뇌수술: 최근 청산 데이터를 기반으로 실제 설정을 자율 튜닝/저장
-    try:
-        df_recent_closed = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' ORDER BY id DESC LIMIT 120",
-            conn,
-        )
-        if not df_recent_closed.empty:
-            from bitget.forward.mutant import _auto_tune_brain_from_closed_df
-
-            cfg_live = load_system_config()
-            cfg_live, _ = _auto_tune_brain_from_closed_df(cfg_live, df_recent_closed)
-            save_system_config(cfg_live)
-    except Exception:
-        pass
-    conn.close()
 
 
 _EXIT_REASON_ZOMBIE_DB = "REPORTER_ZOMBIE_CLEANUP"
