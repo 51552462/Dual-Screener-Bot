@@ -411,6 +411,12 @@ def _build_exit_strategy(sig_type, cur_cpv, total_score, regime_weight=1.0):
         ns_prefix = "COIN_NULRIM_SX"
     if "5선" in sig_type:
         ns_prefix = "COIN_5EMA_S1"
+    # 💡 [코인 생태계 특화] 숏 전용 네임스페이스 — 롱(MASTER_S1) 청산 파라미터를
+    # 잘못 물려받지 않도록 독립 분리(진화·학습도 롱과 별개로 축적).
+    if "TV_SHORT_V1" in sig_type.upper():
+        ns_prefix = "COIN_SHORT_V1"
+    if "TV_SHORT_V2" in sig_type.upper():
+        ns_prefix = "COIN_SHORT_V2"
 
     opt_time_stop = int(SYS_CONFIG.get(f"{ns_prefix}_TIME_STOP", 10))
     opt_sl_atr = float(SYS_CONFIG.get(f"{ns_prefix}_ATR_SL", 2.0))
@@ -848,7 +854,7 @@ def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: s
     }
 
 
-def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, str, pd.DataFrame, Dict]:
+def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series, timeframe: str = "1D") -> Tuple[bool, str, pd.DataFrame, Dict]:
     df_raw = _prepare_ohlcv_df(df)
     if df_raw is None or len(df_raw) < 200:
         return False, "", df_raw, {}
@@ -887,7 +893,20 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     cur_tb = float(tb_index[-1])
     cur_bbe = float(bb_energy[-1])
     cur_rs = float(rs[-1])
-    score = 100.0
+
+    # 💡 [코인 생태계 특화] 롱(MASTER)과 동형의 연속 스코어링 — RS는 부호를 반전해
+    # "벤치마크 대비 약세일수록" 숏에 유리하도록 스케일링한다(0/100 이진 버그 수정).
+    n_triggers = int(bool(entry1.iloc[-1])) + int(bool(entry2.iloc[-1])) + int(bool(entry3.iloc[-1]))
+    score_ema = 10.0 if n_triggers >= 2 else (7.0 if n_triggers == 1 else 5.0)
+    score_rs = scale_score(-cur_rs, 2025.28, -821.13)
+    score_cpv = scale_score(cur_cpv, 0.39, 0.95)
+    score_bbe = scale_score(cur_bbe, 56.80, 3.80)
+    score_tb = scale_score(cur_tb, 20.13, 2.47)
+    score_marcap, marcap_tier, trade_value_24h = _coin_liquidity_rank_score(out)
+    marcap_eok = float(trade_value_24h / 100_000_000.0)
+    recent_hits = final_signal[-252:-1].sum() if len(out) > 252 else final_signal[:-1].sum()
+    freq_count = int(recent_hits)
+    score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
 
     # 💡 [코인 생태계 특화] 숏(Short) 포지션도 의사결정나무 및 도플갱어 검증 필수 수행
     vec7, meta7 = _auto_forward_style_7d_vector(out, idx_close)
@@ -902,9 +921,17 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     if dd_msg:
         guard_comment += f"\n{dd_msg}\n"
 
+    dyn_rs_score = get_dynamic_score(rs, False, timeframe)  # 숏: RS 낮을수록(약세) 고득점
+    dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
+    dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    score_clipped = float(np.clip(score, 0.0, 100.0))
+    exit_strategy = _build_exit_strategy(sig_type, cur_cpv, score_clipped, regime_weight=1.0)
+
     v11_comment = (
         f"📉 [TV Short V1 브리핑]\n"
-        f"🔹 시스템 총점: {score:.1f} / 100점\n"
+        f"🔹 시스템 총점: {score_clipped:.1f} / 100점\n"
+        f"🔹 체급(24h 거래대금): {marcap_tier} | {trade_value_24h:,.0f} USDT\n"
+        f"🔹 도플갱어: cos {dd_cos*100:.1f}% | dtw {dd_dtw:.2f}\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.3f}\n"
         f"▪️ 진짜양봉(TB): {cur_tb:.3f}\n"
         f"▪️ 응축에너지(BBE): {cur_bbe:.3f}\n"
@@ -914,14 +941,26 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     v11_comment += guard_comment
     dbg = {
         "sig_type": sig_type,
-        "score": float(score),
+        "score": score_clipped,
         "side": "SHORT",
         "entry_high": float(out["High"].iloc[-1]),
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
         "v_rs": cur_rs,
+        "dyn_rs_score": float(dyn_rs_score),
+        "dyn_tb_score": float(dyn_tb_score),
+        "dyn_cpv_score": float(dyn_cpv_score),
+        "score_marcap": float(score_marcap),
+        "marcap_tier": marcap_tier,
+        "trade_value_24h": float(trade_value_24h),
+        "marcap_eok": float(marcap_eok),
+        "freq_count": int(freq_count),
         "v11_comment": v11_comment,
+        "recommend": exit_strategy,
+        "sn_score": float(dd_cos),
+        "tree_rejected": rej,
+        "tree_reason": reason,
         "entry1": bool(entry1.iloc[-1]),
         "entry2": bool(entry2.iloc[-1]),
         "entry3": bool(entry3.iloc[-1]),
@@ -930,7 +969,7 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     return True, sig_type, out, dbg
 
 
-def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, str, pd.DataFrame, Dict]:
+def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series, timeframe: str = "1D") -> Tuple[bool, str, pd.DataFrame, Dict]:
     df_raw = _prepare_ohlcv_df(df)
     if df_raw is None or len(df_raw) < 200:
         return False, "", df_raw, {}
@@ -968,7 +1007,25 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     cur_tb = float(tb_index[-1])
     cur_bbe = float(bb_energy[-1])
     cur_rs = float(rs[-1])
-    score = 100.0
+
+    # 💡 [코인 생태계 특화] 롱(MASTER)과 동형의 연속 스코어링 — RS는 부호를 반전해
+    # "벤치마크 대비 약세일수록" 숏에 유리하도록 스케일링한다(0/100 이진 버그 수정).
+    body_range = float(out["High"].iloc[-1] - out["Low"].iloc[-1])
+    body_dom = (
+        float(max(0.0, out["Open"].iloc[-1] - out["Close"].iloc[-1]) / body_range)
+        if body_range > 1e-9
+        else 0.0
+    )
+    score_ema = 10.0 if body_dom >= 0.5 else (7.0 if body_dom >= 0.25 else 5.0)
+    score_rs = scale_score(-cur_rs, 2025.28, -821.13)
+    score_cpv = scale_score(cur_cpv, 0.39, 0.95)
+    score_bbe = scale_score(cur_bbe, 56.80, 3.80)
+    score_tb = scale_score(cur_tb, 20.13, 2.47)
+    score_marcap, marcap_tier, trade_value_24h = _coin_liquidity_rank_score(out)
+    marcap_eok = float(trade_value_24h / 100_000_000.0)
+    recent_hits = final_signal[-252:-1].sum() if len(out) > 252 else final_signal[:-1].sum()
+    freq_count = int(recent_hits)
+    score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
 
     # 💡 [코인 생태계 특화] 숏(Short) 포지션도 의사결정나무 및 도플갱어 검증 필수 수행
     vec7, meta7 = _auto_forward_style_7d_vector(out, idx_close)
@@ -983,9 +1040,17 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     if dd_msg:
         guard_comment += f"\n{dd_msg}\n"
 
+    dyn_rs_score = get_dynamic_score(rs, False, timeframe)  # 숏: RS 낮을수록(약세) 고득점
+    dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
+    dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    score_clipped = float(np.clip(score, 0.0, 100.0))
+    exit_strategy = _build_exit_strategy(sig_type, cur_cpv, score_clipped, regime_weight=1.0)
+
     v11_comment = (
         f"📉 [TV Short V2 브리핑]\n"
-        f"🔹 시스템 총점: {score:.1f} / 100점\n"
+        f"🔹 시스템 총점: {score_clipped:.1f} / 100점\n"
+        f"🔹 체급(24h 거래대금): {marcap_tier} | {trade_value_24h:,.0f} USDT\n"
+        f"🔹 도플갱어: cos {dd_cos*100:.1f}% | dtw {dd_dtw:.2f}\n"
         f"▪️ 캔들지배력(CPV): {cur_cpv:.3f}\n"
         f"▪️ 진짜양봉(TB): {cur_tb:.3f}\n"
         f"▪️ 응축에너지(BBE): {cur_bbe:.3f}\n"
@@ -995,14 +1060,26 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series) -> Tuple[bool, s
     v11_comment += guard_comment
     dbg = {
         "sig_type": sig_type,
-        "score": float(score),
+        "score": score_clipped,
         "side": "SHORT",
         "entry_high": float(out["High"].iloc[-1]),
         "v_cpv": cur_cpv,
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
         "v_rs": cur_rs,
+        "dyn_rs_score": float(dyn_rs_score),
+        "dyn_tb_score": float(dyn_tb_score),
+        "dyn_cpv_score": float(dyn_cpv_score),
+        "score_marcap": float(score_marcap),
+        "marcap_tier": marcap_tier,
+        "trade_value_24h": float(trade_value_24h),
+        "marcap_eok": float(marcap_eok),
+        "freq_count": int(freq_count),
         "v11_comment": v11_comment,
+        "recommend": exit_strategy,
+        "sn_score": float(dd_cos),
+        "tree_rejected": rej,
+        "tree_reason": reason,
         "entry2": bool(entry2.iloc[-1]),
     }
     dbg = _dbg_merge_7d(dbg, out, idx_close)

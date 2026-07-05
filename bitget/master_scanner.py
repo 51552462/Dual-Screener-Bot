@@ -311,10 +311,7 @@ def _scan_one_table(
         rank = hit_rank_start
         engine_pool = _build_engine_pool(engine_filter)
         for engine_name, engine in engine_pool:
-            if engine_name in ("TV_SHORT_V1", "TV_SHORT_V2"):
-                hit, sig_type, out_df, dbg = engine(df, idx_close)
-            else:
-                hit, sig_type, out_df, dbg = engine(df, idx_close, tf)
+            hit, sig_type, out_df, dbg = engine(df, idx_close, tf)
             if hit:
                 rank += 1
                 signal_side = str(dbg.get("side", "LONG")).upper()

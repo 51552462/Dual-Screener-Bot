@@ -29,15 +29,22 @@ def _thompson_ns_prefix(tf: str, sig_type: str) -> str:
     """
     tfu = str(tf).upper()
     sig = str(sig_type)
+    sig_u = sig.upper()
+    # 💡 [코인 생태계 특화] 숏 전용 네임스페이스 — 미분기 시 기본값(MASTER_S1)으로 몰려
+    # 롱 통계에 숏 결과가 오염되는 것을 방지(Thompson 베타 사후분포도 롱과 별개로 진화).
+    if "TV_SHORT_V1" in sig_u:
+        return f"{tfu}_TV_SHORT_V1"
+    if "TV_SHORT_V2" in sig_u:
+        return f"{tfu}_TV_SHORT_V2"
     ns_prefix = f"{tfu}_MASTER_S1"
-    if "SUPERNOVA" in sig.upper():
+    if "SUPERNOVA" in sig_u:
         ns_prefix = f"{tfu}_SUPERNOVA_MASTER"
     else:
         if "S4" in sig:
             ns_prefix = f"{tfu}_MASTER_S4"
         if "눌림" in sig:
             ns_prefix = f"{tfu}_NULRIM_S4" if "S4" in sig else f"{tfu}_NULRIM_S1"
-        if "5선" in sig or "5EMA" in sig.upper():
+        if "5선" in sig or "5EMA" in sig_u:
             ns_prefix = f"{tfu}_5EMA_S1"
     return ns_prefix
 
