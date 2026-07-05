@@ -54,11 +54,12 @@ _DAILY_PATCH_TARGETS = (
     "_step_forward_trade_identity",
     "_step_pil_practitioner_reports",
     "_step_comprehensive_report",
+    "_step_executive_summary_daily",
     "_step_ai_overseer",
     "_step_reconcile",
 )
 
-_DAILY_AUDIT_STEP_COUNT = 17
+_DAILY_AUDIT_STEP_COUNT = 18
 
 
 class TestDailyAuditMockE2E(unittest.TestCase):
@@ -87,6 +88,7 @@ class TestDailyAuditMockE2E(unittest.TestCase):
                 "forward_trade_identity",
                 "pil_practitioner_reports",
                 "comprehensive_report",
+                "executive_summary_daily",
                 "ai_overseer",
                 "reconcile",
             ],

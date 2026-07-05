@@ -95,7 +95,7 @@ def check_pipeline_structure() -> Dict[str, Any]:
     daily_pre_ok, daily_pre_msg = _check_prefix(daily, _DAILY_PRELUDE)
     scan_pre_ok, scan_pre_msg = _check_prefix(scan, _SCAN_PRELUDE)
     daily_body_ok = all(k in daily for k in _DAILY_BODY_KEYS)
-    daily_count_ok = len(daily) == 17
+    daily_count_ok = len(daily) == 18
     track_ok = track == ["config_bootstrap", "artifact_guard", "track_spot", "track_futures"]
 
     ok = daily_pre_ok and scan_pre_ok and daily_body_ok and daily_count_ok and track_ok
