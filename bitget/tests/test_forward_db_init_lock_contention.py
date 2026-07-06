@@ -115,5 +115,58 @@ class TestDropCreateViewLockToleration(unittest.TestCase):
                 real_conn.close()
 
 
+class TestEnsureColTargetsCorrectTable(unittest.TestCase):
+    """회귀: `_ensure_col` 이 테이블명을 하드코딩해 `bitget_real_execution` 전용
+    컬럼(client_order_id)을 엉뚱하게 `bitget_forward_trades` 에 추가하던 버그.
+    그 결과 `bitget_real_execution` 에는 컬럼이 끝내 생기지 않아
+    `log_real_execution()` 의 INSERT 가 항상 'no column named client_order_id'
+    로 실패했다."""
+
+    def test_client_order_id_lands_on_real_execution_table(self):
+        from bitget.forward import shared
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = os.path.join(td, "bitget_market_data.sqlite")
+            conn = sqlite3.connect(db_path)
+            try:
+                shared._init_forward_db_schema(conn)
+                cols_real_exec = {
+                    r[1] for r in conn.execute("PRAGMA table_info(bitget_real_execution)").fetchall()
+                }
+                self.assertIn("client_order_id", cols_real_exec)
+            finally:
+                conn.close()
+
+    def test_ensure_col_respects_explicit_table_argument(self):
+        from bitget.forward.shared import _ensure_col
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE TABLE t_a (id INTEGER)")
+            conn.execute("CREATE TABLE t_b (id INTEGER)")
+            cur = conn.cursor()
+            _ensure_col(cur, "foo", "TEXT DEFAULT ''", table="t_b")
+            cols_a = {r[1] for r in conn.execute("PRAGMA table_info(t_a)").fetchall()}
+            cols_b = {r[1] for r in conn.execute("PRAGMA table_info(t_b)").fetchall()}
+            self.assertNotIn("foo", cols_a)
+            self.assertIn("foo", cols_b)
+        finally:
+            conn.close()
+
+    def test_ensure_col_default_table_unchanged_for_existing_callers(self):
+        """기존 25개 호출부(테이블명 생략)는 여전히 bitget_forward_trades 를 타야 한다."""
+        from bitget.forward.shared import _ensure_col
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE TABLE bitget_forward_trades (id INTEGER)")
+            cur = conn.cursor()
+            _ensure_col(cur, "some_new_col", "TEXT DEFAULT ''")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(bitget_forward_trades)").fetchall()}
+            self.assertIn("some_new_col", cols)
+        finally:
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

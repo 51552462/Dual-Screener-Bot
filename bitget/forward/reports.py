@@ -44,6 +44,27 @@ def _norm_market_type(market_type: str) -> str:
     return str(market_type or "spot").strip().lower()
 
 
+def _format_practitioner_reality_leaderboard_html(df, *, top_n: int = 10) -> str:
+    """실전 체결 vs 가상 청산 괴리 랭킹 — 실전 체결 표본이 있는 practitioner만 대상."""
+    if df is None or df.empty:
+        return ""
+    rows = df.head(int(top_n))
+    lines = [
+        "🕵️ <b>[Bitget 실전 vs 가상 괴리 랭킹]</b>",
+        "실전 체결 로그(bitget_real_execution) 기준 — 표본 부족 시 자동 제외\n",
+    ]
+    for _, r in rows.iterrows():
+        gap = float(r.get("reality_gap_pct", 0.0) or 0.0)
+        gap_icon = "🟢" if gap >= 0 else "🔴"
+        lines.append(
+            f"{gap_icon} <b>{r.get('market_type','')}·{r.get('practitioner_key','')}</b> "
+            f"(n={int(r.get('samples',0))}, 체결성공 {int(r.get('exec_ok',0))}) — "
+            f"실전 {float(r.get('real_ret_pct',0.0)):+.2f}% vs 가상 {float(r.get('virtual_ret_pct',0.0)):+.2f}% "
+            f"(괴리 {gap:+.2f}%p) · 노셔널 {float(r.get('notional_usdt',0.0)):,.1f} USDT"
+        )
+    return "\n".join(lines)
+
+
 def send_group_practitioner_reports():
     """PIL — Bitget PRACT_01~30 (spot/futures) Post-Mortem · Vitality · LLM · ZOMBIE 페널티."""
     from bitget.forward.practitioner_bitget_adapter import send_bitget_practitioner_reports_pil
@@ -68,6 +89,14 @@ def send_group_practitioner_reports():
         print(f"🧠 [Bitget PIL] 실무자 리포트: {out}")
     except Exception as ex:
         send_telegram_msg(f"⚠️ Bitget PIL 실무자 리포트 에러: {ex}")
+
+    try:
+        leaderboard_df = build_practitioner_reality_leaderboard(market_type="all")
+        msg = _format_practitioner_reality_leaderboard_html(leaderboard_df)
+        if msg:
+            send_telegram_msg(msg)
+    except Exception as ex:
+        print(f"⚠️ [Bitget PIL] 실전vs가상 괴리 랭킹 스킵: {ex}")
 
 def send_comprehensive_daily_report():
     init_forward_db()

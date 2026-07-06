@@ -496,6 +496,10 @@ def _process_scan_hit(
         "dtw_score": dbg.get("dtw_score", 0.0),
         "trade_value_24h": float(dbg.get("trade_value_24h", 0.0) or 0.0),
         "marcap_eok": float(dbg.get("marcap_eok", 0.0) or 0.0),
+        "is_top_dna": bool(dbg.get("is_top_dna", False)),
+        "is_worst_dna": bool(dbg.get("is_worst_dna", False)),
+        "is_death_combo": bool(dbg.get("is_death_combo", False)),
+        "is_tenbagger": bool(dbg.get("is_tenbagger", False)),
     }
     sig_for_db = sig_type if str(engine_name).startswith("SUPERNOVA_") else f"[STANDARD][{engine_name}] {sig_type}"
     time.sleep(0.04)  # DB/API 연속 호출 완화

@@ -71,9 +71,9 @@ def save_system_config(cfg: dict) -> None:
     config_manager.save_system_config(cfg)
 
 
-def _ensure_col(cur, col_name, col_type):
+def _ensure_col(cur, col_name, col_type, table: str = "bitget_forward_trades"):
     try:
-        cur.execute(f"ALTER TABLE bitget_forward_trades ADD COLUMN {col_name} {col_type}")
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
     except Exception:
         pass
 
@@ -265,7 +265,7 @@ def _init_forward_db_schema(conn):
         )
         """
     )
-    _ensure_col(cur, "client_order_id", "TEXT DEFAULT ''")
+    _ensure_col(cur, "client_order_id", "TEXT DEFAULT ''", table="bitget_real_execution")
 
     try:
         # DROP/CREATE 를 하나의 try 로 묶어야 한다: 다른 프로세스가 동시에 같은

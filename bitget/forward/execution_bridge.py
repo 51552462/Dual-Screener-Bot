@@ -1,11 +1,16 @@
 """Real execution logging and practitioner leaderboard."""
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
+import time
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
+from bitget.forward.gates import _extract_core_group
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config
 from bitget.infra.shared_db_connector import get_connection
 
@@ -76,7 +81,6 @@ def log_real_execution(
             if "database is locked" in str(e).lower():
                 if attempt >= max_retry - 1:
                     raise
-                import time
                 time.sleep(0.5 * (2 ** attempt))
                 continue
             raise

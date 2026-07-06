@@ -345,9 +345,10 @@ def try_add_virtual_position(
         (entry_date, market_type, symbol, timeframe, sig_type, tier, total_score, dyn_rs, dyn_cpv, dyn_tb,
          entry_price, position_side, entry_atr, entry_high, atr_sl_mult, stop_price, leverage, tf_weight, sim_kelly_risk_pct, margin_used,
          sim_kelly_invest, quantity, entry_cos_score, entry_dtw_score, v_cpv, v_yang, v_energy, v_rs, max_high, min_low, status,
+         is_tenbagger, is_top_dna, is_worst_dna, is_death_combo,
          sim_stat_status, sim_tech_status, sim_breadth_status, entry_breadth, live_a_status, cand_b_status, champ_c_status,
          funding_rate_last, funding_next_settle_ts, funding_accum_usdt_est)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -381,6 +382,10 @@ def try_add_virtual_position(
             float(entry_price),
             float(entry_price),
             "OPEN",
+            int(bool(facts.get("is_tenbagger", False))),
+            int(bool(facts.get("is_top_dna", False))),
+            int(bool(facts.get("is_worst_dna", False))),
+            int(bool(facts.get("is_death_combo", False))),
             "OPEN",
             "OPEN",
             "OPEN",

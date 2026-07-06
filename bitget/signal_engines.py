@@ -83,6 +83,29 @@ def scale_score(val, best, worst):
     return 1.0 + 9.0 * (worst - val) / (worst - best)
 
 
+def _compute_dna_flags(dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs, *, short=False):
+    """한국/미국 스캐너의 DNA 플래그(is_tenbagger/is_top_dna/is_worst_dna/is_death_combo)를
+    코인용으로 이식한다.
+
+    한국/미국은 절대 임계값(예: cpv>=0.56)을 쓰지만, 코인은 심볼별 가격/변동성
+    스케일이 크게 달라 그대로 이식할 수 없다. 대신 각 엔진이 이미 계산해 둔
+    롤링 퍼센타일 점수(dyn_*_score, 1~10 — 해당 엔진 방향 기준 "높을수록 유리"로
+    이미 정규화됨)를 재사용해 심볼/타임프레임별로 자체 보정되게 한다.
+    """
+    hi, lo = 8.5, 2.0
+    is_top_dna = bool(dyn_rs_score >= hi and dyn_cpv_score >= hi and dyn_tb_score >= hi)
+    is_worst_dna = bool(dyn_cpv_score <= lo and dyn_tb_score <= lo and score_bbe <= lo)
+    rs_against_trend = (cur_rs > 0) if short else (cur_rs < 0)
+    is_death_combo = bool(dyn_cpv_score <= lo and rs_against_trend)
+    is_tenbagger = bool(dyn_rs_score >= 9.0 and dyn_cpv_score >= hi)
+    return {
+        "is_top_dna": is_top_dna,
+        "is_worst_dna": is_worst_dna,
+        "is_death_combo": is_death_combo,
+        "is_tenbagger": is_tenbagger,
+    }
+
+
 def _core_factors(df: pd.DataFrame):
     c = df["Close"].values
     o = df["Open"].values
@@ -547,6 +570,7 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
     dyn_rs_score = get_dynamic_score(rs, True, timeframe)
     dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
     dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    dna_flags = _compute_dna_flags(dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs)
     tf_tag = str(timeframe).upper()
     sig_type = f"[{tf_tag}] 🔥 S1 (마스터 추세)" if hit_s1 else f"[{tf_tag}] 🚀 S4 (마스터 바닥탈출)"
 
@@ -591,6 +615,7 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        **dna_flags,
         "vcp_ratio": float(meta7["vcp_ratio"]),
         "vol_flow": float(meta7["vol_flow"]),
         "ma_conv": float(meta7["ma_conv"]),
@@ -685,6 +710,7 @@ def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
     dyn_rs_score = get_dynamic_score(rs, True, timeframe)
     dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
     dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    dna_flags = _compute_dna_flags(dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs)
     tf_tag = str(timeframe).upper()
     raw_sig = "S6" if hit_s6 else ("S7" if hit_s7 else ("S4" if hit_s4 else "S1"))
     label_map = {
@@ -734,6 +760,7 @@ def compute_nulrim_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        **dna_flags,
         "vcp_ratio": float(meta7["vcp_ratio"]),
         "vol_flow": float(meta7["vol_flow"]),
         "ma_conv": float(meta7["ma_conv"]),
@@ -799,6 +826,7 @@ def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: s
     dyn_rs_score = get_dynamic_score(rs, True, timeframe)
     dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
     dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    dna_flags = _compute_dna_flags(dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs)
     tf_tag = str(timeframe).upper()
     sig_type = f"[{tf_tag}] 🔥 S1 (5선 관통)"
     score_clipped = float(np.clip(total_score, 0.0, 100.0))
@@ -841,6 +869,7 @@ def compute_ema5_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe: s
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        **dna_flags,
         "vcp_ratio": float(meta7["vcp_ratio"]),
         "vol_flow": float(meta7["vol_flow"]),
         "ma_conv": float(meta7["ma_conv"]),
@@ -924,6 +953,7 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series, timeframe: str =
     dyn_rs_score = get_dynamic_score(rs, False, timeframe)  # 숏: RS 낮을수록(약세) 고득점
     dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
     dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    dna_flags = _compute_dna_flags(dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs, short=True)
     score_clipped = float(np.clip(score, 0.0, 100.0))
     exit_strategy = _build_exit_strategy(sig_type, cur_cpv, score_clipped, regime_weight=1.0)
 
@@ -961,6 +991,7 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series, timeframe: str =
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        **dna_flags,
         "entry1": bool(entry1.iloc[-1]),
         "entry2": bool(entry2.iloc[-1]),
         "entry3": bool(entry3.iloc[-1]),
@@ -1043,6 +1074,7 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series, timeframe: str =
     dyn_rs_score = get_dynamic_score(rs, False, timeframe)  # 숏: RS 낮을수록(약세) 고득점
     dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
     dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    dna_flags = _compute_dna_flags(dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs, short=True)
     score_clipped = float(np.clip(score, 0.0, 100.0))
     exit_strategy = _build_exit_strategy(sig_type, cur_cpv, score_clipped, regime_weight=1.0)
 
@@ -1080,6 +1112,7 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series, timeframe: str =
         "sn_score": float(dd_cos),
         "tree_rejected": rej,
         "tree_reason": reason,
+        **dna_flags,
         "entry2": bool(entry2.iloc[-1]),
     }
     dbg = _dbg_merge_7d(dbg, out, idx_close)
