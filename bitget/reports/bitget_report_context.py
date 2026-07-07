@@ -15,12 +15,8 @@ import pandas as pd
 
 from bitget.forward.forward_book_integrity import reporter_valid_holding_mask
 from bitget.infra.data_paths import report_db_read_path
+from bitget.infra.market_keys import to_report_label
 from bitget.infra.shared_db_connector import get_connection
-
-
-def _market_label(market_type: str) -> str:
-    m = str(market_type or "spot").strip().lower()
-    return "FUT" if m in ("futures", "fut", "future") else "SPOT"
 
 
 @dataclass(frozen=True)
@@ -39,7 +35,7 @@ class BitgetReportTimekeeper:
         rolling_days: int = 90,
         db_watermark_exit: Optional[str] = None,
     ) -> "BitgetReportTimekeeper":
-        mk = _market_label(market_type)
+        mk = to_report_label(market_type)
         now = datetime.now(timezone.utc)
         anchor = now.strftime("%Y-%m-%d")
         rd = 90 if rolling_days not in (90, 180) else int(rolling_days)
@@ -124,7 +120,7 @@ class BitgetReportContext:
         )
 
     def timekeeper_for(self, market_type: str) -> BitgetReportTimekeeper:
-        mk = _market_label(market_type)
+        mk = to_report_label(market_type)
         return self.tk_futures if mk == "FUT" else self.tk_spot
 
     def lag_for(self, market_type: str) -> int:
@@ -163,7 +159,7 @@ class BitgetReportContext:
         df_all: pd.DataFrame,
         market_type: str,
     ) -> BitgetReportMarketSlice:
-        mk = _market_label(market_type)
+        mk = to_report_label(market_type)
         mkt_raw = str(market_type or "spot").strip().lower()
         if df_all is None or df_all.empty:
             empty = pd.DataFrame()

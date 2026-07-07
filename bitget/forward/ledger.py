@@ -869,6 +869,8 @@ def track_daily_positions(market_type):
                     ret = round(((ep - actual_exit_price) / ep) * 100.0, 2)
                 else:
                     ret = round(((actual_exit_price - ep) / ep) * 100.0, 2)
+                if is_futures_row and notion_open > 0:
+                    ret = round(ret + (accum_fund / notion_open) * 100.0, 2)
                 if pos_side == "SHORT":
                     mfe = round(((ep - new_min) / ep) * 100.0, 2)
                 else:
@@ -912,7 +914,8 @@ def track_daily_positions(market_type):
                     UPDATE bitget_forward_trades
                     SET status=?, exit_date=?, exit_reason=?, final_ret=?, mfe=?, max_high=?, min_low=?, bars_held=?,
                         up_vol_sum=?, down_vol_sum=?, exit_type=?, sim_stat_ret=?, sim_stat_status=?, sim_tech_ret=?, sim_tech_status=?,
-                        sim_breadth_ret=?, sim_breadth_status=?, entry_breadth=?, live_a_ret=?, live_a_status=?, cand_b_ret=?, cand_b_status=?, champ_c_ret=?, champ_c_status=?, flow_tags=?
+                        sim_breadth_ret=?, sim_breadth_status=?, entry_breadth=?, live_a_ret=?, live_a_status=?, cand_b_ret=?, cand_b_status=?, champ_c_ret=?, champ_c_status=?, flow_tags=?,
+                        funding_rate_last=?, funding_next_settle_ts=?, funding_accum_usdt_est=?
                     WHERE id=?
                 """
                 update_params = (
@@ -941,6 +944,9 @@ def track_daily_positions(market_type):
                     champ_c_ret,
                     champ_c_status,
                     flow_tags,
+                    fr_row,
+                    fts_store,
+                    round(accum_fund, 6),
                     int(r["id"]),
                 )
 

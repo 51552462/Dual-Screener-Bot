@@ -10,16 +10,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from bitget.infra.market_keys import to_deathmatch_key as _market_key
 from bitget.reports.bitget_report_context import BitgetReportContext, BitgetReportMarketSlice
 
 
 def _esc(s: Any) -> str:
     return html.escape(str(s) if s is not None else "", quote=False)
-
-
-def _market_key(market_type: str) -> str:
-    m = str(market_type or "spot").strip().lower()
-    return "FUT" if m in ("futures", "fut", "future") else "SPOT"
 
 
 def _min_rotation_days(sys_config: Optional[dict]) -> int:

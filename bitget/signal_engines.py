@@ -1153,7 +1153,7 @@ PRACTITIONER_RULES = {
 }
 
 
-def _practitioner_signal(df_raw: pd.DataFrame, idx_close: pd.Series, rule_key: str, label: str) -> Tuple[bool, str, pd.DataFrame, Dict]:
+def _practitioner_signal(df_raw: pd.DataFrame, idx_close: pd.Series, rule_key: str, label: str, timeframe: str = "1D") -> Tuple[bool, str, pd.DataFrame, Dict]:
     df_raw = _prepare_ohlcv_df(df_raw)
     if df_raw is None or len(df_raw) < 220:
         return False, "", df_raw, {}
@@ -1272,6 +1272,14 @@ def _practitioner_signal(df_raw: pd.DataFrame, idx_close: pd.Series, rule_key: s
         return False, "", df, {}
 
     side = "SHORT" if short_cond and not long_cond else "LONG"
+    score_bbe = scale_score(cur_bbe, 56.80, 3.80)
+    rs_higher_better = side != "SHORT"
+    dyn_rs_score = get_dynamic_score(rs_arr, rs_higher_better, timeframe)
+    dyn_tb_score = get_dynamic_score(tb_index, True, timeframe)
+    dyn_cpv_score = get_dynamic_score(cpv, False, timeframe)
+    dna_flags = _compute_dna_flags(
+        dyn_rs_score, dyn_cpv_score, dyn_tb_score, score_bbe, cur_rs, short=(side == "SHORT")
+    )
     score = float(np.clip(50.0 + abs(cur_rs) * 0.05 + abs(cur_tb) * 0.8 + abs(cur_bbe) * 0.03, 45.0, 99.0))
     sig_type = f"[{label}] {'SHORT' if side == 'SHORT' else 'LONG'}"
     v11_comment = (
@@ -1291,42 +1299,43 @@ def _practitioner_signal(df_raw: pd.DataFrame, idx_close: pd.Series, rule_key: s
         "v_yang": cur_tb,
         "v_energy": cur_bbe,
         "v_rs": cur_rs,
-        "dyn_rs_score": cur_rs,
-        "dyn_cpv_score": cur_cpv,
-        "dyn_tb_score": cur_tb,
+        "dyn_rs_score": dyn_rs_score,
+        "dyn_cpv_score": dyn_cpv_score,
+        "dyn_tb_score": dyn_tb_score,
         "v11_comment": v11_comment,
+        **dna_flags,
     }
     dbg = _dbg_merge_7d(dbg, df, idx_close)
     return True, sig_type, df, dbg
 
 
-def compute_practitioner_01(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P01_RSI_OVERSOLD"], "P01_RSI_OVERSOLD")
-def compute_practitioner_02(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P02_RSI_OVERBOUGHT_SHORT"], "P02_RSI_OVERBOUGHT_SHORT")
-def compute_practitioner_03(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P03_STOCH_GOLDEN"], "P03_STOCH_GOLDEN")
-def compute_practitioner_04(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P04_STOCH_DEAD_HIGH"], "P04_STOCH_DEAD_HIGH")
-def compute_practitioner_05(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P05_BB_LOWER_BOUNCE"], "P05_BB_LOWER_BOUNCE")
-def compute_practitioner_06(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P06_BB_UPPER_REJECT"], "P06_BB_UPPER_REJECT")
-def compute_practitioner_07(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P07_EMA20_60_GOLDEN"], "P07_EMA20_60_GOLDEN")
-def compute_practitioner_08(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P08_EMA20_60_DEAD"], "P08_EMA20_60_DEAD")
-def compute_practitioner_09(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P09_BREAKOUT_20D"], "P09_BREAKOUT_20D")
-def compute_practitioner_10(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P10_BREAKDOWN_20D"], "P10_BREAKDOWN_20D")
-def compute_practitioner_11(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P11_VOL_EXPANSION_LONG"], "P11_VOL_EXPANSION_LONG")
-def compute_practitioner_12(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P12_VOL_EXPANSION_SHORT"], "P12_VOL_EXPANSION_SHORT")
-def compute_practitioner_13(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P13_MEAN_REVERT_LONG"], "P13_MEAN_REVERT_LONG")
-def compute_practitioner_14(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P14_MEAN_REVERT_SHORT"], "P14_MEAN_REVERT_SHORT")
-def compute_practitioner_15(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P15_RSI_DIVERGENCE_LONG"], "P15_RSI_DIVERGENCE_LONG")
-def compute_practitioner_16(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P16_RSI_DIVERGENCE_SHORT"], "P16_RSI_DIVERGENCE_SHORT")
-def compute_practitioner_17(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P17_ATR_SQUEEZE_BREAKUP"], "P17_ATR_SQUEEZE_BREAKUP")
-def compute_practitioner_18(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P18_ATR_SQUEEZE_BREAKDOWN"], "P18_ATR_SQUEEZE_BREAKDOWN")
-def compute_practitioner_19(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P19_MACD_CROSS_UP"], "P19_MACD_CROSS_UP")
-def compute_practitioner_20(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P20_MACD_CROSS_DOWN"], "P20_MACD_CROSS_DOWN")
-def compute_practitioner_21(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P21_ZLEMA_RECLAIM"], "P21_ZLEMA_RECLAIM")
-def compute_practitioner_22(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P22_ZLEMA_REJECT"], "P22_ZLEMA_REJECT")
-def compute_practitioner_23(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P23_MUTANT_ALPHA_1"], "P23_MUTANT_ALPHA_1")
-def compute_practitioner_24(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P24_MUTANT_ALPHA_2"], "P24_MUTANT_ALPHA_2")
-def compute_practitioner_25(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P25_MUTANT_ALPHA_3"], "P25_MUTANT_ALPHA_3")
-def compute_practitioner_26(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P26_RSI50_TREND_LONG"], "P26_RSI50_TREND_LONG")
-def compute_practitioner_27(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P27_RSI50_TREND_SHORT"], "P27_RSI50_TREND_SHORT")
-def compute_practitioner_28(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P28_BB_MID_CROSS_LONG"], "P28_BB_MID_CROSS_LONG")
-def compute_practitioner_29(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P29_BB_MID_CROSS_SHORT"], "P29_BB_MID_CROSS_SHORT")
-def compute_practitioner_30(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P30_MTF_MOMENTUM_LONG"], "P30_MTF_MOMENTUM_LONG")
+def compute_practitioner_01(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P01_RSI_OVERSOLD"], "P01_RSI_OVERSOLD", timeframe)
+def compute_practitioner_02(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P02_RSI_OVERBOUGHT_SHORT"], "P02_RSI_OVERBOUGHT_SHORT", timeframe)
+def compute_practitioner_03(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P03_STOCH_GOLDEN"], "P03_STOCH_GOLDEN", timeframe)
+def compute_practitioner_04(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P04_STOCH_DEAD_HIGH"], "P04_STOCH_DEAD_HIGH", timeframe)
+def compute_practitioner_05(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P05_BB_LOWER_BOUNCE"], "P05_BB_LOWER_BOUNCE", timeframe)
+def compute_practitioner_06(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P06_BB_UPPER_REJECT"], "P06_BB_UPPER_REJECT", timeframe)
+def compute_practitioner_07(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P07_EMA20_60_GOLDEN"], "P07_EMA20_60_GOLDEN", timeframe)
+def compute_practitioner_08(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P08_EMA20_60_DEAD"], "P08_EMA20_60_DEAD", timeframe)
+def compute_practitioner_09(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P09_BREAKOUT_20D"], "P09_BREAKOUT_20D", timeframe)
+def compute_practitioner_10(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P10_BREAKDOWN_20D"], "P10_BREAKDOWN_20D", timeframe)
+def compute_practitioner_11(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P11_VOL_EXPANSION_LONG"], "P11_VOL_EXPANSION_LONG", timeframe)
+def compute_practitioner_12(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P12_VOL_EXPANSION_SHORT"], "P12_VOL_EXPANSION_SHORT", timeframe)
+def compute_practitioner_13(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P13_MEAN_REVERT_LONG"], "P13_MEAN_REVERT_LONG", timeframe)
+def compute_practitioner_14(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P14_MEAN_REVERT_SHORT"], "P14_MEAN_REVERT_SHORT", timeframe)
+def compute_practitioner_15(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P15_RSI_DIVERGENCE_LONG"], "P15_RSI_DIVERGENCE_LONG", timeframe)
+def compute_practitioner_16(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P16_RSI_DIVERGENCE_SHORT"], "P16_RSI_DIVERGENCE_SHORT", timeframe)
+def compute_practitioner_17(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P17_ATR_SQUEEZE_BREAKUP"], "P17_ATR_SQUEEZE_BREAKUP", timeframe)
+def compute_practitioner_18(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P18_ATR_SQUEEZE_BREAKDOWN"], "P18_ATR_SQUEEZE_BREAKDOWN", timeframe)
+def compute_practitioner_19(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P19_MACD_CROSS_UP"], "P19_MACD_CROSS_UP", timeframe)
+def compute_practitioner_20(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P20_MACD_CROSS_DOWN"], "P20_MACD_CROSS_DOWN", timeframe)
+def compute_practitioner_21(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P21_ZLEMA_RECLAIM"], "P21_ZLEMA_RECLAIM", timeframe)
+def compute_practitioner_22(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P22_ZLEMA_REJECT"], "P22_ZLEMA_REJECT", timeframe)
+def compute_practitioner_23(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P23_MUTANT_ALPHA_1"], "P23_MUTANT_ALPHA_1", timeframe)
+def compute_practitioner_24(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P24_MUTANT_ALPHA_2"], "P24_MUTANT_ALPHA_2", timeframe)
+def compute_practitioner_25(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P25_MUTANT_ALPHA_3"], "P25_MUTANT_ALPHA_3", timeframe)
+def compute_practitioner_26(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P26_RSI50_TREND_LONG"], "P26_RSI50_TREND_LONG", timeframe)
+def compute_practitioner_27(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P27_RSI50_TREND_SHORT"], "P27_RSI50_TREND_SHORT", timeframe)
+def compute_practitioner_28(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P28_BB_MID_CROSS_LONG"], "P28_BB_MID_CROSS_LONG", timeframe)
+def compute_practitioner_29(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P29_BB_MID_CROSS_SHORT"], "P29_BB_MID_CROSS_SHORT", timeframe)
+def compute_practitioner_30(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P30_MTF_MOMENTUM_LONG"], "P30_MTF_MOMENTUM_LONG", timeframe)

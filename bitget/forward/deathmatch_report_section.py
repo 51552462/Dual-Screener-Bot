@@ -8,16 +8,12 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from bitget.infra.market_keys import to_deathmatch_key
 from bitget.reports.bitget_report_context import BitgetReportContext, BitgetReportMarketSlice
 
 
 def _esc(s: Any) -> str:
     return html.escape(str(s) if s is not None else "", quote=False)
-
-
-def _market_key(market_type: str) -> str:
-    m = str(market_type or "spot").strip().lower()
-    return "FUT" if m in ("futures", "fut", "future") else "SPOT"
 
 
 def _tier_dm_a(
@@ -28,7 +24,7 @@ def _tier_dm_a(
     n_open: int,
     n_min: int,
 ) -> str:
-    mk = _market_key(market_type)
+    mk = to_deathmatch_key(market_type)
     tk = ctx.timekeeper_for(market_type)
     wm = tk.db_watermark_exit or "—"
     lag = ctx.lag_for(market_type)
@@ -45,7 +41,7 @@ def _tier_dm_a(
 
 
 def _tier_dm_b(ctx: BitgetReportContext, market_type: str, *, n_closed: int) -> str:
-    mk = _market_key(market_type)
+    mk = to_deathmatch_key(market_type)
     tk = ctx.timekeeper_for(market_type)
     wl = _esc(f"{tk.rolling_cutoff}~{tk.session_anchor}")
     return (
@@ -64,7 +60,7 @@ def _tier_dm_c(
     n_observing: int,
     n_ranked: int,
 ) -> str:
-    mk = _market_key(market_type)
+    mk = to_deathmatch_key(market_type)
     tk = ctx.timekeeper_for(market_type)
     wl = _esc(f"{tk.rolling_cutoff}~{tk.session_anchor}")
     return (
@@ -90,13 +86,11 @@ def build_deathmatch_section(
         format_ace_evolution_oneliner,
     )
     from evolution.ace_evolution_store import load_playbook
-    from evolution.deathmatch_battle_royale import (
-        battle_royal_to_nway,
-        format_battle_royal_telegram,
-        run_battle_royal,
-    )
+    from bitget.evolution.deathmatch_allocation_bg import maybe_apply_bitget_deathmatch_allocation
+    from bitget.evolution.deathmatch_bg import build_bitget_nway_deathmatch_registry
+    from evolution.deathmatch_battle_royale import format_battle_royal_telegram
 
-    mk = _market_key(market_type)
+    mk = to_deathmatch_key(market_type)
     n_closed = int(len(df_closed)) if df_closed is not None else 0
     n_real = int(len(mkt_slice.df_real))
     n_open = int(mkt_slice.n_open_valid)
@@ -106,26 +100,22 @@ def build_deathmatch_section(
     if isinstance(meta, dict):
         meta_h = meta.get("META_STRATEGY_HEALTH")
 
-    # persist=False: evolution.deathmatch_store/deathmatch_report의 저장 경로는
-    # 전부 주식(factory) SSOT(meta_governor_state.json·system_config.json·
-    # market_data.sqlite)를 대상으로 하드코딩돼 있어 BITGET_DB_STORAGE_PATH를
-    # 인식하지 못한다. 코인 자체 Kelly 사이징은 이 값을 전혀 읽지 않으므로(항상
-    # bitget.governance.meta_consumer 경유) 여기서 persist해도 아무 효과가 없고,
-    # 주식·코인이 같은 서버/체크아웃을 공유하는 상황(예: 단일 서버 운영, 로컬
-    # 테스트)에서는 코인 데스매치 결과가 주식 실거래 META_GROUP_KELLY_MULT를
-    # 덮어쓸 위험만 남는다. 표시용 랭킹은 in-memory 결과만으로 충분하므로 저장은
-    # 완전히 건너뛴다. (apply_deathmatch_allocation 파라미터는 하위 호환용으로
-    # 시그니처에 남겨두되 더 이상 아무 것도 적용하지 않는다.)
-    br = run_battle_royal(
+    br, dm = build_bitget_nway_deathmatch_registry(
         df_closed,
         sys_config,
-        market=mk,
+        market_type=market_type,
         lookback_days=0,
         window_pre_sliced=True,
         meta_health=meta_h if isinstance(meta_h, dict) else None,
-        persist=False,
+        persist=True,
     )
-    dm = battle_royal_to_nway(br)
+
+    if apply_deathmatch_allocation:
+        _cfg_dm = dict(sys_config)
+        _cfg_dm["DEATHMATCH_APPLY_ALLOCATION"] = 1
+        maybe_apply_bitget_deathmatch_allocation(
+            br, dm, _cfg_dm, market_type=market_type
+        )
 
     # 챔피언 탄생 전조(Genesis) 축적 — Bitget 자체 DB에만 기록(주식 SSOT 미참조).
     # 데스매치 랭킹 산출 직후 훅(비침습·항상 안전 폴백).

@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from bitget.infra.market_keys import to_deathmatch_key as _market_key
 from bitget.reports.bitget_report_context import BitgetReportContext
 
 
@@ -25,11 +26,6 @@ class DnaAutopsySlice:
     disaster_threshold: float
     min_per_group: int
     window_label: str
-
-
-def _market_key(market_type: str) -> str:
-    m = str(market_type or "spot").strip().lower()
-    return "FUT" if m in ("futures", "fut", "future") else "SPOT"
 
 
 def resolve_dna_thresholds(

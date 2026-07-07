@@ -9,8 +9,8 @@ Bitget Champion Genesis — 코인 챔피언/독성 로직 탄생 전조(前兆)
   - REGIME_VECTOR_HISTORY(6차원, SPX/KOSPI/VIX/PRI/macro)
         → REGIME_VECTOR_HISTORY_BG(4차원, BTC EMA200 이격·기울기·ATR·ETH/BTC 브레드스)
   - 저장 위치: Bitget 자체 DB(bitget_market_data.sqlite) — 신규 테이블 2개만.
-  - deathmatch_arm_snapshot(수익 우위 전환점 보조 신호): Bitget은 저장하지 않음
-    (deathmatch_report_section.py가 persist=False 정책) → 항상 빈 시퀀스로 안전 폴백.
+  - deathmatch_arm_snapshot(수익 우위 전환점 보조 신호): Bitget DB에 persist
+    (``bitget.evolution.deathmatch_bg`` 경유 — 주식 SSOT 미참조).
 
 ❗ 비침습 원칙: 스캔·포지션·Kelly 경로 불간섭. 모든 공개 함수는 예외를 삼키고
 안전 폴백한다(리포트/거버넌스 경로에 부하·락·예외 전파 0).
