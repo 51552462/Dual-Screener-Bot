@@ -234,6 +234,13 @@ def _init_forward_db_schema(conn):
     except Exception as e:
         print(f"⚠️ 그림자 장부 스키마 초기화 스킵: {e}")
 
+    try:
+        from bitget.infra.proprietary_friction_store_bg import ensure_proprietary_friction_schema
+
+        ensure_proprietary_friction_schema(cursor=cur)
+    except Exception as e:
+        print(f"⚠️ PRI friction 스키마 초기화 스킵: {e}")
+
     # 실전 체결/리더보드 동기화 로그
     cur.execute(
         """

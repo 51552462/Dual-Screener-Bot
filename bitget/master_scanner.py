@@ -395,6 +395,10 @@ def run_scan(
     ).fetchall()
     table_names = [r[0] for r in rows if "__tmp" not in str(r[0])]
     hit_rank = 0
+    funnel_stats: dict[str, dict[str, int]] = {
+        "spot": {"universe": 0, "survivors": 0},
+        "futures": {"universe": 0, "survivors": 0},
+    }
 
     for tf in TIMEFRAMES:
         idx_close = _benchmark_series(conn, tf)
@@ -404,6 +408,9 @@ def run_scan(
             tf_tables = [t for t in tf_tables if "_SPOT_" in t]
         elif mf in ("futures", "fut", "linear"):
             tf_tables = [t for t in tf_tables if "_FUT_" in t]
+        for tbl in tf_tables:
+            mkt_key = "futures" if "_FUT_" in tbl else "spot"
+            funnel_stats[mkt_key]["universe"] += 1
         with ThreadPoolExecutor(max_workers=min(MAX_SCAN_WORKERS, max(1, len(tf_tables)))) as pool:
             futures = {
                 pool.submit(
@@ -423,6 +430,8 @@ def run_scan(
                 symbol = "_".join(tbl.split("_")[2:-1])
                 for engine_name, sig_type, score, chart_main, chart_promo, ai, dbg, last_close, rank, signal_side in hits:
                     hit_rank = max(hit_rank, int(rank))
+                    mkt_key = "futures" if "_FUT_" in tbl else "spot"
+                    funnel_stats[mkt_key]["survivors"] += 1
                     unique_key = f"{symbol}:{tf}:{engine_name}"
                     if unique_key in sent_today:
                         continue
@@ -458,6 +467,26 @@ def run_scan(
                 del hits
                 gc.collect()
     conn.close()
+    try:
+        from datetime import datetime, timezone
+        from bitget.infra.proprietary_friction_store_bg import insert_scan_funnel_snapshot
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        for mkt, st in funnel_stats.items():
+            uni = int(st.get("universe", 0) or 0)
+            surv = int(st.get("survivors", 0) or 0)
+            if uni <= 0:
+                continue
+            pr = 100.0 * surv / uni
+            insert_scan_funnel_snapshot(
+                ts=ts,
+                market=mkt,
+                universe_size=uni,
+                survivors=surv,
+                pass_rate_pct=pr,
+            )
+    except Exception:
+        pass
     del table_names
     gc.collect()
     wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)

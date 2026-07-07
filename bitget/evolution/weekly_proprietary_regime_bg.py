@@ -1,4 +1,4 @@
-"""Bitget weekly proprietary regime (Shadow PRI) — SPOT/FUTURES from forward_trades."""
+"""Bitget weekly proprietary regime (Shadow PRI) — funnel + friction + ledger SSOT."""
 from __future__ import annotations
 
 import html
@@ -9,12 +9,27 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+import pandas as pd
+
 from bitget.infra.data_paths import bitget_data_dir
+from bitget.infra.proprietary_friction_store_bg import normalize_friction_market
 from bitget.forward.shared import DB_PATH
 
 SHADOW_FILENAME = "BITGET_PROPRIETARY_REGIME_SHADOW.json"
+MIN_SAMPLES_FULL = 5
+MIN_SAMPLES_ANY = 2
 REGIME_Z_UP = 0.35
 REGIME_Z_DOWN = -0.35
+
+_COMPONENT_WEIGHTS: Dict[str, float] = {
+    "pass_rate_trend": 0.22,
+    "mfe_level": 0.24,
+    "mae_stress": 0.18,
+    "closed_vol": 0.14,
+    "dm_a_pressure": 0.12,
+    "starvation": 0.10,
+}
 
 
 def shadow_pri_path() -> str:
@@ -50,41 +65,180 @@ def load_weekly_shadow_pri() -> Dict[str, Any]:
         return {}
 
 
-def _compute_market_pri(
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def _safe_z(series: pd.Series) -> float:
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if len(s) < 2:
+        return 0.0
+    mu = float(s.mean())
+    sd = float(s.std(ddof=0))
+    if sd <= 1e-9:
+        return 0.0
+    return float((s.iloc[-1] - mu) / sd)
+
+
+def _decay_z(z: float, n: int) -> float:
+    w = min(1.0, max(0.0, float(n) / float(MIN_SAMPLES_FULL)))
+    return float(z * w)
+
+
+def _load_funnel_week(conn: sqlite3.Connection, market: str, week_start: str, week_end: str) -> pd.DataFrame:
+    if not _table_exists(conn, "scan_funnel_snapshot"):
+        return pd.DataFrame()
+    mk = normalize_friction_market(market)
+    return pd.read_sql(
+        """
+        SELECT ts, market, universe_size, survivors, pass_rate_pct
+        FROM scan_funnel_snapshot
+        WHERE market=? AND substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
+        ORDER BY ts ASC
+        """,
+        conn,
+        params=(mk, week_start, week_end),
+    )
+
+
+def _load_friction_events(conn: sqlite3.Connection, market: str, week_start: str, week_end: str) -> pd.DataFrame:
+    if not _table_exists(conn, "regime_friction_event"):
+        return pd.DataFrame()
+    mk = normalize_friction_market(market)
+    return pd.read_sql(
+        """
+        SELECT date, market, event_type
+        FROM regime_friction_event
+        WHERE market=? AND date >= ? AND date <= ?
+        ORDER BY date ASC
+        """,
+        conn,
+        params=(mk, week_start, week_end),
+    )
+
+
+def _ledger_week_metrics(
     conn: sqlite3.Connection,
     market_type: str,
     week_start: str,
     week_end: str,
 ) -> Dict[str, Any]:
     mk = str(market_type).lower()
-    closed = conn.execute(
+    empty = {
+        "n_open": 0,
+        "n_closed": 0,
+        "avg_mfe_live": None,
+        "avg_mae_live": None,
+        "closed_ret_std": None,
+        "closed_mean_ret": None,
+    }
+    if not _table_exists(conn, "bitget_forward_trades"):
+        return empty
+
+    df_open = pd.read_sql(
         """
-        SELECT final_ret, sim_kelly_invest, status
+        SELECT entry_price, max_high, min_low, position_side
         FROM bitget_forward_trades
-        WHERE market_type=? AND exit_date >= ? AND exit_date <= ?
-          AND status LIKE 'CLOSED%' AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+        WHERE market_type=? AND status='OPEN' AND entry_price IS NOT NULL AND entry_price > 0
         """,
-        (mk, week_start, week_end),
-    ).fetchall()
-    n_closed = len(closed)
-    wins = sum(1 for r in closed if float(r[0] or 0) > 0)
-    pass_rate = (wins / n_closed) if n_closed else 0.5
-    rets = [float(r[0] or 0) for r in closed]
-    avg_ret = sum(rets) / n_closed if n_closed else 0.0
-    mfe = max(rets) if rets else 0.0
-    mae = min(rets) if rets else 0.0
-    vol_proxy = (mfe - mae) / 10.0 if rets else 0.0
+        conn,
+        params=(mk,),
+    )
+    df_closed = pd.read_sql(
+        """
+        SELECT final_ret, exit_date
+        FROM bitget_forward_trades
+        WHERE market_type=? AND status LIKE 'CLOSED%'
+          AND substr(COALESCE(NULLIF(TRIM(exit_date),''), ''),1,10) >= ?
+          AND substr(COALESCE(NULLIF(TRIM(exit_date),''), ''),1,10) <= ?
+          AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+        """,
+        conn,
+        params=(mk, week_start, week_end),
+    )
 
-    n_open = conn.execute(
-        "SELECT COUNT(*) FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",
-        (mk,),
-    ).fetchone()[0]
+    mfe_live: list[float] = []
+    mae_live: list[float] = []
+    if not df_open.empty:
+        ep = pd.to_numeric(df_open["entry_price"], errors="coerce")
+        mh = pd.to_numeric(df_open.get("max_high"), errors="coerce")
+        ml = pd.to_numeric(df_open.get("min_low"), errors="coerce")
+        side = df_open.get("position_side", "LONG").astype(str).str.upper()
+        for i in range(len(df_open)):
+            e = float(ep.iloc[i]) if pd.notna(ep.iloc[i]) else 0.0
+            if e <= 0:
+                continue
+            hi = float(mh.iloc[i]) if pd.notna(mh.iloc[i]) else e
+            lo = float(ml.iloc[i]) if pd.notna(ml.iloc[i]) else e
+            if side.iloc[i] == "SHORT":
+                mfe_live.append(((e - lo) / e) * 100.0)
+                mae_live.append(((e - hi) / e) * 100.0)
+            else:
+                mfe_live.append(((hi - e) / e) * 100.0)
+                mae_live.append(((lo - e) / e) * 100.0)
 
-    z_pass = (pass_rate - 0.5) * 2.0
-    z_ret = max(-2.0, min(2.0, avg_ret / 5.0))
-    z_vol = max(-2.0, min(2.0, vol_proxy))
-    composite = 0.4 * z_pass + 0.4 * z_ret + 0.2 * z_vol
-    pri = max(0.0, min(100.0, 50.0 + 15.0 * composite))
+    closed_ret = pd.to_numeric(df_closed.get("final_ret"), errors="coerce").dropna()
+    return {
+        "n_open": int(len(df_open)),
+        "n_closed": int(len(closed_ret)),
+        "avg_mfe_live": float(np.mean(mfe_live)) if mfe_live else None,
+        "avg_mae_live": float(np.mean(mae_live)) if mae_live else None,
+        "closed_ret_std": float(closed_ret.std(ddof=0)) if len(closed_ret) >= 2 else None,
+        "closed_mean_ret": float(closed_ret.mean()) if len(closed_ret) else None,
+    }
+
+
+def _compute_market_pri(
+    conn: sqlite3.Connection,
+    market_type: str,
+    week_start: str,
+    week_end: str,
+) -> Dict[str, Any]:
+    funnel = _load_funnel_week(conn, market_type, week_start, week_end)
+    events = _load_friction_events(conn, market_type, week_start, week_end)
+    ledger = _ledger_week_metrics(conn, market_type, week_start, week_end)
+
+    n_funnel = int(len(funnel))
+    if n_funnel >= MIN_SAMPLES_ANY and "pass_rate_pct" in funnel.columns:
+        pr = pd.to_numeric(funnel["pass_rate_pct"], errors="coerce").dropna()
+        z_pass = _decay_z(_safe_z(pr), n_funnel)
+    else:
+        z_pass = 0.0
+
+    n_open = int(ledger["n_open"])
+    avg_mfe = ledger.get("avg_mfe_live")
+    z_mfe = _decay_z((float(avg_mfe) - 3.0) / 3.0, n_open) if avg_mfe is not None and n_open >= MIN_SAMPLES_ANY else 0.0
+
+    avg_mae = ledger.get("avg_mae_live")
+    z_mae = _decay_z((float(avg_mae) + 2.0) / 2.5, n_open) if avg_mae is not None and n_open >= MIN_SAMPLES_ANY else 0.0
+
+    n_closed = int(ledger["n_closed"])
+    cstd = ledger.get("closed_ret_std")
+    z_vol = _decay_z((float(cstd) - 4.0) / 4.0, n_closed) if cstd is not None and n_closed >= MIN_SAMPLES_ANY else 0.0
+
+    dm_a = 0
+    if not events.empty:
+        dm_a = int(events["event_type"].astype(str).str.contains("DM_A", na=False).sum())
+    z_dm = _decay_z(-float(dm_a) / 2.0, dm_a) if dm_a > 0 else 0.0
+
+    starvation = 0.5
+    if n_open + n_closed > 0:
+        starvation = n_open / max(1, n_open + n_closed)
+    z_starv = _decay_z(-(float(starvation) - 0.5) / 0.35, 7)
+
+    components = {
+        "pass_rate_trend": z_pass,
+        "mfe_level": z_mfe,
+        "mae_stress": z_mae,
+        "closed_vol": z_vol,
+        "dm_a_pressure": z_dm,
+        "starvation": z_starv,
+    }
+    composite = sum(components[k] * _COMPONENT_WEIGHTS[k] for k in _COMPONENT_WEIGHTS)
+    pri = float(np.clip(50.0 + 15.0 * composite, 0.0, 100.0))
 
     if composite >= REGIME_Z_UP:
         regime = "UP"
@@ -93,23 +247,35 @@ def _compute_market_pri(
     else:
         regime = "SIDEWAYS"
 
-    cold = n_closed < 3
-    bullets = []
+    bullets: list[str] = []
+    if n_funnel >= MIN_SAMPLES_ANY and not funnel.empty:
+        pr_mean = float(pd.to_numeric(funnel["pass_rate_pct"], errors="coerce").mean())
+        bullets.append(f"주간 평균 스캔 통과율 {pr_mean:.2f}% (표본 {n_funnel}슬롯)")
+    if dm_a:
+        bullets.append(f"DM-A(데스매치 청산 0건) {dm_a}회")
+    if avg_mfe is not None:
+        bullets.append(f"OPEN 평균 MFE {avg_mfe:+.2f}% (n={n_open})")
     if n_closed:
-        bullets.append(f"청산 {n_closed}건 · 승률 {pass_rate*100:.0f}% · 평균 {avg_ret:+.2f}%")
-    if n_open:
-        bullets.append(f"OPEN {n_open}건 유지")
-    if cold:
-        bullets.append("콜드스타트 — 표본 부족")
+        bullets.append(f"청산 {n_closed}건 · 평균 {ledger.get('closed_mean_ret', 0):+.2f}%")
 
-    shadow_pnl = avg_ret * 0.15 if n_closed else 0.0
+    actual = float(ledger.get("closed_mean_ret") or 0.0)
+    regime_mult = {"UP": 1.08, "DOWN": 0.92, "SIDEWAYS": 1.0}.get(regime, 1.0)
+    shadow = actual * regime_mult if n_closed >= MIN_SAMPLES_ANY else 0.0
+    cold = n_funnel < MIN_SAMPLES_FULL and n_closed < MIN_SAMPLES_FULL
+
     return {
         "pri_score": round(pri, 2),
         "regime": regime,
         "composite_z": round(composite, 4),
-        "sample_counts": {"closed_trades": n_closed, "open_positions": int(n_open or 0)},
+        "components": {k: round(v, 4) for k, v in components.items()},
+        "sample_counts": {
+            "funnel_slots": n_funnel,
+            "closed_trades": n_closed,
+            "open_positions": n_open,
+            "dm_a_events": dm_a,
+        },
         "narrative_bullets": bullets,
-        "shadow_pnl_delta_pct": round(shadow_pnl, 4),
+        "shadow_pnl_delta_pct": round((shadow - actual) if n_closed >= MIN_SAMPLES_ANY else 0.0, 4),
         "cold_start": cold,
     }
 
@@ -128,7 +294,7 @@ def compute_weekly_coin_pri(
 
     results: Dict[str, Any] = {
         "shadow_mode": True,
-        "schema_version": 1,
+        "schema_version": 2,
         "week_start": week_start,
         "week_end": week_end,
         "computed_at_utc": now.isoformat(),
@@ -157,7 +323,7 @@ def compute_weekly_coin_pri(
     else:
         blend_regime = "SIDEWAYS"
     results["blended"] = {
-        "pri_score": round(max(0.0, min(100.0, 50.0 + 15.0 * blend_z)), 2),
+        "pri_score": round(float(np.clip(50.0 + 15.0 * blend_z, 0, 100)), 2),
         "regime": blend_regime,
         "composite_z": round(blend_z, 4),
         "shadow_pnl_delta_pct": round(

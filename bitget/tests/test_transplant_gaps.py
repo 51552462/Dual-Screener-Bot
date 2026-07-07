@@ -522,3 +522,58 @@ class TestWeeklyCoinPri:
         monkeypatch.setattr(pri, "shadow_pri_path", lambda: str(tmp_path / "pri.json"))
         out = pri.compute_weekly_coin_pri()
         assert out.get("error") == "no_db"
+
+
+class TestProprietaryFrictionStore:
+    def test_insert_funnel_and_friction(self, tmp_path, monkeypatch):
+        import sqlite3
+        from bitget.infra import proprietary_friction_store_bg as pfs
+
+        db = tmp_path / "m.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.close()
+        monkeypatch.setattr(pfs, "friction_db_path", lambda: str(db))
+        pfs.insert_scan_funnel_snapshot(
+            ts="2026-07-08 10:00",
+            market="spot",
+            universe_size=100,
+            survivors=5,
+            pass_rate_pct=5.0,
+        )
+        pfs.insert_regime_friction_event(
+            date="2026-07-08", market="futures", event_type="DM_A_ZERO_CLOSED"
+        )
+        conn = sqlite3.connect(str(db))
+        n1 = conn.execute("SELECT COUNT(*) FROM scan_funnel_snapshot").fetchone()[0]
+        n2 = conn.execute("SELECT COUNT(*) FROM regime_friction_event").fetchone()[0]
+        conn.close()
+        assert n1 == 1
+        assert n2 == 1
+
+
+class TestShadowMacroBg:
+    def test_shadow_macro_improvement_block(self):
+        import pandas as pd
+        from bitget.shadow_macro_validator_bg import append_shadow_macro_block
+
+        df = pd.DataFrame(
+            {
+                "sig_type": ["STANDARD_A", "SUPERNOVA_B", "STANDARD_C"],
+                "final_ret": [5.0, -2.0, 3.0],
+            }
+        )
+        html_out = append_shadow_macro_block("base", market="spot", df_closed=df)
+        assert "섀도우 매크로" in html_out
+        assert "base" in html_out
+
+
+class TestMetaLearnerBg:
+    def test_meta_learning_cycle_runs(self, tmp_path, monkeypatch):
+        from bitget import meta_learner_bg as ml
+
+        monkeypatch.setattr(ml, "trust_matrix_path", lambda: str(tmp_path / "trust.json"))
+        monkeypatch.setattr(ml, "DB_PATH", str(tmp_path / "missing.sqlite"))
+        out = ml.run_bitget_meta_learning_cycle(meta={"META_REGIME_KEY": "BULL"})
+        assert out["ok"] is True
+        line = ml.build_meta_cognition_line()
+        assert "Meta-Trust" in line

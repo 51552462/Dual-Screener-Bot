@@ -263,9 +263,13 @@ def _step_forward_trade_identity() -> None:
 
 def _step_weekly_coin_pri() -> None:
     from bitget.evolution.weekly_proprietary_regime_bg import compute_weekly_coin_pri
+    from bitget.evolution.weekly_evolution_tail_bg import run_weekly_evolution_tail
 
     out = compute_weekly_coin_pri()
     print(f"🛰️ [Bitget] weekly_coin_pri: blended={out.get('blended')}")
+    blended = out.get("blended") if isinstance(out.get("blended"), dict) else {}
+    tail = run_weekly_evolution_tail(pri_blend_z=blended.get("composite_z"))
+    print(f"🛰️ [Bitget] weekly_evolution_tail: {tail}")
 
 
 def _step_regime_deep_archive_bg() -> None:

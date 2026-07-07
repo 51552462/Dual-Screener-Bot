@@ -295,6 +295,12 @@ def format_macro_treasury_section_html(
         body += f"🌊 Breadth: {html.escape(block.breadth_status, quote=False)}\n"
     if block.defcon is not None:
         body += f"☢️ DEFCON: <b>{html.escape(str(block.defcon), quote=False)}</b>\n"
+    try:
+        from bitget.meta_learner_bg import build_meta_cognition_line
+
+        body += build_meta_cognition_line() + "\n"
+    except Exception:
+        pass
     if block.regime_notes:
         body += html.escape(block.regime_notes, quote=False) + "\n"
     body += f"\n<i>{html.escape(block.treasury_footnote, quote=False)}</i>\n"

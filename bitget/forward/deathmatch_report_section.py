@@ -152,8 +152,27 @@ def build_deathmatch_section(
 
     if n_closed == 0:
         msg += _tier_dm_a(ctx, market_type, n_real=n_real, n_open=n_open, n_min=br.n_min)
+        try:
+            from datetime import datetime, timezone
+            from bitget.infra.proprietary_friction_store_bg import insert_regime_friction_event
+
+            insert_regime_friction_event(
+                date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                market=market_type,
+                event_type="DM_A_ZERO_CLOSED",
+            )
+        except Exception:
+            pass
         if ace_line:
             msg += f"\n{ace_line}"
+        try:
+            from bitget.shadow_macro_validator_bg import append_shadow_macro_block
+
+            msg = append_shadow_macro_block(
+                msg, market=market_type, df_closed=df_closed, sys_config=sys_config
+            )
+        except Exception:
+            pass
         return msg
 
     if n_closed > 0 and not br.arms:
@@ -184,4 +203,13 @@ def build_deathmatch_section(
         ace_oneliner=ace_line,
         include_title=False,
     )
-    return msg + body
+    msg = msg + body
+    try:
+        from bitget.shadow_macro_validator_bg import append_shadow_macro_block
+
+        msg = append_shadow_macro_block(
+            msg, market=market_type, df_closed=df_closed, sys_config=sys_config
+        )
+    except Exception:
+        pass
+    return msg
