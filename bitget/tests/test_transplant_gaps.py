@@ -615,6 +615,35 @@ class TestRegimeAnalogBg:
         assert "Regime Analog" in html_out
         assert "72.5" in html_out
 
+    def test_frontrun_gate_blocks_unfavorable(self):
+        from bitget.evolution.regime_analog_bg import frontrun_gate
+
+        cfg = {
+            "REGIME_ANALOG_SCORE_BG": {
+                "score": 0.9,
+                "front_run_favorable": False,
+                "best_episode": "CRYPTO_WINTER_2022",
+            }
+        }
+        allowed, info = frontrun_gate(cfg)
+        assert allowed is False
+        assert info["reason"] == "unfavorable_regime"
+
+    def test_frontrun_gate_allows_favorable_match(self):
+        from bitget.evolution.regime_analog_bg import frontrun_gate
+
+        cfg = {
+            "REGIME_ANALOG_SCORE_BG": {
+                "score": 0.85,
+                "front_run_favorable": True,
+                "best_episode": "ETF_RALLY_2024",
+            },
+            "REGIME_ANALOG_FRONTRUN_MIN_SCORE": 0.80,
+        }
+        allowed, info = frontrun_gate(cfg)
+        assert allowed is True
+        assert info["reason"] == "analog_match"
+
 
 class TestElasticThresholdBg:
     def test_starvation_high_when_no_entries(self, tmp_path, monkeypatch):
@@ -670,6 +699,72 @@ class TestElasticThresholdBg:
         et = BitgetElasticThreshold({"ELASTIC_TARGET_ENTRIES_PER_WEEK": 12}, "spot")
         starv = et.compute_starvation_index(lookback_days=7)
         assert starv < 0.5
+
+    def test_apply_pair_lowers_cutoff_when_starved(self, tmp_path, monkeypatch):
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThreshold
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                market_type TEXT, status TEXT, sig_type TEXT, final_ret REAL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr("bitget.evolution.elastic_threshold_bg.DB_PATH", str(db))
+        et = BitgetElasticThreshold({}, "spot")
+        st = et.apply_pair(0.75, 0.50, starvation=0.9, vol_proxy=1.0)
+        assert st.cos_cutoff < 0.75
+        assert st.scout_gap >= 0.07
+
+    def test_scout_candidate_near_miss(self):
+        from bitget.evolution.elastic_threshold_bg import (
+            BitgetElasticThresholdState,
+            evaluate_scout_candidate,
+        )
+
+        st = BitgetElasticThresholdState(
+            cos_cutoff=0.70,
+            ml_cutoff=0.50,
+            stretch_factor=1.0,
+            scout_gap=0.10,
+            starvation_index=0.80,
+            vol_proxy=1.0,
+        )
+        verdict = evaluate_scout_candidate(
+            is_pass_cosine=False,
+            is_pass_ml_box=False,
+            best_cos_sim=0.65,
+            eff_cos_cutoff=0.70,
+            ml_score=0.0,
+            eff_ml_cutoff=0.50,
+            state=st,
+            sys_config={"ELASTIC_SCOUT_ENABLED": True},
+        )
+        assert verdict.eligible is True
+        assert verdict.path == "COSINE_SCOUT"
+
+
+class TestEntryGatesLedger:
+    def test_rotation_prebuy_blocked_without_analog(self):
+        from bitget.evolution.regime_analog_bg import frontrun_gate
+
+        cfg = {
+            "PREDICTED_NEXT_SECTOR": "BTC",
+            "REGIME_ANALOG_SCORE_BG": {
+                "score": 0.4,
+                "front_run_favorable": True,
+            },
+            "REGIME_ANALOG_FRONTRUN_MIN_SCORE": 0.80,
+        }
+        allowed, _ = frontrun_gate(cfg)
+        assert allowed is False
+        rotation_active = ("BTC" == cfg["PREDICTED_NEXT_SECTOR"]) and allowed
+        assert rotation_active is False
 
 
 class TestExitRatchetRlBg:

@@ -5,7 +5,13 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+
+
+def _truthy(val: Any, default: bool = True) -> bool:
+    if val is None:
+        return default
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
 
 from bitget.forward.shared import DB_PATH
 from bitget.infra.proprietary_friction_store_bg import normalize_friction_market
@@ -19,8 +25,19 @@ def _clip(v: float, lo: float, hi: float) -> float:
 class BitgetElasticThresholdState:
     cos_cutoff: float
     ml_cutoff: float
+    stretch_factor: float
+    scout_gap: float
     starvation_index: float
     vol_proxy: float
+
+
+@dataclass(frozen=True)
+class ScoutVerdict:
+    eligible: bool
+    reason: str = ""
+    path: str = ""
+    best_metric: float = 0.0
+    effective_cutoff: float = 0.0
 
 
 class BitgetElasticThreshold:
@@ -74,6 +91,41 @@ class BitgetElasticThreshold:
 
     def volatility_proxy(self) -> float:
         return internal_ledger_volatility_proxy(self.market_db)
+
+    def apply_pair(
+        self,
+        base_cos: float,
+        base_ml: float,
+        *,
+        starvation: Optional[float] = None,
+        vol_proxy: Optional[float] = None,
+    ) -> BitgetElasticThresholdState:
+        """표본 기아 시 커트라인 완화 · 고변동 시 소폭 조임 (주식 ElasticThreshold 동형)."""
+        starv = float(starvation if starvation is not None else self.compute_starvation_index())
+        vol = float(vol_proxy if vol_proxy is not None else self.volatility_proxy())
+
+        max_relief = float(self.cfg.get("ELASTIC_MAX_RELIEF", 0.18) or 0.18)
+        vol_tighten = float(self.cfg.get("ELASTIC_VOL_TIGHTEN", 0.06) or 0.06)
+        relief = starv * max_relief
+        tighten = max(0.0, vol - 1.0) * vol_tighten
+
+        floor = float(self.cfg.get("ELASTIC_CUTOFF_FLOOR", 0.32) or 0.32)
+        ceil = float(self.cfg.get("ELASTIC_CUTOFF_CEIL", 0.92) or 0.92)
+
+        cos = _clip(float(base_cos) * (1.0 + tighten) - relief, floor, ceil)
+        ml = _clip(float(base_ml) * (1.0 + tighten) - relief, floor, ceil)
+        base_gap = float(self.cfg.get("ELASTIC_SCOUT_BASE_GAP", 0.07) or 0.07)
+        scout_gap = _clip(base_gap + starv * 0.14, 0.05, 0.22)
+        stretch = 1.0 + tighten - relief
+
+        return BitgetElasticThresholdState(
+            cos_cutoff=round(cos, 4),
+            ml_cutoff=round(ml, 4),
+            stretch_factor=round(stretch, 4),
+            scout_gap=round(scout_gap, 4),
+            starvation_index=round(starv, 4),
+            vol_proxy=round(vol, 4),
+        )
 
 
 def internal_ledger_volatility_proxy(market_type: str, *, lookback_days: int = 20) -> float:
@@ -129,3 +181,73 @@ def internal_ledger_volatility_proxy(market_type: str, *, lookback_days: int = 2
         return 1.0
     raw = float(np.mean(vol_parts))
     return _clip(0.85 + raw * 0.25, 0.7, 1.5)
+
+
+def evaluate_scout_candidate(
+    *,
+    is_pass_cosine: bool,
+    is_pass_ml_box: bool,
+    best_cos_sim: float,
+    eff_cos_cutoff: float,
+    ml_score: float,
+    eff_ml_cutoff: float,
+    state: BitgetElasticThresholdState,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> ScoutVerdict:
+    """DNA 합격 실패 직후 — 정찰병(Scout) 허용 여부."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if not _truthy(cfg.get("ELASTIC_SCOUT_ENABLED"), True):
+        return ScoutVerdict(False, "scout_disabled")
+
+    if is_pass_cosine or is_pass_ml_box:
+        return ScoutVerdict(False, "already_passed")
+
+    if state.starvation_index < float(cfg.get("ELASTIC_SCOUT_MIN_STARVATION", 0.35) or 0.35):
+        return ScoutVerdict(False, "starvation_not_high_enough")
+
+    gap = state.scout_gap
+    cos_floor = eff_cos_cutoff - gap
+    ml_floor = eff_ml_cutoff - gap
+
+    if best_cos_sim >= cos_floor and best_cos_sim < eff_cos_cutoff:
+        return ScoutVerdict(
+            True,
+            "cosine_near_miss",
+            path="COSINE_SCOUT",
+            best_metric=best_cos_sim,
+            effective_cutoff=eff_cos_cutoff,
+        )
+    if ml_score >= ml_floor and ml_score < eff_ml_cutoff:
+        return ScoutVerdict(
+            True,
+            "ml_near_miss",
+            path="MLBOX_SCOUT",
+            best_metric=ml_score,
+            effective_cutoff=eff_ml_cutoff,
+        )
+    return ScoutVerdict(False, "outside_scout_band")
+
+
+def scout_invest_cap(sys_config: Dict[str, Any], account_size: float) -> float:
+    pct = float(sys_config.get("ELASTIC_SCOUT_INVEST_PCT", 0.003) or 0.003)
+    pct = _clip(pct, 0.001, 0.003)
+    return float(account_size) * pct
+
+
+def enforce_scout_hard_cap(
+    invest_amount: float,
+    sim_kelly_invest: float,
+    *,
+    sys_config: Dict[str, Any],
+    account_size: float,
+    entry_price: float,
+) -> Tuple[float, float, float]:
+    """정찰병 비중 절대 상한 — returns (invest_amount, sim_kelly_invest, notional)."""
+    cap = scout_invest_cap(sys_config, float(account_size))
+    inv = min(float(invest_amount), cap)
+    sk = min(float(sim_kelly_invest), cap)
+    ep = float(entry_price) if entry_price else 0.0
+    if ep > 0 and sk > cap:
+        sk = cap
+        inv = min(inv, cap)
+    return inv, sk, sk

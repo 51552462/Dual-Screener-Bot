@@ -22,6 +22,10 @@ from bitget.evolution.coin_regime_vector import (
 )
 
 ANALOG_SCORE_KEY = "REGIME_ANALOG_SCORE_BG"
+GATE_ENABLED_KEY = "REGIME_ANALOG_GATE_ENABLED"
+FRONTRUN_MIN_SCORE_KEY = "REGIME_ANALOG_FRONTRUN_MIN_SCORE"
+GATE_FAIL_OPEN_KEY = "REGIME_ANALOG_GATE_FAIL_OPEN"
+DEFAULT_FRONTRUN_MIN_SCORE = 0.80
 W_MAHALANOBIS = 0.6
 W_DTW = 0.4
 _MAHA_SCALE = 2.5
@@ -219,3 +223,82 @@ def format_regime_analog_brief(result: Optional[Dict[str, Any]] = None) -> str:
         f"\n🧭 <b>[코인 Regime Analog]</b> {ep} · 유사도 <b>{score:.1f}%</b> {fav}\n"
         f"<i>{desc}</i>\n"
     )
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def load_regime_analog(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if isinstance(cfg, dict):
+        val = cfg.get(ANALOG_SCORE_KEY)
+        if isinstance(val, dict):
+            return val
+    try:
+        from bitget.infra.config_manager import load_system_config
+
+        raw = load_system_config().get(ANALOG_SCORE_KEY)
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def frontrun_gate(cfg: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
+    """
+    선취매(순환매 커트라인 완화·켈리 증액) 허용 판정.
+
+    주식 `regime_analog_engine.frontrun_gate` 와 동일 조건이나
+    `REGIME_ANALOG_SCORE_BG` 를 SSOT 로 읽는다.
+    """
+    if isinstance(cfg, dict):
+        gate_cfg = cfg
+    else:
+        try:
+            from bitget.infra.config_manager import load_system_config
+
+            gate_cfg = load_system_config() or {}
+        except Exception:
+            gate_cfg = {}
+
+    enabled = bool(gate_cfg.get(GATE_ENABLED_KEY, True))
+    if not enabled:
+        return True, {"allowed": True, "reason": "gate_disabled"}
+
+    fail_open = bool(gate_cfg.get(GATE_FAIL_OPEN_KEY, True))
+    analog = load_regime_analog(gate_cfg)
+    if not analog:
+        return fail_open, {
+            "allowed": fail_open,
+            "reason": "no_analog_data_fail_open" if fail_open else "no_analog_data_blocked",
+        }
+
+    min_score = _safe_float(
+        gate_cfg.get(FRONTRUN_MIN_SCORE_KEY, DEFAULT_FRONTRUN_MIN_SCORE),
+        DEFAULT_FRONTRUN_MIN_SCORE,
+    )
+    score = _safe_float(analog.get("score"))
+    favorable = bool(analog.get("front_run_favorable", False))
+    info: Dict[str, Any] = {
+        "allowed": False,
+        "score": round(score, 4),
+        "min_score": min_score,
+        "best_episode": analog.get("best_episode"),
+        "best_regime": analog.get("best_regime"),
+        "favorable": favorable,
+        "confidence": analog.get("confidence"),
+    }
+
+    if not favorable:
+        info["reason"] = "unfavorable_regime"
+        return False, info
+    if score < min_score:
+        info["reason"] = "low_analog_score"
+        return False, info
+
+    info["allowed"] = True
+    info["reason"] = "analog_match"
+    return True, info

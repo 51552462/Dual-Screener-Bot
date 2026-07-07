@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from bitget.infra.shared_db_connector import get_connection
+from bitget.forward.mutant import _coin_asset_group
 from bitget.forward.gates import (
     _apply_thompson_kelly_multiplier,
     _calc_atr14,
@@ -239,7 +240,35 @@ def try_add_virtual_position(
     max_alpha_cos_effective = min(1.0, float(max_alpha_cos) + float(alpha_bonus_score))
 
     dyn_cos_limit = float(cfg.get("DYNAMIC_ALPHA_LIMIT", cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.75)))
+    dyn_ml_cutoff = float(cfg.get("DYNAMIC_ML_BOX_CUTOFF", 0.50))
     dyn_dtw_limit = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
+
+    elastic_state = None
+    try:
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThreshold
+
+        elastic_state = BitgetElasticThreshold(cfg, market_type).apply_pair(dyn_cos_limit, dyn_ml_cutoff)
+        dyn_cos_limit = float(elastic_state.cos_cutoff)
+        dyn_ml_cutoff = float(elastic_state.ml_cutoff)
+    except Exception:
+        pass
+
+    sector = _coin_asset_group(symbol)
+    predicted_sector = str(cfg.get("PREDICTED_NEXT_SECTOR", "UNKNOWN"))
+    is_rotation_prebuy = (sector == predicted_sector) and sector not in ("UNKNOWN", "OTHER", "")
+
+    try:
+        from bitget.evolution.regime_analog_bg import frontrun_gate
+
+        frontrun_allowed, analog_gate_info = frontrun_gate(cfg)
+    except Exception:
+        frontrun_allowed, analog_gate_info = True, {"reason": "gate_error_fail_open"}
+
+    rotation_prebuy_active = is_rotation_prebuy and frontrun_allowed
+    frontrun_blocked = is_rotation_prebuy and not frontrun_allowed
+    if rotation_prebuy_active:
+        dyn_cos_limit *= 0.85
+
     raw_dtw = None if not facts else facts.get("dtw_score")
     if raw_dtw is None or (isinstance(raw_dtw, str) and raw_dtw.strip() == ""):
         dtw_ok = True
@@ -251,10 +280,40 @@ def try_add_virtual_position(
             dtw_ok = True
 
     cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and dtw_ok
+    is_pass_ml_box = bool(facts and facts.get("ml_box_pass"))
+    is_scout_entry = False
+    scout_verdict = None
+
+    if not is_incubator_shadow and not cutoff_passed and elastic_state is not None:
+        try:
+            from bitget.evolution.elastic_threshold_bg import evaluate_scout_candidate
+
+            ml_score = float(facts.get("ml_score", facts.get("ml_box_score", 0.0)) or 0.0) if facts else 0.0
+            scout_verdict = evaluate_scout_candidate(
+                is_pass_cosine=cutoff_passed,
+                is_pass_ml_box=is_pass_ml_box,
+                best_cos_sim=float(max_alpha_cos_effective),
+                eff_cos_cutoff=float(dyn_cos_limit),
+                ml_score=ml_score,
+                eff_ml_cutoff=float(dyn_ml_cutoff),
+                state=elastic_state,
+                sys_config=cfg,
+            )
+            if scout_verdict.eligible:
+                is_scout_entry = True
+                cutoff_passed = True
+        except Exception:
+            pass
 
     sig_type_row = sig_type
     if cutoff_passed and alpha_bonus_score > 0:
         sig_type_row = f"{sig_type_row} [🧬알파 융합 AST]"
+    if rotation_prebuy_active:
+        sig_type_row += " #순환매_선취매"
+    if frontrun_blocked:
+        sig_type_row += f" [🔒선취매보류:국면불일치 {analog_gate_info.get('reason', '')}]"
+    if is_scout_entry and scout_verdict is not None:
+        sig_type_row = f"[🔭SCOUT/{scout_verdict.path}] {sig_type_row}"
 
     if not is_incubator_shadow and not cutoff_passed:
         conn.close()
@@ -300,17 +359,10 @@ def try_add_virtual_position(
 
     # 💡 [Namespace Thompson Kelly Sampler] auto_forward_tester 와 동일: [TF]_*_BETA_PARAMS 로 자본 동적 배분
     kelly_risk_pct = _apply_thompson_kelly_multiplier(cfg, tf, sig_type, float(kelly_risk_pct))
-    sector = _coin_asset_group(symbol)
-    predicted_sector = str(cfg.get("PREDICTED_NEXT_SECTOR", "UNKNOWN"))
-    is_rotation_prebuy = (sector == predicted_sector)
     sys_config = cfg
 
-    # 👇👇 [V105.0 자율 진화] 순환매 선취매 태깅 및 베팅 어드밴티지 코인 이식 👇👇
-    if is_rotation_prebuy:
-        sig_type_row += " #순환매_선취매"
-        # 관제탑이 주말 데스매치를 통해 우위를 증명했다면 켈리 비중 2배 뻥튀기
-        if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
-            kelly_risk_pct *= 2.0 
+    if rotation_prebuy_active and sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
+        kelly_risk_pct *= 2.0
 
     core_group = _extract_core_group(sig_type)
     _meta_state = load_meta_state_resolved()
@@ -388,6 +440,25 @@ def try_add_virtual_position(
     else:
         margin_used = margin_required
         sim_kelly_invest = raw_notional
+
+    if is_scout_entry and not is_incubator_shadow:
+        try:
+            from bitget.evolution.elastic_threshold_bg import enforce_scout_hard_cap
+
+            _, sim_kelly_invest, sim_kelly_invest = enforce_scout_hard_cap(
+                sim_kelly_invest,
+                sim_kelly_invest,
+                sys_config=cfg,
+                account_size=account_size,
+                entry_price=float(entry_price),
+            )
+            margin_used = (
+                sim_kelly_invest
+                if market_type == "spot"
+                else sim_kelly_invest / max(leverage, 1e-9)
+            )
+        except Exception:
+            pass
 
     if is_incubator_shadow:
         # 인큐베이터 섀도우 트레이딩: 국고 손실 원천 차단 (가상 기록만 유지)
@@ -918,14 +989,14 @@ def track_daily_positions(market_type):
                 except (TypeError, ValueError, KeyError):
                     cur_atr = entry_atr
 
-            # MFE/MAE 1순위 (+ M1/M2 프리러너 — LONG 전용, 주식 forward/ledger 동형)
+            # MFE/MAE 1순위 (+ M1/M2 프리러너 — LONG/SHORT 대칭, 주식 forward/ledger 동형)
             if low_ret_pct <= dyn_mae_sl:
                 do_exit = True
                 exit_rsn = f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl:.2f}%)"
                 actual_exit_type = "STAT_MAE"
                 actual_exit_price = ep * (1.0 + dyn_mae_sl / 100.0) if pos_side == "LONG" else ep * (1.0 - dyn_mae_sl / 100.0)
             elif high_ret_pct >= dyn_mfe_tp:
-                if pos_side == "LONG" and _scaled_done < 1e-6 and _xdyn_mod is not None:
+                if _scaled_done < 1e-6 and _xdyn_mod is not None:
                     _vol_pct = (cur_atr / ep * 100.0) if (ep > 0 and np.isfinite(cur_atr)) else 5.0
                     _edge_pre = (current_ret_pct / max(1, int(new_bars))) * (_row_f(r, "v_energy", 1.0) / 10.0)
                     f_out = _xdyn_mod.fluid_scale_out_fraction(_meta_regime, _vol_pct, _edge_pre)
@@ -933,41 +1004,72 @@ def track_daily_positions(market_type):
                         do_exit = True
                         exit_rsn = f"유동 전량익절 (방어국면 F_out={f_out:.0%})"
                         actual_exit_type = "STAT_MFE_FULL"
-                        actual_exit_price = ep * (1.0 + dyn_mfe_tp / 100.0)
+                        actual_exit_price = (
+                            ep * (1.0 + dyn_mfe_tp / 100.0)
+                            if pos_side == "LONG"
+                            else ep * (1.0 - dyn_mfe_tp / 100.0)
+                        )
                     else:
                         _partial_locked = round(f_out * dyn_mfe_tp, 4)
-                        conn.execute(
-                            """
-                            UPDATE bitget_forward_trades
-                            SET scaled_out_frac=?, realized_partial_ret=?, free_runner=1, max_high=?, mfe=?
-                            WHERE id=?
-                            """,
-                            (
-                                round(f_out, 4),
-                                _partial_locked,
-                                new_max,
-                                round(high_ret_pct, 2),
-                                int(r["id"]),
-                            ),
-                        )
+                        if pos_side == "LONG":
+                            conn.execute(
+                                """
+                                UPDATE bitget_forward_trades
+                                SET scaled_out_frac=?, realized_partial_ret=?, free_runner=1, max_high=?, mfe=?
+                                WHERE id=?
+                                """,
+                                (
+                                    round(f_out, 4),
+                                    _partial_locked,
+                                    new_max,
+                                    round(high_ret_pct, 2),
+                                    int(r["id"]),
+                                ),
+                            )
+                        else:
+                            conn.execute(
+                                """
+                                UPDATE bitget_forward_trades
+                                SET scaled_out_frac=?, realized_partial_ret=?, free_runner=1, min_low=?, mfe=?
+                                WHERE id=?
+                                """,
+                                (
+                                    round(f_out, 4),
+                                    _partial_locked,
+                                    new_min,
+                                    round(high_ret_pct, 2),
+                                    int(r["id"]),
+                                ),
+                            )
                         conn.commit()
                         continue
-                elif c < l + (h - l) * 0.7:
+                elif pos_side == "LONG" and c < l + (h - l) * 0.7:
                     do_exit = True
                     exit_rsn = f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp:.2f}%)"
                     actual_exit_type = "STAT_MFE"
-                    actual_exit_price = (
-                        ep * (1.0 + dyn_mfe_tp / 100.0)
-                        if pos_side == "LONG"
-                        else ep * (1.0 - dyn_mfe_tp / 100.0)
-                    )
+                    actual_exit_price = ep * (1.0 + dyn_mfe_tp / 100.0)
+                elif pos_side == "SHORT" and c > l + (h - l) * 0.3:
+                    do_exit = True
+                    exit_rsn = f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp:.2f}%)"
+                    actual_exit_type = "STAT_MFE"
+                    actual_exit_price = ep * (1.0 - dyn_mfe_tp / 100.0)
 
-            if not do_exit and _is_free_runner and pos_side == "LONG" and _xdyn_mod is not None:
-                _run_ret = ((new_max - ep) / ep) * 100.0
-                _kappa = _xdyn_mod.convex_ratchet_kappa(_run_ret, _ratchet_state)
-                _trail_px = _xdyn_mod.trail_stop_price(new_max, _kappa)
-                if l <= _trail_px:
-                    if c < o:
+            if not do_exit and _is_free_runner and _xdyn_mod is not None:
+                if pos_side == "LONG":
+                    _run_ret = ((new_max - ep) / ep) * 100.0
+                    _kappa = _xdyn_mod.convex_ratchet_kappa(_run_ret, _ratchet_state)
+                    _trail_px = _xdyn_mod.trail_stop_price(new_max, _kappa)
+                    _trail_hit = l <= _trail_px
+                    _vol_bar = c < o
+                else:
+                    _run_ret = ((ep - new_min) / ep) * 100.0
+                    _kappa = _xdyn_mod.convex_ratchet_kappa(_run_ret, _ratchet_state)
+                    _trail_px = new_min * (1.0 + _kappa)
+                    _trail_hit = h >= _trail_px
+                    _vol_bar = c > o
+
+                if _trail_hit:
+                    if _vol_bar:
                         _icr = v / max(1.0, _row_f(r, "up_vol_sum", 1.0))
                         _avg_vol = (_row_f(r, "up_vol_sum", 0.0) + _row_f(r, "down_vol_sum", 0.0)) / max(
                             1, int(new_bars)
@@ -979,12 +1081,31 @@ def track_daily_positions(market_type):
                         _vol_confirmed = False
                     if _vol_confirmed:
                         do_exit = True
+                        _side_tag = "고점" if pos_side == "LONG" else "저점"
                         exit_rsn = (
-                            f"프리러너 볼록 트레일 청산 (κ={_kappa:.3f} · 고점 {_run_ret:.0f}% "
+                            f"프리러너 볼록 트레일 청산 ({pos_side} κ={_kappa:.3f} · {_side_tag} {_run_ret:.0f}% "
                             f"· ICR {_icr:.2f}/RVOL {_rvol:.2f})"
                         )
                         actual_exit_type = "RUNNER_TRAIL"
                         actual_exit_price = _trail_px
+                    else:
+                        try:
+                            _prev_ft = r.get("flow_tags")
+                            _prev_ft = (
+                                ""
+                                if _prev_ft is None
+                                or (isinstance(_prev_ft, float) and pd.isna(_prev_ft))
+                                else str(_prev_ft)
+                            )
+                            _gtag = "#RUNNER_유예_거래량페이크"
+                            if _gtag not in _prev_ft:
+                                conn.execute(
+                                    "UPDATE bitget_forward_trades SET flow_tags=? WHERE id=?",
+                                    ((f"{_prev_ft} {_gtag}").strip(), int(r["id"])),
+                                )
+                                conn.commit()
+                        except Exception:
+                            pass
 
             # ATR/TimeStop/TECH 2순위
             if not do_exit:
@@ -1084,7 +1205,7 @@ def track_daily_positions(market_type):
                 actual_exit_type = "ZOMBIE_FORCE_CLOSE"
                 actual_exit_price = ep
 
-            if not do_exit and int(float(r.get("parent_trade_id", 0) or 0)) == 0:
+            if not do_exit and _is_free_runner and int(float(r.get("parent_trade_id", 0) or 0)) == 0:
                 try:
                     _ms = load_meta_state_resolved()
                     _regime = str(
