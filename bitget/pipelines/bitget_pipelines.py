@@ -99,6 +99,13 @@ def _step_meta_governor_sync() -> None:
             "meta_governor_sync aborted — refusing stale UNKNOWN report: " + detail
         )
 
+    try:
+        from bitget.evolution.fluid_evolution_bridge_bg import post_bitget_meta_governor_fluid_sync
+
+        post_bitget_meta_governor_fluid_sync()
+    except Exception as _fluid_ex:
+        print(f"⚠️ [Bitget] fluid evolution post-meta sync skip: {_fluid_ex}")
+
 
 def _step_artifact_guard() -> None:
     from bitget.infra.artifact_guard import ensure_bitget_artifacts
@@ -252,6 +259,13 @@ def _step_forward_trade_identity() -> None:
     from bitget.forward.forward_trade_identity import run_identity_repair_all
 
     run_identity_repair_all()
+
+
+def _step_weekly_coin_regime_archive() -> None:
+    from bitget.evolution.weekly_regime_bg import run_weekly_coin_regime_archive
+
+    out = run_weekly_coin_regime_archive()
+    print(f"🛰️ [Bitget] weekly_coin_regime_archive: {out}")
 
 
 def _step_weekly_evolution() -> None:
@@ -759,6 +773,7 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
     return _with_guard(
         [
             StepSpec("weekly_evolution", _step_weekly_evolution, critical=True, delay_after_sec=1.0),
+            StepSpec("weekly_coin_regime_archive", _step_weekly_coin_regime_archive, critical=False),
             StepSpec("weekly_flow_master", _step_weekly_flow_master, critical=True),
             StepSpec("genesis_backfill_weekly", _step_genesis_backfill_weekly, critical=False),
             StepSpec("weekend_grand_report", _step_weekend_grand_report, critical=False, delay_after_sec=1.0),

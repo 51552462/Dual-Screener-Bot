@@ -226,6 +226,8 @@ def _init_forward_db_schema(conn):
     _ensure_col(cur, "is_top_dna", "INTEGER DEFAULT 0")
     _ensure_col(cur, "is_worst_dna", "INTEGER DEFAULT 0")
     _ensure_col(cur, "is_death_combo", "INTEGER DEFAULT 0")
+    _ensure_col(cur, "pyramid_adds", "INTEGER DEFAULT 0")
+    _ensure_col(cur, "parent_trade_id", "INTEGER DEFAULT 0")
     try:
         import bitget.shadow_tracking as bitget_shadow_tracking
         bitget_shadow_tracking.init_shadow_tables(cur)

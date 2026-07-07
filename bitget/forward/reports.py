@@ -12,7 +12,6 @@ from bitget.forward.execution_bridge import (
     build_practitioner_reality_leaderboard,
     sync_real_leaderboard_with_virtual,
 )
-from bitget.forward.gates import _extract_core_group
 from bitget.forward.mutant import (
     _auto_tune_brain_from_closed_df,
     _calculate_metrics,
@@ -36,7 +35,13 @@ from reports.forward_report_scalar import (
     row_scalar,
     scalar_float,
 )
-from reports.report_state_binder import build_macro_treasury_block, format_macro_treasury_section_html
+from bitget.reports.macro_treasury_bg import build_bitget_macro_section_html
+from bitget.reports.leaderboard_bg import build_logic_leaderboard_html
+from bitget.reports.capital_deathmatch_bg import (
+    analyze_capital_deathmatch,
+    format_capital_deathmatch_telegram,
+)
+from bitget.reports.canary_panel_bg import format_canary_panel_html
 
 
 def _norm_market_type(market_type: str) -> str:
@@ -130,65 +135,40 @@ def send_comprehensive_daily_report():
         integrity_html = format_open_book_integrity_html(book_stats)
 
         treasury_key = "TREASURY_SPOT_USDT" if mkt == "spot" else "TREASURY_FUTURES_USDT"
-        treasury = float(cfg.get(treasury_key, 0.0))
-        regime = cfg.get("CURRENT_REGIME_KEY", "UNKNOWN")
-        kelly = float(cfg.get("DYNAMIC_KELLY_RISK", 0.01)) * 100.0
-        b_status = str(cfg.get("CRYPTO_BREADTH_STATUS", "NEUTRAL"))
-        w1 = float(cfg.get("WEIGHT_S1", 1.0))
-        w4 = float(cfg.get("WEIGHT_S4", 1.0))
 
-        msg1 = f"{m_icon} <b>[1/9] {mkt.upper()} 국면/국고 현황</b>\n"
-        msg1 += ctx.market_window_header_html(
-            market_type,
-            n_real=len(mkt_slice.df_real),
-            n_closed=mkt_slice.n_closed_window,
-            n_open=mkt_slice.n_open_valid,
+        msg1 = build_bitget_macro_section_html(
+            market_type=market_type,
+            market_icon=m_icon,
+            ctx=ctx,
+            mkt_slice=mkt_slice,
+            sys_config=cfg,
+            meta=meta,
+            integrity_html=integrity_html or "",
         )
-        if integrity_html:
-            msg1 += integrity_html
-        msg1 += f"📅 {datetime.utcnow().strftime('%Y-%m-%d')} UTC | 국면: <b>{regime}</b>\n"
-        msg1 += f"🏦 잔여 국고: <b>{treasury:,.2f} USDT</b>\n"
-        msg1 += f"⚖️ 동적 켈리: {kelly:.2f}%\n"
-        msg1 += f"🌊 Breadth: {b_status} | base_w1={w1:.2f}, base_w4={w4:.2f}\n"
         send_telegram_msg(msg1)
         time.sleep(1.0)
 
-        msg2 = f"{m_icon} <b>[2/9] 로직별 복리 리더보드</b>\n"
-        groups = {}
-        for _, r in df_all.iterrows():
-            g = _extract_core_group(r.get("sig_type", "UNKNOWN"))
-            groups.setdefault(g, {"closed": [], "open": 0})
-            if str(r.get("status", "")).startswith("OPEN"):
-                groups[g]["open"] += 1
-            else:
-                groups[g]["closed"].append(float(r.get("final_ret", 0.0) or 0.0))
-        board = []
-        base_seed = float(cfg.get("ACCOUNT_SIZE_USDT", 100000))
-        for g, v in groups.items():
-            s = pd.Series(v["closed"], dtype=float)
-            pnl = ((s / 100.0) * base_seed * 0.01).sum()
-            bal = base_seed + pnl
-            wr = float((s > 0).mean() * 100.0) if len(s) else 0.0
-            board.append((g, bal, wr, v["open"]))
-        board.sort(key=lambda x: x[1], reverse=True)
-        if not board:
-            msg2 += "표본 부족 — 아직 로직별 진입 기록이 없습니다.\n"
-        for i, (g, bal, wr, op) in enumerate(board[:7]):
-            medal = "🥇" if i == 0 else ("🥈" if i == 1 else ("🥉" if i == 2 else "🏃"))
-            msg2 += f"{medal} <b>{g}</b>: {bal:,.2f} USDT (승률 {wr:.1f}% / OPEN {op})\n"
+        msg2 = build_logic_leaderboard_html(
+            market_type=market_type,
+            market_icon=m_icon,
+            ctx=ctx,
+            mkt_slice=mkt_slice,
+            df_all=df_all,
+            sys_config=cfg,
+        )
         send_telegram_msg(msg2)
         time.sleep(1.0)
 
-        msg3 = f"{m_icon} <b>[3/9] 자금관리 진검승부</b>\n"
-        if not df_closed.empty:
-            kelly_pnl = float((df_closed["sim_kelly_invest"] * df_closed["final_ret"] / 100.0).sum())
-            fixed_pnl = float((df_closed["margin_used"] * df_closed["final_ret"] / 100.0).sum())
-        else:
-            kelly_pnl = 0.0
-            fixed_pnl = 0.0
-        msg3 += f"💰 누적 켈리 손익: <b>{kelly_pnl:+,.2f} USDT</b>\n"
-        msg3 += f"🛡️ 누적 고정 손익: {fixed_pnl:+,.2f} USDT\n"
-        msg3 += f"🏁 우위: {'동적 켈리' if kelly_pnl > fixed_pnl else '고정 리스크'}\n"
+        dm_block = analyze_capital_deathmatch(
+            df_closed,
+            market_type=market_type,
+            sys_config=cfg,
+            meta=meta,
+        )
+        msg3 = format_capital_deathmatch_telegram(
+            market_icon=m_icon,
+            block=dm_block,
+        )
         send_telegram_msg(msg3)
         time.sleep(1.0)
 
@@ -282,6 +262,20 @@ def send_comprehensive_daily_report():
             send_telegram_msg(f"⚠️ [Genesis 레이더 · {mkt.upper()}] 스킵: {str(e)[:72]}")
 
     conn.close()
+
+    canary_html = format_canary_panel_html()
+    if canary_html:
+        send_telegram_msg(canary_html)
+        time.sleep(1.0)
+
+    try:
+        from evolution_digest import build_global_evolution_digest_messages
+
+        for digest_msg in build_global_evolution_digest_messages(meta):
+            send_telegram_msg(digest_msg)
+            time.sleep(1.0)
+    except Exception as ex:
+        send_telegram_msg(f"⚠️ [Δ 진화·튜닝] 스킵: {str(ex)[:72]}")
 
     # [동적 탐험예산 — 7일 롤링 MAB] 챔피언/탐험 자본배분 현황 패널.
     # 하루 1회 여기서 갱신(무거운 DB 롤링 집계) → 이후 Kelly 사이징 핫패스는

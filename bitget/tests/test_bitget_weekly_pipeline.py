@@ -15,6 +15,7 @@ class TestBitgetWeeklyEvolutionPipeline(unittest.TestCase):
                 "config_bootstrap",
                 "artifact_guard",
                 "weekly_evolution",
+                "weekly_coin_regime_archive",
                 "weekly_flow_master",
                 "genesis_backfill_weekly",
                 "weekend_grand_report",

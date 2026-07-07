@@ -545,6 +545,92 @@ def _floating_pnl_usdt_open_row(conn, r) -> float:
             notion = margin_used
     return float(notion) * (current_ret_pct / 100.0)
 
+def _maybe_pyramid_add(conn, r, market_type, symbol, cur_price, sys_config, regime, edge_score):
+    """[M4] 프리러너 엣지 폭발 시 유휴 NAV 불타기 — 주식 forward/ledger 동형."""
+    try:
+        import exit_dynamics as _xd
+        from bitget.live_nav_manager import live_nav
+    except Exception:
+        return False
+
+    ep_now = float(cur_price or 0.0)
+    if ep_now <= 0:
+        return False
+
+    mkt = str(market_type or "spot").lower()
+    try:
+        nav = float(live_nav(mkt))
+    except Exception:
+        nav = 0.0
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(sim_kelly_invest),0) FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",
+            (mkt,),
+        ).fetchone()
+        open_exposure = float((row or (0.0,))[0] or 0.0)
+    except Exception:
+        open_exposure = 0.0
+    idle_cash = max(0.0, nav - open_exposure)
+
+    pyramid_done = int(float(r.get("pyramid_adds", 0) or 0))
+    decision = _xd.pyramid_decision(
+        edge_score=float(edge_score),
+        regime=regime,
+        idle_cash=idle_cash,
+        nav=nav,
+        pyramid_adds_done=pyramid_done,
+        free_runner=True,
+    )
+    if not decision.get("do"):
+        return False
+
+    add_notional = float(decision["add_notional"])
+    parent_id = int(r.get("id") or 0)
+    entry_date = datetime.utcnow().strftime("%Y-%m-%d")
+    pyr_sig = f"{str(r.get('sig_type') or '')} [PYRAMID]".strip()
+    risk_pct = float(r.get("sim_kelly_risk_pct", 0.02) or 0.02)
+    lev = float(r.get("leverage", 1.0) or 1.0)
+    margin_add = add_notional / lev if lev > 0 else add_notional
+
+    conn.execute(
+        """
+        INSERT INTO bitget_forward_trades
+        (entry_date, market_type, symbol, timeframe, sig_type, tier, total_score, entry_price, position_side,
+         entry_atr, entry_high, leverage, sim_kelly_risk_pct, margin_used, sim_kelly_invest, status,
+         max_high, min_low, parent_trade_id, v_energy, entry_breadth)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            entry_date,
+            mkt,
+            str(symbol),
+            str(r.get("timeframe") or "4H"),
+            pyr_sig,
+            str(r.get("tier") or "PYRAMID"),
+            float(r.get("total_score", 0) or 0),
+            ep_now,
+            str(r.get("position_side") or "LONG"),
+            float(r.get("entry_atr", 0) or 0),
+            ep_now,
+            lev,
+            risk_pct,
+            margin_add,
+            add_notional,
+            "OPEN",
+            ep_now,
+            ep_now,
+            parent_id,
+            float(r.get("v_energy", 0) or 0),
+            float(r.get("entry_breadth", 1.0) or 1.0),
+        ),
+    )
+    conn.execute(
+        "UPDATE bitget_forward_trades SET pyramid_adds=? WHERE id=?",
+        (pyramid_done + 1, parent_id),
+    )
+    return True
+
+
 def _aggregate_global_open_loss_usdt(conn) -> tuple[float, int]:
     """
     status=OPEN 인 전 종목 미실현 손익 중 손실분만 합산 (양수 포지션 PnL은 제외 → 주식 total_open_loss_amount 와 동일).
@@ -909,6 +995,26 @@ def track_daily_positions(market_type):
                 actual_exit_type = "ZOMBIE_FORCE_CLOSE"
                 actual_exit_price = ep
 
+            if not do_exit and int(float(r.get("parent_trade_id", 0) or 0)) == 0:
+                try:
+                    _ms = load_meta_state_resolved()
+                    _regime = str(
+                        (_ms.get("META_REGIME_KEY") if isinstance(_ms, dict) else None)
+                        or cfg.get("CURRENT_REGIME_KEY")
+                        or "UNKNOWN"
+                    )
+                except Exception:
+                    _regime = str(cfg.get("CURRENT_REGIME_KEY") or "UNKNOWN")
+                try:
+                    _edge_now = (current_ret_pct / max(1, new_bars)) * (
+                        float(r.get("v_energy", 0) or 0) / 10.0
+                    )
+                    _maybe_pyramid_add(
+                        conn, r, str(r["market_type"]), str(r["symbol"]), c, cfg, _regime, _edge_now
+                    )
+                except Exception:
+                    pass
+
             # 평행우주 기록
             sim_stat_ret = dyn_mae_sl if low_ret_pct <= dyn_mae_sl else (dyn_mfe_tp if high_ret_pct >= dyn_mfe_tp else current_ret_pct)
             sim_tech_ret = dyn_mae_sl if low_ret_pct <= dyn_mae_sl else (current_ret_pct if not is_tech_exit else current_ret_pct)
@@ -1022,6 +1128,20 @@ def track_daily_positions(market_type):
                 pnl = max(-margin_used, raw_pnl)
                 cur_cfg[treasury_key] = max(0.0, before + margin_used + pnl)
                 save_system_config(cur_cfg)
+
+                try:
+                    from bitget.live_nav_manager import record_closure
+
+                    kelly_pct = float(r.get("sim_kelly_risk_pct", 0) or 0) / 100.0
+                    record_closure(
+                        str(r["market_type"]),
+                        final_ret_pct=float(ret),
+                        kelly_pct=kelly_pct if kelly_pct > 0 else None,
+                        net_pnl_usdt=float(pnl),
+                        exit_date=datetime.utcnow().strftime("%Y-%m-%d"),
+                    )
+                except Exception:
+                    pass
 
                 icon = "🔥스마트청산" if ret > 0 else "🛡️방어손절"
                 send_telegram_msg(

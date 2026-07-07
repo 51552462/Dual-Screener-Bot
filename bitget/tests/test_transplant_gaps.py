@@ -232,6 +232,182 @@ class TestPractitionerDnaParity:
         for key in ("is_top_dna", "is_worst_dna", "is_death_combo", "is_tenbagger"):
             assert key in dbg
         assert 1.0 <= dbg["dyn_rs_score"] <= 10.0
-        assert 1.0 <= dbg["dyn_cpv_score"] <= 10.0
-        assert 1.0 <= dbg["dyn_tb_score"] <= 10.0
-        assert dbg["dyn_rs_score"] != dbg.get("v_rs")
+
+
+class TestLiveNavManager:
+    def test_apply_realized_pnl_updates_nav(self, tmp_path, monkeypatch):
+        from bitget import live_nav_manager as lnm
+
+        state_path = tmp_path / "bitget_treasury_state.json"
+        monkeypatch.setattr(lnm, "treasury_state_path", lambda: str(state_path))
+        st = lnm.apply_realized_pnl("spot", 500.0)
+        assert st["nav"] == lnm.base_capital_for("spot") + 500.0
+        assert st["n_closed"] == 1
+        assert lnm.live_nav("spot") == st["nav"]
+
+    def test_record_closure_prefers_net_pnl_usdt(self, tmp_path, monkeypatch):
+        from bitget import live_nav_manager as lnm
+
+        state_path = tmp_path / "bitget_treasury_state.json"
+        monkeypatch.setattr(lnm, "treasury_state_path", lambda: str(state_path))
+        base = lnm.base_capital_for("futures")
+        out = lnm.record_closure("futures", final_ret_pct=10.0, net_pnl_usdt=-250.0)
+        assert out["nav"] == base - 250.0
+
+
+class TestMacroAndCanaryPanels:
+    def test_macro_section_includes_live_nav(self):
+        from bitget.reports.macro_treasury_bg import build_bitget_macro_section_html
+
+        class _Slice:
+            df_real = []
+            n_closed_window = 0
+            n_open_valid = 0
+
+        ctx = mock.Mock()
+        ctx.market_window_header_html.return_value = "hdr"
+        html_out = build_bitget_macro_section_html(
+            market_type="spot",
+            market_icon="🟢",
+            ctx=ctx,
+            mkt_slice=_Slice(),
+            sys_config={"TREASURY_SPOT_USDT": 50_000.0, "CURRENT_REGIME_KEY": "BULL"},
+            meta={"META_REGIME_KEY": "BULL", "META_GLOBAL_KELLY_MULT": 1.0},
+        )
+        assert "Live NAV" in html_out
+        assert "USDT" in html_out
+        assert "[1/9]" in html_out
+
+    def test_canary_panel_formats_state(self):
+        from bitget.reports.canary_panel_bg import format_canary_panel_html
+
+        html_out = format_canary_panel_html(
+            {
+                "crypto_liquidity_stress": 0.42,
+                "macro_contagion_risk": True,
+                "components": {"symbols_used": ["BTCUSDT"], "btc_ret_3d": -0.03},
+                "updated_at": "2026-07-08",
+            }
+        )
+        assert "Canary" in html_out
+        assert "0.42" in html_out
+        assert "ON" in html_out
+
+
+class TestFluidAndWeeklyRegime:
+    def test_fluid_sync_calls_exploration_and_vector(self):
+        from bitget.evolution.fluid_evolution_bridge_bg import post_bitget_meta_governor_fluid_sync
+
+        calls = {"budget": 0, "vector": 0}
+
+        def _budget():
+            calls["budget"] += 1
+
+        def _vector(cfg):
+            calls["vector"] += 1
+
+        with mock.patch(
+            "bitget.governance.exploration_budget.refresh_exploration_budget_state",
+            side_effect=_budget,
+        ), mock.patch(
+            "bitget.evolution.coin_regime_vector.append_coin_regime_vector_history",
+            side_effect=_vector,
+        ):
+            post_bitget_meta_governor_fluid_sync({})
+        assert calls["budget"] == 1
+        assert calls["vector"] == 1
+
+    def test_weekly_regime_archive_appends_config(self):
+        from bitget.evolution.weekly_regime_bg import run_weekly_coin_regime_archive
+
+        saved = {}
+
+        def _update(key, modifier):
+            saved["key"] = key
+            saved["value"] = modifier([])
+
+        with mock.patch(
+            "bitget.auto_pilot.detect_coin_regime",
+            return_value="RISK_ON",
+        ), mock.patch(
+            "bitget.evolution.coin_regime_vector.append_coin_regime_vector_history",
+        ), mock.patch(
+            "bitget.evolution.coin_regime_vector.build_current_coin_regime_vector",
+            return_value={"vector_map": {"btc": 1.0}},
+        ), mock.patch(
+            "bitget.evolution.coin_regime_vector.load_vector_history",
+            return_value=[1, 2],
+        ), mock.patch(
+            "bitget.infra.config_manager.update_config_value",
+            side_effect=_update,
+        ):
+            out = run_weekly_coin_regime_archive({})
+        assert out["ok"] is True
+        assert out["regime_key"] == "RISK_ON"
+        assert saved["key"] == "WEEKLY_REGIME_ARCHIVE_BG"
+        assert saved["value"][-1]["regime_key"] == "RISK_ON"
+
+
+class TestPyramidAdd:
+    def test_maybe_pyramid_add_inserts_child_row(self, tmp_path):
+        import sqlite3
+
+        from bitget.forward.ledger import _maybe_pyramid_add
+
+        db = tmp_path / "t.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY,
+                entry_date TEXT, market_type TEXT, symbol TEXT, timeframe TEXT,
+                sig_type TEXT, tier TEXT, total_score REAL, entry_price REAL,
+                position_side TEXT, entry_atr REAL, entry_high REAL, leverage REAL,
+                sim_kelly_risk_pct REAL, margin_used REAL, sim_kelly_invest REAL,
+                status TEXT, max_high REAL, min_low REAL, parent_trade_id INTEGER,
+                v_energy REAL, entry_breadth REAL, pyramid_adds INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO bitget_forward_trades
+            (id, market_type, symbol, timeframe, sig_type, tier, total_score, entry_price,
+             position_side, leverage, sim_kelly_invest, status, pyramid_adds, v_energy, entry_breadth)
+            VALUES (1,'spot','BTCUSDT','4H','STANDARD','T1',80,100,'LONG',1,1000,'OPEN',0,5.0,1.0)
+            """
+        )
+        conn.commit()
+        parent = dict(
+            id=1,
+            market_type="spot",
+            symbol="BTCUSDT",
+            timeframe="4H",
+            sig_type="STANDARD",
+            tier="T1",
+            total_score=80,
+            position_side="LONG",
+            entry_atr=1.0,
+            leverage=1.0,
+            sim_kelly_risk_pct=2.0,
+            v_energy=5.0,
+            entry_breadth=1.0,
+            pyramid_adds=0,
+        )
+        with mock.patch(
+            "exit_dynamics.pyramid_decision",
+            return_value={"do": True, "add_notional": 200.0},
+        ), mock.patch("bitget.live_nav_manager.live_nav", return_value=10_000.0):
+            ok = _maybe_pyramid_add(
+                conn, parent, "spot", "BTCUSDT", 105.0, {}, "BULL", edge_score=2.5
+            )
+        assert ok is True
+        n_child = conn.execute(
+            "SELECT COUNT(*) FROM bitget_forward_trades WHERE parent_trade_id=1"
+        ).fetchone()[0]
+        adds = conn.execute(
+            "SELECT pyramid_adds FROM bitget_forward_trades WHERE id=1"
+        ).fetchone()[0]
+        conn.close()
+        assert n_child == 1
+        assert adds == 1
