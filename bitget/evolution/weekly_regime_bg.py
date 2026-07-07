@@ -33,6 +33,15 @@ def run_weekly_coin_regime_archive(sys_config: Optional[Dict[str, Any]] = None) 
         logger.warning("weekly_coin_regime: detect_coin_regime failed: %s", ex)
 
     try:
+        from bitget.evolution.weekly_proprietary_regime_bg import compute_weekly_coin_pri
+
+        pri = compute_weekly_coin_pri()
+        out["pri"] = pri.get("blended")
+    except Exception as ex:
+        out["pri_error"] = str(ex)
+        logger.warning("weekly_coin_regime: PRI failed: %s", ex)
+
+    try:
         from bitget.evolution.coin_regime_vector import (
             append_coin_regime_vector_history,
             build_current_coin_regime_vector,
@@ -56,6 +65,7 @@ def run_weekly_coin_regime_archive(sys_config: Optional[Dict[str, Any]] = None) 
             "regime_key": out.get("regime_key"),
             "vector": out.get("vector"),
             "history_len": out.get("history_len", 0),
+            "pri": out.get("pri"),
         }
 
         def _modifier(old: Any) -> Any:

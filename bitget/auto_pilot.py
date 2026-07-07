@@ -811,6 +811,41 @@ def send_weekly_flow_master_report():
         "\n━━━━━━━━━━━━━━━━━━\n"
         "<i>💡 일주일간 시장 궤적과 관제탑 튜닝 상태를 한 장으로 묶은 코인용 마스터 결과지입니다.</i>"
     )
+
+    try:
+        from bitget.evolution.weekly_proprietary_regime_bg import build_weekly_shadow_pri_html
+
+        spot_pnl = None
+        fut_pnl = None
+        try:
+            conn = get_connection(DB_PATH, read_only=True)
+            for mk, var in (("spot", "spot_pnl"), ("futures", "fut_pnl")):
+                row = conn.execute(
+                    """
+                    SELECT SUM((sim_kelly_invest * final_ret) / 100.0)
+                    FROM bitget_forward_trades
+                    WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%'
+                      AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
+                    """,
+                    (mk, week_ago),
+                ).fetchone()
+                val = float((row or (0.0,))[0] or 0.0)
+                if mk == "spot":
+                    spot_pnl = val
+                else:
+                    fut_pnl = val
+            conn.close()
+        except Exception:
+            pass
+        report_msg += build_weekly_shadow_pri_html(
+            week_start=week_ago,
+            week_end=today_str,
+            spot_week_pnl=spot_pnl,
+            futures_week_pnl=fut_pnl,
+        )
+    except Exception as ex:
+        report_msg += f"\n⚠️ Shadow PRI 블록 스킵: {ex}"
+
     send_telegram_msg(report_msg)
 
 

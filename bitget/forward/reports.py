@@ -227,14 +227,18 @@ def send_comprehensive_daily_report():
         send_telegram_msg(msg7)
         time.sleep(1.0)
 
-        msg8 = f"{m_icon} <b>[8/9] 메타 최적화 및 알파 반감기</b>\n"
-        health = meta.get("META_STRATEGY_HEALTH") if isinstance(meta, dict) else None
-        if isinstance(health, dict) and health:
-            for arm, h in list(health.items())[:5]:
-                if isinstance(h, dict):
-                    msg8 += f"▪️ {arm}: score={h.get('score', '—')} decay={h.get('half_life_days', '—')}\n"
-        else:
-            msg8 += "<i>메타 헬스 데이터 없음 — governance/meta_consumer 경로 확인</i>\n"
+        from bitget.reports.report_state_binder_bg import (
+            build_lifecycle_report_block,
+            format_lifecycle_section_html,
+        )
+        from datetime import timezone as _tz
+
+        lc = build_lifecycle_report_block(meta=meta, sys_config=cfg, now=datetime.now(_tz.utc))
+        msg8 = format_lifecycle_section_html(
+            lc,
+            market_icon=m_icon,
+            today_str=datetime.now(_tz.utc).strftime("%Y-%m-%d"),
+        )
         send_telegram_msg(msg8)
         time.sleep(1.0)
 

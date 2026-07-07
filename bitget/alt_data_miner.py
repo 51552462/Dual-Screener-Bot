@@ -1,19 +1,20 @@
+import json
 import os
 import sqlite3
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 import requests
 
 from bitget.rate_limit_guard import throttle
 
+from bitget.infra.data_paths import alt_data_db_path
 from bitget.infra.shared_db_connector import get_connection
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ALT_DB_PATH = os.path.join(BASE_DIR, "alt_data.sqlite")
 
 
 def init_alt_db():
-    conn = get_connection(ALT_DB_PATH)
+    path = alt_data_db_path()
+    conn = get_connection(path)
     cur = conn.cursor()
     cur.execute(
         """
@@ -53,18 +54,31 @@ def _fetch_prices():
     return btc, eth, ratio
 
 
-def run_alternative_data_mining():
-    print("📡 [Bitget Alt Data Miner] 크립토 거시 대체데이터 수집...")
+def _load_last_row() -> Optional[Dict[str, Any]]:
+    path = alt_data_db_path()
+    if not os.path.isfile(path):
+        return None
+    conn = sqlite3.connect(path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM macro_daily ORDER BY date DESC LIMIT 1").fetchone()
+        return {k: row[k] for k in row.keys()} if row else None
+    finally:
+        conn.close()
+
+
+def run_once() -> Optional[Dict[str, Any]]:
+    """Live fetch + DB upsert. 실패 시 None (hydrate가 lookback 처리)."""
     init_alt_db()
     today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
         btc_dom, total_mc, mc_24h = _fetch_global()
         btc_px, eth_px, eth_btc = _fetch_prices()
-    except Exception as e:
-        print(f"⚠️ 외부 데이터 수집 실패: {e}")
-        return
+    except Exception:
+        return None
 
-    conn = get_connection(ALT_DB_PATH)
+    path = alt_data_db_path()
+    conn = get_connection(path)
     cur = conn.cursor()
     cur.execute(
         """
@@ -76,7 +90,28 @@ def run_alternative_data_mining():
     )
     conn.commit()
     conn.close()
-    print(f"✅ 저장 완료: BTC.D={btc_dom:.2f}% | ETH/BTC={eth_btc:.5f} | MC24h={mc_24h:+.2f}%")
+    return {
+        "date": today,
+        "btc_dominance": btc_dom,
+        "eth_btc_ratio": eth_btc,
+        "total_market_cap_usd": total_mc,
+        "market_cap_change_24h": mc_24h,
+        "btc_price_usd": btc_px,
+        "eth_price_usd": eth_px,
+    }
+
+
+def run_alternative_data_mining():
+    print("📡 [Bitget Alt Data Miner] 크립토 거시 대체데이터 수집...")
+    row = run_once()
+    if not row:
+        print("⚠️ 외부 데이터 수집 실패")
+        return {"ok": False}
+    print(
+        f"✅ 저장 완료: BTC.D={row['btc_dominance']:.2f}% | "
+        f"ETH/BTC={row['eth_btc_ratio']:.5f} | MC24h={row['market_cap_change_24h']:+.2f}%"
+    )
+    return {"ok": True, "row": row}
 
 
 if __name__ == "__main__":

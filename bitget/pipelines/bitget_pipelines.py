@@ -261,6 +261,20 @@ def _step_forward_trade_identity() -> None:
     run_identity_repair_all()
 
 
+def _step_weekly_coin_pri() -> None:
+    from bitget.evolution.weekly_proprietary_regime_bg import compute_weekly_coin_pri
+
+    out = compute_weekly_coin_pri()
+    print(f"🛰️ [Bitget] weekly_coin_pri: blended={out.get('blended')}")
+
+
+def _step_regime_deep_archive_bg() -> None:
+    from bitget.evolution.regime_deep_archive_bg import run_bitget_regime_deep_archive
+
+    out = run_bitget_regime_deep_archive(max_tasks=20)
+    print(f"🛰️ [Bitget] regime_deep_archive: {out}")
+
+
 def _step_weekly_coin_regime_archive() -> None:
     from bitget.evolution.weekly_regime_bg import run_weekly_coin_regime_archive
 
@@ -773,7 +787,9 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
     return _with_guard(
         [
             StepSpec("weekly_evolution", _step_weekly_evolution, critical=True, delay_after_sec=1.0),
+            StepSpec("weekly_coin_pri", _step_weekly_coin_pri, critical=False),
             StepSpec("weekly_coin_regime_archive", _step_weekly_coin_regime_archive, critical=False),
+            StepSpec("regime_deep_archive", _step_regime_deep_archive_bg, critical=False),
             StepSpec("weekly_flow_master", _step_weekly_flow_master, critical=True),
             StepSpec("genesis_backfill_weekly", _step_genesis_backfill_weekly, critical=False),
             StepSpec("weekend_grand_report", _step_weekend_grand_report, critical=False, delay_after_sec=1.0),

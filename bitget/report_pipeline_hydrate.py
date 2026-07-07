@@ -22,6 +22,18 @@ def ensure_bitget_report_pipeline_data(
 
     out: Dict[str, Any] = {"market": "CRYPTO", "ohlcv": "skipped", "db": market_data_db_path()}
 
+    try:
+        from bitget.macro_hydrate_bg import refresh_bitget_macro_daily
+        from bitget.infra.config_manager import update_system_config
+
+        macro = refresh_bitget_macro_daily()
+        out["macro"] = macro
+        src = str(macro.get("source") or "degraded")
+        update_system_config({"BITGET_MACRO_FRESHNESS": src, "MACRO_DAILY_FRESHNESS": src})
+    except Exception as ex:
+        logger.warning("bitget report hydrate macro skip: %s", ex)
+        out["macro"] = {"ok": False, "source": "degraded", "error": str(ex)}
+
     if not refresh_ohlcv:
         print(f"🛰️ [Bitget] report_pipeline_hydrate: {out}")
         return out

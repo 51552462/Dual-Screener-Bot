@@ -5,6 +5,7 @@ from unittest import mock
 
 import pandas as pd
 import pytest
+import sqlite3
 
 from bitget.infra.market_keys import (
     normalize_market_type,
@@ -263,6 +264,7 @@ class TestMacroAndCanaryPanels:
             df_real = []
             n_closed_window = 0
             n_open_valid = 0
+            df_closed = pd.DataFrame()
 
         ctx = mock.Mock()
         ctx.market_window_header_html.return_value = "hdr"
@@ -411,3 +413,112 @@ class TestPyramidAdd:
         conn.close()
         assert n_child == 1
         assert adds == 1
+
+
+class TestReportStateBinderBg:
+    def test_macro_freshness_lookback_tag(self):
+        from bitget.reports.report_state_binder_bg import (
+            MacroTreasuryReportBlock,
+            format_macro_treasury_section_html,
+        )
+
+        block = MacroTreasuryReportBlock(
+            regime_key="BULL",
+            regime_confidence=0.8,
+            regime_notes="",
+            kelly_cap=None,
+            kelly_floor=None,
+            meta_global_kelly_mult=1.0,
+            base_dynamic_kelly_risk=0.02,
+            effective_kelly_risk=0.02,
+            treasury_config_raw=50_000.0,
+            ledger_realized_est=0.0,
+            treasury_footnote="note",
+            nav=50_000.0,
+            macro_freshness="lookback",
+        )
+        html_out = format_macro_treasury_section_html(
+            block, display_label="SPOT", market_icon="🟢", today_str="2026-07-08"
+        )
+        assert "⚠️" in html_out
+        assert "lookback" in html_out or "재사용" in html_out
+
+    def test_lifecycle_block_formats_spot_futures(self):
+        from bitget.reports.report_state_binder_bg import (
+            LifecycleReportBlock,
+            format_lifecycle_section_html,
+        )
+
+        block = LifecycleReportBlock(
+            governor_last_run_at="2026-07-08",
+            governor_last_run_status="OK",
+            n_live=2,
+            n_cooled=1,
+            n_candidate=0,
+            n_observing=0,
+            n_retired=0,
+            n_registry_total=3,
+            n_other_state=0,
+            retired_tracked_count=0,
+            health_summary_line="감시 2그룹",
+            autopilot_age_days=10,
+            autopilot_age_source="LIVE_A_PROMOTION_DATE",
+            live_fleet_mean_age_days=5.0,
+            cycle_discovery_new=0,
+            cycle_promoted_live=0,
+            cycle_demoted_cooled=0,
+            demoted_last_7d=0,
+            live_spot=1,
+            live_futures=1,
+            cooled_spot=0,
+            cooled_futures=1,
+            candidate_spot=0,
+            candidate_futures=0,
+            avg_alpha_life_days_spot=None,
+            avg_alpha_life_days_futures=3.0,
+            health_groups_linked_live=0,
+            footnote="fn",
+        )
+        html_out = format_lifecycle_section_html(block, market_icon="🟢", today_str="2026-07-08")
+        assert "[8/9]" in html_out
+        assert "SPOT LIVE" in html_out
+        assert "FUT LIVE" in html_out
+
+
+class TestMacroHydrateBg:
+    def test_refresh_persists_freshness_on_lookback(self, tmp_path, monkeypatch):
+        from bitget import macro_hydrate_bg as mh
+
+        db = tmp_path / "alt.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE macro_daily (
+                date TEXT PRIMARY KEY, btc_dominance REAL, eth_btc_ratio REAL,
+                total_market_cap_usd REAL, market_cap_change_24h REAL,
+                btc_price_usd REAL, eth_price_usd REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO macro_daily VALUES (?,?,?,?,?,?,?)",
+            ("2026-07-07", 55.0, 0.05, 1e12, 1.0, 60000.0, 3000.0),
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(mh, "_load_macro_row_lookback", lambda **kw: {"date": "2026-07-07", "btc_dominance": 55.0})
+        with mock.patch("bitget.alt_data_miner.run_once", return_value=None):
+            out = mh.refresh_bitget_macro_daily()
+        assert out["source"] == "lookback"
+
+
+class TestWeeklyCoinPri:
+    def test_compute_pri_empty_db(self, tmp_path, monkeypatch):
+        from bitget.evolution import weekly_proprietary_regime_bg as pri
+
+        missing = str(tmp_path / "missing.sqlite")
+        monkeypatch.setattr(pri, "DB_PATH", missing)
+        monkeypatch.setattr(pri, "shadow_pri_path", lambda: str(tmp_path / "pri.json"))
+        out = pri.compute_weekly_coin_pri()
+        assert out.get("error") == "no_db"
