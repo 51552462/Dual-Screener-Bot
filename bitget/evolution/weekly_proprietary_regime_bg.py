@@ -196,6 +196,8 @@ def _compute_market_pri(
     market_type: str,
     week_start: str,
     week_end: str,
+    *,
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     funnel = _load_funnel_week(conn, market_type, week_start, week_end)
     events = _load_friction_events(conn, market_type, week_start, week_end)
@@ -224,10 +226,20 @@ def _compute_market_pri(
         dm_a = int(events["event_type"].astype(str).str.contains("DM_A", na=False).sum())
     z_dm = _decay_z(-float(dm_a) / 2.0, dm_a) if dm_a > 0 else 0.0
 
-    starvation = 0.5
-    if n_open + n_closed > 0:
-        starvation = n_open / max(1, n_open + n_closed)
+    try:
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThreshold
+
+        _et = BitgetElasticThreshold(cfg or {}, market_type)
+        starvation = float(_et.compute_starvation_index(lookback_days=7))
+        vol_proxy = float(_et.volatility_proxy())
+    except Exception:
+        starvation = 0.5
+        if n_open + n_closed > 0:
+            starvation = n_open / max(1, n_open + n_closed)
+        vol_proxy = 1.0
     z_starv = _decay_z(-(float(starvation) - 0.5) / 0.35, 7)
+    if vol_proxy > 1.15:
+        z_starv = float(z_starv * 0.85)
 
     components = {
         "pass_rate_trend": z_pass,
@@ -273,6 +285,8 @@ def _compute_market_pri(
             "closed_trades": n_closed,
             "open_positions": n_open,
             "dm_a_events": dm_a,
+            "starvation_index": round(float(starvation), 4),
+            "vol_proxy": round(float(vol_proxy), 4),
         },
         "narrative_bullets": bullets,
         "shadow_pnl_delta_pct": round((shadow - actual) if n_closed >= MIN_SAMPLES_ANY else 0.0, 4),
@@ -306,10 +320,19 @@ def compute_weekly_coin_pri(
         _save_shadow(results)
         return results
 
+    try:
+        from bitget.infra.config_manager import load_system_config
+
+        cfg = load_system_config() or {}
+    except Exception:
+        cfg = {}
+
     conn = sqlite3.connect(path, timeout=60)
     try:
         for mk in markets:
-            results["markets"][mk.upper()] = _compute_market_pri(conn, mk, week_start, week_end)
+            results["markets"][mk.upper()] = _compute_market_pri(
+                conn, mk, week_start, week_end, cfg=cfg
+            )
     finally:
         conn.close()
 
@@ -377,4 +400,12 @@ def build_weekly_shadow_pri_html(
         bits.append(f"FUT {futures_week_pnl:+,.2f} USDT")
     if bits:
         out += f"▪️ <i>Flow 대조: {' · '.join(bits)}</i>\n"
+    try:
+        from bitget.evolution.regime_analog_bg import format_regime_analog_brief
+
+        analog_line = format_regime_analog_brief()
+        if analog_line:
+            out += analog_line
+    except Exception:
+        pass
     return out

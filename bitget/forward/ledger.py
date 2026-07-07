@@ -47,6 +47,16 @@ CB_RELEASE_LOSS_RATIO = -0.02
 CB_COOLDOWN_CALENDAR_DAYS = 3
 
 
+def _row_f(r, key: str, default: float = 0.0) -> float:
+    try:
+        v = r.get(key, default)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return float(default)
+        return float(v)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_seed):
     """OPEN 미실현 손실/시드 기준 트립·자율 해제 (Bitget config SSOT)."""
     try:
@@ -766,6 +776,20 @@ def track_daily_positions(market_type):
 
     print(f"\n🔍 [포워드 테스팅] {market_type} {len(df_active)}개 포지션 추적 중...")
 
+    try:
+        import exit_dynamics as _xdyn_mod
+
+        _ratchet_state = _xdyn_mod.load_ratchet_state(cfg)
+    except Exception:
+        _xdyn_mod = None
+        _ratchet_state = {}
+    _meta_state = load_meta_state_resolved()
+    _meta_regime = str(
+        (_meta_state.get("META_REGIME_KEY") if isinstance(_meta_state, dict) else None)
+        or cfg.get("CURRENT_REGIME_KEY")
+        or "UNKNOWN"
+    )
+
     for _, r in df_active.iterrows():
         try:
             days_in_pos = _days_since_entry_date(r.get("entry_date"))
@@ -883,19 +907,84 @@ def track_daily_positions(market_type):
             exit_rsn = ""
             actual_exit_type = "HOLD"
             actual_exit_price = c
+            _scaled_done = _row_f(r, "scaled_out_frac", 0.0)
+            _is_free_runner = int(_row_f(r, "free_runner", 0.0)) >= 1
+            _realized_partial = _row_f(r, "realized_partial_ret", 0.0)
+            entry_atr = float(r.get("entry_atr", 0) or 0)
+            cur_atr = entry_atr
+            if hist is not None and len(hist) >= 14 and "atr14" in hist.columns:
+                try:
+                    cur_atr = float(hist["atr14"].iloc[-1])
+                except (TypeError, ValueError, KeyError):
+                    cur_atr = entry_atr
 
-            # MFE/MAE 1순위
+            # MFE/MAE 1순위 (+ M1/M2 프리러너 — LONG 전용, 주식 forward/ledger 동형)
             if low_ret_pct <= dyn_mae_sl:
                 do_exit = True
                 exit_rsn = f"수학적 MAE 장중 이탈 칼손절 ({dyn_mae_sl:.2f}%)"
                 actual_exit_type = "STAT_MAE"
-                actual_exit_price = ep * (1.0 + dyn_mae_sl / 100.0)
+                actual_exit_price = ep * (1.0 + dyn_mae_sl / 100.0) if pos_side == "LONG" else ep * (1.0 - dyn_mae_sl / 100.0)
             elif high_ret_pct >= dyn_mfe_tp:
-                if c < l + (h - l) * 0.7:
+                if pos_side == "LONG" and _scaled_done < 1e-6 and _xdyn_mod is not None:
+                    _vol_pct = (cur_atr / ep * 100.0) if (ep > 0 and np.isfinite(cur_atr)) else 5.0
+                    _edge_pre = (current_ret_pct / max(1, int(new_bars))) * (_row_f(r, "v_energy", 1.0) / 10.0)
+                    f_out = _xdyn_mod.fluid_scale_out_fraction(_meta_regime, _vol_pct, _edge_pre)
+                    if f_out >= 0.999:
+                        do_exit = True
+                        exit_rsn = f"유동 전량익절 (방어국면 F_out={f_out:.0%})"
+                        actual_exit_type = "STAT_MFE_FULL"
+                        actual_exit_price = ep * (1.0 + dyn_mfe_tp / 100.0)
+                    else:
+                        _partial_locked = round(f_out * dyn_mfe_tp, 4)
+                        conn.execute(
+                            """
+                            UPDATE bitget_forward_trades
+                            SET scaled_out_frac=?, realized_partial_ret=?, free_runner=1, max_high=?, mfe=?
+                            WHERE id=?
+                            """,
+                            (
+                                round(f_out, 4),
+                                _partial_locked,
+                                new_max,
+                                round(high_ret_pct, 2),
+                                int(r["id"]),
+                            ),
+                        )
+                        conn.commit()
+                        continue
+                elif c < l + (h - l) * 0.7:
                     do_exit = True
                     exit_rsn = f"수학적 MFE 장중 도달 익절 ({dyn_mfe_tp:.2f}%)"
                     actual_exit_type = "STAT_MFE"
-                    actual_exit_price = ep * (1.0 + dyn_mfe_tp / 100.0)
+                    actual_exit_price = (
+                        ep * (1.0 + dyn_mfe_tp / 100.0)
+                        if pos_side == "LONG"
+                        else ep * (1.0 - dyn_mfe_tp / 100.0)
+                    )
+
+            if not do_exit and _is_free_runner and pos_side == "LONG" and _xdyn_mod is not None:
+                _run_ret = ((new_max - ep) / ep) * 100.0
+                _kappa = _xdyn_mod.convex_ratchet_kappa(_run_ret, _ratchet_state)
+                _trail_px = _xdyn_mod.trail_stop_price(new_max, _kappa)
+                if l <= _trail_px:
+                    if c < o:
+                        _icr = v / max(1.0, _row_f(r, "up_vol_sum", 1.0))
+                        _avg_vol = (_row_f(r, "up_vol_sum", 0.0) + _row_f(r, "down_vol_sum", 0.0)) / max(
+                            1, int(new_bars)
+                        )
+                        _rvol = v / max(1.0, _avg_vol)
+                        _vol_confirmed = (_icr >= 0.25) or (_rvol >= 1.5)
+                    else:
+                        _icr = _rvol = 0.0
+                        _vol_confirmed = False
+                    if _vol_confirmed:
+                        do_exit = True
+                        exit_rsn = (
+                            f"프리러너 볼록 트레일 청산 (κ={_kappa:.3f} · 고점 {_run_ret:.0f}% "
+                            f"· ICR {_icr:.2f}/RVOL {_rvol:.2f})"
+                        )
+                        actual_exit_type = "RUNNER_TRAIL"
+                        actual_exit_price = _trail_px
 
             # ATR/TimeStop/TECH 2순위
             if not do_exit:
@@ -1037,6 +1126,12 @@ def track_daily_positions(market_type):
                     ret = round(((actual_exit_price - ep) / ep) * 100.0, 2)
                 if is_futures_row and notion_open > 0:
                     ret = round(ret + (accum_fund / notion_open) * 100.0, 2)
+                if (
+                    _scaled_done > 1e-6
+                    and actual_exit_type not in ("STAT_MFE_FULL",)
+                    and _xdyn_mod is not None
+                ):
+                    ret = round(_xdyn_mod.blend_final_return(_realized_partial, _scaled_done, ret), 2)
                 if pos_side == "SHORT":
                     mfe = round(((ep - new_min) / ep) * 100.0, 2)
                 else:
@@ -1151,19 +1246,21 @@ def track_daily_positions(market_type):
             else:
                 update_sql = """
                     UPDATE bitget_forward_trades
-                    SET max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?,
+                    SET max_high=?, min_low=?, bars_held=?, up_vol_sum=?, down_vol_sum=?, mfe=?,
                         sim_stat_ret=?, sim_stat_status=?, sim_tech_ret=?, sim_tech_status=?,
                         sim_breadth_ret=?, sim_breadth_status=?, entry_breadth=?,
                         live_a_ret=?, live_a_status=?, cand_b_ret=?, cand_b_status=?, champ_c_ret=?, champ_c_status=?,
                         funding_rate_last=?, funding_next_settle_ts=?, funding_accum_usdt_est=?
                     WHERE id=?
                 """
+                run_mfe = round(high_ret_pct if pos_side == "LONG" else ((ep - new_min) / ep) * 100.0, 2)
                 update_params = (
                     new_max,
                     new_min,
                     new_bars,
                     new_up_vol,
                     new_down_vol,
+                    run_mfe,
                     sim_stat_ret,
                     sim_stat_status,
                     sim_tech_ret,

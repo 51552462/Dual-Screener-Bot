@@ -577,3 +577,178 @@ class TestMetaLearnerBg:
         assert out["ok"] is True
         line = ml.build_meta_cognition_line()
         assert "Meta-Trust" in line
+
+
+class TestRegimeAnalogBg:
+    def test_compute_coin_regime_analog_returns_episode(self):
+        from bitget.evolution.regime_analog_bg import compute_coin_regime_analog
+
+        cfg = {
+            "CRYPTO_REGIME_DETAIL": {
+                "dist_from_ema200_pct": 15.0,
+                "ema200_slope_pct": 1.5,
+                "atr_pct": 3.5,
+                "eth_btc_breadth": 1.05,
+            }
+        }
+        with mock.patch(
+            "bitget.evolution.coin_regime_vector.append_coin_regime_vector_history"
+        ), mock.patch(
+            "bitget.infra.config_manager.update_config_value"
+        ):
+            out = compute_coin_regime_analog(cfg, persist=True)
+        assert out["best_episode"] in out["per_episode"]
+        assert 0.0 <= float(out["score"]) <= 1.0
+        assert out["method"] == "coin_mahalanobis+dtw"
+
+    def test_format_brief_includes_score(self):
+        from bitget.evolution.regime_analog_bg import format_regime_analog_brief
+
+        html_out = format_regime_analog_brief(
+            {
+                "best_episode": "ETF_RALLY_2024",
+                "best_episode_desc": "test",
+                "score_pct": 72.5,
+                "front_run_favorable": True,
+            }
+        )
+        assert "Regime Analog" in html_out
+        assert "72.5" in html_out
+
+
+class TestElasticThresholdBg:
+    def test_starvation_high_when_no_entries(self, tmp_path, monkeypatch):
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThreshold
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                market_type TEXT, status TEXT, sig_type TEXT, final_ret REAL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr(
+            "bitget.evolution.elastic_threshold_bg.DB_PATH", str(db)
+        )
+        et = BitgetElasticThreshold({}, "spot")
+        starv = et.compute_starvation_index(lookback_days=7)
+        assert starv >= 0.7
+
+    def test_starvation_lower_with_recent_activity(self, tmp_path, monkeypatch):
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThreshold
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                market_type TEXT, status TEXT, sig_type TEXT, final_ret REAL
+            )
+            """
+        )
+        today = "2026-07-08"
+        for i in range(12):
+            conn.execute(
+                """
+                INSERT INTO bitget_forward_trades
+                (entry_date, exit_date, market_type, status, sig_type, final_ret)
+                VALUES (?,?,?,?,?,?)
+                """,
+                (today, today, "spot", "CLOSED_WIN", "STANDARD", 2.0),
+            )
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr(
+            "bitget.evolution.elastic_threshold_bg.DB_PATH", str(db)
+        )
+        et = BitgetElasticThreshold({"ELASTIC_TARGET_ENTRIES_PER_WEEK": 12}, "spot")
+        starv = et.compute_starvation_index(lookback_days=7)
+        assert starv < 0.5
+
+
+class TestExitRatchetRlBg:
+    def test_evolve_reads_bitget_free_runner_rows(self, tmp_path):
+        from bitget.evolution.exit_ratchet_rl_bg import evolve_bitget_ratchet_kappa
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                market_type TEXT, status TEXT, mfe REAL, final_ret REAL,
+                exit_type TEXT, bars_held INTEGER,
+                free_runner INTEGER, scaled_out_frac REAL
+            )
+            """
+        )
+        rows = [
+            ("2026-07-01", "2026-07-05", "spot", "CLOSED_WIN", 20.0, 15.0, "RUNNER_TRAIL", 8, 1, 0.5),
+            ("2026-07-02", "2026-07-06", "spot", "CLOSED_WIN", 18.0, 12.0, "RUNNER_TRAIL", 6, 1, 0.4),
+            ("2026-07-03", "2026-07-07", "spot", "CLOSED_WIN", 25.0, 20.0, "STAT_MFE", 10, 0, 0.3),
+        ]
+        for r in rows:
+            conn.execute(
+                """
+                INSERT INTO bitget_forward_trades
+                (entry_date, exit_date, market_type, status, mfe, final_ret,
+                 exit_type, bars_held, free_runner, scaled_out_frac)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """,
+                r,
+            )
+        conn.commit()
+        conn.close()
+        cfg = {}
+        out = evolve_bitget_ratchet_kappa(cfg, db_path=str(db), persist=False)
+        assert out.get("updated") is True
+        assert out["rates"]["n"] >= 3
+        assert "state" in out
+
+
+class TestFreeRunnerSchema:
+    def test_forward_schema_has_runner_columns(self, tmp_path, monkeypatch):
+        from bitget.forward import shared as sh
+
+        db = tmp_path / "bitget.sqlite"
+        monkeypatch.setattr(sh, "DB_PATH", str(db))
+        sh.init_forward_db()
+        conn = sqlite3.connect(str(db))
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(bitget_forward_trades)").fetchall()
+        }
+        conn.close()
+        assert "scaled_out_frac" in cols
+        assert "realized_partial_ret" in cols
+        assert "free_runner" in cols
+
+
+class TestWeeklyEvolutionTail:
+    def test_tail_includes_regime_analog_and_ratchet(self):
+        from bitget.evolution.weekly_evolution_tail_bg import run_weekly_evolution_tail
+
+        with mock.patch(
+            "bitget.evolution.coin_regime_vector.build_current_coin_regime_vector",
+            return_value={"vector_map": {"btc": 1.0}},
+        ), mock.patch(
+            "bitget.evolution.regime_analog_bg.compute_coin_regime_analog",
+            return_value={"score": 0.8, "best_episode": "ETF_RALLY_2024"},
+        ), mock.patch(
+            "bitget.meta_learner_bg.run_bitget_meta_learning_cycle",
+            return_value={"ok": True},
+        ), mock.patch(
+            "doomsday_dampener.evolve_gamma",
+            return_value={"gamma": 1.0},
+        ), mock.patch(
+            "bitget.evolution.exit_ratchet_rl_bg.evolve_bitget_ratchet_kappa",
+            return_value={"updated": False, "reason": "insufficient_runner_sample"},
+        ):
+            out = run_weekly_evolution_tail(pri_blend_z=0.2, sys_config={})
+        assert "regime_analog" in out
+        assert "ratchet_kappa" in out

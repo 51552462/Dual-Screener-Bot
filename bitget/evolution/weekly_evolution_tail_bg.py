@@ -32,6 +32,16 @@ def run_weekly_evolution_tail(
         out["regime_vector_error"] = str(ex)
 
     try:
+        from bitget.evolution.regime_analog_bg import compute_coin_regime_analog
+
+        out["regime_analog"] = compute_coin_regime_analog(
+            cfg, persist=True, pri_blend_z=pri_blend_z
+        )
+    except Exception as ex:
+        out["regime_analog_error"] = str(ex)
+        logger.warning("bitget regime_analog skip: %s", ex)
+
+    try:
         from bitget.meta_learner_bg import run_bitget_meta_learning_cycle
 
         out["meta_learner"] = run_bitget_meta_learning_cycle(sys_config=cfg)
@@ -48,10 +58,9 @@ def run_weekly_evolution_tail(
         logger.warning("bitget evolve_gamma skip: %s", ex)
 
     try:
-        from bitget.forward.shared import DB_PATH
-        from exit_ratchet_rl import evolve_ratchet_kappa
+        from bitget.evolution.exit_ratchet_rl_bg import evolve_bitget_ratchet_kappa
 
-        out["ratchet_kappa"] = evolve_ratchet_kappa(cfg, db_path=DB_PATH)
+        out["ratchet_kappa"] = evolve_bitget_ratchet_kappa(cfg, persist=True)
     except Exception as ex:
         out["ratchet_kappa_error"] = str(ex)
         logger.warning("bitget ratchet_kappa skip: %s", ex)
