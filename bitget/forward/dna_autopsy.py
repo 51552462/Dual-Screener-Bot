@@ -9,8 +9,9 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from bitget.infra.market_keys import to_deathmatch_key as _market_key
+from bitget.infra.market_keys import to_deathmatch_key as _market_key, to_pil_key
 from bitget.reports.bitget_report_context import BitgetReportContext
+from practitioner_market_profiles import resolve_practitioner_profile
 
 
 @dataclass(frozen=True)
@@ -33,9 +34,9 @@ def resolve_dna_thresholds(
     sys_config: Optional[dict[str, Any]] = None,
 ) -> tuple[float, float, int]:
     mk = _market_key(market_type)
+    pil_mk = to_pil_key(market_type)
     cfg = sys_config if isinstance(sys_config, dict) else {}
-    defaults = {"SPOT": (5.0, -3.0), "FUT": (8.0, -5.0)}
-    dj, dd = defaults.get(mk, (5.0, -3.0))
+    prof = resolve_practitioner_profile(pil_mk, "DEFAULT", cfg)
 
     def _f(key: str, default: float) -> float:
         v = cfg.get(key)
@@ -46,8 +47,8 @@ def resolve_dna_thresholds(
         except (TypeError, ValueError):
             return float(default)
 
-    jackpot = _f(f"FORWARD_DNA_JACKPOT_PCT_{mk}", dj)
-    disaster = _f(f"FORWARD_DNA_DISASTER_PCT_{mk}", dd)
+    jackpot = _f(f"FORWARD_DNA_JACKPOT_PCT_{mk}", prof.winner_ret_pct)
+    disaster = _f(f"FORWARD_DNA_DISASTER_PCT_{mk}", prof.loser_ret_pct)
     try:
         min_pg = int(cfg.get("FORWARD_DNA_MIN_PER_GROUP", 2))
     except (TypeError, ValueError):

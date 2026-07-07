@@ -385,8 +385,37 @@ def _fetch_market_trades(conn: sqlite3.Connection, market: str) -> List[Dict[str
 def _fetch_arm_snapshot_series(
     conn: sqlite3.Connection, market: str, label: str
 ) -> List[Tuple[datetime, float]]:
-    """Bitget은 deathmatch_arm_snapshot을 저장하지 않음(persist=False 정책) — 항상 빈 시퀀스."""
-    return []
+    """deathmatch_arm_snapshot composite_score 시계열 (Bitget DB — deathmatch_bg persist)."""
+    dm_mk = "FUT" if str(market).lower() in ("futures", "fut", "future") else "SPOT"
+    try:
+        cur = conn.execute(
+            """
+            SELECT trade_date, composite_score, mean_ret FROM deathmatch_arm_snapshot
+            WHERE market = ? AND (label = ? OR arm_id = ?)
+            ORDER BY trade_date ASC
+            """,
+            (dm_mk, label, label),
+        )
+        rows = cur.fetchall()
+    except sqlite3.Error:
+        return []
+    out: List[Tuple[datetime, float]] = []
+    for r in rows:
+        if hasattr(r, "keys"):
+            td_raw = r["trade_date"]
+            score = r["composite_score"]
+            mean_ret = r["mean_ret"]
+        else:
+            td_raw = r[0]
+            score = r[1] if len(r) > 1 else None
+            mean_ret = r[2] if len(r) > 2 else None
+        d = _parse_date(td_raw)
+        if d is None:
+            continue
+        if score is None:
+            score = mean_ret
+        out.append((d, _safe_float(score)))
+    return out
 
 
 def _logistic(x: float, scale: float = 1.0) -> float:

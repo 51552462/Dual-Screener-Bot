@@ -134,6 +134,77 @@ class TestFundingNetRet:
         assert net == 3.2
 
 
+class TestCircuitBreakerSsot:
+    def test_release_on_recovery(self):
+        from bitget.forward.ledger import (
+            CB_RELEASE_LOSS_RATIO,
+            _update_global_circuit_breaker,
+        )
+
+        saved = {}
+
+        def _save(cfg):
+            saved["cfg"] = dict(cfg)
+            return True
+
+        base_cfg = {
+            "GLOBAL_CIRCUIT_BREAKER": "ON",
+            "GLOBAL_CIRCUIT_BREAKER_TRIGGER_DATE": "2026-01-01",
+            "GLOBAL_CIRCUIT_BREAKER_TRIGGER_MARKET": "SPOT",
+        }
+        with mock.patch("bitget.forward.ledger.load_system_config", return_value=base_cfg), mock.patch(
+            "bitget.forward.ledger.save_system_config", side_effect=_save
+        ), mock.patch("bitget.forward.ledger.send_telegram_msg"):
+            _update_global_circuit_breaker(
+                "SPOT",
+                CB_RELEASE_LOSS_RATIO + 0.01,
+                -100.0,
+                10000.0,
+            )
+        assert saved["cfg"]["GLOBAL_CIRCUIT_BREAKER"] == "OFF"
+
+    def test_auto_pilot_cb_does_not_toggle_global(self):
+        from bitget.auto_pilot import _apply_circuit_breaker
+
+        df = pd.DataFrame(
+            {
+                "exit_date": pd.date_range("2026-01-01", periods=20, freq="D"),
+                "sim_kelly_invest": [1000.0] * 20,
+                "final_ret": [-11.0] * 20,
+            }
+        )
+        cfg = {"GLOBAL_CIRCUIT_BREAKER": "OFF", "DYNAMIC_KELLY_RISK": 0.01}
+        out = _apply_circuit_breaker(cfg, df)
+        assert out.get("GLOBAL_CIRCUIT_BREAKER", "OFF") == "OFF"
+        assert out.get("CLOSED_TRADE_CB_ADVISORY", {}).get("active") is True
+
+
+class TestGenesisArmSnapshotRead:
+    def test_fetch_arm_snapshot_reads_deathmatch_table(self, tmp_path):
+        import sqlite3
+        from bitget.evolution.champion_genesis_bg import _fetch_arm_snapshot_series
+
+        db = tmp_path / "bg.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE deathmatch_arm_snapshot (
+                trade_date TEXT, market TEXT, arm_id TEXT, label TEXT,
+                composite_score REAL, mean_ret REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO deathmatch_arm_snapshot VALUES (?,?,?,?,?,?)",
+            ("2026-06-01", "SPOT", "CORE_A", "CORE_A", 1.5, 2.0),
+        )
+        conn.commit()
+        series = _fetch_arm_snapshot_series(conn, "spot", "CORE_A")
+        conn.close()
+        assert len(series) == 1
+        assert series[0][1] == 1.5
+
+
 class TestPractitionerDnaParity:
     def test_practitioner_dbg_uses_percentile_scores_and_dna_flags(self):
         from bitget.signal_engines import compute_practitioner_01

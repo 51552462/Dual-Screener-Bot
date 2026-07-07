@@ -41,6 +41,79 @@ from bitget.governance.meta_consumer import (
 
 _DEFAULT_BITGET_MAX_OPEN_POSITIONS = DEFAULT_MAX_OPEN_POSITIONS
 
+# ── 스마트 서킷 브레이커(유체 방어) — 주식 forward/ledger.py 동형, 코인 24/7 → 캘린더일 쿨다운
+CB_TRIP_LOSS_RATIO = -0.05
+CB_RELEASE_LOSS_RATIO = -0.02
+CB_COOLDOWN_CALENDAR_DAYS = 3
+
+
+def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_seed):
+    """OPEN 미실현 손실/시드 기준 트립·자율 해제 (Bitget config SSOT)."""
+    try:
+        cfg = load_system_config()
+    except Exception:
+        return
+    state = str(cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    if state != "ON":
+        if loss_ratio <= CB_TRIP_LOSS_RATIO:
+            cfg["GLOBAL_CIRCUIT_BREAKER"] = "ON"
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGER_DATE"] = today
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGER_MARKET"] = str(market or "")
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGERED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            cfg["GLOBAL_CIRCUIT_BREAKER_LAST_LOSS_RATIO"] = round(float(loss_ratio), 6)
+            try:
+                save_system_config(cfg)
+            except Exception:
+                return
+            try:
+                send_telegram_msg(
+                    f"🚨 <b>[GLOBAL CIRCUIT BREAKER — Bitget]</b>\n"
+                    f"시장: {market}\n"
+                    f"OPEN 미실현 손실: <b>{open_loss_amount:,.2f} USDT</b>\n"
+                    f"기준 시드: <b>{base_seed:,.2f} USDT</b>\n"
+                    f"손실/시드: <b>{loss_ratio * 100:.2f}%</b> (한계 ≤−5.0%)\n"
+                    f"조치: 신규 진입 차단 · 회복(>−2%) 또는 {CB_COOLDOWN_CALENDAR_DAYS}일 쿨다운 시 해제"
+                )
+            except Exception:
+                pass
+        return
+
+    trig_market = str(cfg.get("GLOBAL_CIRCUIT_BREAKER_TRIGGER_MARKET") or "")
+    can_confirm_recovery = (not trig_market) or (str(market or "").upper() == trig_market.upper())
+    recovered = bool(can_confirm_recovery and float(loss_ratio) > CB_RELEASE_LOSS_RATIO)
+
+    cooled = False
+    trig_date = str(cfg.get("GLOBAL_CIRCUIT_BREAKER_TRIGGER_DATE") or "")
+    if trig_date:
+        try:
+            td = datetime.strptime(trig_date[:10], "%Y-%m-%d").date()
+            cooled = (datetime.utcnow().date() - td).days >= CB_COOLDOWN_CALENDAR_DAYS
+        except (TypeError, ValueError):
+            cooled = False
+
+    if recovered or cooled:
+        reason = "OPEN 손실 −2% 이내 회복" if recovered else f"{CB_COOLDOWN_CALENDAR_DAYS}일 쿨다운 경과"
+        cfg["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
+        cfg["GLOBAL_CIRCUIT_BREAKER_RELEASED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        cfg["GLOBAL_CIRCUIT_BREAKER_RELEASE_REASON"] = reason
+        try:
+            save_system_config(cfg)
+        except Exception:
+            return
+        try:
+            send_telegram_msg(
+                f"🟢 <b>[GLOBAL CIRCUIT BREAKER 자율 해제 — Bitget]</b>\n"
+                f"평가 시장: {market}\n"
+                f"사유: {reason}\n"
+                f"현재 손실/시드: {loss_ratio * 100:.2f}%\n"
+                f"조치: 신규 진입 재개"
+            )
+        except Exception:
+            pass
+
+
 
 def _execute_retry(conn, sql, params, *, context="", max_retry=5):
     """`database is locked` 재시도(지수 백오프). 커밋은 호출자 책임(같은 트랜잭션 유지용)."""
@@ -488,28 +561,15 @@ def _aggregate_global_open_loss_usdt(conn) -> tuple[float, int]:
             total_open_loss_amount += pnl
     return total_open_loss_amount, len(df_open)
 
-def _finalize_global_circuit_breaker_track(conn, cfg):
-    """OPEN 전역 미실현 손실 기준 글로벌 서킷 ON + 커밋.(주식 track_daily_positions 패턴)"""
+def _finalize_global_circuit_breaker_track(conn, cfg, market_type=None):
+    """OPEN 전역 미실현 손실 기준 글로벌 서킷 트립/해제 (주식 track_daily_positions 패턴)."""
     base_seed = float(cfg.get("ACCOUNT_SIZE_USDT", 100000.0) or 0.0)
-    total_open_loss_amount, n_open_global = _aggregate_global_open_loss_usdt(conn)
+    total_open_loss_amount, _n_open_global = _aggregate_global_open_loss_usdt(conn)
     conn.commit()
     if base_seed > 0:
         loss_ratio = total_open_loss_amount / base_seed
-        if loss_ratio <= -0.05:
-            latest_config = load_system_config()
-            if str(latest_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper() != "ON":
-                latest_config["GLOBAL_CIRCUIT_BREAKER"] = "ON"
-                latest_config["GLOBAL_CIRCUIT_BREAKER_TRIGGERED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-                latest_config["GLOBAL_CIRCUIT_BREAKER_LAST_LOSS_RATIO"] = round(float(loss_ratio), 6)
-                save_system_config(latest_config)
-                send_telegram_msg(
-                    f"🚨 <b>[GLOBAL CIRCUIT BREAKER — Bitget]</b>\n"
-                    f"▪ 미실현 손실 합(OPEN만): <b>{total_open_loss_amount:,.2f} USDT</b>\n"
-                    f"▪ 기준 시드(ACCOUNT_SIZE_USDT): <b>{base_seed:,.2f} USDT</b>\n"
-                    f"▪ 손실/시드: <b>{loss_ratio * 100:.2f}%</b> (한계 ≤-5.0%)\n"
-                    f"▪ 현재 OPEN 수: <b>{n_open_global}</b>\n"
-                    f"조치: <code>GLOBAL_CIRCUIT_BREAKER=ON</code> — 신규 진입 전면 차단."
-                )
+        mk_label = str(market_type or "BITGET").upper()
+        _update_global_circuit_breaker(mk_label, loss_ratio, total_open_loss_amount, base_seed)
 
 def _days_since_entry_date(entry_date_val):
     try:
@@ -604,7 +664,7 @@ def track_daily_positions(market_type):
     if df_active.empty:
         print(f"\n🔍 [포워드 테스팅] {market_type} OPEN 0건 — 글로브 손실/서킷만 점검")
         try:
-            _finalize_global_circuit_breaker_track(conn, cfg)
+            _finalize_global_circuit_breaker_track(conn, cfg, market_type)
         finally:
             conn.close()
         return
@@ -1012,7 +1072,7 @@ def track_daily_positions(market_type):
             continue
 
     try:
-        _finalize_global_circuit_breaker_track(conn, cfg)
+        _finalize_global_circuit_breaker_track(conn, cfg, market_type)
     finally:
         conn.close()
 

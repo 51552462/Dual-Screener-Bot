@@ -269,13 +269,16 @@ def _step_weekly_flow_master() -> None:
 
 def _step_genesis_radar_daily() -> None:
     """[평일 경량] 챔피언 탄생 전조 유사도 스캔(SPOT/FUTURES) — 예측만, 백필은 주말에."""
+    import logging
+
     from bitget.evolution.champion_genesis_bg import run_daily_genesis_radar
 
+    log = logging.getLogger(__name__)
     for mk in ("spot", "futures"):
         try:
             run_daily_genesis_radar(market=mk)
-        except Exception:
-            pass
+        except Exception as ex:
+            log.warning("genesis_radar_daily failed market=%s: %s", mk, ex)
 
 
 def _step_genesis_backfill_weekly() -> None:
@@ -733,8 +736,8 @@ def _pipeline_daily_audit() -> List[StepSpec]:
             StepSpec("report_pipeline_hydrate", _step_report_pipeline_hydrate, critical=False),
             StepSpec("track_spot", _step_track_spot, critical=True),
             StepSpec("track_futures", _step_track_futures, critical=True),
-            StepSpec("deep_dive_spot", _step_deep_dive_spot, critical=False, delay_after_sec=0.5),
-            StepSpec("deep_dive_futures", _step_deep_dive_futures, critical=False, delay_after_sec=0.5),
+            StepSpec("deep_dive_spot", _step_deep_dive_spot, critical=True, delay_after_sec=0.5),
+            StepSpec("deep_dive_futures", _step_deep_dive_futures, critical=True, delay_after_sec=0.5),
             StepSpec("doomsday_bridge_sync", _step_doomsday_bridge_sync, critical=False, delay_after_sec=0.3),
             StepSpec(
                 "reporter_cleanup_zombie_forward_trades",

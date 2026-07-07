@@ -237,24 +237,26 @@ def _synthetic_blackswan_gate(cfg, df_closed: pd.DataFrame):
 
 
 def _apply_circuit_breaker(cfg, df_closed: pd.DataFrame):
+    """Weekly closed-trade MDD advisory — GLOBAL_CIRCUIT_BREAKER 는 ledger track SSOT."""
     if df_closed is None or len(df_closed) < 10:
-        cfg["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
+        cfg["CLOSED_TRADE_CB_ADVISORY"] = {"active": False, "reason": "insufficient_sample"}
         return cfg
     recent = df_closed.sort_values("exit_date").tail(20).copy()
     pnl = pd.to_numeric(recent["sim_kelly_invest"], errors="coerce").fillna(0.0) * pd.to_numeric(recent["final_ret"], errors="coerce").fillna(0.0) / 100.0
     eq = pnl.cumsum()
     if eq.empty:
-        cfg["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
+        cfg["CLOSED_TRADE_CB_ADVISORY"] = {"active": False, "reason": "empty_equity"}
         return cfg
     dd = eq - eq.cummax()
     max_dd = float(dd.min()) if not dd.empty else 0.0
     trigger = max_dd <= -2000.0
-    cfg["GLOBAL_CIRCUIT_BREAKER"] = "ON" if trigger else "OFF"
-    cfg["CIRCUIT_BREAKER_STATE"] = {
+    cfg["CLOSED_TRADE_CB_ADVISORY"] = {
+        "active": bool(trigger),
         "max_drawdown_usdt": round(max_dd, 2),
         "sample_trades": int(len(recent)),
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
+    cfg["CIRCUIT_BREAKER_STATE"] = dict(cfg["CLOSED_TRADE_CB_ADVISORY"])
     if trigger:
         cfg["DYNAMIC_KELLY_RISK"] = 0.002
     return cfg
@@ -559,13 +561,13 @@ def run_autonomous_analysis():
     report_lines.append("")
 
     cfg = _apply_circuit_breaker(cfg, df_closed)
-    cb = cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")
-    cbs = cfg.get("CIRCUIT_BREAKER_STATE") or {}
+    cb = str(cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper()
+    cbs = cfg.get("CLOSED_TRADE_CB_ADVISORY") or cfg.get("CIRCUIT_BREAKER_STATE") or {}
     report_lines.append("<b>[5. 글로벌 서킷 브레이커]</b>")
-    report_lines.append(f"▪️ 상태: <b>{cb}</b>")
+    report_lines.append(f"▪️ OPEN 손실 기준(ledger SSOT): <b>{cb}</b>")
     if cbs:
         report_lines.append(
-            f"▪️ 최근 표본 MDD(USDT): {cbs.get('max_drawdown_usdt')} · n={cbs.get('sample_trades')}"
+            f"▪️ 주간 청산 MDD 참고: {cbs.get('max_drawdown_usdt')} USDT · n={cbs.get('sample_trades')} · advisory={'ON' if cbs.get('active') else 'OFF'}"
         )
     report_lines.append("")
 

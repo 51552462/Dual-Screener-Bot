@@ -271,6 +271,16 @@ def send_comprehensive_daily_report():
         send_telegram_msg(msg9)
         time.sleep(1.0)
 
+        try:
+            from bitget.evolution.champion_genesis_bg import genesis_radar_report_block
+
+            gen_block = genesis_radar_report_block(cfg, market=market_type, market_icon=m_icon)
+            if gen_block:
+                send_telegram_msg(gen_block)
+                time.sleep(1.0)
+        except Exception as e:
+            send_telegram_msg(f"⚠️ [Genesis 레이더 · {mkt.upper()}] 스킵: {str(e)[:72]}")
+
     conn.close()
 
     # [동적 탐험예산 — 7일 롤링 MAB] 챔피언/탐험 자본배분 현황 패널.
@@ -287,11 +297,7 @@ def send_comprehensive_daily_report():
     except Exception as e:
         send_telegram_msg(f"⚠️ [자본 배분] exploration_budget 갱신 실패: {e}")
 
-    # 일일 종합 리포트와 실무자 30인 개별 리포트를 연동 실행
-    try:
-        send_group_practitioner_reports()
-    except Exception as e:
-        send_telegram_msg(f"⚠️ practitioner report error: {e}")
+    # PIL(실무자 30인)은 pipeline `pil_practitioner_reports` step에서 선행 발송 — 중복 방지.
 
 def run_deep_dive_analysis(market_type="spot"):
     """
