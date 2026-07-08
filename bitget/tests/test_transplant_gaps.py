@@ -767,6 +767,73 @@ class TestEntryGatesLedger:
         assert rotation_active is False
 
 
+class TestSupernovaElasticGate:
+    def test_elastic_lowers_scan_cutoff(self, tmp_path, monkeypatch):
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThresholdState
+        from bitget.supernova_hunter import _evaluate_supernova_scan_gate, _resolve_elastic_scan_cutoffs
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                market_type TEXT, status TEXT, sig_type TEXT, final_ret REAL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr("bitget.evolution.elastic_threshold_bg.DB_PATH", str(db))
+        cos, ml, state = _resolve_elastic_scan_cutoffs({}, "spot")
+        assert state is not None
+        assert cos <= 0.50
+
+    def test_scout_near_miss_allowed_at_scan(self):
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThresholdState
+        from bitget.supernova_hunter import _evaluate_supernova_scan_gate
+
+        state = BitgetElasticThresholdState(
+            cos_cutoff=0.70,
+            ml_cutoff=0.50,
+            stretch_factor=1.0,
+            scout_gap=0.10,
+            starvation_index=0.80,
+            vol_proxy=1.0,
+        )
+        allowed, is_scout, path, _, _ = _evaluate_supernova_scan_gate(
+            eff_cos=0.65,
+            best_dtw=2.0,
+            best_ml_ratio=0.2,
+            eff_cos_cutoff=0.70,
+            eff_ml_cutoff=0.50,
+            dtw_cutoff=2.5,
+            elastic_state=state,
+            cfg={"ELASTIC_SCOUT_ENABLED": True},
+        )
+        assert allowed is True
+        assert is_scout is True
+        assert path == "COSINE_SCOUT"
+
+    def test_ml_box_pass_without_cosine(self):
+        from bitget.supernova_hunter import _evaluate_supernova_scan_gate
+
+        allowed, is_scout, _, pass_ml, pass_cos = _evaluate_supernova_scan_gate(
+            eff_cos=0.40,
+            best_dtw=9.0,
+            best_ml_ratio=0.85,
+            eff_cos_cutoff=0.70,
+            eff_ml_cutoff=0.50,
+            dtw_cutoff=2.5,
+            elastic_state=None,
+            cfg={},
+        )
+        assert allowed is True
+        assert is_scout is False
+        assert pass_ml is True
+        assert pass_cos is False
+
+
 class TestExitRatchetRlBg:
     def test_evolve_reads_bitget_free_runner_rows(self, tmp_path):
         from bitget.evolution.exit_ratchet_rl_bg import evolve_bitget_ratchet_kappa

@@ -281,8 +281,12 @@ def try_add_virtual_position(
 
     cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and dtw_ok
     is_pass_ml_box = bool(facts and facts.get("ml_box_pass"))
-    is_scout_entry = False
+    if is_pass_ml_box:
+        cutoff_passed = True
+    is_scout_entry = bool(facts and facts.get("_fluid_scout"))
     scout_verdict = None
+    if is_scout_entry:
+        cutoff_passed = True
 
     if not is_incubator_shadow and not cutoff_passed and elastic_state is not None:
         try:
@@ -314,6 +318,8 @@ def try_add_virtual_position(
         sig_type_row += f" [🔒선취매보류:국면불일치 {analog_gate_info.get('reason', '')}]"
     if is_scout_entry and scout_verdict is not None:
         sig_type_row = f"[🔭SCOUT/{scout_verdict.path}] {sig_type_row}"
+    elif is_scout_entry and "[🔭SCOUT" not in sig_type_row:
+        sig_type_row = f"[🔭SCOUT] {sig_type_row}"
 
     if not is_incubator_shadow and not cutoff_passed:
         conn.close()

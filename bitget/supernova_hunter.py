@@ -25,6 +25,85 @@ scanned_today_cache = {"spot": set(), "futures": set()}
 LOG_FILE_SNIPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sent_log_bitget_supernova.txt")
 
 
+def _resolve_elastic_scan_cutoffs(cfg, market_type: str):
+    """주식 supernova_hunter 의 ElasticThreshold.apply_pair 1차 게이트 (코인 SSOT)."""
+    base_cos = float(cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50))
+    base_ml = float(cfg.get("DYNAMIC_ML_BOX_CUTOFF", 0.50))
+    try:
+        from bitget.evolution.elastic_threshold_bg import BitgetElasticThreshold
+
+        state = BitgetElasticThreshold(cfg, market_type).apply_pair(base_cos, base_ml)
+        return float(state.cos_cutoff), float(state.ml_cutoff), state
+    except Exception:
+        return base_cos, base_ml, None
+
+
+def _best_ml_box_ratio(cpv: float, tb: float, bbe: float, live_clusters: dict) -> float:
+    best = 0.0
+    if not isinstance(live_clusters, dict):
+        return best
+    for bounds in live_clusters.values():
+        if not isinstance(bounds, dict):
+            continue
+        hit = 0
+        dims = 0
+        for key, val in (("cpv", cpv), ("tb", tb), ("bbe", bbe)):
+            lo = bounds.get(f"{key}_min")
+            hi = bounds.get(f"{key}_max")
+            if lo is None or hi is None:
+                continue
+            dims += 1
+            if float(lo) <= float(val) <= float(hi):
+                hit += 1
+        if dims > 0:
+            best = max(best, hit / float(dims))
+    return float(best)
+
+
+def _evaluate_supernova_scan_gate(
+    *,
+    eff_cos: float,
+    best_dtw: float,
+    best_ml_ratio: float,
+    eff_cos_cutoff: float,
+    eff_ml_cutoff: float,
+    dtw_cutoff: float,
+    elastic_state,
+    cfg: dict,
+):
+    """
+    Returns (allowed, is_scout, scout_path, pass_ml, pass_cosine).
+    주식 supernova_hunter: cosine/ML 합격 또는 scout near-miss.
+    """
+    is_pass_cosine = (float(eff_cos) >= float(eff_cos_cutoff)) and (float(best_dtw) <= float(dtw_cutoff))
+    is_pass_ml_box = float(best_ml_ratio) >= float(eff_ml_cutoff)
+    if is_pass_ml_box or is_pass_cosine:
+        return True, False, "", is_pass_ml_box, is_pass_cosine
+
+    if elastic_state is None:
+        return False, False, "", False, False
+
+    try:
+        from bitget.evolution.elastic_threshold_bg import evaluate_scout_candidate
+
+        verdict = evaluate_scout_candidate(
+            is_pass_cosine=False,
+            is_pass_ml_box=False,
+            best_cos_sim=float(eff_cos),
+            eff_cos_cutoff=float(eff_cos_cutoff),
+            ml_score=float(best_ml_ratio),
+            eff_ml_cutoff=float(eff_ml_cutoff),
+            state=elastic_state,
+            sys_config=cfg if isinstance(cfg, dict) else {},
+        )
+    except Exception:
+        return False, False, "", False, False
+
+    if verdict.eligible:
+        return True, True, str(verdict.path or ""), False, False
+    return False, False, "", False, False
+
+
 def send_telegram_msg(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -330,6 +409,12 @@ def execute_supernova_live_scan(market_type, timeframe):
         print(f"⚠️ [bitget/{market_type}] scanner Kelly SSOT 스킵: {_ssot_e}")
     dynamic_cos_cutoff = float(cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50))
     dynamic_dtw_cutoff = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
+    eff_cos_cutoff, eff_ml_cutoff, elastic_state = _resolve_elastic_scan_cutoffs(cfg, market_type)
+    if elastic_state is not None:
+        print(
+            f"🌊 [Elastic 1차게이트/{market_type}] cos={eff_cos_cutoff:.3f} ml={eff_ml_cutoff:.3f} "
+            f"starv={elastic_state.starvation_index:.2f} vol={elastic_state.vol_proxy:.2f}"
+        )
 
     templates = {}
     rank_templates = cfg.get("LIVE_CLUSTER_TEMPLATES", {})
@@ -397,19 +482,18 @@ def execute_supernova_live_scan(market_type, timeframe):
             ev_df = ev_df.dropna(subset=("Open", "High", "Low", "Close", "Volume"), how="any")
             alpha_bonus = compute_evolved_alpha_bonus_score(cfg, ev_df)
             eff_cos = min(1.0, best_cos + alpha_bonus)
-            if eff_cos < dynamic_cos_cutoff or best_dtw > dynamic_dtw_cutoff:
-                try:
-                    bitget_shadow_tracking.record_blocked_trade(
-                        symbol=symbol,
-                        reason="TOXIC_ML_TREE",
-                        entry_price=float(c[-1]),
-                        market_type=market_type,
-                        name=symbol,
-                        position_side="LONG",
-                        timeframe=tf,
-                    )
-                except Exception:
-                    pass
+            best_ml_ratio = _best_ml_box_ratio(float(cpv), float(tb), float(bbe), rank_templates)
+            allowed, is_scout, scout_path, is_pass_ml, is_pass_cos = _evaluate_supernova_scan_gate(
+                eff_cos=eff_cos,
+                best_dtw=best_dtw,
+                best_ml_ratio=best_ml_ratio,
+                eff_cos_cutoff=eff_cos_cutoff,
+                eff_ml_cutoff=eff_ml_cutoff,
+                dtw_cutoff=dynamic_dtw_cutoff,
+                elastic_state=elastic_state,
+                cfg=cfg,
+            )
+            if not allowed:
                 return None
 
             facts = {
@@ -422,10 +506,26 @@ def execute_supernova_live_scan(market_type, timeframe):
                 "dyn_tb": 0.0,
                 "sn_score": float(best_cos),
                 "dtw_score": float(best_dtw if np.isfinite(best_dtw) else 999.0),
+                "ml_box_score": float(best_ml_ratio),
             }
+            if is_scout:
+                facts["_fluid_scout"] = True
+                sig_type = (
+                    f"[🔭SCOUT/{scout_path}][SUPERNOVA][{tf}] {best_name} "
+                    f"(Cos:{eff_cos * 100:.1f}%|DTW:{best_dtw:.2f}|starv"
+                    f"{float(getattr(elastic_state, 'starvation_index', 0) or 0):.0%})"
+                )
+            elif is_pass_ml:
+                sig_type = (
+                    f"[SUPERNOVA_MLBOX][{tf}] 🤖 {best_name} "
+                    f"(ML:{best_ml_ratio*100:.1f}%|Cos:{eff_cos*100:.1f}%)"
+                )
+                facts["ml_box_pass"] = True
+            else:
+                sig_type = f"[SUPERNOVA][{tf}] 🦅 {best_name} (Cos:{eff_cos*100:.1f}%|DTW:{best_dtw:.2f})"
             return {
                 "symbol": symbol,
-                "sig_type": f"[SUPERNOVA][{tf}] 🦅 {best_name} (Cos:{eff_cos*100:.1f}%|DTW:{best_dtw:.2f})",
+                "sig_type": sig_type,
                 "score": eff_cos * 100.0,
                 "entry_price": float(c[-1]),
                 "facts": facts,
