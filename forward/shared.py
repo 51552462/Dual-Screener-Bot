@@ -1655,7 +1655,32 @@ def try_add_virtual_position(
     if pre_sys_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") == "ON":
         return False, "🚫 글로벌 서킷 브레이커 ON: 블랙스완 방어 모드로 신규 진입이 차단되었습니다."
 
-    # 🔻 [톡식 알파 역배팅] TOXIC_FADE_TARGET 시그널이면 롱 거부 → 종목 섹터 인버스 ETF 역매매
+    # 🏛️ [Ch.5 MetaGovernor/Treasury] KILL_SWITCH · DEFENSE · block_trade_sources 조기 게이트
+    try:
+        from meta_treasury_entry_guard import evaluate_meta_global_entry_gate
+
+        _meta_early = load_meta_state_resolved()
+        _mg = evaluate_meta_global_entry_gate(
+            _meta_early,
+            trade_source,
+            sys_config=pre_sys_config,
+        )
+        if _mg.get("block_entry"):
+            _code = str(_mg.get("code") or "META_GATE")
+            _reason = str(_mg.get("reason") or _code)
+            try:
+                import shadow_tracking
+
+                shadow_tracking.record_blocked_trade(
+                    code_str, name, _code, ep
+                )
+            except Exception:
+                pass
+            return False, f"🏛️ [{_code}] {_reason}"
+    except Exception as _mg_ex:
+        print(f"⚠️ [MetaGovernor/Treasury 게이트] 스킵(중립 진행): {_mg_ex}")
+
+    # 🔻 [톡식 알파 역배팅]
     #   - 기존 5-Factor 앙상블·NAV 산출과 독립(테일 펀드 KV 만 사용). 모든 단계 방어적.
     try:
         from inverse_etf_sniper import fade_long_to_inverse, match_toxic_fade_target
@@ -1850,6 +1875,60 @@ def try_add_virtual_position(
         except Exception as _dt_ex:
             print(f"⚠️ [DART 팩터] 스킵(중립 진행): {_dt_ex}")
 
+    # 🔭 [Elastic Scout Guard — P1 Conditional Live / P2 Shadow Routing]
+    # BEAR/HIGH_VOL + _fluid_scout: 교차검증 무기 ≥1 → Live 허용.
+    # 무기 없음 → Live 거부 + OBSERVE_ONLY Shadow 장부·그림자 추적.
+    if facts_d.get("_fluid_scout"):
+        try:
+            from bear_defense_booster_guard import resolve_meta_regime_key
+            from elastic_scout_guard import (
+                evaluate_scout_conditional_live,
+                format_scout_bear_cv_live_tag,
+                route_fluid_scout_bear_shadow,
+            )
+
+            _scout_regime = resolve_meta_regime_key(pre_sys_config)
+            _scout_cv = evaluate_scout_conditional_live(
+                regime_key=_scout_regime,
+                fluid_scout=True,
+                sig_type=str(sig_type),
+                flow_bonus=flow_bonus_val,
+                flow_divergence=flow_divergence_val,
+                short_net=short_net_val,
+                fund_net=fund_net_val,
+                dart_net=dart_net_val,
+            )
+            if _scout_cv.needs_gate:
+                if _scout_cv.live_allowed:
+                    sig_type = f"{sig_type}{format_scout_bear_cv_live_tag(_scout_cv.weapons)}"
+                    print(
+                        f"🔭 [Elastic Scout CV Live] {name}: "
+                        f"교차검증 {_scout_cv.weapons_summary} → Live 허용"
+                    )
+                else:
+                    _shadow_ok, _shadow_msg = route_fluid_scout_bear_shadow(
+                        market=market,
+                        code=code_str,
+                        name=name,
+                        sig_type=str(sig_type),
+                        score=float(score),
+                        ep=float(ep),
+                        sector=sector,
+                        regime_key=_scout_regime,
+                        flow_bonus=flow_bonus_val,
+                        flow_divergence=flow_divergence_val,
+                        short_net=short_net_val,
+                        fund_net=fund_net_val,
+                        dart_net=dart_net_val,
+                        facts=facts_d,
+                        sys_config=pre_sys_config,
+                        satellite_tags=satellite_tags,
+                    )
+                    print(_shadow_msg)
+                    return _shadow_ok, _shadow_msg
+        except Exception as _scout_guard_ex:
+            print(f"⚠️ [Elastic Scout Guard] 스킵(중립 Live): {_scout_guard_ex}")
+
     # 💡 [V13.0 가상매매] 10점 단위 정밀 버킷 생성 (예: 85점 -> 80점대)
     score_bucket = int(score // 10) * 10
     if score_bucket >= 100: score_bucket = 90 # 100점은 90점대 최상위 티어로 병합
@@ -1947,6 +2026,21 @@ def try_add_virtual_position(
     # [P0-1] 수급 가산이 적용됐으면 장부에 박제(브래킷 없는 #태그 → core_group_name 추출 무영향)
     if flow_entry_tag:
         sig_type += flow_entry_tag
+
+    # ⚡ [Ch.3] 진입 시점 오버드라이브 후보 태그 — 감사·청산 상관 분석용
+    try:
+        from overdrive_telemetry import annotate_entry_overdrive_candidate
+
+        _pre_cfg = None
+        try:
+            from config_manager import load_system_config
+
+            _pre_cfg = load_system_config()
+        except Exception:
+            pass
+        sig_type = annotate_entry_overdrive_candidate(sig_type, bbe, _pre_cfg)
+    except Exception:
+        pass
 
     # 👇👇 [수정] V34.0 DTW 투트랙 + V35.0 동적 커트라인 자율 매칭 👇👇
     max_alpha_cos, min_alpha_dtw = 0.0, 99.0
@@ -2306,27 +2400,47 @@ def try_add_virtual_position(
             
             # 👇👇 [V105.0 자율 진화 + 국면 유사도 게이트] 순환매 선취매 베팅 어드밴티지 👇👇
             # 게이트 통과(현재 장세 ≈ 선취매 유리 과거 국면) 시에만 태깅·켈리 증액한다.
+            # P0-3: BEAR/HIGH_VOL 에서는 ROTATION/SPILLOVER advantage Kelly 가산 전면 차단.
+            _prebuy_adv_ok = True
+            try:
+                from bear_defense_booster_guard import allow_prebuy_advantage_boost
+
+                _prebuy_adv_ok = allow_prebuy_advantage_boost(cur_regime)
+            except Exception:
+                pass
             if rotation_prebuy_active:
                 sig_type += " #순환매_선취매" # 장부 기록용 태그 박제
                 # 관제탑이 주말 데스매치를 통해 우위를 증명(1.5배)했다면 켈리 비중 2배 뻥튀기
                 if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
-                    kelly_risk_pct *= 2.0 
+                    if _prebuy_adv_ok:
+                        kelly_risk_pct *= 2.0
+                    else:
+                        sig_type += " #BEAR선취매차단(Rotation)"
 
             # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배.
             # [자가 증명 잠금] 게이트 통과 + 주말 PnL 폐루프(SPILLOVER_ADVANTAGE_ACTIVE)가
             # 스필오버 그룹의 PF 우위(≥1.3배)를 증명했을 때만 증액(돈 벌 때만 베팅↑).
             if spillover_prebuy_active and sys_config.get("SPILLOVER_ADVANTAGE_ACTIVE", False):
-                kelly_risk_pct *= 1.5
+                if _prebuy_adv_ok:
+                    kelly_risk_pct *= 1.5
+                else:
+                    sig_type += " #BEAR선취매차단(Spillover)"
             # 🧬 [전조현상 얼리버드] 과거 confirmed 챔피언 전조와 현재 국면이 고유사
             # (GENESIS_PRECURSOR_ADVANTAGE.active) + 해당 섹터 일치 시 초기 진입 켈리 소폭 가산.
             # 읽기 전용 플래그 소비(증명된 전조 섹터만), 예외/부재 시 1.0 폴백.
             try:
+                from bear_defense_booster_guard import clamp_bear_attack_booster_mult
                 from evolution.champion_genesis import genesis_kelly_boost
 
-                _g_boost = genesis_kelly_boost(sys_config, sector, market)
+                _g_raw = genesis_kelly_boost(sys_config, sector, market)
+                _g_boost = clamp_bear_attack_booster_mult(
+                    _g_raw, cur_regime, sys_config, cap=1.0
+                )
                 if _g_boost and _g_boost != 1.0:
                     kelly_risk_pct *= float(_g_boost)
                     sig_type += " #전조선취매"
+                elif _g_raw and float(_g_raw) > 1.0 and float(_g_boost) <= 1.0:
+                    sig_type += " #BEAR부스터캡(Genesis)"
             except Exception:
                 pass
             if synthetic_survival_buff:
@@ -2350,6 +2464,32 @@ def try_add_virtual_position(
                 clean_sig = re.sub(r'^\[.*?\]\s*', '', clean_sig)
                 core_group_name = clean_sig.split(' [')[0]
 
+                # 🏛️ [Ch.5] Treasury 그룹 mult=0 하드 차단 (META_GROUP_KELLY_MULT / health)
+                try:
+                    from meta_treasury_entry_guard import evaluate_meta_group_entry_gate
+
+                    _meta_pre = load_meta_state_resolved()
+                    _gg = evaluate_meta_group_entry_gate(
+                        _meta_pre,
+                        core_group_name,
+                        market=market,
+                        sys_config=sys_config,
+                    )
+                    if _gg.get("block_entry") and incubator_match_name is None:
+                        try:
+                            import shadow_tracking
+
+                            shadow_tracking.record_blocked_trade(
+                                code_str, name, "TREASURY_GROUP_ZERO", ep
+                            )
+                        except Exception:
+                            pass
+                        return False, (
+                            f"🏛️ [Treasury] {str(_gg.get('reason') or 'group_mult=0')}"
+                        )
+                except Exception as _gg_ex:
+                    print(f"⚠️ [Treasury 그룹 게이트] 스킵(중립 진행): {_gg_ex}")
+
                 # MetaGovernor: system_config 와 분리된 meta_governor_state.json 기반 Kelly 병합
                 # (곱셈: META_GLOBAL_KELLY_MULT × META_NS_KELLY_MULT × META_GROUP_KELLY_MULT + kelly_cap/floor clamp)
                 _meta_state = load_meta_state_resolved()
@@ -2365,14 +2505,68 @@ def try_add_virtual_position(
 
                 # [초월적 진화 M3] 톰슨 샘플링 밴딧 — 승격 루키 템플릿의 자율 켈리 배수.
                 # 사후평균이 자라면 배수↑(최대 2.0), 부진하면 배수↓(최소 0.1)로 기계가 밸브 조절.
+                # P0-2: BEAR/HIGH_VOL 에서는 결합 mult 상한 1.2 (Regime Ceiling).
                 try:
+                    from bear_defense_booster_guard import ceiling_template_bandit_mult
                     from template_bandit import resolve_template_multiplier
 
-                    _bandit_mult = resolve_template_multiplier(sys_config, sig_type)
+                    _bandit_raw = resolve_template_multiplier(sys_config, sig_type)
+                    _bandit_mult = ceiling_template_bandit_mult(
+                        _bandit_raw, cur_regime, sys_config, ceiling=1.2
+                    )
                     if _bandit_mult and _bandit_mult != 1.0:
                         kelly_risk_pct *= float(_bandit_mult)
+                        if (
+                            _bandit_raw
+                            and float(_bandit_raw) > float(_bandit_mult) + 1e-9
+                        ):
+                            sig_type += f" #BEAR밴딧캡(x{_bandit_mult:.2f})"
                 except Exception:
                     pass
+
+                # 🧬 [Ch.2 Regime Specialization] regime_tag ↔ META + ledger 추론 격리
+                try:
+                    from evolution.regime_logic_crossmatrix import (
+                        apply_regime_tag_quarantine_to_kelly,
+                        resolve_regime_tag_for_entry,
+                    )
+
+                    _sig_rtag, _rtag_src = resolve_regime_tag_for_entry(
+                        sys_config,
+                        sig_type=sig_type,
+                        incubator_template_name=incubator_match_name,
+                        group_key=core_group_name,
+                        facts=facts if isinstance(facts, dict) else None,
+                        meta_state=_meta_state,
+                        conn=cursor.connection,
+                        market=market,
+                    )
+                    if _sig_rtag:
+                        if _rtag_src == "ledger_infer":
+                            sig_type += f" #RegimeTag({_sig_rtag}:ledger)"
+                        _rtq = apply_regime_tag_quarantine_to_kelly(
+                            cur_regime,
+                            _sig_rtag,
+                            kelly_risk_pct,
+                            sys_config=sys_config,
+                        )
+                        if _rtq.get("quarantined"):
+                            kelly_risk_pct = float(_rtq.get("kelly_risk_pct") or 0.0)
+                            sig_type += (
+                                f" #RegimeQuarantine({_sig_rtag}≠{cur_regime}:"
+                                f"{_rtq.get('reason', '')})"
+                            )
+                            print(
+                                f"🧬 [Regime Tag Quarantine] {market} {code_str}: "
+                                f"tag={_sig_rtag}({_rtag_src}) meta={cur_regime} → Kelly=0"
+                            )
+                            if _rtq.get("reject_entry") and incubator_match_name is None:
+                                return False, (
+                                    f"RegimeTag 격리(reject): {_sig_rtag} 전략은 "
+                                    f"현재 {cur_regime} 국면에서 진입 불가"
+                                )
+                except Exception as _rtq_ex:
+                    print(f"⚠️ [Regime Tag Quarantine] 스킵(중립 진행): {_rtq_ex}")
 
                 # 🛡️ [P1-1 상관관계 캡] 현재 OPEN 포지션들과 신규 후보의 60일 수익률 상관이
                 # 0.7 이상이면 집중 리스크 → 켈리 비중 0.5배 축소(거부 대신 방어적 축소).
@@ -2423,25 +2617,70 @@ def try_add_virtual_position(
                 except Exception as _vt_ex:
                     print(f"⚠️ [변동성 타게팅] 스킵(중립 진행): {_vt_ex}")
 
-                # ☠️ [P3-4 톡식 플로우태그 켈리 가드] 리포트 전용으로만 소비되던
-                # FLOW_TAG_TOXIC_REGISTRY/FLOW_TAG_PENALTY_MULT를 실제 진입 켈리 사이징에
-                # 최초로 연결한다. 최근(decay 윈도우 이내) 등록된 시장 단위 독성 태그가
-                # 있으면 켈리를 그 배수만큼 축소한다(0.0=완전 정지 방어). 데이터 없거나
-                # 만료 시 mult=1.0 → 완전 무영향(중립). 진입 자체를 막지 않고 비중만 조절.
+                # ☠️ [Ch.1 톡식 플로우태그 진입 가드] sig_type 내 `#태그` ↔ 페널티/레지스트리
+                # 정밀 매칭. 시장 일괄 최악 배수(P3-4) 대신 진입 시점 태그만 축소·차단한다.
+                _ft_mult, _ft_reason = 1.0, ""
                 if sys_config.get("ENABLE_FLOW_TAG_TOXIC_KELLY_GUARD", True):
                     try:
-                        from forward_flow_tag_deep_dive import resolve_flow_tag_toxic_kelly_mult
+                        from forward_flow_tag_deep_dive import resolve_flow_tag_entry_guard
 
-                        _ft_mult, _ft_reason = resolve_flow_tag_toxic_kelly_mult(sys_config, market)
+                        _ft_mult, _ft_reason = resolve_flow_tag_entry_guard(
+                            sys_config, market, sig_type
+                        )
+                        if _ft_mult <= 0.0 and _ft_reason and sys_config.get(
+                            "ENABLE_FLOW_TAG_TOXIC_BLOCK_ENTRIES", True
+                        ):
+                            return False, f"☠️ 독성 태그 진입 차단: {_ft_reason}"
                         if _ft_reason and abs(_ft_mult - 1.0) > 1e-6:
                             kelly_risk_pct *= _ft_mult
                             sig_type += f" #독성태그방어(x{_ft_mult:g}:{_ft_reason})"
                             print(
-                                f"☠️ [톡식 플로우태그 방어] {market}: 등록 독성 태그 {_ft_reason} "
+                                f"☠️ [톡식 플로우태그 방어] {market}: 진입 태그 {_ft_reason} "
                                 f"→ 켈리 ×{_ft_mult:g}"
                             )
                     except Exception as _ft_ex:
                         print(f"⚠️ [톡식 플로우태그 방어] 스킵(중립 진행): {_ft_ex}")
+
+                # 🛑 [Ch.4 Kelly 탄력성] 당일 클러치 + NAV 드로다운 통합 오버레이
+                _cat_mult, _cat_reason = 1.0, ""
+                _nav_mult = 1.0
+                _elast_mult = 1.0
+                if sys_config.get("ENABLE_CATASTROPHIC_DAY_CLUTCH", True) or sys_config.get(
+                    "ENABLE_KELLY_NAV_DD_OVERLAY", True
+                ):
+                    try:
+                        from kelly_elasticity_overlay import (
+                            evaluate_entry_elasticity_overlays,
+                        )
+
+                        _elast = evaluate_entry_elasticity_overlays(
+                            cursor.connection,
+                            market,
+                            today_str,
+                            sys_config=sys_config,
+                        )
+                        if _elast.get("block_entry") and incubator_match_name is None:
+                            return False, (
+                                f"🛑 당일 승률 붕괴 진입 차단: "
+                                f"{(_elast.get('day_clutch') or {}).get('reason', '')}"
+                            )
+                        _comb = float(_elast.get("elasticity_mult", 1.0) or 1.0)
+                        _elast_mult = _comb
+                        _cat_mult = float(_elast.get("day_mult", 1.0) or 1.0)
+                        _nav_mult = float(_elast.get("nav_mult", 1.0) or 1.0)
+                        _cat_reason = str(_elast.get("reason") or "")
+                        if _elast.get("active") and abs(_comb - 1.0) > 1e-6:
+                            kelly_risk_pct *= _comb
+                            sig_type += f" #Kelly탄력성(x{_comb:g})"
+                            if abs(_cat_mult - 1.0) > 1e-6:
+                                sig_type += f" #당일클러치(x{_cat_mult:g})"
+                            if abs(_nav_mult - 1.0) > 1e-6:
+                                sig_type += f" #NAV드로다운(x{_nav_mult:g})"
+                            print(
+                                f"🛑 [Kelly 탄력성] {market}: {_cat_reason} → 켈리 ×{_comb:g}"
+                            )
+                    except Exception as _elast_ex:
+                        print(f"⚠️ [Kelly 탄력성] 스킵(중립 진행): {_elast_ex}")
 
                 # 2. 해당 그룹(로직)이 지금까지 벌어들인 누적 수익금 계산 (실현 손익)
                 cursor.execute("SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?", (f"%{core_group_name}%",))
@@ -2546,6 +2785,19 @@ def try_add_virtual_position(
                     invest_amount = max_invest_limit
                 else:
                     invest_amount = raw_fixed_invest
+                # ☠️ [Ch.1] 고정 2% 비교축(invest_amount)에도 독성 태그 배수 동기화
+                if (
+                    _ft_reason
+                    and abs(_ft_mult - 1.0) > 1e-6
+                    and sys_config.get("ENABLE_FLOW_TAG_TOXIC_INVEST_GUARD", True)
+                ):
+                    invest_amount *= _ft_mult
+                if (
+                    _cat_reason
+                    and abs(_elast_mult - 1.0) > 1e-6
+                    and sys_config.get("ENABLE_CATASTROPHIC_DAY_INVEST_GUARD", True)
+                ):
+                    invest_amount *= _elast_mult
                 # 👆👆 [패치 완료] 👆👆
                 if incubator_match_name is not None:
                     invest_amount, shares, sim_kelly_invest = 0, 0, 0

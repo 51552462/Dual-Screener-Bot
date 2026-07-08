@@ -65,6 +65,443 @@ def _normalize_regime(value: Any) -> str:
         return "UNKNOWN"
 
 
+# ---------------------------------------------------------------------------
+# Regime Specialization Tag Quarantine (Item 3 — MAB / Kelly SSOT)
+# ---------------------------------------------------------------------------
+VALID_REGIME_SPECIALIZATION_TAGS = frozenset(
+    {"BULL_ONLY", "BEAR_ONLY", "ALL_WEATHER", "UNCLASSIFIED"}
+)
+REGIME_TAG_ALLOWED_META: dict[str, frozenset[str]] = {
+    "BULL_ONLY": frozenset({"BULL"}),
+    "BEAR_ONLY": frozenset({"BEAR", "HIGH_VOL"}),
+    "ALL_WEATHER": frozenset({"BULL", "BEAR", "SIDEWAYS", "HIGH_VOL", "UNKNOWN"}),
+    "UNCLASSIFIED": frozenset({"BULL", "BEAR", "SIDEWAYS", "HIGH_VOL", "UNKNOWN"}),
+}
+REGIME_TAG_QUARANTINE_MODE_KEY = "REGIME_TAG_QUARANTINE_MODE"  # kelly_zero | reject
+
+
+def normalize_regime_specialization_tag(tag: Any) -> str:
+    t = str(tag or "UNCLASSIFIED").strip().upper()
+    return t if t in VALID_REGIME_SPECIALIZATION_TAGS else "UNCLASSIFIED"
+
+
+def _quarantine_mode(sys_config: Optional[dict]) -> str:
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    mode = str(cfg.get(REGIME_TAG_QUARANTINE_MODE_KEY) or "kelly_zero").strip().lower()
+    return mode if mode in ("kelly_zero", "reject") else "kelly_zero"
+
+
+def regime_tag_compatible(meta_regime_key: Any, regime_tag: Any) -> bool:
+    """현재 META_REGIME_KEY 가 strategy regime_tag 와 호환되는지."""
+    tag = normalize_regime_specialization_tag(regime_tag)
+    if tag in ("ALL_WEATHER", "UNCLASSIFIED"):
+        return True
+    meta = _normalize_regime(meta_regime_key)
+    allowed = REGIME_TAG_ALLOWED_META.get(tag, REGIME_TAG_ALLOWED_META["UNCLASSIFIED"])
+    return meta in allowed
+
+
+def evaluate_regime_tag_quarantine(
+    meta_regime_key: Any,
+    regime_tag: Any,
+    *,
+    sys_config: Optional[dict] = None,
+) -> dict[str, Any]:
+    """
+    국면 태그 격리 평가.
+
+    Returns:
+      quarantined, kelly_mult (0|1), reject_entry, reason, regime_tag, meta_regime
+    """
+    tag = normalize_regime_specialization_tag(regime_tag)
+    meta = _normalize_regime(meta_regime_key)
+    compatible = regime_tag_compatible(meta, tag)
+    mode = _quarantine_mode(sys_config)
+    if compatible:
+        return {
+            "quarantined": False,
+            "kelly_mult": 1.0,
+            "reject_entry": False,
+            "reason": "regime_tag_compatible",
+            "regime_tag": tag,
+            "meta_regime": meta,
+            "mode": mode,
+        }
+    reason = f"regime_tag_mismatch:{tag}@{meta}"
+    reject = mode == "reject"
+    return {
+        "quarantined": True,
+        "kelly_mult": 0.0,
+        "reject_entry": reject,
+        "reason": reason,
+        "regime_tag": tag,
+        "meta_regime": meta,
+        "mode": mode,
+    }
+
+
+def regime_tag_quarantine_kelly_mult(
+    meta_regime_key: Any,
+    regime_tag: Any,
+    *,
+    sys_config: Optional[dict] = None,
+) -> float:
+    """MAB / MetaGovernor group Kelly overlay — 불일치 시 0.0."""
+    return float(
+        evaluate_regime_tag_quarantine(meta_regime_key, regime_tag, sys_config=sys_config)[
+            "kelly_mult"
+        ]
+    )
+
+
+def apply_regime_tag_quarantine_to_kelly(
+    meta_regime_key: Any,
+    regime_tag: Any,
+    kelly_risk_pct: float,
+    *,
+    sys_config: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Kelly sizing 훅 — 격리 시 kelly_risk_pct → 0."""
+    ev = evaluate_regime_tag_quarantine(meta_regime_key, regime_tag, sys_config=sys_config)
+    base = float(kelly_risk_pct)
+    if "kelly_mult" in ev:
+        mult = float(ev["kelly_mult"])
+    else:
+        mult = 1.0
+    return {
+        **ev,
+        "kelly_risk_pct_before": base,
+        "kelly_risk_pct": base * mult,
+    }
+
+
+def _extract_incubator_template_keys(sig_type: Any) -> list[str]:
+    """sig_type / group_key 에서 INCUBATOR_TEMPLATES 조회 키 후보."""
+    sig = str(sig_type or "")
+    keys: list[str] = []
+    if "INCUBATOR_" in sig:
+        for part in sig.replace("]", " ").replace("[", " ").split():
+            p = part.strip()
+            if not p:
+                continue
+            if p.startswith("INCUBATOR_"):
+                keys.append(p.replace("INCUBATOR_", "", 1))
+            elif p.startswith("GP_MUT_") or p.startswith("OOSVAL_"):
+                keys.append(p)
+    return list(dict.fromkeys(k for k in keys if k))
+
+
+def lookup_regime_tag_from_incubator_template(
+    sys_config: Optional[dict],
+    template_key: Any,
+) -> Optional[str]:
+    """INCUBATOR_TEMPLATES → regime_tag."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    inc = cfg.get("INCUBATOR_TEMPLATES")
+    if not isinstance(inc, dict):
+        return None
+    key = str(template_key or "").strip()
+    if not key:
+        return None
+    candidates = [key, f"GP_MUT_{key}", f"OOSVAL_{key}"]
+    if key.startswith("GP_MUT_"):
+        candidates.append(key.replace("GP_MUT_", "", 1))
+    if key.startswith("OOSVAL_"):
+        candidates.append(key.replace("OOSVAL_", "", 1))
+    seen: set[str] = set()
+    for cand in candidates:
+        if not cand or cand in seen:
+            continue
+        seen.add(cand)
+        tpl = inc.get(cand)
+        if isinstance(tpl, dict) and tpl.get("regime_tag"):
+            return normalize_regime_specialization_tag(tpl.get("regime_tag"))
+    return None
+
+
+def lookup_regime_tag_from_registry(
+    meta_state: Optional[dict],
+    group_key: Any,
+) -> Optional[str]:
+    meta = meta_state if isinstance(meta_state, dict) else {}
+    reg = meta.get("META_STRATEGY_REGISTRY")
+    if not isinstance(reg, list):
+        return None
+    gk = str(group_key or "").strip()
+    if not gk:
+        return None
+    for row in reg:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("group_key") or "").strip() == gk and row.get("regime_tag"):
+            return normalize_regime_specialization_tag(row.get("regime_tag"))
+    return None
+
+
+def resolve_regime_tag_for_signal(
+    sys_config: Optional[dict],
+    *,
+    sig_type: Any = None,
+    incubator_template_name: Any = None,
+    group_key: Any = None,
+    facts: Optional[dict] = None,
+    meta_state: Optional[dict] = None,
+) -> Optional[str]:
+    """
+    실전 신호/템플릿/레지스트리에서 regime_tag SSOT 해석.
+    우선순위: facts → incubator template → sig_type 파싱 → registry group_key.
+    """
+    if isinstance(facts, dict) and facts.get("regime_tag"):
+        return normalize_regime_specialization_tag(facts.get("regime_tag"))
+
+    if incubator_template_name:
+        tag = lookup_regime_tag_from_incubator_template(sys_config, incubator_template_name)
+        if tag:
+            return tag
+
+    for key in _extract_incubator_template_keys(sig_type):
+        tag = lookup_regime_tag_from_incubator_template(sys_config, key)
+        if tag:
+            return tag
+
+    gk = group_key or (str(sig_type or "").split(" [")[0].strip() if sig_type else "")
+    tag = lookup_regime_tag_from_registry(meta_state, gk)
+    if tag:
+        return tag
+
+    return None
+
+
+def regime_tag_mab_group_mult(
+    meta_regime_key: Any,
+    regime_tag: Any,
+    base_group_mult: float,
+    *,
+    sys_config: Optional[dict] = None,
+) -> tuple[float, dict[str, Any]]:
+    """
+    MAB META_GROUP_KELLY_MULT × regime_tag 호환 overlay.
+    불일치 시 그룹 배수를 0 으로 수렴(Quarantine).
+    """
+    try:
+        base = float(base_group_mult)
+    except (TypeError, ValueError):
+        base = 1.0
+    qm = regime_tag_quarantine_kelly_mult(meta_regime_key, regime_tag, sys_config=sys_config)
+    ev = evaluate_regime_tag_quarantine(meta_regime_key, regime_tag, sys_config=sys_config)
+    return base * qm, ev
+
+
+# ---------------------------------------------------------------------------
+# Ledger-backed regime_tag inference (Ch.2 — legacy groups without explicit tag)
+# ---------------------------------------------------------------------------
+_REGIME_INFER_CACHE: dict[str, tuple[str, float]] = {}
+
+
+def _infer_thresholds(sys_config: Optional[dict]) -> dict[str, float]:
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    return {
+        "min_n": float(int(cfg.get("REGIME_TAG_INFER_MIN_N", 5) or 5)),
+        "wr_strong": float(cfg.get("REGIME_TAG_INFER_WR_STRONG", 55.0) or 55.0),
+        "wr_weak": float(cfg.get("REGIME_TAG_INFER_WR_WEAK", 25.0) or 25.0),
+        "spread_min": float(cfg.get("REGIME_TAG_INFER_SPREAD_MIN", 25.0) or 25.0),
+        "lookback_days": float(int(cfg.get("REGIME_TAG_INFER_LOOKBACK_DAYS", 90) or 90)),
+    }
+
+
+def classify_regime_tag_from_wr_table(
+    regime_wr: dict[str, tuple[int, float]],
+    *,
+    sys_config: Optional[dict] = None,
+) -> Optional[str]:
+    """
+    entry_regime → (n, win_rate_pct) 에서 BULL_ONLY/BEAR_ONLY 추론.
+    표본 부족·차이 미미 시 None (격리 미적용).
+    """
+    th = _infer_thresholds(sys_config)
+    min_n = int(th["min_n"])
+
+    def _wr(reg: str) -> tuple[int, float]:
+        n, w = regime_wr.get(reg, (0, 0.0))
+        return int(n), float(w)
+
+    n_bull, wr_bull = _wr("BULL")
+    n_bear, wr_bear = _wr("BEAR")
+    n_side, wr_side = _wr("SIDEWAYS")
+    n_hv, wr_hv = _wr("HIGH_VOL")
+
+    if n_bull >= min_n and n_bear >= min_n:
+        if (
+            wr_bull >= th["wr_strong"]
+            and wr_bear <= th["wr_weak"]
+            and (wr_bull - wr_bear) >= th["spread_min"]
+        ):
+            return "BULL_ONLY"
+        if (
+            wr_bear >= th["wr_strong"]
+            and wr_bull <= th["wr_weak"]
+            and (wr_bear - wr_bull) >= th["spread_min"]
+        ):
+            return "BEAR_ONLY"
+
+    if n_bear >= min_n and n_bull >= min_n:
+        if wr_bear >= th["wr_strong"] and wr_bull <= th["wr_weak"]:
+            return "BEAR_ONLY"
+        if wr_bull >= th["wr_strong"] and wr_bear <= th["wr_weak"]:
+            return "BULL_ONLY"
+
+    # 고변동 전용 방어형
+    if n_hv >= min_n and wr_hv >= th["wr_strong"]:
+        if n_bull >= min_n and wr_bull <= th["wr_weak"]:
+            return "BEAR_ONLY"
+
+    if n_side >= min_n * 2 and n_bull < min_n and n_bear < min_n:
+        return "ALL_WEATHER"
+
+    return None
+
+
+def infer_regime_tag_from_ledger(
+    conn: Any,
+    market: str,
+    group_key: str,
+    *,
+    sys_config: Optional[dict] = None,
+) -> Optional[str]:
+    """forward_trades 청산 원장에서 group_key 국면별 승률로 regime_tag 추론."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if not cfg.get("REGIME_TAG_INFER_FROM_LEDGER", True):
+        return None
+    gk = str(group_key or "").strip()
+    mkt = str(market or "").upper()
+    if not gk or gk == "UNKNOWN" or conn is None:
+        return None
+
+    cache_key = f"{mkt}:{gk}"
+    import time
+
+    now = time.time()
+    cached = _REGIME_INFER_CACHE.get(cache_key)
+    if cached and (now - cached[1]) < 300.0:
+        tag = cached[0]
+        return tag if tag else None
+
+    th = _infer_thresholds(cfg)
+    lookback = int(th["lookback_days"])
+    try:
+        rows = conn.execute(
+            """
+            SELECT entry_regime, final_ret
+            FROM forward_trades
+            WHERE status LIKE 'CLOSED%%'
+              AND UPPER(market) = ?
+              AND sig_type LIKE ?
+              AND entry_date >= date('now', ?)
+            """,
+            (mkt, f"%{gk}%", f"-{lookback} days"),
+        ).fetchall()
+    except Exception:
+        _REGIME_INFER_CACHE[cache_key] = ("", now)
+        return None
+
+    buckets: dict[str, list[float]] = {}
+    for er, fr in rows:
+        reg = _normalize_regime(er)
+        try:
+            r = float(fr)
+        except (TypeError, ValueError):
+            continue
+        buckets.setdefault(reg, []).append(r)
+
+    regime_wr: dict[str, tuple[int, float]] = {}
+    for reg, rets in buckets.items():
+        n = len(rets)
+        wins = sum(1 for x in rets if x > 0)
+        wr = (wins / n * 100.0) if n else 0.0
+        regime_wr[reg] = (n, wr)
+
+    tag = classify_regime_tag_from_wr_table(regime_wr, sys_config=cfg)
+    _REGIME_INFER_CACHE[cache_key] = (tag or "", now)
+    return tag
+
+
+def resolve_regime_tag_for_entry(
+    sys_config: Optional[dict],
+    *,
+    sig_type: Any = None,
+    incubator_template_name: Any = None,
+    group_key: Any = None,
+    facts: Optional[dict] = None,
+    meta_state: Optional[dict] = None,
+    conn: Any = None,
+    market: Any = None,
+) -> tuple[Optional[str], str]:
+    """
+    regime_tag SSOT + ledger 추론 폴백.
+
+    Returns:
+      (tag or None, source) — source: facts|incubator|registry|ledger_infer|none
+    """
+    direct = resolve_regime_tag_for_signal(
+        sys_config,
+        sig_type=sig_type,
+        incubator_template_name=incubator_template_name,
+        group_key=group_key,
+        facts=facts,
+        meta_state=meta_state,
+    )
+    if direct:
+        if isinstance(facts, dict) and facts.get("regime_tag"):
+            return direct, "facts"
+        if incubator_template_name:
+            return direct, "incubator"
+        return direct, "registry"
+
+    gk = group_key or (str(sig_type or "").split(" [")[0].strip() if sig_type else "")
+    inferred = infer_regime_tag_from_ledger(
+        conn, str(market or ""), str(gk or ""), sys_config=sys_config
+    )
+    if inferred:
+        return normalize_regime_specialization_tag(inferred), "ledger_infer"
+    return None, "none"
+
+
+def count_regime_mismatch_trades(
+    df: pd.DataFrame,
+    meta_regime_key: Any,
+    *,
+    sys_config: Optional[dict] = None,
+    meta_state: Optional[dict] = None,
+    conn: Any = None,
+) -> int:
+    """프레임 각 행의 group_key regime_tag vs META_REGIME 불일치 건수."""
+    if df is None or df.empty or "sig_type" not in df.columns:
+        return 0
+    from evolution.deathmatch_battle_royale import ledger_group_key
+
+    meta = _normalize_regime(meta_regime_key)
+    hits = 0
+    for _, row in df.iterrows():
+        sig = str(row.get("sig_type") or "")
+        if "INCUBATOR" in sig.upper():
+            continue
+        gk = ledger_group_key(sig)
+        mkt = str(row.get("market") or "KR")
+        tag, _src = resolve_regime_tag_for_entry(
+            sys_config,
+            sig_type=sig,
+            group_key=gk,
+            meta_state=meta_state,
+            conn=conn,
+            market=mkt,
+        )
+        if not tag or tag in ("ALL_WEATHER", "UNCLASSIFIED"):
+            continue
+        if not regime_tag_compatible(meta, tag):
+            hits += 1
+    return hits
+
+
 def _resolve_min_samples(sys_config: Optional[dict]) -> int:
     if isinstance(sys_config, dict):
         try:

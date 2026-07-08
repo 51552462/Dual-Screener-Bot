@@ -57,6 +57,23 @@ def ace_entry_adjustments(
 
     # 진입: 켈리·컷오프·손절 ATR 배수에 진화 DNA 반영
     kelly_mult = float(min(1.35, max(1.0, mult)))
+    # P0: BEAR/HIGH_VOL — Kelly booster cap 1.0 (V_RECOVERY analog 예외)
+    try:
+        from bear_defense_booster_guard import (
+            clamp_bear_attack_booster_mult,
+            resolve_meta_regime_key,
+        )
+
+        _rk = resolve_meta_regime_key(cfg)
+        _k_raw = kelly_mult
+        kelly_mult = clamp_bear_attack_booster_mult(_k_raw, _rk, cfg, cap=1.0)
+    except Exception:
+        pass
+    if kelly_mult <= 1.0 + 1e-6:
+        return AceEntryAdjustments(
+            kelly_mult=1.0,
+            reason="bear_booster_cap_or_neutral",
+        )
     relax = float(min(0.92, max(0.82, 1.0 - (mult - 1.0) * 0.35)))
     sl_mult = float(min(1.15, max(0.85, 2.0 - mult)))
     tag = flow_tag_prefix(mkt)

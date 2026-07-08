@@ -2053,15 +2053,22 @@ def execute_supernova_live_scan(market):
         if is_success:
             funnel.set_pipeline_result(str(target['code']), "ENROLLED")
             mark_scanned_today(market, target['code'])
-            dispatch_code = str(target.get('code', '')).strip()
-            if was_dispatched_today(market, dispatch_code):
-                print(f"🧯 [{market}] 당일 중복 발송 차단: {dispatch_code}")
+            _is_scout_shadow = (
+                "ScoutBearShadow" in str(msg or "")
+                or "OBSERVE_ONLY" in str(msg or "")
+            )
+            if _is_scout_shadow:
+                print(msg)
             else:
-                send_telegram_msg(
-                    f"<b>{target['msg_type']}</b>\n{dispatch_code} / {target['final_sig']}\n"
-                    f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
-                )
-                mark_dispatched_today(market, dispatch_code)
+                dispatch_code = str(target.get('code', '')).strip()
+                if was_dispatched_today(market, dispatch_code):
+                    print(f"🧯 [{market}] 당일 중복 발송 차단: {dispatch_code}")
+                else:
+                    send_telegram_msg(
+                        f"<b>{target['msg_type']}</b>\n{dispatch_code} / {target['final_sig']}\n"
+                        f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
+                    )
+                    mark_dispatched_today(market, dispatch_code)
         else:
             funnel.record_db_failure(msg or "UNKNOWN")
             funnel.set_pipeline_result(str(target['code']), "FAILED_DB")

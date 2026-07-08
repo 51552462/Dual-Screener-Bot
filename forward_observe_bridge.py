@@ -100,14 +100,12 @@ def try_add_observe_forward_trade(
             "shares": 0,
             "sim_kelly_invest": 0.0,
             "entry_regime": str(facts_d.get("entry_regime", "OBSERVE_ONLY")),
-            # [P3-1 스키마 드리프트 방지] forward/shared.py 의 _FORWARD_TRADE_INSERT_COLS 에
-            # 교차검증 숫자 컬럼 5종이 추가되어 _insert_forward_trade_row 가 row[c] 로 전량
-            # 조회한다 — 관측 전용 경로는 교차검증 팩터를 계산하지 않으므로 0.0 기본값으로 채운다.
-            "flow_bonus": 0.0,
-            "flow_divergence": 0.0,
-            "short_net": 0.0,
-            "fund_net": 0.0,
-            "dart_net": 0.0,
+            # 교차검증 팩터 — facts 에 있으면 HTC/Shadow 진화 입력으로 보존
+            "flow_bonus": float(facts_d.get("flow_bonus", 0) or 0),
+            "flow_divergence": float(facts_d.get("flow_divergence", 0) or 0),
+            "short_net": float(facts_d.get("short_net", 0) or 0),
+            "fund_net": float(facts_d.get("fund_net", 0) or 0),
+            "dart_net": float(facts_d.get("dart_net", 0) or 0),
         }
         _insert_forward_trade_row(cursor, insert_row)
         conn.commit()

@@ -199,6 +199,35 @@ def apply_meta_kelly_merge(
         except (TypeError, ValueError):
             logger.warning("META_GROUP_KELLY_MULT[%s] invalid, skip", core_group_name)
 
+    # [Regime Specialization Item 3] MAB group mult × regime_tag 호환 overlay
+    if sys_config is not None:
+        try:
+            from evolution.regime_logic_crossmatrix import (
+                evaluate_regime_tag_quarantine,
+                resolve_regime_tag_for_signal,
+            )
+
+            _rtag = resolve_regime_tag_for_signal(
+                sys_config,
+                sig_type=core_group_name,
+                group_key=core_group_name,
+                facts=entry_facts if isinstance(entry_facts, dict) else None,
+                meta_state=meta,
+            )
+            if _rtag:
+                _rq = evaluate_regime_tag_quarantine(
+                    meta.get("META_REGIME_KEY"),
+                    _rtag,
+                    sys_config=sys_config,
+                )
+                if _rq.get("quarantined"):
+                    if _rq.get("reject_entry"):
+                        return 0.0
+                    if "kelly_mult" in _rq:
+                        out *= float(_rq["kelly_mult"])
+        except Exception:
+            pass
+
     ra = _regime_action(meta)
     cap = ra.get("kelly_cap")
     floor = ra.get("kelly_floor")
@@ -215,6 +244,19 @@ def apply_meta_kelly_merge(
     if cval is not None:
         out = min(out, cval)
     out = max(out, 0.0)
+
+    # [Ch.4 Kelly 탄력성] 당일 클러치 × NAV 드로다운 오버레이
+    if sys_config is not None:
+        try:
+            from kelly_elasticity_overlay import (
+                apply_elasticity_to_effective_kelly,
+                evaluate_kelly_elasticity_overlay,
+            )
+
+            _ov = evaluate_kelly_elasticity_overlay(sys_config=sys_config, market="KR")
+            out, _ = apply_elasticity_to_effective_kelly(out, _ov)
+        except Exception:
+            pass
 
     return float(out)
 

@@ -4,6 +4,7 @@ flow_tags explode · groupby — 태그별 기여도·독성·FLOW_TAG_TOXIC_REG
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -239,6 +240,133 @@ def _persist_flow_tag_toxic_registry(
             exc_info=True,
         )
         return False, reg_key
+
+
+_FLOW_TAG_TOKEN_RE = re.compile(r"#[\w가-힣]+")
+
+
+def extract_flow_tags_from_text(text: object) -> List[str]:
+    """sig_type·flow_tags 등에서 `#태그` 토큰만 추출(중복 제거, 순서 유지)."""
+    raw = str(text or "")
+    seen: set[str] = set()
+    out: List[str] = []
+    for m in _FLOW_TAG_TOKEN_RE.finditer(raw):
+        tok = m.group(0).strip()
+        if tok and tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+    return out
+
+
+def _registry_penalty_mult_for_tag(
+    tag: str,
+    *,
+    registry: Dict[str, Any],
+    market: str,
+    now: datetime,
+    decay_days: int,
+) -> Tuple[float, Optional[int]]:
+    """단일 태그에 대한 레지스트리 페널티(만료 시 1.0)."""
+    mkt = str(market or "").upper()
+    tag_key = str(tag or "").strip()
+    worst = 1.0
+    worst_age: Optional[int] = None
+
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        entry_tag = str(entry.get("tag", "")).strip()
+        if entry_tag != tag_key and str(key) != f"flow_tag:{mkt}:{tag_key}":
+            continue
+        if str(entry.get("market", "")).upper() != mkt:
+            continue
+        registered_at = str(entry.get("registered_at", "")).strip()[:10]
+        if not registered_at:
+            continue
+        try:
+            reg_dt = datetime.strptime(registered_at, "%Y-%m-%d")
+        except ValueError:
+            continue
+        age_days = (now - reg_dt).days
+        if age_days < 0 or age_days > decay_days:
+            continue
+        try:
+            mult = float(entry.get("kelly_mult", 1.0))
+        except (TypeError, ValueError):
+            continue
+        mult = max(0.0, min(1.0, mult))
+        if mult < worst:
+            worst = mult
+            worst_age = age_days
+    return worst, worst_age
+
+
+def resolve_flow_tag_entry_guard(
+    sys_config: Optional[Dict[str, Any]],
+    market: str,
+    sig_type: object,
+    *,
+    now_dt: Optional[datetime] = None,
+) -> Tuple[float, str]:
+    """
+    [Ch.1 TOXIC_TAG_LEAK] 진입 시점 sig_type 내 `#태그` ↔ 페널티/레지스트리 정밀 매칭.
+
+    과거 P3-4 는 시장 단위 최악 배수를 모든 진입에 일괄 적용했고, AI 감사관은
+    청산 시 부여되는 exit flow_tags(예: #건전한조정_매집우위)까지 '누출'로 집계해
+    거짓 양성이 났다. 이 함수는 **진입 문자열에 실제로 붙은 태그**만 대상으로
+    FLOW_TAG_PENALTY_MULT + 유효기간 내 FLOW_TAG_TOXIC_REGISTRY 를 병합한다.
+    """
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    tags = extract_flow_tags_from_text(sig_type)
+    if not tags:
+        return 1.0, ""
+
+    penalty_map = cfg.get("FLOW_TAG_PENALTY_MULT")
+    if not isinstance(penalty_map, dict):
+        penalty_map = {}
+    reg = cfg.get("FLOW_TAG_TOXIC_REGISTRY")
+    if not isinstance(reg, dict):
+        reg = {}
+
+    try:
+        decay_days = int(
+            cfg.get("FLOW_TAG_TOXIC_GUARD_DECAY_DAYS", FLOW_TAG_TOXIC_GUARD_DECAY_DAYS_DEFAULT)
+        )
+    except (TypeError, ValueError):
+        decay_days = FLOW_TAG_TOXIC_GUARD_DECAY_DAYS_DEFAULT
+
+    now = (now_dt or datetime.now()).replace(tzinfo=None)
+    mkt = str(market or "").upper()
+
+    worst_mult = 1.0
+    worst_tag = ""
+    worst_age: Optional[int] = None
+
+    for tag in tags:
+        tag_mult = 1.0
+        if tag in penalty_map:
+            try:
+                tag_mult = min(tag_mult, float(penalty_map[tag]))
+            except (TypeError, ValueError):
+                pass
+        reg_mult, reg_age = _registry_penalty_mult_for_tag(
+            tag,
+            registry=reg,
+            market=mkt,
+            now=now,
+            decay_days=decay_days,
+        )
+        tag_mult = min(tag_mult, reg_mult)
+        tag_mult = max(0.0, min(1.0, tag_mult))
+        if tag_mult < worst_mult:
+            worst_mult = tag_mult
+            worst_tag = tag
+            worst_age = reg_age
+
+    if worst_tag and worst_mult < 1.0:
+        age_s = str(worst_age) if worst_age is not None else "?"
+        return worst_mult, f"{worst_tag}(D+{age_s})"
+    return 1.0, ""
 
 
 def resolve_flow_tag_toxic_kelly_mult(

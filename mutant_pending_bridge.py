@@ -62,6 +62,8 @@ def sync_validated_json_into_pending() -> tuple[int, str]:
             "oos_avg_return": row.get("oos_avg_return"),
             "n_signals": row.get("n_signals"),
             "validated_at": row.get("validated_at"),
+            "regime_tag": row.get("regime_tag"),
+            "regime_tag_meta": row.get("regime_tag_meta"),
             "status": "PENDING_APPROVAL",
         }
         existing.append(entry)
@@ -144,6 +146,8 @@ def auto_merge_validated_into_incubator() -> tuple[int, str]:
             "oos_excess_alpha": row.get("oos_excess_alpha"),
             "oos_avg_return": row.get("oos_avg_return"),
             "n_signals": row.get("n_signals"),
+            "regime_tag": row.get("regime_tag"),
+            "regime_tag_meta": row.get("regime_tag_meta"),
             "source": "gp_oos_auto_promoted",
         }
         if tb is not None:
@@ -225,6 +229,8 @@ def apply_pending_mutants_if_approved() -> str:
             "oos_win_rate": row.get("oos_win_rate"),
             "oos_avg_return": row.get("oos_avg_return"),
             "n_signals": row.get("n_signals"),
+            "regime_tag": row.get("regime_tag"),
+            "regime_tag_meta": row.get("regime_tag_meta"),
             "source": "mutant_oos_validated",
         }
         row["status"] = "MERGED"

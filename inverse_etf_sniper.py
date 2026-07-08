@@ -7,7 +7,11 @@ Inverse ETF Sniper — 테일 리스크 전용 슬리브 (롱 팩토리 미사�
   (토요일 _tail_convexity_shield 의 적립·×30 페이오프와 독립: 여긴 '바닥 유지'만, 페이오프 없음.)
 - 장부: `forward_trades` 에 sig_type 에 `[INVERSE_ETF]` 마커가 포함된 행만 인버스로 간주.
 - 킬 스위치: INVERSE_MODE_ACTIVE=False 인데 OPEN 인버스가 남아 있으면 전량 시장가 청산 후 테일로 반환.
-- 진입: 테일 잔액의 30% 하드캡, OPEN 인버스가 1건이라도 있으면 신규 진입 금지.
+- V-Recovery 킬 스위치(Axis3): BEAR/HIGH_VOL→BULL(반등) 전환 시 INVERSE_MODE ON 이어도 전량 청산 + RL Reset.
+- 진입: 테일 잔액의 **Self-Evolution Hedge Base Cap** —
+  Axis1: predictive_regime_ensemble 5팩터 내재(BEAR_GRIND 20% / ACCEL 35% / PANIC 50%) ×
+  Axis2: live_nav_manager.inverse_sleeve + forward_trades 실현 PnL RL(수익→100% / 휩쏘→절반·15%상한),
+  OPEN 인버스가 1건이라도 있으면 신규 진입 금지.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ from config_manager import (
 # 식별자 / 유니버스 (롱 팩토리 로직 미사용 — 스나이퍼 전용 상수)
 # ---------------------------------------------------------------------------
 INVERSE_SIG_MARKER = "[INVERSE_ETF]"
-INVERSE_HARD_CAP_PCT = 0.30
+INVERSE_HARD_CAP_PCT = 0.30  # 레거시 정적 폴백 — resolve_dynamic_inverse_cap_pct 실패 시만
 
 # [Daily Floor] 평일 자동 보충 목표/바닥(국고 대비). 토요일 적립 목표(TAIL_FUND_ACCRUAL_PCT)와 동일 수준.
 TAIL_FUND_FLOOR_PCT = 0.015
@@ -195,6 +199,25 @@ def _numeric_tail_balance(key: str) -> float:
 
 def _inverse_mode_active(cfg: dict[str, Any]) -> bool:
     return bool(cfg.get("INVERSE_MODE_ACTIVE", False))
+
+
+def _resolve_inverse_cap_pct(market: str, cfg: dict[str, Any]) -> tuple[float, dict[str, Any]]:
+    """Self-Evolution Hedge Engine — Axis1 Base Cap × Axis2 RL. 실패 시 정적 30% 폴백."""
+    try:
+        from dynamic_hedge_cap import resolve_dynamic_inverse_cap_pct
+
+        cap, meta = resolve_dynamic_inverse_cap_pct(market, cfg)
+        audit = dict(meta) if isinstance(meta, dict) else {}
+        audit["pct"] = float(cap)
+        audit["reason"] = str(meta.get("summary") or "")
+        return float(cap), audit
+    except Exception as _cap_ex:
+        print(f"⚠️ [inverse_etf_sniper] 동적 캡 스킵(정적 {INVERSE_HARD_CAP_PCT:.0%}): {_cap_ex}")
+        return INVERSE_HARD_CAP_PCT, {
+            "pct": INVERSE_HARD_CAP_PCT,
+            "reason": f"static_fallback={INVERSE_HARD_CAP_PCT:.0%}",
+            "efficacy_mode": "static_fallback",
+        }
 
 
 def _fetch_hedge_5d_return_pct(market: str, hedge_code: str) -> Optional[float]:
@@ -434,6 +457,18 @@ def _close_inverse_row_at_market(
         """,
         (status, today_str, exit_reason, round(final_ret, 4), new_high, new_low, rid),
     )
+    try:
+        from live_nav_manager import record_inverse_sleeve_closure
+
+        record_inverse_sleeve_closure(
+            mkt,
+            final_ret_pct=float(final_ret),
+            invest_amount=float(invest_amount),
+            exit_date=today_str,
+            sig_type=str(row["sig_type"] or ""),
+        )
+    except Exception:
+        pass
     return max(0.0, float(recovered))
 
 
@@ -466,6 +501,82 @@ def enforce_inverse_kill_switch(conn: sqlite3.Connection, cfg: dict[str, Any]) -
     conn.commit()
     print(f"🛡️ [inverse_etf_sniper] 킬 스위치: 인버스 OPEN {n}건 시장가 청산 후 테일 반환.")
     return n
+
+
+def enforce_v_recovery_kill_switch(
+    conn: sqlite3.Connection,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Axis 3 — V-Recovery 비대칭 킬 스위치.
+
+    BEAR/HIGH_VOL → BULL(또는 명확한 반등 시그널) 전환 시:
+      1) OPEN 인버스 전량 청산 (INVERSE_MODE ON 이어도 발동)
+      2) live_nav inverse_sleeve RL rolling log Reset
+    """
+    out: dict[str, Any] = {"closed": 0, "triggered": False}
+    try:
+        from self_evolution_hedge_engine import (
+            evaluate_v_recovery_kill_switch,
+            persist_hedge_regime_snapshot,
+            reset_hedge_rl_after_v_recovery,
+        )
+
+        eval_result = evaluate_v_recovery_kill_switch(cfg)
+        out.update(eval_result)
+        current = str(eval_result.get("current_regime") or "UNKNOWN")
+
+        if not eval_result.get("triggered"):
+            persist_hedge_regime_snapshot(cfg, current_regime=current)
+            return out
+
+        out["triggered"] = True
+        rows = _inverse_open_rows(conn)
+        n = 0
+        for row in rows:
+            mkt = str(row["market"] or "").upper()
+            code = str(row["code"] or "").strip()
+            px = _fetch_last_close(mkt, code)
+            if px is None:
+                ep = float(row["entry_price"] or 0.0)
+                px = ep if ep > 0 else 0.01
+            recovered = _close_inverse_row_at_market(
+                conn,
+                row,
+                px,
+                "V_RECOVERY_KILL_SWITCH",
+            )
+            release_tail_amount(mkt, recovered)
+            n += 1
+        if n > 0:
+            conn.commit()
+
+        reset_meta = reset_hedge_rl_after_v_recovery(
+            reason=str(eval_result.get("reason") or "v_recovery"),
+        )
+        out["closed"] = n
+        out["rl_reset"] = reset_meta
+        persist_hedge_regime_snapshot(cfg, current_regime=current)
+        print(
+            f"📈 [inverse_etf_sniper] V-Recovery 킬 스위치: "
+            f"{eval_result.get('previous_regime')}→{current} "
+            f"({eval_result.get('reason')}) — 청산 {n}건 + RL Reset"
+        )
+        return out
+    except Exception as ex:
+        out["error"] = str(ex)
+        try:
+            from self_evolution_hedge_engine import (
+                evaluate_v_recovery_kill_switch,
+                persist_hedge_regime_snapshot,
+            )
+
+            ev = evaluate_v_recovery_kill_switch(cfg)
+            persist_hedge_regime_snapshot(cfg, current_regime=ev.get("current_regime"))
+        except Exception:
+            pass
+        print(f"⚠️ [inverse_etf_sniper] V-Recovery 킬 스위치 스킵: {ex}")
+        return out
 
 
 def _insert_inverse_forward_trade(
@@ -571,8 +682,20 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
 
+    # Axis 3 — V-Recovery (INVERSE_MODE ON 이어도 비대칭 청산 + RL Reset)
+    summary["v_recovery"] = enforce_v_recovery_kill_switch(conn, cfg)
+    cfg = load_system_config()
+
     summary["kill_closed"] = enforce_inverse_kill_switch(conn, cfg)
     cfg = load_system_config()
+
+    if summary["v_recovery"].get("triggered"):
+        summary["skipped"] = (
+            f"V-Recovery 킬 스위치 발동 ({summary['v_recovery'].get('reason')}): "
+            f"청산 {summary['v_recovery'].get('closed', 0)}건 — 신규 진입 보류"
+        )
+        conn.close()
+        return summary
 
     if not _inverse_mode_active(cfg):
         summary["skipped"] = "INVERSE_MODE_ACTIVE=False (킬 스위치만 처리)"
@@ -617,20 +740,23 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
 
         key = _tail_fund_key(mkt)
         tail_bal = _numeric_tail_balance(key)
-        max_inv = max(0.0, tail_bal * INVERSE_HARD_CAP_PCT)
+        cap_pct, cap_meta = _resolve_inverse_cap_pct(mkt, cfg)
+        cap_reason = str(cap_meta.get("reason") or "")
+        max_inv = max(0.0, tail_bal * cap_pct)
         if max_inv <= 0:
             # [Shadow Inverse Ledger] 잔액 0 → return False 대신 가상거래로 표본 축적
             try:
                 _insert_inverse_shadow(
                     conn, market=mkt, code=code, name=cand["name"], entry_price=px,
-                    reason="테일 30% 캡: 잔액 0(실진입 거부)",
+                    reason=f"테일 {cap_pct:.0%} 캡({cap_reason}): 잔액 0(실진입 거부)",
                 )
                 conn.commit()
                 summary["shadow"] = {"market": mkt, "code": code, "entry_price": px, "reason": "tail_balance_zero"}
             except Exception as _sh_ex:
                 conn.rollback()
                 print(f"🚨 [inverse_etf_sniper] 섀도우 INSERT 실패: {_sh_ex}")
-            summary["skipped"] = "테일 30% 캡: 잔액 0으로 실진입 불가 → 섀도우 기록"
+            summary["skipped"] = f"테일 {cap_pct:.0%} 캡: 잔액 0으로 실진입 불가 → 섀도우 기록"
+            summary["dynamic_cap"] = cap_meta
             break
 
         invest = round(min(max_inv, tail_bal), 2)
@@ -644,14 +770,15 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
             try:
                 _insert_inverse_shadow(
                     conn, market=mkt, code=code, name=cand["name"], entry_price=px,
-                    reason="테일 30% 캡: Reserve OCC 실패(실진입 거부)",
+                    reason=f"테일 {cap_pct:.0%} 캡({cap_reason}): Reserve OCC 실패(실진입 거부)",
                 )
                 conn.commit()
                 summary["shadow"] = {"market": mkt, "code": code, "entry_price": px, "reason": "reserve_failed"}
             except Exception as _sh_ex:
                 conn.rollback()
                 print(f"🚨 [inverse_etf_sniper] 섀도우 INSERT 실패: {_sh_ex}")
-            summary["skipped"] = "테일 30% 캡: Reserve OCC 실패(잔액·경합) → 섀도우 기록"
+            summary["skipped"] = f"테일 {cap_pct:.0%} 캡: Reserve OCC 실패(잔액·경합) → 섀도우 기록"
+            summary["dynamic_cap"] = cap_meta
             break
 
         try:
@@ -666,7 +793,11 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
             )
             conn.commit()
             summary["entered"] = {"market": mkt, "code": code, "invest": invest, "hedge_5d_ret": r5}
-            print(f"🎯 [inverse_etf_sniper] 진입: {mkt} {code} invest={invest:,.0f} (테일 30% 캡, hedge5d={r5:.2f}%)")
+            summary["dynamic_cap"] = cap_meta
+            print(
+                f"🎯 [inverse_etf_sniper] 진입: {mkt} {code} invest={invest:,.0f} "
+                f"(동적캡 {cap_pct:.0%}: {cap_reason}, hedge5d={r5:.2f}%)"
+            )
             break
         except Exception as e:
             conn.rollback()
@@ -741,7 +872,10 @@ def fade_long_to_inverse(
         except Exception:
             pass
         tail_bal = _numeric_tail_balance(_tail_fund_key(inv_mkt))
-        max_inv = max(0.0, tail_bal * INVERSE_HARD_CAP_PCT)
+        cap_pct, cap_meta = _resolve_inverse_cap_pct(
+            inv_mkt, sys_config if isinstance(sys_config, dict) else load_system_config()
+        )
+        max_inv = max(0.0, tail_bal * cap_pct)
         fade_sig = (
             f"Dante_TOXIC_FADE[{cand.get('sector_key')}]{FADE_SIG_MARKER}{INVERSE_SIG_MARKER}"
             f" ◀{str(src_code)[:8]}/{str(src_sig)[:32]}"

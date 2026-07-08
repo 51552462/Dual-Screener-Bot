@@ -279,6 +279,7 @@ def run_registry_lifecycle(
             "updated_at": now_iso,
             "oos_win_rate": prom.get("oos_win_rate"),
             "oos_avg_return": prom.get("oos_avg_return"),
+            "regime_tag": prom.get("regime_tag"),
         }
         by_sid[sid] = row
         stats["discovery_new"] += 1

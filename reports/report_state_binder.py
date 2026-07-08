@@ -40,6 +40,12 @@ class MacroTreasuryReportBlock:
     currency_symbol: str = "₩"
     currency_suffix: str = "원"
     amount_decimals: int = 0
+    # [Ch.4 Kelly 탄력성] 당일 클러치 × NAV 드로다운 오버레이
+    effective_kelly_pre_overlay: float = 0.0
+    kelly_day_clutch_mult: float = 1.0
+    kelly_nav_dd_mult: float = 1.0
+    kelly_elasticity_mult: float = 1.0
+    nav_drawdown_pct: Optional[float] = None
     # [진화형 둠스데이 감쇠] 브레이크 성향(γ) 메타인지 브리핑 — 빌드 시점 사전계산.
     dampening_brief_html: Optional[str] = None
     # [Mission 3] 매크로 데이터 신선도(live/lookback/degraded) — 거시 국면 신선도 태그.
@@ -324,6 +330,30 @@ def build_macro_treasury_block(
         cur_symbol, cur_suffix, cur_dec = _cur["symbol"], _cur["suffix"], int(_cur["decimals"])
     except Exception:
         pass
+    eff_pre = float(eff_k)
+    k_day = k_nav = k_elast = 1.0
+    nav_dd = None
+    try:
+        from kelly_elasticity_overlay import (
+            apply_elasticity_to_effective_kelly,
+            evaluate_kelly_elasticity_overlay,
+        )
+
+        _ov = evaluate_kelly_elasticity_overlay(
+            sys_config=sys_config,
+            market=mkt,
+            nav=nav_val,
+            hwm=hwm_val,
+            mdd_pct=mdd_val,
+        )
+        eff_k, _det = apply_elasticity_to_effective_kelly(eff_pre, _ov)
+        k_day = float(_ov.get("day_mult", 1.0) or 1.0)
+        k_nav = float(_ov.get("nav_mult", 1.0) or 1.0)
+        k_elast = float(_ov.get("elasticity_mult", 1.0) or 1.0)
+        nav_dd = _ov.get("nav_drawdown_pct")
+    except Exception:
+        eff_k = eff_pre
+        k_elast = 1.0
     try:
         from regime_kelly_failsafe import record_kelly_snapshot
 
@@ -346,6 +376,11 @@ def build_macro_treasury_block(
         meta_global_kelly_mult=g_mult,
         base_dynamic_kelly_risk=base_k,
         effective_kelly_risk=eff_k,
+        effective_kelly_pre_overlay=eff_pre,
+        kelly_day_clutch_mult=k_day,
+        kelly_nav_dd_mult=k_nav,
+        kelly_elasticity_mult=k_elast,
+        nav_drawdown_pct=nav_dd,
         treasury_config_raw=raw,
         ledger_realized_est=led,
         oms_equity=oms_equity,
@@ -430,8 +465,21 @@ def format_macro_treasury_section_html(
     body += (
         f"⚖️ 켈리: 베이스 {_fmt_amount(block.base_dynamic_kelly_risk * 100.0, decimals=2)}% "
         f"× Meta글로벌 <b>{_fmt_amount(block.meta_global_kelly_mult, decimals=3)}</b> "
+    )
+    if abs(block.kelly_elasticity_mult - 1.0) > 1e-6:
+        body += (
+            f"→ 사전 {_fmt_amount(block.effective_kelly_pre_overlay * 100.0, decimals=2)}% "
+            f"× 탄력성 <b>{_fmt_amount(block.kelly_elasticity_mult, decimals=3)}</b> "
+            f"(당일×{_fmt_amount(block.kelly_day_clutch_mult, decimals=3)} "
+            f"· NAV×{_fmt_amount(block.kelly_nav_dd_mult, decimals=3)}) "
+        )
+    body += (
         f"→ 유효 <b>{_fmt_amount(block.effective_kelly_risk * 100.0, decimals=2)}%</b>\n"
     )
+    if block.nav_drawdown_pct is not None and block.nav_drawdown_pct > 0:
+        body += (
+            f" 📉 NAV 드로다운(HWM 대비): <b>{block.nav_drawdown_pct:.2f}%</b>\n"
+        )
     if block.kelly_cap is not None or block.kelly_floor is not None:
         cap_s = _fmt_amount(float(block.kelly_cap), decimals=4) if block.kelly_cap is not None else "—"
         fl_s = _fmt_amount(float(block.kelly_floor), decimals=4) if block.kelly_floor is not None else "—"

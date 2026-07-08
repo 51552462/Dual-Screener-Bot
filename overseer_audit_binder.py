@@ -24,8 +24,16 @@ from reports.report_state_binder import (
 
 # ---------------------------------------------------------------------------
 # LLM system prompt (전문 — ai_overseer 가 그대로 사용)
+# Ch.6: overseer_llm_narrative.build_overseer_llm_system_prompt() 가 SSOT
 # ---------------------------------------------------------------------------
-OVERSEER_LLM_SYSTEM_PROMPT = """You are a Ruthless QA engineer for a quant trading factory. You are NOT a cheerleader.
+def _overseer_llm_system_prompt_ssot() -> str:
+    try:
+        from overseer_llm_narrative import build_overseer_llm_system_prompt
+
+        return build_overseer_llm_system_prompt()
+    except Exception:
+        pass
+    return """You are a Ruthless QA engineer for a quant trading factory. You are NOT a cheerleader.
 
 STRICT RULES:
 1. Use ONLY facts in AUDIT_DOSSIER_JSON and ANOMALIES_JSON. Do not invent numbers, regimes, or trades.
@@ -36,6 +44,9 @@ STRICT RULES:
 6. Output in Korean, max 10 short lines, Telegram-safe HTML (<b>, <i> only). No markdown headers.
 7. Do NOT repeat the full anomaly list; add 1–2 actionable checks for tomorrow only.
 8. If zero anomalies: state neutrally what to monitor — still no praise fluff."""
+
+
+OVERSEER_LLM_SYSTEM_PROMPT = _overseer_llm_system_prompt_ssot()
 
 BULLISH_REGIME_KEYS: Set[str] = {
     "BULL",
@@ -91,16 +102,41 @@ class OverseerAuditDossier:
     trades_open: int
     win_rate_today_pct: Optional[float]
     overdrive_count_today: int
+    overdrive_eligible_today: int
+    overdrive_logged_today: int
+    overdrive_loss_target_today: int
+    overdrive_hurdle: float
+    overdrive_v_energy_max_today: Optional[float]
+    overdrive_supernova_closed_today: int
+    overdrive_all_loss_sl_day: bool
     rnd_entry_today: int
     flow_tag_toxic_count: int
     flow_tag_top_penalty_tag: Optional[str]
     flow_tag_penalty_mult: Optional[float]
     toxic_tag_hits_today: int
+    toxic_tag_entry_hits_today: int
+    toxic_tag_exit_echo_hits_today: int
+    regime_mismatch_entry_hits_today: int
+    regime_mismatch_closed_hits_today: int
+    catastrophic_clutch_active: bool
+    catastrophic_clutch_mult: float
     csv_status: str
     config_regime_key: str
     effective_kelly_risk: float
     predicted_sector_kr: str
     predicted_sector_us: str
+    effective_kelly_pre_overlay: float = 0.0
+    kelly_day_clutch_mult: float = 1.0
+    kelly_nav_dd_mult: float = 1.0
+    kelly_elasticity_mult: float = 1.0
+    nav_drawdown_pct: Optional[float] = None
+    kill_switch_active: bool = False
+    treasury_zeroed_groups: int = 0
+    treasury_actionable_groups: int = 0
+    treasury_zeroed_group_names: Tuple[str, ...] = ()
+    governor_stale_hours: Optional[float] = None
+    governor_is_stale: bool = False
+    zero_group_entry_hits_today: int = 0
     db_error: Optional[str] = None
 
 
@@ -285,6 +321,7 @@ def _count_toxic_tag_hits(
     df: pd.DataFrame,
     penalty_mult: Dict[str, float],
 ) -> int:
+    """청산 시 부여된 flow_tags 기준 매칭(텔레메트리·exit echo 전용)."""
     if df.empty or not penalty_mult or "flow_tags" not in df.columns:
         return 0
     hits = 0
@@ -292,6 +329,26 @@ def _count_toxic_tag_hits(
         for tag in str(tags_raw).split():
             t = tag.strip()
             if t and t in penalty_mult:
+                hits += 1
+                break
+    return hits
+
+
+def _count_toxic_tag_entry_hits(
+    df: pd.DataFrame,
+    penalty_mult: Dict[str, float],
+) -> int:
+    """진입 sig_type 내 `#태그` ↔ 페널티 맵 — TOXIC_TAG_LEAK SSOT."""
+    if df.empty or not penalty_mult or "sig_type" not in df.columns:
+        return 0
+    try:
+        from forward_flow_tag_deep_dive import extract_flow_tags_from_text
+    except ImportError:
+        return 0
+    hits = 0
+    for sig_raw in df["sig_type"].fillna(""):
+        for tag in extract_flow_tags_from_text(str(sig_raw)):
+            if tag in penalty_mult:
                 hits += 1
                 break
     return hits
@@ -363,10 +420,47 @@ def build_overseer_audit_dossier(
         except (TypeError, ValueError):
             pass
 
-    toxic_hits = _count_toxic_tag_hits(
-        pd.concat([df_closed_today, df_entry_today], ignore_index=True),
-        penalty_map,
-    )
+    toxic_entry_hits = _count_toxic_tag_entry_hits(df_entry_today, penalty_map)
+    toxic_exit_echo_hits = _count_toxic_tag_hits(df_closed_today, penalty_map)
+
+    regime_mm_entry = 0
+    regime_mm_closed = 0
+    cat_clutch_active = False
+    cat_clutch_mult = 1.0
+    try:
+        from catastrophic_day_guard import evaluate_catastrophic_day_clutch
+        from evolution.regime_logic_crossmatrix import count_regime_mismatch_trades
+
+        _rk_audit = str(m.get("META_REGIME_KEY") or cfg.get("CURRENT_REGIME_KEY") or "UNKNOWN")
+        _ac = sqlite3.connect(db_path, timeout=60)
+        try:
+            regime_mm_entry = count_regime_mismatch_trades(
+                df_entry_today,
+                _rk_audit,
+                sys_config=cfg,
+                meta_state=m,
+                conn=_ac,
+            )
+            regime_mm_closed = count_regime_mismatch_trades(
+                df_closed_today,
+                _rk_audit,
+                sys_config=cfg,
+                meta_state=m,
+                conn=_ac,
+            )
+            for _mkt in ("KR", "US"):
+                _cc = evaluate_catastrophic_day_clutch(
+                    _ac, _mkt, today_str, sys_config=cfg
+                )
+                if _cc.get("active"):
+                    cat_clutch_active = True
+                    cat_clutch_mult = min(
+                        cat_clutch_mult, float(_cc.get("kelly_mult", 1.0) or 1.0)
+                    )
+        finally:
+            _ac.close()
+    except Exception:
+        pass
 
     n_closed = len(df_closed_today)
     n_entry = len(df_entry_today)
@@ -377,13 +471,43 @@ def build_overseer_audit_dossier(
         wr_today = float((fr > 0).sum() / len(fr) * 100.0)
 
     od_count = 0
-    if n_closed > 0 and "exit_reason" in df_closed_today.columns:
-        od_count = int(
-            df_closed_today["exit_reason"]
-            .astype(str)
-            .str.contains("오버드라이브", na=False)
-            .sum()
-        )
+    od_eligible = 0
+    od_logged = 0
+    od_loss_target = 0
+    od_hurdle_val = 20.0
+    od_ve_max: Optional[float] = None
+    od_sn_closed = 0
+    od_all_loss_sl = False
+    if n_closed > 0:
+        try:
+            from overdrive_telemetry import (
+                resolve_od_hurdle,
+                summarize_overdrive_closed_day,
+            )
+
+            od_hurdle_val = resolve_od_hurdle(cfg)
+            _od_sum = summarize_overdrive_closed_day(
+                df_closed_today,
+                sys_config=cfg,
+                od_hurdle=od_hurdle_val,
+            )
+            od_eligible = int(_od_sum.get("eligible_count") or 0)
+            od_logged = int(_od_sum.get("logged_count") or 0)
+            od_loss_target = int(_od_sum.get("loss_as_target_count") or 0)
+            od_count = od_logged
+            _vm = _od_sum.get("v_energy_max")
+            od_ve_max = float(_vm) if _vm is not None else None
+            od_sn_closed = int(_od_sum.get("supernova_closed_count") or 0)
+            od_all_loss_sl = bool(_od_sum.get("all_loss_sl_day"))
+        except Exception:
+            if "exit_reason" in df_closed_today.columns:
+                od_count = int(
+                    df_closed_today["exit_reason"]
+                    .astype(str)
+                    .str.contains("오버드라이브", na=False)
+                    .sum()
+                )
+                od_logged = od_count
 
     rnd_n = 0
     if not df_entry_today.empty and "sig_type" in df_entry_today.columns:
@@ -424,7 +548,26 @@ def build_overseer_audit_dossier(
         pass
 
     cfg_regime = _resolve_overseer_config_regime(m, cfg)
-    eff_k = _resolve_overseer_kelly_display(m, cfg, macro.effective_kelly_risk)
+    eff_k = float(macro.effective_kelly_risk)
+    eff_pre = float(
+        getattr(macro, "effective_kelly_pre_overlay", eff_k) or eff_k
+    )
+    k_day_m = float(getattr(macro, "kelly_day_clutch_mult", 1.0) or 1.0)
+    k_nav_m = float(getattr(macro, "kelly_nav_dd_mult", 1.0) or 1.0)
+    k_elast_m = float(getattr(macro, "kelly_elasticity_mult", 1.0) or 1.0)
+    nav_dd_m = getattr(macro, "nav_drawdown_pct", None)
+
+    _mt_extras: Dict[str, Any] = {}
+    try:
+        from meta_treasury_entry_guard import build_meta_treasury_dossier_extras
+
+        _mt_extras = build_meta_treasury_dossier_extras(
+            m,
+            df_entry_today=df_entry_today,
+            sys_config=cfg,
+        )
+    except Exception:
+        _mt_extras = {}
 
     return OverseerAuditDossier(
         as_of_kst=today_str,
@@ -451,14 +594,47 @@ def build_overseer_audit_dossier(
         trades_open=n_open,
         win_rate_today_pct=wr_today,
         overdrive_count_today=od_count,
+        overdrive_eligible_today=od_eligible,
+        overdrive_logged_today=od_logged,
+        overdrive_loss_target_today=od_loss_target,
+        overdrive_hurdle=od_hurdle_val,
+        overdrive_v_energy_max_today=od_ve_max,
+        overdrive_supernova_closed_today=od_sn_closed,
+        overdrive_all_loss_sl_day=od_all_loss_sl,
         rnd_entry_today=rnd_n,
         flow_tag_toxic_count=toxic_count,
         flow_tag_top_penalty_tag=top_penalty_tag,
         flow_tag_penalty_mult=top_penalty_mult,
-        toxic_tag_hits_today=toxic_hits,
+        toxic_tag_hits_today=toxic_entry_hits,
+        toxic_tag_entry_hits_today=toxic_entry_hits,
+        toxic_tag_exit_echo_hits_today=toxic_exit_echo_hits,
+        regime_mismatch_entry_hits_today=regime_mm_entry,
+        regime_mismatch_closed_hits_today=regime_mm_closed,
+        catastrophic_clutch_active=cat_clutch_active,
+        catastrophic_clutch_mult=cat_clutch_mult,
         csv_status=csv_status,
         config_regime_key=cfg_regime,
         effective_kelly_risk=eff_k,
+        effective_kelly_pre_overlay=eff_pre,
+        kelly_day_clutch_mult=k_day_m,
+        kelly_nav_dd_mult=k_nav_m,
+        kelly_elasticity_mult=k_elast_m,
+        nav_drawdown_pct=(
+            float(nav_dd_m) if nav_dd_m is not None else None
+        ),
+        kill_switch_active=bool(_mt_extras.get("kill_switch_active")),
+        treasury_zeroed_groups=int(_mt_extras.get("treasury_zeroed_groups") or 0),
+        treasury_actionable_groups=int(
+            _mt_extras.get("treasury_actionable_groups") or 0
+        ),
+        treasury_zeroed_group_names=tuple(
+            _mt_extras.get("treasury_zeroed_group_names") or ()
+        ),
+        governor_stale_hours=_mt_extras.get("governor_stale_hours"),
+        governor_is_stale=bool(_mt_extras.get("governor_is_stale")),
+        zero_group_entry_hits_today=int(
+            _mt_extras.get("zero_group_entry_hits_today") or 0
+        ),
         predicted_sector_kr=str(
             cfg.get("PREDICTED_NEXT_SECTOR_KR", "—") or "—"
         ),
@@ -565,19 +741,25 @@ def detect_audit_anomalies(
                 ),
             )
 
-    # TOXIC_TAG_LEAK
-    if dossier.flow_tag_toxic_count > 0 and dossier.toxic_tag_hits_today > 0:
+    # TOXIC_TAG_LEAK — 진입 sig_type 태그만(청산 exit flow_tags 제외)
+    if dossier.flow_tag_toxic_count > 0 and dossier.toxic_tag_entry_hits_today > 0:
         tag_esc = html.escape(dossier.flow_tag_top_penalty_tag or "?", quote=False)
         mult = dossier.flow_tag_penalty_mult
         mult_s = f"{mult:.2f}" if mult is not None else "?"
+        exit_echo = dossier.toxic_tag_exit_echo_hits_today
+        exit_note = (
+            f" · 청산 exit echo <b>{exit_echo}</b>건(사후 태그, 누출 아님)"
+            if exit_echo > 0
+            else ""
+        )
         _add(
             "TOXIC_TAG_LEAK",
             "CRITICAL",
-            "독성 태그 페널티인데 동일 태그 계열 거래 발생",
+            "독성 태그 페널티인데 진입 시 동일 태그 계열 거래 발생",
             (
                 f"FLOW_TAG_TOXIC_REGISTRY=<b>{dossier.flow_tag_toxic_count}</b>건 · "
-                f"당일 페널티 태그 매칭 거래 <b>{dossier.toxic_tag_hits_today}</b>건 · "
-                f"예: <b>{tag_esc}</b> mult=<b>{mult_s}</b>."
+                f"당일 <b>진입</b> 페널티 태그 매칭 <b>{dossier.toxic_tag_entry_hits_today}</b>건 · "
+                f"예: <b>{tag_esc}</b> mult=<b>{mult_s}</b>{exit_note}."
             ),
         )
 
@@ -632,23 +814,47 @@ def detect_audit_anomalies(
             ),
         )
 
-    # Blocked sources but entries
-    if dossier.block_trade_sources and n_entry > 0:
-        src = html.escape(",".join(dossier.block_trade_sources[:5]), quote=False)
-        _add(
-            "BLOCK_SOURCE_LEAK",
-            "CRITICAL",
-            "차단 trade_source 설정인데 진입 발생",
-            f"block_trade_sources=[{src}] · 진입 <b>{n_entry}</b>건.",
-        )
+    # Ch.5 — MetaGovernor / Treasury 연동 감사
+    try:
+        from meta_treasury_entry_guard import detect_meta_treasury_audit_anomalies
 
-    # CATASTROPHIC_LOSS_DAY — 표본 충분한데 승률이 사실상 0%인 날 (기존엔 규칙 없이
-    # dossier 수치로만 노출되어 LLM 자유서술에서만 스쳐 지나갔다).
+        for _mt in detect_meta_treasury_audit_anomalies(
+            kill_switch_active=dossier.kill_switch_active,
+            treasury_mode=dossier.meta_treasury_mode,
+            treasury_zeroed_groups=dossier.treasury_zeroed_groups,
+            treasury_actionable_groups=dossier.treasury_actionable_groups,
+            governor_is_stale=dossier.governor_is_stale,
+            governor_hours_since_run=dossier.governor_stale_hours,
+            trades_entry_today=n_entry,
+            trades_closed_today=n_closed,
+            win_rate_today_pct=dossier.win_rate_today_pct,
+            catastrophic_clutch_active=dossier.catastrophic_clutch_active,
+            zero_group_entry_hits=dossier.zero_group_entry_hits_today,
+            block_trade_sources=dossier.block_trade_sources,
+            sys_config=sys_config,
+        ):
+            _add(
+                _mt["code"],
+                _mt["severity"],
+                _mt["headline"],
+                _mt["evidence"],
+            )
+    except Exception:
+        pass
+
+    # CATASTROPHIC_LOSS_DAY — 표본 충분한데 승률이 사실상 0%인 날
     if (
         dossier.win_rate_today_pct is not None
         and n_closed >= th["win_rate_min_n"]
         and dossier.win_rate_today_pct <= th["win_rate_catastrophic_pct"]
     ):
+        mm_e = dossier.regime_mismatch_entry_hits_today
+        mm_c = dossier.regime_mismatch_closed_hits_today
+        clutch_s = (
+            f" · 당일클러치=<b>ON×{dossier.catastrophic_clutch_mult:.2f}</b>"
+            if dossier.catastrophic_clutch_active
+            else " · 당일클러치=<b>OFF</b>(사후감지만)"
+        )
         _add(
             "CATASTROPHIC_LOSS_DAY",
             "CRITICAL",
@@ -657,22 +863,136 @@ def detect_audit_anomalies(
                 f"청산 <b>{n_closed}</b>건 · 승률 <b>{dossier.win_rate_today_pct:.1f}%</b> "
                 f"(임계 ≤<b>{th['win_rate_catastrophic_pct']:.0f}%</b>, 최소표본 "
                 f"<b>{int(th['win_rate_min_n'])}</b>). 국면(META_REGIME_KEY="
-                f"<b>{html.escape(rk_meta, quote=False)}</b>)/전략 미스매치 또는 "
-                "청산 엔진 결함 가능성 — 즉시 원인 규명 필요."
+                f"<b>{html.escape(rk_meta, quote=False)}</b>) · "
+                f"국면미스매치 진입 <b>{mm_e}</b>/청산 <b>{mm_c}</b>{clutch_s}. "
+                "전략 regime_tag 격리·당일 클러치 즉시 점검."
             ),
         )
 
-    # Overdrive sanity
-    if n_closed >= 3 and dossier.overdrive_count_today == 0:
+    # KELLY 탄력성 — Ch.4
+    try:
+        from kelly_elasticity_overlay import detect_kelly_inelastic_anomaly
+
+        _inel = detect_kelly_inelastic_anomaly(
+            effective_pre=dossier.effective_kelly_pre_overlay,
+            effective_post=dossier.effective_kelly_risk,
+            overlay={
+                "elasticity_mult": dossier.kelly_elasticity_mult,
+                "active": dossier.kelly_elasticity_mult < 0.999
+                or dossier.catastrophic_clutch_active,
+                "nav_drawdown_pct": dossier.nav_drawdown_pct,
+            },
+            catastrophic_clutch_active=dossier.catastrophic_clutch_active,
+            sys_config=sys_config,
+        )
+        if _inel:
+            _add(
+                _inel["code"],
+                _inel["severity"],
+                _inel["headline"],
+                _inel["evidence"],
+            )
+    except Exception:
+        pass
+
+    if dossier.kelly_elasticity_mult < 0.999 and dossier.effective_kelly_pre_overlay > 0:
         _add(
-            "OVERDRIVE_SILENT",
+            "KELLY_ELASTICITY_ACTIVE",
             "WARN",
-            "청산 다수인데 오버드라이브 0건",
+            "Kelly 탄력성 오버레이 활성 — 유효 비중 축소 중",
             (
-                f"청산 <b>{n_closed}</b>건 · 오버드라이브 <b>0</b>. "
-                "휩소·로직 비활성·조건 미충족 점검."
+                f"사전 <b>{dossier.effective_kelly_pre_overlay * 100:.2f}%</b> "
+                f"→ 유효 <b>{dossier.effective_kelly_risk * 100:.2f}%</b> "
+                f"(×<b>{dossier.kelly_elasticity_mult:.3f}</b> · "
+                f"당일×{dossier.kelly_day_clutch_mult:.3f} · "
+                f"NAV×{dossier.kelly_nav_dd_mult:.3f}) · "
+                f"NAV dd=<b>{dossier.nav_drawdown_pct or '—'}</b>%."
             ),
         )
+
+    # REGIME_STRATEGY_MISMATCH — BEAR/BULL 불일치 전략이 실제 거래에 참여
+    _mm_total = (
+        dossier.regime_mismatch_entry_hits_today
+        + dossier.regime_mismatch_closed_hits_today
+    )
+    if _mm_total > 0 and (
+        _is_defensive_regime(rk_meta) or _is_bullish_regime(rk_meta)
+    ):
+        sev = "CRITICAL" if _mm_total >= 3 else "WARN"
+        _add(
+            "REGIME_STRATEGY_MISMATCH",
+            sev,
+            "META 국면과 regime_tag 전략 불일치 거래",
+            (
+                f"META=<b>{html.escape(rk_meta, quote=False)}</b> · "
+                f"불일치 진입 <b>{dossier.regime_mismatch_entry_hits_today}</b> · "
+                f"불일치 청산 <b>{dossier.regime_mismatch_closed_hits_today}</b>. "
+                "<i>레지스트리/ledger 추론 격리·MAB overlay 재확인.</i>"
+            ),
+        )
+
+    # Overdrive sanity (Ch.3 — 정밀 규칙, 7/8 전량손절 오탐 제거)
+    try:
+        from overdrive_telemetry import detect_overdrive_audit_anomalies
+
+        _od_sum_audit = {
+            "n_closed": n_closed,
+            "eligible_count": dossier.overdrive_eligible_today,
+            "logged_count": dossier.overdrive_logged_today,
+            "telemetry_gap_count": max(
+                0,
+                dossier.overdrive_eligible_today - dossier.overdrive_logged_today,
+            ),
+            "loss_as_target_count": dossier.overdrive_loss_target_today,
+            "od_hurdle": dossier.overdrive_hurdle,
+            "v_energy_max": dossier.overdrive_v_energy_max_today,
+            "supernova_closed_count": dossier.overdrive_supernova_closed_today,
+            "all_loss_sl_day": dossier.overdrive_all_loss_sl_day,
+        }
+        for _oa in detect_overdrive_audit_anomalies(
+            _od_sum_audit,
+            win_rate_today_pct=dossier.win_rate_today_pct,
+            sys_config=sys_config,
+        ):
+            sev = _oa["severity"]
+            if sev == "INFO":
+                continue
+            _add(
+                _oa["code"],
+                sev,
+                _oa["headline"],
+                _oa["evidence"],
+            )
+        if (
+            n_closed >= 3
+            and dossier.overdrive_eligible_today == 0
+            and (dossier.overdrive_all_loss_sl_day or (
+                dossier.win_rate_today_pct is not None
+                and dossier.win_rate_today_pct <= th["win_rate_catastrophic_pct"]
+            ))
+        ):
+            _add(
+                "OVERDRIVE_EXPECTED_IDLE",
+                "INFO",
+                "오버드라이브 미발동 정상(전량손절·eligible=0)",
+                (
+                    f"청산 <b>{n_closed}</b> · eligible <b>0</b> · "
+                    f"hurdle <b>{dossier.overdrive_hurdle:g}</b> · "
+                    f"v_max <b>{dossier.overdrive_v_energy_max_today or '—'}</b> — "
+                    "익절 가속 경로 미진입으로 0건은 정상."
+                ),
+            )
+    except Exception:
+        if n_closed >= 3 and dossier.overdrive_count_today == 0:
+            _add(
+                "OVERDRIVE_SILENT",
+                "WARN",
+                "청산 다수인데 오버드라이브 0건",
+                (
+                    f"청산 <b>{n_closed}</b>건 · 오버드라이브 <b>0</b>. "
+                    "휩소·로직 비활성·조건 미충족 점검."
+                ),
+            )
 
     # 파생 CSV — DB 손상이 아니면 WARN (자가 치유 대상)
     if "Missing" in dossier.csv_status:
@@ -736,7 +1056,15 @@ def format_overseer_audit_html(
         f"Treasury <b>{html.escape(dossier.meta_treasury_mode, quote=False)}</b>\n"
     )
     out += (
-        f" Kelly: base×global → 유효 <b>{dossier.effective_kelly_risk * 100:.2f}%</b> "
+        f" Kelly: base×global "
+        f"→ 사전 <b>{dossier.effective_kelly_pre_overlay * 100:.2f}%</b> "
+    )
+    if dossier.kelly_elasticity_mult < 0.999:
+        out += (
+            f"×탄력성 <b>{dossier.kelly_elasticity_mult:.3f}</b> "
+        )
+    out += (
+        f"→ 유효 <b>{dossier.effective_kelly_risk * 100:.2f}%</b> "
         f"(META_GLOBAL_KELLY_MULT=<b>{dossier.meta_global_kelly_mult:.3f}</b>)\n"
     )
     out += f" {html.escape(dossier.vix_summary, quote=False)}\n"
@@ -745,9 +1073,22 @@ def format_overseer_audit_html(
             f" notes: <i>{html.escape(dossier.meta_regime_action_notes, quote=False)}</i>\n"
         )
     gov_at = dossier.meta_governor_last_run_at or "—"
+    stale_s = (
+        f" · stale {dossier.governor_stale_hours:.1f}h"
+        if dossier.governor_stale_hours is not None
+        else ""
+    )
+    if dossier.governor_is_stale:
+        stale_s += " ⚠️"
+    ks_s = " · KILL_SWITCH=ON" if dossier.kill_switch_active else ""
+    tz_s = (
+        f" · Treasury zeroed <b>{dossier.treasury_zeroed_groups}</b>"
+        f"/{dossier.treasury_actionable_groups}"
+    )
     out += (
         f" Governor: <code>{html.escape(gov_at, quote=False)}</code> · "
-        f"<b>{html.escape(dossier.meta_governor_last_run_status, quote=False)}</b>\n\n"
+        f"<b>{html.escape(dossier.meta_governor_last_run_status, quote=False)}</b>"
+        f"{stale_s}{ks_s}{tz_s}\n\n"
     )
 
     out += "━━━ <b>[당일 장부 팩트]</b> ━━━\n"
@@ -762,8 +1103,30 @@ def format_overseer_audit_html(
     )
     out += (
         f" 독성태그 레지스트리 <b>{dossier.flow_tag_toxic_count}</b> · "
-        f"당일 페널티 태그 매칭 <b>{dossier.toxic_tag_hits_today}</b>\n"
+        f"당일 진입 페널티 매칭 <b>{dossier.toxic_tag_entry_hits_today}</b>"
     )
+    if dossier.toxic_tag_exit_echo_hits_today > 0:
+        out += (
+            f" · 청산 exit echo <b>{dossier.toxic_tag_exit_echo_hits_today}</b>"
+        )
+    out += (
+        f"\n 국면미스매치 진입 <b>{dossier.regime_mismatch_entry_hits_today}</b>"
+        f" · 청산 <b>{dossier.regime_mismatch_closed_hits_today}</b>"
+    )
+    if dossier.catastrophic_clutch_active:
+        out += (
+            f" · 당일클러치 <b>ON×{dossier.catastrophic_clutch_mult:.2f}</b>"
+        )
+    out += (
+        f"\n 오버드라이브 hurdle <b>{dossier.overdrive_hurdle:g}</b> · "
+        f"eligible <b>{dossier.overdrive_eligible_today}</b> · "
+        f"logged <b>{dossier.overdrive_logged_today}</b>"
+    )
+    if dossier.overdrive_loss_target_today > 0:
+        out += f" · 대상손절 <b>{dossier.overdrive_loss_target_today}</b>"
+    if dossier.overdrive_v_energy_max_today is not None:
+        out += f" · v_max <b>{dossier.overdrive_v_energy_max_today:g}</b>"
+    out += "\n"
     out += f" CSV: {html.escape(dossier.csv_status, quote=False)}\n\n"
     return out
 
@@ -772,6 +1135,16 @@ def build_llm_narrative_prompt(
     dossier: OverseerAuditDossier,
     anomalies: Sequence[AuditAnomaly],
 ) -> str:
+    try:
+        from overseer_llm_narrative import build_llm_narrative_user_prompt
+
+        return build_llm_narrative_user_prompt(
+            dossier,
+            anomalies,
+            dossier_json=_dossier_to_json_dict(dossier),
+        )
+    except Exception:
+        pass
     anom_json = [
         {
             "code": a.code,

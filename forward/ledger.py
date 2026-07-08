@@ -656,15 +656,44 @@ def track_daily_positions(market):
                     ret = round(_xdyn.blend_final_return(_realized_partial, _scaled_done, ret), 2)
                 mfe = round(((new_max - ep) / ep) * 100, 2)
 
-                # ⚡ [P3-5 텔레메트리 결선] is_overdrive_on(v_energy≥od_hurdle → 익절목표 ×1.10)은
-                # 지금까지 dyn_mfe_tp 계산에만 관여하고 exit_reason/flow_tags 어디에도 기록되지
-                # 않아 AI 감사관의 "오버드라이브 건수" 집계가 항상 0으로 죽어 있던 단선을 해소한다.
-                # 청산 판정(do_exit/exit_rsn/ret) 로직 자체는 절대 건드리지 않고, 이미 결정된
-                # exit_rsn 문자열 끝에 사실만 덧붙인다(순수 텔레메트리, 매매 결과 불변).
-                if is_overdrive_on:
-                    exit_rsn = f"{exit_rsn} [오버드라이브가속:v_energy≥{od_hurdle:g}]"
+                # ⚡ [Ch.3 오버드라이브 텔레메트리] exit_reason + flow_tags SSOT
+                _od_base_tp = safe_float_cast(ns_live_params.get("DYNAMIC_MFE_TP", 10.0), 10.0)
+                _od_boost_tp = (
+                    _od_base_tp * 1.10 if is_overdrive_on else _od_base_tp
+                )
+                try:
+                    from overdrive_telemetry import (
+                        append_overdrive_exit_reason,
+                        build_overdrive_exit_tags,
+                    )
+
+                    exit_rsn = append_overdrive_exit_reason(
+                        exit_rsn,
+                        is_overdrive_on=is_overdrive_on,
+                        od_hurdle=od_hurdle,
+                        dyn_mfe_tp_base=_od_base_tp,
+                        dyn_mfe_tp_boosted=_od_boost_tp,
+                    )
+                except Exception:
+                    if is_overdrive_on:
+                        exit_rsn = f"{exit_rsn} [오버드라이브가속:v_energy≥{od_hurdle:g}]"
 
                 tags = []
+                try:
+                    from overdrive_telemetry import build_overdrive_exit_tags
+
+                    tags.extend(
+                        build_overdrive_exit_tags(
+                            is_overdrive_on=is_overdrive_on,
+                            v_energy=row_scalar(r, "v_energy", 0.0),
+                            od_hurdle=od_hurdle,
+                            final_ret=ret,
+                            exit_type=actual_exit_type,
+                            exit_reason=exit_rsn,
+                        )
+                    )
+                except Exception:
+                    pass
                 if _ace_evo is not None and _ace_evo.active and _ace_evo.flow_tag:
                     tags.append(f"#{_ace_evo.flow_tag}")
                     tags.append("#에이스진화_보유연장")
@@ -724,16 +753,29 @@ def track_daily_positions(market):
                 # [Live NAV 동기화] 청산 실현손익을 treasury_state.json NAV 에 즉시 복리 반영.
                 # net_pnl = NAV × 그 거래 켈리(sim_kelly_risk_pct) × (ret/100). 실패해도 장부는 계속.
                 try:
-                    from live_nav_manager import record_closure
+                    from live_nav_manager import is_inverse_trade_sig, record_closure, record_inverse_sleeve_closure
+
                     _kelly = row_scalar(r, 'sim_kelly_risk_pct', 0.0)
                     if _kelly and _kelly > 1.0:
                         _kelly = _kelly / 100.0
-                    record_closure(
-                        market,
-                        final_ret_pct=float(ret),
-                        kelly_pct=(_kelly if _kelly and _kelly > 0 else None),
-                        exit_date=exit_date,
-                    )
+                    _sig = row_scalar(r, 'sig_type', '')
+                    _is_inv = is_inverse_trade_sig(_sig)
+                    if not _is_inv:
+                        record_closure(
+                            market,
+                            final_ret_pct=float(ret),
+                            kelly_pct=(_kelly if _kelly and _kelly > 0 else None),
+                            exit_date=exit_date,
+                        )
+                    else:
+                        _inv = float(row_scalar(r, 'invest_amount', 0.0) or row_scalar(r, 'sim_kelly_invest', 0.0) or 0.0)
+                        record_inverse_sleeve_closure(
+                            market,
+                            final_ret_pct=float(ret),
+                            invest_amount=_inv,
+                            exit_date=exit_date,
+                            sig_type=str(_sig),
+                        )
                 except Exception:
                     pass
 

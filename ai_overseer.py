@@ -3,6 +3,7 @@ import os
 import time
 import random
 import json
+import html
 import sqlite3
 from types import SimpleNamespace
 import pandas as pd
@@ -212,6 +213,10 @@ def run_ai_auditor():
     if (os.environ.get("GEMINI_API_KEY") or "").strip():
         try:
             from llm_gemini_core import LlmCallSpec, generate_text_sync
+            from overseer_llm_narrative import (
+                format_overseer_llm_html_section,
+                process_overseer_llm_narrative,
+            )
 
             user_prompt = build_llm_narrative_prompt(dossier, anomalies)
             spec = LlmCallSpec(
@@ -224,13 +229,28 @@ def run_ai_auditor():
             )
             ai_res = generate_text_sync(spec, max_wait_sec=180.0)
             ai_text = (ai_res.text or "").strip()
-            if ai_text and GEMINI_RAW_FALLBACK_PREFIX not in ai_text:
-                msg += "━━━ <b>[LLM 해석 · Ruthless QA]</b> ━━━\n"
-                msg += ai_text + "\n"
-            elif ai_text:
-                msg += f"\n<i>{ai_text}</i>\n"
+            narr = process_overseer_llm_narrative(
+                dossier,
+                anomalies,
+                ai_text,
+                api_fallback_prefix=GEMINI_RAW_FALLBACK_PREFIX,
+            )
+            msg += format_overseer_llm_html_section(narr)
         except Exception as e:
-            msg += f"\n<i>LLM 해석 스킵: {e}</i>\n"
+            try:
+                from overseer_llm_narrative import (
+                    build_deterministic_narrative,
+                    format_overseer_llm_html_section,
+                    LlmNarrativeResult,
+                )
+
+                det = build_deterministic_narrative(dossier, anomalies)
+                msg += format_overseer_llm_html_section(
+                    LlmNarrativeResult(det, "deterministic", True, ("exception",))
+                )
+                msg += f"<i>LLM 예외: {html.escape(str(e), quote=False)}</i>\n"
+            except Exception:
+                msg += f"\n<i>LLM 해석 스킵: {e}</i>\n"
     else:
         msg += "\n<i>LLM 비활성(GEMINI_API_KEY 없음) — 규칙 감사만 발송.</i>\n"
 

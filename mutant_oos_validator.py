@@ -5,6 +5,11 @@ Mutant OOS Validator — 합성 인큐베이터 챔피언의 실데이터(읽기
 - 입력: 동일 디렉터리 mutant_hall_of_fame.json (hall_of_fame)
 - 출력: validated_live_mutants.json (합격 전략만)
 - DB: market_data.sqlite 는 URI mode=ro + PRAGMA query_only=ON 만 사용.
+
+[Architect · Regime Specialization]
+- Hard Block 폐기: BEAR/BLACK_SWAN synthetic fail → Drop 금지.
+- Item 2 Regime Tagging: BULL/BEAR/SIDEWAYS 합성 채점 → BULL_ONLY | BEAR_ONLY | ALL_WEATHER.
+- 승격 pass = 실데이터 OOS; regime_tag 는 LIVE 레지스트리 메타로 보존(Item 3 MAB 격리 입력).
 """
 from __future__ import annotations
 
@@ -25,9 +30,43 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 HALL_OF_FAME_JSON = os.path.join(_THIS_DIR, "mutant_hall_of_fame.json")
 VALIDATED_JSON = os.path.join(_THIS_DIR, "validated_live_mutants.json")
 TELEGRAM_ERROR_LOG = os.path.join(_THIS_DIR, "telegram_error_log.txt")
+SYNTHETIC_DB = os.path.join(_THIS_DIR, "synthetic_market.sqlite")
 
 # [Mission 1] 361행 NameError 수정: market_db_paths 의 단일 경로 SSOT 를 모듈 상수로 노출.
 MARKET_DB = market_db_read_path()
+
+# ---------------------------------------------------------------------------
+# Regime Specialization SSOT — Hard Block 폐기 (Architect P0)
+# ---------------------------------------------------------------------------
+# 합성 BEAR/BLACK_SWAN/방어 MDD 미달로 Mutant Drop 금지. BULL 전문가는 하락장 약점으로 죽지 않음.
+REGIME_HARD_BLOCK_ENABLED = False  # SSOT: 항상 False — env 로 재활성화 불가(진화 퇴행 방지).
+REGIME_STRESS_BUCKETS: dict[str, frozenset[str]] = {
+    "BULL": frozenset({"BULL"}),
+    "BEAR": frozenset({"BEAR", "BLACK_SWAN", "HIGH_VOL", "CRASH"}),
+    "SIDEWAYS": frozenset({"SIDEWAYS"}),
+}
+# 레거시 Hard Block 임계(deprecated) — audit 리포트용만, pass 에 미반영.
+DEPRECATED_BEAR_MIN_EXCESS_ALPHA = float(
+    os.environ.get("OOS_BEAR_MIN_EXCESS_ALPHA", "-0.001") or "-0.001"
+)
+DEPRECATED_BEAR_MAX_MDD_PCT = float(
+    os.environ.get("OOS_BEAR_MAX_MDD_PCT", "-25") or "-25"
+)
+SYNTHETIC_REGIME_MIN_BARS = 40
+SYNTHETIC_REGIME_MAX_TICKERS = 30
+
+# ---------------------------------------------------------------------------
+# Regime Specialization Tagging (Item 2)
+# ---------------------------------------------------------------------------
+REGIME_TAG_MIN_SIGNALS = int(os.environ.get("OOS_REGIME_TAG_MIN_SIGNALS", "15") or "15")
+BULL_STRONG_EXCESS_ALPHA = float(os.environ.get("OOS_BULL_STRONG_EXCESS", "0.00025") or "0.00025")
+BULL_STRONG_MIN_WIN_RATE = float(os.environ.get("OOS_BULL_STRONG_WR", "0.52") or "0.52")
+BEAR_STRONG_EXCESS_ALPHA = float(os.environ.get("OOS_BEAR_STRONG_EXCESS", "0.00015") or "0.00015")
+BEAR_STRONG_MIN_WIN_RATE = float(os.environ.get("OOS_BEAR_STRONG_WR", "0.51") or "0.51")
+BEAR_STRONG_MIN_AVG_RETURN = float(os.environ.get("OOS_BEAR_STRONG_AVG_RET", "0.00005") or "0.00005")
+REGIME_WEAK_EXCESS_ALPHA = float(os.environ.get("OOS_REGIME_WEAK_EXCESS", "-0.00005") or "-0.00005")
+REGIME_WEAK_MAX_WIN_RATE = float(os.environ.get("OOS_REGIME_WEAK_WR", "0.49") or "0.49")
+VALID_REGIME_TAGS = frozenset({"BULL_ONLY", "BEAR_ONLY", "ALL_WEATHER", "UNCLASSIFIED"})
 
 # 최근 약 6개월 영업일(여유)
 OOS_MIN_BARS = 130
@@ -199,6 +238,349 @@ def _panel_baseline_drift(frames_by_key: dict[str, pd.DataFrame]) -> float:
     return float(np.mean(np.array(allr))) if allr else 0.0
 
 
+def regime_hard_block_enabled() -> bool:
+    """Hard Block SSOT — Architect 정책상 항상 False (OOS_REGIME_HARD_BLOCK env 무시)."""
+    return bool(REGIME_HARD_BLOCK_ENABLED)
+
+
+def _mdd_pct_from_returns(rets: Sequence[float]) -> float:
+    if not rets:
+        return 0.0
+    arr = np.asarray(rets, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return 0.0
+    equity = np.cumprod(1.0 + arr)
+    peak = np.maximum.accumulate(equity)
+    dd = equity / np.maximum(peak, 1e-12) - 1.0
+    return float(np.min(dd) * 100.0)
+
+
+def legacy_regime_hard_block_reason(stress_audit: Optional[Mapping[str, Any]]) -> str:
+    """
+    레거시 BEAR/BLACK_SWAN Hard Block 이 Drop 했을 reason — audit 전용.
+    REGIME_HARD_BLOCK_ENABLED=False 이므로 pass/승격에 사용하지 않는다.
+    """
+    audit = stress_audit if isinstance(stress_audit, dict) else {}
+    bear = audit.get("BEAR")
+    if not isinstance(bear, dict):
+        return ""
+    n_sig = int(bear.get("n_signals") or 0)
+    if n_sig < 10:
+        return ""
+    try:
+        excess = float(bear.get("excess_alpha") or 0.0)
+    except (TypeError, ValueError):
+        excess = 0.0
+    try:
+        mdd = float(bear.get("mdd_pct") or 0.0)
+    except (TypeError, ValueError):
+        mdd = 0.0
+    if excess < DEPRECATED_BEAR_MIN_EXCESS_ALPHA:
+        return "legacy_bear_excess_alpha_fail"
+    if mdd < DEPRECATED_BEAR_MAX_MDD_PCT:
+        return "legacy_bear_mdd_fail"
+    return ""
+
+
+def apply_regime_hard_block(stress_audit: Optional[Mapping[str, Any]]) -> tuple[bool, str]:
+    """
+    국면 stress Hard Block — Architect 정책상 무효(no-op).
+    반환 (blocked, reason): blocked 는 항상 False.
+    """
+    if not regime_hard_block_enabled():
+        return False, ""
+    reason = legacy_regime_hard_block_reason(stress_audit)
+    if reason:
+        return True, reason
+    return False, ""
+
+
+def resolve_oos_promotion_pass(
+    *,
+    excess_alpha: float,
+    oos_wr: float,
+    n_sig: int,
+    eval_failed: bool = False,
+    stress_audit: Optional[Mapping[str, Any]] = None,
+) -> tuple[bool, str]:
+    """
+    실데이터 OOS 승격 게이트 — 국면 stress 와 무관.
+    eval_error / no_signals 는 호출부에서 선처리; 여기서는 수치 게이트만.
+    """
+    if eval_failed:
+        return False, "eval_error"
+    if n_sig <= 0:
+        return False, "no_signals_on_real_panel"
+    passed = (
+        excess_alpha > PROMOTE_MIN_EXCESS_ALPHA
+        and oos_wr > PROMOTE_MIN_WIN_RATE
+        and n_sig >= PROMOTE_MIN_SIGNALS
+    )
+    if not passed:
+        return False, "real_panel_threshold"
+    blocked, block_reason = apply_regime_hard_block(stress_audit)
+    if blocked:
+        return False, block_reason or "regime_hard_block"
+    return True, ""
+
+
+def _load_synthetic_regime_frames(
+    db_path: str = SYNTHETIC_DB,
+    *,
+    max_tickers: int = SYNTHETIC_REGIME_MAX_TICKERS,
+) -> dict[str, dict[str, pd.DataFrame]]:
+    """
+    synthetic_ohlcv → 국면 버킷(BULL/BEAR/SIDEWAYS)별 ticker OHLCV 패널.
+    Hard Block 아님 — Regime Tagging(Item 2) 입력용 audit.
+    """
+    out: dict[str, dict[str, pd.DataFrame]] = {k: {} for k in REGIME_STRESS_BUCKETS}
+    if not os.path.isfile(db_path):
+        return out
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False) as conn:
+            raw = pd.read_sql(
+                "SELECT ticker, date, open, high, low, close, volume, regime "
+                "FROM synthetic_ohlcv ORDER BY ticker, date",
+                conn,
+            )
+    except Exception:
+        return out
+    if raw.empty or "regime" not in raw.columns:
+        return out
+
+    raw["date"] = pd.to_datetime(raw["date"], errors="coerce")
+    raw = raw.dropna(subset=["date"])
+    tickers = sorted(raw["ticker"].dropna().unique().tolist())[: max(1, int(max_tickers))]
+
+    for ticker in tickers:
+        sub = raw[raw["ticker"] == ticker].copy()
+        if sub.empty:
+            continue
+        for bucket, regime_set in REGIME_STRESS_BUCKETS.items():
+            blk = sub[sub["regime"].astype(str).str.upper().isin(regime_set)].copy()
+            if len(blk) < SYNTHETIC_REGIME_MIN_BARS:
+                continue
+            blk = blk.sort_values("date")
+            df = pd.DataFrame(
+                {
+                    "Date": blk["date"],
+                    "Open": pd.to_numeric(blk["open"], errors="coerce"),
+                    "High": pd.to_numeric(blk["high"], errors="coerce"),
+                    "Low": pd.to_numeric(blk["low"], errors="coerce"),
+                    "Close": pd.to_numeric(blk["close"], errors="coerce"),
+                    "Volume": pd.to_numeric(blk["volume"], errors="coerce"),
+                }
+            )
+            df = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
+            if len(df) >= SYNTHETIC_REGIME_MIN_BARS:
+                out[bucket][str(ticker)] = df.reset_index(drop=True)
+    return out
+
+
+def evaluate_synthetic_regime_stress_audit(
+    expr: str,
+    regime_frames: Optional[Mapping[str, Mapping[str, pd.DataFrame]]] = None,
+) -> dict[str, Any]:
+    """
+    합성 DB 국면별 stress 채점 — audit-only (pass/승격 미연동).
+    """
+    frames = regime_frames if regime_frames is not None else _load_synthetic_regime_frames()
+    audit: dict[str, Any] = {}
+    for bucket in REGIME_STRESS_BUCKETS:
+        panel = frames.get(bucket) if isinstance(frames, dict) else None
+        if not isinstance(panel, dict) or not panel:
+            audit[bucket] = {
+                "n_signals": 0,
+                "win_rate": None,
+                "avg_return": None,
+                "excess_alpha": None,
+                "mdd_pct": None,
+                "n_tickers": 0,
+                "audit_only": True,
+            }
+            continue
+        all_r: list[float] = []
+        all_win: list[float] = []
+        drift_r: list[float] = []
+        for raw in panel.values():
+            c = pd.to_numeric(raw["Close"], errors="coerce").astype(np.float64)
+            fwd = (c.shift(-1) / c - 1.0).to_numpy()
+            fwd = fwd[np.isfinite(fwd)]
+            if fwd.size:
+                drift_r.extend(fwd.tolist())
+            ev = _prepare_eval_frame(raw)
+            rv = _oos_forward_returns_at_signals(expr, ev)
+            if rv is None or rv.size == 0:
+                continue
+            all_r.extend(rv.tolist())
+            all_win.extend((rv > 0.0).astype(float).tolist())
+        if not all_r:
+            audit[bucket] = {
+                "n_signals": 0,
+                "win_rate": None,
+                "avg_return": None,
+                "excess_alpha": None,
+                "mdd_pct": None,
+                "n_tickers": len(panel),
+                "audit_only": True,
+            }
+            continue
+        baseline = float(np.mean(np.array(drift_r))) if drift_r else float(np.mean(np.array(all_r)))
+        oos_wr = float(np.mean(np.array(all_win)))
+        oos_ar = float(np.mean(np.array(all_r)))
+        audit[bucket] = {
+            "n_signals": int(len(all_r)),
+            "win_rate": round(oos_wr, 6),
+            "avg_return": round(oos_ar, 8),
+            "excess_alpha": round(oos_ar - baseline, 8),
+            "mdd_pct": round(_mdd_pct_from_returns(all_r), 4),
+            "n_tickers": len(panel),
+            "audit_only": True,
+        }
+    audit["_hard_block_disabled"] = not regime_hard_block_enabled()
+    audit["_legacy_would_block"] = legacy_regime_hard_block_reason(audit)
+    tag, tag_meta = classify_regime_specialization_tag(audit)
+    audit["_regime_tag"] = tag
+    audit["_regime_tag_meta"] = tag_meta
+    return audit
+
+
+def _float_metric(val: Any) -> Optional[float]:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if np.isfinite(f) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _bucket_regime_profile(
+    stress_audit: Mapping[str, Any],
+    bucket: str,
+) -> dict[str, Any]:
+    """국면 버킷(BULL/BEAR/SIDEWAYS) 강약 프로필 — Tagging 입력."""
+    raw = stress_audit.get(bucket) if isinstance(stress_audit, dict) else None
+    blk = raw if isinstance(raw, dict) else {}
+    n_sig = int(blk.get("n_signals") or 0)
+    excess = _float_metric(blk.get("excess_alpha"))
+    wr = _float_metric(blk.get("win_rate"))
+    avg_ret = _float_metric(blk.get("avg_return"))
+    mdd = _float_metric(blk.get("mdd_pct"))
+
+    base = {
+        "bucket": bucket,
+        "n_signals": n_sig,
+        "excess_alpha": excess,
+        "win_rate": wr,
+        "avg_return": avg_ret,
+        "mdd_pct": mdd,
+    }
+    if n_sig < REGIME_TAG_MIN_SIGNALS or excess is None or wr is None:
+        return {**base, "profile": "insufficient"}
+
+    b = str(bucket).upper()
+    if b == "BULL":
+        strong = excess >= BULL_STRONG_EXCESS_ALPHA and wr >= BULL_STRONG_MIN_WIN_RATE
+        weak = excess <= REGIME_WEAK_EXCESS_ALPHA or wr <= REGIME_WEAK_MAX_WIN_RATE
+    elif b == "BEAR":
+        strong = (
+            (excess >= BEAR_STRONG_EXCESS_ALPHA and wr >= BEAR_STRONG_MIN_WIN_RATE)
+            or (
+                avg_ret is not None
+                and avg_ret >= BEAR_STRONG_MIN_AVG_RETURN
+                and excess > REGIME_WEAK_EXCESS_ALPHA
+            )
+        )
+        weak = excess <= REGIME_WEAK_EXCESS_ALPHA or wr <= REGIME_WEAK_MAX_WIN_RATE
+    else:  # SIDEWAYS
+        strong = (
+            excess >= BULL_STRONG_EXCESS_ALPHA * 0.5
+            and wr >= (BULL_STRONG_MIN_WIN_RATE - 0.02)
+        )
+        weak = excess <= REGIME_WEAK_EXCESS_ALPHA or wr <= REGIME_WEAK_MAX_WIN_RATE
+
+    if strong and not weak:
+        profile = "strong"
+    elif weak and not strong:
+        profile = "weak"
+    elif strong and weak:
+        profile = "strong" if excess >= 0.0 else "weak"
+    else:
+        profile = "neutral"
+    return {**base, "profile": profile}
+
+
+def classify_regime_specialization_tag(
+    stress_audit: Optional[Mapping[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    """
+    합성 국면별 stress → Regime Specialization Tag.
+
+    BULL_ONLY  — 상승장 폭발 · 하락장 방어 약함
+    BEAR_ONLY  — 상승장 약함 · 하락장 숏/방어 절대수익
+    ALL_WEATHER — BULL·BEAR 모두 strong
+    UNCLASSIFIED — 전문가 패턴 미확정(표본 부족·중립)
+    """
+    audit = stress_audit if isinstance(stress_audit, dict) else {}
+    bull = _bucket_regime_profile(audit, "BULL")
+    bear = _bucket_regime_profile(audit, "BEAR")
+    side = _bucket_regime_profile(audit, "SIDEWAYS")
+    bp, brp, sp = bull["profile"], bear["profile"], side["profile"]
+
+    if bp == "strong" and brp == "strong":
+        tag, reason = "ALL_WEATHER", "bull_and_bear_strong"
+    elif bp == "strong" and brp in ("weak", "insufficient", "neutral"):
+        tag, reason = "BULL_ONLY", "bull_strong_bear_not"
+    elif brp == "strong" and bp in ("weak", "insufficient", "neutral"):
+        tag, reason = "BEAR_ONLY", "bear_strong_bull_not"
+    elif sp == "strong" and bp != "strong" and brp != "strong":
+        tag, reason = "UNCLASSIFIED", "sideways_only_no_bull_bear_edge"
+    else:
+        tag, reason = "UNCLASSIFIED", "no_clear_specialist_pattern"
+
+    meta = {
+        "tag": tag,
+        "reason": reason,
+        "bull_profile": bp,
+        "bear_profile": brp,
+        "sideways_profile": sp,
+        "bull": bull,
+        "bear": bear,
+        "sideways": side,
+        "thresholds": {
+            "min_signals": REGIME_TAG_MIN_SIGNALS,
+            "bull_strong_excess": BULL_STRONG_EXCESS_ALPHA,
+            "bull_strong_wr": BULL_STRONG_MIN_WIN_RATE,
+            "bear_strong_excess": BEAR_STRONG_EXCESS_ALPHA,
+            "bear_strong_wr": BEAR_STRONG_MIN_WIN_RATE,
+            "bear_strong_avg_return": BEAR_STRONG_MIN_AVG_RETURN,
+            "weak_excess": REGIME_WEAK_EXCESS_ALPHA,
+            "weak_wr": REGIME_WEAK_MAX_WIN_RATE,
+        },
+    }
+    if tag not in VALID_REGIME_TAGS:
+        tag = "UNCLASSIFIED"
+    return tag, meta
+
+
+def normalize_regime_tag(tag: Any) -> str:
+    """LIVE/MAB 소비용 SSOT 정규화."""
+    t = str(tag or "UNCLASSIFIED").strip().upper()
+    return t if t in VALID_REGIME_TAGS else "UNCLASSIFIED"
+
+
+def attach_regime_tag_fields(rec: dict[str, Any], stress_audit: Mapping[str, Any]) -> None:
+    """summary/promoted dict 에 regime_tag + meta in-place."""
+    tag = stress_audit.get("_regime_tag") if isinstance(stress_audit, dict) else None
+    meta = stress_audit.get("_regime_tag_meta") if isinstance(stress_audit, dict) else None
+    if not tag:
+        tag, meta = classify_regime_specialization_tag(stress_audit)
+    rec["regime_tag"] = normalize_regime_tag(tag)
+    rec["regime_tag_meta"] = meta if isinstance(meta, dict) else {}
+
+
 def _eval_engine() -> str:
     try:
         import numexpr  # noqa: F401
@@ -308,6 +690,8 @@ def run_oos_validation(
 
     baseline = _panel_baseline_drift(frames_by_key)
 
+    synthetic_regime_frames = _load_synthetic_regime_frames()
+
     promoted: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
 
@@ -330,32 +714,42 @@ def run_oos_validation(
             all_r.extend(rv.tolist())
             all_win.extend((rv > 0.0).astype(float).tolist())
 
+        stress_audit = evaluate_synthetic_regime_stress_audit(
+            expr, regime_frames=synthetic_regime_frames
+        )
+
         if eval_failed:
-            summaries.append(
-                {
-                    "name": name,
-                    "expr": expr,
-                    "oos_win_rate": None,
-                    "oos_avg_return": None,
-                    "n_signals": 0,
-                    "pass": False,
-                    "reason": "eval_error",
-                }
-            )
+            rec_fail = {
+                "name": name,
+                "expr": expr,
+                "oos_win_rate": None,
+                "oos_avg_return": None,
+                "n_signals": 0,
+                "pass": False,
+                "reason": "eval_error",
+                "regime_stress_audit": stress_audit,
+                "regime_hard_block_applied": False,
+                "legacy_regime_block_reason": legacy_regime_hard_block_reason(stress_audit),
+            }
+            attach_regime_tag_fields(rec_fail, stress_audit)
+            summaries.append(rec_fail)
             continue
 
         if not all_r:
-            summaries.append(
-                {
-                    "name": name,
-                    "expr": expr,
-                    "oos_win_rate": None,
-                    "oos_avg_return": None,
-                    "n_signals": 0,
-                    "pass": False,
-                    "reason": "no_signals_on_real_panel",
-                }
-            )
+            rec_empty = {
+                "name": name,
+                "expr": expr,
+                "oos_win_rate": None,
+                "oos_avg_return": None,
+                "n_signals": 0,
+                "pass": False,
+                "reason": "no_signals_on_real_panel",
+                "regime_stress_audit": stress_audit,
+                "regime_hard_block_applied": False,
+                "legacy_regime_block_reason": legacy_regime_hard_block_reason(stress_audit),
+            }
+            attach_regime_tag_fields(rec_empty, stress_audit)
+            summaries.append(rec_empty)
             continue
 
         oos_wr = float(np.mean(np.array(all_win)))
@@ -370,10 +764,12 @@ def run_oos_validation(
         except Exception:
             oos_sharpe = 0.0
         # [Mission 5] 합격 = 실데이터 베이스라인 대비 초과 알파 + 최소 승률 + 최소 표본.
-        passed = (
-            excess_alpha > PROMOTE_MIN_EXCESS_ALPHA
-            and oos_wr > PROMOTE_MIN_WIN_RATE
-            and n_sig >= PROMOTE_MIN_SIGNALS
+        # 국면 stress(BEAR/BLACK_SWAN) 는 audit-only — Hard Block 미적용.
+        passed, pass_reason = resolve_oos_promotion_pass(
+            excess_alpha=excess_alpha,
+            oos_wr=oos_wr,
+            n_sig=n_sig,
+            stress_audit=stress_audit,
         )
         rec = {
             "name": name,
@@ -390,7 +786,12 @@ def run_oos_validation(
             "n_signals": n_sig,
             "n_tickers_used": len(frames_by_key),
             "pass": passed,
+            "reason": pass_reason if not passed else "",
+            "regime_stress_audit": stress_audit,
+            "regime_hard_block_applied": False,
+            "legacy_regime_block_reason": legacy_regime_hard_block_reason(stress_audit),
         }
+        attach_regime_tag_fields(rec, stress_audit)
         summaries.append(rec)
 
     # [P2-1] 다중검정 보정(Deflated Sharpe) — 전 챔피언 OOS 수익률을 '시도(trials)'로 보고
@@ -451,6 +852,22 @@ def run_oos_validation(
         "data_source": "market_data.sqlite_ro" if os.path.exists(MARKET_DB) else "fdr_fallback",
         "n_tickers_panel": len(frames_by_key),
         "baseline_drift": round(baseline, 8),
+        "regime_specialization_policy": {
+            "hard_block_enabled": regime_hard_block_enabled(),
+            "stress_audit_only": True,
+            "tagging_enabled": True,
+            "valid_tags": sorted(VALID_REGIME_TAGS),
+            "buckets": list(REGIME_STRESS_BUCKETS.keys()),
+            "tag_thresholds": {
+                "min_signals": REGIME_TAG_MIN_SIGNALS,
+                "bull_strong_excess": BULL_STRONG_EXCESS_ALPHA,
+                "bull_strong_wr": BULL_STRONG_MIN_WIN_RATE,
+                "bear_strong_excess": BEAR_STRONG_EXCESS_ALPHA,
+                "bear_strong_wr": BEAR_STRONG_MIN_WIN_RATE,
+                "bear_strong_avg_return": BEAR_STRONG_MIN_AVG_RETURN,
+            },
+            "note": "BEAR fail does not drop; regime_tag preserved on LIVE promotion",
+        },
         "thresholds": {
             "min_win_rate": PROMOTE_MIN_WIN_RATE,
             "min_excess_alpha": PROMOTE_MIN_EXCESS_ALPHA,
@@ -485,12 +902,17 @@ def _format_telegram_top1(payload: dict[str, Any]) -> str:
         )
     n_promo = len(payload.get("promoted") or [])
     base_pct = float(payload.get("baseline_drift", 0.0)) * 100.0
+    tag_line = ""
+    rtag = top.get("regime_tag")
+    if rtag:
+        tag_line = f"\n· 국면 태그: <b>{rtag}</b> ({(top.get('regime_tag_meta') or {}).get('reason', '')})"
     return (
         "🛡️ [실전 OOS 검증 완료]\n"
         f"{body}\n"
         f"· 시장 베이스라인: {base_pct:+.4f}% (이걸 이겨야 합격)\n"
         f"· 합격 승격 전략 수: {n_promo}\n"
         f"· 패널 종목 수: {payload.get('n_tickers_panel', 0)}"
+        f"{tag_line}"
     )
 
 

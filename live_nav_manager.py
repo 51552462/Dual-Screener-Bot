@@ -19,8 +19,8 @@ import json
 import os
 import tempfile
 import threading
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 try:
     from factory_data_paths import factory_data_dir
@@ -49,6 +49,11 @@ DEFAULT_EFFECTIVE_KELLY = 0.02   # 켈리 미해결 시 보수적 기본(=sim_ke
 MIN_EFFECTIVE_KELLY = 0.001
 MAX_EFFECTIVE_KELLY = 0.50
 
+# Axis 2 — Inverse Sleeve RL (Self-Evolution Hedge Engine)
+INVERSE_SLEEVE_LOOKBACK_DAYS = 5
+INVERSE_SLEEVE_MAX_EVENTS = 48
+INVERSE_SIG_MARKER_NAV = "[INVERSE_ETF]"
+
 _LOCK = threading.RLock()
 
 
@@ -69,6 +74,14 @@ def treasury_state_path() -> str:
     return os.path.join(factory_data_dir(), TREASURY_STATE_FILENAME)
 
 
+def _empty_inverse_sleeve_state() -> Dict[str, Any]:
+    """Axis 2 — 인버스 슬리브 rolling 실현 PnL (테일 펀드 격리, 롱 NAV 와 분리)."""
+    return {
+        "events": [],
+        "updated_at": None,
+    }
+
+
 def _empty_market_state(market: str) -> Dict[str, Any]:
     base = base_capital_for(market)
     cur = currency_for(market)
@@ -80,6 +93,7 @@ def _empty_market_state(market: str) -> Dict[str, Any]:
         "mdd_pct": 0.0,
         "n_closed": 0,
         "last_exit_date": None,
+        "inverse_sleeve": _empty_inverse_sleeve_state(),
         "updated_at": None,
     }
 
@@ -110,6 +124,8 @@ def load_treasury_state() -> Dict[str, Any]:
             else:
                 base = _empty_market_state(mkt)
                 base.update({k: v for k, v in data[mkt].items() if v is not None})
+                if not isinstance(base.get("inverse_sleeve"), dict):
+                    base["inverse_sleeve"] = _empty_inverse_sleeve_state()
                 data[mkt] = base
         return data
     except (OSError, json.JSONDecodeError, ValueError):
@@ -192,7 +208,21 @@ def resolve_effective_kelly(
     eff = base * g
     if eff <= 0.0:
         eff = DEFAULT_EFFECTIVE_KELLY
-    return float(min(MAX_EFFECTIVE_KELLY, max(MIN_EFFECTIVE_KELLY, eff)))
+    eff = float(min(MAX_EFFECTIVE_KELLY, max(MIN_EFFECTIVE_KELLY, eff)))
+    try:
+        from kelly_elasticity_overlay import (
+            apply_elasticity_to_effective_kelly,
+            evaluate_kelly_elasticity_overlay,
+        )
+
+        _ov = evaluate_kelly_elasticity_overlay(
+            sys_config=cfg,
+            market=market,
+        )
+        eff, _ = apply_elasticity_to_effective_kelly(eff, _ov)
+    except Exception:
+        pass
+    return float(eff)
 
 
 def live_notional(
@@ -318,3 +348,158 @@ def format_currency(market: str, value: float, *, with_symbol: bool = True) -> s
     if not with_symbol:
         return body
     return f"{cur['symbol']}{body}"
+
+
+def _prune_inverse_sleeve_events(
+    events: List[Dict[str, Any]],
+    *,
+    lookback_days: int = INVERSE_SLEEVE_LOOKBACK_DAYS,
+) -> List[Dict[str, Any]]:
+    cutoff = (datetime.now() - timedelta(days=int(lookback_days))).strftime("%Y-%m-%d")
+    kept: List[Dict[str, Any]] = []
+    for ev in events or []:
+        if not isinstance(ev, dict):
+            continue
+        d = str(ev.get("exit_date") or "")[:10]
+        if d and d >= cutoff:
+            kept.append(ev)
+    if len(kept) > INVERSE_SLEEVE_MAX_EVENTS:
+        kept = kept[-INVERSE_SLEEVE_MAX_EVENTS:]
+    return kept
+
+
+def record_inverse_sleeve_closure(
+    market: str,
+    *,
+    final_ret_pct: float,
+    invest_amount: float,
+    exit_date: Optional[str] = None,
+    sig_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Axis 2 — 인버스 슬리브 청산 1건을 treasury_state rolling log 에 기록.
+
+    롱 NAV(record_closure)와 분리 — 테일 펀드 인버스 실현손익만 RL 입력으로 축적.
+    """
+    mkt = normalize_market(market)
+    try:
+        ret = float(final_ret_pct)
+    except (TypeError, ValueError):
+        ret = 0.0
+    try:
+        inv = float(invest_amount)
+    except (TypeError, ValueError):
+        inv = 0.0
+    if inv <= 0:
+        inv = 0.0
+    net_pnl_abs = inv * (ret / 100.0)
+    exit_d = str(exit_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    event = {
+        "exit_date": exit_d,
+        "final_ret_pct": round(ret, 4),
+        "invest_amount": round(inv, 2),
+        "net_pnl_abs": round(net_pnl_abs, 2),
+        "sig_type": str(sig_type or "")[:200],
+    }
+    with _LOCK:
+        state = load_treasury_state()
+        mst = dict(state.get(mkt, _empty_market_state(mkt)))
+        sleeve = mst.get("inverse_sleeve")
+        if not isinstance(sleeve, dict):
+            sleeve = _empty_inverse_sleeve_state()
+        events = list(sleeve.get("events") or [])
+        events.append(event)
+        events = _prune_inverse_sleeve_events(events)
+        sleeve = dict(sleeve)
+        sleeve["events"] = events
+        sleeve["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        mst["inverse_sleeve"] = sleeve
+        state[mkt] = mst
+        save_treasury_state(state)
+        return sleeve
+
+
+def get_inverse_sleeve_rl_stats(
+    market: str,
+    *,
+    lookback_days: int = INVERSE_SLEEVE_LOOKBACK_DAYS,
+) -> Dict[str, Any]:
+    """
+    Axis 2 — live_nav_manager rolling log → RL 판정용 통계 (읽기 전용).
+
+    반환: n_closed, weighted_ret_pct, total_invest, total_net_pnl_abs, verdict
+    """
+    mkt = normalize_market(market)
+    out: Dict[str, Any] = {
+        "market": mkt,
+        "source": "live_nav_manager",
+        "lookback_days": int(lookback_days),
+        "n_closed": 0,
+        "weighted_ret_pct": 0.0,
+        "total_invest": 0.0,
+        "total_net_pnl_abs": 0.0,
+        "verdict": "insufficient",
+    }
+    st = get_market_state(mkt)
+    sleeve = st.get("inverse_sleeve") if isinstance(st.get("inverse_sleeve"), dict) else {}
+    events = _prune_inverse_sleeve_events(
+        list(sleeve.get("events") or []),
+        lookback_days=lookback_days,
+    )
+    if not events:
+        return out
+
+    weighted_sum = 0.0
+    invest_sum = 0.0
+    pnl_sum = 0.0
+    for ev in events:
+        try:
+            ret = float(ev.get("final_ret_pct", 0.0) or 0.0)
+            inv = float(ev.get("invest_amount", 0.0) or 0.0)
+            pnl = float(ev.get("net_pnl_abs", inv * ret / 100.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if inv <= 0:
+            inv = 1.0
+        weighted_sum += ret * inv
+        invest_sum += inv
+        pnl_sum += pnl
+
+    out["n_closed"] = len(events)
+    out["total_invest"] = round(invest_sum, 2)
+    out["total_net_pnl_abs"] = round(pnl_sum, 2)
+    if invest_sum <= 0:
+        return out
+
+    wret = weighted_sum / invest_sum
+    out["weighted_ret_pct"] = round(float(wret), 4)
+    if wret > 1e-9:
+        out["verdict"] = "profitable"
+    else:
+        out["verdict"] = "whipsaw"
+    return out
+
+
+def reset_inverse_sleeve_rl(market: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Axis 3 — V-Recovery RL amnesia: rolling inverse sleeve 이벤트 전량 삭제.
+
+    market=None 이면 KR/US 모두 reset.
+    """
+    with _LOCK:
+        state = load_treasury_state()
+        targets = [normalize_market(market)] if market else ["KR", "US"]
+        cleared: list[str] = []
+        for mkt in targets:
+            mst = dict(state.get(mkt, _empty_market_state(mkt)))
+            mst["inverse_sleeve"] = _empty_inverse_sleeve_state()
+            state[mkt] = mst
+            cleared.append(mkt)
+        save_treasury_state(state)
+        return {"cleared_markets": cleared, "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+
+def is_inverse_trade_sig(sig_type: Any) -> bool:
+    s = str(sig_type or "")
+    return INVERSE_SIG_MARKER_NAV in s
+

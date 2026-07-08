@@ -9,7 +9,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-_SCOUT_MARKERS = ("🔭SCOUT", "FLUID_SCOUT", "COSINE_SCOUT", "MLBOX_SCOUT", "SCOUT]")
+_SCOUT_MARKERS = (
+    "🔭SCOUT",
+    "FLUID_SCOUT",
+    "COSINE_SCOUT",
+    "MLBOX_SCOUT",
+    "SCOUT]",
+    "ScoutBearShadow",
+)
 
 
 def is_fluid_scout_sig(sig_type: Any, *, trade_source: Any = None) -> bool:
