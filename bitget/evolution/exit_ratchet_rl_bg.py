@@ -75,15 +75,21 @@ def evolve_bitget_ratchet_kappa(
     cfg = dict(cfg or {})
     cfg[xd.RATCHET_STATE_KEY] = new_state
 
-    if persist and own_cfg:
+    result: Dict[str, Any] = {
+        "updated": True,
+        "rates": rates,
+        "old_state": old_state,
+        "state": new_state,
+    }
+    if persist:
         try:
             from bitget.infra.config_manager import update_system_config
 
             update_system_config({xd.RATCHET_STATE_KEY: new_state})
-        except Exception:
-            pass
+        except Exception as ex:
+            result["persist_error"] = str(ex)
 
-    return {"updated": True, "rates": rates, "old_state": old_state, "state": new_state}
+    return result
 
 
 def build_ratchet_brief(result: Dict[str, Any]) -> str:

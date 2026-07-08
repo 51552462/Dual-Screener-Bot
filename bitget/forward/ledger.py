@@ -34,6 +34,7 @@ from bitget.forward.shared import (
     save_system_config,
     send_telegram_msg,
 )
+from bitget.funding_fetcher import fetch_funding_snapshot
 from bitget.governance.meta_consumer import (
     apply_meta_kelly_merge,
     effective_max_position_pct,

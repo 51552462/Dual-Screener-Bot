@@ -873,6 +873,102 @@ class TestExitRatchetRlBg:
         assert out["rates"]["n"] >= 3
         assert "state" in out
 
+    def test_evolve_persists_ratchet_when_cfg_passed(self, tmp_path):
+        import exit_dynamics as xd
+
+        from bitget.evolution.exit_ratchet_rl_bg import evolve_bitget_ratchet_kappa
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                market_type TEXT, status TEXT, mfe REAL, final_ret REAL,
+                exit_type TEXT, bars_held INTEGER,
+                free_runner INTEGER, scaled_out_frac REAL
+            )
+            """
+        )
+        for r in [
+            ("2026-07-01", "2026-07-05", "spot", "CLOSED_WIN", 20.0, 15.0, "RUNNER_TRAIL", 8, 1, 0.5),
+            ("2026-07-02", "2026-07-06", "spot", "CLOSED_WIN", 18.0, 12.0, "RUNNER_TRAIL", 6, 1, 0.4),
+            ("2026-07-03", "2026-07-07", "spot", "CLOSED_WIN", 25.0, 20.0, "STAT_MFE", 10, 0, 0.3),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO bitget_forward_trades
+                (entry_date, exit_date, market_type, status, mfe, final_ret,
+                 exit_type, bars_held, free_runner, scaled_out_frac)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """,
+                r,
+            )
+        conn.commit()
+        conn.close()
+
+        cfg = {xd.RATCHET_STATE_KEY: {}}
+        with mock.patch("bitget.infra.config_manager.update_system_config") as upd:
+            out = evolve_bitget_ratchet_kappa(cfg, db_path=str(db), persist=True)
+            assert out.get("updated") is True
+            upd.assert_called_once()
+            saved = upd.call_args[0][0]
+            assert xd.RATCHET_STATE_KEY in saved
+            assert "persist_error" not in out
+
+
+class TestDoomsdayDampenerBg:
+    def test_evolve_bitget_gamma_persists_to_bitget_config(self, tmp_path):
+        from datetime import datetime
+
+        from doomsday_dampener import GAMMA_KEY, STATE_KEY
+
+        from bitget.evolution.doomsday_dampener_bg import evolve_bitget_gamma
+
+        db = tmp_path / "fwd.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            """
+            CREATE TABLE bitget_forward_trades (
+                id INTEGER PRIMARY KEY, entry_date TEXT, exit_date TEXT,
+                status TEXT, final_ret REAL, sig_type TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO bitget_forward_trades
+            (entry_date, exit_date, status, final_ret, sig_type)
+            VALUES ('2026-07-01', '2026-07-05', 'CLOSED_WIN', -2.5, '[SUPERNOVA]')
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        cfg = {
+            GAMMA_KEY: 1.5,
+            STATE_KEY: {
+                "brake_log": [{"date": "2026-07-05", "mult": 0.75, "gamma": 1.5, "score": 72.0}],
+                "history": [],
+            },
+        }
+        now = datetime(2026, 7, 8, 12, 0, 0)
+        with mock.patch("bitget.infra.config_manager.update_system_config") as upd:
+            out = evolve_bitget_gamma(sys_config=cfg, db_path=str(db), persist=True, now=now)
+            assert "gamma_after" in out
+            upd.assert_called_once()
+            saved = upd.call_args[0][0]
+            assert GAMMA_KEY in saved
+            assert STATE_KEY in saved
+            assert "persist_error" not in out
+
+
+class TestLedgerFundingImport:
+    def test_ledger_imports_fetch_funding_snapshot(self):
+        from bitget.forward import ledger as lg
+
+        assert callable(getattr(lg, "fetch_funding_snapshot", None))
+
 
 class TestFreeRunnerSchema:
     def test_forward_schema_has_runner_columns(self, tmp_path, monkeypatch):
@@ -905,8 +1001,8 @@ class TestWeeklyEvolutionTail:
             "bitget.meta_learner_bg.run_bitget_meta_learning_cycle",
             return_value={"ok": True},
         ), mock.patch(
-            "doomsday_dampener.evolve_gamma",
-            return_value={"gamma": 1.0},
+            "bitget.evolution.doomsday_dampener_bg.evolve_bitget_gamma",
+            return_value={"gamma_after": 1.0},
         ), mock.patch(
             "bitget.evolution.exit_ratchet_rl_bg.evolve_bitget_ratchet_kappa",
             return_value={"updated": False, "reason": "insufficient_runner_sample"},

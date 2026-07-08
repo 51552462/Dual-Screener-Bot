@@ -50,12 +50,12 @@ def run_weekly_evolution_tail(
         logger.warning("bitget meta_learner skip: %s", ex)
 
     try:
-        from doomsday_dampener import evolve_gamma
+        from bitget.evolution.doomsday_dampener_bg import evolve_bitget_gamma
 
-        out["doomsday_gamma"] = evolve_gamma(sys_config=cfg, db_path=None, persist=True)
+        out["doomsday_gamma"] = evolve_bitget_gamma(sys_config=cfg, persist=True)
     except Exception as ex:
         out["doomsday_gamma_error"] = str(ex)
-        logger.warning("bitget evolve_gamma skip: %s", ex)
+        logger.warning("bitget evolve_bitget_gamma skip: %s", ex)
 
     try:
         from bitget.evolution.exit_ratchet_rl_bg import evolve_bitget_ratchet_kappa
