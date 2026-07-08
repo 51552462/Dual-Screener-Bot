@@ -240,7 +240,17 @@ def try_add_virtual_position(
     max_alpha_cos = _facts_cos_scalar_01(facts or {}, score)
     max_alpha_cos_effective = min(1.0, float(max_alpha_cos) + float(alpha_bonus_score))
 
-    dyn_cos_limit = float(cfg.get("DYNAMIC_ALPHA_LIMIT", cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.75)))
+    sig_type_upper = str(sig_type or "").upper()
+    is_supernova_sig = "[SUPERNOVA]" in sig_type_upper
+    if is_supernova_sig:
+        cos_base_policy = "SUPERNOVA"
+        cos_base_key = "DYNAMIC_SUPERNOVA_CUTOFF"
+        dyn_cos_base = float(cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50))
+    else:
+        cos_base_policy = "ALPHA"
+        cos_base_key = "DYNAMIC_ALPHA_LIMIT"
+        dyn_cos_base = float(cfg.get("DYNAMIC_ALPHA_LIMIT", cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.75)))
+    dyn_cos_limit = dyn_cos_base
     dyn_ml_cutoff = float(cfg.get("DYNAMIC_ML_BOX_CUTOFF", 0.50))
     dyn_dtw_limit = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
 
@@ -323,11 +333,34 @@ def try_add_virtual_position(
         sig_type_row = f"[🔭SCOUT] {sig_type_row}"
 
     if not is_incubator_shadow and not cutoff_passed:
-        conn.close()
-        return False, (
-            f"시계열 게이트: AST 융합 Cos_eff={max_alpha_cos_effective:.3f} (기준≥{dyn_cos_limit}) 또는 "
-            f"DTW 조건 불만족(DTW cutoff≤{dyn_dtw_limit})"
+        cos_ok = bool(max_alpha_cos_effective >= dyn_cos_limit)
+        cos_shortfall = float(dyn_cos_limit) - float(max_alpha_cos_effective)
+        if raw_dtw is None or (isinstance(raw_dtw, str) and raw_dtw.strip() == ""):
+            dtw_display = "N/A(미검)"
+        else:
+            try:
+                dtw_display = f"{float(raw_dtw):.2f}"
+            except (TypeError, ValueError):
+                dtw_display = "N/A(파싱불가)"
+        base_hdr = (
+            f"시계열 게이트 거절 [Base={cos_base_policy}({cos_base_key}={dyn_cos_base:.3f}"
+            f"→elastic {dyn_cos_limit:.3f})]"
         )
+        cos_part = (
+            f"Cos_eff={max_alpha_cos_effective:.3f} ≥ {dyn_cos_limit:.3f} OK"
+            if cos_ok
+            else (
+                f"Cos_eff={max_alpha_cos_effective:.3f} < {dyn_cos_limit:.3f} "
+                f"({cos_shortfall:.3f} 부족, {cos_shortfall * 100:.1f}%p)"
+            )
+        )
+        dtw_part = (
+            f"DTW={dtw_display} ≤ {dyn_dtw_limit:.2f} OK"
+            if dtw_ok
+            else f"DTW={dtw_display} > {dyn_dtw_limit:.2f} (허용 초과)"
+        )
+        conn.close()
+        return False, f"{base_hdr} {cos_part}; {dtw_part}"
 
     entry_atr = _calc_atr14(hist_df)
     atr_sl_mult = float(cfg.get("ATR_SL_MULT", 2.0))
