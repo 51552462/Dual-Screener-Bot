@@ -1216,6 +1216,7 @@ class MetaGovernor:
             system_cfg=self._system_cfg_snapshot,
             validated_mutants_path=ctx.validated_mutants_path,
             forward_db_path=registry_db_path,
+            meta_working=self._working,
         )
 
         pil_cands = self._prior.get("META_PIL_RETIRE_CANDIDATES")

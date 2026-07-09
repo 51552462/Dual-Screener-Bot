@@ -231,6 +231,7 @@ def run_registry_lifecycle(
     system_cfg: Optional[Dict[str, Any]] = None,
     validated_mutants_path: Optional[str] = None,
     forward_db_path: Optional[str] = None,
+    meta_working: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
@@ -256,6 +257,7 @@ def run_registry_lifecycle(
         "retired": 0,
         "promoted_live_by_market": {"KR": 0, "US": 0, "BG": 0},
         "demoted_7d": 0,
+        "re_evolution_redemption_promoted": 0,
         "today_kst": today_kst,
     }
 
@@ -321,7 +323,17 @@ def run_registry_lifecycle(
                 stats["discovery_new"] += 1
 
             st = str(row.get("state") or "").upper()
-            if st in ("OBSERVING", "") and passes_candidate_gate(hv, mp):
+            try:
+                from re_evolution_redemption_gate import is_re_evolution_observing_row
+
+                _re_evol_obs = is_re_evolution_observing_row(row)
+            except Exception:
+                _re_evol_obs = False
+            if (
+                st in ("OBSERVING", "")
+                and passes_candidate_gate(hv, mp)
+                and not _re_evol_obs
+            ):
                 row["state"] = "CANDIDATE"
                 row["updated_at"] = now_iso
                 if not row.get("promote_reason"):
@@ -352,6 +364,29 @@ def run_registry_lifecycle(
             row["health_miss_streak"] = consecutive_below_live_days(sid)
 
         st = str(row.get("state") or "").upper()
+
+        # --- Re-Evolution Phase 3: 섀도우 부활전 → LIVE ---
+        if st == "OBSERVING":
+            try:
+                from re_evolution_redemption_gate import try_promote_re_evolution_redemption
+
+                promoted, _rev = try_promote_re_evolution_redemption(
+                    row,
+                    meta=meta_working,
+                    sys_config=system_cfg,
+                    forward_db_path=forward_db_path,
+                    now=now,
+                )
+                if promoted:
+                    stats["re_evolution_redemption_promoted"] += 1
+                    stats["promoted_live"] += 1
+                    mk_stat = mkt if mkt in stats["promoted_live_by_market"] else "KR"
+                    stats["promoted_live_by_market"][mk_stat] = (
+                        stats["promoted_live_by_market"].get(mk_stat, 0) + 1
+                    )
+                    continue
+            except Exception as ex:
+                logger.warning("re_evolution redemption skip %s: %s", gk, ex)
 
         # --- Hard-Threshold Auto-Promotion (인큐베이터·ACE) ---
         if (

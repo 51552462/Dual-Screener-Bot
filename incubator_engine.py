@@ -496,6 +496,26 @@ def main() -> None:
     )
 
     try:
+        from config_manager import load_system_config, save_system_config
+        from re_evolution_loser_mutation import (
+            collect_re_evolution_incubator_seed_hints,
+            run_re_evolution_loser_mutation_cycle,
+        )
+
+        cfg = load_system_config() or {}
+        updated, re_logs = run_re_evolution_loser_mutation_cycle(cfg)
+        save_system_config(updated)
+        hints = collect_re_evolution_incubator_seed_hints(updated)
+        print("🔄 [Re-Evolution P2] Loser Mutation:")
+        for ln in re_logs:
+            print(ln.replace("<b>", "").replace("</b>", ""))
+        if hints:
+            print(f"   RE_EVOL 인큐베이터 시드: {len(hints)}건")
+    except Exception as e:
+        logger.warning("incubator_engine: re_evolution loser mutation hook: %s", e)
+        print(f"⚠️ [Re-Evolution P2] 스킵: {e}")
+
+    try:
         _load_incubator_dotenv_optional()
         with open(OUTPUT_JSON, "r", encoding="utf-8") as f:
             saved = json.load(f)

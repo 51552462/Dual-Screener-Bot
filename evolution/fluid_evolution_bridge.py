@@ -166,6 +166,18 @@ def run_fluid_evolution_weekend_hooks(
     from dna_mutator import run_weekend_dna_mutation_cycle
 
     lines: List[str] = []
+    lines.append("\n🔄 <b>[Re-Evolution · Loser Mutation P2]</b>")
+    try:
+        from re_evolution_loser_mutation import run_re_evolution_loser_mutation_cycle
+
+        updated, re_logs = run_re_evolution_loser_mutation_cycle(sys_config)
+        sys_config.clear()
+        sys_config.update(updated)
+        lines.extend(re_logs)
+    except Exception as ex:
+        lines.append(f"⚠️ Re-Evolution loser mutation skip: {ex}")
+        logger.exception("re_evolution loser mutation failed")
+
     lines.append("\n🧬 <b>[Fluid Evolution · Meta-DNA Mutation]</b>")
     try:
         updated, mut_logs = run_weekend_dna_mutation_cycle(sys_config)

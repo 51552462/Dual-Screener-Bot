@@ -150,6 +150,262 @@ def select_parents_for_mutation(
     return [(n, t) for _, _, n, t in scored[:max_parents]]
 
 
+def select_champion_template(
+    sys_config: Dict[str, Any],
+    market: str,
+    *,
+    exclude_group: Optional[str] = None,
+) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """교배용 챔피언 DNA — 승률 상위 1개."""
+    ex = str(exclude_group or "").strip()
+    parents = select_parents_for_mutation(sys_config, market)
+    for name, tpl in parents:
+        if ex and ex in str(name):
+            continue
+        return name, tpl
+    mk = str(market or "KR").upper()
+    pool = sys_config.get(f"DNA_SUPERNOVA_{mk}_MULTI") or {}
+    if isinstance(pool, dict):
+        for name, tpl in pool.items():
+            if isinstance(tpl, dict) and ex not in str(name):
+                return str(name), tpl
+    return None
+
+
+def diagnose_loser_from_closures(
+    rows: List[Dict[str, Any]],
+    *,
+    loss_threshold_pct: float = -3.0,
+) -> Dict[str, Any]:
+    """
+    섀도우/실전 패자 청산으로 실패 원인 추론.
+
+    failure_mode:
+      stop_too_tight | entry_too_aggressive | low_mfe_quick_sl | bleed_streak
+    """
+    if not rows:
+        return {
+            "failure_mode": "bleed_streak",
+            "n_closed": 0,
+            "n_loss": 0,
+            "avg_bars_held": 0.0,
+            "sl_ratio": 0.0,
+            "avg_mfe_pct": 0.0,
+            "avg_cpv": 0.0,
+        }
+
+    losses: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            ret = float(r.get("final_ret", 0) or 0)
+        except (TypeError, ValueError):
+            ret = 0.0
+        if ret <= float(loss_threshold_pct):
+            losses.append(r)
+
+    n = len(rows)
+    n_loss = len(losses)
+    if n_loss == 0:
+        return {
+            "failure_mode": "bleed_streak",
+            "n_closed": n,
+            "n_loss": 0,
+            "avg_bars_held": 0.0,
+            "sl_ratio": 0.0,
+            "avg_mfe_pct": 0.0,
+            "avg_cpv": 0.0,
+        }
+
+    sl_hits = 0
+    bars: List[float] = []
+    mfes: List[float] = []
+    cpvs: List[float] = []
+
+    for r in losses:
+        reason = str(r.get("exit_reason") or r.get("exit_rsn") or "").upper()
+        if "손절" in reason or "SL" in reason or "STOP" in reason:
+            sl_hits += 1
+        try:
+            bars.append(float(r.get("bars_held") or 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            ep = float(r.get("entry_price") or 0)
+            mh = float(r.get("max_high") or ep)
+            if ep > 0:
+                mfes.append((mh - ep) / ep * 100.0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            cpv = float(r.get("dyn_cpv") or r.get("v_cpv") or 0)
+            if cpv:
+                cpvs.append(cpv)
+        except (TypeError, ValueError):
+            pass
+
+    sl_ratio = sl_hits / n_loss
+    avg_bars = sum(bars) / len(bars) if bars else 0.0
+    avg_mfe = sum(mfes) / len(mfes) if mfes else 0.0
+    avg_cpv = sum(cpvs) / len(cpvs) if cpvs else 0.0
+
+    if sl_ratio >= 0.55 and avg_bars <= 6.0 and avg_mfe < 3.0:
+        mode = "stop_too_tight"
+    elif avg_cpv >= 0.65 and sl_ratio >= 0.45:
+        mode = "entry_too_aggressive"
+    elif avg_mfe < 2.5 and sl_ratio >= 0.45:
+        mode = "low_mfe_quick_sl"
+    else:
+        mode = "bleed_streak"
+
+    return {
+        "failure_mode": mode,
+        "n_closed": n,
+        "n_loss": n_loss,
+        "avg_bars_held": round(avg_bars, 2),
+        "sl_ratio": round(sl_ratio, 3),
+        "avg_mfe_pct": round(avg_mfe, 2),
+        "avg_cpv": round(avg_cpv, 3),
+    }
+
+
+def crossover_dna_templates(
+    loser: Dict[str, Any],
+    champion: Dict[str, Any],
+    *,
+    loser_weight: float = 0.55,
+) -> Dict[str, Any]:
+    """패자 DNA × 챔피언 DNA 선형 교배."""
+    lw = max(0.35, min(0.70, float(loser_weight)))
+    out = copy.deepcopy(loser)
+    for k in _DNA_KEYS:
+        if k not in loser or k not in champion:
+            continue
+        try:
+            lv = float(loser[k])
+            cv = float(champion[k])
+        except (TypeError, ValueError):
+            continue
+        out[k] = _clip_key(k, lw * lv + (1.0 - lw) * cv)
+    for key, (lo, hi) in MUTATION_HARD_BOUNDARIES.items():
+        if key not in loser or key not in champion:
+            continue
+        try:
+            lv = float(loser[key])
+            cv = float(champion[key])
+        except (TypeError, ValueError):
+            continue
+        out[key] = round(max(lo, min(hi, lw * lv + (1.0 - lw) * cv)), 6)
+    out["mutation_kind"] = "crossover"
+    out["crossover_loser_weight"] = round(lw, 3)
+    return apply_mutation_hard_boundaries(out)
+
+
+def mutate_dna_for_failure_diagnosis(
+    template: Dict[str, Any],
+    diagnosis: Dict[str, Any],
+    *,
+    rate: float = 0.05,
+    name_suffix: Optional[str] = None,
+) -> Dict[str, Any]:
+    """실패 모드별 강제 돌연변이 — 손절·진입·MFE 패턴 반영."""
+    out = copy.deepcopy(template)
+    mode = str(diagnosis.get("failure_mode") or "bleed_streak")
+
+    def _bump_hard(key: str, mult: float, default: float) -> None:
+        try:
+            base = float(out.get(key, default))
+        except (TypeError, ValueError):
+            base = default
+        lo, hi = MUTATION_HARD_BOUNDARIES.get(key, (0.0, 999.0))
+        out[key] = round(max(lo, min(hi, base * mult)), 6)
+
+    if mode == "stop_too_tight":
+        _bump_hard("stop_loss_pct", 1.15, 0.045)
+        _bump_hard("stop_loss", 1.15, 0.045)
+        if "cos_cutoff" in out:
+            out["cos_cutoff"] = _clip_key(
+                "cos_cutoff", float(out["cos_cutoff"]) - 0.04
+            )
+        if "tb" in out:
+            out["tb"] = mutate_gene_value("tb", float(out["tb"]), rate=rate * 1.8)
+        if "trailing_stop_pct" in out:
+            _bump_hard("trailing_stop_pct", 1.10, 0.04)
+    elif mode == "entry_too_aggressive":
+        if "cos_cutoff" in out:
+            out["cos_cutoff"] = _clip_key(
+                "cos_cutoff", float(out["cos_cutoff"]) + 0.05
+            )
+        if "cpv" in out:
+            out["cpv"] = _clip_key("cpv", float(out["cpv"]) * 1.08)
+        _bump_hard("kelly_risk_pct", 0.85, 0.015)
+    elif mode == "low_mfe_quick_sl":
+        if "tb" in out:
+            out["tb"] = mutate_gene_value("tb", float(out["tb"]), rate=rate * 2.0)
+        if "bbe" in out:
+            out["bbe"] = _clip_key("bbe", float(out["bbe"]) * 0.92)
+        _bump_hard("stop_loss_pct", 1.08, 0.04)
+    else:
+        _bump_hard("kelly_risk_pct", 0.80, 0.012)
+        if "cos_cutoff" in out:
+            out["cos_cutoff"] = _clip_key(
+                "cos_cutoff", float(out["cos_cutoff"]) + 0.02
+            )
+
+    for k in _DNA_KEYS:
+        if k in out:
+            try:
+                out[k] = mutate_gene_value(k, float(out[k]), rate=rate * 0.6)
+            except (TypeError, ValueError):
+                continue
+
+    out["status"] = "INCUBATING"
+    out["mutated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    out["mutation_rate"] = rate
+    out["mutation_kind"] = "forced_mutate"
+    out["failure_mode"] = mode
+    if name_suffix:
+        out["parent_lineage"] = str(name_suffix)
+    return apply_mutation_hard_boundaries(out)
+
+
+def build_loser_child_mutant(
+    loser_tpl: Dict[str, Any],
+    diagnosis: Dict[str, Any],
+    champion_tpl: Optional[Dict[str, Any]] = None,
+    *,
+    rate: float = 0.05,
+    parent_label: str = "",
+) -> Dict[str, Any]:
+    """
+    패자 부모 → (선택) 챔피언 교배 → 실패 모드 강제 변이 Child.
+    bleed_streak / low_mfe 는 교배 우선, stop/entry 는 강제 변이 우선.
+    """
+    mode = str(diagnosis.get("failure_mode") or "bleed_streak")
+    use_crossover = champion_tpl is not None and mode in (
+        "bleed_streak",
+        "low_mfe_quick_sl",
+    )
+    if use_crossover and champion_tpl is not None:
+        blended = crossover_dna_templates(loser_tpl, champion_tpl, loser_weight=0.50)
+        child = mutate_dna_for_failure_diagnosis(
+            blended,
+            diagnosis,
+            rate=rate * 0.8,
+            name_suffix=parent_label,
+        )
+        child["mutation_kind"] = "crossover+forced_mutate"
+    else:
+        child = mutate_dna_for_failure_diagnosis(
+            loser_tpl,
+            diagnosis,
+            rate=rate,
+            name_suffix=parent_label,
+        )
+    child["re_evolution"] = True
+    child["failure_diagnosis"] = dict(diagnosis)
+    return child
+
+
 def run_weekend_dna_mutation_cycle(
     sys_config: Dict[str, Any],
     *,

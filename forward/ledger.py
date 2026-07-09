@@ -787,6 +787,38 @@ def track_daily_positions(market):
                 except Exception:
                     pass
 
+                # 🔄 [Re-Evolution P1] LIVE 3-Strike 평가 → OBSERVING 섀도우 강등(비파괴)
+                try:
+                    from re_evolution_strike_guard import process_live_closure_strike
+
+                    _re_strike = process_live_closure_strike(
+                        market=market,
+                        sig_type=str(row_scalar(r, 'sig_type', '')),
+                        final_ret_pct=float(ret),
+                        sim_kelly_invest=float(
+                            row_scalar(r, 'sim_kelly_invest', 0.0) or 0.0
+                        ),
+                        invest_amount=float(
+                            row_scalar(r, 'invest_amount', 0.0) or 0.0
+                        ),
+                        sys_config=sys_config,
+                    )
+                    _re_act = str(_re_strike.get("action") or "")
+                    if _re_act == "demoted_observing":
+                        print(
+                            f"🔄 [Re-Evolution] 3-Strike 강등 → OBSERVING: "
+                            f"{_re_strike.get('group_key')} "
+                            f"(strikes={_re_strike.get('strikes')})"
+                        )
+                    elif _re_act == "strike_recorded":
+                        print(
+                            f"⚠️ [Re-Evolution] Strike "
+                            f"{_re_strike.get('strikes')}/{_re_strike.get('strike_need')}: "
+                            f"{_re_strike.get('group_key')} ret={_re_strike.get('final_ret_pct')}%"
+                        )
+                except Exception as _re_strike_ex:
+                    logger.debug("re_evolution strike skip: %s", _re_strike_ex)
+
                 icon = "🔥스마트청산" if ret > 0 else "🛡️방어손절"
                 if _is_observe_only:
                     icon = "👁️관측청산" if ret > 0 else "👁️관측손절"

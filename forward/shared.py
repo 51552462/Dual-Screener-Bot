@@ -2052,6 +2052,8 @@ def try_add_virtual_position(
     # 💡 [버그 픽스] 안전 변수 초기화 (에러 시 DB 엉킴 원천 방지)
     entry_atr, invest_amount, shares, sim_kelly_invest, cur_regime = 0.0, 0, 0, 0, "UNKNOWN"
     synthetic_survival_buff = False
+    _re_evol_shadow = False
+    _re_evol_sid = ""
 
     try:
         sys_config = load_system_config()
@@ -2464,6 +2466,22 @@ def try_add_virtual_position(
                 clean_sig = re.sub(r'^\[.*?\]\s*', '', clean_sig)
                 core_group_name = clean_sig.split(' [')[0]
 
+                # 🔄 [Re-Evolution P1] 3-Strike 강등 그룹 → 섀도우 가상매매(notional 0)
+                try:
+                    from re_evolution_strike_guard import is_re_evolution_shadow_group
+                    from strategy_promotion_engine import stable_strategy_id
+
+                    _meta_re = load_meta_state_resolved()
+                    if is_re_evolution_shadow_group(_meta_re, market, core_group_name):
+                        _re_evol_shadow = True
+                        _re_evol_sid = stable_strategy_id(market, core_group_name)
+                        print(
+                            f"🔄 [Re-Evolution Shadow] {market} {core_group_name}: "
+                            f"OBSERVING — 실자본 회수·가상매매만"
+                        )
+                except Exception as _re_shadow_ex:
+                    print(f"⚠️ [Re-Evolution Shadow] 스킵: {_re_shadow_ex}")
+
                 # 🏛️ [Ch.5] Treasury 그룹 mult=0 하드 차단 (META_GROUP_KELLY_MULT / health)
                 try:
                     from meta_treasury_entry_guard import evaluate_meta_group_entry_gate
@@ -2475,7 +2493,11 @@ def try_add_virtual_position(
                         market=market,
                         sys_config=sys_config,
                     )
-                    if _gg.get("block_entry") and incubator_match_name is None:
+                    if (
+                        _gg.get("block_entry")
+                        and incubator_match_name is None
+                        and not _re_evol_shadow
+                    ):
                         try:
                             import shadow_tracking
 
@@ -2801,6 +2823,20 @@ def try_add_virtual_position(
                 # 👆👆 [패치 완료] 👆👆
                 if incubator_match_name is not None:
                     invest_amount, shares, sim_kelly_invest = 0, 0, 0
+                elif _re_evol_shadow:
+                    try:
+                        from re_evolution_strike_guard import (
+                            apply_shadow_entry_zero_notional,
+                        )
+
+                        sig_type, shares, invest_amount, sim_kelly_invest = (
+                            apply_shadow_entry_zero_notional(
+                                sig_type,
+                                strategy_id=_re_evol_sid,
+                            )
+                        )
+                    except Exception:
+                        shares, invest_amount, sim_kelly_invest = 0, 0, 0
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
 
@@ -2825,6 +2861,7 @@ def try_add_virtual_position(
         "OBSERVE_ONLY" in _sig_s
         or "INCUBATOR_" in _sig_s
         or "기각/관찰용" in _sig_s
+        or "RE_EVOL_SHADOW" in _sig_s
     )
     _has_notional = (
         int(shares or 0) > 0

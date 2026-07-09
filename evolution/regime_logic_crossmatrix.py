@@ -512,6 +512,16 @@ def _resolve_min_samples(sys_config: Optional[dict]) -> int:
     return MIN_SAMPLES
 
 
+def resolve_regime_crossmatrix_min_samples(
+    sys_config: Optional[dict] = None,
+) -> int:
+    """
+    국면 교차매트릭스 베이지안 수축 최소 표본 SSOT.
+    Re-Evolution 섀도우 부활전·리더보드 등에서 동일 기준으로 재사용.
+    """
+    return _resolve_min_samples(sys_config)
+
+
 def _max_consecutive_losses(ret_ordered: pd.Series) -> int:
     """시간순 정렬된 final_ret 에서 최장 연속 손실(≤0) 길이."""
     streak = 0
