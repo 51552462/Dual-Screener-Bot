@@ -997,6 +997,29 @@ def _step_weekly_proprietary_regime() -> None:
         print(f"[ratchet_kappa] {kv.get('rates')} → updated={kv.get('updated')}")
     except Exception as ex:
         print(f"[ratchet_kappa] skip: {ex}")
+    # [Mega-Trend 3번] 내부 킬스위치 민감도 주간 RL (기회비용 vs 방어성공).
+    try:
+        from exit_ratchet_rl import evolve_mega_trend_kill_sensitivity
+
+        mkr = evolve_mega_trend_kill_sensitivity()
+        print(
+            f"[mega_trend_kill_rl] int="
+            f"{mkr.get('rates_internal', {}).get('n', 0)} "
+            f"clx={mkr.get('rates_climax', {}).get('n', 0)} "
+            f"→ updated={mkr.get('updated')} lanes={mkr.get('lanes_updated')}"
+        )
+        if mkr.get("updated"):
+            try:
+                from reports.mega_trend_kill_report_section import (
+                    format_mega_trend_kill_rl_evolution_telegram,
+                )
+                from system_auto_pilot import send_telegram_report
+
+                send_telegram_report(format_mega_trend_kill_rl_evolution_telegram(mkr))
+            except Exception as _tg_ex:
+                print(f"[mega_trend_kill_rl] telegram skip: {_tg_ex}")
+    except Exception as ex:
+        print(f"[mega_trend_kill_rl] skip: {ex}")
 
 
 def _step_regime_deep_archive() -> None:

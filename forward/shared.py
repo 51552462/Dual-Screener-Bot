@@ -1545,6 +1545,72 @@ def _core_signal_name(sig: object) -> str:
     return core
 
 
+def _evaluate_champion_convergence_risk(
+    conn: sqlite3.Connection,
+    market: str,
+    code: str,
+    candidate_sig_type: object,
+    existing_sig_type: object,
+) -> Optional[dict]:
+    """
+    [P1-1b + P1-1c] 동일 종목 중복 시그널 — 로직 직교성(1번) + OPEN Concentration(2번).
+    예외 시 None(중립) — 진입 차단 로직에는 영향 없음.
+    """
+    try:
+        from portfolio_risk_overlay import evaluate_champion_convergence_risk_profile
+
+        profile = evaluate_champion_convergence_risk_profile(
+            conn,
+            market,
+            code,
+            candidate_sig_type,
+            existing_sig_type,
+        )
+        if profile.get("convergence_detected"):
+            _rho = profile.get("logic_corr")
+            _rho_s = f"{float(_rho):.2f}" if _rho is not None else "n/a"
+            _tag = "직교" if profile.get("orthogonal") else "비직교"
+            print(
+                f"📐 [로직 직교성] {market} {code}: "
+                f"{profile.get('candidate_group')} vs {profile.get('existing_group')} "
+                f"ρ_pnl={_rho_s} n={profile.get('logic_corr_n')} → {_tag} "
+                f"({profile.get('reason', '')})"
+            )
+            _conc = profile.get("concentration") or {}
+            _pcorr = _conc.get("max_corr")
+            _pcorr_s = f"{float(_pcorr):.2f}" if _pcorr is not None else "n/a"
+            _ctag = "분산" if profile.get("portfolio_diversified") else "쏠림"
+            if _conc.get("peer_count", 0) > 0 or not _conc.get("neutral", True):
+                print(
+                    f"🧭 [포트 Concentration] {market} {code}: "
+                    f"OPEN {profile.get('open_position_count', 0)}건 · "
+                    f"peer {_conc.get('peer_count', 0)} · "
+                    f"ρ_60d={_pcorr_s} → {_ctag} ({_conc.get('reason', '')})"
+                )
+            elif profile.get("open_position_count", 0) <= 1:
+                print(
+                    f"🧭 [포트 Concentration] {market} {code}: "
+                    f"타 OPEN 없음 → neutral"
+                )
+        return profile
+    except Exception as _orth_ex:
+        print(f"⚠️ [챔피언 수렴 리스크] 스킵(중립): {_orth_ex}")
+        return None
+
+
+def _evaluate_champion_logic_orthogonality(
+    conn: sqlite3.Connection,
+    market: str,
+    code: str,
+    candidate_sig_type: object,
+    existing_sig_type: object,
+) -> Optional[dict]:
+    """하위 호환 — evaluate_champion_convergence_risk 위임."""
+    return _evaluate_champion_convergence_risk(
+        conn, market, code, candidate_sig_type, existing_sig_type
+    )
+
+
 def _log_convergence_signal_if_diverse(
     cursor: sqlite3.Cursor,
     market: str,
@@ -1596,6 +1662,8 @@ def try_add_virtual_position(
     satellite_tags=None,
 ):
     init_forward_db()
+    if not isinstance(facts, dict):
+        facts = {}
     code_str = str(code).zfill(6) if market == 'KR' else str(code)
 
     if str(market or "").upper() == "KR":
@@ -1652,6 +1720,8 @@ def try_add_virtual_position(
 
     # 계좌 통합 서킷 브레이커가 켜지면 신규 진입 전면 차단
     pre_sys_config = load_system_config()
+    facts["_sys_config"] = pre_sys_config
+    facts["sector"] = sector
     if pre_sys_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") == "ON":
         return False, "🚫 글로벌 서킷 브레이커 ON: 블랙스완 방어 모드로 신규 진입이 차단되었습니다."
 
@@ -1943,23 +2013,104 @@ def try_add_virtual_position(
     tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
     today_str = datetime.now(tz).strftime('%Y-%m-%d')
 
-    # 1) 현재 OPEN 중복 방지: 같은 시장/티커가 열려 있으면 신규 진입 금지
+    # 1) 동일 종목 OPEN — 챔피언 수렴 Correlation Kelly 게이트 [1~3번]
     cursor.execute(
-        "SELECT id, sig_type, entry_date FROM forward_trades WHERE market=? AND code=? AND status='OPEN' LIMIT 1",
+        "SELECT id, sig_type, entry_date FROM forward_trades "
+        "WHERE market=? AND code=? AND status='OPEN'",
         (market, code_str),
     )
-    _open_dup_row = cursor.fetchone()
-    if _open_dup_row:
-        # [P3-2] 폐기 직전 — 다른 전략이 이미 보유 종목을 또 짚었는지 방어적으로 기록(차단 로직 불변)
-        _log_convergence_signal_if_diverse(
-            cursor, market, code_str, name, sig_type, _open_dup_row[1], _open_dup_row[2]
-        )
+    _open_dup_rows = cursor.fetchall()
+    if _open_dup_rows:
         try:
-            conn.commit()
-        except Exception:
-            pass
-        conn.close()
-        return False, "중복 보유 중"
+            from portfolio_risk_overlay import evaluate_convergence_entry_gate
+
+            _conv_gate = evaluate_convergence_entry_gate(
+                conn,
+                market,
+                code_str,
+                sig_type,
+                _open_dup_rows,
+                sys_config=pre_sys_config,
+                candidate_sector=sector,
+            )
+            _profiles = _conv_gate.get("profiles") or []
+            if _profiles:
+                _evaluate_champion_convergence_risk(
+                    conn,
+                    market,
+                    code_str,
+                    sig_type,
+                    _open_dup_rows[0][1],
+                )
+            if not _conv_gate.get("allow_entry"):
+                _log_convergence_signal_if_diverse(
+                    cursor,
+                    market,
+                    code_str,
+                    name,
+                    sig_type,
+                    _open_dup_rows[0][1],
+                    _open_dup_rows[0][2] if len(_open_dup_rows[0]) > 2 else "",
+                )
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+                conn.close()
+                if _conv_gate.get("same_logic_block"):
+                    return False, f"동일 로직 중복 보유: {_conv_gate.get('reason', '')}"
+                return False, (
+                    f"🛡️ 챔피언 수렴 Tail Risk 거부: {_conv_gate.get('reason', '')}"
+                )
+
+            _last_profile = _profiles[-1] if _profiles else None
+            if _last_profile:
+                facts["_convergence_profile"] = _last_profile
+            facts["_correlation_kelly_mult"] = float(
+                _conv_gate.get("kelly_mult", 1.0) or 1.0
+            )
+            facts["_correlation_sizing_action"] = str(
+                _conv_gate.get("action") or "standard"
+            )
+            facts["_correlation_sizing_reason"] = str(
+                _conv_gate.get("reason") or ""
+            )
+            if _conv_gate.get("mega_trend_forgiveness"):
+                facts["_mega_trend_forgiveness"] = True
+            if _conv_gate.get("rotation_advantage_approved"):
+                facts["_rotation_advantage_approved"] = True
+            _log_convergence_signal_if_diverse(
+                cursor,
+                market,
+                code_str,
+                name,
+                sig_type,
+                _open_dup_rows[0][1],
+                _open_dup_rows[0][2] if len(_open_dup_rows[0]) > 2 else "",
+            )
+            print(
+                f"⚔️ [CorrKelly 수렴] {market} {code_str}: "
+                f"action={_conv_gate.get('action')} "
+                f"mult={float(_conv_gate.get('kelly_mult', 1.0)):.2g} "
+                f"({_conv_gate.get('reason', '')})"
+            )
+        except Exception as _cg_ex:
+            print(f"⚠️ [CorrKelly 수렴 게이트] 스킵 → 중복 차단: {_cg_ex}")
+            _log_convergence_signal_if_diverse(
+                cursor,
+                market,
+                code_str,
+                name,
+                sig_type,
+                _open_dup_rows[0][1],
+                _open_dup_rows[0][2] if len(_open_dup_rows[0]) > 2 else "",
+            )
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            conn.close()
+            return False, "중복 보유 중"
 
     # 2) 당일 재진입(피라미딩) 방지: OPEN/CLOSED 무관 — entry_date 정규화 비교
     entry_d = _sql_entry_date_normalized("entry_date")
@@ -1969,6 +2120,13 @@ def try_add_virtual_position(
     )
     _today_dup_row = cursor.fetchone()
     if _today_dup_row:
+        _evaluate_champion_convergence_risk(
+            conn,
+            market,
+            code_str,
+            sig_type,
+            _today_dup_row[1],
+        )
         # [P3-2] 폐기 직전 — 다른 전략이 당일 이미 짚은 종목을 또 짚었는지 방어적으로 기록(차단 로직 불변)
         _log_convergence_signal_if_diverse(
             cursor, market, code_str, name, sig_type, _today_dup_row[1], today_str
@@ -2410,14 +2568,41 @@ def try_add_virtual_position(
                 _prebuy_adv_ok = allow_prebuy_advantage_boost(cur_regime)
             except Exception:
                 pass
+
+            # [Mega-Trend 2번] 메가트렌드 언락 시 ROTATION_ADVANTAGE 정당 승인 (순환매 선취매 무관)
+            _mega_trend_capital_unlock = False
+            try:
+                from mega_trend_ignition import is_mega_trend_rotation_advantage
+
+                _mega_trend_capital_unlock = is_mega_trend_rotation_advantage(
+                    sector, sys_config
+                )
+                if _mega_trend_capital_unlock:
+                    facts["_mega_trend_forgiveness"] = True
+                    facts["_rotation_advantage_approved"] = True
+            except Exception:
+                pass
+
             if rotation_prebuy_active:
                 sig_type += " #순환매_선취매" # 장부 기록용 태그 박제
-                # 관제탑이 주말 데스매치를 통해 우위를 증명(1.5배)했다면 켈리 비중 2배 뻥튀기
-                if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
+                # 관제탑이 주말 데스매치를 통해 우위를 증명(1.5배)했거나,
+                # Mega-Trend 언락(2번)이 ROTATION_ADVANTAGE 를 정당 승인한 경우 켈리 2배
+                _mega_rot = bool(
+                    facts.get("_rotation_advantage_approved")
+                    or facts.get("_mega_trend_forgiveness")
+                    or _mega_trend_capital_unlock
+                )
+                if sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False) or _mega_rot:
                     if _prebuy_adv_ok:
                         kelly_risk_pct *= 2.0
+                        if _mega_rot and not sys_config.get("ROTATION_ADVANTAGE_ACTIVE", False):
+                            sig_type += " #MegaTrend순환가산"
                     else:
                         sig_type += " #BEAR선취매차단(Rotation)"
+            elif _mega_trend_capital_unlock and _prebuy_adv_ok:
+                # 순환매 선취매 태그 없이도 메가트렌드 섹터면 자본 합산(켈리 2배)
+                kelly_risk_pct *= 2.0
+                sig_type += " #MegaTrend자본합산"
 
             # 글로벌 스필오버 선취매 연동: KR에서 논리 섹터 연관 시 켈리 1.5배.
             # [자가 증명 잠금] 게이트 통과 + 주말 PnL 폐루프(SPILLOVER_ADVANTAGE_ACTIVE)가
@@ -2525,6 +2710,24 @@ def try_add_virtual_position(
                     sector_mapped=str(sector),
                 )
 
+                # 🔄 [Re-Evolution Warm-Start] 불사조 LIVE 복귀 — 정상 Kelly × Base Confidence(40%)
+                if not _re_evol_shadow:
+                    try:
+                        from re_evolution_warm_start import apply_warm_start_kelly_scaler
+
+                        _ws_kelly = apply_warm_start_kelly_scaler(
+                            kelly_risk_pct,
+                            _meta_state,
+                            market=market,
+                            group_key=core_group_name,
+                            sys_config=sys_config,
+                        )
+                        if _ws_kelly < kelly_risk_pct - 1e-12:
+                            kelly_risk_pct = _ws_kelly
+                            sig_type += " #RE_EVOL_WARM_START"
+                    except Exception as _ws_ex:
+                        print(f"⚠️ [Re-Evolution Warm-Start] Kelly 스킵: {_ws_ex}")
+
                 # [초월적 진화 M3] 톰슨 샘플링 밴딧 — 승격 루키 템플릿의 자율 켈리 배수.
                 # 사후평균이 자라면 배수↑(최대 2.0), 부진하면 배수↓(최소 0.1)로 기계가 밸브 조절.
                 # P0-2: BEAR/HIGH_VOL 에서는 결합 mult 상한 1.2 (Regime Ceiling).
@@ -2590,34 +2793,33 @@ def try_add_virtual_position(
                 except Exception as _rtq_ex:
                     print(f"⚠️ [Regime Tag Quarantine] 스킵(중립 진행): {_rtq_ex}")
 
-                # 🛡️ [P1-1 상관관계 캡] 현재 OPEN 포지션들과 신규 후보의 60일 수익률 상관이
-                # 0.7 이상이면 집중 리스크 → 켈리 비중 0.5배 축소(거부 대신 방어적 축소).
-                #   · 읽기 전용(KR_/US_ 일봉)·데이터 부족 시 무충돌로 수렴 → 켈리 무영향.
+                # ⚔️ [P1-1d CorrKelly] 1~3번 통합 — 로직 직교·Concentration → Kelly 클램핑
                 try:
                     from portfolio_risk_overlay import (
-                        check_portfolio_correlation,
-                        corr_kelly_mult,
+                        apply_entry_correlation_kelly_overlay,
                     )
 
-                    cursor.execute(
-                        "SELECT code FROM forward_trades WHERE market=? AND status='OPEN'",
-                        (market,),
+                    kelly_risk_pct, sig_type, _corr_sz = (
+                        apply_entry_correlation_kelly_overlay(
+                            conn,
+                            market,
+                            code_str,
+                            sig_type,
+                            kelly_risk_pct,
+                            facts=facts,
+                            sys_config=sys_config,
+                            candidate_sector=sector,
+                        )
                     )
-                    _open_codes = [r[0] for r in cursor.fetchall() if r and r[0]]
-                    _corr = check_portfolio_correlation(
-                        conn, market, code_str, _open_codes
-                    )
-                    if _corr.get("conflict"):
-                        _cm = float(corr_kelly_mult())
-                        kelly_risk_pct *= _cm
-                        _mx = float(_corr.get("max_corr", 0.0) or 0.0)
-                        sig_type += f" #상관캡(ρ{_mx:.2f}x{_cm:g})"
+                    _cs_act = str(_corr_sz.get("action") or "")
+                    _cs_mult = float(_corr_sz.get("kelly_mult", 1.0) or 1.0)
+                    if _cs_act in ("penalty", "joint_attack") or _cs_mult != 1.0:
                         print(
-                            f"🛡️ [상관관계 캡] {market} {code_str}: "
-                            f"{_corr.get('reason', '')} → 켈리 ×{_cm:g}"
+                            f"⚔️ [CorrKelly] {market} {code_str}: "
+                            f"{_cs_act} ×{_cs_mult:g} — {_corr_sz.get('reason', '')}"
                         )
                 except Exception as _corr_ex:
-                    print(f"⚠️ [상관관계 캡] 스킵(중립 진행): {_corr_ex}")
+                    print(f"⚠️ [CorrKelly] 스킵(중립 진행): {_corr_ex}")
 
                 # 🌊 [P1-2 변동성 타게팅] 현재 OPEN 북의 실현 변동성으로 전역 켈리 배수 스케일링
                 #   (σ_target/σ_realized, [0.5,1.5] 클램프). 변동성 급등기 자동 디그로싱.

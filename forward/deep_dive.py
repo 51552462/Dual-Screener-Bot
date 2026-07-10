@@ -348,6 +348,14 @@ def send_comprehensive_daily_report(
     satellite_brief_kr = build_satellite_intel_for_report(
         sys_config, market="KR", sentiment_fresh_warn=sentiment_fresh_warn
     )
+    try:
+        from reports.mega_trend_kill_report_section import append_mega_trend_daily_to_satellite
+
+        satellite_brief_kr = append_mega_trend_daily_to_satellite(
+            sys_config, satellite_brief_kr
+        )
+    except Exception as _mtk_ex:
+        print(f"⚠️ [일일 통합 리포트] Mega-Trend Kill 브리핑 스킵: {_mtk_ex}")
     satellite_brief_us = build_satellite_intel_for_report(
         sys_config, market="US", sentiment_fresh_warn=sentiment_fresh_warn
     )

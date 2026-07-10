@@ -11,7 +11,7 @@ Transcendent Asymmetric Exit — 비대칭 수익 극대화 청산 수식 엔진
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # 국면 분류
@@ -239,3 +239,296 @@ def blend_final_return(realized_partial_ret: float, scaled_out_frac: float, runn
     """
     rem = _clamp(1.0 - float(scaled_out_frac), 0.0, 1.0)
     return round(float(realized_partial_ret) + rem * float(runner_ret_pct), 4)
+
+
+# ===========================================================================
+# Mission 5 — Mega-Trend 내재적 PnL·승률 자가 진단 (Internal Kill-Switch 1번)
+# ===========================================================================
+import os as _os
+
+MEGA_TREND_INTERNAL_DIAG_KEY = "internal_diagnostics"
+
+_BOUNCE_EXIT_TYPES = frozenset(
+    {"STAT_MAE", "STAT_ATR", "HYBRID_ATR", "ZOMBIE_FORCE_CLOSE", "MEGA_CLIMAX_RUNNER"}
+)
+_BOUNCE_REASON_MARKERS = ("본절", "손절", "MAE", "bounce", "칼손절", "이탈")
+
+
+def _mega_trend_internal_thresholds_base() -> Dict[str, Any]:
+    """RL 적용 전 기본 임계치."""
+    def _f(key: str, default: float) -> float:
+        try:
+            return float(_os.environ.get(key, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    def _i(key: str, default: int) -> int:
+        try:
+            return int(_os.environ.get(key, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "window_n": _i("MEGA_TREND_INTERNAL_WINDOW_N", 8),
+        "window_n_min": _i("MEGA_TREND_INTERNAL_WINDOW_MIN", 5),
+        "win_rate_min": _f("MEGA_TREND_INTERNAL_WIN_RATE_MIN", 0.40),
+        "mfe_reach_min": _f("MEGA_TREND_INTERNAL_MFE_REACH_MIN", 0.35),
+        "bounce_stop_max_rate": _f("MEGA_TREND_INTERNAL_BOUNCE_RATE_MAX", 0.45),
+        "pnl_accel_drop_min": _f("MEGA_TREND_INTERNAL_PNL_ACCEL_DROP", 0.15),
+        "mfe_target_pct": _f("MEGA_TREND_INTERNAL_MFE_TARGET_PCT", 5.0),
+        "breakeven_band_pct": _f("MEGA_TREND_INTERNAL_BE_BAND", 1.5),
+        "gave_back_mfe_ratio": _f("MEGA_TREND_INTERNAL_GAVE_BACK_RATIO", 0.35),
+    }
+
+
+def mega_trend_internal_thresholds(sector: Optional[str] = None) -> Dict[str, Any]:
+    """내재적 킬스위치 1번 임계치 — env + Kill RL delta (P5: sector overlay)."""
+    base = _mega_trend_internal_thresholds_base()
+    try:
+        from mega_trend_kill_rl import apply_kill_rl_threshold_adjustments, load_kill_rl_state
+
+        return apply_kill_rl_threshold_adjustments(
+            base, rl_state=load_kill_rl_state(), sector=sector
+        )
+    except Exception:
+        return base
+
+
+def _safe_float(v: object, default: float = 0.0) -> float:
+    try:
+        x = float(v)  # type: ignore[arg-type]
+        if x != x:  # NaN
+            return default
+        return x
+    except (TypeError, ValueError):
+        return default
+
+
+def classify_mega_trend_trade_outcome(
+    trade: Mapping[str, Any],
+    *,
+    breakeven_band_pct: float = 1.5,
+    mfe_target_pct: float = 5.0,
+    gave_back_ratio: float = 0.35,
+) -> str:
+    """
+    단일 체결 결과 분류.
+    win | loss | bounce_stop | open_live
+    """
+    status = str(trade.get("status") or "OPEN").upper()
+    final_ret = trade.get("final_ret")
+    sim_ret = _safe_float(trade.get("sim_stat_ret"))
+    mfe = _safe_float(trade.get("mfe"))
+    exit_type = str(trade.get("exit_type") or "").strip().upper()
+    exit_reason = str(trade.get("exit_reason") or "")
+
+    if status == "OPEN":
+        if sim_ret > breakeven_band_pct:
+            return "open_live"
+        if sim_ret <= -breakeven_band_pct:
+            return "loss"
+        return "open_live"
+
+    ret = _safe_float(final_ret, sim_ret)
+    band = float(breakeven_band_pct)
+
+    if exit_type in _BOUNCE_EXIT_TYPES:
+        return "bounce_stop"
+    if any(m in exit_reason for m in _BOUNCE_REASON_MARKERS):
+        return "bounce_stop"
+    if -band <= ret <= band:
+        return "bounce_stop"
+    if mfe >= float(mfe_target_pct) and ret < mfe * float(gave_back_ratio):
+        return "bounce_stop"
+    if ret > band:
+        return "win"
+    return "loss"
+
+
+def is_mfe_target_reached(
+    trade: Mapping[str, Any],
+    *,
+    mfe_target_pct: float = 5.0,
+) -> bool:
+    """MFE(최대 허용 수익) 목표 도달 여부."""
+    mfe = _safe_float(trade.get("mfe"))
+    if mfe >= float(mfe_target_pct):
+        return True
+    if str(trade.get("status") or "").upper() == "OPEN":
+        entry = _safe_float(trade.get("entry_price"))
+        max_high = _safe_float(trade.get("max_high"))
+        if entry > 0 and max_high > 0:
+            run_mfe = ((max_high - entry) / entry) * 100.0
+            return run_mfe >= float(mfe_target_pct)
+    return False
+
+
+def compute_internal_trade_metrics(
+    trades: Sequence[Mapping[str, Any]],
+    *,
+    thresholds: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """최근 N회 체결 — 승률·MFE 도달률·본절/손절 튕김 빈도."""
+    thr = dict(mega_trend_internal_thresholds())
+    if isinstance(thresholds, Mapping):
+        thr.update({k: thresholds[k] for k in thresholds if k in thr})
+
+    closed_wins = 0
+    closed_losses = 0
+    bounce_stops = 0
+    mfe_hits = 0
+    rets: List[float] = []
+    outcomes: List[str] = []
+
+    for t in trades or []:
+        oc = classify_mega_trend_trade_outcome(
+            t,
+            breakeven_band_pct=float(thr["breakeven_band_pct"]),
+            mfe_target_pct=float(thr["mfe_target_pct"]),
+            gave_back_ratio=float(thr["gave_back_mfe_ratio"]),
+        )
+        outcomes.append(oc)
+        if is_mfe_target_reached(t, mfe_target_pct=float(thr["mfe_target_pct"])):
+            mfe_hits += 1
+
+        if oc == "win":
+            closed_wins += 1
+            rets.append(_safe_float(t.get("final_ret"), _safe_float(t.get("sim_stat_ret"))))
+        elif oc == "loss":
+            closed_losses += 1
+            rets.append(_safe_float(t.get("final_ret"), _safe_float(t.get("sim_stat_ret"))))
+        elif oc == "bounce_stop":
+            bounce_stops += 1
+            rets.append(_safe_float(t.get("final_ret"), _safe_float(t.get("sim_stat_ret"))))
+
+    n = len(trades or [])
+    closed_n = closed_wins + closed_losses + bounce_stops
+    win_rate = (closed_wins / closed_n) if closed_n > 0 else None
+    mfe_reach_rate = (mfe_hits / n) if n > 0 else None
+    bounce_rate = (bounce_stops / closed_n) if closed_n > 0 else None
+    avg_ret = (sum(rets) / len(rets)) if rets else None
+
+    return {
+        "n_trades": n,
+        "n_closed": closed_n,
+        "win_rate": round(win_rate, 4) if win_rate is not None else None,
+        "mfe_reach_rate": round(mfe_reach_rate, 4) if mfe_reach_rate is not None else None,
+        "bounce_stop_rate": round(bounce_rate, 4) if bounce_rate is not None else None,
+        "avg_ret_pct": round(avg_ret, 4) if avg_ret is not None else None,
+        "wins": closed_wins,
+        "losses": closed_losses,
+        "bounce_stops": bounce_stops,
+        "mfe_hits": mfe_hits,
+        "outcomes": outcomes,
+    }
+
+
+def compute_pnl_acceleration(
+    trades: Sequence[Mapping[str, Any]],
+    *,
+    thresholds: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    PnL 가속도 — 최근 절반 vs 이전 절반 승률·평균수익 변화.
+    음수 가속 = 내부 동력 둔화.
+    """
+    items = list(trades or [])
+    n = len(items)
+    if n < 4:
+        return {
+            "accel_win_rate": None,
+            "accel_avg_ret": None,
+            "recent_metrics": None,
+            "prior_metrics": None,
+            "reason": "insufficient_trades_for_accel",
+        }
+
+    mid = n // 2
+    prior = items[:mid]
+    recent = items[mid:]
+    recent_m = compute_internal_trade_metrics(recent, thresholds=thresholds)
+    prior_m = compute_internal_trade_metrics(prior, thresholds=thresholds)
+
+    accel_wr = None
+    if recent_m.get("win_rate") is not None and prior_m.get("win_rate") is not None:
+        accel_wr = float(recent_m["win_rate"]) - float(prior_m["win_rate"])
+
+    accel_ret = None
+    if recent_m.get("avg_ret_pct") is not None and prior_m.get("avg_ret_pct") is not None:
+        accel_ret = float(recent_m["avg_ret_pct"]) - float(prior_m["avg_ret_pct"])
+
+    return {
+        "accel_win_rate": round(accel_wr, 4) if accel_wr is not None else None,
+        "accel_avg_ret": round(accel_ret, 4) if accel_ret is not None else None,
+        "recent_metrics": recent_m,
+        "prior_metrics": prior_m,
+        "reason": "computed",
+    }
+
+
+def evaluate_internal_momentum_loss(
+    trades: Sequence[Mapping[str, Any]],
+    *,
+    thresholds: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    [1번] 내재적 자가 진단 — 외부 가격/수급 없이 장부만으로 동력 상실 판정.
+
+    트리거 (OR):
+      · 승률 ≤ win_rate_min (기본 40%)
+      · MFE 도달률 ≤ mfe_reach_min
+      · 본절/손절 튕김 비율 ≥ bounce_stop_max_rate
+      · 승률 가속도 ≤ -pnl_accel_drop_min
+    """
+    thr = dict(mega_trend_internal_thresholds())
+    if isinstance(thresholds, Mapping):
+        thr.update({k: thresholds[k] for k in thresholds if k in thr})
+
+    min_n = int(thr["window_n_min"])
+    metrics = compute_internal_trade_metrics(trades, thresholds=thr)
+    accel = compute_pnl_acceleration(trades, thresholds=thr)
+
+    out: Dict[str, Any] = {
+        "momentum_lost": False,
+        "self_diagnosis": False,
+        "triggers": [],
+        "metrics": metrics,
+        "acceleration": accel,
+        "reason": "neutral",
+    }
+
+    if int(metrics.get("n_trades") or 0) < min_n:
+        out["reason"] = f"insufficient_sample n={metrics.get('n_trades')}<{min_n}"
+        return out
+
+    triggers: List[str] = []
+    wr = metrics.get("win_rate")
+    if wr is not None and float(wr) <= float(thr["win_rate_min"]):
+        triggers.append(f"win_rate_collapse_{float(wr):.2f}<={thr['win_rate_min']}")
+
+    mfe_r = metrics.get("mfe_reach_rate")
+    if mfe_r is not None and float(mfe_r) <= float(thr["mfe_reach_min"]):
+        triggers.append(f"mfe_reach_collapse_{float(mfe_r):.2f}<={thr['mfe_reach_min']}")
+
+    bounce_r = metrics.get("bounce_stop_rate")
+    if bounce_r is not None and float(bounce_r) >= float(thr["bounce_stop_max_rate"]):
+        triggers.append(f"bounce_stop_spike_{float(bounce_r):.2f}>={thr['bounce_stop_max_rate']}")
+
+    accel_wr = accel.get("accel_win_rate")
+    if accel_wr is not None and float(accel_wr) <= -float(thr["pnl_accel_drop_min"]):
+        triggers.append(f"pnl_accel_win_rate_{float(accel_wr):.2f}")
+
+    if triggers:
+        out.update(
+            {
+                "momentum_lost": True,
+                "self_diagnosis": True,
+                "triggers": triggers,
+                "reason": "internal_momentum_lost: " + " | ".join(triggers),
+            }
+        )
+    else:
+        out["reason"] = "internal_momentum_ok"
+
+    return out
+

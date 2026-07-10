@@ -792,6 +792,15 @@ def run_limit_up_forensics(
         except Exception as e:
             print(f"⚠️ 상한가 부검 텔레그램 단계 오류: {e}")
 
+        # [Mega-Trend Unlock 3번] 상한가 부검소 일일 잡 — 광기 종료 킬스위치 (forensics OHLCV)
+        if include_kr:
+            try:
+                from mega_trend_climax import run_climax_watch_from_forensics
+
+                run_climax_watch_from_forensics(cfg, save_config_fn=save_config)
+            except Exception as ex:
+                print(f"⚠️ [Mega-Trend Climax] limit_up_forensics 연동 스킵: {ex}")
+
 
 if __name__ == "__main__":
     run_limit_up_forensics()

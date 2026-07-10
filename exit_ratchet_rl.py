@@ -135,6 +135,35 @@ def evolve_ratchet_kappa(
     return {"updated": True, "rates": rates, "old_state": old_state, "state": new_state}
 
 
+def evolve_mega_trend_kill_sensitivity(
+    cfg: Optional[Dict[str, Any]] = None,
+    *,
+    db_path: Optional[str] = None,
+    lookback_days: int = 90,
+    persist: bool = True,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    [Mega-Trend 3번] 주말 킬스위치 민감도 RL 1사이클.
+    exit_ratchet_rl 주간 진화 루프와 동일 cron 경로에서 호출.
+    """
+    try:
+        from mega_trend_kill_rl import evolve_mega_trend_kill_sensitivity as _evolve
+
+        return _evolve(cfg, db_path=db_path, persist=persist, now=now)
+    except Exception as ex:
+        return {"updated": False, "reason": str(ex), "state": {}}
+
+
+def build_mega_trend_kill_rl_brief(result: Dict[str, Any]) -> str:
+    try:
+        from mega_trend_kill_rl import build_kill_rl_brief
+
+        return build_kill_rl_brief(result)
+    except Exception:
+        return f"[Mega-Trend Kill RL] {result}"
+
+
 def build_ratchet_brief(result: Dict[str, Any]) -> str:
     st = result.get("state", {})
     rates = result.get("rates", {})

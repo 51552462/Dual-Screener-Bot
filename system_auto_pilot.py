@@ -1980,6 +1980,28 @@ def send_weekly_flow_master_report():
         print(f"🪝 [Ratchet-κ] {_kv.get('rates')} → {_kv.get('state')}")
     except Exception as _kv_ex:
         print(f"⚠️ [Ratchet-κ] skip: {_kv_ex}")
+    # [Mega-Trend 3번] 내부 킬스위치 민감도 RL (기회비용 vs 방어성공).
+    try:
+        from exit_ratchet_rl import evolve_mega_trend_kill_sensitivity
+
+        _mkr = evolve_mega_trend_kill_sensitivity()
+        print(
+            f"🧬 [Mega-Trend-Kill-RL] int="
+            f"{_mkr.get('rates_internal', {}).get('n', 0)} "
+            f"clx={_mkr.get('rates_climax', {}).get('n', 0)} "
+            f"→ updated={_mkr.get('updated')} lanes={_mkr.get('lanes_updated')}"
+        )
+        if _mkr.get("updated"):
+            try:
+                from reports.mega_trend_kill_report_section import (
+                    format_mega_trend_kill_rl_evolution_telegram,
+                )
+
+                send_telegram_report(format_mega_trend_kill_rl_evolution_telegram(_mkr))
+            except Exception as _mkr_tg_ex:
+                print(f"⚠️ [Mega-Trend-Kill-RL] telegram skip: {_mkr_tg_ex}")
+    except Exception as _mkr_ex:
+        print(f"⚠️ [Mega-Trend-Kill-RL] skip: {_mkr_ex}")
     from weekly_flow_report import send_weekly_flow_master_report as _send_weekly
 
     _send_weekly(

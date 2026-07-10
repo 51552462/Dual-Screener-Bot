@@ -616,6 +616,12 @@ def format_weekly_flow_report_html(bundle: WeeklyFlowMasterSnapshot) -> str:
         )
     except Exception:
         pass
+    try:
+        from reports.mega_trend_kill_report_section import build_mega_trend_kill_weekly_appendix
+
+        msg += build_mega_trend_kill_weekly_appendix(bundle.sys_config)
+    except Exception:
+        pass
     return msg
 
 

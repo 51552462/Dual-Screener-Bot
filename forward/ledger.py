@@ -418,6 +418,34 @@ def track_daily_positions(market):
 
             # 4. ⚔️ 청산 아레나: MFE/MAE 및 관제탑 모드에 따른 수학적 사형 집행
             do_exit, exit_rsn, actual_exit_type = False, "", "HOLD"
+
+            # [Mega-Trend 3번] Climax Kill scale-out 잔여 러너 — exit_dynamics 방어 후속
+            _climax_rsn = str(r.get("exit_reason") or "")
+            _scaled_kill = row_scalar(r, "scaled_out_frac", 0.0)
+            if (
+                "MEGA_TREND_CLIMAX" in _climax_rsn
+                and _scaled_kill >= 0.5
+                and _scaled_kill < 0.999
+                and not _is_observe_only
+            ):
+                _runner_loss_thr = -1.5
+                try:
+                    from mega_trend_climax import climax_config as _mt_climax_cfg
+
+                    _runner_loss_thr = float(
+                        _mt_climax_cfg().get("runner_defense_loss_pct", -1.5)
+                    )
+                except Exception:
+                    pass
+                if low_ret_pct <= _runner_loss_thr or (
+                    c < o and current_ret_pct < 0.0
+                ):
+                    do_exit, exit_rsn, actual_exit_type = (
+                        True,
+                        "Mega-Trend Climax 잔여러너 방어청산",
+                        "MEGA_CLIMAX_RUNNER",
+                    )
+                    actual_exit_price = c
             
             # 💡 [V51.0 핵심] 내 전략(Namespace) 방에 할당된 독립 파라미터 뇌(Brain) 꺼내오기
             ns_live_params = sys_config.get(f"{ns_prefix}_LIVE_PARAMS", sys_config)
@@ -786,6 +814,38 @@ def track_daily_positions(market):
                     update_bandit_for_closure(row_scalar(r, 'sig_type', ''), won=(float(ret) > 0))
                 except Exception:
                     pass
+
+                # 🔄 [Re-Evolution Warm-Start EV] 실측 매칭 가속 / 가짜부활 킬스위치
+                try:
+                    from re_evolution_ev_rampup import process_warm_start_live_closure
+
+                    _re_ev = process_warm_start_live_closure(
+                        market=market,
+                        sig_type=str(row_scalar(r, 'sig_type', '')),
+                        final_ret_pct=float(ret),
+                        sim_kelly_invest=float(
+                            row_scalar(r, 'sim_kelly_invest', 0.0) or 0.0
+                        ),
+                        invest_amount=float(
+                            row_scalar(r, 'invest_amount', 0.0) or 0.0
+                        ),
+                        exit_date=str(row_scalar(r, 'exit_date', '') or ''),
+                        sys_config=sys_config,
+                    )
+                    _re_ev_act = str(_re_ev.get("action") or "")
+                    if _re_ev_act == "full_ramp":
+                        print(
+                            f"🚀 [Re-Evolution EV] Full ramp 100%: "
+                            f"{_re_ev.get('group_key')}"
+                        )
+                    elif _re_ev_act == "shadow_recall":
+                        print(
+                            f"🛑 [Re-Evolution EV] Fake resurrection recall: "
+                            f"{_re_ev.get('group_key')} "
+                            f"({_re_ev.get('reason')})"
+                        )
+                except Exception as _re_ev_ex:
+                    logger.debug("re_evolution ev rampup skip: %s", _re_ev_ex)
 
                 # 🔄 [Re-Evolution P1] LIVE 3-Strike 평가 → OBSERVING 섀도우 강등(비파괴)
                 try:

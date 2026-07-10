@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Sequence, Set
 
 try:
     from market_db_paths import MARKET_DATA_DB_PATH as _DB_PATH
@@ -238,3 +238,212 @@ def get_flow_score(
                 c.close()
             except Exception:
                 pass
+
+
+# ── [Mega-Trend 1번] 섹터 단위 기관/외인 순매수 Z-Score ─────────────────────────
+
+
+_code_sector_map_cache: Optional[Dict[str, str]] = None
+
+
+def _flow_z_window_days() -> int:
+    try:
+        return max(2, int(os.environ.get("MEGA_TREND_FLOW_WINDOW_DAYS", "5")))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _flow_z_history_days() -> int:
+    try:
+        return max(10, int(os.environ.get("MEGA_TREND_FLOW_HISTORY_DAYS", "60")))
+    except (TypeError, ValueError):
+        return 60
+
+
+def _flow_z_min_threshold() -> float:
+    try:
+        return float(os.environ.get("MEGA_TREND_FLOW_Z_MIN", "2.0"))
+    except (TypeError, ValueError):
+        return 2.0
+
+
+def build_kr_code_sector_map() -> Dict[str, str]:
+    """FDR KOSPI/KOSDAQ 리스트 → 표준 섹터 버킷 (mega-trend·수급 집계 공용)."""
+    global _code_sector_map_cache
+    if _code_sector_map_cache is not None:
+        return _code_sector_map_cache
+
+    out: Dict[str, str] = {}
+    try:
+        import FinanceDataReader as fdr
+        from sector_taxonomy import map_standard_sector
+
+        for tag in ("KOSPI", "KOSDAQ"):
+            try:
+                lst = fdr.StockListing(tag)
+            except Exception:
+                continue
+            if lst is None or lst.empty:
+                continue
+            code_col = "Code" if "Code" in lst.columns else "Symbol"
+            sec_col = None
+            for c in ("Industry", "업종", "Sector", "sector", "분류"):
+                if c in lst.columns:
+                    sec_col = c
+                    break
+            if sec_col is None:
+                continue
+            for _, row in lst.iterrows():
+                code = str(row.get(code_col) or "").zfill(6)
+                if not code or code == "000000":
+                    continue
+                raw = str(row.get(sec_col) or "").strip()
+                out[code] = map_standard_sector(raw, market="KR")
+    except Exception:
+        pass
+
+    _code_sector_map_cache = out
+    return out
+
+
+def aggregate_sector_flow_by_date(
+    conn: Optional[sqlite3.Connection] = None,
+    *,
+    history_days: Optional[int] = None,
+) -> Dict[str, Dict[str, float]]:
+    """{date: {sector: foreign_inst_krw_sum}} — kr_investor_flow 집계."""
+    hist = int(history_days or _flow_z_history_days())
+    own = False
+    c = conn
+    if c is None:
+        c = _connect()
+        own = True
+    if c is None:
+        return {}
+
+    cmap = build_kr_code_sector_map()
+    try:
+        ensure_flow_table(c)
+        rows = c.execute(
+            f"""
+            SELECT date, code, foreign_inst_krw
+            FROM {FLOW_TABLE}
+            ORDER BY date DESC
+            LIMIT ?
+            """,
+            (hist * 800,),
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        if own and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+    by_date: Dict[str, Dict[str, float]] = {}
+    seen_dates: Set[str] = set()
+    for date_s, code, krw in rows or []:
+        d = str(date_s or "")[:10]
+        if not d:
+            continue
+        if d not in seen_dates and len(seen_dates) >= hist:
+            continue
+        seen_dates.add(d)
+        sec = cmap.get(str(code).zfill(6), "미분류(원시)")
+        try:
+            v = float(krw or 0.0)
+        except (TypeError, ValueError):
+            v = 0.0
+        bucket = by_date.setdefault(d, {})
+        bucket[sec] = bucket.get(sec, 0.0) + v
+    return by_date
+
+
+def compute_sector_flow_zscore(
+    sector: str,
+    conn: Optional[sqlite3.Connection] = None,
+    *,
+    window_days: Optional[int] = None,
+    history_days: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    섹터 누적 순매수(외인+기관) Z-Score — 최근 window일 합 vs 과거 window일 합 분포.
+    """
+    from sector_taxonomy import map_standard_sector
+
+    sec = map_standard_sector(sector, market="KR")
+    win = int(window_days or _flow_z_window_days())
+    hist = int(history_days or _flow_z_history_days())
+    neutral: Dict[str, Any] = {
+        "sector": sec,
+        "z_score": None,
+        "window_krw": 0.0,
+        "n_windows": 0,
+        "neutral": True,
+        "reason": "insufficient_data",
+    }
+
+    by_date = aggregate_sector_flow_by_date(conn, history_days=hist)
+    dates = sorted(by_date.keys())
+    if len(dates) < win + 5:
+        return neutral
+
+    def _window_sum(end_idx: int) -> float:
+        start = max(0, end_idx - win + 1)
+        total = 0.0
+        for i in range(start, end_idx + 1):
+            total += float(by_date[dates[i]].get(sec, 0.0))
+        return total
+
+    windows = [_window_sum(i) for i in range(win - 1, len(dates))]
+    if len(windows) < 5:
+        return neutral
+
+    current = float(windows[-1])
+    prior = windows[:-1]
+    mean = sum(prior) / len(prior)
+    var = sum((x - mean) ** 2 for x in prior) / max(1, len(prior) - 1)
+    std = math.sqrt(var) if var > 1e-12 else 0.0
+    if std <= 1e-6:
+        return {
+            **neutral,
+            "window_krw": current,
+            "n_windows": len(windows),
+            "reason": "zero_std",
+        }
+
+    z = (current - mean) / std
+    return {
+        "sector": sec,
+        "z_score": round(float(z), 4),
+        "window_krw": round(current, 2),
+        "window_mean_krw": round(mean, 2),
+        "window_std_krw": round(std, 2),
+        "n_windows": len(windows),
+        "window_days": win,
+        "neutral": False,
+        "strong_inflow": float(z) >= _flow_z_min_threshold(),
+        "reason": "computed",
+    }
+
+
+def compute_all_sector_flow_zscores(
+    conn: Optional[sqlite3.Connection] = None,
+    *,
+    sectors: Optional[Sequence[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """전 섹터(또는 지정 목록) flow Z-Score 맵."""
+    if sectors:
+        targets = [str(s) for s in sectors]
+    else:
+        by_date = aggregate_sector_flow_by_date(conn)
+        targets = sorted(
+            {sec for day in by_date.values() for sec in day.keys() if sec}
+        )
+    out: Dict[str, Dict[str, Any]] = {}
+    for sec in targets:
+        out[sec] = compute_sector_flow_zscore(sec, conn=conn)
+    return out
+

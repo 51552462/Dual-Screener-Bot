@@ -641,6 +641,23 @@ def run_smart_money_tracker():
     # (진입 관문 try_add_virtual_position 의 '수급 모멘텀/다이버전스' 가산 팩터 소비원)
     _persist_investor_flow_timeseries(trade_dates)
 
+    # [Mega-Trend Unlock] 내부1진단→내부1킬→내부2킬→외부3→점화
+    try:
+        from mega_trend_climax import refresh_mega_trend_climax_kill
+        from mega_trend_ignition import refresh_mega_trend_ignition
+        from mega_trend_internal_kill import refresh_mega_trend_internal_momentum_kill
+        from mega_trend_internal_monitor import refresh_mega_trend_internal_diagnostics
+        from mega_trend_toxic_kill import refresh_mega_trend_toxic_graveyard_kill
+
+        cfg_mt = load_config()
+        refresh_mega_trend_internal_diagnostics(cfg_mt, save_config_fn=save_config)
+        refresh_mega_trend_internal_momentum_kill(cfg_mt, save_config_fn=save_config)
+        refresh_mega_trend_toxic_graveyard_kill(cfg_mt, save_config_fn=save_config)
+        refresh_mega_trend_climax_kill(cfg_mt, save_config_fn=save_config)
+        refresh_mega_trend_ignition(cfg_mt, save_config_fn=save_config)
+    except Exception as ex:
+        print(f"⚠️ [Mega-Trend Unlock] 스킵(비치명적): {ex}")
+
     # [P1-4] 같은 KR 일일 잡에 공매도/대차잔고 시계열 백필을 피기백(별도 크론 불필요).
     #   (진입 관문의 '숏스퀴즈 가산 / 크라우디드 숏 경계' 팩터 소비원). 전부 방어적.
     try:
