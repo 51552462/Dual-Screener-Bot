@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytz
 import sqlite3
 import json
+from typing import Optional
 from low_ram_sqlite_pragmas import apply_busy_timeout
 from dotenv import load_dotenv
 
