@@ -886,7 +886,8 @@ def _aggregate_global_open_loss_usdt(conn) -> tuple[float, int]:
     status=OPEN 인 전 종목 미실현 손익 중 손실분만 합산 (양수 포지션 PnL은 제외 → 주식 total_open_loss_amount 와 동일).
     반환: (total_open_loss_amount, open_count).
     """
-    df_open = pd.read_sql(*forward_open_float_pnl_sql(), conn)
+    sql_query, sql_params = forward_open_float_pnl_sql()
+    df_open = pd.read_sql(sql_query, conn, params=sql_params)
     total_open_loss_amount = 0.0
     for _, row in df_open.iterrows():
         pnl = _floating_pnl_usdt_open_row(conn, row)
