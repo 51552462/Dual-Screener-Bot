@@ -2,13 +2,14 @@
 Bitget-isolated async Telegram daemon.
 
 Uses `bitget_message_queue.sqlite` (not equity message_queue.sqlite).
+Heartbeat / gauges write to `bitget_ops_events.sqlite` so Bitget watchdog
+can observe hangs and restart `dante-bitget-async` (never equity ops DB).
 Bootstrap uses BITGET_* credentials only — never equity MAIN/EQUITY_KR keys.
 """
 from __future__ import annotations
 
 import asyncio
 import os
-import sys
 
 
 def _patch_bitget_queue_paths() -> None:
@@ -18,6 +19,14 @@ def _patch_bitget_queue_paths() -> None:
     tmq._BOT_DIR = bitget_data_dir()
     tmq.MESSAGE_QUEUE_DB_PATH = message_queue_db_path()
     tmq._schema_ready = False
+
+
+def _patch_bitget_ops_logger() -> None:
+    """Redirect root async_telegram_daemon HB/gauges → Bitget ops_events SSOT."""
+    import async_telegram_daemon as atd
+    import bitget.infra.ops_logger as bg_ops
+
+    atd.ops_logger = bg_ops
 
 
 def _load_bitget_dotenv() -> None:
@@ -59,22 +68,26 @@ def _bootstrap_bitget_daemon_registration():
 
 
 def main() -> int:
+    from bitget.infra.logging_setup import get_logger
+
     _patch_bitget_queue_paths()
+    _patch_bitget_ops_logger()
     os.environ.setdefault("DANTE_ASYNC_TELEGRAM_DAEMON", "1")
     os.environ.setdefault("BITGET_ASYNC_TELEGRAM", "1")
 
     reg = _bootstrap_bitget_daemon_registration()
     if not reg:
-        print(
-            "⚠️ [bitget.async_telegram_daemon] 큐 데몬 등록 없음 — "
-            "bitget/.env 또는 루트 .env 에 아래를 설정하세요.\n"
-            "  BITGET_TELEGRAM_TOKEN (또는 BITGET_BOT_TOKEN)\n"
-            "  BITGET_TELEGRAM_CHAT_ID (또는 BITGET_BOT_CHAT_ID)",
-            file=sys.stderr,
+        get_logger("bitget.async_telegram_daemon").error(
+            "queue daemon registration missing — set in bitget/.env or root .env: "
+            "BITGET_TELEGRAM_TOKEN (or BITGET_BOT_TOKEN), "
+            "BITGET_TELEGRAM_CHAT_ID (or BITGET_BOT_CHAT_ID)"
         )
         return 2
 
     import async_telegram_daemon
+
+    # Re-apply after import in case module was loaded earlier without patch
+    _patch_bitget_ops_logger()
 
     tm, tp, cid, en = reg
     asyncio.run(async_telegram_daemon.run_async_telegram_daemon(tm, tp, cid, en))

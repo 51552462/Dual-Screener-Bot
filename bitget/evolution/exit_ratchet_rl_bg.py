@@ -2,29 +2,22 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import exit_dynamics as xd
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.bounded_reads import exit_ratchet_runner_trades_sql
+from bitget.infra.clock import utc_date_days_ago_str, utc_now
 
 
 def _read_runner_trades(db_path: str, cutoff: str):
     uri = str(db_path).replace("\\", "/")
     conn = sqlite3.connect(f"file:{uri}?mode=ro", uri=True, timeout=30)
     try:
-        return conn.execute(
-            """
-            SELECT mfe, final_ret, exit_type, bars_held
-            FROM bitget_forward_trades
-            WHERE (free_runner=1 OR scaled_out_frac > 0)
-              AND status LIKE 'CLOSED%'
-              AND final_ret IS NOT NULL AND mfe IS NOT NULL
-              AND substr(IFNULL(exit_date, entry_date),1,10) >= ?
-            """,
-            (cutoff,),
-        ).fetchall()
+        sql, params = exit_ratchet_runner_trades_sql(cutoff=cutoff)
+        return conn.execute(sql, params).fetchall()
     finally:
         conn.close()
 
@@ -52,8 +45,8 @@ def evolve_bitget_ratchet_kappa(
         except Exception:
             cfg = {}
     path = db_path or DB_PATH
-    now = now or datetime.utcnow()
-    cutoff = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    now = now or utc_now()
+    cutoff = utc_date_days_ago_str(lookback_days, anchor=now)
 
     rates: Dict[str, Any] = {"n": 0, "whipsaw_rate": 0.0, "giveback_rate": 0.0}
     if path:

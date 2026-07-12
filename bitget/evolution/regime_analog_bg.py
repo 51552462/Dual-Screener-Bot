@@ -20,6 +20,7 @@ from bitget.evolution.coin_regime_vector import (
     load_vector_history_arrays,
     regime_index,
 )
+from bitget.infra.clock import utc_now
 
 ANALOG_SCORE_KEY = "REGIME_ANALOG_SCORE_BG"
 GATE_ENABLED_KEY = "REGIME_ANALOG_GATE_ENABLED"
@@ -123,7 +124,7 @@ def compute_coin_regime_analog(
     """현재 코인 국면 vs 역사적 에피소드 유사도."""
     from bitget.evolution.coin_regime_vector import append_coin_regime_vector_history
 
-    now = now or datetime.utcnow()
+    now = now or utc_now()
     built = build_current_coin_regime_vector(cfg)
     current_vec = built["vector"]
     x = np.asarray(current_vec, dtype=float)

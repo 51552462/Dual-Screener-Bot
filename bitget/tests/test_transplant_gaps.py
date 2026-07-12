@@ -31,6 +31,14 @@ class TestMarketKeys:
         assert to_deathmatch_key("spot") == "SPOT"
         assert to_pil_key("futures") == "BG_FUTURES"
         assert to_pil_key("spot") == "BG_SPOT"
+
+    def test_bitget_registry_market_accepts_aliases_rejects_stock(self):
+        from bitget.infra.market_keys import is_bitget_registry_market
+
+        for m in ("SPOT", "FUT", "FUTURES", "BG", "BG_SPOT", "BG_FUTURES", "BG_FUT", "futures"):
+            assert is_bitget_registry_market(m), m
+        for m in ("KR", "US", "KRX", "", "NASDAQ"):
+            assert not is_bitget_registry_market(m), m
         assert to_db_key("FUTURES") == "futures"
 
 

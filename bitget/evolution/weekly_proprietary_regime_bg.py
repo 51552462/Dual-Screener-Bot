@@ -6,15 +6,22 @@ import json
 import os
 import sqlite3
 import tempfile
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
+from bitget.infra.clock import utc_date_days_ago_str, utc_now
 from bitget.infra.data_paths import bitget_data_dir
 from bitget.infra.proprietary_friction_store_bg import normalize_friction_market
 from bitget.forward.shared import DB_PATH
+from bitget.infra.bounded_reads import (
+    forward_pri_closed_week_sql,
+    forward_pri_open_metrics_sql,
+    pri_funnel_week_sql,
+    pri_friction_week_sql,
+    warn_if_open_exceeds_safety,
+)
 
 SHADOW_FILENAME = "BITGET_PROPRIETARY_REGIME_SHADOW.json"
 MIN_SAMPLES_FULL = 5
@@ -92,32 +99,16 @@ def _load_funnel_week(conn: sqlite3.Connection, market: str, week_start: str, we
     if not _table_exists(conn, "scan_funnel_snapshot"):
         return pd.DataFrame()
     mk = normalize_friction_market(market)
-    return pd.read_sql(
-        """
-        SELECT ts, market, universe_size, survivors, pass_rate_pct
-        FROM scan_funnel_snapshot
-        WHERE market=? AND substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
-        ORDER BY ts ASC
-        """,
-        conn,
-        params=(mk, week_start, week_end),
-    )
+    sql, params = pri_funnel_week_sql(market=mk, week_start=week_start, week_end=week_end)
+    return pd.read_sql(sql, conn, params=params)
 
 
 def _load_friction_events(conn: sqlite3.Connection, market: str, week_start: str, week_end: str) -> pd.DataFrame:
     if not _table_exists(conn, "regime_friction_event"):
         return pd.DataFrame()
     mk = normalize_friction_market(market)
-    return pd.read_sql(
-        """
-        SELECT date, market, event_type
-        FROM regime_friction_event
-        WHERE market=? AND date >= ? AND date <= ?
-        ORDER BY date ASC
-        """,
-        conn,
-        params=(mk, week_start, week_end),
-    )
+    sql, params = pri_friction_week_sql(market=mk, week_start=week_start, week_end=week_end)
+    return pd.read_sql(sql, conn, params=params)
 
 
 def _ledger_week_metrics(
@@ -138,27 +129,15 @@ def _ledger_week_metrics(
     if not _table_exists(conn, "bitget_forward_trades"):
         return empty
 
-    df_open = pd.read_sql(
-        """
-        SELECT entry_price, max_high, min_low, position_side
-        FROM bitget_forward_trades
-        WHERE market_type=? AND status='OPEN' AND entry_price IS NOT NULL AND entry_price > 0
-        """,
-        conn,
-        params=(mk,),
+    warn_if_open_exceeds_safety(conn, market_type=mk)
+    open_q, open_params = forward_pri_open_metrics_sql(market_type=mk)
+    df_open = pd.read_sql(open_q, conn, params=open_params)
+    closed_q, closed_params = forward_pri_closed_week_sql(
+        market_type=mk,
+        week_start=week_start,
+        week_end=week_end,
     )
-    df_closed = pd.read_sql(
-        """
-        SELECT final_ret, exit_date
-        FROM bitget_forward_trades
-        WHERE market_type=? AND status LIKE 'CLOSED%'
-          AND substr(COALESCE(NULLIF(TRIM(exit_date),''), ''),1,10) >= ?
-          AND substr(COALESCE(NULLIF(TRIM(exit_date),''), ''),1,10) <= ?
-          AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
-        """,
-        conn,
-        params=(mk, week_start, week_end),
-    )
+    df_closed = pd.read_sql(closed_q, conn, params=closed_params)
 
     mfe_live: list[float] = []
     mae_live: list[float] = []
@@ -300,11 +279,11 @@ def compute_weekly_coin_pri(
     week_end: Optional[str] = None,
     markets: Tuple[str, ...] = ("spot", "futures"),
 ) -> Dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     if not week_end:
         week_end = now.strftime("%Y-%m-%d")
     if not week_start:
-        week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+        week_start = utc_date_days_ago_str(6, anchor=now)
 
     results: Dict[str, Any] = {
         "shadow_mode": True,

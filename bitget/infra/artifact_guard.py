@@ -6,14 +6,14 @@ Bitget 팩토리 파생 자산 자가 치유 — bitget_market_data.sqlite (SSOT
 """
 from __future__ import annotations
 
-import logging
 import os
 import sqlite3
 from typing import Any, Dict, List, Tuple
 
 from bitget.infra.data_paths import market_data_db_path, meta_governor_state_path
+from bitget.infra.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("bitget.artifact_guard")
 
 REQUIRED_TABLES: Tuple[str, ...] = (
     "bitget_forward_trades",
@@ -149,9 +149,8 @@ def main() -> None:
     import json
     import sys
 
-    logging.basicConfig(level=logging.INFO)
     out = ensure_bitget_artifacts(force_meta="--force-meta" in sys.argv)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    logger.info("%s", json.dumps(out, ensure_ascii=False, indent=2))
     if out.get("error") == "no_db":
         raise SystemExit(2)
     if out.get("error") == "schema_incomplete" or out.get("meta") == "failed":

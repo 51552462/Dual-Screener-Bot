@@ -10,13 +10,20 @@ import os
 import re
 import sqlite3
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import pandas as pd
 
 from bitget.forward.shared import DB_PATH, init_forward_db
+from bitget.infra.bounded_reads import (
+    forward_identity_blank_symbol_ids_sql,
+    forward_identity_trades_sql,
+    warn_if_open_exceeds_safety,
+)
+from bitget.infra.clock import utc_datetime_str_tz
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.logging_setup import get_logger
+from bitget.infra.memory_policy import FORWARD_IDENTITY_BLANK_REPAIR_BATCH_LIMIT
 from bitget.infra.shared_db_connector import get_connection
 from bitget.reports.bitget_report_context import BitgetReportContext
 
@@ -30,6 +37,7 @@ IdentityClass = Literal[
 _BLANK = frozenset({"", "nan", "none", "null", "nat", "—", "-", "unknown", "종목미상"})
 _SYNTH_RE = re.compile(r"^(spot|futures|crypto):", re.I)
 _BITGET_TABLE_RE = re.compile(r"^BITGET_(SPOT|FUT)_(.+)_(\d+D|\d+H|\d+M)$", re.I)
+logger = get_logger("bitget.forward.trade_identity")
 
 
 @dataclass(frozen=True)
@@ -195,19 +203,27 @@ def resolve_trade_symbol(
     return "—", "unresolved"
 
 
-def _fetch_trades_df(conn: sqlite3.Connection, market: str) -> pd.DataFrame:
-    where, _ = _market_filter_sql(market)
-    df = pd.read_sql(
-        f"""
-        SELECT id, market_type, symbol, status, entry_date, exit_date,
-               final_ret, flow_tags, sig_type, timeframe
-        FROM bitget_forward_trades
-        WHERE {where}
-          AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
-        ORDER BY id DESC
-        """,
-        conn,
+def _fetch_trades_df(
+    conn: sqlite3.Connection,
+    market: str,
+    *,
+    rolling_cutoff: str | None = None,
+    session_anchor: str | None = None,
+) -> pd.DataFrame:
+    mk = _norm_market_type(market)
+    if rolling_cutoff is None or session_anchor is None:
+        ctx = BitgetReportContext.build()
+        tk = ctx.timekeeper_for(mk if mk != "all" else "spot")
+        rolling_cutoff = rolling_cutoff or tk.rolling_cutoff
+        session_anchor = session_anchor or tk.session_anchor
+    if mk in ("spot", "futures"):
+        warn_if_open_exceeds_safety(conn, market_type=mk)
+    q, params = forward_identity_trades_sql(
+        market_type=market,
+        rolling_cutoff=rolling_cutoff,
+        session_anchor=session_anchor,
     )
+    df = pd.read_sql(q, conn, params=params)
     if df.empty:
         return df
     for col in ("entry_date", "exit_date"):
@@ -248,7 +264,12 @@ def _pipeline_health(conn: sqlite3.Connection, market: str, *, rolling_days: int
         """
     ).fetchone()[0]
 
-    df = _fetch_trades_df(conn, market)
+    df = _fetch_trades_df(
+        conn,
+        market,
+        rolling_cutoff=tk.rolling_cutoff,
+        session_anchor=tk.session_anchor,
+    )
     n_closed_window = 0
     if not df.empty:
         ent = df["entry_date"].astype(str).str[:10]
@@ -308,11 +329,16 @@ def diagnose_forward_trade_identity(
 ) -> IdentityDiagnosticReport:
     mk = _norm_market_type(market)
     path = db_path or DB_PATH
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now_utc = utc_datetime_str_tz()
     pipeline = _pipeline_health(conn, mk, rolling_days=rolling_days)
     lookup, lookup_stats = build_symbol_lookup(conn, mk)
 
-    df = _fetch_trades_df(conn, mk)
+    df = _fetch_trades_df(
+        conn,
+        mk,
+        rolling_cutoff=pipeline.rolling_cutoff,
+        session_anchor=pipeline.session_anchor,
+    )
     gap_rows_all: List[IdentityGapRow] = []
     gap_window_ids: set[int] = set()
     gap_open_ids: set[int] = set()
@@ -392,7 +418,12 @@ def backfill_forward_trade_symbols(
     mk = _norm_market_type(market)
     lookup, _stats = build_symbol_lookup(conn, mk)
     pipeline = _pipeline_health(conn, mk, rolling_days=rolling_days)
-    df = _fetch_trades_df(conn, mk)
+    df = _fetch_trades_df(
+        conn,
+        mk,
+        rolling_cutoff=pipeline.rolling_cutoff,
+        session_anchor=pipeline.session_anchor,
+    )
     result = BackfillResult(
         market_type=mk,
         dry_run=bool(dry_run),
@@ -551,29 +582,33 @@ def run_identity_repair_for_market(
             only_window=True,
             rolling_days=rolling_days,
         )
-        # blank symbol rows — synthetic label repair (always apply)
+        # blank symbol rows — synthetic label repair (batched)
         mk = _norm_market_type(market)
         where, _ = _market_filter_sql(mk if mk != "all" else "spot")
         extra = 0
         if not dry_run:
-            rows = conn.execute(
-                f"""
-                SELECT id, market_type, timeframe FROM bitget_forward_trades
-                WHERE {where} AND (symbol IS NULL OR TRIM(symbol) = '')
-                """
-            ).fetchall()
-            for rid, mtype, tf in rows:
-                label = f"{mtype or 'crypto'}:{tf or '?'}"
-                conn.execute(
-                    "UPDATE bitget_forward_trades SET symbol = ? WHERE id = ?",
-                    (label, int(rid)),
+            batch_lim = int(FORWARD_IDENTITY_BLANK_REPAIR_BATCH_LIMIT)
+            while True:
+                blank_q, blank_params = forward_identity_blank_symbol_ids_sql(
+                    market_where=where,
+                    limit=batch_lim,
                 )
-                extra += 1
-            if extra:
+                rows = conn.execute(blank_q, blank_params).fetchall()
+                if not rows:
+                    break
+                for rid, mtype, tf in rows:
+                    label = f"{mtype or 'crypto'}:{tf or '?'}"
+                    conn.execute(
+                        "UPDATE bitget_forward_trades SET symbol = ? WHERE id = ?",
+                        (label, int(rid)),
+                    )
+                    extra += 1
                 conn.commit()
+                if len(rows) < batch_lim:
+                    break
         line = format_repair_log_line(diag, backfill)
-        print(line)
-        print(format_diagnostic_report_text(diag))
+        logger.info("%s", line)
+        logger.info("%s", format_diagnostic_report_text(diag))
         return {
             "market": mk,
             "repaired": int(backfill.updated) + int(extra),

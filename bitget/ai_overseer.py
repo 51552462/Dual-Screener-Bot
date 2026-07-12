@@ -1,8 +1,15 @@
+"""
+Bitget AI 상시 감사관 — 23:50 KST 일일 리포트 + bounded Tier-2 reads.
+
+Clock boundary (intentional):
+  - `overseer_loop` / `gather_daily_system_facts` → Asia/Seoul (KST) audit calendar day.
+  - `exit_date` in ledger is UTC date-only → SQL uses prev+cur UTC union for KST day overlap.
+  - ops_events / trading logic elsewhere → `bitget.infra.clock` UTC SSOT.
+"""
+from __future__ import annotations
+
 import json
 import os
-import random
-import sqlite3
-import time
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -14,7 +21,10 @@ from dotenv import load_dotenv
 load_dotenv()
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.governance.meta_consumer import load_meta_state_resolved
+from bitget.infra.bounded_reads import overseer_daily_closed_sql, overseer_rnd_day_count_sql
 from bitget.infra.data_paths import flow_csv_path, market_data_db_path
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.memory_policy import OVERSEER_CSV_STATUS_ROW_CAP
 from bitget.infra.shared_db_connector import get_connection
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -24,6 +34,7 @@ CSV_PATH = flow_csv_path()
 ALT_CSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Supernova_Flow_Tracking_Master.csv")
 TELEGRAM_TOKEN = bitget_telegram_token()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
+logger = get_logger("bitget.ai_overseer")
 
 
 def load_config(max_retries=5):
@@ -39,7 +50,7 @@ def send_telegram_alert(text):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
-        print(f"텔레그램 발송 실패: {e}")
+        log_exception(logger, "telegram send failed: %s", e)
 
 
 GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 규칙 감사 본문은 유지됩니다."
@@ -67,9 +78,28 @@ def safe_generate_content(*, model, contents, max_retries=5):
     )
 
 
-def gather_daily_system_facts():
+def _kst_today_str() -> str:
+    """KST audit calendar day — intentional local TZ for operator daily report."""
     tz_kr = pytz.timezone("Asia/Seoul")
-    today_str = datetime.now(tz_kr).strftime("%Y-%m-%d")
+    return datetime.now(tz_kr).strftime("%Y-%m-%d")
+
+
+def _csv_status_row_count(path: str) -> tuple[int, bool]:
+    """Line-count CSV rows (header excluded) without loading full DataFrame."""
+    cap = int(OVERSEER_CSV_STATUS_ROW_CAP)
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            n = sum(1 for _ in f)
+        data_rows = max(0, n - 1)
+        if data_rows > cap:
+            return cap, True
+        return data_rows, False
+    except OSError:
+        return 0, False
+
+
+def gather_daily_system_facts():
+    today_str = _kst_today_str()
     report_data = {
         "date": today_str,
         "trades": {},
@@ -80,20 +110,12 @@ def gather_daily_system_facts():
 
     try:
         conn = get_connection(DB_PATH, read_only=True)
-        df_closed = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE entry_date <= ? AND status LIKE 'CLOSED%' AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'",
-            conn,
-            params=(today_str,),
-        )
-        if "exit_date" in df_closed.columns:
-            df_closed = df_closed[df_closed["exit_date"].astype(str).str.startswith(today_str)]
+        closed_q, closed_params = overseer_daily_closed_sql(today=today_str)
+        df_closed = pd.read_sql(closed_q, conn, params=closed_params)
 
-        df_rnd = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE entry_date=? AND sig_type LIKE '%[R&D_%'",
-            conn,
-            params=(today_str,),
-        )
-        report_data["rnd_data_count"] = int(len(df_rnd))
+        rnd_q, rnd_params = overseer_rnd_day_count_sql(today=today_str)
+        rnd_row = conn.execute(rnd_q, rnd_params).fetchone()
+        report_data["rnd_data_count"] = int(rnd_row[0] if rnd_row else 0)
 
         if not df_closed.empty:
             ret = pd.to_numeric(df_closed["final_ret"], errors="coerce").fillna(0.0)
@@ -132,11 +154,13 @@ def gather_daily_system_facts():
 
     try:
         if os.path.exists(CSV_PATH):
-            df_csv = pd.read_csv(CSV_PATH)
-            report_data["csv_status"] = f"정상 (누적 {len(df_csv)}행 보존 중)"
+            n_rows, truncated = _csv_status_row_count(CSV_PATH)
+            suffix = "+" if truncated else ""
+            report_data["csv_status"] = f"정상 (누적 {n_rows}{suffix}행 보존 중)"
         elif os.path.exists(ALT_CSV_PATH):
-            df_csv = pd.read_csv(ALT_CSV_PATH)
-            report_data["csv_status"] = f"정상(대체 CSV) (누적 {len(df_csv)}행 보존 중)"
+            n_rows, truncated = _csv_status_row_count(ALT_CSV_PATH)
+            suffix = "+" if truncated else ""
+            report_data["csv_status"] = f"정상(대체 CSV) (누적 {n_rows}{suffix}행 보존 중)"
         else:
             report_data["csv_status"] = "🚨 경고: Bitget CSV 파일이 삭제되었거나 존재하지 않습니다."
     except Exception as e:
@@ -146,7 +170,7 @@ def gather_daily_system_facts():
 
 
 def run_ai_auditor():
-    print("👁️ [Bitget AI 최고 감시자] 시스템 장부 스캔 및 분석 중...")
+    logger.info("[AI overseer] system ledger scan start")
     facts = gather_daily_system_facts()
 
     prompt = f"""
@@ -168,31 +192,57 @@ def run_ai_auditor():
         ai_res = safe_generate_content(model="gemini-2.5-flash", contents=prompt)
         ai_text = (getattr(ai_res, "text", "") or "").strip() or f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}"
         send_telegram_alert(ai_text)
-        print("✅ [Bitget AI 최고 감시자] 텔레그램 직보 완료.")
+        logger.info("[AI overseer] telegram report sent")
     except Exception as e:
-        err_msg = f"🚨 <b>[Bitget AI 감시자 에러]</b> Gemini 통신/분석 중 오류:\n{e}"
-        print(err_msg)
+        log_exception(logger, "[AI overseer] gemini/analysis error: %s", e)
         send_telegram_alert(f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}\n\n(상세: {e})")
 
 
 def overseer_loop():
+    from bitget.infra.daemon_loop import (
+        OVERSEER_ERROR_SEC,
+        OVERSEER_POLL_SEC,
+        OVERSEER_POST_AUDIT_SLEEP_SEC,
+        LocalTick,
+        sleep_or_backoff,
+    )
+
     tz_kr = pytz.timezone("Asia/Seoul")
-    print("🛡️ [Bitget AI 상시 감사관 시스템] 영구 가동 대기 중...")
-    print(" - 매일 23:50 KST 에 시스템 전역을 부검하고 분석 리포트를 발송합니다.")
-    if not (os.environ.get("GEMINI_API_KEY") or "").strip():
-        print("⚠️ [AI 비활성화] GEMINI_API_KEY 미설정 — 감사 루프는 유지되나 23:50 감사 스킵.")
+    tick = LocalTick(tz_kr)
+    gemini_enabled = bool((os.environ.get("GEMINI_API_KEY") or "").strip())
+    audit_hm_key = ""
+    loop_error = False
+
+    logger.info("[AI overseer] permanent audit loop waiting")
+    logger.info(" - daily audit at 23:50 KST")
+    if not gemini_enabled:
+        logger.warning(
+            "[AI disabled] GEMINI_API_KEY missing — loop stays up, 23:50 audit skipped"
+        )
 
     while True:
         try:
-            now = datetime.now(tz_kr)
-            if now.hour == 23 and now.minute == 50:
-                if (os.environ.get("GEMINI_API_KEY") or "").strip():
+            tick.refresh()
+            if tick.hour == 23 and tick.minute == 50:
+                if gemini_enabled and tick.hm_key != audit_hm_key:
                     run_ai_auditor()
-                time.sleep(65)
-            time.sleep(30)
+                    audit_hm_key = tick.hm_key
+                loop_error = False
+                sleep_or_backoff(
+                    normal_sec=OVERSEER_POST_AUDIT_SLEEP_SEC,
+                    after_error=False,
+                )
+                continue
+            loop_error = False
+            sleep_or_backoff(normal_sec=OVERSEER_POLL_SEC, after_error=loop_error)
         except Exception as e:
-            print(f"감시자 스케줄러 에러: {e}")
-            time.sleep(60)
+            log_exception(logger, "overseer scheduler error: %s", e)
+            loop_error = True
+            sleep_or_backoff(
+                normal_sec=OVERSEER_POLL_SEC,
+                after_error=loop_error,
+                error_sec=OVERSEER_ERROR_SEC,
+            )
 
 
 if __name__ == "__main__":

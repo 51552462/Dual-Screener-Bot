@@ -258,6 +258,24 @@ def apply_meta_kelly_merge(
         except Exception:
             pass
 
+    # [Re-Evolution Warm-Start] 불사조 복귀 그룹 — Base Confidence Kelly 배수
+    if core_group_name:
+        try:
+            from re_evolution_warm_start import apply_warm_start_kelly_scaler
+
+            mkt = "KR"
+            if isinstance(entry_facts, dict):
+                mkt = str(entry_facts.get("market") or entry_facts.get("MARKET") or mkt).upper()
+            out = apply_warm_start_kelly_scaler(
+                out,
+                meta,
+                market=mkt,
+                group_key=str(core_group_name),
+                sys_config=sys_config,
+            )
+        except Exception:
+            pass
+
     return float(out)
 
 

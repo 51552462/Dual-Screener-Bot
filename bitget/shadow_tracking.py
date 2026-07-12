@@ -7,10 +7,12 @@ import os
 import random
 import sqlite3
 import time
-from datetime import datetime
 
+from bitget.infra.clock import utc_datetime_str
 from bitget.infra.data_paths import market_data_db_path
 from bitget.infra.shared_db_connector import get_connection
+
+import memory_bounds
 
 DB_PATH = market_data_db_path()
 
@@ -109,7 +111,7 @@ def record_blocked_trade(
     max_retries: int = 5,
 ) -> bool:
     """매수/매도 포기(차단) 1건 기록. 장갑차 재시도."""
-    blocked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    blocked_at = utc_datetime_str()
     for attempt in range(max_retries):
         try:
             conn = get_connection(DB_PATH)
@@ -134,6 +136,12 @@ def record_blocked_trade(
             )
             conn.commit()
             conn.close()
+            try:
+                from bitget.infra.memory_retention import maybe_run_bitget_retention_after_write
+
+                maybe_run_bitget_retention_after_write()
+            except Exception:
+                pass
             return True
         except sqlite3.OperationalError:
             if attempt < max_retries - 1:

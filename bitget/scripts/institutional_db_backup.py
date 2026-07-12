@@ -27,14 +27,18 @@ import sqlite3
 import sys
 import tarfile
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from bitget.infra.clock import utc_compact_key, utc_datetime_str, utc_now_iso
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.memory_policy import DB_BACKUP_KEEP_ARCHIVES
 
 # bitget/scripts/this.py → parents[1]=bitget, parents[2]=repo root
 _SCRIPT = Path(__file__).resolve()
 _BITGET_ROOT = _SCRIPT.parents[1]
 _REPO_ROOT = _SCRIPT.parents[2]
+logger = get_logger("bitget.scripts.institutional_db_backup")
 
 # 스캔 제외 디렉터리 (대용량/불필요/재생성 가능)
 _EXCLUDE_DIRS = {
@@ -44,7 +48,7 @@ _EXCLUDE_DIRS = {
 # SQLite 후보 확장자. -wal/-shm/.tmp 는 backup API 가 흡수하므로 제외.
 _SQLITE_SUFFIXES = (".sqlite", ".sqlite3", ".db")
 _SKIP_SUBSTRINGS = ("-wal", "-shm", ".tmp", "-journal")
-
+_ARCHIVE_GLOB = "dual_screener_db_backup_*.tar.gz"
 
 def _looks_like_sqlite(path: Path) -> bool:
     """헤더 magic 으로 SQLite 파일인지 최종 확인 ('SQLite format 3\\000')."""
@@ -180,7 +184,7 @@ def write_restore_guide(staging_dir: Path, backup_id: str, archive_name: str,
             f"| `{item.get('source')}` | `{item.get('backup_rel')}` | {badge} | {item.get('size', 0)} |"
         )
     guide = _RESTORE_GUIDE_TEMPLATE.format(
-        created=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        created=utc_datetime_str(),
         backup_id=backup_id,
         n_ok=n_ok,
         n_total=len(manifest),
@@ -200,19 +204,54 @@ def compress_dir(staging_dir: Path, archive_path: Path) -> Path:
     return archive_path
 
 
+def default_out_dir() -> Path:
+    """Prefer BITGET_DB_BACKUP_DIR → data_dir/backups/db → repo/backups/db."""
+    env = (os.environ.get("BITGET_DB_BACKUP_DIR") or "").strip()
+    if env:
+        return Path(env)
+    try:
+        from bitget.infra.data_paths import bitget_data_dir
+
+        return Path(bitget_data_dir()) / "backups" / "db"
+    except Exception:
+        return _REPO_ROOT / "backups" / "db"
+
+
+def prune_old_archives(out_dir: Path, *, keep: int = DB_BACKUP_KEEP_ARCHIVES) -> int:
+    """Keep newest N tar.gz archives; delete older. Disk budget for 4GB boxes."""
+    keep_n = max(1, int(keep))
+    if not out_dir.is_dir():
+        return 0
+    archives = sorted(
+        out_dir.glob(_ARCHIVE_GLOB),
+        key=lambda p: p.stat().st_mtime if p.exists() else 0.0,
+        reverse=True,
+    )
+    removed = 0
+    for old in archives[keep_n:]:
+        try:
+            old.unlink()
+            removed += 1
+            logger.info("[backup] pruned %s", old.name)
+        except OSError as e:
+            logger.warning("[backup] prune skip %s: %s", old, e)
+    return removed
+
+
 def run_backup(
     *,
     roots: List[Path],
     out_dir: Path,
     compress: bool = True,
     keep_staging: bool = False,
+    keep_archives: Optional[int] = None,
 ) -> Dict[str, object]:
-    backup_id = datetime.now().strftime("%Y%m%dT%H%M%S")
+    backup_id = utc_compact_key()
     staging = out_dir / backup_id
     staging.mkdir(parents=True, exist_ok=True)
 
     dbs = discover_sqlite_dbs(roots)
-    print(f"[backup] discovered {len(dbs)} SQLite DB(s)")
+    logger.info("[backup] discovered %s SQLite DB(s)", len(dbs))
     manifest: List[Dict[str, object]] = []
     all_ok = True
 
@@ -229,17 +268,17 @@ def run_backup(
             entry["size"] = dst.stat().st_size if dst.exists() else 0
             all_ok = all_ok and bool(chk["ok"])
             status = "OK" if chk["ok"] else "INTEGRITY-FAIL"
-            print(f"  [{status}] {rel} ({entry['size']} bytes)")
+            logger.info("  [%s] %s (%s bytes)", status, rel, entry["size"])
         except Exception as e:  # noqa: BLE001
             entry["error"] = str(e)
             entry["integrity_ok"] = False
             all_ok = False
-            print(f"  [ERROR] {rel}: {e}", file=sys.stderr)
+            log_exception(logger, "  [ERROR] %s: %s", rel, e)
         manifest.append(entry)
 
     summary = {
         "backup_id": backup_id,
-        "created": datetime.now().isoformat(),
+        "created": utc_now_iso(),
         "repo_root": str(_REPO_ROOT),
         "db_count": len(dbs),
         "all_integrity_ok": all_ok,
@@ -257,14 +296,42 @@ def run_backup(
         archive_path = out_dir / archive_name
         compress_dir(staging, archive_path)
         result["archive"] = str(archive_path)
-        print(f"[backup] compressed → {archive_path}")
+        logger.info("[backup] compressed → %s", archive_path)
         if not keep_staging:
             import shutil
 
             shutil.rmtree(staging, ignore_errors=True)
             result["staging"] = "(removed)"
-    print(f"[backup] DONE id={backup_id} all_integrity_ok={all_ok}")
+    keep_n = DB_BACKUP_KEEP_ARCHIVES if keep_archives is None else int(keep_archives)
+    result["pruned"] = prune_old_archives(out_dir, keep=keep_n)
+    logger.info("[backup] DONE id=%s all_integrity_ok=%s pruned=%s", backup_id, all_ok, result["pruned"])
     return result
+
+
+def run_backup_job(
+    *,
+    roots: Optional[List[Path]] = None,
+    out_dir: Optional[Path] = None,
+    compress: bool = True,
+    keep_staging: bool = False,
+    keep_archives: Optional[int] = None,
+) -> Dict[str, object]:
+    """Cron/pipeline entry — backup + prune + stamped-log GC (disk survival)."""
+    res = run_backup(
+        roots=roots or _default_roots(),
+        out_dir=out_dir or default_out_dir(),
+        compress=compress,
+        keep_staging=keep_staging,
+        keep_archives=keep_archives,
+    )
+    try:
+        from bitget.disk_manager import cleanup_stamped_shell_logs
+
+        res["stamped_logs_removed"] = cleanup_stamped_shell_logs()
+    except Exception as e:
+        log_exception(logger, "[backup] stamped log cleanup skip: %s", e)
+        res["stamped_logs_removed"] = 0
+    return res
 
 
 def _default_roots() -> List[Path]:
@@ -297,21 +364,42 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--out-dir",
-        default=str(_REPO_ROOT / "backups" / "db"),
-        help="백업 저장 위치 (기본 <repo>/backups/db)",
+        default=None,
+        help="백업 저장 위치 (기본 BITGET_DB_BACKUP_DIR 또는 data_dir/backups/db)",
     )
     parser.add_argument("--no-compress", action="store_true", help="tar.gz 압축 생략")
     parser.add_argument("--keep-staging", action="store_true", help="압축 후 staging 폴더 유지")
+    parser.add_argument(
+        "--keep",
+        type=int,
+        default=None,
+        help=f"보존할 tar.gz 개수 (기본 {DB_BACKUP_KEEP_ARCHIVES})",
+    )
+    parser.add_argument(
+        "--no-log-gc",
+        action="store_true",
+        help="stamped shell log GC 생략",
+    )
     args = parser.parse_args(argv)
 
     roots = [Path(r) for r in args.root] if args.root else _default_roots()
-    out_dir = Path(args.out_dir)
-    res = run_backup(
-        roots=roots,
-        out_dir=out_dir,
-        compress=not args.no_compress,
-        keep_staging=args.keep_staging,
-    )
+    out_dir = Path(args.out_dir) if args.out_dir else default_out_dir()
+    if args.no_log_gc:
+        res = run_backup(
+            roots=roots,
+            out_dir=out_dir,
+            compress=not args.no_compress,
+            keep_staging=args.keep_staging,
+            keep_archives=args.keep,
+        )
+    else:
+        res = run_backup_job(
+            roots=roots,
+            out_dir=out_dir,
+            compress=not args.no_compress,
+            keep_staging=args.keep_staging,
+            keep_archives=args.keep,
+        )
     # 무결성 실패가 하나라도 있으면 비정상 종료코드 → CI/운영 스크립트가 감지.
     return 0 if res.get("all_ok") else 2
 

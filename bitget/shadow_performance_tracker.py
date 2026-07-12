@@ -8,16 +8,19 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
 from typing import Any, Dict
 
 import pandas as pd
 
 from bitget.config_hub import load_config, save_config
+from bitget.infra.bounded_reads import shadow_blocked_history_sql, forward_shadow_defended_match_sql
+from bitget.infra.clock import utc_datetime_str
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.logging_setup import get_logger
 from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
+logger = get_logger("bitget.shadow_performance_tracker")
 
 
 def _load_config():
@@ -39,20 +42,13 @@ def _calc_ret(entry: float, close: float, side: str) -> float:
 def run_shadow_performance_evaluation(blocked_limit: int = 500) -> Dict[str, Any]:
     conn = get_connection(DB_PATH)
     try:
-        blocked = pd.read_sql(
-            f"""
-            SELECT id, market_type, symbol, reason, position_side, timeframe, entry_price, blocked_at
-            FROM bitget_blocked_trade_history
-            ORDER BY id DESC
-            LIMIT {int(blocked_limit)}
-            """,
-            conn,
-        )
+        q, params = shadow_blocked_history_sql(limit=blocked_limit)
+        blocked = pd.read_sql(q, conn, params=params)
     except Exception:
         blocked = pd.DataFrame()
 
     if blocked.empty:
-        payload = {"updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "blocked": {}, "notes": "no blocked rows"}
+        payload = {"updated_at": utc_datetime_str(), "blocked": {}, "notes": "no blocked rows"}
         cfg = _load_config()
         cfg["SHADOW_PERFORMANCE"] = payload
         _save_config(cfg)
@@ -66,13 +62,7 @@ def run_shadow_performance_evaluation(blocked_limit: int = 500) -> Dict[str, Any
         sum_signed = 0.0
         n_positive = 0
         for _, r in b.iterrows():
-            q = """
-                SELECT final_ret, leverage, position_side
-                FROM bitget_forward_trades
-                WHERE market_type=? AND symbol=? AND entry_date>=? AND status LIKE 'CLOSED%'
-                ORDER BY id ASC
-                LIMIT 1
-            """
+            q = forward_shadow_defended_match_sql()
             sub = pd.read_sql(
                 q,
                 conn,
@@ -98,7 +88,7 @@ def run_shadow_performance_evaluation(blocked_limit: int = 500) -> Dict[str, Any
         }
 
     payload = {
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": utc_datetime_str(),
         "blocked": {"by_reason": reasons, "rows_loaded": int(len(blocked))},
         "notes": "defense metric uses blocked-trade counterfactual with leverage-adjusted ROE",
     }
@@ -118,4 +108,4 @@ def run_shadow_snapshot_report() -> str:
 
 
 if __name__ == "__main__":
-    print(run_shadow_snapshot_report())
+    logger.info("%s", run_shadow_snapshot_report())

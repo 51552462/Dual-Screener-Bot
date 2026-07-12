@@ -13,13 +13,28 @@ import requests
 
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.funding_fetcher import fetch_funding_snapshot
+from bitget.infra.bounded_reads import (
+    forward_brain_tune_closed_sql,
+    forward_zombie_fact_close_ids_sql,
+    forward_zombie_zero_invest_ids_sql,
+)
+from bitget.infra.clock import utc_date_key
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
 from bitget.infra.shared_db_connector import get_connection
+import memory_bounds
+
+from bitget.infra.memory_policy import (
+    FORWARD_ZOMBIE_CLEANUP_BATCH_LIMIT,
+    FUNDING_SNAP_CACHE_MAX_KEYS,
+    FUNDING_SNAP_TTL_SEC,
+)
+from bitget.infra.logging_setup import get_logger, log_exception
 
 DB_PATH = market_data_db_path()
 CONFIG_PATH = system_config_json_path()
 TELEGRAM_TOKEN = bitget_telegram_token()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
+logger = get_logger("bitget.forward.shared")
 
 DEFAULT_MAX_OPEN_POSITIONS = 20
 _FUNDING_SNAP_CACHE: dict = {}
@@ -83,10 +98,15 @@ def _cached_funding_snapshot(symbol: str):
     ent = _FUNDING_SNAP_CACHE.get(k)
     if ent:
         ts0, snap0 = ent
-        if snap0 is not None and (now - ts0) < 55.0:
+        if snap0 is not None and (now - ts0) < FUNDING_SNAP_TTL_SEC:
             return snap0
     snap = fetch_funding_snapshot(k)
     _FUNDING_SNAP_CACHE[k] = (now, snap)
+    memory_bounds.evict_oldest_dict_keys(
+        _FUNDING_SNAP_CACHE,
+        FUNDING_SNAP_CACHE_MAX_KEYS,
+        ts_getter=lambda key: (_FUNDING_SNAP_CACHE.get(key) or (0.0, None))[0],
+    )
     return snap
 
 def _deathmatch_min_n_cfg(cfg: dict) -> int:
@@ -117,10 +137,8 @@ def init_forward_db():
                 _FORWARD_DB_SCHEMA_READY_PATHS.add(path_key)
     # 실시간 뇌수술: 최근 청산 데이터를 기반으로 실제 설정을 자율 튜닝/저장
     try:
-        df_recent_closed = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' ORDER BY id DESC LIMIT 120",
-            conn,
-        )
+        tune_q, tune_params = forward_brain_tune_closed_sql()
+        df_recent_closed = pd.read_sql(tune_q, conn, params=tune_params)
         if not df_recent_closed.empty:
             from bitget.forward.mutant import _auto_tune_brain_from_closed_df
 
@@ -235,14 +253,14 @@ def _init_forward_db_schema(conn):
         import bitget.shadow_tracking as bitget_shadow_tracking
         bitget_shadow_tracking.init_shadow_tables(cur)
     except Exception as e:
-        print(f"⚠️ 그림자 장부 스키마 초기화 스킵: {e}")
+        log_exception(logger, "shadow ledger schema init skipped: %s", e)
 
     try:
         from bitget.infra.proprietary_friction_store_bg import ensure_proprietary_friction_schema
 
         ensure_proprietary_friction_schema(cursor=cur)
     except Exception as e:
-        print(f"⚠️ PRI friction 스키마 초기화 스킵: {e}")
+        log_exception(logger, "PRI friction schema init skipped: %s", e)
 
     # 실전 체결/리더보드 동기화 로그
     cur.execute(
@@ -359,27 +377,20 @@ def reporter_cleanup_zombie_forward_trades() -> int:
     OPEN/ACTIVE 인데 수량·투입 0 → CLOSED_ZOMBIE (주식 forward/shared 동일 규칙).
     bitget_forward_trades 직접 갱신 — DROP 없음.
     """
-    from datetime import datetime
-
     if not os.path.isfile(DB_PATH):
         return 0
     init_forward_db()
     conn = get_connection(DB_PATH)
     total = 0
-    exit_day = datetime.now().strftime("%Y-%m-%d")
+    exit_day = utc_date_key()
+    batch_lim = FORWARD_ZOMBIE_CLEANUP_BATCH_LIMIT
     try:
-        cur = conn.execute(
-            """
-            SELECT id FROM bitget_forward_trades
-            WHERE (status = 'OPEN' OR UPPER(TRIM(IFNULL(status,''))) = 'ACTIVE')
-              AND COALESCE(quantity,0) <= 0
-              AND COALESCE(sim_kelly_invest,0) <= 0
-              AND COALESCE(margin_used,0) <= 0
-              AND IFNULL(sig_type,'') NOT LIKE '%OBSERVE_ONLY%'
-            """
-        )
-        ids = [int(r[0]) for r in cur.fetchall() if r and r[0] is not None]
-        if ids:
+        while True:
+            z_q, z_params = forward_zombie_zero_invest_ids_sql(limit=batch_lim)
+            cur = conn.execute(z_q, z_params)
+            ids = [int(r[0]) for r in cur.fetchall() if r and r[0] is not None]
+            if not ids:
+                break
             conn.executemany(
                 """
                 UPDATE bitget_forward_trades
@@ -390,20 +401,16 @@ def reporter_cleanup_zombie_forward_trades() -> int:
                 [(exit_day, _EXIT_REASON_ZOMBIE_DB, i) for i in ids],
             )
             total += len(ids)
+            conn.commit()
+            if len(ids) < batch_lim:
+                break
 
-        cur2 = conn.execute(
-            """
-            SELECT id FROM bitget_forward_trades
-            WHERE (status = 'OPEN' OR UPPER(TRIM(IFNULL(status,''))) = 'ACTIVE')
-              AND COALESCE(quantity,0) <= 0
-              AND (
-                (exit_date IS NOT NULL AND TRIM(CAST(exit_date AS TEXT)) != '')
-                OR final_ret IS NOT NULL
-              )
-            """
-        )
-        ids2 = [int(r[0]) for r in cur2.fetchall() if r and r[0] is not None and int(r[0]) not in set(ids)]
-        if ids2:
+        while True:
+            f_q, f_params = forward_zombie_fact_close_ids_sql(limit=batch_lim)
+            cur2 = conn.execute(f_q, f_params)
+            ids2 = [int(r[0]) for r in cur2.fetchall() if r and r[0] is not None]
+            if not ids2:
+                break
             conn.executemany(
                 """
                 UPDATE bitget_forward_trades
@@ -414,10 +421,13 @@ def reporter_cleanup_zombie_forward_trades() -> int:
                 [(_EXIT_REASON_FACT_CLOSE_DB, i) for i in ids2],
             )
             total += len(ids2)
+            conn.commit()
+            if len(ids2) < batch_lim:
+                break
 
         if total:
             conn.commit()
-        print(f"🛰️ [Bitget] reporter_cleanup_zombie_forward_trades: {total}")
+        logger.info("reporter_cleanup_zombie_forward_trades: %s", total)
         return total
     finally:
         conn.close()

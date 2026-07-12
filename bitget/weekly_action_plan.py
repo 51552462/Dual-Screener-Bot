@@ -268,9 +268,9 @@ def _optional_llm_tail(facts_plain: str, *, rule_plain: str) -> str:
 def snapshot_baseline_for_next_week(
     sys_config: Dict[str, Any], *, effective_kelly: float,
 ) -> Dict[str, Any]:
-    from datetime import datetime, timezone
+    from bitget.infra.clock import utc_hm_key
     return {
-        "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "saved_at": utc_hm_key(),
         "DYNAMIC_SUPERNOVA_CUTOFF": sys_config.get("DYNAMIC_SUPERNOVA_CUTOFF"),
         "DYNAMIC_ML_BOX_CUTOFF": sys_config.get("DYNAMIC_ML_BOX_CUTOFF"),
         "DYNAMIC_KELLY_RISK": sys_config.get("DYNAMIC_KELLY_RISK"),

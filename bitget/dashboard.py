@@ -6,6 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from bitget.infra.bounded_reads import forward_dashboard_closed_sql
 from bitget.infra.data_paths import market_db_read_path
 from bitget.infra.shared_db_connector import get_connection
 from bitget.dashboard_ops_panel import render_ops_gauge_panel
@@ -25,15 +26,8 @@ def load_factory_data():
         return pd.DataFrame()
     try:
         conn = get_connection(DB_PATH, read_only=True, check_same_thread=False)
-        query = """
-            SELECT
-                id, entry_date, exit_date, market_type, symbol, timeframe, sig_type, status,
-                final_ret, sim_kelly_invest, margin_used, leverage, position_side,
-                dyn_cpv, dyn_tb, v_energy, dyn_rs
-            FROM bitget_forward_trades
-            WHERE status LIKE 'CLOSED%'
-        """
-        df = pd.read_sql(query, conn)
+        query, params = forward_dashboard_closed_sql()
+        df = pd.read_sql(query, conn, params=params)
         conn.close()
         if not df.empty:
             if "exit_date" in df.columns:

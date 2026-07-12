@@ -2,6 +2,10 @@
 Bitget job runner — Step 격리, flock, cron-safe exit codes.
 
 주식 `factory_runtime.py` 패턴; lock 경로·환경 변수는 Bitget 전용.
+
+Clock boundary (intentional):
+  - `dispatch_bitget_mode` / lock metadata → Asia/Seoul (KST) for operator-facing run_id·timestamps.
+  - 24/7 trading logic, SQL lookbacks, ops_events → `bitget.infra.clock` UTC SSOT.
 """
 from __future__ import annotations
 
@@ -48,8 +52,10 @@ BITGET_MODES = frozenset(
         "reconcile",
         "data_refresh",
         "health",
+        "ws_oms_smoke",
         "gap_heal",
         "snapshot",
+        "db_backup",
         "record_baseline",
         "validate",
         "load_test",

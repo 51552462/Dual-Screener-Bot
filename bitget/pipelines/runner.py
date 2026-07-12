@@ -12,18 +12,21 @@ def step_infra_health() -> None:
     from bitget.infra.logging_setup import get_logger, setup_logging
 
     setup_logging(default_component="bitget.health")
-    get_logger("bitget.health").info("infra health check")
+    log = get_logger("bitget.health")
+    log.info("infra health check")
     config_manager.bootstrap_from_json_if_empty()
     ops_logger.record_heartbeat("bitget.health", extra={"phase": "2"})
-    print("[OK] bitget infra")
-    print(f"  data_dir      = {data_paths.bitget_data_dir()}")
-    print(f"  market_db     = {data_paths.market_data_db_path()}")
-    print(f"  ops_events_db = {ops_logger.OPS_EVENTS_DB_PATH}")
-    print(f"  config_db     = {data_paths.system_config_db_path()}")
-    print(f"  dashboard     = :{data_paths.dashboard_port()}")
-    print(f"  heatmap       = :{data_paths.heatmap_port()}")
-    print(f"  runtime_modes = {sorted(runtime.BITGET_MODES)}")
-
+    log.info(
+        "[OK] bitget infra data_dir=%s market_db=%s ops_events_db=%s "
+        "config_db=%s dashboard=:%s heatmap=:%s runtime_modes=%s",
+        data_paths.bitget_data_dir(),
+        data_paths.market_data_db_path(),
+        ops_logger.OPS_EVENTS_DB_PATH,
+        data_paths.system_config_db_path(),
+        data_paths.dashboard_port(),
+        data_paths.heatmap_port(),
+        sorted(runtime.BITGET_MODES),
+    )
 
 def _telegram_send_fn():
     try:
@@ -82,14 +85,16 @@ def run_factory_cli(argv: list[str] | None = None) -> int:
         parser.error("--mode is required (or use bitget.sh --daemon for 24/7)")
 
     if args.enqueue:
+        from bitget.infra.logging_setup import get_logger
         from bitget.infra.task_orchestrator import enqueue
 
         engine = _engine_for_mode(args.mode)
         task_id = enqueue(engine, args.mode)
+        log = get_logger("bitget.runner")
         if task_id is None:
-            print(f"[QUEUE] dedupe — {engine}:{args.mode} already PENDING/RUNNING")
+            log.info("[QUEUE] dedupe — %s:%s already PENDING/RUNNING", engine, args.mode)
         else:
-            print(f"[QUEUE] enqueued #{task_id} {engine}:{args.mode}")
+            log.info("[QUEUE] enqueued #%s %s:%s", task_id, engine, args.mode)
         return 0
 
     send_fn = None if args.skip_telegram else _telegram_send_fn()

@@ -70,6 +70,15 @@ def _telegram_http_concurrency() -> int:
     return 4
 
 
+def _telegram_mem_queue_maxsize() -> int:
+    try:
+        from bitget.infra.memory_policy import TELEGRAM_MEM_QUEUE_MAXSIZE
+
+        return max(500, int(TELEGRAM_MEM_QUEUE_MAXSIZE))
+    except Exception:
+        return 4000
+
+
 def _safe_caption(caption: str) -> str:
     cap = caption or ""
     return cap[:1000] + "\n...(글자수 제한으로 요약됨)" if len(cap) > 1000 else cap
@@ -301,16 +310,24 @@ async def run_async_telegram_daemon(
     await asyncio.to_thread(ensure_message_queue_schema)
     tok_p = token_promo or token_main
     conc = _telegram_http_concurrency()
+    q_max = _telegram_mem_queue_maxsize()
 
-    mem_q: asyncio.Queue = asyncio.Queue()
-    work_q: asyncio.Queue = asyncio.Queue(maxsize=4000)
+    mem_q: asyncio.Queue = asyncio.Queue(maxsize=q_max)
+    work_q: asyncio.Queue = asyncio.Queue(maxsize=q_max)
 
     flight_lock = asyncio.Lock()
     flight_cell = [0]
+    hb_payload: dict[str, Any] = {}
 
     refs = await asyncio.to_thread(list_all_pending_message_refs)
+    # SQLite backlog 이 maxsize 를 넘으면 put() 이 영구 block — 최근 N건만 메모리 큐에 적재.
+    if len(refs) > q_max:
+        refs = refs[-q_max:]
     for t, mid in refs:
-        await mem_q.put((t, mid))
+        try:
+            mem_q.put_nowait((t, mid))
+        except asyncio.QueueFull:
+            break
 
     loop = asyncio.get_running_loop()
     set_telegram_memory_bridge(loop, mem_q)
@@ -329,18 +346,23 @@ async def run_async_telegram_daemon(
                 n429 = _count_429_last_60s()
                 async with flight_lock:
                     inflight = int(flight_cell[0])
-                payload = {
-                    "telegram_queue_pending": pending_sql,
-                    "telegram_queue_pending_sqlite": pending_sql,
-                    "mem_q_size": q_mem,
-                    "work_q_size": q_work,
-                    "telegram_http_429_last_60s": n429,
-                    "telegram_http_concurrency": int(conc),
-                    "telegram_http_in_flight": inflight,
-                }
+                hb_payload.clear()
+                hb_payload.update(
+                    {
+                        "telegram_queue_pending": pending_sql,
+                        "telegram_queue_pending_sqlite": pending_sql,
+                        "mem_q_size": q_mem,
+                        "work_q_size": q_work,
+                        "telegram_http_429_last_60s": n429,
+                        "telegram_http_concurrency": int(conc),
+                        "telegram_http_in_flight": inflight,
+                        "mem_q_maxsize": q_max,
+                    }
+                )
+                payload_snapshot = dict(hb_payload)
 
                 def _write_hb() -> None:
-                    ops_logger.record_gauge_snapshot("async_telegram_daemon", payload)
+                    ops_logger.record_gauge_snapshot("async_telegram_daemon", payload_snapshot)
                     ops_logger.record_heartbeat("async_telegram_daemon")
 
                 await asyncio.to_thread(_write_hb)

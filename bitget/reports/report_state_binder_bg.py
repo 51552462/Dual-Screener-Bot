@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from bitget.governance.meta_consumer import resolve_trading_kelly_base
+from bitget.infra.clock import parse_utc_iso, utc_now
 from bitget.infra.market_keys import normalize_market_type, to_report_label
 from bitget.live_nav_manager import get_market_state, live_nav
 
@@ -322,12 +323,7 @@ def _parse_iso_datetime(val: Any) -> Optional[datetime]:
     s = str(val).strip()
     if not s:
         return None
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
+    return parse_utc_iso(s)
 
 
 def _coerce_calendar_date(val: Any) -> Optional[date]:
@@ -360,7 +356,10 @@ def build_lifecycle_report_block(
     now: Optional[datetime] = None,
     auto_heal_meta: bool = True,
 ) -> LifecycleReportBlock:
-    now = now or datetime.now(timezone.utc)
+    now = now or utc_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now_aware = now
     m = _meta_with_optional_auto_heal(meta, auto_heal=auto_heal_meta)
     reg_raw = m.get("META_STRATEGY_REGISTRY")
     reg: List[Dict[str, Any]] = [r for r in reg_raw if isinstance(r, dict)] if isinstance(reg_raw, list) else []
@@ -419,14 +418,11 @@ def build_lifecycle_report_block(
             break
 
     ages: List[int] = []
-    now_aware = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
     for row in live_rows:
         dt = _parse_iso_datetime(row.get("promoted_at") or row.get("last_promoted_at") or row.get("updated_at"))
         if dt is None:
             continue
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        ages.append(max(0, int((now_aware - dt.astimezone(timezone.utc)).days)))
+        ages.append(max(0, int((now_aware - dt).days)))
 
     autopilot_age = None
     if explicit_d is not None:
@@ -453,7 +449,7 @@ def build_lifecycle_report_block(
         cutoff = now_aware - timedelta(days=7)
         for row in reg:
             dt = _parse_iso_datetime(row.get("last_demoted_at"))
-            if dt and (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)) >= cutoff:
+            if dt and dt >= cutoff:
                 demoted_7d += 1
 
     health_raw = m.get("META_STRATEGY_HEALTH")

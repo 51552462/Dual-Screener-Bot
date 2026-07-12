@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
+from bitget.infra.clock import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ def run_weekly_coin_regime_archive(sys_config: Optional[Dict[str, Any]] = None) 
         except Exception:
             cfg = {}
 
-    out: Dict[str, Any] = {"ok": True, "ts": datetime.now(timezone.utc).isoformat()}
+    out: Dict[str, Any] = {"ok": True, "ts": utc_now_iso()}
 
     try:
         from bitget.auto_pilot import detect_coin_regime

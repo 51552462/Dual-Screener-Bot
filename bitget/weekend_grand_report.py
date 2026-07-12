@@ -18,18 +18,33 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.clock import utc_now
+from bitget.infra.bounded_reads import (
+    forward_grand_report_closed_sql,
+    grand_report_deathmatch_champion_sql,
+    grand_report_elimination_events_sql,
+    grand_report_genesis_sql,
+    grand_report_registry_demoted_sql,
+    grand_report_registry_promoted_sql,
+    grand_report_strategy_registry_sql,
+)
+from bitget.infra.memory_policy import GRAND_REPORT_CLOSED_LIMIT
+from bitget.infra.logging_setup import get_logger, log_exception
+
 _TG_LIMIT = 3900
 MARKETS = ("spot", "futures")
+logger = get_logger("bitget.weekend_grand_report")
 MARKET_FLAG = {"spot": "🟢", "futures": "🟠"}
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return utc_now()
 
 
 def _month_start(d: Optional[datetime] = None) -> datetime:
@@ -86,17 +101,13 @@ def _signed_usdt(value: float) -> str:
 
 def _load_closed(conn: sqlite3.Connection, market: str, start: str, end: str) -> pd.DataFrame:
     try:
-        df = pd.read_sql(
-            """
-            SELECT * FROM bitget_forward_trades
-            WHERE market_type=? AND status LIKE 'CLOSED%'
-              AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
-              AND IFNULL(exit_date,'') >= ? AND IFNULL(exit_date,'') <= ?
-            ORDER BY exit_date ASC
-            """,
-            conn,
-            params=(market, start, end + " 23:59:59"),
+        q, params = forward_grand_report_closed_sql(
+            market_type=market,
+            start=start,
+            end=end,
+            limit=GRAND_REPORT_CLOSED_LIMIT,
         )
+        df = pd.read_sql(q, conn, params=params)
         if df is None or df.empty:
             return pd.DataFrame()
         df["final_ret"] = pd.to_numeric(df["final_ret"], errors="coerce")
@@ -175,20 +186,11 @@ def _market_summary(market: str, df_period: pd.DataFrame, cfg: Dict[str, Any]) -
 
 def _evolution_block(conn: sqlite3.Connection, start: str, end: str, *, detailed: bool) -> str:
     lines: List[str] = ["🧬 <b>[구조 진화·발전]</b>"]
-    end_excl = end + " 23:59:59"
 
     if _table_exists(conn, "champion_precursor_genesis"):
         try:
-            g = pd.read_sql(
-                """
-                SELECT market, champion_label, kind, status, realized_fwd_ret,
-                       crowned_date, resolved_at
-                FROM champion_precursor_genesis
-                WHERE IFNULL(resolved_at,'') >= ? AND IFNULL(resolved_at,'') <= ?
-                """,
-                conn,
-                params=(start, end_excl),
-            )
+            g_q, g_params = grand_report_genesis_sql(start=start, end=end)
+            g = pd.read_sql(g_q, conn, params=g_params)
         except Exception:
             g = pd.DataFrame()
         if g is not None and not g.empty:
@@ -211,10 +213,8 @@ def _evolution_block(conn: sqlite3.Connection, start: str, end: str, *, detailed
 
     if _table_exists(conn, "deathmatch_champion"):
         try:
-            c = pd.read_sql(
-                "SELECT market, champion_label, composite_score, win_rate FROM deathmatch_champion",
-                conn,
-            )
+            c_q, c_params = grand_report_deathmatch_champion_sql()
+            c = pd.read_sql(c_q, conn, params=c_params)
         except Exception:
             c = pd.DataFrame()
         if c is not None and not c.empty:
@@ -226,16 +226,8 @@ def _evolution_block(conn: sqlite3.Connection, start: str, end: str, *, detailed
 
     if _table_exists(conn, "deathmatch_elimination_event"):
         try:
-            e = pd.read_sql(
-                """
-                SELECT market, arm_id, reason, event_date
-                FROM deathmatch_elimination_event
-                WHERE IFNULL(event_date,'') >= ? AND IFNULL(event_date,'') <= ?
-                ORDER BY event_date DESC
-                """,
-                conn,
-                params=(start, end_excl),
-            )
+            e_q, e_params = grand_report_elimination_events_sql(start=start, end=end)
+            e = pd.read_sql(e_q, conn, params=e_params)
         except Exception:
             e = pd.DataFrame()
         if e is not None and not e.empty:
@@ -249,11 +241,8 @@ def _evolution_block(conn: sqlite3.Connection, start: str, end: str, *, detailed
 
     if _table_exists(conn, "strategy_registry"):
         try:
-            reg = pd.read_sql(
-                "SELECT market, group_key, state, last_promoted_at, last_demoted_at, "
-                "promote_reason, demote_reason FROM strategy_registry",
-                conn,
-            )
+            reg_q, reg_params = grand_report_strategy_registry_sql()
+            reg = pd.read_sql(reg_q, conn, params=reg_params)
         except Exception:
             reg = pd.DataFrame()
         if reg is not None and not reg.empty:
@@ -262,12 +251,15 @@ def _evolution_block(conn: sqlite3.Connection, start: str, end: str, *, detailed
             cand = int((reg["state"].astype(str).str.upper() == "CANDIDATE").sum())
             lines.append(f"• 전략 생애주기: LIVE {live} · COOLED {cooled} · CANDIDATE {cand}")
 
-            def _in_win(col: str) -> pd.DataFrame:
-                s = reg[col].astype(str)
-                return reg[(s >= start) & (s <= end_excl)]
+            try:
+                p_q, p_params = grand_report_registry_promoted_sql(start=start, end=end)
+                promoted = pd.read_sql(p_q, conn, params=p_params)
+                d_q, d_params = grand_report_registry_demoted_sql(start=start, end=end)
+                demoted = pd.read_sql(d_q, conn, params=d_params)
+            except Exception:
+                promoted = pd.DataFrame()
+                demoted = pd.DataFrame()
 
-            promoted = _in_win("last_promoted_at")
-            demoted = _in_win("last_demoted_at")
             if len(promoted) or len(demoted):
                 lines.append(
                     f"• 이번 기간 승격 <b>{len(promoted)}</b> · 강등 <b>{len(demoted)}</b>"
@@ -461,6 +453,7 @@ def build_grand_report_sections(
             conn.close()
         except Exception:
             pass
+    flush_gc(label="grand_report_build")
     return sections
 
 
@@ -476,7 +469,7 @@ def send_grand_report(
             from bitget.forward.shared import send_telegram_msg as send_fn  # type: ignore
         except Exception:
             def send_fn(_m: str) -> None:  # type: ignore
-                print(_m)
+                logger.info("%s", _m)
 
     out: Dict[str, Any] = {"monthly": monthly, "sent": 0, "error": None}
     try:
@@ -490,7 +483,7 @@ def send_grand_report(
             time.sleep(1)
     except Exception as ex:
         out["error"] = str(ex)
-        print(f"[bitget_grand_report] 발송 실패: {ex}")
+        log_exception(logger, "[bitget_grand_report] send failed: %s", ex)
     return out
 
 

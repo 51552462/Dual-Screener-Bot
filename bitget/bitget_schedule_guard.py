@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
 import pytz
 
 from bitget.bitget_scan_schedule import scan_mode_market, slot_for_mode
+from bitget.infra.clock import utc_now
 
 _UTC = pytz.UTC
 
@@ -26,10 +27,6 @@ _FACTORY_LOCK_PATH = str(_REPO_ROOT / ".factory_runtime.lock")
 _FACTORY_HEAVY_PREFIXES = ("scan_", "daily_", "weekly")
 # bitget 에서 factory 에 양보할 무거운 모드.
 _YIELD_GATED_MODES = ("scan_", "data_refresh")
-
-
-def utc_now() -> datetime:
-    return datetime.now(_UTC)
 
 
 def _factory_yield_disabled() -> bool:

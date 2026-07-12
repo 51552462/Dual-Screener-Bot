@@ -51,6 +51,24 @@ class TestDaemonSniperPolicy(unittest.TestCase):
         self.assertIn("bitget_hb", started)
         self.assertNotIn("bitget_supernova_sniper", started)
 
+    def test_public_ws_disabled_by_default(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("BITGET_DAEMON_PUBLIC_WS", None)
+            self.assertFalse(bap._daemon_public_ws_enabled())
+
+    def test_public_ws_enabled_when_opt_in(self):
+        with mock.patch.dict(os.environ, {"BITGET_DAEMON_PUBLIC_WS": "1"}):
+            self.assertTrue(bap._daemon_public_ws_enabled())
+
+    def test_private_ws_disabled_by_default(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("BITGET_DAEMON_PRIVATE_WS", None)
+            self.assertFalse(bap._daemon_private_ws_enabled())
+
+    def test_private_ws_enabled_when_opt_in(self):
+        with mock.patch.dict(os.environ, {"BITGET_DAEMON_PRIVATE_WS": "1"}):
+            self.assertTrue(bap._daemon_private_ws_enabled())
+
 
 if __name__ == "__main__":
     unittest.main()

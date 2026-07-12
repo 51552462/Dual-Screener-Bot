@@ -3,17 +3,20 @@ import os
 import random
 import sqlite3
 import time
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, _tree
 
 from bitget.config_hub import load_config, save_config
+from bitget.infra.bounded_reads import forward_toxic_graveyard_closed_sql
+from bitget.infra.clock import utc_date_str
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.logging_setup import get_logger, log_exception
 from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
+logger = get_logger("bitget.toxic_graveyard_analyzer")
 
 
 def get_toxic_rules(tree, feature_names):
@@ -64,7 +67,7 @@ def _mine_for_market(df: pd.DataFrame, market_type: str):
     clf.fit(X, y)
     rules = get_toxic_rules(clf, features)
 
-    created_at = datetime.now().strftime("%Y-%m-%d")
+    created_at = utc_date_str()
     out = {}
     for k, v in rules.items():
         row = dict(v)
@@ -75,26 +78,22 @@ def _mine_for_market(df: pd.DataFrame, market_type: str):
 
 
 def run_graveyard_autopsy():
-    print("💀 [Bitget 오답노트 블랙박스 부검소] 참사주 독성 패턴(Anti-Pattern) 머신러닝 추출 중...")
+    logger.info("[toxic graveyard] mining anti-pattern decision tree from disasters")
 
     config = load_config()
     try:
         conn = get_connection(DB_PATH, read_only=True, check_same_thread=False)
-        query = """
-            SELECT market_type, dyn_cpv, dyn_tb, v_energy, dyn_rs, final_ret
-            FROM bitget_forward_trades
-            WHERE status LIKE 'CLOSED%'
-        """
-        df = pd.read_sql(query, conn)
+        q, params = forward_toxic_graveyard_closed_sql()
+        df = pd.read_sql(q, conn, params=params)
         conn.close()
     except Exception as e:
-        print(f"🚨 DB 로드 실패: {e}")
+        log_exception(logger, "toxic graveyard DB load failed: %s", e)
         save_config(config)
         return
 
     df = df.dropna(subset=["dyn_cpv", "dyn_tb", "v_energy", "dyn_rs", "final_ret"])
     if df.empty:
-        print("⚠️ 부검 가능한 청산 데이터가 없습니다.")
+        logger.warning("no closed trades available for graveyard autopsy")
         save_config(config)
         return
 
@@ -113,9 +112,9 @@ def run_graveyard_autopsy():
         anti.update(mined)
         config["ANTI_PATTERNS"] = anti
         save_config(config)
-        print(f"✅ 부검 완료! {len(mined)}개의 Bitget 독성 방어막이 관제탑에 업데이트되었습니다.")
+        logger.info("graveyard autopsy complete: %s toxic shields updated", len(mined))
     else:
-        print("💡 현재 데이터에서는 뚜렷한 맹독성 다중 조건이 발견되지 않았습니다.")
+        logger.info("no clear multi-condition toxic patterns found")
         save_config(config)
 
 

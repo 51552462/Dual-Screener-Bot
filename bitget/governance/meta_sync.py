@@ -13,9 +13,9 @@ import json
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from bitget.infra.clock import parse_utc_iso, utc_now, utc_now_iso
 from bitget.infra.data_paths import market_data_db_path, meta_governor_state_path, system_config_json_path
 
 logger = logging.getLogger(__name__)
@@ -56,17 +56,10 @@ def meta_governor_run_age_hours(state: Optional[Dict[str, Any]]) -> Optional[flo
     raw = state.get("META_GOVERNOR_LAST_RUN_AT")
     if not raw:
         return None
-    try:
-        s = str(raw).strip()
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        return (now - dt.astimezone(timezone.utc)).total_seconds() / 3600.0
-    except (TypeError, ValueError):
+    dt = parse_utc_iso(str(raw))
+    if dt is None:
         return None
+    return (utc_now() - dt).total_seconds() / 3600.0
 
 
 def is_bitget_meta_degraded(state: Optional[Dict[str, Any]]) -> bool:
@@ -343,7 +336,7 @@ def _refresh_coin_regime() -> Dict[str, Any]:
 
     cfg = config_manager.load_system_config() or {}
     cfg = detect_coin_regime(cfg)
-    now = datetime.now(timezone.utc).isoformat()
+    now = utc_now_iso()
     rk = normalize_regime_key(cfg.get("CURRENT_REGIME_KEY"))
     detail = cfg.get("CRYPTO_REGIME_DETAIL") if isinstance(cfg.get("CRYPTO_REGIME_DETAIL"), dict) else {}
     ra = {

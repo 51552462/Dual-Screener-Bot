@@ -49,6 +49,15 @@ def set_telegram_memory_bridge(
     _BRIDGE_QUEUE = q
 
 
+def _telegram_mem_queue_maxsize() -> int:
+    try:
+        from bitget.infra.memory_policy import TELEGRAM_MEM_QUEUE_MAXSIZE
+
+        return max(500, int(TELEGRAM_MEM_QUEUE_MAXSIZE))
+    except Exception:
+        return 4000
+
+
 def _notify_telegram_memory_bridge(target: str, msg_id: int) -> None:
     loop = _BRIDGE_LOOP
     q = _BRIDGE_QUEUE
@@ -57,7 +66,11 @@ def _notify_telegram_memory_bridge(target: str, msg_id: int) -> None:
     item = (str(target), int(msg_id))
 
     def _schedule() -> None:
-        asyncio.create_task(q.put(item))
+        try:
+            q.put_nowait(item)
+        except asyncio.QueueFull:
+            # SQLite PENDING 유지 — async dispatcher 가 claim_next 로 회수
+            pass
 
     try:
         loop.call_soon_threadsafe(_schedule)

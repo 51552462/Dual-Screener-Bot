@@ -1,15 +1,25 @@
+from __future__ import annotations
+
 import json
 import os
 import sqlite3
 import threading
 import time
-import gc
-from datetime import datetime, timezone
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import memory_bounds
 import requests
+
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.clock import utc_date_str, utc_hm_key
+from bitget.infra.memory_policy import GC_AFTER_SCAN_TABLE, OHLCV_SIGNAL_BAR_LIMIT
 
 import bitget.shadow_tracking as bitget_shadow_tracking
 from bitget.ai_report import generate_ai_report
@@ -17,6 +27,7 @@ from bitget.charting import save_chart
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token, bitget_telegram_token_promo
 from bitget.executor import execute_real_order
 from bitget.forward_tester import generate_mutant_strategies, log_real_execution, track_daily_positions, try_add_virtual_position
+import bitget.signal_engines as bse
 from bitget.signal_engines import (
     compute_ema5_signal,
     compute_master_signal,
@@ -26,7 +37,10 @@ from bitget.signal_engines import (
 )
 
 from bitget.infra.data_paths import logs_dir, market_data_db_path, market_db_read_path
+from bitget.infra.logging_setup import get_logger, log_exception
 from bitget.infra.shared_db_connector import get_connection
+
+logger = get_logger("bitget.master_scanner")
 
 DB_PATH = market_data_db_path()
 DB_READ_PATH = market_db_read_path()
@@ -79,6 +93,10 @@ _SCANNER_ENGINE_ALLOWLIST = {
 
 
 def _build_engine_pool(engine_filter: str | None = None):
+    """
+    Scanner engine SSOT — base engines + optional PRACT_01..30 pool.
+    Full scan (empty filter) must resolve practitioner fns via bitget.signal_engines.
+    """
     base_engines = [
         ("EMA5", compute_ema5_signal),
         ("MASTER", compute_master_signal),
@@ -122,7 +140,11 @@ def _lookup_virtual_trade_id(market_type: str, symbol: str, timeframe: str, sig_
 
 
 def _load_table(conn, table_name):
-    df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{table_name}"', conn)
+    tail = memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_SIGNAL_BAR_LIMIT)
+    df = pd.read_sql(
+        f'SELECT Date, Open, High, Low, Close, Volume FROM "{table_name}"{tail}',
+        conn,
+    )
     if df.empty:
         return None
     df["Date"] = pd.to_datetime(df["Date"])
@@ -322,7 +344,7 @@ def _scan_one_table(
                 last_close = float(out_df["Close"].iloc[-1]) if out_df is not None and not out_df.empty else 0.0
                 hits.append((engine_name, sig_type, float(dbg.get("score", 0.0)), chart_main, chart_promo, ai, dbg, last_close, rank, signal_side))
                 del out_df
-                gc.collect()
+                flush_gc(label=GC_AFTER_SCAN_TABLE)
         if include_embedded_supernova:
             sn = _supernova_hit(df, symbol, tf)
         else:
@@ -351,10 +373,10 @@ def _scan_one_table(
             last_close = float(df["Close"].iloc[-1])
             hits.append((sn["engine_name"], sn["sig_type"], float(sn["score"]), chart_main, chart_promo, ai, dbg, last_close, rank, signal_side))
         del df
-        gc.collect()
+        flush_gc(label=GC_AFTER_SCAN_TABLE)
         return hits
     except Exception as e:
-        print(f"scan error {tbl}: {e}")
+        log_exception(logger, "scan error %s: %s", tbl, e)
         return []
     finally:
         conn.close()
@@ -374,9 +396,9 @@ def run_scan(
         include_embedded_supernova = not engine_filter
     global sent_today, last_run_date
     if not os.path.exists(DB_PATH):
-        print("DB not found. Run bitget_mtf_data_updater.py first.")
+        logger.error("DB not found. Run bitget_mtf_data_updater.py first.")
         return
-    today_str = datetime_now_utc_date()
+    today_str = utc_date_str()
     if today_str != last_run_date:
         sent_today.clear()
         last_run_date = today_str
@@ -461,17 +483,23 @@ def run_scan(
                     except Exception as e:
                         # DB 락(락 재시도 소진) 등 단일 히트 처리 실패가 전체 스캔(다른 심볼/TF)을
                         # 통째로 죽이지 않도록 격리한다. (2026-07-04 scan_spot_dante FAIL 원인)
-                        print(f"[{engine_name}] {symbol} {tf} -> 처리 실패(격리됨): {e}")
+                        log_exception(
+                            logger,
+                            "[%s] %s %s -> hit processing failed (isolated): %s",
+                            engine_name,
+                            symbol,
+                            tf,
+                            e,
+                        )
                     del dbg
-                    gc.collect()
+                    flush_gc(label=GC_AFTER_SCAN_TABLE)
                 del hits
-                gc.collect()
+                flush_gc(label=GC_AFTER_SCAN_TABLE)
     conn.close()
     try:
-        from datetime import datetime, timezone
         from bitget.infra.proprietary_friction_store_bg import insert_scan_funnel_snapshot
 
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        ts = utc_hm_key()
         for mkt, st in funnel_stats.items():
             uni = int(st.get("universe", 0) or 0)
             surv = int(st.get("survivors", 0) or 0)
@@ -488,7 +516,7 @@ def run_scan(
     except Exception:
         pass
     del table_names
-    gc.collect()
+    flush_gc(label="scan_complete")
     wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
 
 
@@ -631,76 +659,119 @@ def _process_scan_hit(
         enabled=SEND_TELEGRAM,
         send_profile="html",
     )
-    print(f"[{engine_name}] {symbol} {tf} -> {db_msg} | charts queued")
-
-
-def datetime_now_utc_date():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    logger.info("[%s] %s %s -> %s | charts queued", engine_name, symbol, tf, db_msg)
 
 
 def _is_candle_close_time(now_utc: datetime, tf: str) -> bool:
-    h = now_utc.hour
-    m = now_utc.minute
+    return _is_candle_close_parts(now_utc.hour, now_utc.minute, tf)
+
+
+def _is_candle_close_parts(hour: int, minute: int, tf: str) -> bool:
     if tf == "1H":
-        return m == 0
+        return minute == 0
     if tf == "2H":
-        return m == 0 and h % 2 == 0
+        return minute == 0 and hour % 2 == 0
     if tf == "4H":
-        return m == 0 and h % 4 == 0
+        return minute == 0 and hour % 4 == 0
     if tf == "1D":
-        return m == 0 and h == 0
+        return minute == 0 and hour == 0
     return False
 
 
+class _TrackWorkerPool:
+    """Persistent track workers — no per-15min Thread() allocation."""
+
+    _MARKETS = ("spot", "futures")
+
+    def __init__(self) -> None:
+        self._events = {m: threading.Event() for m in self._MARKETS}
+        for market in self._MARKETS:
+            threading.Thread(
+                target=self._loop,
+                args=(market,),
+                daemon=True,
+                name=f"bitget_track_{market}",
+            ).start()
+
+    def _loop(self, market_type: str) -> None:
+        evt = self._events[market_type]
+        while True:
+            evt.wait()
+            evt.clear()
+            try:
+                track_daily_positions(market_type=market_type)
+            except Exception as e:
+                log_exception(logger, "track worker error [%s]: %s", market_type, e)
+
+    def trigger(self) -> None:
+        for evt in self._events.values():
+            evt.set()
+
+
+_TIMEFRAMES_TUPLE = tuple(TIMEFRAMES)
+
+
 def run_mtf_scheduler():
-    print("🕒 [Bitget MTF 스캐너] UTC 캔들 마감 스케줄 대기 중...")
-    print(" - 1H: 매시 정각")
-    print(" - 2H: 짝수시 정각")
-    print(" - 4H: 0/4/8/12/16/20시 정각")
-    print(" - 1D: 00:00 UTC")
-    last_trigger_key = ""
-    last_mutant_gen_date = ""
-    last_track_key = ""
+    from bitget.infra.daemon_loop import (
+        MTF_SCHEDULER_ERROR_SEC,
+        MTF_SCHEDULER_POLL_SEC,
+        MTF_SCHEDULER_POST_SCAN_SLEEP_SEC,
+        DaemonLoopFrame,
+        collect_due_timeframes,
+        sleep_or_backoff,
+    )
 
-    def _run_track_worker(market_type: str):
-        try:
-            track_daily_positions(market_type=market_type)
-        except Exception as e:
-            print(f"track worker error [{market_type}]: {e}")
-
-    def _launch_track_workers():
-        threading.Thread(target=_run_track_worker, args=("spot",), daemon=True).start()
-        threading.Thread(target=_run_track_worker, args=("futures",), daemon=True).start()
+    logger.info("Bitget MTF scanner waiting (UTC candle close schedule)")
+    logger.info(" - 1H: every hour")
+    logger.info(" - 2H: even hours")
+    logger.info(" - 4H: 0/4/8/12/16/20")
+    logger.info(" - 1D: 00:00 UTC")
+    frame = DaemonLoopFrame()
+    track_pool = _TrackWorkerPool()
 
     while True:
         try:
-            now_utc = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-            # 포지션 청산 트래킹: 15분 간격 비동기 백그라운드 실행
-            if now_utc.minute % 15 == 0:
-                track_key = now_utc.strftime("%Y-%m-%d %H:%M")
-                if track_key != last_track_key:
-                    _launch_track_workers()
-                    last_track_key = track_key
-            # 하루 1회 인큐베이터 돌연변이 생성 (00:10 UTC)
-            if now_utc.hour == 0 and now_utc.minute == 10:
-                day_key = now_utc.strftime("%Y-%m-%d")
-                if day_key != last_mutant_gen_date:
-                    ok, m = generate_mutant_strategies()
-                    print(f"🧪 [인큐베이터 생성] {m}")
-                    if ok:
-                        last_mutant_gen_date = day_key
-            due_tfs = [tf for tf in TIMEFRAMES if _is_candle_close_time(now_utc, tf)]
-            if due_tfs:
-                trigger_key = f"{now_utc.isoformat()}|{','.join(due_tfs)}"
-                if trigger_key != last_trigger_key:
-                    print(f"🚀 [스캔 시작] {now_utc.strftime('%Y-%m-%d %H:%M')} UTC | TF: {', '.join(due_tfs)}")
+            frame.refresh_utc(truncate_minute=True)
+            tick = frame.tick
+            if tick.minute % 15 == 0 and frame.dedup.track_once(tick.hm_key):
+                track_pool.trigger()
+            if tick.hour == 0 and tick.minute == 10 and frame.dedup.mutant_day_once(tick.day_key):
+                ok, m = generate_mutant_strategies()
+                logger.info("[incubator] %s", m)
+                if not ok:
+                    frame.dedup.reset_mutant_day()
+            collect_due_timeframes(
+                tick.hour,
+                tick.minute,
+                _TIMEFRAMES_TUPLE,
+                frame.due_buf,
+                is_close_fn=_is_candle_close_parts,
+            )
+            if frame.due_buf:
+                trigger_key = f"{tick.now.isoformat()}|{frame.due_buf.join()}"
+                if frame.dedup.trigger_once(trigger_key):
+                    logger.info(
+                        "[scan start] %s UTC | TF: %s",
+                        tick.hm_key,
+                        ", ".join(frame.due_buf.items),
+                    )
                     run_scan()
-                    last_trigger_key = trigger_key
-                    time.sleep(60)
-            time.sleep(10)
+                    frame.mark_ok()
+                    sleep_or_backoff(
+                        normal_sec=MTF_SCHEDULER_POST_SCAN_SLEEP_SEC,
+                        after_error=False,
+                    )
+                    continue
+            frame.mark_ok()
+            sleep_or_backoff(normal_sec=MTF_SCHEDULER_POLL_SEC, after_error=frame.loop_error)
         except Exception as e:
-            print(f"scheduler error: {e}")
-            time.sleep(30)
+            log_exception(logger, "scheduler error: %s", e)
+            frame.mark_error()
+            sleep_or_backoff(
+                normal_sec=MTF_SCHEDULER_POLL_SEC,
+                after_error=frame.loop_error,
+                error_sec=MTF_SCHEDULER_ERROR_SEC,
+            )
 
 
 if __name__ == "__main__":

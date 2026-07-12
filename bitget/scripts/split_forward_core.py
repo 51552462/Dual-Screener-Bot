@@ -67,4 +67,9 @@ body = body.replace(
 
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(header + body, encoding="utf-8")
-print(f"wrote {dst} ({len((header + body).splitlines())} lines)")
+
+from bitget.infra.logging_setup import get_logger
+
+get_logger("bitget.scripts.split_forward_core").info(
+    "wrote %s (%s lines)", dst, len((header + body).splitlines())
+)

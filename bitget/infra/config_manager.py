@@ -24,6 +24,7 @@ from bitget.infra.data_paths import (
     system_config_db_path,
     system_config_json_path,
 )
+from bitget.infra.logging_setup import get_logger, log_exception
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(TOKEN|SECRET|PASSPHRASE|PASSWORD|PRIVATE[_-]?KEY|API[_-]?KEY|CREDENTIAL|AUTHORIZATION|WEBHOOK)",
@@ -36,6 +37,7 @@ CONFIG_DB_PATH = system_config_db_path()
 CONFIG_SNAPSHOTS_DIR = os.path.join(CONFIG_DIR, "bitget_config_snapshots")
 _MAX_CONFIG_SNAPSHOT_FILES = 365
 LOCK_PATH = os.path.join(CONFIG_DIR, ".bitget_config_kv.lock")
+logger = get_logger("bitget.config_manager")
 
 
 class ConfigConcurrencyError(RuntimeError):
@@ -119,7 +121,7 @@ def _read_json_file(path: str, max_retries: int = 5) -> dict[str, Any]:
             if attempt < max_retries - 1:
                 time.sleep(random.uniform(0.05, 0.2))
             else:
-                print(f"🚨 [bitget.config_manager] JSON 읽기 실패: {path} — {e}")
+                log_exception(logger, "JSON read failed: %s — %s", path, e)
                 return {}
     return {}
 
@@ -188,7 +190,7 @@ def get_config_value(key: str, default_value: Any = None) -> Any:
     try:
         return _retry_on_locked(_read)
     except (json.JSONDecodeError, OSError, sqlite3.Error) as e:
-        print(f"⚠️ [bitget.config_manager] get_config_value({key!r}) 실패: {e}")
+        log_exception(logger, "get_config_value(%r) failed: %s", key, e)
         return default_value
 
 
@@ -199,6 +201,13 @@ def set_config_value(key: str, value: Any) -> None:
         raise ValueError(
             f"config key {key!r} looks like a secret; use .env (BITGET_* ) instead"
         )
+
+    from bitget.infra.config_bounds import clamp_config_value
+
+    before = value
+    value = clamp_config_value(str(key), value)
+    if value != before:
+        logger.warning("config hard-bound clamp %s: %r → %r", key, before, value)
 
     payload = _encode_json(
         strip_sensitive_from_config_obj(value) if isinstance(value, (dict, list)) else value
@@ -260,6 +269,14 @@ def update_config_value(
                 current = _decode_json(str(row["value_json"]))
                 version = int(row["version"])
             new_val = modifier(current)
+            from bitget.infra.config_bounds import clamp_config_value
+
+            clamped = clamp_config_value(str(key), new_val)
+            if clamped != new_val:
+                logger.warning(
+                    "config hard-bound clamp (OCC) %s: %r → %r", key, new_val, clamped
+                )
+                new_val = clamped
             payload = _encode_json(
                 strip_sensitive_from_config_obj(new_val)
                 if isinstance(new_val, (dict, list))
@@ -310,7 +327,7 @@ def load_system_config(max_retries: int = 5) -> dict[str, Any]:
                 try:
                     out[k] = _decode_json(str(r["value_json"]))
                 except json.JSONDecodeError:
-                    print(f"⚠️ [bitget.config_manager] 손상된 JSON 건너뜀: key={k!r}")
+                    logger.warning("skip corrupt JSON key=%r", k)
             return out
         finally:
             conn.close()
@@ -318,7 +335,7 @@ def load_system_config(max_retries: int = 5) -> dict[str, Any]:
     try:
         blob = _retry_on_locked(_load_sqlite, max_retries=max_retries)
     except (OSError, sqlite3.Error) as e:
-        print(f"⚠️ [bitget.config_manager] SQLite 로드 실패, JSON 시도: {e}")
+        log_exception(logger, "SQLite load failed, falling back to JSON: %s", e)
         blob = {}
 
     if blob:
@@ -358,6 +375,16 @@ def save_system_config(config_data: Mapping[str, Any], max_retries: int = 5) -> 
         return False
     config_data = strip_sensitive_from_config_obj(dict(config_data))
 
+    from bitget.infra.config_bounds import apply_config_hard_bounds
+
+    config_data, bound_changes = apply_config_hard_bounds(config_data)
+    if bound_changes:
+        logger.warning(
+            "config hard-bound clamp on save (%d keys): %s",
+            len(bound_changes),
+            "; ".join(bound_changes[:12]),
+        )
+
     def _save() -> None:
         conn = _connect()
         try:
@@ -380,7 +407,7 @@ def save_system_config(config_data: Mapping[str, Any], max_retries: int = 5) -> 
         invalidate_runtime_system_config_cache()
         return True
     except Exception as e:
-        print(f"🚨 [bitget.config_manager] save_system_config 실패: {e}")
+        log_exception(logger, "save_system_config failed: %s", e)
         return False
 
 
@@ -420,5 +447,5 @@ def bootstrap_from_json_if_empty(*, max_retries: int = 5) -> bool:
         return False
     ok = save_system_config(legacy, max_retries=max_retries)
     if ok:
-        print(f"📦 [bitget.config_manager] JSON → SQLite bootstrap: {CONFIG_PATH}")
+        logger.info("JSON → SQLite bootstrap: %s", CONFIG_PATH)
     return ok

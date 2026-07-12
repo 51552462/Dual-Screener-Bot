@@ -2,12 +2,21 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 
 import numpy as np
 import pandas as pd
 
+import memory_bounds
+
 from bitget.forward.shared import DB_PATH, load_system_config
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.memory_policy import (
+    GATES_BREADTH_BENCH_BAR_LIMIT,
+    OHLCV_SIGNAL_BAR_LIMIT,
+)
+
+logger = get_logger("bitget.forward.gates")
+
 
 def _tf_weight(tf: str, cfg: dict) -> float:
     custom = cfg.get("TF_RISK_WEIGHTS", {})
@@ -16,10 +25,12 @@ def _tf_weight(tf: str, cfg: dict) -> float:
     default = {"1D": 1.0, "4H": 0.5, "2H": 0.25, "1H": 0.1}
     return float(default.get(tf, 1.0))
 
+
 def _extract_core_group(sig_type: str) -> str:
     clean_sig = str(sig_type).replace("💀[기각/관찰용] ", "")
     clean_sig = re.sub(r"^\[.*?\]\s*", "", clean_sig)
     return clean_sig.split(" [")[0].strip()
+
 
 def _thompson_ns_prefix(tf: str, sig_type: str) -> str:
     """
@@ -30,8 +41,6 @@ def _thompson_ns_prefix(tf: str, sig_type: str) -> str:
     tfu = str(tf).upper()
     sig = str(sig_type)
     sig_u = sig.upper()
-    # 💡 [코인 생태계 특화] 숏 전용 네임스페이스 — 미분기 시 기본값(MASTER_S1)으로 몰려
-    # 롱 통계에 숏 결과가 오염되는 것을 방지(Thompson 베타 사후분포도 롱과 별개로 진화).
     if "TV_SHORT_V1" in sig_u:
         return f"{tfu}_TV_SHORT_V1"
     if "TV_SHORT_V2" in sig_u:
@@ -48,10 +57,9 @@ def _thompson_ns_prefix(tf: str, sig_type: str) -> str:
             ns_prefix = f"{tfu}_5EMA_S1"
     return ns_prefix
 
+
 def _apply_thompson_kelly_multiplier(cfg: dict, tf: str, sig_type: str, kelly_risk_pct: float) -> float:
-    """
-    [NS]_BETA_PARAMS 의 alpha, beta 로 Thompson 샘플 → 켈리 동적 배분 (주식 동형).
-    """
+    """[NS]_BETA_PARAMS 의 alpha, beta 로 Thompson 샘플 → 켈리 동적 배분 (주식 동형)."""
     ns_prefix = _thompson_ns_prefix(tf, sig_type)
     try:
         beta_pack = cfg.get(f"{ns_prefix}_BETA_PARAMS", {})
@@ -65,16 +73,20 @@ def _apply_thompson_kelly_multiplier(cfg: dict, tf: str, sig_type: str, kelly_ri
     except Exception:
         return float(kelly_risk_pct)
 
+
 def _table_name(market_type: str, symbol: str, timeframe: str) -> str:
     prefix = "SPOT" if market_type == "spot" else "FUT"
     return f"BITGET_{prefix}_{symbol}_{timeframe}"
 
-def _load_bench_close(conn, symbol: str, timeframe: str = "1D", limit: int = 80):
+
+def _load_bench_close(conn, symbol: str, timeframe: str = "1D", limit: int | None = None):
+    bar_lim = int(limit if limit is not None else GATES_BREADTH_BENCH_BAR_LIMIT)
+    tail = memory_bounds.ohlcv_limit_sql(bar_limit=bar_lim)
     for market_type in ("futures", "spot"):
         tbl = _table_name(market_type, symbol, timeframe)
         try:
             df = pd.read_sql(
-                f'SELECT Date, Close FROM "{tbl}" ORDER BY Date DESC LIMIT {int(limit)}',
+                f'SELECT Date, Close FROM "{tbl}"{tail}',
                 conn,
             )
             if len(df) >= 30:
@@ -82,20 +94,16 @@ def _load_bench_close(conn, symbol: str, timeframe: str = "1D", limit: int = 80)
                 df["Date"] = pd.to_datetime(df["Date"])
                 return df
         except Exception as e:
-            try:
-                print(f"🚨 [청산 추적 에러] {r['symbol']}: {e}")
-            except Exception:
-                print(f"🚨 [청산 추적 에러] unknown_symbol: {e}")
+            log_exception(logger, "[breadth bench] %s: %s", symbol, e)
             continue
     return None
 
+
 def _calc_market_breadth(conn):
-    """
-    breadth > 1: 알트 확산, breadth < 1: BTC 쏠림
-    """
+    """breadth > 1: 알트 확산, breadth < 1: BTC 쏠림"""
     try:
-        btc = _load_bench_close(conn, "BTC_USDT", "1D", 80)
-        eth = _load_bench_close(conn, "ETH_USDT", "1D", 80)
+        btc = _load_bench_close(conn, "BTC_USDT", "1D")
+        eth = _load_bench_close(conn, "ETH_USDT", "1D")
         if btc is not None and eth is not None:
             m = btc.merge(eth, on="Date", how="inner", suffixes=("_btc", "_eth"))
             if len(m) >= 30:
@@ -107,6 +115,7 @@ def _calc_market_breadth(conn):
         pass
     return 1.0
 
+
 def _cosine_similarity(vec_a, vec_b):
     a = np.asarray(vec_a, dtype=float)
     b = np.asarray(vec_b, dtype=float)
@@ -115,6 +124,7 @@ def _cosine_similarity(vec_a, vec_b):
     if na <= 1e-12 or nb <= 1e-12:
         return 0.0
     return float(np.dot(a, b) / (na * nb))
+
 
 def _extract_4d_dna_from_facts(facts: dict):
     return np.array(
@@ -126,6 +136,7 @@ def _extract_4d_dna_from_facts(facts: dict):
         ],
         dtype=float,
     )
+
 
 def _is_blocked_by_anti_patterns(cfg: dict, facts: dict, threshold: float = 0.85):
     anti_patterns = cfg.get("ANTI_PATTERNS", [])
@@ -150,11 +161,14 @@ def _is_blocked_by_anti_patterns(cfg: dict, facts: dict, threshold: float = 0.85
             best_sim = sim
     return best_sim >= threshold, best_sim
 
-def _load_hist(conn, market_type: str, symbol: str, timeframe: str, limit=300):
+
+def _load_hist(conn, market_type: str, symbol: str, timeframe: str, limit: int | None = None):
+    bar_lim = int(limit if limit is not None else OHLCV_SIGNAL_BAR_LIMIT)
+    tail = memory_bounds.ohlcv_limit_sql(bar_limit=bar_lim)
     tbl = _table_name(market_type, symbol, timeframe)
     try:
         df = pd.read_sql(
-            f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date DESC LIMIT {int(limit)}',
+            f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"{tail}',
             conn,
         )
     except Exception:
@@ -165,6 +179,7 @@ def _load_hist(conn, market_type: str, symbol: str, timeframe: str, limit=300):
     df["Date"] = pd.to_datetime(df["Date"])
     return df
 
+
 def _calc_atr14(df):
     x = df.copy()
     x["prev_c"] = x["Close"].shift(1)
@@ -174,6 +189,7 @@ def _calc_atr14(df):
     )
     x["atr"] = x["tr"].ewm(span=14, adjust=False).mean()
     return float(x["atr"].iloc[-1]) if len(x) else 0.0
+
 
 def evaluate_evolved_alpha_formula(df, formula):
     """`auto_forward_tester`와 동일: JSON(AST) 진화 수식을 OHLCV 행렬로 즉석 평가."""
@@ -225,6 +241,7 @@ def evaluate_evolved_alpha_formula(df, formula):
         return None
     return None
 
+
 def compute_evolved_alpha_bonus_score(sys_config: dict, hist_df: pd.DataFrame) -> float:
     """
     관제탑 EVOLVED_ALPHA_FACTORS → 주식 `try_add_virtual_position`과 동일 배율의 알파 가산점(상한 0.15).
@@ -242,12 +259,15 @@ def compute_evolved_alpha_bonus_score(sys_config: dict, hist_df: pd.DataFrame) -
     if not alpha_vals:
         return 0.0
     mv = max(alpha_vals)
-    evolved_threshold = float(sys_config.get("EVOLVED_ALPHA_THRESHOLD", sys_config.get("BITGET_EVOLVED_ALPHA_THRESHOLD", 0.0)))
+    evolved_threshold = float(
+        sys_config.get("EVOLVED_ALPHA_THRESHOLD", sys_config.get("BITGET_EVOLVED_ALPHA_THRESHOLD", 0.0))
+    )
     if mv <= evolved_threshold:
         return 0.0
     denom = max(abs(evolved_threshold), abs(mv) * 1e-9, 1e-12)
     rel_excess = (mv - evolved_threshold) / denom
     return float(min(0.15, rel_excess * 0.15))
+
 
 def _facts_cos_scalar_01(facts: dict, score_arg) -> float:
     """facts / score에서 템플릿 코사인(또는 이에 해당하는 동적 점수)을 0~1 스케일로 통일."""

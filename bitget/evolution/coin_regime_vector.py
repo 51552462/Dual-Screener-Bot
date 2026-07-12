@@ -15,6 +15,8 @@ import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from bitget.infra.clock import utc_now
+
 VECTOR_HISTORY_KEY = "REGIME_VECTOR_HISTORY_BG"
 HISTORY_CAP = 180
 
@@ -111,7 +113,7 @@ def append_coin_regime_vector_history(
 ) -> None:
     """현재 국면 벡터를 REGIME_VECTOR_HISTORY_BG 롤링 버퍼에 원자적으로 추가."""
     built = build_current_coin_regime_vector(cfg)
-    now = now or datetime.now()
+    now = now or utc_now()
     entry = {
         "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
         "vector": [round(float(v), 6) for v in built["vector"]],

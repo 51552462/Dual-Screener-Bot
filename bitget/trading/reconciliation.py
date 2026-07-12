@@ -1,22 +1,33 @@
 """
-Scheduled OMS reconciliation — phantom virtual OPEN cleanup, order hydration, orphan alerts.
+Scheduled OMS reconciliation — phantom virtual OPEN cleanup, order hydration,
+orphan escalation (block new entries; never auto-flatten exchange orphans).
 """
 from __future__ import annotations
 
 import json
 import sqlite3
 import time
-from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
+
+import pandas as pd
+
+from bitget.infra.bounded_reads import forward_open_recon_futures_sql
+from bitget.infra.clock import parse_utc_iso, utc_date_str, utc_datetime_str, utc_datetime_str_tz, utc_now
+from bitget.infra.memory_policy import (
+    OMS_ORPHAN_ALERT_MIN_INTERVAL_SEC,
+    OMS_ORPHAN_STREAK_PROPOSE_KILL,
+)
 
 from bitget.forward_tester import init_forward_db, load_system_config, save_system_config, send_telegram_msg
 from bitget.infra.data_paths import market_data_db_path
 from bitget.infra.logging_setup import get_logger, setup_logging
+from bitget.infra.network_retry import call_with_retry
 from bitget.infra.shared_db_connector import get_connection
-from bitget.rate_limit_guard import throttle
 from bitget.symbol_utils import normalize_market_symbol
 from bitget.trading.execution_safety import meta_kill_switch_active
 from bitget.trading.oms_core import create_trade_exchange
+from bitget.trading.oms_source_stats import get_oms_source_counters
+from bitget.trading.order_snapshot import fetch_order_snapshot, list_open_orders
 from bitget.trading.position_manager import build_open_position_index, row_ccxt_future_symbol
 from bitget.trading.slippage_guard import audit_post_trade_slippage
 
@@ -25,7 +36,7 @@ logger = get_logger("bitget.trading.reconciliation")
 
 
 def _close_phantom_virtual(conn, r, exit_rsn: str, exit_type: str = "RECON_GHOST"):
-    exit_d = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    exit_d = utc_date_str()
     ret = 0.0
     tid = int(r["id"])
     ep = float(r.get("entry_price") or 0.0)
@@ -105,7 +116,7 @@ def _hydrate_recent_executions(ex, conn, *, max_slippage_bps: float = 50.0) -> i
         """
     )
     rows = cur.fetchall()
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    now = utc_datetime_str()
     audited = 0
     for rid, sym, mtype, oid, entry_px in rows:
         if not oid:
@@ -116,14 +127,22 @@ def _hydrate_recent_executions(ex, conn, *, max_slippage_bps: float = 50.0) -> i
         except Exception:
             continue
         try:
-            throttle("bitget.oms.fetch_order", 0.35)
-            od = ex.fetch_order(str(oid), ccxt_sym)
+            od = fetch_order_snapshot(
+                ex,
+                str(oid),
+                ccxt_sym,
+                market_type=mt or "futures",
+                prefer_private_ws=True,
+            )
+            if od is None:
+                logger.info("hydrate skip id=%s oid=%s: fetch_order failed", rid, oid)
+                continue
         except Exception as e:
             logger.info("hydrate skip id=%s oid=%s: %s", rid, oid, e)
             continue
         st = str(od.get("status") or "")
         filled = float(od.get("filled") or 0.0)
-        remaining = float(od.get("remaining") or 0.0)
+        remaining = float(od.get("remaining") or 0.0) if od.get("remaining") not in ("", None) else 0.0
         fill_px = od.get("average") or od.get("price")
         slip_audit = {}
         if fill_px is not None and entry_px is not None:
@@ -141,7 +160,8 @@ def _hydrate_recent_executions(ex, conn, *, max_slippage_bps: float = 50.0) -> i
                 "filled": filled,
                 "remaining": remaining,
                 "slippage_audit": slip_audit,
-                "raw": od,
+                "source": od.get("_source") or "unknown",
+                "raw": {k: v for k, v in od.items() if k != "raw"},
             },
             ensure_ascii=False,
         )[:4000]
@@ -158,11 +178,9 @@ def _hydrate_recent_executions(ex, conn, *, max_slippage_bps: float = 50.0) -> i
 
 
 def _scan_open_orders_and_notify(ex) -> int:
-    try:
-        throttle("bitget.oms.fetch_open_orders", 0.45)
-        oo = ex.fetch_open_orders()
-    except Exception as e:
-        logger.warning("fetch_open_orders: %s", e)
+    oo = list_open_orders(ex, prefer_private_ws=True)
+    if oo is None:
+        logger.warning("list_open_orders failed after retries")
         return 0
     if not oo:
         return 0
@@ -192,12 +210,16 @@ def detect_orphan_positions(
     Returns human-readable alert lines.
     """
     pos_map = build_open_position_index(ex)
+    recon_q, recon_params = forward_open_recon_futures_sql()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT symbol, position_side FROM bitget_forward_trades WHERE lower(market_type)='futures' AND status='OPEN'"
-    )
+    cur.execute(recon_q, recon_params)
     open_keys = set()
-    for sym, ps in cur.fetchall():
+    for row in cur.fetchall():
+        if hasattr(row, "keys"):
+            sym, ps = row["symbol"], row["position_side"]
+        else:
+            sym = row[0]
+            ps = row[1] if len(row) > 1 else "LONG"
         open_keys.add((row_ccxt_future_symbol(sym), str(ps or "LONG").upper()))
 
     orphans: list[str] = []
@@ -213,14 +235,9 @@ def reconcile_phantom_opens(ex, conn) -> int:
     Closes ghosts in forward ledger and returns count fixed.
     """
     pos_map = build_open_position_index(ex)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT * FROM bitget_forward_trades WHERE lower(market_type)='futures' AND status='OPEN'"
-    )
-    colnames = [d[0] for d in cur.description]
+    df_open = pd.read_sql(*forward_open_recon_futures_sql(), conn)
     n_fixed = 0
-    for row in cur.fetchall():
-        r = dict(zip(colnames, row))
+    for _, r in df_open.iterrows():
         ccxt_sym = row_ccxt_future_symbol(r.get("symbol", ""))
         side = str(r.get("position_side", "LONG")).upper()
         key = (ccxt_sym, side)
@@ -237,27 +254,133 @@ def reconcile_phantom_opens(ex, conn) -> int:
     return n_fixed
 
 
-def _reconcile_futures_opens(ex, conn) -> int:
+def apply_orphan_escalation(
+    cfg: dict,
+    orphans: list[str],
+    *,
+    now_iso: Optional[str] = None,
+    alert: bool = True,
+) -> dict[str, Any]:
+    """
+    Persist orphan gate state for live execution_safety.
+
+    Invariants:
+      - Never place exchange reduce/close for orphans
+      - Never auto-arm MetaGovernor KILL_SWITCH (propose flag only)
+      - Clear ACTIVE when orphan list is empty
+    """
+    stamp = now_iso or utc_datetime_str_tz()
+    patch: dict[str, Any] = {
+        "OMS_ORPHAN_LAST_AT_UTC": stamp,
+        "OMS_ORPHAN_COUNT": len(orphans),
+        "OMS_ORPHAN_SYMBOLS": " | ".join(orphans[:20]),
+    }
+    if not orphans:
+        patch.update(
+            {
+                "OMS_ORPHAN_ACTIVE": "OFF",
+                "OMS_ORPHAN_STREAK": 0,
+                "OMS_ORPHAN_KILL_SWITCH_PROPOSED": "OFF",
+            }
+        )
+        if str(cfg.get("OMS_ORPHAN_ACTIVE", "OFF") or "OFF").strip().upper() == "ON":
+            logger.warning("OMS orphans cleared — new entries unblocked")
+            if alert:
+                try:
+                    from bitget.governance.meta_alerts import send_meta_critical_alert
+
+                    send_meta_critical_alert(
+                        "OMS orphans cleared",
+                        "Exchange book matches virtual OPEN again — orphan gate OFF",
+                        prefix="OMS_ORPHAN_CLEAR",
+                    )
+                except Exception:
+                    pass
+        return patch
+
+    try:
+        prev_streak = int(cfg.get("OMS_ORPHAN_STREAK") or 0)
+    except (TypeError, ValueError):
+        prev_streak = 0
+    streak = prev_streak + 1
+    propose_at = max(1, int(OMS_ORPHAN_STREAK_PROPOSE_KILL))
+    propose = streak >= propose_at
+    patch.update(
+        {
+            "OMS_ORPHAN_ACTIVE": "ON",
+            "OMS_ORPHAN_STREAK": streak,
+            "OMS_ORPHAN_KILL_SWITCH_PROPOSED": "ON" if propose else "OFF",
+        }
+    )
+
+    if not alert:
+        return patch
+
+    # Throttle CRITICAL alerts (config last-alert epoch)
+    send_alert = True
+    try:
+        last = parse_utc_iso(str(cfg.get("OMS_ORPHAN_LAST_ALERT_AT_UTC") or ""))
+        if last is not None:
+            age = (utc_now() - last).total_seconds()
+            if age < float(OMS_ORPHAN_ALERT_MIN_INTERVAL_SEC):
+                send_alert = False
+    except Exception:
+        send_alert = True
+
+    if send_alert:
+        body = (
+            f"orphans={len(orphans)} streak={streak}/{propose_at}\n"
+            + "\n".join(f"- {x}" for x in orphans[:20])
+            + "\n→ new live entries BLOCKED (OMS_ORPHAN_ACTIVE=ON)"
+            + "\n→ NEVER auto-flatten — human must resolve exchange book"
+        )
+        if propose:
+            body += (
+                "\n→ PROPOSE MetaGovernor KILL_SWITCH "
+                "(operator confirm; not auto-armed)"
+            )
+        try:
+            from bitget.governance.meta_alerts import send_meta_critical_alert
+
+            send_meta_critical_alert(
+                "OMS exchange-only orphans",
+                body,
+                prefix="OMS_ORPHAN",
+            )
+            patch["OMS_ORPHAN_LAST_ALERT_AT_UTC"] = stamp
+        except Exception:
+            try:
+                send_telegram_msg(
+                    "[OMS] Exchange-only positions (no virtual OPEN)\n"
+                    + "\n".join(f"- {x}" for x in orphans[:20])
+                )
+                patch["OMS_ORPHAN_LAST_ALERT_AT_UTC"] = stamp
+            except Exception:
+                pass
+    return patch
+
+
+def _reconcile_futures_opens(ex, conn) -> tuple[int, list[str]]:
     n_fixed = reconcile_phantom_opens(ex, conn)
     orphans = detect_orphan_positions(ex, conn)
-    if orphans:
-        send_telegram_msg(
-            "[OMS] Exchange-only positions (no virtual OPEN)\n"
-            + "\n".join(f"- {x}" for x in orphans[:20])
-        )
     conn.commit()
-    return n_fixed
+    return n_fixed, orphans
 
 
 def _fetch_my_trades_snapshot(ex) -> tuple[int, list]:
-    try:
-        since_ms = int((time.time() - 72 * 3600) * 1000)
-        throttle("bitget.oms.fetch_my_trades", 0.5)
-        trs = ex.fetch_my_trades(since=since_ms, limit=200)
-        return len(trs or []), trs or []
-    except Exception as e:
-        logger.warning("fetch_my_trades: %s", e)
+    since_ms = int((time.time() - 72 * 3600) * 1000)
+    trs = call_with_retry(
+        lambda: ex.fetch_my_trades(since=since_ms, limit=200),
+        op="oms.fetch_my_trades",
+        throttle_key="bitget.oms.fetch_my_trades",
+        throttle_interval_sec=0.5,
+        default=None,
+        swallow=True,
+    )
+    if trs is None:
+        logger.warning("fetch_my_trades failed after retries")
         return -1, []
+    return len(trs or []), trs or []
 
 
 def run_scheduled_reconciliation() -> dict[str, Any]:
@@ -282,34 +405,58 @@ def run_scheduled_reconciliation() -> dict[str, Any]:
     max_slip = float(cfg.get("POST_TRADE_MAX_SLIPPAGE_BPS", 50.0))
     report: dict[str, Any] = {
         "phantoms_closed": 0,
+        "orphans": 0,
+        "orphan_active": False,
         "open_orders": 0,
         "hydrated": 0,
         "slippage_alerts": 0,
         "my_trades": 0,
     }
+    counters = get_oms_source_counters()
+    counters.begin_window()
+    pending_cfg: dict[str, Any] = {}
     try:
         report["slippage_alerts"] = int(
             _hydrate_recent_executions(ex, conn, max_slippage_bps=max_slip)
         )
         report["hydrated"] = 1
-        report["phantoms_closed"] = int(_reconcile_futures_opens(ex, conn))
+        phantoms, orphans = _reconcile_futures_opens(ex, conn)
+        report["phantoms_closed"] = int(phantoms)
+        report["orphans"] = int(len(orphans))
+        orphan_patch = apply_orphan_escalation(cfg, orphans)
+        report["orphan_active"] = str(orphan_patch.get("OMS_ORPHAN_ACTIVE")) == "ON"
         report["open_orders"] = int(_scan_open_orders_and_notify(ex))
         n_tr, _ = _fetch_my_trades_snapshot(ex)
         report["my_trades"] = int(n_tr)
-        cfg2 = load_system_config()
-        cfg2["LAST_OMS_RECON_AT_UTC"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        cfg2["LAST_OMS_RECON_PHANTOMS"] = report["phantoms_closed"]
-        cfg2["LAST_OMS_RECON_OPEN_ORDERS"] = report["open_orders"]
-        cfg2["LAST_OMS_RECON_SLIPPAGE_ALERTS"] = report["slippage_alerts"]
-        cfg2["LAST_OMS_MY_TRADES_WINDOW_COUNT"] = report["my_trades"]
-        save_system_config(cfg2)
+        pending_cfg = {
+            "LAST_OMS_RECON_AT_UTC": utc_datetime_str_tz(),
+            "LAST_OMS_RECON_PHANTOMS": report["phantoms_closed"],
+            "LAST_OMS_RECON_ORPHANS": report["orphans"],
+            "LAST_OMS_RECON_OPEN_ORDERS": report["open_orders"],
+            "LAST_OMS_RECON_SLIPPAGE_ALERTS": report["slippage_alerts"],
+            "LAST_OMS_MY_TRADES_WINDOW_COUNT": report["my_trades"],
+        }
+        pending_cfg.update(orphan_patch)
     finally:
+        source_window = counters.end_window()
+        report["source_counts"] = source_window
+        try:
+            cfg2 = load_system_config()
+            cfg2.update(pending_cfg)
+            cfg2["LAST_OMS_SOURCE_COUNTS"] = source_window
+            save_system_config(cfg2)
+        except Exception as e:
+            logger.warning("OMS recon config persist failed: %s", e)
         conn.close()
 
     logger.info(
-        "OMS reconciliation done phantoms=%s open_orders=%s slippage_alerts=%s",
+        "OMS reconciliation done phantoms=%s orphans=%s orphan_active=%s "
+        "open_orders=%s slippage_alerts=%s source=%s",
         report["phantoms_closed"],
+        report["orphans"],
+        report["orphan_active"],
         report["open_orders"],
         report["slippage_alerts"],
+        report.get("source_counts"),
     )
     return report

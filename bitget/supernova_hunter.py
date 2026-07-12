@@ -5,24 +5,35 @@ import os
 import random
 import sqlite3
 import time
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import memory_bounds
+
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.memory_policy import GC_AFTER_SCAN_TABLE, OHLCV_SIGNAL_BAR_LIMIT, SUPERNOVA_SCAN_MAX_WORKERS
 import requests
 
 import bitget.shadow_tracking as bitget_shadow_tracking
 from bitget.config_hub import load_config, save_config
 from bitget.env import bitget_telegram_chat_id, bitget_telegram_token
 from bitget.forward_tester import compute_evolved_alpha_bonus_score, try_add_virtual_position
+from bitget.infra.bounded_reads import (
+    sqlite_bitget_ohlcv_tf_tables_sql,
+    sqlite_bitget_scan_tables_sql,
+)
+from bitget.infra.clock import utc_datetime_str
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.logging_setup import get_logger, log_exception
 from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
 TELEGRAM_TOKEN = bitget_telegram_token()
 TELEGRAM_CHAT_ID = bitget_telegram_chat_id()
 scanned_today_cache = {"spot": set(), "futures": set()}
+MARKET_TYPES = ("spot", "futures")
 LOG_FILE_SNIPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sent_log_bitget_supernova.txt")
+logger = get_logger("bitget.supernova_hunter")
 
 
 def _resolve_elastic_scan_cutoffs(cfg, market_type: str):
@@ -237,16 +248,26 @@ def _mutate_alpha_formula_ast(formula: str):
 
 
 def _read_tables(conn, timeframe):
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     tf = timeframe.upper()
+    sql, params = sqlite_bitget_ohlcv_tf_tables_sql(timeframe=tf)
+    rows = conn.execute(sql, params).fetchall()
     out = []
     for (name,) in rows:
         if name.startswith("BITGET_") and name.endswith(f"_{tf}"):
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{name}" ORDER BY Date ASC', conn)
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{name}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_SIGNAL_BAR_LIMIT)}",
+                conn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
             if len(df) >= 240:
                 df["Date"] = pd.to_datetime(df["Date"])
                 df = df.set_index("Date")
                 out.append((name, df))
+            else:
+                del df
+                flush_gc(label=GC_AFTER_OHLCV_BATCH)
     return out
 
 
@@ -300,7 +321,7 @@ def evolve_alpha_factors(timeframe="1D"):
     samples = [df for _, df in _read_tables(conn, timeframe)[:80]]
     conn.close()
     if not samples:
-        print("No sample data for alpha evolution.")
+        logger.info("No sample data for alpha evolution.")
         return
 
     def ic_for_formula(formula):
@@ -354,16 +375,16 @@ def evolve_alpha_factors(timeframe="1D"):
         push(generate_random_alpha_formula())
 
     if not scored:
-        print("No valid evolved formulas.")
+        logger.info("No valid evolved formulas.")
         return
     scored.sort(key=lambda x: x[1], reverse=True)
     top = scored[:3]
     cfg["EVOLVED_ALPHA_FACTORS"] = {f"ALPHA_{i+1}": top[i][0] for i in range(len(top))}
     cfg["EVOLVED_ALPHA_THRESHOLD"] = float(np.mean([ic for _, ic in top]) * 0.5)
     cfg["EVOLVED_ALPHA_TIMEFRAME"] = str(timeframe).upper()
-    cfg["EVOLVED_ALPHA_UPDATED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cfg["EVOLVED_ALPHA_UPDATED_AT"] = utc_datetime_str()
     save_config(cfg)
-    print("Evolved alpha factors saved.")
+    logger.info("Evolved alpha factors saved.")
 
 
 def _get_similarity(vec1, vec2):
@@ -383,22 +404,18 @@ def _calc_dtw(s, t):
 
 
 def _load_tables_for_scan(conn, market_type, timeframe):
-    pref = "BITGET_SPOT_" if market_type == "spot" else "BITGET_FUT_"
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    tf = str(timeframe).upper()
-    out = []
-    for (name,) in rows:
-        if name.startswith(pref) and name.endswith(f"_{tf}"):
-            if "BTC_USDT" in name:
-                continue
-            out.append(name)
-    return out
+    sql, params = sqlite_bitget_scan_tables_sql(
+        market_type=market_type,
+        timeframe=timeframe,
+        exclude_btc=True,
+    )
+    return [r[0] for r in conn.execute(sql, params).fetchall()]
 
 
 def execute_supernova_live_scan(market_type, timeframe):
     market_type = str(market_type).lower()
     tf = str(timeframe).upper()
-    print(f"\n🦅 [{market_type}/{tf}] 초신성 15배속 실시간 저격 시작...")
+    logger.info("[%s/%s] supernova live scan start", market_type, tf)
 
     cfg = load_config()
     try:
@@ -406,14 +423,18 @@ def execute_supernova_live_scan(market_type, timeframe):
 
         cfg = hydrate_intraday_scanner_config(cfg, market=f"BG_{market_type.upper()}")
     except Exception as _ssot_e:
-        print(f"⚠️ [bitget/{market_type}] scanner Kelly SSOT 스킵: {_ssot_e}")
+        logger.warning("[%s] scanner Kelly SSOT skip: %s", market_type, _ssot_e)
     dynamic_cos_cutoff = float(cfg.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50))
     dynamic_dtw_cutoff = float(cfg.get("DYNAMIC_DTW_LIMIT", 2.5))
     eff_cos_cutoff, eff_ml_cutoff, elastic_state = _resolve_elastic_scan_cutoffs(cfg, market_type)
     if elastic_state is not None:
-        print(
-            f"🌊 [Elastic 1차게이트/{market_type}] cos={eff_cos_cutoff:.3f} ml={eff_ml_cutoff:.3f} "
-            f"starv={elastic_state.starvation_index:.2f} vol={elastic_state.vol_proxy:.2f}"
+        logger.info(
+            "[Elastic gate/%s] cos=%.3f ml=%.3f starv=%.2f vol=%.2f",
+            market_type,
+            eff_cos_cutoff,
+            eff_ml_cutoff,
+            elastic_state.starvation_index,
+            elastic_state.vol_proxy,
         )
 
     templates = {}
@@ -434,6 +455,7 @@ def execute_supernova_live_scan(market_type, timeframe):
         return
 
     def worker(tbl):
+        cconn = None
         try:
             symbol = "_".join(tbl.split("_")[2:-1])
             uniq = f"{symbol}:{tf}"
@@ -441,8 +463,13 @@ def execute_supernova_live_scan(market_type, timeframe):
                 return None
 
             cconn = get_connection(DB_PATH, read_only=True)
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', cconn)
-            cconn.close()
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_SIGNAL_BAR_LIMIT)}",
+                cconn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
             if df.empty or len(df) < 220:
                 return None
             df["Date"] = pd.to_datetime(df["Date"])
@@ -523,7 +550,7 @@ def execute_supernova_live_scan(market_type, timeframe):
                 facts["ml_box_pass"] = True
             else:
                 sig_type = f"[SUPERNOVA][{tf}] 🦅 {best_name} (Cos:{eff_cos*100:.1f}%|DTW:{best_dtw:.2f})"
-            return {
+            result = {
                 "symbol": symbol,
                 "sig_type": sig_type,
                 "score": eff_cos * 100.0,
@@ -531,14 +558,24 @@ def execute_supernova_live_scan(market_type, timeframe):
                 "facts": facts,
                 "uniq": uniq,
             }
+            del df, c, o, h, l, v
+            flush_gc(label=GC_AFTER_SCAN_TABLE)
+            return result
         except Exception:
             return None
+        finally:
+            if cconn is not None:
+                try:
+                    cconn.close()
+                except Exception:
+                    pass
 
     valid = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SUPERNOVA_SCAN_MAX_WORKERS) as executor:
         for r in executor.map(worker, tables):
             if r:
                 valid.append(r)
+    flush_gc(label="supernova_scan_batch")
 
     for target in valid:
         ok, msg = try_add_virtual_position(
@@ -582,17 +619,27 @@ def execute_supernova_live_scan(market_type, timeframe):
                 f"점수: {target['score']:.1f}\n"
                 f"장부: {msg}"
             )
-    print(f"✅ [{market_type}/{tf}] 실시간 저격 완료: {len(valid)}건 합격 후보")
+    logger.info("[%s/%s] supernova live scan done: %s candidates", market_type, tf, len(valid))
 
 
 def run_live_sniper_scheduler():
-    print("🕒 [초신성 실시간 스나이퍼] 대기 중...")
-    print(" - 1H: 매 정시")
-    print(" - 2H: 짝수시")
-    print(" - 4H: 0/4/8/12/16/20시")
-    print(" - 1D: 00:05 UTC")
-    last_day = datetime.utcnow().strftime("%Y-%m-%d")
-    
+    from bitget.infra.daemon_loop import (
+        SNIPER_SCHEDULER_ERROR_SEC,
+        SNIPER_SCHEDULER_POLL_SEC,
+        SNIPER_SCHEDULER_POST_SCAN_SLEEP_SEC,
+        UtcTick,
+        sleep_or_backoff,
+    )
+
+    logger.info("supernova sniper scheduler waiting (1H/2H/4H/1D UTC candle close)")
+    logger.info(" - 1H: every hour")
+    logger.info(" - 2H: even hours")
+    logger.info(" - 4H: 0/4/8/12/16/20")
+    logger.info(" - 1D: 00:05 UTC")
+    tick = UtcTick()
+    tick.refresh()
+    last_day = tick.day_key
+
     # 💡 [버그 픽스] 서버 재부팅 시 기억 복원
     if os.path.exists(LOG_FILE_SNIPER):
         try:
@@ -607,37 +654,52 @@ def run_live_sniper_scheduler():
         except Exception:
             pass
 
+    loop_error = False
     while True:
         try:
-            now = datetime.utcnow()
-            day = now.strftime("%Y-%m-%d")
-            if day != last_day:
+            tick.refresh()
+            if tick.day_key != last_day:
                 scanned_today_cache["spot"].clear()
                 scanned_today_cache["futures"].clear()
-                last_day = day
-                # 날짜가 바뀌면 로그 파일 초기화
+                last_day = tick.day_key
                 try:
                     with open(LOG_FILE_SNIPER, "w", encoding="utf-8") as f:
-                        f.write(day + "\n")
+                        f.write(tick.day_key + "\n")
                 except Exception:
                     pass
 
-            if now.minute == 0:
-                for mt in ("spot", "futures"):
+            if tick.minute == 0:
+                for mt in MARKET_TYPES:
                     execute_supernova_live_scan(mt, "1H")
-                    if now.hour % 2 == 0:
+                    if tick.hour % 2 == 0:
                         execute_supernova_live_scan(mt, "2H")
-                    if now.hour % 4 == 0:
+                    if tick.hour % 4 == 0:
                         execute_supernova_live_scan(mt, "4H")
-                time.sleep(60)
-            elif now.hour == 0 and now.minute == 5:
-                for mt in ("spot", "futures"):
+                loop_error = False
+                sleep_or_backoff(
+                    normal_sec=SNIPER_SCHEDULER_POST_SCAN_SLEEP_SEC,
+                    after_error=False,
+                )
+                continue
+            if tick.hour == 0 and tick.minute == 5:
+                for mt in MARKET_TYPES:
                     execute_supernova_live_scan(mt, "1D")
-                time.sleep(60)
-            time.sleep(20)
+                loop_error = False
+                sleep_or_backoff(
+                    normal_sec=SNIPER_SCHEDULER_POST_SCAN_SLEEP_SEC,
+                    after_error=False,
+                )
+                continue
+            loop_error = False
+            sleep_or_backoff(normal_sec=SNIPER_SCHEDULER_POLL_SEC, after_error=loop_error)
         except Exception as e:
-            print(f"스나이퍼 스케줄러 에러: {e}")
-            time.sleep(60)
+            log_exception(logger, "supernova sniper scheduler error: %s", e)
+            loop_error = True
+            sleep_or_backoff(
+                normal_sec=SNIPER_SCHEDULER_POLL_SEC,
+                after_error=loop_error,
+                error_sec=SNIPER_SCHEDULER_ERROR_SEC,
+            )
 
 
 def mine_supernova_templates_by_timeframe(timeframe="1D"):
@@ -654,7 +716,7 @@ def mine_supernova_templates_by_timeframe(timeframe="1D"):
     samples = _read_tables(conn, tf)
     conn.close()
     if not samples:
-        print(f"[{tf}] 템플릿 마이닝용 샘플 없음")
+        logger.info("[%s] no samples for template mining", tf)
         return {}
 
     # 1) D-Day DNA 추출
@@ -678,7 +740,7 @@ def mine_supernova_templates_by_timeframe(timeframe="1D"):
         dna_rows.append(dna)
 
     if not dna_rows:
-        print(f"[{tf}] 유효 DNA 없음")
+        logger.info("[%s] no valid DNA", tf)
         return {}
 
     # 2) 랭크별 1차 분류
@@ -733,7 +795,7 @@ def mine_supernova_templates_by_timeframe(timeframe="1D"):
             existing.pop(k, None)
     existing.update(tf_templates)
     cfg[multi_key] = existing
-    cfg[f"{tf}_TEMPLATE_UPDATED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cfg[f"{tf}_TEMPLATE_UPDATED_AT"] = utc_datetime_str()
     save_config(cfg)
 
     send_telegram_msg(
@@ -741,6 +803,6 @@ def mine_supernova_templates_by_timeframe(timeframe="1D"):
         f"STEALTH {split_counts['stealth']}개 | VOLATILE {split_counts['volatile']}개\n"
         f"총 저장: {len(tf_templates)}개"
     )
-    print(f"[{tf}] STEALTH/VOLATILE 템플릿 저장 완료: {len(tf_templates)}")
+    logger.info("[%s] STEALTH/VOLATILE templates saved: %s", tf, len(tf_templates))
     return tf_templates
 

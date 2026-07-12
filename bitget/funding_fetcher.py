@@ -1,6 +1,10 @@
 """
 실시간 펀딩비·다음 결제 시각 조회 (Bitget 공개 API, 비인증).
+
+Network resilience: ``bitget.infra.network_retry`` SSOT (Ch3).
 """
+from __future__ import annotations
+
 import math
 from datetime import datetime, timezone
 
@@ -9,9 +13,12 @@ try:
 except Exception:
     ccxt = None
 
-from bitget.rate_limit_guard import backoff_sleep, throttle
+from bitget.infra.logging_setup import get_logger, setup_logging
+from bitget.infra.network_retry import call_with_retry
 from bitget.symbol_utils import normalize_market_symbol
 
+setup_logging()
+logger = get_logger("bitget.funding_fetcher")
 
 _pub_ex = None
 
@@ -21,8 +28,19 @@ def _ex():
     if ccxt is None:
         return None
     if _pub_ex is None:
-        _pub_ex = ccxt.bitget({"enableRateLimit": True})
-        _pub_ex.load_markets()
+        ex = ccxt.bitget({"enableRateLimit": True})
+        ok = call_with_retry(
+            lambda: (ex.load_markets() or True),
+            op="funding.load_markets",
+            throttle_key="bitget.pub.load_markets",
+            throttle_interval_sec=0.5,
+            default=False,
+            swallow=True,
+        )
+        if not ok:
+            logger.warning("funding public exchange load_markets failed after retries")
+            return None
+        _pub_ex = ex
     return _pub_ex
 
 
@@ -37,18 +55,18 @@ def fetch_funding_snapshot(symbol: str):
         return None
     raw = str(symbol or "").replace("_", "/")
     ccxt_sym = normalize_market_symbol(raw, "futures")
-    try:
-        throttle("bitget.pub.fetch_funding_rate", 0.14)
-        o = ex.fetch_funding_rate(ccxt_sym)
-    except Exception:
-        backoff_sleep(1)
-        try:
-            throttle("bitget.pub.fetch_funding_rate", 0.16)
-            o = ex.fetch_funding_rate(ccxt_sym)
-        except Exception:
-            return None
+    o = call_with_retry(
+        lambda: ex.fetch_funding_rate(ccxt_sym),
+        op="funding.fetch_funding_rate",
+        throttle_key="bitget.pub.fetch_funding_rate",
+        throttle_interval_sec=0.14,
+        default=None,
+        swallow=True,
+    )
+    if not isinstance(o, dict):
+        return None
 
-    info = o if isinstance(o, dict) else {}
+    info = o
     rate = info.get("fundingRate")
     if rate is None and isinstance(info.get("info"), dict):
         rate = info["info"].get("fundingRate")

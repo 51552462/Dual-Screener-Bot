@@ -4,12 +4,12 @@ import re
 import sqlite3
 import time
 from collections import Counter
-from datetime import datetime
 
-import requests
 from bs4 import BeautifulSoup
 
-from bitget.rate_limit_guard import throttle
+from bitget.infra.clock import utc_date_key
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.network_retry import http_get
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
@@ -22,6 +22,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_DB_PATH = os.path.join(BASE_DIR, "news_data.sqlite")
 FGI_URL = "https://api.alternative.me/fng/?limit=1"
 CRYPTO_NEWS_URL = "https://cointelegraph.com/tags/markets"
+logger = get_logger("bitget.sentiment_miner")
 
 
 def _headers():
@@ -54,20 +55,42 @@ def init_news_db():
 
 
 def fetch_fear_greed():
+    r = http_get(
+        FGI_URL,
+        op="sentiment.fear_greed",
+        throttle_key="http.alternative.fng",
+        throttle_interval_sec=0.35,
+        timeout=12.0,
+        headers=_headers(),
+        default=None,
+        swallow=True,
+    )
+    if r is None:
+        return 50.0, "Neutral"
     try:
-        r = requests.get(FGI_URL, headers=_headers(), timeout=12)
         j = r.json().get("data", [{}])[0]
         val = float(j.get("value", 50))
         cls = str(j.get("value_classification", "Neutral"))
         return val, cls
-    except Exception:
+    except Exception as e:
+        log_exception(logger, "fear/greed parse failed: %s", e)
         return 50.0, "Neutral"
 
 
 def fetch_crypto_news_titles():
+    r = http_get(
+        CRYPTO_NEWS_URL,
+        op="sentiment.crypto_news",
+        throttle_key="http.cointelegraph.news",
+        throttle_interval_sec=0.45,
+        timeout=15.0,
+        headers=_headers(),
+        default=None,
+        swallow=True,
+    )
+    if r is None:
+        return []
     try:
-        throttle("http.cointelegraph.news", 0.45)
-        r = requests.get(CRYPTO_NEWS_URL, headers=_headers(), timeout=15)
         time.sleep(random.uniform(0.8, 1.7))
         soup = BeautifulSoup(r.text, "html.parser")
         titles = []
@@ -78,7 +101,8 @@ def fetch_crypto_news_titles():
             if len(titles) >= 80:
                 break
         return titles
-    except Exception:
+    except Exception as e:
+        log_exception(logger, "crypto news parse failed: %s", e)
         return []
 
 
@@ -97,9 +121,9 @@ def extract_keywords(titles):
 
 
 def run_sentiment_mining():
-    print("🧠 [Bitget Sentiment Miner] 공포/탐욕 + 크립토 뉴스 마이닝...")
+    logger.info("[sentiment] fear/greed + crypto news mining")
     init_news_db()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_date_key()
     titles = fetch_crypto_news_titles()
     keys = extract_keywords(titles)
     fgi, label = fetch_fear_greed()
@@ -119,7 +143,7 @@ def run_sentiment_mining():
     )
     conn.commit()
     conn.close()
-    print(f"✅ 저장 완료: FGI={fgi:.1f}({label}) | keywords={keys}")
+    logger.info("sentiment saved: FGI=%.1f(%s) keywords=%s", fgi, label, keys)
 
 
 if __name__ == "__main__":

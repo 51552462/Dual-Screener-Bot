@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from bitget.forward.shared import load_system_config, save_system_config
+from bitget.infra.clock import utc_date_str, utc_datetime_str
 
 def _pf(series):
     if series is None or len(series) == 0:
@@ -83,7 +84,7 @@ def generate_mutant_strategies():
     - 결과를 bitget_system_config.json의 INCUBATOR_TEMPLATES에 누적
     """
     cfg = load_system_config()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_date_str()
     if str(cfg.get("INCUBATOR_LAST_GEN_DATE", "")) == today:
         return False, "오늘 인큐베이터 생성 이미 완료"
 
@@ -171,7 +172,7 @@ def _auto_tune_brain_from_closed_df(cfg: dict, closed_df: pd.DataFrame):
             "cpv": round((float(old.get("cpv", cpv_m)) * (1 - alpha)) + (cpv_m * alpha), 4),
             "tb": round((float(old.get("tb", tb_m)) * (1 - alpha)) + (tb_m * alpha), 4),
             "bbe": round((float(old.get("bbe", bbe_m)) * (1 - alpha)) + (bbe_m * alpha), 4),
-            "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": utc_datetime_str(),
         }
         msgs.append(f"MFE 황금타점 스무딩: 표본 {len(hi_mfe)}건 반영")
 

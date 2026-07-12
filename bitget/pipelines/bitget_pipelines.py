@@ -9,7 +9,10 @@ from __future__ import annotations
 from typing import Callable, Dict, List, Sequence
 
 from bitget.bitget_scan_schedule import ALL_SCAN_SLOTS, ScanSlot
+from bitget.infra.logging_setup import get_logger, log_exception
 from bitget.infra.runtime import StepSpec
+
+logger = get_logger("bitget.pipelines")
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +66,7 @@ def _step_meta_governor_sync() -> None:
     out = rebuild_bitget_meta_state(force=False, refresh_regime=True)
     align = ensure_config_regime_aligned()
     out["config_regime_align"] = align
-    print(f"🛰️ [Bitget] meta_governor_sync: {out}")
+    logger.info("meta_governor_sync: %s", out)
 
     failures: list[str] = []
     if out.get("meta") == "failed":
@@ -104,7 +107,7 @@ def _step_meta_governor_sync() -> None:
 
         post_bitget_meta_governor_fluid_sync()
     except Exception as _fluid_ex:
-        print(f"⚠️ [Bitget] fluid evolution post-meta sync skip: {_fluid_ex}")
+        log_exception(logger, "fluid evolution post-meta sync skip: %s", _fluid_ex)
 
 
 def _step_artifact_guard() -> None:
@@ -255,6 +258,12 @@ def _step_reporter_cleanup_zombie() -> None:
     reporter_cleanup_zombie_forward_trades()
 
 
+def _step_memory_retention() -> None:
+    from bitget.disk_manager import run_bitget_memory_retention
+
+    run_bitget_memory_retention(force=True)
+
+
 def _step_forward_trade_identity() -> None:
     from bitget.forward.forward_trade_identity import run_identity_repair_all
 
@@ -266,24 +275,24 @@ def _step_weekly_coin_pri() -> None:
     from bitget.evolution.weekly_evolution_tail_bg import run_weekly_evolution_tail
 
     out = compute_weekly_coin_pri()
-    print(f"🛰️ [Bitget] weekly_coin_pri: blended={out.get('blended')}")
+    logger.info("weekly_coin_pri: blended=%s", out.get("blended"))
     blended = out.get("blended") if isinstance(out.get("blended"), dict) else {}
     tail = run_weekly_evolution_tail(pri_blend_z=blended.get("composite_z"))
-    print(f"🛰️ [Bitget] weekly_evolution_tail: {tail}")
+    logger.info("weekly_evolution_tail: %s", tail)
 
 
 def _step_regime_deep_archive_bg() -> None:
     from bitget.evolution.regime_deep_archive_bg import run_bitget_regime_deep_archive
 
     out = run_bitget_regime_deep_archive(max_tasks=20)
-    print(f"🛰️ [Bitget] regime_deep_archive: {out}")
+    logger.info("regime_deep_archive: %s", out)
 
 
 def _step_weekly_coin_regime_archive() -> None:
     from bitget.evolution.weekly_regime_bg import run_weekly_coin_regime_archive
 
     out = run_weekly_coin_regime_archive()
-    print(f"🛰️ [Bitget] weekly_coin_regime_archive: {out}")
+    logger.info("weekly_coin_regime_archive: %s", out)
 
 
 def _step_weekly_evolution() -> None:
@@ -356,14 +365,14 @@ def _step_monthly_grand_report() -> None:
     """월말 종합 결산 리포트 (월 마지막 날에만 발송)."""
     from bitget.weekend_grand_report import send_grand_report_if_due
     result = send_grand_report_if_due()
-    print(f"[bitget] monthly_grand_report: {result}")
+    logger.info("monthly_grand_report: %s", result)
 
 
 def _step_weekly_action_plan() -> None:
     """주간 액션 플랜 생성·발송 + 다음 주 baseline 저장."""
     from bitget.weekly_action_plan import build_weekly_action_plan, persist_weekly_baseline, ToxicTagInfo
     from bitget.forward.shared import send_telegram_msg
-    from datetime import datetime, timedelta, timezone
+    from bitget.infra.clock import utc_date_days_ago_str, utc_date_key, utc_now
 
     sys_config: dict = {}
     try:
@@ -372,9 +381,9 @@ def _step_weekly_action_plan() -> None:
     except Exception:
         pass
 
-    now = datetime.now(timezone.utc)
-    week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    week_end = now.strftime("%Y-%m-%d")
+    now = utc_now()
+    week_start = utc_date_days_ago_str(7, anchor=now)
+    week_end = utc_date_key(anchor=now)
     regime = str(sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN"))
     kelly = float(sys_config.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01)
     meta_mult = float(sys_config.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
@@ -422,13 +431,10 @@ def _step_weekly_action_plan() -> None:
             pass
 
         try:
-            tag_rows = conn.execute(
-                "SELECT flow_tags, final_ret FROM bitget_forward_trades "
-                "WHERE exit_date >= ? AND status LIKE 'CLOSED%' "
-                "AND IFNULL(flow_tags,'') != '' "
-                "AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'",
-                (week_start,),
-            ).fetchall()
+            from bitget.infra.bounded_reads import forward_weekly_flow_tags_sql
+
+            tag_q, tag_params = forward_weekly_flow_tags_sql(since_date=week_start)
+            tag_rows = conn.execute(tag_q, tag_params).fetchall()
             if tag_rows:
                 tag_stats: dict = {}
                 for ft, ret in tag_rows:
@@ -479,7 +485,7 @@ def _step_weekly_executive_summary() -> None:
     """주간 리포트 말미 [최종 요약: 1분 브리핑]."""
     from bitget.report_executive_summary import build_weekly_executive_summary_html
     from bitget.forward.shared import send_telegram_msg
-    from datetime import datetime, timedelta, timezone
+    from bitget.infra.clock import utc_date_days_ago_str, utc_date_key, utc_now
 
     meta: dict = {}
     sys_config: dict = {}
@@ -494,9 +500,9 @@ def _step_weekly_executive_summary() -> None:
     except Exception:
         pass
 
-    now = datetime.now(timezone.utc)
-    week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    week_end = now.strftime("%Y-%m-%d")
+    now = utc_now()
+    week_start = utc_date_days_ago_str(7, anchor=now)
+    week_end = utc_date_key(anchor=now)
     regime = str(sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN"))
 
     spot_pnl: float | None = None
@@ -504,19 +510,17 @@ def _step_weekly_executive_summary() -> None:
     n_retired = 0
     n_cooled = 0
     try:
+        from bitget.infra.bounded_reads import forward_weekly_market_pnl_sum_sql
         from bitget.infra.data_paths import market_data_db_path
         from bitget.infra.shared_db_connector import get_connection
 
         conn = get_connection(market_data_db_path(), read_only=True)
         for mkt, attr in [("spot", "spot_pnl"), ("futures", "fut_pnl")]:
             try:
-                row = conn.execute(
-                    "SELECT SUM((sim_kelly_invest * final_ret) / 100.0) "
-                    "FROM bitget_forward_trades "
-                    "WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%' "
-                    "AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'",
-                    (mkt, week_start),
-                ).fetchone()
+                pnl_q, pnl_p = forward_weekly_market_pnl_sum_sql(
+                    market_type=mkt, since_date=week_start
+                )
+                row = conn.execute(pnl_q, pnl_p).fetchone()
                 val = float(row[0]) if row and row[0] is not None else 0.0
                 if attr == "spot_pnl":
                     spot_pnl = val
@@ -572,6 +576,18 @@ def _step_snapshot() -> None:
         raise RuntimeError(result.get("error") or "snapshot backup failed")
 
 
+def _step_institutional_db_backup() -> None:
+    """Integrity-verified SQLite backup (PRAGMA) + archive prune + stamped-log GC."""
+    from bitget.scripts.institutional_db_backup import run_backup_job
+
+    result = run_backup_job()
+    if not result.get("all_ok"):
+        raise RuntimeError(
+            f"institutional db backup integrity failed "
+            f"id={result.get('backup_id')} archive={result.get('archive')}"
+        )
+
+
 def _step_record_baseline() -> None:
     from bitget.validation.runner import run_record_baseline
 
@@ -594,6 +610,20 @@ def _step_cutover_check() -> None:
     from bitget.validation.runner import run_cutover_check
 
     run_cutover_check()
+
+
+def _step_ws_oms_smoke() -> None:
+    """Health attaché — log/gauge only (no raise unless STRICT)."""
+    from bitget.validation.ws_oms_smoke import run_ws_oms_smoke
+
+    run_ws_oms_smoke(raise_on_fail=False)
+
+
+def _step_ws_oms_smoke_gate() -> None:
+    """Dedicated mode — hard FAIL → non-zero exit."""
+    from bitget.validation.ws_oms_smoke import run_ws_oms_smoke
+
+    run_ws_oms_smoke(raise_on_fail=True)
 
 
 def _step_validate_all() -> None:
@@ -776,6 +806,7 @@ def _pipeline_daily_audit() -> List[StepSpec]:
                 _step_reporter_cleanup_zombie,
                 critical=False,
             ),
+            StepSpec("memory_retention_sweep", _step_memory_retention, critical=False),
             StepSpec("forward_trade_identity", _step_forward_trade_identity, critical=False),
             StepSpec("pil_practitioner_reports", _step_pil_practitioner_reports, critical=False, delay_after_sec=0.5),
             StepSpec("comprehensive_report", _step_comprehensive_report, critical=False),
@@ -806,7 +837,16 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
 def _pipeline_health() -> List[StepSpec]:
     from bitget.pipelines.runner import step_infra_health
 
-    return [StepSpec("infra_health", step_infra_health, critical=True)]
+    return [
+        StepSpec("infra_health", step_infra_health, critical=True),
+        StepSpec("ws_oms_smoke", _step_ws_oms_smoke, critical=False),
+    ]
+
+
+def _pipeline_ws_oms_smoke() -> List[StepSpec]:
+    return _with_guard(
+        [StepSpec("ws_oms_smoke", _step_ws_oms_smoke_gate, critical=True)]
+    )
 
 
 def _pipeline_monthly_grand() -> List[StepSpec]:
@@ -817,6 +857,7 @@ def _pipeline_monthly_grand() -> List[StepSpec]:
 
 PIPELINE_BUILDERS: Dict[str, Callable[[], List[StepSpec]]] = {
     "health": _pipeline_health,
+    "ws_oms_smoke": _pipeline_ws_oms_smoke,
     "data_refresh": _pipeline_data_refresh,
     "scan_spot": _pipeline_scan_spot,
     "scan_futures": _pipeline_scan_futures,
@@ -828,6 +869,9 @@ PIPELINE_BUILDERS: Dict[str, Callable[[], List[StepSpec]]] = {
     "monthly_grand": _pipeline_monthly_grand,
     "gap_heal": lambda: _with_guard([StepSpec("gap_heal", _step_gap_heal, critical=True)]),
     "snapshot": lambda: _with_guard([StepSpec("snapshot", _step_snapshot, critical=True)]),
+    "db_backup": lambda: _with_guard(
+        [StepSpec("institutional_db_backup", _step_institutional_db_backup, critical=True)]
+    ),
     "record_baseline": lambda: _with_guard(
         [StepSpec("record_baseline", _step_record_baseline, critical=True)]
     ),

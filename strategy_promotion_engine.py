@@ -26,6 +26,67 @@ def stable_strategy_id(market: str, group_key: str) -> str:
     return "strat:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def resolve_live_ev_verification_tolerance(
+    market: str,
+    *,
+    meta: Optional[Dict[str, Any]] = None,
+    sys_config: Optional[Dict[str, Any]] = None,
+    regime_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    불사조 LIVE 실전 EV 검증 — ATR14/Price × META_REGIME_KEY 가중 동적 오차율.
+    re_evolution_ev_rampup 청산 평가부 SSOT 진입점.
+    """
+    from re_evolution_dynamic_tolerance import compute_dynamic_ev_tolerance_pct
+
+    return compute_dynamic_ev_tolerance_pct(
+        market,
+        meta=meta,
+        sys_config=sys_config,
+        regime_key=regime_key,
+    )
+
+
+def evaluate_live_ev_performance_verification(
+    live_rets: List[float],
+    warm_record: Optional[Dict[str, Any]],
+    *,
+    market: str = "KR",
+    meta: Optional[Dict[str, Any]] = None,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    불사조 LIVE 실전 성과 검증 — ATR tolerance OR Z-Score (-1.5σ) 통합 게이트.
+    re_evolution_ev_rampup.process_warm_start_live_closure 와 동일 SSOT.
+    """
+    from re_evolution_dynamic_tolerance import enrich_ev_ramp_config_with_dynamic_tolerance
+    from re_evolution_ev_rampup import ev_rampup_config
+    from re_evolution_zscore_ev import (
+        enrich_ev_ramp_config_with_zscore,
+        evaluate_combined_live_ev_verification,
+        resolve_shadow_ev_distribution,
+    )
+
+    base_cfg = ev_rampup_config(sys_config)
+    cfg = enrich_ev_ramp_config_with_dynamic_tolerance(
+        base_cfg, market, meta=meta, sys_config=sys_config
+    )
+    cfg = enrich_ev_ramp_config_with_zscore(cfg, sys_config=sys_config)
+    dist = resolve_shadow_ev_distribution(warm_record)
+    matched, detail = evaluate_combined_live_ev_verification(
+        live_rets,
+        dist.get("mean_pct"),
+        dist.get("std_pct"),
+        cfg,
+    )
+    return {
+        "match": matched,
+        "detail": detail,
+        "shadow_distribution": dist,
+        "market": str(market or "KR").upper(),
+    }
+
+
 def parse_health_key(key: str) -> Tuple[str, str]:
     s = str(key or "").strip()
     if "|" in s:
@@ -258,6 +319,9 @@ def run_registry_lifecycle(
         "promoted_live_by_market": {"KR": 0, "US": 0, "BG": 0},
         "demoted_7d": 0,
         "re_evolution_redemption_promoted": 0,
+        "re_evolution_warm_start_promoted": 0,
+        "re_evolution_ev_full_ramp": 0,
+        "re_evolution_ev_shadow_recall": 0,
         "today_kst": today_kst,
     }
 
@@ -379,6 +443,23 @@ def run_registry_lifecycle(
                 )
                 if promoted:
                     stats["re_evolution_redemption_promoted"] += 1
+                    if _rev.get("warm_start_applied"):
+                        stats["re_evolution_warm_start_promoted"] = (
+                            int(stats.get("re_evolution_warm_start_promoted") or 0) + 1
+                        )
+                        _dyn_tol = None
+                        if isinstance(meta_working, dict):
+                            try:
+                                _dyn_tol = resolve_live_ev_verification_tolerance(
+                                    mkt,
+                                    meta=meta_working,
+                                    sys_config=system_cfg,
+                                )
+                                meta_working["META_RE_EVOLUTION_LAST_DYNAMIC_TOLERANCE"] = _dyn_tol
+                            except Exception:
+                                pass
+                        if isinstance(_dyn_tol, dict):
+                            stats.setdefault("re_evolution_dynamic_tolerance_last", _dyn_tol)
                     stats["promoted_live"] += 1
                     mk_stat = mkt if mkt in stats["promoted_live_by_market"] else "KR"
                     stats["promoted_live_by_market"][mk_stat] = (

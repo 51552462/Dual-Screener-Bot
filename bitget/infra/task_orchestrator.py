@@ -31,6 +31,17 @@ from typing import Callable, Iterator, List, Optional
 
 import pytz
 
+import low_ram_sqlite_pragmas
+import memory_bounds
+
+from bitget.infra.bounded_reads import task_queue_claim_next_sql
+from bitget.infra.clock import utc_now, utc_now_iso
+from bitget.infra.memory_policy import (
+    TASK_QUEUE_DONE_KEEP_DAYS,
+    TASK_QUEUE_DONE_KEEP_LAST,
+    TASK_QUEUE_FAILED_KEEP_DAYS,
+    TASK_QUEUE_FAILED_KEEP_LAST,
+)
 from bitget.infra.shared_db_connector import BUSY_TIMEOUT_MS
 
 # --- 엔진 식별자 ---
@@ -85,7 +96,7 @@ def _in_window(now_local: datetime, start: tuple[int, int], end: tuple[int, int]
 
 def primary_engine_now(*, now_utc: Optional[datetime] = None) -> str:
     """현재 서버 시각 기준으로 Priority 1 을 가져야 할 엔진을 반환."""
-    base = now_utc or datetime.now(pytz.UTC)
+    base = now_utc or utc_now()
     if base.tzinfo is None:
         base = pytz.UTC.localize(base)
 
@@ -141,6 +152,7 @@ def _raw_conn(db_path: Optional[str] = None) -> Iterator[sqlite3.Connection]:
         conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS};")
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
         yield conn
     finally:
         try:
@@ -272,6 +284,27 @@ def _worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+_WORKER_ID_CACHE: Optional[str] = None
+_HEARTBEAT_PAYLOAD: Optional["ReusableDictPayload"] = None
+
+
+def _heartbeat_writer() -> "ReusableDictPayload":
+    global _HEARTBEAT_PAYLOAD, _WORKER_ID_CACHE
+    from bitget.infra.daemon_loop import ReusableDictPayload
+
+    if _WORKER_ID_CACHE is None:
+        _WORKER_ID_CACHE = _worker_id()
+    if _HEARTBEAT_PAYLOAD is None:
+        _HEARTBEAT_PAYLOAD = ReusableDictPayload(
+            pid=os.getpid(),
+            worker=_WORKER_ID_CACHE,
+            status="alive",
+            ts_utc="",
+            ts_epoch=0.0,
+        )
+    return _HEARTBEAT_PAYLOAD
+
+
 def claim_next(*, db_path: Optional[str] = None) -> Optional[Task]:
     """
     가장 높은 우선순위의 PENDING 작업을 **원자적으로** 픽업하여 RUNNING 으로 전환.
@@ -286,9 +319,7 @@ def claim_next(*, db_path: Optional[str] = None) -> Optional[Task]:
             conn.execute("BEGIN EXCLUSIVE TRANSACTION;")
             now = _now_iso()
             row = conn.execute(
-                "SELECT * FROM task_queue "
-                "WHERE status='PENDING' AND available_at <= ? "
-                "ORDER BY priority ASC, id ASC LIMIT 1",
+                task_queue_claim_next_sql(),
                 (now,),
             ).fetchone()
             if row is None:
@@ -321,12 +352,117 @@ def claim_next(*, db_path: Optional[str] = None) -> Optional[Task]:
         )
 
 
+# retention hook — complete/fail 후 throttled purge
+_task_queue_retention_gate = memory_bounds.ThrottledCallback(interval_sec=3600.0)
+
+
+def _maybe_purge_terminal_tasks(db_path: Optional[str] = None) -> None:
+    if not _task_queue_retention_gate.due():
+        return
+    try:
+        purge_terminal_tasks(db_path=db_path)
+    except Exception:
+        pass
+
+
+def purge_terminal_tasks(*, db_path: Optional[str] = None) -> dict[str, int]:
+    """
+    DONE/FAILED 터미널 상태 정리 + stuck RUNNING heal.
+
+    기관급 큐 hygiene:
+      - 날짜 기반 purge (finished_at 접두)
+      - 상태별 keep_last (최근 N건 audit trail)
+      - RUNNING > 6h → FAILED (워커 crash orphan)
+    """
+    from datetime import timedelta
+
+    path = db_path or _queue_db_path()
+    init_queue(path)
+    stats: dict[str, int] = {}
+    with _raw_conn(path) as conn:
+        try:
+            conn.execute("SELECT 1 FROM task_queue LIMIT 1")
+        except sqlite3.OperationalError:
+            return stats
+
+        for status, days in (
+            ("DONE", TASK_QUEUE_DONE_KEEP_DAYS),
+            ("FAILED", TASK_QUEUE_FAILED_KEEP_DAYS),
+        ):
+            cutoff = (datetime.now(_KST) - timedelta(days=int(days))).strftime("%Y-%m-%d")
+            try:
+                cur = conn.execute(
+                    "DELETE FROM task_queue WHERE status=? AND substr(COALESCE(finished_at,''),1,10) < ?",
+                    (status, cutoff),
+                )
+                stats[f"{status.lower()}_by_age"] = int(cur.rowcount or 0)
+            except sqlite3.Error:
+                pass
+
+        for status, keep in (
+            ("DONE", TASK_QUEUE_DONE_KEEP_LAST),
+            ("FAILED", TASK_QUEUE_FAILED_KEEP_LAST),
+        ):
+            try:
+                before = conn.execute(
+                    "SELECT COUNT(*) FROM task_queue WHERE status=?", (status,)
+                ).fetchone()
+                n_before = int(before[0] or 0) if before else 0
+                conn.execute(
+                    f"""
+                    DELETE FROM task_queue
+                    WHERE status=? AND id NOT IN (
+                        SELECT id FROM (
+                            SELECT id FROM task_queue
+                            WHERE status=?
+                            ORDER BY id DESC
+                            LIMIT ?
+                        )
+                    )
+                    """,
+                    (status, status, int(keep)),
+                )
+                after = conn.execute(
+                    "SELECT COUNT(*) FROM task_queue WHERE status=?", (status,)
+                ).fetchone()
+                n_after = int(after[0] or 0) if after else 0
+                removed = max(0, n_before - n_after)
+                if removed:
+                    stats[f"{status.lower()}_keep_last"] = removed
+            except sqlite3.Error:
+                pass
+
+        stuck_cutoff = (datetime.now(_KST) - timedelta(hours=6)).isoformat()
+        try:
+            cur = conn.execute(
+                """
+                UPDATE task_queue
+                SET status='FAILED', finished_at=?, last_error='STUCK_RUNNING_HEAL'
+                WHERE status='RUNNING'
+                  AND picked_at IS NOT NULL
+                  AND picked_at < ?
+                """,
+                (_now_iso(), stuck_cutoff),
+            )
+            stats["running_healed"] = int(cur.rowcount or 0)
+        except sqlite3.Error:
+            pass
+
+    total = sum(v for v in stats.values() if v > 0)
+    if total:
+        import logging
+
+        logging.getLogger(__name__).info("bitget task_queue retention: %s", stats)
+    return stats
+
+
 def complete(task_id: int, *, db_path: Optional[str] = None) -> None:
     with _raw_conn(db_path) as conn:
         conn.execute(
             "UPDATE task_queue SET status='DONE', finished_at=? WHERE id=?",
             (_now_iso(), int(task_id)),
         )
+    _maybe_purge_terminal_tasks(db_path=db_path)
 
 
 def fail(
@@ -340,6 +476,7 @@ def fail(
     실패 처리. attempts >= max_attempts 면 FAILED(영구 폐기), 아니면 backoff 후 PENDING 재진입.
     반환: 최종 상태('FAILED' | 'PENDING').
     """
+    result = "PENDING"
     with _raw_conn(db_path) as conn:
         row = conn.execute(
             "SELECT attempts, max_attempts FROM task_queue WHERE id=?", (int(task_id),)
@@ -353,16 +490,19 @@ def fail(
                 "UPDATE task_queue SET status='FAILED', finished_at=?, last_error=? WHERE id=?",
                 (_now_iso(), str(error)[:1000], int(task_id)),
             )
-            return "FAILED"
-        # backoff 후 재대기
-        from datetime import timedelta
+            result = "FAILED"
+        else:
+            from datetime import timedelta
 
-        avail = (datetime.now(_KST) + timedelta(seconds=max(0.0, backoff_sec))).isoformat()
-        conn.execute(
-            "UPDATE task_queue SET status='PENDING', available_at=?, last_error=? WHERE id=?",
-            (avail, str(error)[:1000], int(task_id)),
-        )
-        return "PENDING"
+            avail = (datetime.now(_KST) + timedelta(seconds=max(0.0, backoff_sec))).isoformat()
+            conn.execute(
+                "UPDATE task_queue SET status='PENDING', available_at=?, last_error=? WHERE id=?",
+                (avail, str(error)[:1000], int(task_id)),
+            )
+            result = "PENDING"
+    if result == "FAILED":
+        _maybe_purge_terminal_tasks(db_path=db_path)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -518,15 +658,12 @@ def worker_heartbeat_path() -> str:
 def touch_worker_heartbeat(*, status: str = "alive", extra: Optional[dict] = None) -> None:
     """워커 생존 신호를 원자적으로 기록(타임스탬프/epoch/PID/상태). 실패는 무시."""
     path = worker_heartbeat_path()
-    payload = {
-        "ts_utc": datetime.now(pytz.UTC).isoformat(),
-        "ts_epoch": time.time(),
-        "pid": os.getpid(),
-        "worker": _worker_id(),
-        "status": str(status),
-    }
-    if extra:
-        payload.update(extra)
+    payload = _heartbeat_writer().fill_with_extra(
+        extra=extra,
+        ts_utc=utc_now_iso(),
+        ts_epoch=time.time(),
+        status=str(status),
+    )
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         tmp = f"{path}.tmp"

@@ -17,13 +17,15 @@ import sys
 import threading
 import traceback
 import time
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import low_ram_sqlite_pragmas
+import memory_bounds
 import sqlite_schema_guard
 
+from bitget.infra.clock import utc_hours_ago_iso, utc_now_iso
 from bitget.infra.data_paths import bitget_data_dir, ops_events_db_path
+from bitget.infra.memory_policy import OPS_EVENTS_KEEP_DAYS, RETENTION_SWEEP_MIN_INTERVAL_SEC
 
 _BOT_DIR = bitget_data_dir()
 OPS_EVENTS_DB_PATH = ops_events_db_path()
@@ -31,10 +33,21 @@ OPS_HEALTH_DB_PATH = OPS_EVENTS_DB_PATH
 
 _write_lock = threading.RLock()
 _MAX_PAYLOAD_CHARS = 32000
+_ops_retention_gate = memory_bounds.ThrottledCallback(interval_sec=RETENTION_SWEEP_MIN_INTERVAL_SEC)
+_OPS_EVENTS_KEEP_DAYS = OPS_EVENTS_KEEP_DAYS
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _maybe_prune_ops_events(conn: sqlite3.Connection) -> None:
+    if not _ops_retention_gate.due():
+        return
+    try:
+        n = memory_bounds.prune_ops_events_older_than_days(
+            conn, keep_days=_OPS_EVENTS_KEEP_DAYS
+        )
+        if n:
+            conn.commit()
+    except Exception:
+        pass
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -78,7 +91,7 @@ def insert_ops_event(
     ts_utc: Optional[str] = None,
     max_retries: int = 6,
 ) -> bool:
-    ts_use = ts_utc or _utc_now_iso()
+    ts_use = ts_utc or utc_now_iso()
     comp = (component or "unknown")[:128]
     sev = (severity or "INFO")[:32]
     ev = (event or "misc")[:256]
@@ -105,6 +118,7 @@ def insert_ops_event(
                         """,
                         (ts_use, comp, sev, ev, blob),
                     )
+                    _maybe_prune_ops_events(conn)
                     conn.commit()
                 finally:
                     conn.close()
@@ -215,14 +229,10 @@ def install_unhandled_exception_hooks() -> None:
     sys.excepthook = _sys_excepthook
 
 
-def _since_utc_iso(hours: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-
 def fetch_recent_rows(*, hours: float = 1.0, limit: int = 500) -> list[dict[str, Any]]:
     if not os.path.isfile(OPS_EVENTS_DB_PATH):
         return []
-    since = _since_utc_iso(hours)
+    since = utc_hours_ago_iso(hours)
     out: list[dict[str, Any]] = []
     try:
         uri = f"file:{OPS_EVENTS_DB_PATH.replace(os.sep, '/')}?mode=ro"
@@ -265,7 +275,7 @@ def fetch_recent_rows(*, hours: float = 1.0, limit: int = 500) -> list[dict[str,
 def fetch_heartbeat_ticks(*, hours: float = 2.0, limit: int = 4000) -> list[dict[str, Any]]:
     if not os.path.isfile(OPS_EVENTS_DB_PATH):
         return []
-    since = _since_utc_iso(hours)
+    since = utc_hours_ago_iso(hours)
     out: list[dict[str, Any]] = []
     try:
         uri = f"file:{OPS_EVENTS_DB_PATH.replace(os.sep, '/')}?mode=ro"

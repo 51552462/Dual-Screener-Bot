@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 from typing import Any, Dict
 
+from bitget.infra.clock import utc_now_iso
 from bitget.infra.data_paths import bitget_data_dir
+from bitget.infra.logging_setup import get_logger
+
+logger = get_logger("bitget.doomsday_bridge")
 
 
 def _status_json_path() -> str:
@@ -36,7 +39,7 @@ def sync_doomsday_to_bitget_config() -> Dict[str, Any]:
     payload = {
         "regime": "DOOMSDAY" if int(dd.get("level") or 5) <= 2 else "NORMAL",
         "defcon_level": int(dd.get("level") or 5),
-        "updated_at": dd.get("updated_at") or datetime.now(timezone.utc).isoformat(),
+        "updated_at": dd.get("updated_at") or utc_now_iso(),
         "signals": dd.get("signals") if isinstance(dd.get("signals"), dict) else {},
         "metrics": dd.get("metrics") if isinstance(dd.get("metrics"), dict) else {},
         "source": "bitget_doomsday_bridge",
@@ -48,5 +51,5 @@ def sync_doomsday_to_bitget_config() -> Dict[str, Any]:
 
     config_manager.set_config_value("DOOMSDAY_DEFCON", dd)
     out = {"ok": True, "level": payload["defcon_level"], "path": path}
-    print(f"🛰️ [Bitget] doomsday_bridge: {out}")
+    logger.info("doomsday_bridge: %s", out)
     return out

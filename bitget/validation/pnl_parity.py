@@ -6,11 +6,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sqlite3
-from datetime import datetime, timezone
 from typing import Any
 
+from bitget.infra.bounded_reads import (
+    forward_open_count_sql,
+    forward_open_pnl_parity_sql,
+    warn_if_open_exceeds_safety,
+)
+from bitget.infra.clock import utc_datetime_str_tz
 from bitget.infra.data_paths import market_data_db_path, validation_state_dir
+from bitget.infra.memory_policy import FORWARD_OPEN_MAX_SAFETY
 from bitget.infra.shared_db_connector import get_connection
 
 PNL_BASELINE_NAME = "pnl_baseline.json"
@@ -22,15 +27,12 @@ def _fingerprint_db(db_path: str | None = None) -> dict[str, Any]:
         return {"error": "db_missing", "path": path}
     conn = get_connection(path, read_only=True)
     try:
-        open_rows = conn.execute(
-            """
-            SELECT id, symbol, timeframe, market_type, position_side, sig_type,
-                   entry_price, margin_used, sim_kelly_invest, status
-            FROM bitget_forward_trades
-            WHERE status='OPEN'
-            ORDER BY id
-            """
-        ).fetchall()
+        warn_if_open_exceeds_safety(conn)
+        open_q, open_params = forward_open_pnl_parity_sql()
+        open_rows = conn.execute(open_q, open_params).fetchall()
+        cnt_q, cnt_params = forward_open_count_sql()
+        cnt_row = conn.execute(cnt_q, cnt_params).fetchone()
+        open_total = int(cnt_row[0] or 0) if cnt_row else 0
         closed_stats = conn.execute(
             """
             SELECT COUNT(*),
@@ -45,7 +47,9 @@ def _fingerprint_db(db_path: str | None = None) -> dict[str, Any]:
     canonical = json.dumps(open_rows, ensure_ascii=False, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
     return {
-        "open_count": len(open_rows),
+        "open_count": open_total,
+        "open_fingerprint_rows": len(open_rows),
+        "open_fingerprint_truncated": open_total > FORWARD_OPEN_MAX_SAFETY,
         "open_fingerprint": digest,
         "closed_count": int(closed_stats[0] or 0) if closed_stats else 0,
         "closed_pnl_sum": float(closed_stats[1] or 0.0) if closed_stats else 0.0,
@@ -60,9 +64,10 @@ def baseline_path() -> str:
 def save_pnl_baseline(*, db_path: str | None = None) -> dict[str, Any]:
     fp = _fingerprint_db(db_path)
     payload = {
-        "recorded_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "recorded_at_utc": utc_datetime_str_tz(),
         **fp,
     }
+    os.makedirs(validation_state_dir(), exist_ok=True)
     with open(baseline_path(), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return payload

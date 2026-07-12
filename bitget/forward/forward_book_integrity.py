@@ -10,6 +10,13 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.bounded_reads import (
+    forward_integrity_closed_window_count_sql,
+    forward_open_integrity_open_sql,
+    warn_if_open_exceeds_safety,
+)
+from bitget.infra.clock import utc_date_days_ago_str, utc_date_str
+from bitget.infra.memory_policy import FORWARD_INTEGRITY_CLOSED_WINDOW_DAYS
 from bitget.infra.shared_db_connector import get_connection
 
 
@@ -98,6 +105,7 @@ def compute_open_book_stats(
     market_type: str,
     session_anchor: str,
     valid_mask_fn=None,
+    closed_window: int | None = None,
 ) -> OpenBookStats:
     label, _ = _normalize_market_filter(market_type)
     anchor = str(session_anchor or "")[:10]
@@ -126,8 +134,11 @@ def compute_open_book_stats(
     )
     today_raw = raw_m & (ent == anchor)
     today_valid = valid_m & (ent == anchor)
-    st = df_market["status"].astype(str).str.upper()
-    closed_n = int(st.str.contains("CLOSED", na=False).sum())
+    if closed_window is not None:
+        closed_n = int(closed_window)
+    else:
+        st = df_market["status"].astype(str).str.upper()
+        closed_n = int(st.str.contains("CLOSED", na=False).sum())
 
     note = "ok"
     n_raw = int(raw_m.sum())
@@ -170,24 +181,27 @@ def diagnose_open_book_from_db(
     db_path: Optional[str] = None,
     session_anchor: Optional[str] = None,
 ) -> OpenBookStats:
-    label, mkt_raw = _normalize_market_filter(market_type)
+    _, mkt_raw = _normalize_market_filter(market_type)
     path = db_path or DB_PATH
+    anchor = str(session_anchor or utc_date_str())[:10]
     conn = get_connection(path, read_only=True)
     try:
-        df = pd.read_sql(
-            """
-            SELECT id, market_type, symbol, status, entry_date, quantity,
-                   sim_kelly_invest, margin_used, entry_price, sig_type
-            FROM bitget_forward_trades
-            WHERE LOWER(IFNULL(market_type,'')) = ?
-            """,
-            conn,
-            params=(mkt_raw,),
+        warn_if_open_exceeds_safety(conn, market_type=mkt_raw)
+        open_q, open_params = forward_open_integrity_open_sql(market_type=mkt_raw)
+        df = pd.read_sql(open_q, conn, params=open_params)
+
+        since = utc_date_days_ago_str(int(FORWARD_INTEGRITY_CLOSED_WINDOW_DAYS))
+        closed_q, closed_params = forward_integrity_closed_window_count_sql(
+            market_type=mkt_raw,
+            since_date=since,
         )
+        closed_row = conn.execute(closed_q, closed_params).fetchone()
+        closed_window = int(closed_row[0] if closed_row else 0)
     finally:
         conn.close()
     return compute_open_book_stats(
         df,
         market_type=market_type,
-        session_anchor=session_anchor or "",
+        session_anchor=anchor,
+        closed_window=closed_window,
     )

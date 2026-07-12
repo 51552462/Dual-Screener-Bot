@@ -276,8 +276,9 @@ def fetch_shadow_closed_rows(
 
 
 def compute_shadow_stats(closed_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """섀도우 청산 집계 — WR, PF, equal-weight avg return."""
+    """섀도우 청산 집계 — WR, PF, equal-weight avg return, std dev."""
     from strategy_promotion_engine import profit_factor_from_returns
+    from re_evolution_zscore_ev import compute_shadow_return_distribution
 
     rets: List[float] = []
     for row in closed_rows:
@@ -293,6 +294,8 @@ def compute_shadow_stats(closed_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             "win_rate": 0.0,
             "profit_factor": 0.0,
             "avg_ret_pct": 0.0,
+            "std_ret_pct": 0.0,
+            "effective_std_ret_pct": 0.0,
             "cum_ret_pct": 0.0,
         }
 
@@ -301,12 +304,15 @@ def compute_shadow_stats(closed_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     pf = profit_factor_from_returns(rets)
     avg = sum(rets) / n
     cum = sum(rets)
+    dist = compute_shadow_return_distribution(rets)
 
     return {
         "n_closed": n,
         "win_rate": round(wr, 4),
         "profit_factor": round(float(pf), 4),
         "avg_ret_pct": round(avg, 4),
+        "std_ret_pct": dist.get("std_pct"),
+        "effective_std_ret_pct": dist.get("effective_std_pct"),
         "cum_ret_pct": round(cum, 4),
     }
 
@@ -401,7 +407,7 @@ def passes_redemption_gate(
 
 
 def restore_redemption_capital_overlay(meta: Dict[str, Any], group_key: str) -> None:
-    """Kelly overlay 0 해제 — health 기반 배수 복원."""
+    """Kelly overlay 0 해제 — health 기반 배수 복원 (full ramp 완료 시)."""
     gk = str(group_key or "").strip()
     if not gk:
         return
@@ -490,7 +496,26 @@ def apply_redemption_meta_updates(
     meta["META_RE_EVOLUTION_REDEMPTION_LOG"] = log[-50:]
     meta["META_RE_EVOLUTION_LAST_REDEMPTION_AT"] = now_iso
 
-    restore_redemption_capital_overlay(meta, gk)
+    from re_evolution_warm_start import apply_warm_start_meta_on_redemption
+
+    shadow_stats = gate_detail.get("shadow_stats") if isinstance(gate_detail, Mapping) else None
+    if not isinstance(shadow_stats, dict):
+        shadow_stats = {
+            "avg_ret_pct": gate_detail.get("strategy_avg_ret_pct"),
+            "n_closed": gate_detail.get("n_closed"),
+            "win_rate": gate_detail.get("win_rate"),
+            "profit_factor": gate_detail.get("profit_factor"),
+        }
+
+    apply_warm_start_meta_on_redemption(
+        meta,
+        market=mk,
+        group_key=gk,
+        strategy_id=sid,
+        shadow_stats=shadow_stats,
+        gate_detail=gate_detail,
+        now_iso=now_iso,
+    )
 
 
 def evaluate_shadow_redemption(
@@ -536,6 +561,7 @@ def evaluate_shadow_redemption(
         stats, bench, cfg, verification_window=window
     )
     detail["verification_window"] = window
+    detail["shadow_stats"] = stats
 
     return {
         "eligible": True,
@@ -600,30 +626,41 @@ def try_promote_re_evolution_redemption(
     if not ev.get("passes"):
         return False, ev
 
-    row["state"] = "LIVE"
-    row["capital_mult"] = 1.0
+    from re_evolution_warm_start import apply_warm_start_registry_row
+
+    apply_warm_start_registry_row(
+        row,
+        shadow_stats=ev.get("shadow_stats") or {},
+        sys_config=sys_config,
+        now_iso=now_iso,
+    )
     row["promoted_at"] = row.get("promoted_at") or now_iso
     row["last_promoted_at"] = now_iso
-    row["promote_reason"] = "re_evolution_redemption"
     row["demote_reason"] = None
     row["observe_only_released"] = True
     row["re_evolution_redeemed_at"] = now_iso
     row["updated_at"] = now_iso
 
     if isinstance(meta, dict):
+        gate_detail = dict(ev.get("gate_detail") or {})
+        gate_detail["shadow_stats"] = ev.get("shadow_stats") or {}
         apply_redemption_meta_updates(
             meta,
             market=mk,
             group_key=gk,
             strategy_id=sid,
-            gate_detail=ev.get("gate_detail") or {},
+            gate_detail=gate_detail,
             now_iso=now_iso,
         )
 
+    ev["warm_start_applied"] = True
+    ev["warm_start_mult"] = float(row.get("warm_start_mult") or 0.4)
+
     logger.info(
-        "Re-Evolution redemption LIVE: %s %s (n=%s wr=%.2f alpha=%s)",
+        "Re-Evolution redemption LIVE (warm-start): %s %s mult=%.2f n=%s wr=%.2f alpha=%s",
         mk,
         gk,
+        float(row.get("warm_start_mult") or 0.4),
         (ev.get("gate_detail") or {}).get("n_closed"),
         float((ev.get("gate_detail") or {}).get("win_rate") or 0.0),
         (ev.get("gate_detail") or {}).get("alpha_excess_pct"),

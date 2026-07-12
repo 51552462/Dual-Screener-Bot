@@ -230,6 +230,7 @@ class TestShadowStats(unittest.TestCase):
         self.assertEqual(s["n_closed"], 5)
         self.assertEqual(s["win_rate"], 0.8)
         self.assertGreater(s["profit_factor"], 1.25)
+        self.assertGreater(s.get("effective_std_ret_pct", 0.0), 0.0)
 
 
 class TestRedemptionGate(unittest.TestCase):
@@ -364,12 +365,17 @@ class TestMetaRestore(unittest.TestCase):
             market="KR",
             group_key="RANK_A",
             strategy_id="strat:abc",
-            gate_detail={"pass": True, "alpha_excess_pct": 2.0},
+            gate_detail={
+                "pass": True,
+                "alpha_excess_pct": 2.0,
+                "shadow_stats": {"avg_ret_pct": 2.0, "n_closed": 16},
+            },
         )
         self.assertNotIn("RANK_A", meta["META_RE_EVOLUTION_SHADOW_GROUPS"])
-        self.assertNotIn("RANK_A", meta["META_RE_EVOLUTION_KELLY_OVERLAY"])
+        self.assertEqual(meta["META_RE_EVOLUTION_KELLY_OVERLAY"]["RANK_A"], 0.4)
         self.assertFalse(meta["META_RE_EVOLUTION_STRIKES"]["KR|RANK_A"]["demoted"])
         self.assertIn("redeemed_at", meta["META_RE_EVOLUTION_DEMOTED"][0])
+        self.assertIn("KR|RANK_A", meta["META_RE_EVOLUTION_WARM_START"])
 
     @patch("evolution.deathmatch_allocation.merge_group_kelly_from_overlay")
     @patch("evolution.deathmatch_allocation.health_to_group_mult")
@@ -390,9 +396,10 @@ class TestTryPromote(unittest.TestCase):
     def test_promotes_row_and_meta(self, mock_eval):
         mock_eval.return_value = {
             "passes": True,
+            "shadow_stats": {"avg_ret_pct": 2.0, "n_closed": 16},
             "gate_detail": {
                 "pass": True,
-                "n_closed": 7,
+                "n_closed": 16,
                 "win_rate": 0.6,
                 "alpha_excess_pct": 2.0,
             },
@@ -418,9 +425,11 @@ class TestTryPromote(unittest.TestCase):
         )
         self.assertTrue(ok)
         self.assertEqual(row["state"], "LIVE")
-        self.assertEqual(row["capital_mult"], 1.0)
-        self.assertEqual(row["promote_reason"], "re_evolution_redemption")
+        self.assertEqual(row["capital_mult"], 0.4)
+        self.assertEqual(row["warm_start_mult"], 0.4)
+        self.assertEqual(row["promote_reason"], "re_evolution_redemption_warm_start")
         self.assertNotIn("RANK_A", meta["META_RE_EVOLUTION_SHADOW_GROUPS"])
+        self.assertEqual(meta["META_RE_EVOLUTION_WARM_START"]["KR|RANK_A"]["kelly_mult"], 0.4)
 
     def test_skips_non_re_evolution(self):
         row = {

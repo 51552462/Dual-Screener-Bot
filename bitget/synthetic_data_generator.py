@@ -2,12 +2,15 @@ import json
 import os
 import random
 import time
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
 from bitget.config_hub import load_config, save_config
+from bitget.infra.clock import utc_datetime_str
+from bitget.infra.logging_setup import get_logger
+
+logger = get_logger("bitget.synthetic_data_generator")
 
 
 def generate_synthetic_crypto_ohlcv(n_paths=1000, n_bars=720):
@@ -70,7 +73,7 @@ def _estimate_survival(path_df: pd.DataFrame, side="LONG", leverage=3.0):
 
 
 def stress_test_mutants():
-    print("⏳ [Bitget 가혹 행위 연구소] 합성 코인 우주 생성 중...")
+    logger.info("[synthetic stress] generating synthetic crypto universe")
     n_paths = 1200
     syn = generate_synthetic_crypto_ohlcv(n_paths=n_paths, n_bars=720)
 
@@ -81,14 +84,18 @@ def stress_test_mutants():
 
     cfg = load_config()
     cfg["BITGET_SYNTHETIC_STRESS"] = {
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": utc_datetime_str(),
         "paths": int(n_paths),
         "long_survival_rate": round(float(long_rate), 3),
         "short_survival_rate": round(float(short_rate), 3),
         "flash_crash_enabled": True,
     }
     save_config(cfg)
-    print(f"✅ 합성 테스트 완료: LONG 생존 {long_rate:.2f}% | SHORT 생존 {short_rate:.2f}%")
+    logger.info(
+        "synthetic stress complete: LONG survival %.2f%% | SHORT survival %.2f%%",
+        long_rate,
+        short_rate,
+    )
 
 
 if __name__ == "__main__":

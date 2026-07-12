@@ -56,6 +56,7 @@ sudo INSTALL_ROOT=/home/ubuntu/Dual-Screener-Bot ./bitget/deploy/update_bitget.s
 
 ```bash
 ./bitget/deploy/bitget.sh --health
+./bitget/deploy/bitget.sh --ws-oms-smoke
 ./bitget/deploy/bitget.sh --scan-all
 ./bitget/deploy/bitget.sh --daily-audit
 ./bitget/deploy/bitget.sh --reconcile
@@ -100,8 +101,68 @@ python -m bitget.pipelines.runner --mode scan_all
 | `BITGET_ASYNC_TELEGRAM` | 1 (systemd) | async daemon 사용 |
 | `ENABLE_REAL_EXECUTION` | false | 실주문 마스터 스위치 |
 | `REAL_EXECUTION_DRY_RUN` | true | dry-run (기본) |
+| `BITGET_DAEMON_PUBLIC_WS` | 0 | Public WS → StreamBuffer (opt-in; slippage + ref price) |
+| `BITGET_DAEMON_PRIVATE_WS` | 0 | Private WS → OMS cache (opt-in; API keys 필수) |
+| `BITGET_WS_EXTRA_SYMBOLS` | — | Public WS 추가 심볼 (쉼표, 예: `SOLUSDT,XRPUSDT`) |
+| `BITGET_WS_OMS_SMOKE_STRICT` | 0 | smoke에서 plane REST-heavy를 hard FAIL로 승격 |
+| `BITGET_DAEMON_SNIPER` | 0 | daemon 내 supernova sniper (기본 OFF; cron SSOT) |
 
-예시: `bitget/deploy/bitget_resource_limits.env.example`
+예시: `bitget/deploy/bitget.env.example` · `bitget/deploy/bitget_resource_limits.env.example`
+
+코드 SSOT age/임계 (`bitget/infra/memory_policy.py` — env 아님):
+
+| 상수 | 기본 | 용도 |
+|------|------|------|
+| `PRIVATE_POS_INDEX_MAX_AGE_SEC` | 20 | private positions/orders/account/margin 신뢰 상한 |
+| `PUBLIC_REF_PRICE_MAX_AGE_SEC` | 5 | normalize ref price (ticker) 신뢰 상한 |
+| `OMS_REST_SHARE_WARN` | 0.85 | plane REST 비율 경고 |
+| `OMS_REST_SHARE_MIN_SAMPLES` | 20 | 경고 최소 샘플 |
+| `OMS_REST_SHARE_ALERT_MIN_INTERVAL_SEC` | 3600 | CRITICAL 텔레그램 스로틀 |
+| `WS_OMS_SMOKE_HEARTBEAT_MAX_AGE_SEC` | 180 | smoke: auto_pilot HB 신선도 |
+
+---
+
+## Live WS / OMS smoke (읽기 전용)
+
+소켓을 열거나 주문을 넣지 **않는다**. ops heartbeat·env·아키텍처 가드만 관찰한다.
+
+```bash
+# WS opt-in 전: 정보성 PASS (하드 검사 없음)
+./bitget/deploy/bitget.sh --ws-oms-smoke
+
+# 프로덕션 (factory에 PUBLIC/PRIVATE WS=1 + API keys + websocket-client)
+./bitget/deploy/bitget.sh --ws-oms-smoke
+# hard FAIL → exit 1 (deps/creds/stale HB/WS not started/consumer SSOT drift)
+# plane REST-heavy → WARN (STRICT=1 이면 hard)
+```
+
+`--health` 에도 동일 체크가 **optional** 스텝으로 포함된다 (cron health 실패 유발 안 함).  
+Cutover: `./bitget/deploy/bitget.sh --cutover-check` → `oms_book_consumer_ssot` 포함.
+
+---
+
+## OMS book telemetry (heartbeat `oms_book`)
+
+`bitget_auto_pilot` heartbeat payload. 대시보드 Ops 패널·`--ws-oms-smoke`가 소비.
+
+**Dual-plane (경보·smoke SSOT):**
+
+| Plane | Keys | 의미 |
+|-------|------|------|
+| private | `pos_*` `oo_*` `fo_*` `bal_*` `mm_*` | private WS consumers |
+| public | `tk_*` | public StreamBuffer ref price |
+
+| Key | Source hit |
+|-----|------------|
+| `pos_ws` / `pos_rest` | position index |
+| `oo_ws` / `oo_rest` | open orders |
+| `fo_ws` / `fo_rest` | order hydrate |
+| `bal_ws` / `bal_rest` | USDT equity (`bal_after`·spot는 REST) |
+| `mm_ws` / `mm_rest` | marginMode |
+| `tk_ws` / `tk_rest` | normalize ref ticker |
+
+- Private REST-heavy 경보는 **tk를 무시**한다 (public OFF + 전량 REST ticker ≠ private 장애).
+- Gauge: `bitget.oms_book` (`plane=private|public`). Alert prefix: `OMS_REST_SHARE` / `OMS_TK_REST_SHARE`.
 
 ---
 
@@ -145,11 +206,15 @@ systemctl list-timers dante-bitget-watchdog.timer dante-bitget-snapshot.timer --
 
 | 증상 | 확인 | 조치 |
 |------|------|------|
-| WS stale / gap | `bitget.sh --gap-heal` | REST backfill, `dante-bitget-ws` 재시작 |
+| WS stale / gap | `bitget.sh --gap-heal` | REST backfill, `dante-bitget-ws` / factory 재시작 |
+| private WS soft-disable | factory 로그 `private WS soft-disabled` | `websocket-client` + API keys + `BITGET_DAEMON_PRIVATE_WS=1` |
+| OMS private REST-heavy | dashboard OMS panel / gauge `bitget.oms_book` | login·channels·HB `private_ws`; smoke |
+| OMS public (tk) REST-heavy | 동일 (plane=public) | `BITGET_DAEMON_PUBLIC_WS=1`, universe, StreamBuffer |
 | heartbeat miss | `bitget.sh --watchdog` 로그 | factory/ws 재시작, `BITGET_WATCHDOG_*` 확인 |
 | scan DB lock | snapshot stale | `bitget.sh --snapshot`, `BITGET_SNAPSHOT_MAX_STALE_SEC` |
 | Telegram 적체 | `bitget_ops_events` gauge | `dante-bitget-async` 재시작 |
 | 실주문 차단 | config `ENABLE_REAL_EXECUTION` | 의도적이면 OK; slippage/meta KILL_SWITCH 확인 |
+| consumer SSOT drift | `--ws-oms-smoke` / `--cutover-check` | `oms_book_consumer_ssot` failed 서브키 확인 |
 
 ---
 

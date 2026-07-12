@@ -34,6 +34,8 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator, Optional
 
+import low_ram_sqlite_pragmas
+
 # --- Traffic Rule 상수 (변경 금지 — 전 시스템 일관성의 핵심) ---
 DEFAULT_TIMEOUT_SEC: float = 60.0
 BUSY_TIMEOUT_MS: int = 60_000
@@ -55,10 +57,13 @@ def _apply_traffic_rules(conn: sqlite3.Connection, *, read_only: bool) -> None:
     if read_only:
         # 읽기 전용 연결은 절대 쓰지 않음을 SQLite 에 보장 → writer 락 비차단.
         conn.execute("PRAGMA query_only=ON;")
+        low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
         return
     # WAL/synchronous 는 DB 파일 단위 영속 설정. writer 연결에서만 보장.
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
+    # 주식 config_manager·shadow_tracking 과 동일 — 4GB RAM OOM 완화.
+    low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
 
 
 def get_connection(

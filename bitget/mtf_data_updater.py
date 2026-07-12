@@ -1,13 +1,15 @@
 import json
 import os
 import sqlite3
-import gc
 import time
 import subprocess
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+
+from bitget.infra.clock import utc_datetime_str_tz
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.memory_policy import GC_AFTER_OHLCV_BATCH
 
 try:
     import ccxt
@@ -17,11 +19,11 @@ except ModuleNotFoundError:
     import ccxt
 import pandas as pd
 from bitget.infra.data_paths import charts_dir, market_data_db_path
+from bitget.infra.network_retry import call_with_retry
 from bitget.infra.shared_db_connector import get_connection
 from bitget.config_hub import load_config as hub_load_config
 from bitget.symbol_utils import normalize_table_symbol
-from bitget.rate_limit_guard import throttle, backoff_sleep
-from bitget.infra.logging_setup import setup_logging, get_logger
+from bitget.infra.logging_setup import setup_logging, get_logger, log_exception
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -66,7 +68,13 @@ def create_exchange(default_type: str):
             },
         }
     )
-    ex.load_markets()
+    call_with_retry(
+        lambda: (ex.load_markets() or True),
+        op="mtf.load_markets",
+        throttle_key="bitget.mtf.load_markets",
+        throttle_interval_sec=0.5,
+        swallow=False,
+    )
     return ex
 
 
@@ -121,7 +129,13 @@ def _run_with_db_retry(write_fn, op_desc: str):
             if not _is_lock_error(e):
                 raise
             sleep_s = DB_WRITE_BASE_SLEEP * (attempt + 1)
-            print(f"⏳ DB lock retry {attempt + 1}/{DB_WRITE_MAX_RETRIES} [{op_desc}] after {sleep_s:.2f}s")
+            logger.warning(
+                "DB lock retry %s/%s [%s] after %.2fs",
+                attempt + 1,
+                DB_WRITE_MAX_RETRIES,
+                op_desc,
+                sleep_s,
+            )
             time.sleep(sleep_s)
         except Exception as e:
             last_exc = e
@@ -164,8 +178,17 @@ def _extract_quote_volume_usdt(ticker: dict) -> float:
 
 
 def load_dynamic_universe(exchange, market_type: str, min_quote_volume_usdt: float, default_quote: str):
-    throttle("bitget.fetch_tickers", 0.45)
-    tickers = exchange.fetch_tickers()
+    tickers = call_with_retry(
+        lambda: exchange.fetch_tickers(),
+        op="mtf.fetch_tickers",
+        throttle_key="bitget.fetch_tickers",
+        throttle_interval_sec=0.45,
+        default=None,
+        swallow=True,
+    )
+    if not isinstance(tickers, dict):
+        logger.warning("[%s] fetch_tickers failed after retries — empty universe", market_type)
+        return []
     selected = []
 
     for symbol, market in exchange.markets.items():
@@ -261,7 +284,7 @@ def save_ohlcv(conn, market_type: str, symbol: str, timeframe: str, ohlcv):
     time.sleep(0.03)  # DB 쓰기 간격을 벌려 잠금/버스트 완화
     _run_with_db_retry(lambda: save_data_safely(conn, tbl, df), f"{tbl}")
     del df
-    gc.collect()
+    flush_gc(label=GC_AFTER_OHLCV_BATCH)
     return True
 
 
@@ -293,7 +316,7 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
     exchange = create_exchange("spot" if market_type == "spot" else "swap")
     symbols = _benchmark_symbols(exchange, market_type)
     if not symbols:
-        print(f"[WARN] [{market_type}] 벤치마크(BTC/ETH) 심볼 탐색 실패")
+        logger.warning("[%s] benchmark BTC/ETH symbol discovery failed", market_type)
         return 0
     conn = get_connection(DB_PATH)
     ok = 0
@@ -303,19 +326,24 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
         for sym in symbols:
             ohlcv_by = {}
             for tf in api_tfs:
-                try:
-                    time.sleep(0.06)  # API ban 방어용 미세 지연
-                    lim = ohlcv_limit
-                    if str(tf).lower() == "1h" and need_2h:
-                        lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
-                    throttle("bitget.fetch_ohlcv", 0.10)
-                    ohlcv = exchange.fetch_ohlcv(symbol=sym, timeframe=tf, limit=lim)
-                    if ohlcv:
-                        ohlcv_by[str(tf).lower()] = ohlcv
-                    del ohlcv
-                    gc.collect()
-                except Exception as e:
-                    print(f"[WARN] [{market_type}] 벤치마크 {sym} {tf} 수집 실패: {e}")
+                time.sleep(0.06)  # API ban 방어용 미세 지연
+                lim = ohlcv_limit
+                if str(tf).lower() == "1h" and need_2h:
+                    lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
+                ohlcv = call_with_retry(
+                    lambda s=sym, t=tf, l=lim: exchange.fetch_ohlcv(
+                        symbol=s, timeframe=t, limit=l
+                    ),
+                    op="mtf.fetch_ohlcv.benchmark",
+                    throttle_key="bitget.fetch_ohlcv",
+                    throttle_interval_sec=0.10,
+                    default=None,
+                    swallow=True,
+                )
+                if ohlcv:
+                    ohlcv_by[str(tf).lower()] = ohlcv
+                del ohlcv
+                flush_gc(label=GC_AFTER_OHLCV_BATCH)
             for tf in timeframes:
                 tl = str(tf).lower()
                 try:
@@ -330,7 +358,14 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
                         if ohlcv and save_ohlcv(conn, market_type, sym, tf, ohlcv):
                             ok += 1
                 except Exception as e:
-                    print(f"[WARN] [{market_type}] 벤치마크 {sym} {tf} 저장 실패: {e}")
+                    log_exception(
+                        logger,
+                        "[%s] benchmark store failed %s %s: %s",
+                        market_type,
+                        sym,
+                        tf,
+                        e,
+                    )
     finally:
         conn.close()
     return ok
@@ -356,11 +391,19 @@ def _enforce_benchmark_preload(timeframes, ohlcv_limit: int):
             "symbols": symbols,
         }
         if ok:
-            print(f"[BENCH] [{market_type}] 벤치마크 선수집 완료: {saved}/{required} TF 저장")
+            logger.info(
+                "[%s] benchmark preload complete: %s/%s TF stored",
+                market_type,
+                saved,
+                required,
+            )
         else:
-            print(
-                f"[FAIL] [{market_type}] 벤치마크 선수집 미완료: {saved}/{required} TF "
-                f"(symbols={symbols}) -> 병렬 스캔 차단"
+            logger.error(
+                "[%s] benchmark preload incomplete: %s/%s TF (symbols=%s) — parallel scan blocked",
+                market_type,
+                saved,
+                required,
+                symbols,
             )
     return preload_status
 
@@ -378,19 +421,23 @@ def fetch_symbol_ohlcv_payload(
     ohlcv_by = {}
     try:
         for tf in api_tfs:
-            try:
-                time.sleep(0.06)  # API ban 방어용 미세 지연
-                lim = ohlcv_limit
-                if str(tf).lower() == "1h" and need_2h:
-                    lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
-                throttle("bitget.fetch_ohlcv", 0.10)
-                ohlcv = exchange.fetch_ohlcv(symbol=symbol, timeframe=tf, limit=lim)
-                if ohlcv:
-                    ohlcv_by[str(tf).lower()] = ohlcv
-                    payloads.append((symbol, tf, ohlcv))
-            except Exception as e:
-                print(f"[WARN] [{market_type}] {symbol} {tf} 수집 실패: {e}")
-                backoff_sleep(1)
+            time.sleep(0.06)  # API ban 방어용 미세 지연
+            lim = ohlcv_limit
+            if str(tf).lower() == "1h" and need_2h:
+                lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
+            ohlcv = call_with_retry(
+                lambda t=tf, l=lim: exchange.fetch_ohlcv(
+                    symbol=symbol, timeframe=t, limit=l
+                ),
+                op="mtf.fetch_ohlcv",
+                throttle_key="bitget.fetch_ohlcv",
+                throttle_interval_sec=0.10,
+                default=None,
+                swallow=True,
+            )
+            if ohlcv:
+                ohlcv_by[str(tf).lower()] = ohlcv
+                payloads.append((symbol, tf, ohlcv))
         if need_2h:
             h2 = _resample_1h_ohlcv_to_2h(ohlcv_by.get("1h") or [])
             if h2:
@@ -398,7 +445,7 @@ def fetch_symbol_ohlcv_payload(
                     h2 = h2[-ohlcv_limit:]
                 payloads.append((symbol, "2h", h2))
     finally:
-        gc.collect()
+        flush_gc(label=GC_AFTER_OHLCV_BATCH)
     return symbol, payloads
 
 
@@ -413,25 +460,33 @@ def run_mtf_update():
     workers = max(1, min(workers, 5))  # 서버 안정성 기준 상한
     uni_cfg = config.get("universe", {})
 
-    started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    print(f"[START] Bitget MTF 업데이트 시작: {started}")
-    print(f"[INFO] 타임프레임: {timeframes}")
+    started = utc_datetime_str_tz()
+    logger.info("Bitget MTF update start: %s", started)
+    logger.info("timeframes: %s", timeframes)
     preload_status = _enforce_benchmark_preload(timeframes, ohlcv_limit)
 
     for market_type in ("spot", "linear"):
         mcfg = uni_cfg.get(market_type, {})
         if not mcfg.get("enabled", True):
-            print(f"[SKIP] {market_type} 비활성화 - 스킵")
+            logger.info("[%s] disabled — skip", market_type)
             continue
         if not preload_status.get(market_type, {}).get("ok", False):
-            print(f"[SKIP] [{market_type}] 벤치마크 선수집 실패로 병렬 수집 스킵")
+            logger.warning(
+                "[%s] benchmark preload failed — parallel fetch skipped",
+                market_type,
+            )
             continue
 
         min_qv = float(mcfg.get("min_quote_volume_usdt", 0))
         ex = create_exchange("spot" if market_type == "spot" else "swap")
         universe = load_dynamic_universe(ex, market_type, min_qv, default_quote)
         # 💡 [버그 픽스] exchange 객체를 삭제하지 않고 워커들에 재사용하여 API 호출 폭주(IP 차단) 완벽 방어
-        print(f"[INFO] [{market_type}] 거래대금 필터 통과: {len(universe)}개 (기준: {min_qv:,.0f} USDT)")
+        logger.info(
+            "[%s] quote-volume filter pass: %s symbols (min=%.0f USDT)",
+            market_type,
+            len(universe),
+            min_qv,
+        )
 
         if not universe:
             continue
@@ -453,21 +508,35 @@ def run_mtf_update():
                             if save_ohlcv(writer_conn, market_type, p_symbol, p_tf, p_ohlcv):
                                 ok_count += 1
                         except Exception as e:
-                            print(f"[WARN] [{market_type}] 순차 적재 실패 {p_symbol} {p_tf}: {e}")
+                            log_exception(
+                                logger,
+                                "[%s] sequential store failed %s %s: %s",
+                                market_type,
+                                p_symbol,
+                                p_tf,
+                                e,
+                            )
                         finally:
                             del p_ohlcv
-                            gc.collect()
+                            flush_gc(label=GC_AFTER_OHLCV_BATCH)
                     done += 1
                     total_tables += ok_count
-                    print(f"[OK] [{market_type}] {done}/{len(universe)} {sym} -> {ok_count} TF 저장")
+                    logger.info(
+                        "[%s] %s/%s %s -> %s TF stored",
+                        market_type,
+                        done,
+                        len(universe),
+                        sym,
+                        ok_count,
+                    )
                     time.sleep(0.02)
-                    gc.collect()
+                    flush_gc(label=GC_AFTER_OHLCV_BATCH)
         finally:
             writer_conn.close()
 
-        print(f"[DONE] [{market_type}] 완료: 총 {total_tables}개 테이블 저장")
+        logger.info("[%s] complete: %s tables stored", market_type, total_tables)
         del universe
-        gc.collect()
+        flush_gc(label=GC_AFTER_OHLCV_BATCH)
 
 
 if __name__ == "__main__":

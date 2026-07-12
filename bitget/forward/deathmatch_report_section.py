@@ -153,11 +153,11 @@ def build_deathmatch_section(
     if n_closed == 0:
         msg += _tier_dm_a(ctx, market_type, n_real=n_real, n_open=n_open, n_min=br.n_min)
         try:
-            from datetime import datetime, timezone
+            from bitget.infra.clock import utc_date_key
             from bitget.infra.proprietary_friction_store_bg import insert_regime_friction_event
 
             insert_regime_friction_event(
-                date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                date=utc_date_key(),
                 market=market_type,
                 event_type="DM_A_ZERO_CLOSED",
             )

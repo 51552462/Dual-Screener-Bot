@@ -7,18 +7,34 @@ import json
 import os
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
+import memory_bounds
 import requests
 
+from bitget.forward.shared import init_forward_db, send_telegram_msg
+from bitget.infra.bounded_reads import (
+    forward_weekly_flow_closed_sql,
+    forward_weekly_tf_rotation_sql,
+)
+from bitget.infra.clock import (
+    parse_utc_iso,
+    utc_date_days_ago_str,
+    utc_date_key,
+    utc_datetime_str,
+    utc_datetime_str_tz,
+    utc_now,
+)
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
 from bitget.infra.shared_db_connector import get_connection
+from bitget.infra.memory_policy import OHLCV_REGIME_BAR_LIMIT
+from bitget.infra.logging_setup import get_logger
 
 DB_PATH = market_data_db_path()
 CONFIG_PATH = system_config_json_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
+logger = get_logger("bitget.system_auto_pilot")
 
 
 def load_config():
@@ -36,8 +52,14 @@ def save_config(cfg):
 def _load_btc_1d(conn):
     for tbl in ("BITGET_FUT_BTC_USDT_1D", "BITGET_SPOT_BTC_USDT_1D"):
         try:
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', conn)
-            if len(df) >= 220:
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_REGIME_BAR_LIMIT)}",
+                conn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
+            if len(df) >= 200:
                 return df
         except Exception:
             pass
@@ -47,8 +69,14 @@ def _load_btc_1d(conn):
 def _load_eth_1d(conn):
     for tbl in ("BITGET_FUT_ETH_USDT_1D", "BITGET_SPOT_ETH_USDT_1D"):
         try:
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', conn)
-            if len(df) >= 220:
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_REGIME_BAR_LIMIT)}",
+                conn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
+            if len(df) >= 200:
                 return df
         except Exception:
             pass
@@ -214,7 +242,11 @@ def _smooth_live_params(live, recent_df):
 
 def run_tf_brain_surgery(cfg):
     conn = get_connection(DB_PATH, read_only=True)
-    df = pd.read_sql("SELECT * FROM forward_trades WHERE status LIKE 'CLOSED%'", conn)
+    q, q_params = memory_bounds.forward_trades_bounded_sql(
+        table="forward_trades",
+        closed_limit=memory_bounds.FORWARD_CLOSED_TRADES_LIMIT,
+    )
+    df = pd.read_sql(q, conn, params=q_params)
     conn.close()
     if df.empty or "sector" not in df.columns:
         return cfg
@@ -277,7 +309,7 @@ def run_tf_brain_surgery(cfg):
             "STANDARD_PF": round(_pf(std_df["final_ret"]) if not std_df.empty else 0.0, 4),
             "SUPERNOVA_PF": round(_pf(sn_df["final_ret"]) if not sn_df.empty else 0.0, 4),
             "winner": "SUPERNOVA" if _pf(sn_df["final_ret"]) > _pf(std_df["final_ret"]) else "STANDARD",
-            "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": utc_datetime_str(),
         }
     return cfg
 
@@ -297,16 +329,16 @@ def run_autonomous_analysis():
     else:
         k = max(0.002, min(0.018, k))
     cfg["DYNAMIC_KELLY_RISK"] = round(k, 4)
-    cfg["AUTO_PILOT_UPDATED_AT"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    cfg["AUTO_PILOT_UPDATED_AT"] = utc_datetime_str_tz()
     save_config(cfg)
-    print("Bitget autonomous analysis complete.")
+    logger.info("Bitget autonomous analysis complete")
 
 
 def send_weekly_flow_master_report():
     """일주일간의 하루하루 자금 흐름, 승률 변화, 섹터 이동 궤적을 총결산하는 마스터 결과지"""
-    now = datetime.utcnow()
-    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    today_str = now.strftime("%Y-%m-%d")
+    now = utc_now()
+    week_ago = utc_date_days_ago_str(7, anchor=now)
+    today_str = utc_date_key(anchor=now)
     cfg = load_config()
     regime = cfg.get("CURRENT_REGIME_KEY", "UNKNOWN")
     try:
@@ -319,40 +351,48 @@ def send_weekly_flow_master_report():
             icon = "🟢" if market_type == "spot" else "🟠"
             report_msg += f"\n{icon} <b>[{market_type.upper()} 일주일 자금 및 섹터 흐름 궤적]</b>\n"
             report_msg += "🗓️ <b>[일자별 실현 손익 및 승률 타임라인]</b>\n"
-            cursor = conn.execute(
-                """
-                SELECT exit_date,
-                       SUM((sim_kelly_invest * final_ret) / 100.0) as daily_pnl,
-                       SUM(CASE WHEN final_ret > 0 THEN 1 ELSE 0 END) as wins,
-                       COUNT(*) as total
-                FROM bitget_forward_trades
-                WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                GROUP BY exit_date ORDER BY exit_date ASC
-                """,
-                (market_type, week_ago),
+            q_flow, p_flow = forward_weekly_flow_closed_sql(
+                market_type=market_type,
+                since_date=week_ago,
             )
-            daily_stats = cursor.fetchall()
+            flow_df = pd.read_sql(q_flow, conn, params=p_flow)
             weekly_pnl = 0.0
-            if daily_stats:
-                for e_date, d_pnl, wins, total in daily_stats:
-                    d_pnl = float(d_pnl or 0.0)
+            if not flow_df.empty:
+                invest = pd.to_numeric(flow_df["sim_kelly_invest"], errors="coerce").fillna(0.0)
+                ret = pd.to_numeric(flow_df["final_ret"], errors="coerce").fillna(0.0)
+                flow_df = flow_df.assign(pnl_usdt=invest * ret / 100.0)
+                daily = (
+                    flow_df.groupby("exit_date", dropna=False)
+                    .agg(
+                        daily_pnl=("pnl_usdt", "sum"),
+                        wins=("final_ret", lambda s: (pd.to_numeric(s, errors="coerce") > 0).sum()),
+                        total=("final_ret", "count"),
+                    )
+                    .reset_index()
+                    .sort_values("exit_date")
+                )
+                for row in daily.itertuples(index=False):
+                    d_pnl = float(row.daily_pnl or 0.0)
+                    wins = int(row.wins or 0)
+                    total = int(row.total or 0)
                     d_wr = (float(wins) / float(total) * 100.0) if total else 0.0
                     weekly_pnl += d_pnl
-                    short_date = str(e_date)[5:] if e_date else "--"
+                    short_date = str(row.exit_date)[5:] if row.exit_date else "--"
                     emo = "🔴" if d_pnl < 0 else "🟢"
-                    report_msg += f" {emo} {short_date}: <b>{d_pnl:+,.2f}USDT</b> (승률 {d_wr:.0f}% / {total}건 청산)\n"
+                    report_msg += (
+                        f" {emo} {short_date}: <b>{d_pnl:+,.2f}USDT</b> "
+                        f"(승률 {d_wr:.0f}% / {total}건 청산)\n"
+                    )
                 report_msg += f" 💰 <b>주간 누적 실현 손익: {weekly_pnl:+,.2f} USDT</b>\n"
             else:
                 report_msg += " ↳ 이번 주 청산 데이터가 없습니다.\n"
 
             report_msg += "\n🔄 <b>[주간 주도 섹터 진화 궤적]</b>\n"
-            rot_df = pd.read_sql(
-                "SELECT entry_date, timeframe FROM bitget_forward_trades WHERE market_type=? AND entry_date >= ? "
-                "AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%' ORDER BY entry_date ASC",
-                conn,
-                params=(market_type, week_ago),
+            q_rot, p_rot = forward_weekly_tf_rotation_sql(
+                market_type=market_type,
+                since_date=week_ago,
             )
+            rot_df = pd.read_sql(q_rot, conn, params=p_rot)
             if not rot_df.empty:
                 daily_dom = rot_df.groupby("entry_date")["timeframe"].agg(lambda x: x.mode().iloc[0] if not x.mode().empty else None).dropna()
                 flow_path = [f"{str(s)[:4]}({str(d)[5:]})" for d, s in daily_dom.items()]
@@ -361,21 +401,20 @@ def send_weekly_flow_master_report():
                 report_msg += " ↳ 섹터 편입 데이터가 없습니다.\n"
 
             report_msg += "\n🏆 <b>[이번 주 MVP 시그널 엔진]</b>\n"
-            top = conn.execute(
-                """
-                SELECT sig_type, SUM((sim_kelly_invest * final_ret) / 100.0) as profit, COUNT(*)
-                FROM bitget_forward_trades
-                WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                GROUP BY sig_type ORDER BY profit DESC LIMIT 3
-                """,
-                (market_type, week_ago),
-            ).fetchall()
-            if top:
-                for i, (sig, pnl, cnt) in enumerate(top):
+            if not flow_df.empty:
+                mvp = (
+                    flow_df.groupby("sig_type", dropna=False)
+                    .agg(profit=("pnl_usdt", "sum"), cnt=("final_ret", "count"))
+                    .sort_values("profit", ascending=False)
+                    .head(3)
+                )
+                for i, (sig, row) in enumerate(mvp.iterrows()):
                     clean_sig = str(sig).split("]")[0] + "]" if "]" in str(sig) else str(sig)[:15]
                     medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉"
-                    report_msg += f" {medal} {clean_sig}: <b>{float(pnl or 0.0):+,.2f}USDT</b> 기여 ({cnt}건)\n"
+                    report_msg += (
+                        f" {medal} {clean_sig}: <b>{float(row['profit'] or 0.0):+,.2f}USDT</b> "
+                        f"기여 ({int(row['cnt'])}건)\n"
+                    )
             else:
                 report_msg += " ↳ MVP 데이터가 없습니다.\n"
 
@@ -383,7 +422,10 @@ def send_weekly_flow_master_report():
         report_msg += f" ▪️ <b>현재 국면:</b> {regime}\n"
         report_msg += f" ▪️ <b>동적 켈리 비중:</b> {float(cfg.get('DYNAMIC_KELLY_RISK', 0.01))*100:.1f}%\n"
         report_msg += f" ▪️ <b>초신성 허들:</b> 코사인 {float(cfg.get('DYNAMIC_ALPHA_LIMIT', 0.75))*100:.0f}% | ML박스 {float(cfg.get('DYNAMIC_ML_BOX_CUTOFF', 0.50))*100:.0f}%\n"
-        report_msg += f" ▪️ <b>로직 수명:</b> 최초 작동일로부터 {(now - datetime.strptime(str(cfg.get('LIVE_A_PROMOTION_DATE', today_str)), '%Y-%m-%d')).days}일차 유지 중\n"
+        promo_raw = str(cfg.get("LIVE_A_PROMOTION_DATE", today_str))[:10]
+        promo_dt = parse_utc_iso(promo_raw)
+        days_live = max(0, (now.date() - (promo_dt.date() if promo_dt else now.date())).days)
+        report_msg += f" ▪️ <b>로직 수명:</b> 최초 작동일로부터 {days_live}일차 유지 중\n"
         conn.close()
     except Exception as e:
         report_msg = f"⚠️ 주간 리포트 생성 중 에러: {e}"

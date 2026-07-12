@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -14,6 +13,13 @@ def _truthy(val: Any, default: bool = True) -> bool:
     return str(val).strip().lower() in ("1", "true", "yes", "on")
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.bounded_reads import (
+    elastic_vol_closed_rets_sql,
+    forward_open_count_sql,
+    forward_pri_open_metrics_sql,
+)
+from bitget.infra.clock import utc_date_days_ago_str
+from bitget.infra.memory_policy import ELASTIC_VOL_OPEN_LIMIT
 from bitget.infra.proprietary_friction_store_bg import normalize_friction_market
 
 
@@ -51,7 +57,7 @@ class BitgetElasticThreshold:
     def compute_starvation_index(self, *, lookback_days: int = 7) -> float:
         target_entries = int(self.cfg.get("ELASTIC_TARGET_ENTRIES_PER_WEEK", 12) or 12)
         target_closed = int(self.cfg.get("ELASTIC_TARGET_CLOSED_PER_WEEK", 6) or 6)
-        since = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        since = utc_date_days_ago_str(lookback_days)
         db = DB_PATH
         if not db or not os.path.isfile(db):
             return 0.85
@@ -75,10 +81,8 @@ class BitgetElasticThreshold:
                     """,
                     (self.market_db, since),
                 ).fetchone()[0]
-                n_open = conn.execute(
-                    "SELECT COUNT(*) FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",
-                    (self.market_db,),
-                ).fetchone()[0]
+                n_open_q, n_open_params = forward_open_count_sql(market_type=self.market_db)
+                n_open = conn.execute(n_open_q, n_open_params).fetchone()[0]
             finally:
                 conn.close()
         except sqlite3.Error:
@@ -133,30 +137,23 @@ def internal_ledger_volatility_proxy(market_type: str, *, lookback_days: int = 2
     import numpy as np
 
     mk = str(market_type or "spot").lower()
-    since = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    since = utc_date_days_ago_str(lookback_days)
     db = DB_PATH
     if not db or not os.path.isfile(db):
         return 1.0
     try:
         conn = sqlite3.connect(db, timeout=20)
         try:
-            open_rows = conn.execute(
-                """
-                SELECT entry_price, max_high, min_low, position_side
-                FROM bitget_forward_trades
-                WHERE market_type=? AND status='OPEN' AND entry_price > 0
-                """,
-                (mk,),
-            ).fetchall()
-            closed_rets = conn.execute(
-                """
-                SELECT final_ret FROM bitget_forward_trades
-                WHERE market_type=? AND status LIKE 'CLOSED%'
-                  AND substr(IFNULL(NULLIF(TRIM(exit_date),''), entry_date),1,10) >= ?
-                  AND final_ret IS NOT NULL
-                """,
-                (mk, since),
-            ).fetchall()
+            open_q, open_params = forward_pri_open_metrics_sql(
+                market_type=mk,
+                limit=ELASTIC_VOL_OPEN_LIMIT,
+            )
+            open_rows = conn.execute(open_q, open_params).fetchall()
+            closed_q, closed_params = elastic_vol_closed_rets_sql(
+                market_type=mk,
+                since_date=since,
+            )
+            closed_rets = conn.execute(closed_q, closed_params).fetchall()
         finally:
             conn.close()
     except sqlite3.Error:

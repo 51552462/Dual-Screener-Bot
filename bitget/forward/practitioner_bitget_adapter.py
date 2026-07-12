@@ -6,13 +6,12 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
-from datetime import datetime, timedelta
 
+from bitget.infra.clock import utc_date_str
 from bitget.infra.shared_db_connector import get_connection
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import pytz
 
 from practitioner_intelligence import (
     PractitionerBrief,
@@ -100,24 +99,27 @@ def send_bitget_practitioner_reports_pil(
         meta = {}
 
     briefs: List[PractitionerBrief] = []
-    tz = pytz.timezone("UTC")
-    today_utc = datetime.now(tz).strftime("%Y-%m-%d")
+    today_utc = utc_date_str()
 
     conn = get_connection(db_path)
     try:
         for market_type in ("spot", "futures"):
             mkt = str(market_type).strip().lower()
+            from bitget.infra.bounded_reads import forward_pil_trades_sql
+
+            pil_q, pil_params = forward_pil_trades_sql(market_type=mkt)
             df_all = pd.read_sql(
-                """
-                SELECT *
-                FROM bitget_forward_trades
-                WHERE market_type=? AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                ORDER BY id DESC
-                LIMIT 2500
-                """,
+                pil_q,
                 conn,
-                params=(mkt,),
+                params=pil_params,
             )
+            if df_all.empty:
+                continue
+
+            if "sig_type" in df_all.columns:
+                df_all = df_all[
+                    ~df_all["sig_type"].astype(str).str.contains("INCUBATOR", na=False)
+                ].copy()
             if df_all.empty:
                 continue
 
@@ -163,15 +165,13 @@ def send_bitget_practitioner_reports_pil(
                 briefs.append(brief)
 
                 msg = format_practitioner_brief_html(brief)
+                from bitget.infra.bounded_reads import real_execution_practitioner_sample_sql
+
+                sample_sql, sample_lim = real_execution_practitioner_sample_sql()
                 real_df = pd.read_sql(
-                    """
-                    SELECT realized_ret_pct, notional_usdt
-                    FROM bitget_real_execution
-                    WHERE market_type=? AND practitioner_key=?
-                    ORDER BY id DESC LIMIT 200
-                    """,
+                    sample_sql,
                     conn,
-                    params=(mkt, p_key),
+                    params=(mkt, p_key, sample_lim),
                 )
                 if not real_df.empty:
                     rr = pd.to_numeric(real_df["realized_ret_pct"], errors="coerce").fillna(0.0)

@@ -6,6 +6,7 @@ import sqlite3
 from typing import Optional
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.shared_db_connector import connect
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,8 @@ def ensure_proprietary_friction_schema(
     if not path:
         return
     try:
-        conn = sqlite3.connect(path, timeout=30)
-        try:
+        with connect(path) as conn:
             conn.executescript(_DDL)
-            conn.commit()
-        finally:
-            conn.close()
     except sqlite3.Error as ex:
         logger.warning("bitget proprietary_friction schema skip: %s", ex)
 
@@ -76,8 +73,7 @@ def insert_scan_funnel_snapshot(
         return
     try:
         ensure_proprietary_friction_schema(db_path=path)
-        conn = sqlite3.connect(path, timeout=15)
-        try:
+        with connect(path) as conn:
             conn.execute(
                 """
                 INSERT INTO scan_funnel_snapshot
@@ -92,9 +88,12 @@ def insert_scan_funnel_snapshot(
                     round(float(pass_rate_pct), 6),
                 ),
             )
-            conn.commit()
-        finally:
-            conn.close()
+        try:
+            from bitget.infra.memory_retention import maybe_run_bitget_retention_after_write
+
+            maybe_run_bitget_retention_after_write()
+        except Exception:
+            pass
     except sqlite3.Error as ex:
         logger.debug("bitget scan_funnel_snapshot insert skip: %s", ex)
 
@@ -115,8 +114,7 @@ def insert_regime_friction_event(
         return
     try:
         ensure_proprietary_friction_schema(db_path=path)
-        conn = sqlite3.connect(path, timeout=15)
-        try:
+        with connect(path) as conn:
             conn.execute(
                 """
                 INSERT INTO regime_friction_event (date, market, event_type)
@@ -124,8 +122,11 @@ def insert_regime_friction_event(
                 """,
                 (d, normalize_friction_market(market), et),
             )
-            conn.commit()
-        finally:
-            conn.close()
+        try:
+            from bitget.infra.memory_retention import maybe_run_bitget_retention_after_write
+
+            maybe_run_bitget_retention_after_write()
+        except Exception:
+            pass
     except sqlite3.Error as ex:
         logger.debug("bitget regime_friction_event insert skip: %s", ex)

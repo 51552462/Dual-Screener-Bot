@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from bitget.infra.bounded_reads import forward_heatmap_open_sql
 from bitget.infra.data_paths import market_db_read_path
 from bitget.infra.shared_db_connector import get_connection
 
@@ -39,13 +40,8 @@ def load_open_positions():
         return pd.DataFrame()
     try:
         conn = get_connection(DB_PATH, read_only=True, check_same_thread=False)
-        q = """
-            SELECT symbol, market_type, position_side, timeframe, total_score,
-                   margin_used, sim_kelly_invest, leverage, entry_price
-            FROM bitget_forward_trades
-            WHERE status='OPEN'
-        """
-        df = pd.read_sql(q, conn)
+        q, params = forward_heatmap_open_sql()
+        df = pd.read_sql(q, conn, params=params)
         conn.close()
         return df
     except Exception:

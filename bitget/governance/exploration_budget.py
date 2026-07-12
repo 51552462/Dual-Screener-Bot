@@ -13,12 +13,14 @@ Dynamic Exploration Budget (7일 롤링 MAB) — 챔피언(LIVE) vs 탐험(OBSER
 """
 from __future__ import annotations
 
-import logging
 import time
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from bitget.infra.bounded_reads import forward_exploration_budget_closed_sql
+from bitget.infra.clock import parse_utc_iso, utc_date_days_ago_str, utc_now, utc_now_iso
+from bitget.infra.logging_setup import get_logger
+
+logger = get_logger("bitget.governance.exploration_budget")
 
 STATE_KEY = "EXPLORATION_BUDGET_STATE"
 
@@ -37,28 +39,8 @@ _ROLE_CACHE: Dict[str, Any] = {"ts": 0.0, "map": {}}
 _ROLE_CACHE_TTL_SEC = 120.0
 
 
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _now_iso() -> str:
-    return _now_utc().isoformat()
-
-
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
-
-
-def _parse_iso(s: Optional[str]) -> Optional[datetime]:
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(s))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        return None
 
 
 def _default_state() -> Dict[str, Any]:
@@ -73,7 +55,7 @@ def _default_state() -> Dict[str, Any]:
         "exploration_7d_ret_pct": None,
         "champion_n": 0,
         "exploration_n": 0,
-        "updated_at": _now_iso(),
+        "updated_at": utc_now_iso(),
     }
 
 
@@ -118,18 +100,19 @@ def _load_registry_role_map(*, force: bool = False) -> Dict[str, str]:
         from strategy_registry_store import load_registry_rows
 
         from bitget.infra.data_paths import market_data_db_path
+        from bitget.infra.market_keys import is_bitget_registry_market
 
         # 코인 전용 strategy_registry는 Bitget 자체 DB에 격리 저장된다(주식 DB 미참조).
         rows = load_registry_rows(market_data_db_path())
         for r in rows:
-            mkt = str(r.get("market") or "").strip().upper()
-            if mkt not in ("BG", "SPOT", "FUT"):
+            mkt = str(r.get("market") or "").strip()
+            if not is_bitget_registry_market(mkt):
                 continue
             gk = str(r.get("group_key") or "").strip()
             if not gk:
                 continue
             role = _classify_role(str(r.get("state") or ""))
-            # 여러 마켓(BG 단일 통합)에 동일 group_key 가 있을 수 있으므로
+            # 여러 마켓(SPOT/FUT/레거시 BG)에 동일 group_key 가 있을 수 있으므로
             # CHAMPION 을 우선 유지(더 정보가 많은 상태를 신뢰).
             if gk not in out or role == "CHAMPION":
                 out[gk] = role
@@ -148,7 +131,7 @@ def compute_rolling_bucket_returns(days: int = ROLLING_WINDOW_DAYS) -> Dict[str,
     from bitget.infra.shared_db_connector import get_connection
 
     role_map = _load_registry_role_map()
-    cutoff = (_now_utc() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff = utc_date_days_ago_str(days)
 
     buckets: Dict[str, Dict[str, float]] = {
         "CHAMPION": {"pnl": 0.0, "capital": 0.0, "n": 0},
@@ -158,15 +141,8 @@ def compute_rolling_bucket_returns(days: int = ROLLING_WINDOW_DAYS) -> Dict[str,
     conn = None
     try:
         conn = get_connection(market_data_db_path(), read_only=True)
-        cur = conn.execute(
-            """
-            SELECT sig_type, final_ret, sim_kelly_invest
-            FROM bitget_forward_trades
-            WHERE status LIKE 'CLOSED%' AND IFNULL(exit_date,'') >= ?
-              AND final_ret IS NOT NULL
-            """,
-            (cutoff,),
-        )
+        q, params = forward_exploration_budget_closed_sql(since_date=cutoff)
+        cur = conn.execute(q, params)
         for sig_type, final_ret, sim_kelly_invest in cur.fetchall():
             sig_s = str(sig_type or "")
             if "[INCUBATOR_" in sig_s.upper():
@@ -215,8 +191,8 @@ def trigger_regime_shift_reset(
             "mode": "REGIME_SHIFT_DEFENSE",
             "last_regime_key": new_regime,
             "prev_regime_key": previous_regime,
-            "regime_shift_at": _now_iso(),
-            "updated_at": _now_iso(),
+            "regime_shift_at": utc_now_iso(),
+            "updated_at": utc_now_iso(),
         }
     )
     _save_state(state)
@@ -272,21 +248,21 @@ def refresh_exploration_budget_state(*, force: bool = False) -> Dict[str, Any]:
         # 훅이 놓친 국면전환을 여기서 잡아 즉시 방어(안전망).
         return trigger_regime_shift_reset(previous_regime=last_regime, new_regime=current_regime)
 
-    regime_shift_at = _parse_iso(state.get("regime_shift_at"))
+    regime_shift_at = parse_utc_iso(state.get("regime_shift_at"))
     if regime_shift_at is not None:
-        days_since = (_now_utc() - regime_shift_at).total_seconds() / 86400.0
+        days_since = (utc_now() - regime_shift_at).total_seconds() / 86400.0
         if days_since < REGIME_SHIFT_PROTECTION_DAYS:
             state["mode"] = "REGIME_SHIFT_DEFENSE"
             state["explore_pct"] = EXPLORE_DEFAULT_PCT
             state["champion_pct"] = CHAMPION_DEFAULT_PCT
             state["defense_days_remaining"] = round(REGIME_SHIFT_PROTECTION_DAYS - days_since, 2)
-            state["updated_at"] = _now_iso()
+            state["updated_at"] = utc_now_iso()
             _save_state(state)
             return state
 
-    updated_at = _parse_iso(state.get("updated_at"))
+    updated_at = parse_utc_iso(state.get("updated_at"))
     if not force and updated_at is not None:
-        hours_since = (_now_utc() - updated_at).total_seconds() / 3600.0
+        hours_since = (utc_now() - updated_at).total_seconds() / 3600.0
         if hours_since < MIN_RECOMPUTE_INTERVAL_HOURS and state.get("mode") not in ("INIT",):
             return state
 
@@ -319,7 +295,7 @@ def refresh_exploration_budget_state(*, force: bool = False) -> Dict[str, Any]:
             "champion_n": champ_n,
             "exploration_n": expl_n,
             "defense_days_remaining": 0,
-            "updated_at": _now_iso(),
+            "updated_at": utc_now_iso(),
         }
     )
     _save_state(state)

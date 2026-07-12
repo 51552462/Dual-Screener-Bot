@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from doomsday_dampener import (
@@ -19,6 +19,7 @@ from doomsday_dampener import (
 )
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.clock import utc_date_days_ago_str, utc_date_key, utc_now
 
 
 def _bitget_forward_net_pnl_pct(db_path: str, start_date: str, end_date: str) -> Tuple[float, int]:
@@ -53,7 +54,7 @@ def evolve_bitget_gamma(
     persist: bool = True,
 ) -> Dict[str, Any]:
     """주간 γ 경사하강 — Bitget forward DB·config만 사용(주식 SSOT 오염 방지)."""
-    now = now or datetime.now()
+    now = now or utc_now()
     if sys_config is None:
         try:
             from bitget.infra.config_manager import load_system_config
@@ -67,8 +68,8 @@ def evolve_bitget_gamma(
     state = dict(sys_config.get(STATE_KEY) or {})
     log: List[Dict[str, Any]] = [e for e in (state.get("brake_log") or []) if isinstance(e, dict)]
 
-    win_start = (now - timedelta(days=EVAL_WINDOW_DAYS)).strftime("%Y-%m-%d")
-    win_end = now.strftime("%Y-%m-%d")
+    win_start = utc_date_days_ago_str(EVAL_WINDOW_DAYS, anchor=now)
+    win_end = utc_date_key(anchor=now)
     braked = [
         e
         for e in log

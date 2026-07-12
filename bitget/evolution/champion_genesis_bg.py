@@ -31,6 +31,7 @@ from bitget.evolution.coin_regime_vector import (
     load_vector_history_arrays as _vector_history_arrays,
     regime_index as _regime_index,
 )
+from bitget.infra.clock import utc_date_days_ago_str, utc_date_key, utc_datetime_str
 
 GENESIS_TABLE = "champion_precursor_genesis"
 PREDICTION_TABLE = "precursor_prediction_log"
@@ -225,7 +226,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return utc_datetime_str()
 
 
 def _parse_date(s: Any) -> Optional[datetime]:
@@ -330,23 +331,16 @@ def _fetch_label_trades(
 ) -> List[Dict[str, Any]]:
     """해당 group_key(label)에 매핑되는 CLOSED 거래(시간순). sector는 심볼 기반 자산군."""
     from bitget.forward.mutant import _coin_asset_group
+    from bitget.infra.bounded_reads import genesis_closed_trades_sql
 
     try:
-        cur = conn.execute(
-            """
-            SELECT entry_date, exit_date, symbol, sig_type, status, final_ret,
-                   dyn_cpv, dyn_tb, v_energy, entry_breadth, flow_tags
-            FROM bitget_forward_trades
-            WHERE market_type = ? AND status LIKE 'CLOSED%'
-            ORDER BY entry_date ASC
-            """,
-            (str(market).lower(),),
-        )
+        sql, params = genesis_closed_trades_sql(market_type=market)
+        cur = conn.execute(sql, params)
         rows = cur.fetchall()
     except sqlite3.Error:
         return []
     out: List[Dict[str, Any]] = []
-    for r in rows:
+    for r in reversed(rows):
         if _group_key(str(r["sig_type"] or "")) != label:
             continue
         d = dict(r)
@@ -358,21 +352,16 @@ def _fetch_label_trades(
 def _fetch_market_trades(conn: sqlite3.Connection, market: str) -> List[Dict[str, Any]]:
     """v_energy Z-score·자산군 주도력 산정을 위한 시장 전체 CLOSED 거래(경량)."""
     from bitget.forward.mutant import _coin_asset_group
+    from bitget.infra.bounded_reads import genesis_market_energy_closed_sql
 
     try:
-        cur = conn.execute(
-            """
-            SELECT entry_date, symbol, v_energy FROM bitget_forward_trades
-            WHERE market_type = ? AND status LIKE 'CLOSED%' AND entry_date IS NOT NULL
-            ORDER BY entry_date ASC
-            """,
-            (str(market).lower(),),
-        )
+        sql, params = genesis_market_energy_closed_sql(market_type=market)
+        cur = conn.execute(sql, params)
         rows = cur.fetchall()
     except sqlite3.Error:
         return []
     out: List[Dict[str, Any]] = []
-    for r in rows:
+    for r in reversed(rows):
         d = _parse_date(r["entry_date"])
         if d is None:
             continue
@@ -386,21 +375,16 @@ def _fetch_arm_snapshot_series(
     conn: sqlite3.Connection, market: str, label: str
 ) -> List[Tuple[datetime, float]]:
     """deathmatch_arm_snapshot composite_score 시계열 (Bitget DB — deathmatch_bg persist)."""
-    dm_mk = "FUT" if str(market).lower() in ("futures", "fut", "future") else "SPOT"
+    from bitget.infra.bounded_reads import genesis_arm_snapshot_sql
+
     try:
-        cur = conn.execute(
-            """
-            SELECT trade_date, composite_score, mean_ret FROM deathmatch_arm_snapshot
-            WHERE market = ? AND (label = ? OR arm_id = ?)
-            ORDER BY trade_date ASC
-            """,
-            (dm_mk, label, label),
-        )
+        sql, params = genesis_arm_snapshot_sql(market=market, label=label)
+        cur = conn.execute(sql, params)
         rows = cur.fetchall()
     except sqlite3.Error:
         return []
     out: List[Tuple[datetime, float]] = []
-    for r in rows:
+    for r in reversed(rows):
         if hasattr(r, "keys"):
             td_raw = r["trade_date"]
             score = r["composite_score"]
@@ -747,7 +731,7 @@ def capture_champion_precursors(
                 conn_rw.close()
             return out
         out["skipped"] = False
-        crowned = datetime.now().strftime("%Y-%m-%d")
+        crowned = utc_date_key()
         mk = str(market).lower()
         try:
             champ = getattr(br, "champion", None)
@@ -931,7 +915,7 @@ def run_precursor_prediction(
                         ) VALUES (?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
-                            datetime.now().strftime("%Y-%m-%d"),
+                            utc_date_key(),
                             str(market).lower(),
                             best_label,
                             best_sector,
@@ -990,17 +974,15 @@ def backfill_and_learn(
                 conn_rw.close()
             return out
         mk = str(market).lower()
-        cutoff = (datetime.now() - timedelta(days=HORIZON_DAYS)).strftime("%Y-%m-%d")
+        cutoff = utc_date_days_ago_str(HORIZON_DAYS)
+        from bitget.infra.bounded_reads import (
+            genesis_pending_champions_sql,
+            genesis_unresolved_predictions_sql,
+        )
+
         try:
-            cur = conn_ro.execute(
-                f"""
-                SELECT id, champion_label, crowned_date, confidence, decay_count
-                FROM {GENESIS_TABLE}
-                WHERE market = ? AND kind='champion' AND status='pending'
-                  AND crowned_date IS NOT NULL AND crowned_date <= ?
-                """,
-                (mk, cutoff),
-            )
+            pend_sql, pend_params = genesis_pending_champions_sql(market=mk, cutoff=cutoff)
+            cur = conn_ro.execute(pend_sql, pend_params)
             pend = cur.fetchall()
             for row in pend:
                 rret = _realized_after(conn_ro, mk, row["champion_label"], str(row["crowned_date"]))
@@ -1022,14 +1004,8 @@ def backfill_and_learn(
                 )
                 out["resolved"] += 1
 
-            cur2 = conn_ro.execute(
-                f"""
-                SELECT id, matched_champion_label, matched_sector, predict_date
-                FROM {PREDICTION_TABLE}
-                WHERE market=? AND hit IS NULL AND predict_date <= ?
-                """,
-                (mk, cutoff),
-            )
+            pred_sql, pred_params = genesis_unresolved_predictions_sql(market=mk, cutoff=cutoff)
+            cur2 = conn_ro.execute(pred_sql, pred_params)
             preds = cur2.fetchall()
             for p in preds:
                 rret = _realized_after(conn_ro, mk, p["matched_champion_label"], str(p["predict_date"]))

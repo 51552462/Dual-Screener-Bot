@@ -1,11 +1,10 @@
 import json
 import os
-from datetime import datetime, timezone
 
 from bitget.config_hub import load_config
+from bitget.infra.clock import utc_datetime_str_tz
 from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.oms import create_trade_exchange, generate_client_oid, oms_place_market_order
-from bitget.rate_limit_guard import backoff_sleep, throttle
 from bitget.symbol_utils import normalize_market_symbol
 from bitget.trading.execution_safety import ExecutionGateOutcome, run_pre_execution_gates
 from bitget.trading.leverage_manager import prepare_futures_order_params, resolve_leverage, resolve_margin_mode
@@ -45,12 +44,11 @@ def _normalize_order_from_markets(ex, market_symbol, qty, market_type, ref_price
 
     px = ref_price
     if px is None or float(px or 0) <= 0:
-        try:
-            throttle("bitget.fetch_ticker", 0.2)
-            t = ex.fetch_ticker(market_symbol)
-            px = float(t.get("last") or t.get("close") or t.get("bid") or t.get("ask") or 0.0)
-        except Exception:
-            px = float(px or 0.0)
+        from bitget.trading.market_price_snapshot import fetch_ref_price
+
+        px = fetch_ref_price(
+            ex, market_symbol, market_type=market_type, prefer_ws=True, explicit=None
+        )
     px = float(px or 0.0)
 
     try:
@@ -112,15 +110,13 @@ def _normalize_order_from_markets(ex, market_symbol, qty, market_type, ref_price
     return q_adj, px, diag
 
 
-def _fetch_total_usdt(ex):
-    try:
-        throttle("bitget.fetch_balance", 0.22)
-        bal = ex.fetch_balance()
-        total = bal.get("total", {}) if isinstance(bal, dict) else {}
-        return float(total.get("USDT", 0.0) or 0.0)
-    except Exception:
-        return 0.0
+def _fetch_total_usdt(ex, *, market_type="futures", prefer_ws=True):
+    """USDT equity — futures may use private account WS; post-fill must prefer_ws=False."""
+    from bitget.trading.account_snapshot import fetch_usdt_balance
 
+    return float(
+        fetch_usdt_balance(ex, market_type=market_type, prefer_ws=prefer_ws)
+    )
 
 def execute_real_order(
     symbol,
@@ -138,9 +134,17 @@ def execute_real_order(
       1. ENABLE_REAL_EXECUTION
       2. REAL_EXECUTION_DRY_RUN
       3. MetaGovernor KILL_SWITCH
-      4. Pre-trade slippage gate
-      5. Leverage / margin manager (futures only)
-      6. OMS market order (oms_core)
+      4. GLOBAL_CIRCUIT_BREAKER
+      5. OMS orphan active (exchange-only — no flatten)
+      6. Portfolio NAV drawdown (reduce/block/halt)
+      7. Portfolio gross notional cap (no flatten)
+      8. Tail-risk reserve (underfund size / empty+DD block)
+      9. Doomsday DEFCON (≤ block — new LONG only; size dampen)
+     10. BTC-proxy concentration (high-β same-side — no flatten)
+     11. Bad-tick / flash-crash price sanity
+     12. Pre-trade slippage gate
+     13. Leverage / margin manager (futures; MAX_LEVERAGE)
+     14. OMS market order (oms_core defense-in-depth)
     """
     cfg = _load_config()
 
@@ -157,12 +161,17 @@ def execute_real_order(
             "ok": False,
             "status": "invalid_amount",
             "message": "amount must be > 0",
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "timestamp": utc_datetime_str_tz(),
             "margin_mode_requested": resolved_mm,
             "client_order_id": "",
         }
 
-    gate = run_pre_execution_gates(cfg, market_symbol=market_symbol, market_type=market_type)
+    gate = run_pre_execution_gates(
+        cfg,
+        market_symbol=market_symbol,
+        market_type=market_type,
+        position_side=side_u,
+    )
     meta_out.update(gate.meta)
 
     if gate.outcome == ExecutionGateOutcome.EXECUTION_DISABLED:
@@ -194,7 +203,18 @@ def execute_real_order(
             **meta_out,
         }
 
-    if gate.outcome == ExecutionGateOutcome.META_BLOCKED:
+    if gate.outcome in (
+        ExecutionGateOutcome.META_BLOCKED,
+        ExecutionGateOutcome.CIRCUIT_BLOCKED,
+        ExecutionGateOutcome.ORPHAN_BLOCKED,
+        ExecutionGateOutcome.NAV_BLOCKED,
+        ExecutionGateOutcome.GROSS_BLOCKED,
+        ExecutionGateOutcome.TAIL_RISK_BLOCKED,
+        ExecutionGateOutcome.DOOMSDAY_BLOCKED,
+        ExecutionGateOutcome.CONCENTRATION_BLOCKED,
+        ExecutionGateOutcome.PRICE_SANITY_BLOCKED,
+        ExecutionGateOutcome.SLIPPAGE_BLOCKED,
+    ):
         return {
             "ok": False,
             "status": gate.outcome.value,
@@ -207,23 +227,39 @@ def execute_real_order(
             **meta_out,
         }
 
-    if gate.outcome == ExecutionGateOutcome.SLIPPAGE_BLOCKED:
-        return {
-            "ok": False,
-            "status": gate.outcome.value,
-            "message": gate.message,
-            "symbol": market_symbol,
-            "side": order_side,
-            "amount": qty,
-            "leverage": lev,
-            "client_order_id": "",
-            **meta_out,
-        }
+    # NAV / doomsday / tail-risk reduce — shrink size before normalize (never invent size up)
+    try:
+        nav_mult = float(meta_out.get("nav_size_mult") or 1.0)
+    except (TypeError, ValueError):
+        nav_mult = 1.0
+    try:
+        doom_mult = float(meta_out.get("doomsday_size_mult") or 1.0)
+    except (TypeError, ValueError):
+        doom_mult = 1.0
+    try:
+        tail_mult = float(meta_out.get("tail_risk_size_mult") or 1.0)
+    except (TypeError, ValueError):
+        tail_mult = 1.0
+    size_mult = 1.0
+    if 0.0 < nav_mult < 1.0:
+        size_mult *= nav_mult
+    if 0.0 < doom_mult < 1.0:
+        size_mult *= doom_mult
+    if 0.0 < tail_mult < 1.0:
+        size_mult *= tail_mult
+    if 0.0 < size_mult < 1.0:
+        qty = qty * size_mult
+        meta_out["amount_after_risk_reduce"] = qty
+        if 0.0 < nav_mult < 1.0:
+            meta_out["amount_after_nav_reduce"] = qty
+        if 0.0 < doom_mult < 1.0:
+            meta_out["amount_after_doomsday_reduce"] = qty
+        if 0.0 < tail_mult < 1.0:
+            meta_out["amount_after_tail_risk_reduce"] = qty
 
     try:
         ex = create_trade_exchange(market_type)
-        throttle("bitget.balance", 0.2)
-        bal_before = _fetch_total_usdt(ex)
+        bal_before = _fetch_total_usdt(ex, market_type=market_type, prefer_ws=True)
 
         qty_norm, px_ref, diag = _normalize_order_from_markets(
             ex, market_symbol, qty, market_type, ref_price=None
@@ -280,6 +316,8 @@ def execute_real_order(
             params_base=params,
             client_oid=coid,
             max_attempts=int(cfg.get("OMS_ORDER_MAX_ATTEMPTS", 3)),
+            market_type=market_type,
+            position_side=side_u,
         )
         meta_out.update(
             {
@@ -303,7 +341,8 @@ def execute_real_order(
                 "raw": om.get("raw"),
             }
 
-        bal_after = _fetch_total_usdt(ex)
+        # Post-fill: force REST — account WS may still hold pre-trade equity
+        bal_after = _fetch_total_usdt(ex, market_type=market_type, prefer_ws=False)
         pnl = float(bal_after - bal_before)
         ret_pct = float((pnl / bal_before) * 100.0) if bal_before > 0 else 0.0
         oid_out = str((om.get("raw") or {}).get("id") or om.get("order_id") or "")
@@ -327,7 +366,6 @@ def execute_real_order(
         }
 
     except Exception as e:
-        backoff_sleep(1)
         logger.warning("execute_real_order failed: %s", e)
         return {
             "ok": False,

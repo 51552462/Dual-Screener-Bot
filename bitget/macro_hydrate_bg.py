@@ -5,12 +5,15 @@ import logging
 import math
 import os
 import sqlite3
-from datetime import datetime
 from typing import Any, Dict, Optional
+
+from bitget.infra.bounded_reads import macro_daily_lookback_sql
+from bitget.infra.clock import utc_date_key
+from bitget.infra.memory_policy import MACRO_DAILY_LOOKBACK_MAX_ROWS
 
 logger = logging.getLogger(__name__)
 
-_MACRO_LOOKBACK_MAX_ROWS = 365
+_MACRO_LOOKBACK_MAX_ROWS = MACRO_DAILY_LOOKBACK_MAX_ROWS
 _MACRO_FLOAT_KEYS = (
     "btc_dominance",
     "eth_btc_ratio",
@@ -54,13 +57,11 @@ def _load_macro_row_lookback(*, max_rows: int = _MACRO_LOOKBACK_MAX_ROWS) -> Opt
         conn = sqlite3.connect(path, timeout=30)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute(
-                "SELECT * FROM macro_daily ORDER BY date DESC LIMIT ?",
-                (max(1, int(max_rows)),),
-            ).fetchall()
+            q, params = macro_daily_lookback_sql(max_rows=max_rows)
+            rows = conn.execute(q, params).fetchall()
             if not rows:
                 return None
-            today = datetime.utcnow().strftime("%Y-%m-%d")
+            today = utc_date_key()
             best_sparse = None
             for row in rows:
                 dct = {k: row[k] for k in row.keys()}

@@ -4,10 +4,10 @@ import random
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import memory_bounds
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
@@ -18,27 +18,45 @@ except ModuleNotFoundError:
     from sklearn.cluster import KMeans
 
 from bitget.config_hub import load_config, save_config_atomic
+from bitget.infra.bounded_reads import (
+    forward_cluster_mining_symbols_sql,
+    forward_data_miner_mfe_training_sql,
+    forward_data_miner_mfe_winners_sql,
+    sqlite_bitget_ohlcv_tables_sql,
+)
+from bitget.infra.clock import utc_date_days_ago_str, utc_datetime_str
 from bitget.infra.data_paths import flow_csv_path, market_data_db_path
+from bitget.infra.gc_cycle import flush_gc, heavy_data_cycle
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.memory_policy import (
+    GC_AFTER_AST_EVOLUTION,
+    GC_AFTER_CLUSTER_MINING,
+    GC_AFTER_GMM_FIT,
+    GC_AFTER_OHLCV_BATCH,
+    OHLCV_ENTRY_LOOKBACK_DAYS,
+    OHLCV_SIGNAL_BAR_LIMIT,
+    SUPERNOVA_CLUSTER_GC_EVERY_N,
+    SUPERNOVA_CLUSTER_MAX_TABLES,
+    SUPERNOVA_CLUSTER_MIN_BARS,
+    SUPERNOVA_CLUSTER_OUT_MAX_ROWS,
+    SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS,
+)
 from bitget.infra.shared_db_connector import get_connection
 from bitget.supernova_hunter import extract_dna_from_df
 
 DB_PATH = market_data_db_path()
 CSV_PATH = flow_csv_path()
 TIMEFRAMES = ["1D", "4H", "2H", "1H"]
+logger = get_logger("bitget.data_miner")
 
 
 def _load_mfe_winners(timeframe: str, mfe_min: float = 8.0) -> pd.DataFrame:
     conn = get_connection(DB_PATH, read_only=True)
-    sql = """
-        SELECT
-            id, entry_date, exit_date, market_type, symbol, timeframe, position_side, sig_type,
-            dyn_cpv, dyn_tb, v_energy, dyn_rs, v_rs, mfe, final_ret
-        FROM bitget_forward_trades
-        WHERE status LIKE 'CLOSED%'
-          AND UPPER(timeframe)=?
-          AND COALESCE(mfe, 0) >= ?
-    """
-    df = pd.read_sql(sql, conn, params=(str(timeframe).upper(), float(mfe_min)))
+    sql, params = forward_data_miner_mfe_winners_sql(
+        timeframe=str(timeframe),
+        mfe_min=float(mfe_min),
+    )
+    df = pd.read_sql(sql, conn, params=params)
     conn.close()
     return df
 
@@ -106,16 +124,18 @@ def mine_bitget_dna_templates():
         templates = _fit_gmm_templates(df, n_components=int(cfg.get("BITGET_GMM_CLUSTERS", 3)))
         tf_key = f"TF_{tf}"
         all_templates[tf_key] = {
-            "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": utc_datetime_str(),
             "source_rows": int(len(df)),
             "templates": templates,
         }
         mined_count += len(templates)
+        del df
+        flush_gc(label=GC_AFTER_GMM_FIT)
 
     cfg["BITGET_GMM_DNA_TEMPLATES"] = all_templates
-    cfg["BITGET_GMM_DNA_UPDATED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cfg["BITGET_GMM_DNA_UPDATED_AT"] = utc_datetime_str()
     save_config_atomic(cfg)
-    print(f"✅ Bitget GMM DNA mining complete: {mined_count} templates.")
+    logger.info("Bitget GMM DNA mining complete: %s templates", mined_count)
 
 
 def evaluate_alpha_formula(df: pd.DataFrame, formula: str):
@@ -276,21 +296,65 @@ def _crossover_alpha_formula_ast(formula1: str, formula2: str):
 
 def _table_name(market_type: str, symbol: str, timeframe: str) -> str:
     prefix = "SPOT" if str(market_type).lower() == "spot" else "FUT"
-    return f"BITGET_{prefix}_{str(symbol)}_{str(timeframe).upper()}"
+    return f"BITGET_{prefix}_{str(symbol).strip()}_{str(timeframe).upper()}"
+
+
+def _parse_ohlcv_table_name(tbl: str) -> tuple[str, str, str] | None:
+    """BITGET_SPOT_BTC_USDT_1D → (SPOT, BTC_USDT, 1D)."""
+    if not tbl.startswith("BITGET_") or "__tmp" in tbl:
+        return None
+    parts = tbl.split("_")
+    if len(parts) < 5:
+        return None
+    return parts[1], "_".join(parts[2:-1]), parts[-1].upper()
+
+
+def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int) -> list[str]:
+    """Forward-trades 우선 · sqlite_master fallback — OHLCV table scan cap."""
+    cap = max(1, int(max_tables))
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    since = utc_date_days_ago_str(SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS)
+    sym_sql, sym_params = forward_cluster_mining_symbols_sql(since_date=since)
+    for market_type, symbol, timeframe in conn.execute(sym_sql, sym_params).fetchall():
+        tbl = _table_name(market_type, symbol, timeframe)
+        if tbl in seen:
+            continue
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+            (tbl,),
+        ).fetchone()
+        if not exists:
+            continue
+        seen.add(tbl)
+        ordered.append(tbl)
+        if len(ordered) >= cap:
+            return ordered
+
+    remaining = cap - len(ordered)
+    if remaining <= 0:
+        return ordered
+
+    fb_sql, fb_params = sqlite_bitget_ohlcv_tables_sql(limit=remaining + len(seen))
+    for (name,) in conn.execute(fb_sql, fb_params).fetchall():
+        if name in seen or "__tmp" in name:
+            continue
+        if _parse_ohlcv_table_name(name) is None:
+            continue
+        seen.add(name)
+        ordered.append(name)
+        if len(ordered) >= cap:
+            break
+    return ordered
 
 
 def _load_recent_mfe_training_samples(timeframe: str, days: int = 30):
     tf = str(timeframe).upper()
+    since = utc_date_days_ago_str(int(days))
     conn = get_connection(DB_PATH, read_only=True)
-    q = """
-        SELECT market_type, symbol, timeframe, entry_date, mfe
-        FROM bitget_forward_trades
-        WHERE status LIKE 'CLOSED%'
-          AND UPPER(timeframe)=?
-          AND DATE(entry_date) >= DATE('now', ?)
-          AND COALESCE(mfe, 0) > 0
-    """
-    trades = pd.read_sql(q, conn, params=(tf, f"-{int(days)} day"))
+    q, params = forward_data_miner_mfe_training_sql(timeframe=tf, since_date=since)
+    trades = pd.read_sql(q, conn, params=params)
     samples = []
     if trades.empty:
         conn.close()
@@ -299,9 +363,12 @@ def _load_recent_mfe_training_samples(timeframe: str, days: int = 30):
     for _, r in trades.iterrows():
         tbl = _table_name(r["market_type"], r["symbol"], r["timeframe"])
         try:
+            entry_day = str(r["entry_date"])[:10]
             h = pd.read_sql(
-                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC',
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_entry_window_sql(bar_limit=OHLCV_SIGNAL_BAR_LIMIT, lookback_days=OHLCV_ENTRY_LOOKBACK_DAYS)}",
                 conn,
+                params=(entry_day,),
             )
         except Exception:
             continue
@@ -315,14 +382,17 @@ def _load_recent_mfe_training_samples(timeframe: str, days: int = 30):
         if pd.isna(entry_dt):
             continue
         samples.append((h, entry_dt, float(r.get("mfe", 0.0) or 0.0)))
+        del h
+        flush_gc(label=GC_AFTER_OHLCV_BATCH)
     conn.close()
+    flush_gc(label="mfe_samples_loaded")
     return samples
 
 
 def evolve_bitget_ast_formulas(timeframe: str = "1D"):
     samples = _load_recent_mfe_training_samples(timeframe=timeframe, days=30)
     if not samples:
-        print(f"⚠️ No recent 30d MFE samples for TF {timeframe}.")
+        logger.warning("No recent 30d MFE samples for TF %s", timeframe)
         return
 
     def mfe_ic_for_formula(formula: str):
@@ -383,7 +453,7 @@ def evolve_bitget_ast_formulas(timeframe: str = "1D"):
         push_formula(generate_random_alpha_formula())
 
     if not scored:
-        print("⚠️ No valid evolved alpha formula produced.")
+        logger.warning("No valid evolved alpha formula produced")
         return
     scored.sort(key=lambda x: x[1], reverse=True)
     top = scored[:3]
@@ -393,46 +463,72 @@ def evolve_bitget_ast_formulas(timeframe: str = "1D"):
     cfg["BITGET_EVOLVED_ALPHA_TIMEFRAME"] = str(timeframe).upper()
     cfg["BITGET_EVOLVED_ALPHA_FIT_TARGET"] = "MFE_30D"
     cfg["BITGET_EVOLVED_ALPHA_SAMPLE_SIZE"] = int(len(samples))
-    cfg["BITGET_EVOLVED_ALPHA_UPDATED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cfg["BITGET_EVOLVED_ALPHA_UPDATED_AT"] = utc_datetime_str()
     save_config_atomic(cfg)
-    print(f"✅ Bitget AST alpha evolution complete for {timeframe} (target=MFE_30D).")
+    del samples
+    del scored
+    flush_gc(label=GC_AFTER_AST_EVOLUTION)
+    logger.info(
+        "Bitget AST alpha evolution complete for %s (target=MFE_30D)",
+        timeframe,
+    )
 
 
 def build_supernova_csv():
     if not os.path.exists(DB_PATH):
         return 0
     conn = get_connection(DB_PATH, read_only=True)
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%__tmp%'").fetchall()
+    tables = _resolve_cluster_mining_tables(conn, max_tables=SUPERNOVA_CLUSTER_MAX_TABLES)
     out = []
-    for (tbl,) in rows:
-        if not tbl.startswith("BITGET_") or "__tmp" in tbl:
-            continue
-        parts = tbl.split("_")
-        if len(parts) < 5:
-            continue
-        tf = parts[-1].upper()
-        symbol = "_".join(parts[2:-1])
-        df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', conn)
-        if len(df) < 240:
-            continue
-        df["Date"] = pd.to_datetime(df["Date"])
-        df = df.set_index("Date")
-        dna = extract_dna_from_df(df, tf)
-        if dna is None:
-            continue
-        out.append(
-            {
-                "종목코드": symbol,
-                "시장": parts[1],
-                "랭크": f"MTF_{tf}",
-                "[D_Day_당일] 평균_CPV": dna["cpv"],
-                "[D_Day_당일] 평균_진짜양봉(TB)": dna["tb"],
-                "[D_Day_당일] 평균_응축에너지(BBE)": dna["bbe"],
-                "[D_Day_당일] 진모멘텀(TML)": dna["tml"],
-                "[D_Day_당일] 평균_시장강도(RS)": dna["rs"],
-            }
-        )
-    conn.close()
+    min_bars = int(SUPERNOVA_CLUSTER_MIN_BARS)
+    out_cap = int(SUPERNOVA_CLUSTER_OUT_MAX_ROWS)
+    gc_every = max(1, int(SUPERNOVA_CLUSTER_GC_EVERY_N))
+    try:
+        for idx, tbl in enumerate(tables):
+            if len(out) >= out_cap:
+                break
+            parsed = _parse_ohlcv_table_name(tbl)
+            if parsed is None:
+                continue
+            market, symbol, tf = parsed
+            try:
+                df = pd.read_sql(
+                    f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                    f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_SIGNAL_BAR_LIMIT)}",
+                    conn,
+                )
+            except Exception:
+                continue
+            if not df.empty:
+                df = df.sort_values("Date")
+            if len(df) < min_bars:
+                del df
+                continue
+            df["Date"] = pd.to_datetime(df["Date"])
+            df = df.set_index("Date")
+            dna = extract_dna_from_df(df, tf)
+            del df
+            if dna is None:
+                if (idx + 1) % gc_every == 0:
+                    flush_gc(label=GC_AFTER_OHLCV_BATCH)
+                continue
+            out.append(
+                {
+                    "종목코드": symbol,
+                    "시장": market,
+                    "랭크": f"MTF_{tf}",
+                    "[D_Day_당일] 평균_CPV": dna["cpv"],
+                    "[D_Day_당일] 평균_진짜양봉(TB)": dna["tb"],
+                    "[D_Day_당일] 평균_응축에너지(BBE)": dna["bbe"],
+                    "[D_Day_당일] 진모멘텀(TML)": dna["tml"],
+                    "[D_Day_당일] 평균_시장강도(RS)": dna["rs"],
+                }
+            )
+            if (idx + 1) % gc_every == 0:
+                flush_gc(label=GC_AFTER_OHLCV_BATCH)
+    finally:
+        conn.close()
+        flush_gc(label=GC_AFTER_OHLCV_BATCH)
     if not out:
         return 0
     pd.DataFrame(out).to_csv(CSV_PATH, index=False, encoding="utf-8-sig")
@@ -442,7 +538,7 @@ def build_supernova_csv():
 def run_cluster_mining():
     n = build_supernova_csv()
     if n == 0:
-        print("No supernova samples to mine.")
+        logger.info("No supernova samples to mine")
         return
     df = pd.read_csv(CSV_PATH)
     target_features = [
@@ -454,39 +550,42 @@ def run_cluster_mining():
     ]
     clean_df = df.dropna(subset=target_features).copy()
     if len(clean_df) < 10:
-        print("Insufficient clean samples for KMeans.")
+        logger.warning("Insufficient clean samples for KMeans")
         return
 
-    X = clean_df[target_features].values
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-    clean_df["Cluster"] = kmeans.fit_predict(X_scaled)
+    with heavy_data_cycle(GC_AFTER_CLUSTER_MINING):
+        X = clean_df[target_features].values
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+        clean_df["Cluster"] = kmeans.fit_predict(X_scaled)
 
-    mined = {}
-    for i in range(3):
-        cdf = clean_df[clean_df["Cluster"] == i]
-        if cdf.empty:
-            continue
-        mined[f"CLUSTER_{i+1}"] = {
-            "cpv_min": float(round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.10), 4)),
-            "cpv_max": float(round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.90), 4)),
-            "tb_min": float(round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.10), 4)),
-            "tb_max": float(round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.90), 4)),
-            "bbe_min": float(round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.10), 4)),
-            "bbe_max": float(round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.90), 4)),
-            "tml_min": float(round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.10), 4)),
-            "tml_max": float(round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.90), 4)),
-            "rs_min": float(round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.10), 4)),
-            "rs_max": float(round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.90), 4)),
-            "sample_size": int(len(cdf)),
-        }
+        mined = {}
+        for i in range(3):
+            cdf = clean_df[clean_df["Cluster"] == i]
+            if cdf.empty:
+                continue
+            mined[f"CLUSTER_{i+1}"] = {
+                "cpv_min": float(round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.10), 4)),
+                "cpv_max": float(round(cdf["[D_Day_당일] 평균_CPV"].quantile(0.90), 4)),
+                "tb_min": float(round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.10), 4)),
+                "tb_max": float(round(cdf["[D_Day_당일] 평균_진짜양봉(TB)"].quantile(0.90), 4)),
+                "bbe_min": float(round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.10), 4)),
+                "bbe_max": float(round(cdf["[D_Day_당일] 평균_응축에너지(BBE)"].quantile(0.90), 4)),
+                "tml_min": float(round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.10), 4)),
+                "tml_max": float(round(cdf["[D_Day_당일] 진모멘텀(TML)"].quantile(0.90), 4)),
+                "rs_min": float(round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.10), 4)),
+                "rs_max": float(round(cdf["[D_Day_당일] 평균_시장강도(RS)"].quantile(0.90), 4)),
+                "sample_size": int(len(cdf)),
+            }
 
     cfg = load_config()
     cfg["LIVE_CLUSTER_TEMPLATES"] = mined
-    cfg["LIVE_CLUSTER_UPDATED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cfg["LIVE_CLUSTER_UPDATED_AT"] = utc_datetime_str()
     save_config_atomic(cfg)
-    print(f"KMeans mining complete: {len(mined)} clusters")
+    del df
+    del clean_df
+    logger.info("KMeans mining complete: %s clusters", len(mined))
 
 
 def run_bitget_data_miner(timeframes=None):
@@ -497,8 +596,9 @@ def run_bitget_data_miner(timeframes=None):
     try:
         run_cluster_mining()
     except Exception as exc:
-        print(f"⚠️ cluster mining skipped: {exc}")
-    print("🚀 bitget_data_miner run complete.")
+        log_exception(logger, "cluster mining skipped: %s", exc)
+    logger.info("bitget_data_miner run complete")
+    flush_gc(label="data_miner_complete")
 
 
 if __name__ == "__main__":

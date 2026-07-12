@@ -1,15 +1,16 @@
 import json
 import os
 import sqlite3
-from datetime import datetime
 from typing import Any, Dict, Optional
 
-import requests
-
-from bitget.rate_limit_guard import throttle
-
+from bitget.infra.bounded_reads import macro_daily_last_row_sql
+from bitget.infra.clock import utc_date_key
 from bitget.infra.data_paths import alt_data_db_path
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.network_retry import http_get
 from bitget.infra.shared_db_connector import get_connection
+
+logger = get_logger("bitget.alt_data_miner")
 
 
 def init_alt_db():
@@ -34,8 +35,15 @@ def init_alt_db():
 
 
 def _fetch_global():
-    throttle("http.coingecko.global", 0.35)
-    g = requests.get("https://api.coingecko.com/api/v3/global", timeout=15).json().get("data", {})
+    res = http_get(
+        "https://api.coingecko.com/api/v3/global",
+        op="alt.coingecko.global",
+        throttle_key="http.coingecko.global",
+        throttle_interval_sec=0.35,
+        timeout=15.0,
+        swallow=False,
+    )
+    g = res.json().get("data", {})
     btc_dom = float(g.get("market_cap_percentage", {}).get("btc", 0.0) or 0.0)
     total_mc = float(g.get("total_market_cap", {}).get("usd", 0.0) or 0.0)
     mc_24h = float(g.get("market_cap_change_percentage_24h_usd", 0.0) or 0.0)
@@ -43,11 +51,15 @@ def _fetch_global():
 
 
 def _fetch_prices():
-    throttle("http.coingecko.simple_price", 0.35)
-    p = requests.get(
+    res = http_get(
         "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
-        timeout=15,
-    ).json()
+        op="alt.coingecko.simple_price",
+        throttle_key="http.coingecko.simple_price",
+        throttle_interval_sec=0.35,
+        timeout=15.0,
+        swallow=False,
+    )
+    p = res.json()
     btc = float(p.get("bitcoin", {}).get("usd", 0.0) or 0.0)
     eth = float(p.get("ethereum", {}).get("usd", 0.0) or 0.0)
     ratio = (eth / btc) if btc > 0 else 0.0
@@ -61,7 +73,7 @@ def _load_last_row() -> Optional[Dict[str, Any]]:
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("SELECT * FROM macro_daily ORDER BY date DESC LIMIT 1").fetchone()
+        row = conn.execute(macro_daily_last_row_sql()).fetchone()
         return {k: row[k] for k in row.keys()} if row else None
     finally:
         conn.close()
@@ -70,11 +82,12 @@ def _load_last_row() -> Optional[Dict[str, Any]]:
 def run_once() -> Optional[Dict[str, Any]]:
     """Live fetch + DB upsert. 실패 시 None (hydrate가 lookback 처리)."""
     init_alt_db()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_date_key()
     try:
         btc_dom, total_mc, mc_24h = _fetch_global()
         btc_px, eth_px, eth_btc = _fetch_prices()
-    except Exception:
+    except Exception as e:
+        log_exception(logger, "alt-data live fetch failed: %s", e)
         return None
 
     path = alt_data_db_path()
@@ -102,14 +115,16 @@ def run_once() -> Optional[Dict[str, Any]]:
 
 
 def run_alternative_data_mining():
-    print("📡 [Bitget Alt Data Miner] 크립토 거시 대체데이터 수집...")
+    logger.info("[alt-data] crypto macro alternative data fetch")
     row = run_once()
     if not row:
-        print("⚠️ 외부 데이터 수집 실패")
+        logger.warning("external alt-data fetch failed")
         return {"ok": False}
-    print(
-        f"✅ 저장 완료: BTC.D={row['btc_dominance']:.2f}% | "
-        f"ETH/BTC={row['eth_btc_ratio']:.5f} | MC24h={row['market_cap_change_24h']:+.2f}%"
+    logger.info(
+        "alt-data saved: BTC.D=%.2f%% ETH/BTC=%.5f MC24h=%+.2f%%",
+        row["btc_dominance"],
+        row["eth_btc_ratio"],
+        row["market_cap_change_24h"],
     )
     return {"ok": True, "row": row}
 

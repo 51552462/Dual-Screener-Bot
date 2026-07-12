@@ -1,16 +1,26 @@
 import json
 import os
 import sqlite3
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
+import memory_bounds
+
 from bitget.config_hub import load_config
+from bitget.infra.bounded_reads import sqlite_bitget_ohlcv_tables_sql
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.logging_setup import get_logger
+from bitget.infra.memory_policy import (
+    GC_AFTER_BACKTEST_TABLE,
+    TIME_MACHINE_MAX_BARS_PER_TABLE,
+    TIME_MACHINE_MAX_TABLES,
+)
 from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
+logger = get_logger("bitget.time_machine_backtester")
 
 CRASH_PERIODS = {
     "LUNA_CRASH_2022": {"start": "2022-05-01", "end": "2022-06-15"},
@@ -19,9 +29,12 @@ CRASH_PERIODS = {
 }
 
 
-def _load_tables(conn):
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'BITGET_%'").fetchall()
-    return [r[0] for r in rows if any(tf in r[0] for tf in ("_1D", "_4H", "_2H", "_1H"))]
+def _load_tables(conn, *, max_tables: int | None = None):
+    cap = int(max_tables if max_tables is not None else TIME_MACHINE_MAX_TABLES)
+    sql, params = sqlite_bitget_ohlcv_tables_sql(limit=cap)
+    rows = conn.execute(sql, params).fetchall()
+    tfs = ("_1D", "_4H", "_2H", "_1H")
+    return [r[0] for r in rows if any(tf in r[0] for tf in tfs)]
 
 
 def _extract_symbol(table_name: str):
@@ -48,12 +61,24 @@ def run_time_machine_backtest(period_key="FTX_COLLAPSE_2022", leverage=3.0):
     results = []
     for tbl in tables:
         try:
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close FROM "{tbl}" ORDER BY Date ASC', conn)
+            range_sql, range_params = memory_bounds.ohlcv_date_range_sql(
+                start=period["start"],
+                end=period["end"],
+                bar_limit=TIME_MACHINE_MAX_BARS_PER_TABLE,
+            )
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close FROM "{tbl}"{range_sql}',
+                conn,
+                params=range_params,
+            )
             if len(df) < 50:
+                del df
                 continue
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-            test_df = df[(df["Date"] >= period["start"]) & (df["Date"] <= period["end"])].copy()
+            test_df = df.dropna(subset=["Date"]).copy()
             if len(test_df) < 20:
+                del df
+                del test_df
                 continue
             symbol = _extract_symbol(tbl)
             for side in ("LONG", "SHORT"):
@@ -91,12 +116,16 @@ def run_time_machine_backtest(period_key="FTX_COLLAPSE_2022", leverage=3.0):
                         "leverage": float(leverage),
                     }
                 )
+            del df
+            del test_df
+            flush_gc(label=GC_AFTER_BACKTEST_TABLE)
         except Exception:
             continue
     conn.close()
+    flush_gc(label="backtest_complete")
 
     if not results:
-        print("⚠️ 테스트 가능한 데이터가 없습니다.")
+        logger.warning("time machine: no testable data for period=%s", period_key)
         return pd.DataFrame()
 
     res = pd.DataFrame(results)
@@ -107,7 +136,16 @@ def run_time_machine_backtest(period_key="FTX_COLLAPSE_2022", leverage=3.0):
         wr = (sub["final_ret"] > 0).mean() * 100.0
         liq_rate = sub["liquidated"].mean() * 100.0
         avg_ret = sub["final_ret"].mean()
-        print(f"[{period_key}] {side} | 승률 {wr:.2f}% | 평균RET {avg_ret:+.2f}% | 강제청산율 {liq_rate:.2f}%")
+        logger.info(
+            "[%s] %s | win=%.2f%% | avg_ret=%+.2f%% | liq=%.2f%%",
+            period_key,
+            side,
+            wr,
+            avg_ret,
+            liq_rate,
+        )
+    del results
+    flush_gc(label="backtest_result_frame")
     return res
 
 

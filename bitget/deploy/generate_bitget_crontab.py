@@ -26,9 +26,11 @@ from bitget.bitget_scan_schedule import (  # noqa: E402
     SCHEDULE_WEEKDAYS,
     SPOT_SCAN_SLOTS,
 )
+from bitget.infra.logging_setup import get_logger  # noqa: E402
 
 DEFAULT_INSTALL_ROOT = "/home/ubuntu/dante_bots/Dual-Screener-Bot"
 CRON_USER = "ubuntu"
+logger = get_logger("bitget.deploy.generate_bitget_crontab")
 
 
 def _cron_line(minute: int, hour: int, dow: str, command: str, install_root: str) -> str:
@@ -74,7 +76,8 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         f"# --- Ops (non-scan, 24/7) ---",
         "# track */15 (light) · watchdog */5 (light) keep running through stock hours.",
         "# reconcile :53 · data-refresh :43 — off stock :x0/:x5 minutes; data-refresh",
-        "# also yields to factory. daily-audit/health/weekly run in the KST-pre-open idle window.",
+        "# also yields to factory. daily-audit/health/weekly/db-backup run in the "
+        "KST-pre-open idle window.",
         "# canary */15 (light, public API only, no DB/lock): keeps bitget_canary_state.json",
         "# fresh (<=15min) so the stock regime engine's 90-min staleness gate always passes.",
         "*/15 * * * *  "
@@ -85,6 +88,9 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --reconcile",
         "43 */4 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --data-refresh",
+        "# Integrity backup @00:05 UTC — before health/daily-audit; PRAGMA + archive prune",
+        "5 0 * * *  "
+        + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --db-backup",
         "20 0 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --daily-audit",
         "30 0 * * 1  "
@@ -150,7 +156,7 @@ def write_template(
         encoding="utf-8",
         newline="\n",
     )
-    print(f"OK wrote {path}" + (" (queue mode)" if use_queue else ""))
+    logger.info("OK wrote %s%s", path, " (queue mode)" if use_queue else "")
 
 
 def check_template(
@@ -160,17 +166,17 @@ def check_template(
     path = _deploy_path(root)
     want = render_bitget_crontab(install_root, use_queue=use_queue)
     if not path.is_file():
-        print(f"ERROR: missing {path}", file=sys.stderr)
+        logger.error("ERROR: missing %s", path)
         return 1
     got = path.read_text(encoding="utf-8")
     if got != want:
-        print(
-            f"ERROR: drift: {path} does not match bitget_scan_schedule.py "
-            f"(run: python bitget/deploy/generate_bitget_crontab.py)",
-            file=sys.stderr,
+        logger.error(
+            "ERROR: drift: %s does not match bitget_scan_schedule.py "
+            "(run: python bitget/deploy/generate_bitget_crontab.py)",
+            path,
         )
         return 1
-    print(f"OK {path} matches SSOT")
+    logger.info("OK %s matches SSOT", path)
     return 0
 
 

@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import low_ram_sqlite_pragmas
+import memory_bounds
 import sqlite_schema_guard
 from factory_data_paths import factory_data_dir
 
@@ -32,6 +33,21 @@ OPS_HEALTH_DB_PATH = OPS_EVENTS_DB_PATH
 
 _write_lock = threading.RLock()
 _MAX_PAYLOAD_CHARS = 32000
+_ops_retention_gate = memory_bounds.ThrottledCallback(interval_sec=3600.0)
+_OPS_EVENTS_KEEP_DAYS = 60
+
+
+def _maybe_prune_ops_events(conn: sqlite3.Connection) -> None:
+    if not _ops_retention_gate.due():
+        return
+    try:
+        n = memory_bounds.prune_ops_events_older_than_days(
+            conn, keep_days=_OPS_EVENTS_KEEP_DAYS
+        )
+        if n:
+            conn.commit()
+    except Exception:
+        pass
 
 
 def _utc_now_iso() -> str:
@@ -105,6 +121,7 @@ def insert_ops_event(
                         """,
                         (ts_use, comp, sev, ev, blob),
                     )
+                    _maybe_prune_ops_events(conn)
                     conn.commit()
                 finally:
                     conn.close()

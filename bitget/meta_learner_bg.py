@@ -7,10 +7,11 @@ import os
 import sqlite3
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from bitget.forward.shared import DB_PATH
+from bitget.infra.clock import parse_utc_iso, utc_date_key, utc_datetime_str, utc_now
 from bitget.infra.data_paths import bitget_data_dir
 
 TRUST_MATRIX_FILENAME = "BITGET_META_TRUST_MATRIX.json"
@@ -66,7 +67,7 @@ def load_trust_matrix() -> Dict[str, Any]:
 def save_trust_matrix(state: Dict[str, Any]) -> bool:
     path = trust_matrix_path()
     state = dict(state)
-    state["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    state["updated_at"] = utc_datetime_str()
     state["w_external"] = round(1.0 - float(state.get("w_internal", W_INIT)), 6)
     try:
         with _LOCK:
@@ -186,8 +187,10 @@ def run_bitget_meta_learning_cycle(
     *,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    now = now or datetime.utcnow()
-    today = now.strftime("%Y-%m-%d")
+    now = now or utc_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    today = utc_date_key(anchor=now)
     db_path = DB_PATH
 
     with _LOCK:
@@ -220,16 +223,15 @@ def run_bitget_meta_learning_cycle(
                 for ev in m.get("pending_events", []):
                     if not isinstance(ev, dict) or not ev.get("date"):
                         continue
-                    try:
-                        ev_date = datetime.strptime(str(ev["date"])[:10], "%Y-%m-%d")
-                    except ValueError:
+                    ev_dt = parse_utc_iso(str(ev["date"])[:10])
+                    if ev_dt is None:
                         continue
-                    mature_on = ev_date + timedelta(days=DIVERGENCE_EVAL_DAYS)
+                    mature_on = ev_dt + timedelta(days=DIVERGENCE_EVAL_DAYS)
                     if now < mature_on:
                         still_pending.append(ev)
                         continue
-                    start = ev["date"]
-                    end = mature_on.strftime("%Y-%m-%d")
+                    start = str(ev["date"])[:10]
+                    end = utc_date_key(anchor=mature_on)
                     fwd_pnl, n = _forward_net_pnl_pct(conn, start, end)
                     winner = _winner_of(ev.get("internal_dir", ""), ev.get("external_dir", ""), fwd_pnl)
                     w_before = float(m["w_internal"])

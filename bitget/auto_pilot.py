@@ -2,11 +2,28 @@ import json
 import os
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
-from bitget.infra.logging_setup import setup_logging, get_logger
+import memory_bounds
+
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.clock import (
+    parse_utc_iso,
+    utc_date_days_ago_str,
+    utc_date_key,
+    utc_datetime_str_tz,
+    utc_now,
+)
+from bitget.infra.bounded_reads import (
+    forward_autopilot_analysis_closed_sql,
+    forward_incubator_judge_closed_sql,
+    forward_weekly_flow_closed_sql,
+    forward_weekly_market_pnl_sum_sql,
+    forward_weekly_tf_rotation_sql,
+)
+from bitget.infra.memory_policy import GC_AFTER_GMM_FIT, OHLCV_REGIME_BAR_LIMIT
+from bitget.infra.logging_setup import setup_logging, get_logger, log_exception
 from bitget.config_hub import load_config as hub_load_config, save_config_atomic as hub_save_config_atomic
 from bitget.schedule_lock import acquire as schedule_acquire
 
@@ -63,8 +80,14 @@ def _ensure_defaults(cfg):
 def _load_bench_1d(conn, symbol):
     for tbl in (f"BITGET_FUT_{symbol}_1D", f"BITGET_SPOT_{symbol}_1D"):
         try:
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close FROM "{tbl}" ORDER BY Date ASC', conn)
-            if len(df) >= 220:
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_REGIME_BAR_LIMIT)}",
+                conn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
+            if len(df) >= 200:
                 return df
         except Exception:
             continue
@@ -188,7 +211,7 @@ def _sample_thompson_kelly(df_closed: pd.DataFrame, base_kelly: float):
             "beta": beta,
             "sample": round(ts_sample, 4),
             "pf": round(pf_val, 4),
-            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "updated_at": utc_datetime_str_tz(),
         }
     return out
 
@@ -210,13 +233,13 @@ def _alpha_half_life_guard(cfg, df_closed: pd.DataFrame):
         "early_pf": round(float(early_pf), 4),
         "late_pf": round(float(late_pf), 4),
         "ratio": round(float(ratio), 4),
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "updated_at": utc_datetime_str_tz(),
     }
     return cfg
 
 
 def _synthetic_blackswan_gate(cfg, df_closed: pd.DataFrame):
-    gate = {"enabled": False, "reason": "", "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
+    gate = {"enabled": False, "reason": "", "updated_at": utc_datetime_str_tz()}
     if df_closed is None or df_closed.empty:
         cfg["BLACKSWAN_GATE"] = gate
         return cfg
@@ -254,7 +277,7 @@ def _apply_circuit_breaker(cfg, df_closed: pd.DataFrame):
         "active": bool(trigger),
         "max_drawdown_usdt": round(max_dd, 2),
         "sample_trades": int(len(recent)),
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "updated_at": utc_datetime_str_tz(),
     }
     cfg["CIRCUIT_BREAKER_STATE"] = dict(cfg["CLOSED_TRADE_CB_ADVISORY"])
     if trigger:
@@ -263,21 +286,10 @@ def _apply_circuit_breaker(cfg, df_closed: pd.DataFrame):
 
 
 def _update_tail_risk_fund(cfg):
-    for market in ("SPOT", "FUTURES"):
-        t_key = f"TREASURY_{market}_USDT"
-        f_key = f"TAIL_RISK_FUND_{market}"
-        treasury = float(cfg.get(t_key, 0.0) or 0.0)
-        fund = float(cfg.get(f_key, 0.0) or 0.0)
-        target = max(0.0, treasury * 0.015)
-        transfer = min(max(0.0, target - fund), treasury)
-        treasury -= transfer
-        fund += transfer
-        if str(cfg.get("CURRENT_REGIME_KEY", "")).upper() == "BEAR" and float(cfg.get("BTC_ATR_PCT", 0.0)) >= 6.0 and fund > 0:
-            treasury += fund * 20.0
-            fund = 0.0
-        cfg[t_key] = round(max(0.0, treasury), 4)
-        cfg[f_key] = round(max(0.0, fund), 4)
-    return cfg
+    """Delegate to trading.tail_risk_gate SSOT (accrual + 1:1 crisis release; never ×N mint)."""
+    from bitget.trading.tail_risk_gate import accrue_tail_risk_fund
+
+    return accrue_tail_risk_fund(cfg)
 
 
 def _eq_oos_bootstrap_floor(ret_series):
@@ -358,8 +370,8 @@ def _engine6_oos_parallel_champion(cfg, df_closed: pd.DataFrame, report_lines: l
     """
     report_lines.append("<b>[평행우주 A/B/C · 엔진6 OOS 및 챔피언 스무딩]</b>")
     defaults = _default_param_bundle()
-    now_u = datetime.now(timezone.utc)
-    oos_barrier = (now_u - timedelta(days=14)).strftime("%Y-%m-%d")
+    now_u = utc_now()
+    oos_barrier = utc_date_days_ago_str(14, anchor=now_u)
 
     if df_closed is None or df_closed.empty:
         report_lines.append("▪️ 청산 표본 없음 — 엔진6 스킵.")
@@ -485,9 +497,14 @@ def run_autonomous_analysis():
     ]
 
     conn = get_connection(DB_PATH, read_only=True)
-    df_closed = pd.read_sql("SELECT * FROM bitget_forward_trades WHERE status LIKE 'CLOSED%'", conn)
+    n_closed_row = conn.execute(
+        "SELECT COUNT(*) FROM bitget_forward_trades WHERE status LIKE 'CLOSED%'"
+    ).fetchone()
+    n_closed_total = int(n_closed_row[0] or 0) if n_closed_row else 0
+    q_closed, p_closed = forward_autopilot_analysis_closed_sql()
+    df_closed = pd.read_sql(q_closed, conn, params=p_closed)
     conn.close()
-    n_closed = len(df_closed) if df_closed is not None else 0
+    n_closed = n_closed_total
 
     cfg = detect_coin_regime(cfg)
     report_lines.append("<b>[1. 동적 국면 판독 — Spot/Futures 레짐]</b>")
@@ -579,6 +596,12 @@ def run_autonomous_analysis():
     report_lines.append(
         f"▪️ Futures 국고 / 테일: {cfg.get('TREASURY_FUTURES_USDT', 0):,.2f} / {cfg.get('TAIL_RISK_FUND_FUTURES', 0):,.2f} USDT"
     )
+    _tail_act = cfg.get("TAIL_RISK_LAST_ACTION") or {}
+    if _tail_act.get("actions"):
+        report_lines.append(
+            f"▪️ 적립/1:1방출: {', '.join(str(a) for a in (_tail_act.get('actions') or [])[:6])}"
+            f"{' · CRISIS' if _tail_act.get('crisis') else ''}"
+        )
     report_lines.append("")
 
     regime = str(cfg.get("CURRENT_REGIME_KEY", "CHOP")).upper()
@@ -591,7 +614,7 @@ def run_autonomous_analysis():
     else:
         kelly = max(0.002, min(0.018, kelly))
     cfg["DYNAMIC_KELLY_RISK"] = round(kelly, 4)
-    cfg["AUTO_PILOT_UPDATED_AT"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    cfg["AUTO_PILOT_UPDATED_AT"] = utc_datetime_str_tz()
 
     report_lines.append("<b>[7. 레짐별 켈리 최종 클램프]</b>")
     report_lines.append(f"▪️ 레짐: <b>{regime}</b> · 클램프 전 {k_pre_clamp*100:.2f}% → 최종 <b>{kelly*100:.2f}%</b>")
@@ -599,7 +622,9 @@ def run_autonomous_analysis():
 
     save_config_atomic(cfg)
     send_telegram_report("\n".join(report_lines))
-    print("Bitget auto pilot autonomous analysis complete.")
+    del df_closed
+    flush_gc(label=GC_AFTER_GMM_FIT)
+    logger.info("Bitget auto pilot autonomous analysis complete")
 
 
 def _judge_incubator_templates(cfg):
@@ -608,10 +633,8 @@ def _judge_incubator_templates(cfg):
         return cfg, "인큐베이터 템플릿 없음"
 
     conn = get_connection(DB_PATH, read_only=True)
-    closed = pd.read_sql(
-        "SELECT sig_type, final_ret FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' AND IFNULL(sig_type,'') LIKE '%INCUBATOR%'",
-        conn,
-    )
+    q_inc, p_inc = forward_incubator_judge_closed_sql()
+    closed = pd.read_sql(q_inc, conn, params=p_inc)
     conn.close()
     if closed.empty:
         return cfg, "인큐베이터 청산 표본 부족"
@@ -632,7 +655,7 @@ def _judge_incubator_templates(cfg):
             promoted.append(name)
             cfg[f"PROMOTED_{name}"] = {
                 "template": dna,
-                "promoted_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "promoted_at": utc_datetime_str_tz(),
                 "wr": round(wr, 4),
                 "pf": round(pf, 4),
             }
@@ -660,7 +683,7 @@ def _run_daily_evolution_batch():
     ok, m = generate_mutant_strategies()
     cfg = _ensure_defaults(load_config())
     cfg, judge_msg = _judge_incubator_templates(cfg)
-    cfg["AUTO_PILOT_DAILY_EVOLUTION_AT"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    cfg["AUTO_PILOT_DAILY_EVOLUTION_AT"] = utc_datetime_str_tz()
     save_config_atomic(cfg)
     send_telegram_msg(
         "🧠 [BITGET DAILY EVOLUTION BATCH]\n"
@@ -677,9 +700,9 @@ def send_weekly_flow_master_report():
     관제탑(bitget_system_config.json) 튜닝 스냅샷을 붙여 텔레그램 발송.
     (주식 V100 리포트와 동등한 역할 / 코인은 24·7 장이므로 월 시작 기준 롤링 7일)
     """
-    now = datetime.now(timezone.utc)
-    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    today_str = now.strftime("%Y-%m-%d")
+    now = utc_now()
+    week_ago = utc_date_days_ago_str(7, anchor=now)
+    today_str = utc_date_key(anchor=now)
     cfg = _ensure_defaults(load_config())
     regime = str(cfg.get("CURRENT_REGIME_KEY", "UNKNOWN"))
     gate = cfg.get("BLACKSWAN_GATE", {}) or {}
@@ -698,27 +721,33 @@ def send_weekly_flow_master_report():
             icon = "🟢" if market_type == "spot" else "🟠"
             report_msg += f"\n{icon} <b>[{market_type.upper()} 일주일 자금·타임프레임 궤적]</b>\n"
             report_msg += "🗓️ <b>[일자별 실현 손익 및 승률 타임라인]</b>\n"
-            cursor = conn.execute(
-                """
-                SELECT exit_date,
-                       SUM((sim_kelly_invest * final_ret) / 100.0) as daily_pnl,
-                       SUM(CASE WHEN final_ret > 0 THEN 1 ELSE 0 END) as wins,
-                       COUNT(*) as total
-                FROM bitget_forward_trades
-                WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                GROUP BY exit_date ORDER BY exit_date ASC
-                """,
-                (market_type, week_ago),
+            q_flow, p_flow = forward_weekly_flow_closed_sql(
+                market_type=market_type,
+                since_date=week_ago,
             )
-            daily_stats = cursor.fetchall()
+            flow_df = pd.read_sql(q_flow, conn, params=p_flow)
             weekly_pnl = 0.0
-            if daily_stats:
-                for e_date, d_pnl, wins, total in daily_stats:
-                    d_pnl = float(d_pnl or 0.0)
+            if not flow_df.empty:
+                invest = pd.to_numeric(flow_df["sim_kelly_invest"], errors="coerce").fillna(0.0)
+                ret = pd.to_numeric(flow_df["final_ret"], errors="coerce").fillna(0.0)
+                flow_df = flow_df.assign(pnl_usdt=invest * ret / 100.0)
+                daily = (
+                    flow_df.groupby("exit_date", dropna=False)
+                    .agg(
+                        daily_pnl=("pnl_usdt", "sum"),
+                        wins=("final_ret", lambda s: (pd.to_numeric(s, errors="coerce") > 0).sum()),
+                        total=("final_ret", "count"),
+                    )
+                    .reset_index()
+                    .sort_values("exit_date")
+                )
+                for row in daily.itertuples(index=False):
+                    d_pnl = float(row.daily_pnl or 0.0)
+                    wins = int(row.wins or 0)
+                    total = int(row.total or 0)
                     d_wr = (float(wins) / float(total) * 100.0) if total else 0.0
                     weekly_pnl += d_pnl
-                    short_date = str(e_date)[5:] if e_date else "--"
+                    short_date = str(row.exit_date)[5:] if row.exit_date else "--"
                     emo = "🔴" if d_pnl < 0 else "🟢"
                     report_msg += (
                         f" {emo} {short_date}: <b>{d_pnl:+,.2f} USDT</b> "
@@ -729,12 +758,11 @@ def send_weekly_flow_master_report():
                 report_msg += " ↳ 이번 구간 청산 데이터가 없습니다.\n"
 
             report_msg += "\n🔄 <b>[주간 주도 타임프레임 진화 궤적]</b>\n"
-            rot_df = pd.read_sql(
-                "SELECT entry_date, timeframe FROM bitget_forward_trades WHERE market_type=? AND entry_date >= ? "
-                "AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%' ORDER BY entry_date ASC",
-                conn,
-                params=(market_type, week_ago),
+            q_rot, p_rot = forward_weekly_tf_rotation_sql(
+                market_type=market_type,
+                since_date=week_ago,
             )
+            rot_df = pd.read_sql(q_rot, conn, params=p_rot)
             if not rot_df.empty:
 
                 def _dominant_tf(s):
@@ -748,21 +776,20 @@ def send_weekly_flow_master_report():
                 report_msg += " ↳ 타임프레임 편입 궤적 데이터가 없습니다.\n"
 
             report_msg += "\n🏆 <b>[구간 MVP 시그널 엔진 TOP3]</b>\n"
-            top = conn.execute(
-                """
-                SELECT sig_type, SUM((sim_kelly_invest * final_ret) / 100.0) as profit, COUNT(*)
-                FROM bitget_forward_trades
-                WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                  AND IFNULL(sig_type, '') NOT LIKE '%INCUBATOR%'
-                GROUP BY sig_type ORDER BY profit DESC LIMIT 3
-                """,
-                (market_type, week_ago),
-            ).fetchall()
-            if top:
-                for i, (sig, pnl, cnt) in enumerate(top):
+            if not flow_df.empty:
+                mvp = (
+                    flow_df.groupby("sig_type", dropna=False)
+                    .agg(profit=("pnl_usdt", "sum"), cnt=("final_ret", "count"))
+                    .sort_values("profit", ascending=False)
+                    .head(3)
+                )
+                for i, (sig, row) in enumerate(mvp.iterrows()):
                     clean_sig = str(sig).split("]")[0] + "]" if "]" in str(sig) else str(sig)[:18]
                     medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉"
-                    report_msg += f" {medal} {clean_sig}: <b>{float(pnl or 0.0):+,.2f} USDT</b> 기여 ({cnt}건)\n"
+                    report_msg += (
+                        f" {medal} {clean_sig}: <b>{float(row['profit'] or 0.0):+,.2f} USDT</b> "
+                        f"기여 ({int(row['cnt'])}건)\n"
+                    )
             else:
                 report_msg += " ↳ MVP 데이터가 없습니다.\n"
 
@@ -797,11 +824,8 @@ def send_weekly_flow_master_report():
             report_msg += "\n"
 
         promo_raw = str(cfg.get("LIVE_A_PROMOTION_DATE", today_str))[:10]
-        try:
-            promo_dt = datetime.strptime(promo_raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            days_live = max(0, (now.date() - promo_dt.date()).days)
-        except ValueError:
-            days_live = 0
+        promo_dt = parse_utc_iso(promo_raw)
+        days_live = max(0, (now.date() - (promo_dt.date() if promo_dt else now.date())).days)
         report_msg += f" ▪️ <b>로직 유지 일수:</b> LIVE 기준 {days_live}일차 (기준일 {promo_raw})\n"
 
     except Exception as e:
@@ -820,15 +844,10 @@ def send_weekly_flow_master_report():
         try:
             conn = get_connection(DB_PATH, read_only=True)
             for mk, var in (("spot", "spot_pnl"), ("futures", "fut_pnl")):
-                row = conn.execute(
-                    """
-                    SELECT SUM((sim_kelly_invest * final_ret) / 100.0)
-                    FROM bitget_forward_trades
-                    WHERE market_type=? AND exit_date >= ? AND status LIKE 'CLOSED%'
-                      AND IFNULL(sig_type,'') NOT LIKE '%INCUBATOR%'
-                    """,
-                    (mk, week_ago),
-                ).fetchone()
+                pnl_q, pnl_p = forward_weekly_market_pnl_sum_sql(
+                    market_type=mk, since_date=week_ago
+                )
+                row = conn.execute(pnl_q, pnl_p).fetchone()
                 val = float((row or (0.0,))[0] or 0.0)
                 if mk == "spot":
                     spot_pnl = val
@@ -864,7 +883,7 @@ def _mark_report_flag(day_key: str, reason: str) -> None:
         flags = {}
     flags[day_key] = {
         "sent": True,
-        "sent_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "sent_at": utc_datetime_str_tz(),
         "reason": reason,
     }
     sorted_days = sorted(flags.keys(), reverse=True)
@@ -881,7 +900,7 @@ def _safe_call_ai_modules_for_report():
         if hasattr(bitget_ai_overseer, "run_ai_auditor"):
             bitget_ai_overseer.run_ai_auditor()
     except Exception as e:
-        print(f"⚠️ [세이프티 넷] bitget_ai_overseer 호출 실패(무시): {e}")
+        log_exception(logger, "[safety-net] bitget_ai_overseer call failed (ignored): %s", e)
 
 
 def _safe_run_satellite(lock_key: str, lock_sec: int, module_name: str, func_name: str, *args, **kwargs):
@@ -893,7 +912,13 @@ def _safe_run_satellite(lock_key: str, lock_sec: int, module_name: str, func_nam
         if callable(fn):
             fn(*args, **kwargs)
     except Exception as e:
-        print(f"⚠️ [세이프티 넷] {module_name}.{func_name} 호출 실패(무시): {e}")
+        log_exception(
+            logger,
+            "[safety-net] %s.%s call failed (ignored): %s",
+            module_name,
+            func_name,
+            e,
+        )
 
 
 def system_main_loop() -> None:

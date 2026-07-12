@@ -4,23 +4,30 @@ PUMP_DNA 선취매 룰 스캐너 → bitget_virtual_trade_history 기록.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
 from typing import Any, Dict, List
 
 import pandas as pd
 
-import bitget.shadow_tracking as bitget_shadow_tracking
-from bitget.pump_forensics import PATTERN_KEYS, load_config, _extract_flags
+import memory_bounds
 
+import bitget.shadow_tracking as bitget_shadow_tracking
+from bitget.infra.bounded_reads import sqlite_bitget_ohlcv_1d_tables_sql
+from bitget.infra.clock import utc_datetime_str
+from bitget.infra.gc_cycle import flush_gc
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.memory_policy import GC_AFTER_OHLCV_BATCH, OHLCV_FORENSICS_BAR_LIMIT
 from bitget.infra.shared_db_connector import get_connection
+from bitget.pump_forensics import PATTERN_KEYS, load_config, _extract_flags
 
 DB_PATH = bitget_shadow_tracking.DB_PATH
 STRATEGY_NAME = "bitget_forensics_pioneer"
+logger = get_logger("bitget.forensics_pioneer")
 
 
 def _load_scan_tables(conn: sqlite3.Connection) -> List[str]:
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'BITGET_%_1D'").fetchall()
-    return [r[0] for r in rows if "BTC_USDT" not in r[0]]
+    sql, params = sqlite_bitget_ohlcv_1d_tables_sql(exclude_btc=True)
+    rows = conn.execute(sql, params).fetchall()
+    return [r[0] for r in rows]
 
 
 def _required_rules(cfg: Dict[str, Any]) -> List[str]:
@@ -41,11 +48,11 @@ def _matched(flags: Dict[str, bool], required: List[str]) -> bool:
 
 
 def run_forensics_pioneer():
-    print("🔭 [Bitget Forensics Pioneer] 선취매 룰 스캔 시작...")
+    logger.info("[Forensics Pioneer] preemptive rule scan start")
     cfg = load_config()
     required = _required_rules(cfg)
     if not required:
-        print("⚠️ PUMP_DNA 합의 룰 없음, 스캔 스킵.")
+        logger.warning("PUMP_DNA consensus rules missing — scan skip")
         return
 
     conn = get_connection(DB_PATH, read_only=True)
@@ -54,7 +61,13 @@ def run_forensics_pioneer():
     for tbl in tables:
         try:
             symbol = "_".join(tbl.split("_")[2:-1])
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', conn)
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_FORENSICS_BAR_LIMIT)}",
+                conn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
             if len(df) < 25:
                 continue
             t_idx = len(df) - 1
@@ -64,7 +77,7 @@ def run_forensics_pioneer():
 
             cur = conn.cursor()
             bitget_shadow_tracking.init_shadow_tables(cur)
-            logged_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            logged_at = utc_datetime_str()
             tags = "PUMP_DNA_PREEMPTIVE"
             bitget_shadow_tracking.insert_virtual_trade_row(
                 cur,
@@ -80,10 +93,14 @@ def run_forensics_pioneer():
             )
             conn.commit()
             hits += 1
-        except Exception:
+            del df
+            flush_gc(label=GC_AFTER_OHLCV_BATCH)
+        except Exception as e:
+            log_exception(logger, "forensics pioneer table skip %s: %s", tbl, e)
             continue
     conn.close()
-    print(f"✅ Pioneer 기록 완료: {hits}건")
+    flush_gc(label="forensics_pioneer_complete")
+    logger.info("Pioneer records complete: %s", hits)
 
 
 if __name__ == "__main__":

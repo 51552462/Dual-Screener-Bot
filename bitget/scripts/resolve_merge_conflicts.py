@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from bitget.infra.logging_setup import get_logger
+
+logger = get_logger("bitget.scripts.resolve_merge_conflicts")
+
 
 def resolve_head(text: str) -> str:
     out: list[str] = []
@@ -42,7 +46,7 @@ def main() -> None:
             if "<<<<<<< HEAD" not in text:
                 continue
             path.write_text(resolve_head(text), encoding="utf-8")
-            print(f"resolved {path.relative_to(root)}")
+            logger.info("resolved %s", path.relative_to(root))
 
 
 if __name__ == "__main__":

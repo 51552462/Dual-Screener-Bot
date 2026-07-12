@@ -176,6 +176,15 @@ def apply_meta_kelly_merge(
     except (TypeError, ValueError):
         pass
 
+    # Evolutionary doomsday shape dampening (stock meta_governor_consumer parity)
+    if sys_config is not None:
+        try:
+            from doomsday_dampener import apply_doomsday_dampening
+
+            out = apply_doomsday_dampening(out, sys_config=sys_config, meta=meta)
+        except Exception:
+            pass
+
     ns_map = meta.get("META_NS_KELLY_MULT")
     if isinstance(ns_map, dict) and ns_prefix in ns_map:
         try:

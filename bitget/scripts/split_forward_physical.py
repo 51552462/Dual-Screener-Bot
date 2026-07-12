@@ -5,8 +5,11 @@ import ast
 import textwrap
 from pathlib import Path
 
+from bitget.infra.logging_setup import get_logger
+
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "forward" / "_core.py"
+logger = get_logger("bitget.scripts.split_forward_physical")
 
 # Functions to skip (duplicates / moved to shared already)
 SKIP = {
@@ -244,7 +247,7 @@ def main() -> None:
             out = HEADERS[mod] + "".join(chunks)
         path = ROOT / "forward" / f"{mod}.py"
         path.write_text(out, encoding="utf-8")
-        print(f"wrote {path} ({len(out.splitlines())} lines)")
+        logger.info("wrote %s (%s lines)", path, len(out.splitlines()))
 
     facade = '''"""Backward-compat aggregate — prefer `bitget.forward.*` submodules."""
 from bitget.forward.execution_bridge import (
@@ -282,7 +285,7 @@ __all__ = [
 ]
 '''
     CORE.write_text(facade, encoding="utf-8")
-    print(f"wrote facade {CORE}")
+    logger.info("wrote facade %s", CORE)
 
 
 if __name__ == "__main__":

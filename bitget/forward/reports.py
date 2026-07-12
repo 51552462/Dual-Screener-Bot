@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+
+import memory_bounds
+
+from bitget.infra.clock import utc_date_key, utc_datetime_str
+from bitget.infra.logging_setup import get_logger, log_exception
 
 from bitget.forward.execution_bridge import (
     build_practitioner_reality_leaderboard,
@@ -42,6 +46,8 @@ from bitget.reports.capital_deathmatch_bg import (
     format_capital_deathmatch_telegram,
 )
 from bitget.reports.canary_panel_bg import format_canary_panel_html
+
+logger = get_logger("bitget.forward.reports")
 
 
 def _norm_market_type(market_type: str) -> str:
@@ -91,8 +97,9 @@ def send_group_practitioner_reports():
             load_meta_state_resolved=load_meta_state_resolved,
             base_seed_usdt=seed,
         )
-        print(f"🧠 [Bitget PIL] 실무자 리포트: {out}")
+        logger.info("[Bitget PIL] practitioner report: %s", out)
     except Exception as ex:
+        log_exception(logger, "[Bitget PIL] practitioner report failed: %s", ex)
         send_telegram_msg(f"⚠️ Bitget PIL 실무자 리포트 에러: {ex}")
 
     try:
@@ -101,7 +108,7 @@ def send_group_practitioner_reports():
         if msg:
             send_telegram_msg(msg)
     except Exception as ex:
-        print(f"⚠️ [Bitget PIL] 실전vs가상 괴리 랭킹 스킵: {ex}")
+        log_exception(logger, "[Bitget PIL] reality leaderboard skipped: %s", ex)
 
 def send_comprehensive_daily_report():
     init_forward_db()
@@ -113,11 +120,8 @@ def send_comprehensive_daily_report():
     for market_type in ["spot", "futures"]:
         mkt = _norm_market_type(market_type)
         m_icon = "🟢" if mkt == "spot" else "🟠"
-        df_all = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE market_type=?",
-            conn,
-            params=(mkt,),
-        )
+        q, q_params = memory_bounds.forward_trades_bounded_sql(market_type=mkt)
+        df_all = pd.read_sql(q, conn, params=q_params)
         # 표본 0건이어도 주식 daily_report 패리티대로 "0건" 리포트를 발송한다 —
         # 여기서 continue 하면 스캔이 아직 진입 기록을 쌓지 못한 시장은 텔레그램에
         # 아무 알림도 뜨지 않아(원인불명 침묵) 장애 감지가 불가능해진다.
@@ -231,13 +235,12 @@ def send_comprehensive_daily_report():
             build_lifecycle_report_block,
             format_lifecycle_section_html,
         )
-        from datetime import timezone as _tz
 
-        lc = build_lifecycle_report_block(meta=meta, sys_config=cfg, now=datetime.now(_tz.utc))
+        lc = build_lifecycle_report_block(meta=meta, sys_config=cfg)
         msg8 = format_lifecycle_section_html(
             lc,
             market_icon=m_icon,
-            today_str=datetime.now(_tz.utc).strftime("%Y-%m-%d"),
+            today_str=utc_date_key(),
         )
         send_telegram_msg(msg8)
         time.sleep(1.0)
@@ -263,6 +266,7 @@ def send_comprehensive_daily_report():
                 send_telegram_msg(gen_block)
                 time.sleep(1.0)
         except Exception as e:
+            log_exception(logger, "[Genesis radar · %s] skipped: %s", mkt, e)
             send_telegram_msg(f"⚠️ [Genesis 레이더 · {mkt.upper()}] 스킵: {str(e)[:72]}")
 
     conn.close()
@@ -279,6 +283,7 @@ def send_comprehensive_daily_report():
             send_telegram_msg(digest_msg)
             time.sleep(1.0)
     except Exception as ex:
+        log_exception(logger, "[evolution digest] skipped: %s", ex)
         send_telegram_msg(f"⚠️ [Δ 진화·튜닝] 스킵: {str(ex)[:72]}")
 
     # [동적 탐험예산 — 7일 롤링 MAB] 챔피언/탐험 자본배분 현황 패널.
@@ -293,6 +298,7 @@ def send_comprehensive_daily_report():
         _budget_state = refresh_exploration_budget_state()
         send_telegram_msg(format_exploration_budget_panel_html(_budget_state))
     except Exception as e:
+        log_exception(logger, "[exploration_budget] refresh failed: %s", e)
         send_telegram_msg(f"⚠️ [자본 배분] exploration_budget 갱신 실패: {e}")
 
     # PIL(실무자 30인)은 pipeline `pil_practitioner_reports` step에서 선행 발송 — 중복 방지.
@@ -310,11 +316,8 @@ def run_deep_dive_analysis(market_type="spot"):
         ctx = BitgetReportContext.build()
 
         conn = get_connection(DB_PATH)
-        df_all = pd.read_sql(
-            "SELECT * FROM bitget_forward_trades WHERE market_type=?",
-            conn,
-            params=(mkt,),
-        )
+        q, q_params = memory_bounds.forward_trades_bounded_sql(market_type=mkt)
+        df_all = pd.read_sql(q, conn, params=q_params)
         conn.close()
 
         if df_all.empty:
@@ -322,7 +325,10 @@ def run_deep_dive_analysis(market_type="spot"):
                 f"⚠️ <b>[{mkt.upper()} Bitget 딥 다이브]</b>\n"
                 "표본 부족 (현재 <b>0</b>건 / 최소 10건)으로 딥다이브 생략."
             )
-            print(skip_msg.replace("<b>", "").replace("</b>", ""))
+            logger.info(
+                "[%s] deep dive skipped: empty sample (0 / min 10)",
+                mkt,
+            )
             send_telegram_msg(skip_msg)
             return
 
@@ -338,7 +344,11 @@ def run_deep_dive_analysis(market_type="spot"):
                 f"표본 부족 (롤링 윈도우 <b>{n_closed}</b>건 / 최소 10건)으로 딥다이브 생략.\n"
                 f"📎 <i>{tk.rolling_cutoff}~{tk.session_anchor} · lag {ctx.lag_for(mkt)}d</i>"
             )
-            print(skip_msg.replace("<b>", "").replace("</b>", ""))
+            logger.info(
+                "[%s] deep dive skipped: rolling closed=%s (min 10)",
+                mkt,
+                n_closed,
+            )
             send_telegram_msg(skip_msg)
             return
 
@@ -420,7 +430,7 @@ def run_deep_dive_analysis(market_type="spot"):
                         "v_energy": row_scalar(row, "v_energy"),
                         "dyn_rs": row_scalar(row, "dyn_rs"),
                         "final_ret": row_scalar(row, "final_ret"),
-                        "recorded_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        "recorded_at": utc_datetime_str(),
                     }
                 )
             # 폭주 방지: 최신 500개만 유지
@@ -446,7 +456,7 @@ def run_deep_dive_analysis(market_type="spot"):
             pass
 
         send_telegram_msg(report_msg)
-        print(f"✅ [{mkt}] 딥 다이브 분석 리포트 발송 완료.")
+        logger.info("[%s] deep dive analysis report sent", mkt)
     except Exception as e:
         from html import escape as html_escape
 
@@ -454,6 +464,6 @@ def run_deep_dive_analysis(market_type="spot"):
             f"🚨 <b>[포워드 장부 에러]</b> 딥 다이브 분석 중 에러 발생:\n"
             f"<code>{html_escape(str(e), quote=False)}</code>"
         )
-        print(err_msg)
+        log_exception(logger, "[%s] deep dive analysis failed: %s", mkt, e)
         send_telegram_msg(err_msg)
 

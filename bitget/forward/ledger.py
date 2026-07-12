@@ -8,6 +8,18 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from bitget.infra.bounded_reads import (
+    forward_group_closed_pnl_sum_sql,
+    forward_group_open_margin_sum_sql,
+    forward_open_count_sql,
+    forward_open_dup_id_sql,
+    forward_open_exposure_sum_sql,
+    forward_open_float_pnl_sql,
+    forward_open_track_sql,
+    warn_if_open_exceeds_safety,
+)
+from bitget.infra.clock import utc_date, utc_date_str, utc_datetime_str, utc_datetime_str_tz
+from bitget.infra.logging_setup import get_logger, log_exception
 from bitget.infra.shared_db_connector import get_connection
 from bitget.forward.mutant import _coin_asset_group
 from bitget.forward.gates import (
@@ -47,6 +59,7 @@ _DEFAULT_BITGET_MAX_OPEN_POSITIONS = DEFAULT_MAX_OPEN_POSITIONS
 CB_TRIP_LOSS_RATIO = -0.05
 CB_RELEASE_LOSS_RATIO = -0.02
 CB_COOLDOWN_CALENDAR_DAYS = 3
+logger = get_logger("bitget.forward.ledger")
 
 
 def _row_f(r, key: str, default: float = 0.0) -> float:
@@ -66,14 +79,14 @@ def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_se
     except Exception:
         return
     state = str(cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_date_str()
 
     if state != "ON":
         if loss_ratio <= CB_TRIP_LOSS_RATIO:
             cfg["GLOBAL_CIRCUIT_BREAKER"] = "ON"
             cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGER_DATE"] = today
             cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGER_MARKET"] = str(market or "")
-            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGERED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            cfg["GLOBAL_CIRCUIT_BREAKER_TRIGGERED_AT"] = utc_datetime_str_tz()
             cfg["GLOBAL_CIRCUIT_BREAKER_LAST_LOSS_RATIO"] = round(float(loss_ratio), 6)
             try:
                 save_system_config(cfg)
@@ -101,14 +114,14 @@ def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_se
     if trig_date:
         try:
             td = datetime.strptime(trig_date[:10], "%Y-%m-%d").date()
-            cooled = (datetime.utcnow().date() - td).days >= CB_COOLDOWN_CALENDAR_DAYS
+            cooled = (utc_date() - td).days >= CB_COOLDOWN_CALENDAR_DAYS
         except (TypeError, ValueError):
             cooled = False
 
     if recovered or cooled:
         reason = "OPEN 손실 −2% 이내 회복" if recovered else f"{CB_COOLDOWN_CALENDAR_DAYS}일 쿨다운 경과"
         cfg["GLOBAL_CIRCUIT_BREAKER"] = "OFF"
-        cfg["GLOBAL_CIRCUIT_BREAKER_RELEASED_AT"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        cfg["GLOBAL_CIRCUIT_BREAKER_RELEASED_AT"] = utc_datetime_str_tz()
         cfg["GLOBAL_CIRCUIT_BREAKER_RELEASE_REASON"] = reason
         try:
             save_system_config(cfg)
@@ -136,7 +149,13 @@ def _execute_retry(conn, sql, params, *, context="", max_retry=5):
             em = str(e).lower()
             if "database is locked" in em and attempt < max_retry - 1:
                 wait_s = 0.5 * (2 ** attempt)
-                print(f"⏳ [DB LOCK 재시도] {context} #{attempt + 1}/{max_retry} wait={wait_s:.2f}s")
+                logger.warning(
+                    "DB lock retry %s #%s/%s wait=%.2fs",
+                    context,
+                    attempt + 1,
+                    max_retry,
+                    wait_s,
+                )
                 time.sleep(wait_s)
                 continue
             raise
@@ -190,7 +209,7 @@ def try_add_virtual_position(
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id FROM bitget_forward_trades WHERE symbol=? AND timeframe=? AND market_type=? AND position_side=? AND status='OPEN'",
+        forward_open_dup_id_sql(),
         (symbol, tf, market_type, position_side),
     )
     if cur.fetchone():
@@ -202,11 +221,84 @@ def try_add_virtual_position(
         max_open_quota = max(1, int(float(_q)))
     except (TypeError, ValueError):
         max_open_quota = _DEFAULT_BITGET_MAX_OPEN_POSITIONS
-    cur.execute("SELECT COUNT(*) FROM bitget_forward_trades WHERE status='OPEN'")
+    _cnt_q, _cnt_p = forward_open_count_sql()
+    cur.execute(_cnt_q, _cnt_p)
     _open_quota_n = cur.fetchone()[0] or 0
     if int(_open_quota_n) >= max_open_quota:
         conn.close()
         return False, "🚨 시장 쿼터 초과"
+
+    # Portfolio NAV DD — live evaluate_nav_risk_gate parity (never flatten)
+    nav_size_mult = 1.0
+    try:
+        from bitget.trading.execution_safety import (
+            ExecutionGateOutcome,
+            evaluate_nav_risk_gate,
+        )
+
+        _nav = evaluate_nav_risk_gate(cfg)
+        if _nav.outcome == ExecutionGateOutcome.NAV_BLOCKED:
+            conn.close()
+            return False, f"🚨 포트폴리오 NAV 드로다운 차단 ({_nav.message})"
+        try:
+            nav_size_mult = float(_nav.meta.get("nav_size_mult") or 1.0)
+        except (TypeError, ValueError):
+            nav_size_mult = 1.0
+    except Exception:
+        nav_size_mult = 1.0
+
+    try:
+        from bitget.trading.execution_safety import gross_entry_blocked
+
+        if gross_entry_blocked(cfg):
+            conn.close()
+            return False, "🚨 포트폴리오 명목노출 상한 (gross notional cap)"
+    except Exception:
+        pass
+
+    try:
+        from bitget.trading.tail_risk_gate import (
+            tail_risk_entry_blocked,
+            tail_risk_size_mult as _tail_risk_size_mult,
+        )
+
+        _tail_block, _tail_meta = tail_risk_entry_blocked(cfg)
+        if _tail_block:
+            conn.close()
+            return False, "🚨 테일리스크 적립금 고갈 + NAV DD (tail-risk reserve)"
+        try:
+            _tm = float(_tail_meta.get("tail_risk_size_mult") or _tail_risk_size_mult(cfg) or 1.0)
+            if 0.0 < _tm < 1.0:
+                nav_size_mult = float(nav_size_mult) * _tm
+        except (TypeError, ValueError):
+            pass
+    except Exception:
+        pass
+
+    try:
+        from bitget.trading.doomsday_gate import doomsday_long_entry_blocked
+
+        _doom_block, _ = doomsday_long_entry_blocked(cfg, position_side=position_side)
+        if _doom_block:
+            conn.close()
+            return False, "🛑 둠스데이 DEFCON — 신규 LONG 차단 (no flatten)"
+    except Exception:
+        pass
+
+    try:
+        from bitget.trading.concentration_gate import concentration_entry_blocked
+
+        _conc_block, _ = concentration_entry_blocked(
+            cfg,
+            symbol=symbol,
+            position_side=position_side,
+            market_type=market_type,
+        )
+        if _conc_block:
+            conn.close()
+            return False, "🚨 BTC-proxy 집중도 상한 (concentration cap)"
+    except Exception:
+        pass
 
     blocked, sim = _is_blocked_by_anti_patterns(cfg, facts, threshold=0.85)
     if blocked:
@@ -230,6 +322,25 @@ def try_add_virtual_position(
     if hist_df is None or len(hist_df) < 60:
         conn.close()
         return False, "ATR 계산용 히스토리 부족"
+
+    try:
+        from bitget.trading.price_sanity_gate import price_sanity_entry_blocked
+
+        _ps_block, _ps_meta = price_sanity_entry_blocked(
+            cfg,
+            symbol=symbol,
+            market_type=market_type,
+            timeframe=tf,
+            entry_price=float(entry_price),
+            hist_df=hist_df,
+        )
+        if _ps_block:
+            conn.close()
+            return False, (
+                f"🚨 배드틱/플래시크래시 차단 ({_ps_meta.get('price_sanity')})"
+            )
+    except Exception:
+        pass
 
     evaluate_df = hist_df.copy()
     for col in ("Open", "High", "Low", "Close", "Volume"):
@@ -427,7 +538,7 @@ def try_add_virtual_position(
     max_position_pct = float(effective_max_position_pct(cfg, _meta_state))
 
     cur.execute(
-        "SELECT SUM((sim_kelly_invest * final_ret) / 100.0) FROM bitget_forward_trades WHERE status LIKE 'CLOSED%' AND sig_type LIKE ?",
+        forward_group_closed_pnl_sum_sql(),
         (f"%{core_group}%",),
     )
     realized_pnl = float(cur.fetchone()[0] or 0.0)
@@ -450,7 +561,7 @@ def try_add_virtual_position(
             return False, liq_reason
 
     cur.execute(
-        "SELECT SUM(margin_used) FROM bitget_forward_trades WHERE status='OPEN' AND sig_type LIKE ?",
+        forward_group_open_margin_sum_sql(),
         (f"%{core_group}%",),
     )
     locked_cash = float(cur.fetchone()[0] or 0.0)
@@ -466,6 +577,13 @@ def try_add_virtual_position(
         return False, f"{treasury_key} 잔고 부족"
 
     leverage = 1.0 if market_type == "spot" else float(cfg.get("FUTURES_LEVERAGE", 3.0))
+    if market_type != "spot":
+        try:
+            from bitget.trading.execution_safety import max_leverage_cap
+
+            leverage = min(float(leverage), float(max_leverage_cap(cfg)))
+        except Exception:
+            pass
     max_invest_limit = min(group_current_seed * max_position_pct, available_cash, treasury_balance)
 
     raw_qty = float((group_current_seed * kelly_risk_pct) / risk_distance)
@@ -500,6 +618,19 @@ def try_add_virtual_position(
         except Exception:
             pass
 
+    # NAV reduce stage (live executor parity — shrink only, never invent size up)
+    if (
+        not is_incubator_shadow
+        and 0.0 < nav_size_mult < 1.0
+        and float(sim_kelly_invest) > 0.0
+    ):
+        sim_kelly_invest = float(sim_kelly_invest) * nav_size_mult
+        margin_used = (
+            sim_kelly_invest
+            if market_type == "spot"
+            else sim_kelly_invest / max(leverage, 1e-9)
+        )
+
     if is_incubator_shadow:
         # 인큐베이터 섀도우 트레이딩: 국고 손실 원천 차단 (가상 기록만 유지)
         margin_used = 0.0
@@ -518,7 +649,7 @@ def try_add_virtual_position(
         fixed_notional *= leverage
     _ = fixed_notional
 
-    now = datetime.utcnow().strftime("%Y-%m-%d")
+    now = utc_date_str()
     entry_cos_score = float(max_alpha_cos_effective * 100.0)
     entry_dtw_score = float(facts.get("dtw_score", facts.get("entry_dtw_score", 0.0)) or 0.0)
     fr0 = 0.0
@@ -602,7 +733,7 @@ def try_add_virtual_position(
     if satellite_tags is not None:
         try:
             import bitget.shadow_tracking as bitget_shadow_tracking
-            logged_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            logged_at = utc_datetime_str()
             bitget_shadow_tracking.insert_virtual_trade_row(
                 cur,
                 market_type,
@@ -684,10 +815,8 @@ def _maybe_pyramid_add(conn, r, market_type, symbol, cur_price, sys_config, regi
     except Exception:
         nav = 0.0
     try:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(sim_kelly_invest),0) FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",
-            (mkt,),
-        ).fetchone()
+        exp_q, exp_p = forward_open_exposure_sum_sql(market_type=mkt)
+        row = conn.execute(exp_q, exp_p).fetchone()
         open_exposure = float((row or (0.0,))[0] or 0.0)
     except Exception:
         open_exposure = 0.0
@@ -707,7 +836,7 @@ def _maybe_pyramid_add(conn, r, market_type, symbol, cur_price, sys_config, regi
 
     add_notional = float(decision["add_notional"])
     parent_id = int(r.get("id") or 0)
-    entry_date = datetime.utcnow().strftime("%Y-%m-%d")
+    entry_date = utc_date_str()
     pyr_sig = f"{str(r.get('sig_type') or '')} [PYRAMID]".strip()
     risk_pct = float(r.get("sim_kelly_risk_pct", 0.02) or 0.02)
     lev = float(r.get("leverage", 1.0) or 1.0)
@@ -757,10 +886,7 @@ def _aggregate_global_open_loss_usdt(conn) -> tuple[float, int]:
     status=OPEN 인 전 종목 미실현 손익 중 손실분만 합산 (양수 포지션 PnL은 제외 → 주식 total_open_loss_amount 와 동일).
     반환: (total_open_loss_amount, open_count).
     """
-    df_open = pd.read_sql(
-        "SELECT * FROM bitget_forward_trades WHERE status='OPEN'",
-        conn,
-    )
+    df_open = pd.read_sql(*forward_open_float_pnl_sql(), conn)
     total_open_loss_amount = 0.0
     for _, row in df_open.iterrows():
         pnl = _floating_pnl_usdt_open_row(conn, row)
@@ -786,7 +912,7 @@ def _days_since_entry_date(entry_date_val):
         if len(s) < 10:
             return None
         ed = datetime.strptime(s, "%Y-%m-%d").date()
-        return (datetime.utcnow().date() - ed).days
+        return (utc_date() - ed).days
     except Exception:
         return None
 
@@ -797,7 +923,7 @@ def _force_close_zombie_delist_or_halt(conn, r):
     ret = -100.0
     exit_rsn = "상폐/거래정지 강제청산"
     exit_type = "DELIST_OR_HALT"
-    exit_d = datetime.utcnow().strftime("%Y-%m-%d")
+    exit_d = utc_date_str()
     ep = float(r.get("entry_price") or 0.0)
     new_max = float(r.get("max_high") or ep)
     new_min = float(r.get("min_low") or ep)
@@ -863,13 +989,14 @@ def track_daily_positions(market_type):
     init_forward_db()
     conn = get_connection(DB_PATH)
     cfg = load_system_config()
-    df_active = pd.read_sql(
-        "SELECT * FROM bitget_forward_trades WHERE market_type=? AND status='OPEN'",
-        conn,
-        params=(str(market_type).lower(),),
-    )
+    warn_if_open_exceeds_safety(conn, market_type=str(market_type).lower())
+    track_q, track_params = forward_open_track_sql(market_type=str(market_type).lower())
+    df_active = pd.read_sql(track_q, conn, params=track_params)
     if df_active.empty:
-        print(f"\n🔍 [포워드 테스팅] {market_type} OPEN 0건 — 글로브 손실/서킷만 점검")
+        logger.info(
+            "[forward track] %s OPEN 0 — globe loss/circuit check only",
+            market_type,
+        )
         try:
             _finalize_global_circuit_breaker_track(conn, cfg, market_type)
         finally:
@@ -880,12 +1007,17 @@ def track_daily_positions(market_type):
     # 주식 auto_forward_tester: breadth < 0.97 → MAE 손절·타임스탑 0.5배 비상 조임
     breadth_collapse_tightening = breadth_now < 0.97
     if breadth_collapse_tightening:
-        print(
-            f"🛡️ [포워드 Bitget] 시장 폭 붕괴 연동 (breadth={breadth_now:.3f} < 0.97): "
-            f"기보유 MAE 손절선·타임스탑 0.5배 타이트닝"
+        logger.warning(
+            "[forward] breadth collapse (breadth=%.3f < 0.97): "
+            "MAE stop / time-stop 0.5x tightening",
+            breadth_now,
         )
 
-    print(f"\n🔍 [포워드 테스팅] {market_type} {len(df_active)}개 포지션 추적 중...")
+    logger.info(
+        "[forward track] %s tracking %s open positions",
+        market_type,
+        len(df_active),
+    )
 
     try:
         import exit_dynamics as _xdyn_mod
@@ -1342,7 +1474,7 @@ def track_daily_positions(market_type):
                 """
                 update_params = (
                     "CLOSED_WIN" if ret > 0 else "CLOSED_LOSS",
-                    datetime.utcnow().strftime("%Y-%m-%d"),
+                    utc_date_str(),
                     exit_rsn,
                     ret,
                     mfe,
@@ -1394,7 +1526,7 @@ def track_daily_positions(market_type):
                         final_ret_pct=float(ret),
                         kelly_pct=kelly_pct if kelly_pct > 0 else None,
                         net_pnl_usdt=float(pnl),
-                        exit_date=datetime.utcnow().strftime("%Y-%m-%d"),
+                        exit_date=utc_date_str(),
                     )
                 except Exception:
                     pass
@@ -1444,9 +1576,10 @@ def track_daily_positions(market_type):
                 _execute_commit_retry(conn, update_sql, update_params, context=f"추적갱신 {r['symbol']}")
         except Exception as e:
             try:
-                print(f"🚨 [청산 추적 에러] {r['symbol']}: {e}")
+                sym = r["symbol"]
             except Exception:
-                print(f"🚨 [청산 추적 에러] unknown_symbol: {e}")
+                sym = "unknown_symbol"
+            log_exception(logger, "[forward track] exit error %s: %s", sym, e)
             continue
 
     try:

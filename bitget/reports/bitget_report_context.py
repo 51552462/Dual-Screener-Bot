@@ -8,12 +8,13 @@ from __future__ import annotations
 import html
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date
 from typing import Optional
 
 import pandas as pd
 
 from bitget.forward.forward_book_integrity import reporter_valid_holding_mask
+from bitget.infra.clock import utc_date_days_ago_str, utc_date_key, utc_date_str, utc_now
 from bitget.infra.data_paths import report_db_read_path
 from bitget.infra.market_keys import to_report_label
 from bitget.infra.shared_db_connector import get_connection
@@ -36,10 +37,10 @@ class BitgetReportTimekeeper:
         db_watermark_exit: Optional[str] = None,
     ) -> "BitgetReportTimekeeper":
         mk = to_report_label(market_type)
-        now = datetime.now(timezone.utc)
-        anchor = now.strftime("%Y-%m-%d")
+        now = utc_now()
+        anchor = utc_date_key(anchor=now)
         rd = 90 if rolling_days not in (90, 180) else int(rolling_days)
-        cutoff = (now.date() - timedelta(days=rd)).strftime("%Y-%m-%d")
+        cutoff = utc_date_days_ago_str(rd, anchor=now)
         return cls(
             market=mk,
             session_anchor=anchor,
@@ -116,7 +117,7 @@ class BitgetReportContext:
             ),
             db_read_path=path,
             window_days=wd,
-            calendar_today_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            calendar_today_utc=utc_date_str(),
         )
 
     def timekeeper_for(self, market_type: str) -> BitgetReportTimekeeper:
@@ -129,8 +130,8 @@ class BitgetReportContext:
         if not wm or len(str(wm)) < 10:
             return 999
         try:
-            a = datetime.strptime(tk.session_anchor, "%Y-%m-%d").date()
-            w = datetime.strptime(str(wm)[:10], "%Y-%m-%d").date()
+            a = date.fromisoformat(tk.session_anchor[:10])
+            w = date.fromisoformat(str(wm)[:10])
             return max(0, (a - w).days)
         except ValueError:
             return 999

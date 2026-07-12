@@ -1,9 +1,9 @@
 """Bitget [1/9] macro/treasury section — ReportStateBinder SSOT wrapper."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Optional
 
+from bitget.infra.clock import utc_date_key
 from bitget.infra.market_keys import normalize_market_type, to_report_label
 from bitget.reports.bitget_report_context import BitgetReportContext
 from bitget.reports.report_state_binder_bg import (
@@ -39,7 +39,7 @@ def build_bitget_macro_section_html(
     )
     if integrity_html:
         lead = lead.rstrip() + "\n" + integrity_html.rstrip() + "\n"
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = utc_date_key()
     return format_macro_treasury_section_html(
         block,
         display_label=to_report_label(market_type),

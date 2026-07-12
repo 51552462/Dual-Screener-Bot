@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 from typing import Any
 
+from bitget.infra.clock import utc_datetime_str_tz
 from bitget.infra.data_paths import logs_dir, validation_state_dir
 
 SIGNAL_BASELINE_NAME = "signal_baseline.json"
@@ -39,7 +39,7 @@ def baseline_path() -> str:
 def save_signal_baseline(*, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     keys = sorted(read_scan_hit_keys())
     payload = {
-        "recorded_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "recorded_at_utc": utc_datetime_str_tz(),
         "hit_keys": keys,
         "hit_count": len(keys),
         "extra": extra or {},

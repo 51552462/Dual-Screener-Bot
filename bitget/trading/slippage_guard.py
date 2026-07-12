@@ -6,14 +6,13 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from bitget.data.stream_buffer import get_stream_buffer
+from bitget.data.ws_stream_producer import normalize_inst_id, normalize_inst_type
 
 
 def _inst_type_for_market(market_type: str) -> str:
-    return "SPOT" if str(market_type).lower() == "spot" else "USDT-FUTURES"
-
-
-def _normalize_inst_id(symbol: str) -> str:
-    return str(symbol).replace("_", "").upper()
+    return normalize_inst_type(
+        "SPOT" if str(market_type).lower() == "spot" else "USDT-FUTURES"
+    )
 
 
 def _resolve_tv24_usdt(facts: dict | None, symbol: str, market_type: str) -> Optional[float]:
@@ -31,7 +30,7 @@ def _resolve_tv24_usdt(facts: dict | None, symbol: str, market_type: str) -> Opt
             pass
     buf = get_stream_buffer()
     inst_type = _inst_type_for_market(market_type)
-    inst_id = _normalize_inst_id(symbol)
+    inst_id = normalize_inst_id(symbol)
     row = buf.get_ticker(inst_id, inst_type)
     if row and row.get("quote_volume_24h") is not None:
         try:
@@ -87,7 +86,7 @@ def estimate_slippage_bps(
     """
     buf = get_stream_buffer()
     inst_type = _inst_type_for_market(market_type)
-    inst_id = _normalize_inst_id(symbol)
+    inst_id = normalize_inst_id(symbol)
 
     age = buf.age_sec(inst_id, inst_type)
     if age is None:

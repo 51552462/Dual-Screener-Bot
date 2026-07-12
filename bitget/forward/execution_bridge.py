@@ -12,7 +12,13 @@ import pandas as pd
 
 from bitget.forward.gates import _extract_core_group
 from bitget.forward.shared import DB_PATH, init_forward_db, load_system_config, save_system_config
+from bitget.infra.bounded_reads import real_execution_leaderboard_sql
+from bitget.infra.clock import utc_datetime_str
 from bitget.infra.shared_db_connector import get_connection
+
+
+def _utc_now_str() -> str:
+    return utc_datetime_str()
 
 def _extract_practitioner_key(sig_type: str) -> str:
     s = str(sig_type or "")
@@ -38,7 +44,7 @@ def log_real_execution(
     virtual_trade_id: int = 0,
 ):
     init_forward_db()
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    now = _utc_now_str()
     ex = exec_result if isinstance(exec_result, dict) else {}
     status = str(ex.get("status", "unknown"))
     exec_ok = 1 if bool(ex.get("ok", False)) else 0
@@ -127,7 +133,7 @@ def sync_real_leaderboard_with_virtual():
               OR virtual_mfe IS NULL
           )
         """,
-        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),),
+        (_utc_now_str(),),
     )
     conn.commit()
     conn.close()
@@ -136,22 +142,8 @@ def build_practitioner_reality_leaderboard(market_type: str = "all", limit_rows:
     init_forward_db()
     sync_real_leaderboard_with_virtual()
     conn = get_connection(DB_PATH)
-    where_m = ""
-    params = []
-    if str(market_type).lower() in ("spot", "futures"):
-        where_m = "WHERE market_type=?"
-        params = [str(market_type).lower()]
-    df_real = pd.read_sql(
-        f"""
-        SELECT market_type, practitioner_key, exec_ok, is_dry_run, notional_usdt, realized_ret_pct, virtual_final_ret
-        FROM bitget_real_execution
-        {where_m}
-        ORDER BY id DESC
-        LIMIT 5000
-        """,
-        conn,
-        params=params,
-    )
+    q, params = real_execution_leaderboard_sql(market_type=market_type)
+    df_real = pd.read_sql(q, conn, params=params)
     conn.close()
     if df_real.empty:
         return pd.DataFrame()

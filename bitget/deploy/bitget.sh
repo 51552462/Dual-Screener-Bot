@@ -53,7 +53,8 @@ usage() {
   cat <<'EOF'
 Usage: bitget/deploy/bitget.sh <flag>
 
-  --health            infra self-check
+  --health            infra self-check (+ observational ws/oms smoke)
+  --ws-oms-smoke      live WS/OMS readiness (read-only; exit 1 on hard FAIL)
   --watchdog          heartbeat stale detector (cron/timer)
   --daemon            24/7 pipeline daemon (python -m bitget.pipelines.bitget_auto_pilot)
   --scan-all          LEGACY: data refresh + full MTF scan + track (manual only)
@@ -81,6 +82,7 @@ Usage: bitget/deploy/bitget.sh <flag>
   --canary            export crypto canary state JSON (file bridge → stock regime)
   --gap-heal          WS stale -> REST backfill
   --snapshot          CQRS market DB backup (read replica)
+  --db-backup         integrity-verified SQLite backup (PRAGMA + tar.gz prune)
   --record-baseline   save signal + PnL validation baselines
   --validate          parity check vs baselines
   --load-test         DB scan capacity benchmark
@@ -100,6 +102,9 @@ Environment:
   BITGET_DASHBOARD_PORT    default 8511
   BITGET_HEATMAP_PORT      default 8512
   BITGET_DAEMON_SNIPER     daemon 24/7 supernova sniper (default 0; cron staggered is SSOT)
+  BITGET_DAEMON_PUBLIC_WS  Tier-1 public WS → StreamBuffer (default 0)
+  BITGET_DAEMON_PRIVATE_WS private WS → OMS cache (default 0; needs API keys)
+  BITGET_WS_OMS_SMOKE_STRICT  escalate OMS REST-heavy to hard FAIL (default 0)
 EOF
 }
 
@@ -109,6 +114,7 @@ EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --health)           MODE="health" ;;
+    --ws-oms-smoke)     MODE="ws_oms_smoke" ;;
     --watchdog)         MODE="watchdog" ;;
     --daemon)           MODE="daemon" ;;
     --scan-all)         MODE="scan_all" ;;
@@ -128,6 +134,7 @@ while [[ $# -gt 0 ]]; do
     --canary)           MODE="canary" ;;
     --gap-heal)         MODE="gap_heal" ;;
     --snapshot)         MODE="snapshot" ;;
+    --db-backup)        MODE="db_backup" ;;
     --record-baseline)  MODE="record_baseline" ;;
     --validate)         MODE="validate" ;;
     --load-test)        MODE="load_test" ;;

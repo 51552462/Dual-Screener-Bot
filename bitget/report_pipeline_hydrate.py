@@ -6,11 +6,12 @@ Bitget daily report 직전 데이터 hydration (주식 report_pipeline_hydrate �
 """
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any, Dict
 
-logger = logging.getLogger(__name__)
+from bitget.infra.logging_setup import get_logger
+
+logger = get_logger("bitget.report_pipeline_hydrate")
 
 
 def ensure_bitget_report_pipeline_data(
@@ -35,7 +36,7 @@ def ensure_bitget_report_pipeline_data(
         out["macro"] = {"ok": False, "source": "degraded", "error": str(ex)}
 
     if not refresh_ohlcv:
-        print(f"🛰️ [Bitget] report_pipeline_hydrate: {out}")
+        logger.info("report_pipeline_hydrate: %s", out)
         return out
 
     full = str(os.environ.get("BITGET_REPORT_HYDRATE_FULL", "0")).strip().lower() in (
@@ -55,5 +56,5 @@ def ensure_bitget_report_pipeline_data(
     else:
         out["ohlcv"] = "light_ok" if os.path.isfile(market_data_db_path()) else "no_db"
 
-    print(f"🛰️ [Bitget] report_pipeline_hydrate: {out}")
+    logger.info("report_pipeline_hydrate: %s", out)
     return out

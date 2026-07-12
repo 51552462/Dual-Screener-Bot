@@ -11,10 +11,15 @@ import time
 from datetime import datetime
 
 import low_ram_sqlite_pragmas
+import memory_bounds
 
 from market_db_paths import MARKET_DATA_DB_PATH as DB_PATH
 
 _OPS_DB_PATH = DB_PATH
+
+OPS_SNAPSHOT_KEEP_DAYS = 90
+SHADOW_HISTORY_KEEP_DAYS = 90
+_shadow_retention_gate = memory_bounds.ThrottledCallback(interval_sec=3600.0)
 
 
 def _toxic_ml_antipatterns_rule_map(ml_obj: object) -> dict:
@@ -236,6 +241,7 @@ def record_ops_snapshot_from_live_state(*, max_retries: int = 5) -> bool:
             )
             conn.commit()
             conn.close()
+            maybe_run_shadow_retention_sweep()
             return True
         except sqlite3.OperationalError:
             if attempt < max_retries - 1:
@@ -246,6 +252,35 @@ def record_ops_snapshot_from_live_state(*, max_retries: int = 5) -> bool:
             else:
                 return False
     return False
+
+
+def maybe_run_shadow_retention_sweep(*, force: bool = False) -> dict[str, int]:
+    """ops_snapshot·shadow history — 한국/미국 market_data.sqlite growth cap."""
+    if not force and not _shadow_retention_gate.due():
+        return {}
+    stats: dict[str, int] = {}
+    try:
+        conn = sqlite3.connect(_OPS_DB_PATH, timeout=60)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
+        for table, col, days in (
+            ("ops_snapshot", "timestamp", OPS_SNAPSHOT_KEEP_DAYS),
+            ("blocked_trade_history", "blocked_at", SHADOW_HISTORY_KEEP_DAYS),
+            ("virtual_trade_history", "logged_at", SHADOW_HISTORY_KEEP_DAYS),
+            ("convergence_log", "detected_at", SHADOW_HISTORY_KEEP_DAYS),
+        ):
+            try:
+                conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
+                stats[table] = memory_bounds.prune_sqlite_by_date_prefix(
+                    conn, table, col, days
+                )
+            except sqlite3.OperationalError:
+                continue
+        conn.commit()
+        conn.close()
+    except Exception:
+        return stats
+    return stats
 
 
 def build_satellite_tags(config: dict) -> str:

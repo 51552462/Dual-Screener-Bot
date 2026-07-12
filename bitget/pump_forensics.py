@@ -6,17 +6,24 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+import memory_bounds
+
 from bitget.config_hub import load_config, save_config
+from bitget.infra.bounded_reads import sqlite_bitget_ohlcv_1d_tables_sql
+from bitget.infra.clock import utc_hm_key
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.gc_cycle import flush_gc, heavy_data_cycle
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.memory_policy import GC_AFTER_OHLCV_BATCH, OHLCV_FORENSICS_BAR_LIMIT
 from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
+logger = get_logger("bitget.pump_forensics")
 PATTERN_KEYS = [
     "vol_compression",
     "ma_convergence",
@@ -68,15 +75,22 @@ def _extract_flags(ohlc: pd.DataFrame, t_idx: int) -> Optional[Dict[str, bool]]:
 
 
 def run_pump_forensics() -> None:
-    print("🔬 [Bitget Pump Forensics] +20% 급등 코인 DNA 역추적...")
+    logger.info("[Pump Forensics] +20%% pump DNA reverse scan start")
     conn = get_connection(DB_PATH, read_only=True)
-    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'BITGET_%_1D'").fetchall()]
+    tbl_sql, tbl_params = sqlite_bitget_ohlcv_1d_tables_sql(exclude_btc=False)
+    tables = [r[0] for r in conn.execute(tbl_sql, tbl_params).fetchall()]
 
     rows: List[Dict[str, bool]] = []
     used_symbols: List[str] = []
     for tbl in tables:
         try:
-            df = pd.read_sql(f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}" ORDER BY Date ASC', conn)
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
+                f"{memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_FORENSICS_BAR_LIMIT)}",
+                conn,
+            )
+            if not df.empty:
+                df = df.sort_values("Date")
             if len(df) < 30:
                 continue
             close = pd.to_numeric(df["Close"], errors="coerce")
@@ -91,12 +105,16 @@ def run_pump_forensics() -> None:
             rows.append(flags)
             sym = "_".join(tbl.split("_")[2:-1])
             used_symbols.append(sym)
-        except Exception:
+            del df
+            flush_gc(label=GC_AFTER_OHLCV_BATCH)
+        except Exception as e:
+            log_exception(logger, "pump forensics table skip %s: %s", tbl, e)
             continue
     conn.close()
+    flush_gc(label="pump_forensics_scan")
 
     if not rows:
-        print("⚠️ 급등 포렌식 표본 부족.")
+        logger.warning("pump forensics sample insufficient")
         return
 
     n = len(rows)
@@ -110,7 +128,7 @@ def run_pump_forensics() -> None:
     consensus_hits = sum(1 for v in rule.values() if v)
 
     payload = {
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+        "updated_at": utc_hm_key(),
         "pump_threshold_pct": PUMP_THRESHOLD_PCT,
         "samples_analyzed": n,
         "symbols_analyzed": used_symbols[:120],
@@ -125,10 +143,16 @@ def run_pump_forensics() -> None:
     if not isinstance(dna, dict):
         dna = {}
     dna["GLOBAL"] = payload
-    dna["updated_at_global"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    dna["updated_at_global"] = utc_hm_key()
     cfg["PUMP_DNA"] = dna
     save_config(cfg)
-    print(f"✅ PUMP_DNA 저장 완료 (합의 {consensus_hits}/{len(PATTERN_KEYS)})")
+    del rows
+    flush_gc(label="pump_forensics_complete")
+    logger.info(
+        "PUMP_DNA saved (consensus %s/%s)",
+        consensus_hits,
+        len(PATTERN_KEYS),
+    )
 
 
 if __name__ == "__main__":

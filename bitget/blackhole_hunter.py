@@ -1,38 +1,38 @@
 import json
 import os
 import sqlite3
-from datetime import datetime
 
 import pandas as pd
 
 from bitget.config_hub import load_config, save_config
+from bitget.infra.bounded_reads import forward_blackhole_recent_closed_sql
+from bitget.infra.clock import utc_date_days_ago_str, utc_hm_key
 from bitget.infra.data_paths import market_data_db_path
+from bitget.infra.logging_setup import get_logger
 from bitget.infra.shared_db_connector import get_connection
 
 DB_PATH = market_data_db_path()
+logger = get_logger("bitget.blackhole_hunter")
 
 
 def scan_blackhole_targets():
-    print("🕳️ [Bitget 블랙홀 헌터] Toxic DNA 군집 스캔 중...")
+    logger.info("[blackhole] toxic DNA cluster scan")
     cfg = load_config()
     anti = cfg.get("ANTI_PATTERNS", {})
     if not isinstance(anti, (dict, list)) or len(anti) == 0:
-        cfg["BLACKHOLE_TOXIC_COUNT"] = {"count": 0, "symbols": [], "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
+        cfg["BLACKHOLE_TOXIC_COUNT"] = {"count": 0, "symbols": [], "updated_at": utc_hm_key()}
         cfg["BLACKHOLE_SWITCH_SIGNAL"] = {"active": False, "action": "NONE"}
         save_config(cfg)
-        print("💡 등록된 독성 패턴이 없어 스위칭 없음.")
+        logger.info("no anti-patterns registered — switch none")
         return
 
     conn = get_connection(DB_PATH, read_only=True)
-    q = """
-        SELECT symbol, final_ret, dyn_cpv, dyn_tb, v_energy, dyn_rs
-        FROM bitget_forward_trades
-        WHERE status LIKE 'CLOSED%' AND exit_date >= date('now', '-14 day')
-    """
-    df = pd.read_sql(q, conn)
+    since = utc_date_days_ago_str(14)
+    q, params = forward_blackhole_recent_closed_sql(since_date=since)
+    df = pd.read_sql(q, conn, params=params)
     conn.close()
     if df.empty:
-        print("⚠️ 최근 14일 청산 데이터가 부족합니다.")
+        logger.warning("insufficient CLOSED trades in last 14d")
         return
 
     df["final_ret"] = pd.to_numeric(df["final_ret"], errors="coerce").fillna(0.0)
@@ -50,7 +50,7 @@ def scan_blackhole_targets():
         "count": toxic_count,
         "symbols": toxic_symbols[:50],
         "ratio": round(toxic_ratio, 4),
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+        "updated_at": utc_hm_key(),
     }
     cfg["BLACKHOLE_SWITCH_SIGNAL"] = {
         "active": bool(switch_on),
@@ -58,10 +58,15 @@ def scan_blackhole_targets():
         "target_symbol": "BTC_USDT",
         "position_side": "SHORT" if switch_on else "NONE",
         "reason": msg,
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+        "updated_at": utc_hm_key(),
     }
     save_config(cfg)
-    print(f"✅ 완료: toxic_count={toxic_count}, toxic_ratio={toxic_ratio:.2%}, action={action}")
+    logger.info(
+        "blackhole done: toxic_count=%s toxic_ratio=%.2f%% action=%s",
+        toxic_count,
+        toxic_ratio * 100.0,
+        action,
+    )
 
 
 if __name__ == "__main__":

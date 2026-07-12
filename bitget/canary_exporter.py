@@ -23,8 +23,11 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+from bitget.infra.clock import utc_now_iso
+from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.network_retry import call_with_retry
 
 # ── 산출 파라미터 (shadow 관찰 후 보정 전제) ──────────────────────────────
 TOP_N_ALTS = 5
@@ -35,6 +38,8 @@ BTC_DROP_THRESH = -0.07     # BTC 3일 -7% 이하면 급락
 OI_HISTORY_MAX_AGE_SEC = 26 * 3600
 OI_LOOKBACK_TARGET_SEC = 24 * 3600
 OI_LOOKBACK_TOLERANCE_SEC = 3 * 3600   # 24h±3h 범위의 과거 포인트로 비교
+
+logger = get_logger("bitget.canary_exporter")
 
 # ── 비-크립토 네이티브 자산 제외(코인 유동성 스트레스 신호 오염원) ────────────
 # 거래대금 상위 동적 선정에 끼어들면 신호를 왜곡하므로 base 기준으로 거른다.
@@ -79,8 +84,16 @@ def _ex():
         return None
     if _pub_ex is None:
         try:
-            _pub_ex = ccxt.bitget({"enableRateLimit": True, "options": {"defaultType": "swap"}})
-            _pub_ex.load_markets()
+            ex = ccxt.bitget({"enableRateLimit": True, "options": {"defaultType": "swap"}})
+            ok = call_with_retry(
+                lambda: (ex.load_markets() or True),
+                op="canary.load_markets",
+                throttle_key="bitget.pub.load_markets",
+                throttle_interval_sec=0.5,
+                default=False,
+                swallow=True,
+            )
+            _pub_ex = ex if ok else None
         except Exception:
             _pub_ex = None
     return _pub_ex
@@ -93,16 +106,25 @@ def _top_alt_swaps(n: int = TOP_N_ALTS) -> List[str]:
     ex = _ex()
     if ex is None:
         return []
-    try:
-        from bitget.rate_limit_guard import throttle
-
-        throttle("bitget.pub.fetch_tickers", 0.2)
-        tickers = ex.fetch_tickers(params={"type": "swap"})
-    except Exception:
-        try:
-            tickers = ex.fetch_tickers()
-        except Exception:
-            return []
+    tickers = call_with_retry(
+        lambda: ex.fetch_tickers(params={"type": "swap"}),
+        op="canary.fetch_tickers.swap",
+        throttle_key="bitget.pub.fetch_tickers",
+        throttle_interval_sec=0.2,
+        default=None,
+        swallow=True,
+    )
+    if not isinstance(tickers, dict):
+        tickers = call_with_retry(
+            lambda: ex.fetch_tickers(),
+            op="canary.fetch_tickers",
+            throttle_key="bitget.pub.fetch_tickers",
+            throttle_interval_sec=0.2,
+            default=None,
+            swallow=True,
+        )
+    if not isinstance(tickers, dict):
+        return []
 
     rows: List[Tuple[str, float]] = []
     markets = getattr(ex, "markets", {}) or {}
@@ -139,13 +161,16 @@ def _last_prices(symbols: List[str]) -> Dict[str, float]:
     if ex is None or not symbols:
         return out
     tickers: Dict[str, Any] = {}
-    try:
-        from bitget.rate_limit_guard import throttle
-
-        throttle("bitget.pub.fetch_tickers", 0.2)
-        tickers = ex.fetch_tickers(symbols) or {}
-    except Exception:
-        tickers = {}
+    raw = call_with_retry(
+        lambda: ex.fetch_tickers(symbols),
+        op="canary.fetch_tickers.prices",
+        throttle_key="bitget.pub.fetch_tickers",
+        throttle_interval_sec=0.2,
+        default=None,
+        swallow=True,
+    )
+    if isinstance(raw, dict):
+        tickers = raw
     for s in symbols:
         t = tickers.get(s) if isinstance(tickers, dict) else None
         t = t or {}
@@ -202,12 +227,15 @@ def _current_oi_total_usdt(
     total = 0.0
     got = 0
     for sym in symbols:
-        try:
-            from bitget.rate_limit_guard import throttle
-
-            throttle("bitget.pub.fetch_open_interest", 0.15)
-            o = ex.fetch_open_interest(sym)
-        except Exception:
+        o = call_with_retry(
+            lambda s=sym: ex.fetch_open_interest(s),
+            op="canary.fetch_open_interest",
+            throttle_key="bitget.pub.fetch_open_interest",
+            throttle_interval_sec=0.15,
+            default=None,
+            swallow=True,
+        )
+        if o is None:
             continue
         val = _oi_value_from_dict(o, prices.get(sym))
         if val is not None and val > 0:
@@ -236,13 +264,14 @@ def _oi_change_via_history(
     now_got = 0
     pair_got = 0
     for sym in symbols:
-        try:
-            from bitget.rate_limit_guard import throttle
-
-            throttle("bitget.pub.fetch_open_interest_history", 0.2)
-            hist = ex.fetch_open_interest_history(sym, "1h", limit=25)
-        except Exception:
-            continue
+        hist = call_with_retry(
+            lambda s=sym: ex.fetch_open_interest_history(s, "1h", limit=25),
+            op="canary.fetch_open_interest_history",
+            throttle_key="bitget.pub.fetch_open_interest_history",
+            throttle_interval_sec=0.2,
+            default=None,
+            swallow=True,
+        )
         if not isinstance(hist, list) or len(hist) < 2:
             continue
         latest = _oi_value_from_dict(hist[-1], prices.get(sym))
@@ -347,16 +376,23 @@ def _btc_ret_3d() -> Optional[float]:
     ex = _ex()
     if ex is None:
         return None
-    try:
-        from bitget.rate_limit_guard import throttle
-
-        throttle("bitget.pub.fetch_ohlcv", 0.15)
-        ohlcv = ex.fetch_ohlcv("BTC/USDT:USDT", timeframe="1d", limit=4)
-    except Exception:
-        try:
-            ohlcv = ex.fetch_ohlcv("BTC/USDT", timeframe="1d", limit=4)
-        except Exception:
-            return None
+    ohlcv = call_with_retry(
+        lambda: ex.fetch_ohlcv("BTC/USDT:USDT", timeframe="1d", limit=4),
+        op="canary.fetch_ohlcv.btc",
+        throttle_key="bitget.pub.fetch_ohlcv",
+        throttle_interval_sec=0.15,
+        default=None,
+        swallow=True,
+    )
+    if not ohlcv:
+        ohlcv = call_with_retry(
+            lambda: ex.fetch_ohlcv("BTC/USDT", timeframe="1d", limit=4),
+            op="canary.fetch_ohlcv.btc_spot",
+            throttle_key="bitget.pub.fetch_ohlcv",
+            throttle_interval_sec=0.15,
+            default=None,
+            swallow=True,
+        )
     if not ohlcv or len(ohlcv) < 4:
         return None
     try:
@@ -449,7 +485,7 @@ def compute_canary_state() -> Dict[str, Any]:
 
     return {
         "schema": "bitget_canary.v1",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": utc_now_iso(),
         "crypto_liquidity_stress": round(float(stress), 4),
         "macro_contagion_risk": contagion,
         "components": {
@@ -468,13 +504,13 @@ def compute_canary_state() -> Dict[str, Any]:
     }
 
 
-def _safe_print(msg: str) -> None:
-    """일부 콘솔(cp949 등)에서 이모지 인코딩 실패로 tail 훅이 죽지 않도록 방어."""
+def _safe_log(msg: str) -> None:
+    """stderr/cp949 이모지 인코딩 실패로 tail 훅이 죽지 않도록 방어."""
     try:
-        print(msg)
+        logger.info("%s", msg)
     except Exception:
         try:
-            print(msg.encode("ascii", "replace").decode("ascii"))
+            logger.info("%s", msg.encode("ascii", "replace").decode("ascii"))
         except Exception:
             pass
 
@@ -495,18 +531,16 @@ def run_canary_export() -> Dict[str, Any]:
         state = compute_canary_state()
         path = canary_state_path()
         _atomic_write_json(path, state)
-        _safe_print(
-            f"🛰️ [Canary] stress={state['crypto_liquidity_stress']} "
+        _safe_log(
+            f"[Canary] stress={state['crypto_liquidity_stress']} "
             f"contagion={state['macro_contagion_risk']} "
             f"syms={state['components']['symbols_used']} -> {path}"
         )
         return {"ok": True, "path": path, "state": state}
     except Exception as ex:  # noqa: BLE001 — tail 훅: 실패해도 파이프라인 진행
-        _safe_print(f"⚠️ [Canary] export skipped: {ex}")
+        log_exception(logger, "[Canary] export skipped: %s", ex)
         return {"ok": False, "error": str(ex)}
 
 
 if __name__ == "__main__":
-    import pprint
-
-    pprint.pprint(run_canary_export())
+    logger.info("%s", run_canary_export())

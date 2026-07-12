@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import argparse
 import os
-import time
+
+from bitget.infra.daemon_loop import (
+    QUEUE_WORKER_ERROR_SLEEP_SEC,
+    QUEUE_WORKER_IDLE_POLL_SEC,
+    sleep_or_backoff,
+)
 
 # 기본 폴링 간격(초): PENDING 이 없을 때 다음 확인까지 대기.
-DEFAULT_POLL_SEC = 5.0
+DEFAULT_POLL_SEC = QUEUE_WORKER_IDLE_POLL_SEC
 # [#2] yield 양보 시 재시도까지 기본 대기(초). 주식 슬롯이 풀리길 기다리는 간격.
 DEFAULT_YIELD_DEFER_BACKOFF_SEC = 60.0
 
@@ -136,8 +141,8 @@ def run_worker(
     def _tick() -> None:
         touch_worker_heartbeat(status="draining")
 
+    loop_error = False
     while True:
-        # 루프가 정상적으로 돌 때마다(유휴 포함) 생존 신호를 찍는다.
         touch_worker_heartbeat(status="idle")
         try:
             processed = drain(
@@ -146,13 +151,19 @@ def run_worker(
                 backoff_sec=retry_backoff_sec,
                 on_tick=_tick,
             )
+            loop_error = False
         except Exception:  # noqa: BLE001
             logger.exception("queue worker drain crashed — continuing")
             processed = 0
+            loop_error = True
         if once:
             return processed
         if processed == 0:
-            time.sleep(poll_sec)
+            sleep_or_backoff(
+                normal_sec=poll_sec,
+                after_error=loop_error,
+                error_sec=QUEUE_WORKER_ERROR_SLEEP_SEC,
+            )
 
 
 def main(argv: list[str] | None = None) -> int:

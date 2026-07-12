@@ -4,6 +4,8 @@ Description=Run Bitget watchdog every 5 minutes
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
 Unit=dante-bitget-watchdog.service
 
 [Install]

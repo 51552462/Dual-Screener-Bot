@@ -81,5 +81,23 @@ class TestMetaGovernorCycleWiring(unittest.TestCase):
         self.assertTrue(any("regime" in t.lower() for t, _ in alerts))
 
 
+class TestMetaGovernorRunAge(unittest.TestCase):
+    def test_meta_governor_run_age_hours_uses_utc_ssot(self):
+        from datetime import datetime, timezone
+
+        from bitget.governance.meta_sync import meta_governor_run_age_hours
+
+        anchor = datetime(2026, 7, 11, 12, 0, 0, tzinfo=timezone.utc)
+        state = {"META_GOVERNOR_LAST_RUN_AT": "2026-07-11T06:00:00+00:00"}
+        with mock.patch("bitget.governance.meta_sync.utc_now", return_value=anchor):
+            age = meta_governor_run_age_hours(state)
+        self.assertAlmostEqual(age, 6.0, places=3)
+
+    def test_meta_governor_run_age_hours_invalid_timestamp(self):
+        from bitget.governance.meta_sync import meta_governor_run_age_hours
+
+        self.assertIsNone(meta_governor_run_age_hours({"META_GOVERNOR_LAST_RUN_AT": "not-a-date"}))
+
+
 if __name__ == "__main__":
     unittest.main()

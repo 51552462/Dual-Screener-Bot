@@ -1,15 +1,36 @@
 """
 Bitget market-type key SSOT.
 
-DB·리포트·데스매치·PIL 등 모듈마다 spot/futures 표기가 달라 혼선이 생기므로
-한 곳에서 정규화한다.
+DB·리포트·데스매치·PIL·strategy_registry 등 모듈마다 spot/futures 표기가 달라
+혼선이 생기므로 한 곳에서 정규화한다.
 """
 from __future__ import annotations
 
 _FUT_ALIASES = frozenset(
-    {"futures", "fut", "future", "futures_usdt", "bg_futures", "fut_usdt"}
+    {
+        "futures",
+        "fut",
+        "future",
+        "futures_usdt",
+        "bg_futures",
+        "fut_usdt",
+        "bg_fut",
+    }
 )
 _SPOT_ALIASES = frozenset({"spot", "bg_spot", "spot_usdt"})
+
+# strategy_registry.market labels Bitget may persist (uppercase compare)
+_BITGET_REGISTRY_MARKETS = frozenset(
+    {
+        "SPOT",
+        "FUT",
+        "FUTURES",
+        "BG",  # legacy unified crypto book
+        "BG_SPOT",
+        "BG_FUT",
+        "BG_FUTURES",
+    }
+)
 
 
 def normalize_market_type(market_type: str) -> str:
@@ -19,9 +40,29 @@ def normalize_market_type(market_type: str) -> str:
         return "futures"
     if raw in _SPOT_ALIASES:
         return "spot"
-    if raw.startswith("fut"):
+    if raw.startswith("fut") or raw.startswith("bg_fut"):
         return "futures"
+    if raw.startswith("bg_") and "spot" in raw:
+        return "spot"
     return "spot"
+
+
+def is_bitget_registry_market(market: str) -> bool:
+    """
+    True if strategy_registry.market belongs to Bitget crypto book.
+    Rejects stock KR/US labels so exploration MAB does not soft-miss Bitget rows.
+    """
+    m = str(market or "").strip().upper()
+    if not m:
+        return False
+    if m in _BITGET_REGISTRY_MARKETS:
+        return True
+    raw = str(market or "").strip().lower()
+    if raw in _FUT_ALIASES or raw in _SPOT_ALIASES:
+        return True
+    if raw.startswith("fut") or raw.startswith("bg_fut") or raw.startswith("bg_spot"):
+        return True
+    return False
 
 
 def to_deathmatch_key(market_type: str) -> str:

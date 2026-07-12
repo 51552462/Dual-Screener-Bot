@@ -9,9 +9,9 @@ import json
 import os
 import tempfile
 import threading
-from datetime import datetime
 from typing import Any, Dict, Optional
 
+from bitget.infra.clock import utc_datetime_str
 from bitget.infra.data_paths import bitget_data_dir
 from bitget.infra.market_keys import normalize_market_type
 
@@ -88,7 +88,7 @@ def load_treasury_state() -> Dict[str, Any]:
 def save_treasury_state(state: Dict[str, Any]) -> bool:
     path = treasury_state_path()
     state = dict(state)
-    state["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state["updated_at"] = utc_datetime_str()
     try:
         with _LOCK:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -121,6 +121,54 @@ def live_nav(market_type: str) -> float:
         return v if v > 0 else base
     except (TypeError, ValueError):
         return base
+
+
+def portfolio_nav_snapshot() -> Dict[str, Any]:
+    """Combined SPOT+FUTURES treasury NAV / HWM / current drawdown %.
+
+    Portfolio MDD uses combined peaks: (hwm_s+hwm_f - nav_s-nav_f) / (hwm_s+hwm_f).
+    Soft-fails to zeros — never raises into the live order path.
+    """
+    try:
+        state = load_treasury_state()
+        spot = state.get("spot") if isinstance(state.get("spot"), dict) else {}
+        fut = state.get("futures") if isinstance(state.get("futures"), dict) else {}
+
+        def _f(row: Dict[str, Any], key: str, default: float = 0.0) -> float:
+            try:
+                return float(row.get(key, default) or default)
+            except (TypeError, ValueError):
+                return float(default)
+
+        spot_nav = _f(spot, "nav")
+        fut_nav = _f(fut, "nav")
+        spot_hwm = max(_f(spot, "hwm", spot_nav), spot_nav)
+        fut_hwm = max(_f(fut, "hwm", fut_nav), fut_nav)
+        nav = spot_nav + fut_nav
+        hwm = spot_hwm + fut_hwm
+        mdd_pct = 0.0
+        if hwm > 0:
+            mdd_pct = max(0.0, (hwm - nav) / hwm * 100.0)
+        return {
+            "nav": nav,
+            "hwm": hwm,
+            "mdd_pct": round(mdd_pct, 4),
+            "spot_nav": spot_nav,
+            "futures_nav": fut_nav,
+            "spot_hwm": spot_hwm,
+            "futures_hwm": fut_hwm,
+        }
+    except Exception:
+        return {
+            "nav": 0.0,
+            "hwm": 0.0,
+            "mdd_pct": 0.0,
+            "spot_nav": 0.0,
+            "futures_nav": 0.0,
+            "spot_hwm": 0.0,
+            "futures_hwm": 0.0,
+            "error": "portfolio_nav_snapshot_failed",
+        }
 
 
 def resolve_effective_kelly(

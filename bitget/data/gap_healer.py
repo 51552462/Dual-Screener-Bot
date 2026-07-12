@@ -1,5 +1,7 @@
 """
 REST backfill when WebSocket lag or disconnect is detected.
+
+Tier-1 연동: stream_buffer freshness → throttled REST heal (서버 다운 방지).
 """
 from __future__ import annotations
 
@@ -7,23 +9,39 @@ import os
 import time
 from typing import Iterable, Optional
 
+import memory_bounds
+
 from bitget.data.stream_buffer import get_stream_buffer
 from bitget.infra.logging_setup import get_logger
+from bitget.infra.memory_policy import (
+    GAP_HEAL_MAX_AGE_SEC,
+    GAP_HEAL_MAX_SYMBOLS_SCAN,
+    GAP_HEAL_MIN_INTERVAL_SEC,
+)
 
 logger = get_logger("bitget.data.gap_healer")
 
-DEFAULT_MAX_AGE_SEC = float(os.environ.get("BITGET_GAP_HEAL_MAX_AGE_SEC", "120"))
+DEFAULT_MAX_AGE_SEC = float(os.environ.get("BITGET_GAP_HEAL_MAX_AGE_SEC", str(GAP_HEAL_MAX_AGE_SEC)))
+
+_heal_gate = memory_bounds.ThrottledCallback(interval_sec=GAP_HEAL_MIN_INTERVAL_SEC)
+_stale_symbols_buf: list[str] = []
+_norm_symbols_buf: list[str] = []
 
 
 def _normalize_symbols(symbols: Optional[Iterable[str]]) -> tuple[str, ...]:
+    buf = _norm_symbols_buf
+    buf.clear()
     if not symbols:
         return ()
-    out: list[str] = []
+    seen: set[str] = set()
     for s in symbols:
         sym = str(s or "").replace("_", "").upper().strip()
-        if sym:
-            out.append(sym)
-    return tuple(dict.fromkeys(out))
+        if sym and sym not in seen:
+            seen.add(sym)
+            buf.append(sym)
+            if len(buf) >= GAP_HEAL_MAX_SYMBOLS_SCAN:
+                break
+    return tuple(buf)
 
 
 def assess_buffer_health(
@@ -39,14 +57,15 @@ def assess_buffer_health(
     stats = buf.stats()
     global_age = float(stats.get("last_update_age_sec") or 9999.0)
     ob_age = float(stats.get("last_orderbook_age_sec") or 9999.0)
-    stale_symbols: list[str] = []
+    stale = _stale_symbols_buf
+    stale.clear()
     sym_list = _normalize_symbols(symbols)
 
     for sym in sym_list:
         for inst_type in inst_types:
             age = buf.age_sec(sym, inst_type)
             if age is None or age > float(max_age_sec):
-                stale_symbols.append(f"{inst_type}:{sym}")
+                stale.append(f"{inst_type}:{sym}")
 
     global_stale = global_age >= float(max_age_sec)
     if stats.get("orderbooks", 0) and ob_age >= float(max_age_sec):
@@ -55,7 +74,7 @@ def assess_buffer_health(
         "buffer_age_sec": global_age,
         "orderbook_age_sec": ob_age,
         "global_stale": global_stale,
-        "stale_symbols": stale_symbols,
+        "stale_symbols": list(stale),
         "stats": stats,
     }
 
@@ -68,6 +87,7 @@ def heal_if_stale(
 ) -> dict:
     """
     If stream buffer is stale (global or watched symbols), run incremental MTF REST update.
+    Throttled by GAP_HEAL_MIN_INTERVAL_SEC unless force=True.
     """
     health = assess_buffer_health(symbols=symbols, max_age_sec=max_age_sec)
     age = float(health["buffer_age_sec"])
@@ -81,6 +101,10 @@ def heal_if_stale(
 
     needs_heal = force or health["global_stale"] or bool(health["stale_symbols"])
     if not needs_heal:
+        return out
+
+    if not force and not _heal_gate.due():
+        out["reason"] = "throttled"
         return out
 
     reason = "global_stale" if health["global_stale"] else "symbol_stale"

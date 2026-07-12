@@ -7,9 +7,9 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
 from typing import Any
 
+from bitget.infra.clock import parse_utc_iso, utc_now, utc_now_iso
 from bitget.infra.data_paths import validation_state_dir
 
 PARALLEL_STATE_NAME = "parallel_run_state.json"
@@ -25,7 +25,7 @@ def parallel_state_path() -> str:
 
 def start_parallel_run(*, mode: str = "pipeline", note: str = "") -> dict[str, Any]:
     payload = {
-        "started_at_utc": datetime.now(timezone.utc).isoformat(),
+        "started_at_utc": utc_now_iso(),
         "mode": str(mode),
         "note": note,
         "target_hours": float(os.environ.get("BITGET_PARALLEL_RUN_HOURS", "48")),
@@ -52,10 +52,11 @@ def parallel_run_status() -> dict[str, Any]:
     if not st:
         return {"active": False, "elapsed_hours": 0.0, "ready_for_cutover": False}
     try:
-        started = datetime.fromisoformat(str(st["started_at_utc"]).replace("Z", "+00:00"))
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-        elapsed_h = (datetime.now(timezone.utc) - started).total_seconds() / 3600.0
+        started = parse_utc_iso(str(st["started_at_utc"]))
+        if started is None:
+            elapsed_h = 0.0
+        else:
+            elapsed_h = (utc_now() - started).total_seconds() / 3600.0
     except Exception:
         elapsed_h = 0.0
     target = float(st.get("target_hours") or 48.0)

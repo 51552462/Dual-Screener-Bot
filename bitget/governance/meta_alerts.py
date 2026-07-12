@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from html import escape as html_escape
 
+from bitget.infra.logging_setup import get_logger, log_exception
+
+logger = get_logger("bitget.governance.meta_alerts")
+
 
 def send_meta_critical_alert(title: str, body: str, *, prefix: str = "CRITICAL") -> bool:
     """Meta 뇌사·파이프라인 치명 실패 — parse_mode=HTML 안전 발송."""
@@ -23,8 +27,5 @@ def send_meta_critical_alert(title: str, body: str, *, prefix: str = "CRITICAL")
         send_telegram_msg(msg)
         return True
     except Exception as e:
-        try:
-            print(f"[CRITICAL] telegram skip: {e}")
-        except Exception:
-            pass
+        log_exception(logger, "[CRITICAL] telegram skip: %s", e)
         return False
