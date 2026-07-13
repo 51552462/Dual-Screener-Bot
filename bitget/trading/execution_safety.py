@@ -434,9 +434,10 @@ def evaluate_doomsday_gate(
         )
 
         blocked, meta = doomsday_long_entry_blocked(cfg, position_side=position_side)
-        size_mult = doomsday_size_mult(cfg)
+        size_mult = doomsday_size_mult(cfg, position_side=position_side)
         meta = dict(meta)
         meta["doomsday_size_mult"] = size_mult
+        meta["doomsday_size_side"] = str(position_side or "LONG").upper()
     except Exception as e:
         return GateResult(
             ExecutionGateOutcome.APPROVED,

@@ -139,6 +139,39 @@ def _lookup_virtual_trade_id(market_type: str, symbol: str, timeframe: str, sig_
         return 0
 
 
+def _lookup_virtual_trade_quantity(
+    market_type: str, symbol: str, timeframe: str, sig_type: str, side: str
+) -> float:
+    """Paper Kelly quantity SSOT for live fill — ARCR/NAV already baked in."""
+    try:
+        conn = get_connection(DB_PATH, read_only=True)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT quantity
+            FROM bitget_forward_trades
+            WHERE market_type=? AND symbol=? AND timeframe=? AND sig_type=?
+              AND position_side=? AND status='OPEN'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                str(market_type).lower(),
+                str(symbol),
+                str(timeframe).upper(),
+                str(sig_type),
+                str(side).upper(),
+            ),
+        )
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return 0.0
+        return float(row[0] or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _load_table(conn, table_name):
     tail = memory_bounds.ohlcv_limit_sql(bar_limit=OHLCV_SIGNAL_BAR_LIMIT)
     df = pd.read_sql(
@@ -590,11 +623,25 @@ def _process_scan_hit(
         try:
             order_side = str(dbg.get("side", "LONG")).upper()
             order_amount = float(dbg.get("order_amount", 0.0) or 0.0)
+            amount_source = "raw"
             if order_amount <= 0:
-                # fallback: 가상 장부 quantity를 쓰지 못하는 경우 최소 notional 기반 근사
-                px = float(dbg.get("last_close", last_close) or 0.0)
-                default_notional = 20.0
-                order_amount = (default_notional / px) if px > 0 else 0.0
+                # Paper≈live: prefer virtual Kelly quantity (ARCR/NAV already applied)
+                vqty = _lookup_virtual_trade_quantity(
+                    market_type=market_type,
+                    symbol=symbol,
+                    timeframe=tf,
+                    sig_type=sig_for_db,
+                    side=order_side,
+                )
+                if vqty > 0:
+                    order_amount = float(vqty)
+                    amount_source = "virtual_kelly"
+                else:
+                    # last-resort exchange-min approximation — not institutional sizing
+                    px = float(dbg.get("last_close", last_close) or 0.0)
+                    default_notional = 20.0
+                    order_amount = (default_notional / px) if px > 0 else 0.0
+                    amount_source = "fallback_min_notional"
             order_lev = float(dbg.get("leverage", 3.0) or 3.0)
             exec_result = execute_real_order(
                 symbol=symbol,
@@ -603,6 +650,7 @@ def _process_scan_hit(
                 leverage=order_lev,
                 market_type=market_type,
                 strategy_key=str(engine_name or ""),
+                amount_source=amount_source,
             )
             vt_id = _lookup_virtual_trade_id(
                 market_type=market_type,

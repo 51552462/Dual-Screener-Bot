@@ -148,8 +148,13 @@ def apply_meta_kelly_merge(
     sys_config: Optional[Dict[str, Any]] = None,
     entry_facts: Optional[Dict[str, Any]] = None,
     sector_mapped: Optional[str] = None,
+    position_side: Optional[str] = None,
 ) -> float:
-    """Meta mult + kelly_cap/floor + KILL_SWITCH (주식 consumer 규칙 대칭)."""
+    """Meta mult + kelly_cap/floor + KILL_SWITCH (주식 consumer 규칙 대칭).
+
+    When ``position_side`` is set (Bitget ledger), side-blind doomsday dampening is
+    skipped — ARCR applies LONG damp / SHORT relay after merge in the ledger.
+    """
     if (
         sys_config is not None
         and entry_facts is not None
@@ -176,8 +181,9 @@ def apply_meta_kelly_merge(
     except (TypeError, ValueError):
         pass
 
-    # Evolutionary doomsday shape dampening (stock meta_governor_consumer parity)
-    if sys_config is not None:
+    # Side-aware ARCR owns dampening when position_side is known (coin path).
+    # Legacy / side-unknown callers keep stock-parity blind dampen.
+    if sys_config is not None and position_side is None:
         try:
             from doomsday_dampener import apply_doomsday_dampening
 

@@ -126,6 +126,7 @@ def execute_real_order(
     market_type="futures",
     strategy_key=None,
     margin_mode=None,
+    amount_source: str = "raw",
 ):
     """
     Bitget live order — safety gates → normalization → leverage (futures) → OMS.
@@ -139,12 +140,17 @@ def execute_real_order(
       6. Portfolio NAV drawdown (reduce/block/halt)
       7. Portfolio gross notional cap (no flatten)
       8. Tail-risk reserve (underfund size / empty+DD block)
-      9. Doomsday DEFCON (≤ block — new LONG only; size dampen)
+      9. Doomsday DEFCON (≤ block — new LONG only; ARCR size mult)
      10. BTC-proxy concentration (high-β same-side — no flatten)
      11. Bad-tick / flash-crash price sanity
      12. Pre-trade slippage gate
      13. Leverage / margin manager (futures; MAX_LEVERAGE)
      14. OMS market order (oms_core defense-in-depth)
+
+    amount_source:
+      - ``virtual_kelly`` / ``paper_kelly`` / ``ledger`` → qty already includes
+        NAV/ARCR/tail from ``try_add_virtual_position``; skip re-scale (paper≈live).
+      - ``raw`` (default) → apply gate size mults once (incl. SHORT ARCR boost).
     """
     cfg = _load_config()
 
@@ -154,7 +160,12 @@ def execute_real_order(
     lev = resolve_leverage(cfg, strategy_key=strategy_key, leverage_explicit=leverage)
     resolved_mm = resolve_margin_mode(cfg, strategy_key=strategy_key, margin_mode_explicit=margin_mode)
     market_symbol = normalize_market_symbol(str(symbol).replace("_", "/"), market_type)
-    meta_out = {"margin_mode_requested": resolved_mm, "leverage": lev}
+    src = str(amount_source or "raw").strip().lower() or "raw"
+    meta_out = {
+        "margin_mode_requested": resolved_mm,
+        "leverage": lev,
+        "amount_source": src,
+    }
 
     if qty <= 0:
         return {
@@ -227,35 +238,46 @@ def execute_real_order(
             **meta_out,
         }
 
-    # NAV / doomsday / tail-risk reduce — shrink size before normalize (never invent size up)
-    try:
-        nav_mult = float(meta_out.get("nav_size_mult") or 1.0)
-    except (TypeError, ValueError):
-        nav_mult = 1.0
-    try:
-        doom_mult = float(meta_out.get("doomsday_size_mult") or 1.0)
-    except (TypeError, ValueError):
-        doom_mult = 1.0
-    try:
-        tail_mult = float(meta_out.get("tail_risk_size_mult") or 1.0)
-    except (TypeError, ValueError):
-        tail_mult = 1.0
-    size_mult = 1.0
-    if 0.0 < nav_mult < 1.0:
-        size_mult *= nav_mult
-    if 0.0 < doom_mult < 1.0:
-        size_mult *= doom_mult
-    if 0.0 < tail_mult < 1.0:
-        size_mult *= tail_mult
-    if 0.0 < size_mult < 1.0:
-        qty = qty * size_mult
-        meta_out["amount_after_risk_reduce"] = qty
+    # NAV / ARCR doomsday / tail-risk size plane.
+    # virtual_kelly: already sized in ledger (paper≈live) — block gates still ran above.
+    kelly_sourced = src in ("virtual_kelly", "paper_kelly", "ledger")
+    if not kelly_sourced:
+        try:
+            nav_mult = float(meta_out.get("nav_size_mult") or 1.0)
+        except (TypeError, ValueError):
+            nav_mult = 1.0
+        try:
+            doom_mult = float(meta_out.get("doomsday_size_mult") or 1.0)
+        except (TypeError, ValueError):
+            doom_mult = 1.0
+        try:
+            tail_mult = float(meta_out.get("tail_risk_size_mult") or 1.0)
+        except (TypeError, ValueError):
+            tail_mult = 1.0
+        size_mult = 1.0
         if 0.0 < nav_mult < 1.0:
-            meta_out["amount_after_nav_reduce"] = qty
+            size_mult *= nav_mult
         if 0.0 < doom_mult < 1.0:
-            meta_out["amount_after_doomsday_reduce"] = qty
+            size_mult *= doom_mult
+        elif doom_mult > 1.0:
+            from bitget.infra.memory_policy import ARCR_SHORT_RELAY_CAP
+
+            size_mult *= min(float(doom_mult), float(ARCR_SHORT_RELAY_CAP))
         if 0.0 < tail_mult < 1.0:
-            meta_out["amount_after_tail_risk_reduce"] = qty
+            size_mult *= tail_mult
+        if size_mult > 0.0 and abs(size_mult - 1.0) > 1e-12:
+            qty = qty * size_mult
+            meta_out["amount_after_risk_resize"] = qty
+            if 0.0 < nav_mult < 1.0:
+                meta_out["amount_after_nav_reduce"] = qty
+            if 0.0 < doom_mult < 1.0:
+                meta_out["amount_after_doomsday_reduce"] = qty
+            elif doom_mult > 1.0:
+                meta_out["amount_after_doomsday_boost"] = qty
+            if 0.0 < tail_mult < 1.0:
+                meta_out["amount_after_tail_risk_reduce"] = qty
+    else:
+        meta_out["risk_resize_skipped"] = "virtual_kelly_ssot"
 
     try:
         ex = create_trade_exchange(market_type)

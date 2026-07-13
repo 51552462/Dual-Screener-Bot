@@ -431,7 +431,8 @@ class TestExecutionSafety(unittest.TestCase):
 
         gate_s = evaluate_doomsday_gate(cfg, position_side="SHORT")
         self.assertEqual(gate_s.outcome, ExecutionGateOutcome.APPROVED)
-        self.assertLessEqual(float(gate_s.meta.get("doomsday_size_mult") or 1.0), 1.0)
+        # ARCR: SHORT must not inherit LONG dampen — hold (≥1) or soft boost
+        self.assertGreaterEqual(float(gate_s.meta.get("doomsday_size_mult") or 1.0), 1.0)
 
         from unittest.mock import patch
 

@@ -48,6 +48,15 @@ CORR_BENCH_SYMBOL: str = "BTC_USDT"
 CORR_BENCH_TF: str = "1D"
 # Doomsday DEFCON — block new LONG when level ≤ this (never flatten; SHORT may hedge)
 DOOMSDAY_BLOCK_LEVEL: int = 2
+# ARCR — asymmetric regime capital relay (LONG damp / SHORT hold-or-boost)
+ARCR_SHORT_RELAY_GAIN: float = 0.50       # boost = 1 + (1−damp)×gain
+ARCR_SHORT_RELAY_CAP: float = 1.35        # hard ceiling on SHORT size/Kelly tilt
+ARCR_TS_SIDE_FLOOR: float = 0.50          # TS_KELLY_BY_SIDE / base clip
+ARCR_TS_SIDE_CAP: float = 1.50
+ARCR_FUNDING_CARRY_FLOOR: float = 0.85    # adverse carry soft shrink
+ARCR_FUNDING_CARRY_CAP: float = 1.15      # favorable carry soft boost
+ARCR_FUNDING_SCALE: float = 300.0         # funding_rate×scale → Δmult (≤0 disables)
+
 # Tail-risk reserve (accrual → crisis 1:1 release; underfund size / empty+DD block)
 TAIL_RISK_ACCRUAL_PCT: float = 1.5          # % of each treasury → fund target
 TAIL_RISK_MIN_COVERAGE_PCT: float = 0.5     # fund/NAV %; below → size shrink (≤0 disables)

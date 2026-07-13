@@ -526,6 +526,7 @@ def try_add_virtual_position(
         sys_config=sys_config,
         entry_facts=facts if isinstance(facts, dict) else {},
         sector_mapped=str(sector),
+        position_side=position_side,
     )
 
     # [동적 탐험예산 — 7일 롤링 MAB] 최종 Kelly 비중에 챔피언(LIVE)/탐험
@@ -533,6 +534,28 @@ def try_add_virtual_position(
     # 미분류(NEUTRAL) 그룹은 스케일러 1.0(무변경). 실패 시 항상 안전 폴백.
     _explore_scaler, _explore_role = get_exploration_role_scaler(cfg, core_group)
     kelly_risk_pct *= _explore_scaler
+
+    # ARCR — side-regime × TS_KELLY_BY_SIDE × funding carry (paper≈live SSOT)
+    fr_preview = None
+    if str(market_type).lower() == "futures":
+        try:
+            _s_pre = fetch_funding_snapshot(symbol)
+            if _s_pre:
+                fr_preview = float(_s_pre.get("funding_rate") or 0.0)
+        except Exception:
+            fr_preview = None
+    try:
+        from bitget.trading.regime_capital_relay import apply_regime_capital_to_kelly
+
+        kelly_risk_pct, _arcr_meta = apply_regime_capital_to_kelly(
+            kelly_risk_pct,
+            cfg=cfg,
+            position_side=position_side,
+            meta_state=_meta_state,
+            funding_rate=fr_preview,
+        )
+    except Exception:
+        pass
 
     account_size = float(cfg.get("ACCOUNT_SIZE_USDT", 100000))
     max_position_pct = float(effective_max_position_pct(cfg, _meta_state))
@@ -652,14 +675,15 @@ def try_add_virtual_position(
     now = utc_date_str()
     entry_cos_score = float(max_alpha_cos_effective * 100.0)
     entry_dtw_score = float(facts.get("dtw_score", facts.get("entry_dtw_score", 0.0)) or 0.0)
-    fr0 = 0.0
+    fr0 = 0.0 if fr_preview is None else float(fr_preview)
     fts0 = ""
     acc0 = 0.0
     if str(market_type).lower() == "futures":
         try:
             _s = fetch_funding_snapshot(symbol)
             if _s:
-                fr0 = float(_s.get("funding_rate") or 0.0)
+                if fr_preview is None:
+                    fr0 = float(_s.get("funding_rate") or 0.0)
                 fts0 = str(_s.get("next_funding_iso") or _s.get("next_funding_ts") or "").strip()
         except Exception:
             pass

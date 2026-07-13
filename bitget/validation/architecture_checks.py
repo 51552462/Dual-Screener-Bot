@@ -829,12 +829,31 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
         "def crypto_contagion_score",
         "Never auto-flatten",
         "Soft-pass",
+        "position_side",
+        "regime_capital_relay",
     )
     details["doomsday_gate"] = {
         "ok": bool(doom) and not _require_all(doom, doom_req),
         "missing": _require_all(doom, doom_req)
         if doom
         else ["trading/doomsday_gate.py missing"],
+    }
+
+    _, arcr = _file_text("trading/regime_capital_relay.py")
+    arcr_req = (
+        "def resolve_side_regime_mult",
+        "def resolve_side_thompson_mult",
+        "def resolve_funding_carry_mult",
+        "def apply_regime_capital_to_kelly",
+        "Never auto-flatten",
+        "Soft-pass",
+        "SHORT",
+    )
+    details["regime_capital_relay"] = {
+        "ok": bool(arcr) and not _require_all(arcr, arcr_req),
+        "missing": _require_all(arcr, arcr_req)
+        if arcr
+        else ["trading/regime_capital_relay.py missing"],
     }
 
     _, conc = _file_text("trading/concentration_gate.py")
@@ -935,6 +954,10 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
         "CORR_BTC_MIN",
         "CORR_CLUSTER_MAX_PCT",
         "DOOMSDAY_BLOCK_LEVEL",
+        "ARCR_SHORT_RELAY_GAIN",
+        "ARCR_SHORT_RELAY_CAP",
+        "ARCR_TS_SIDE_FLOOR",
+        "ARCR_FUNDING_SCALE",
         "TAIL_RISK_ACCRUAL_PCT",
         "TAIL_RISK_MIN_COVERAGE_PCT",
         "TAIL_RISK_EMPTY_BLOCK",
@@ -989,6 +1012,8 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
         "집중도 상한",
         "price_sanity_entry_blocked",
         "배드틱",
+        "apply_regime_capital_to_kelly",
+        "position_side=position_side",
     )
     details["paper_ledger_gross"] = {
         "ok": bool(led) and not _require_all(led, led_req),
@@ -996,7 +1021,7 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
     }
 
     _, meta_c = _file_text("governance/meta_consumer.py")
-    meta_req = ("apply_doomsday_dampening",)
+    meta_req = ("position_side", "apply_doomsday_dampening")
     details["meta_kelly_doomsday"] = {
         "ok": bool(meta_c) and not _require_all(meta_c, meta_req),
         "missing": _require_all(meta_c, meta_req)

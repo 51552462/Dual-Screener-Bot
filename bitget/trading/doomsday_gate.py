@@ -5,7 +5,7 @@ Invariants:
   - DEFCON ≤ DOOMSDAY_BLOCK_LEVEL → block new LONG only (SHORT may hedge)
   - Never auto-flatten open inventory
   - Soft-pass if DOOMSDAY_DEFCON missing / unreadable
-  - Contagion score feeds shared doomsday_dampener (Kelly + live size mult)
+  - Contagion score feeds ARCR (LONG damp / SHORT hold-or-boost) via regime_capital_relay
 """
 from __future__ import annotations
 
@@ -122,22 +122,23 @@ def doomsday_long_entry_blocked(
     return True, meta
 
 
-def doomsday_size_mult(cfg: Optional[dict], meta_state: Optional[dict] = None) -> float:
+def doomsday_size_mult(
+    cfg: Optional[dict],
+    meta_state: Optional[dict] = None,
+    *,
+    position_side: str = "LONG",
+) -> float:
     """
-    Live size shrink via shared dampener (1.0 = no change).
-    Soft-pass → 1.0 when score missing or below dampener floor.
+    Live size mult via ARCR side-regime (paper≈live).
+    LONG → damp ≤1.0; SHORT → 1.0 or soft boost ≤ ARCR_SHORT_RELAY_CAP.
+    Soft-pass → 1.0 when score missing.
     """
     try:
-        from doomsday_dampener import (
-            dampening_multiplier,
-            global_score_from_config,
-            resolve_gamma,
-        )
+        from bitget.trading.regime_capital_relay import resolve_side_regime_mult
 
-        score = global_score_from_config(cfg)
-        if score is None:
-            return 1.0
-        gamma = resolve_gamma(meta_state, cfg)
-        return float(dampening_multiplier(score, gamma))
+        mult, _ = resolve_side_regime_mult(
+            cfg, position_side=position_side, meta_state=meta_state
+        )
+        return float(mult)
     except Exception:
         return 1.0
