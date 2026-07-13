@@ -50,6 +50,7 @@ def _daemon_public_ws_enabled() -> bool:
 
 
 def _daemon_private_ws_enabled() -> bool:
+    return False
     """Tier-1 private WS → PrivateStreamBuffer. Opt-in — requires API credentials."""
     from bitget.data.ws_private_service import private_ws_daemon_enabled
 
@@ -266,7 +267,7 @@ def system_main_loop() -> None:
 
     if _daemon_private_ws_enabled():
         try:
-            from bitget.data.ws_private_service import start_private_ws_market_service
+          # from bitget.data.ws_private_service import start_private_ws_market_service
 
             pws_ok = start_private_ws_market_service()
             pws_line = (
