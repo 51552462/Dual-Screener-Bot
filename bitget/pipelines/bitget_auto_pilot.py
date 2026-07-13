@@ -42,6 +42,7 @@ def _daemon_sniper_enabled() -> bool:
 
 
 def _daemon_public_ws_enabled() -> bool:
+    return False
     """Tier-1 public WS → StreamBuffer. Opt-in — slippage_guard soft-skips when empty."""
   # from bitget.data.ws_market_service import public_ws_daemon_enabled
 
