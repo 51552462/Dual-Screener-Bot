@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from bitget.data.ws_stream_producer import normalize_inst_id, normalize_inst_type
+# from bitget.data.ws_stream_producer import normalize_inst_id, normalize_inst_type
 from bitget.infra.logging_setup import get_logger
 from bitget.infra.memory_policy import PUBLIC_REF_PRICE_MAX_AGE_SEC
 from bitget.infra.network_retry import call_with_retry

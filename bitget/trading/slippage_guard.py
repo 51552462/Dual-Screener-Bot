@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from bitget.data.stream_buffer import get_stream_buffer
-from bitget.data.ws_stream_producer import normalize_inst_id, normalize_inst_type
+# from bitget.data.ws_stream_producer import normalize_inst_id, normalize_inst_type
 
 
 def _inst_type_for_market(market_type: str) -> str:
