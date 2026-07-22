@@ -27,7 +27,7 @@ from bitget.infra.logging_setup import setup_logging, get_logger, log_exception
 from bitget.config_hub import load_config as hub_load_config, save_config_atomic as hub_save_config_atomic
 from bitget.schedule_lock import acquire as schedule_acquire
 
-ffrom bitget.forward_tester import (
+from bitget.forward_tester import (
     generate_mutant_strategies,
     init_forward_db,
     run_deep_dive_analysis,
