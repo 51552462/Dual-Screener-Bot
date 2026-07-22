@@ -32,7 +32,9 @@ def evolve_bitget_ratchet_kappa(
     cfg: Optional[Dict[str, Any]] = None,
     *,
     db_path: Optional[str] = None,
-    lookback_days: int = 7,
+    # [아키텍트 수술] 코인 초단기 변동성 반영. 
+    # 기본 7일 룩백을 유지하되, 코인의 물리법칙에 맞게 3일(72시간)로 단축하여 RL 민감도를 극대화.
+    lookback_days: int = 3,
     persist: bool = True,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
@@ -59,9 +61,19 @@ def evolve_bitget_ratchet_kappa(
     if rates.get("n", 0) < 3:
         return {"updated": False, "reason": "insufficient_runner_sample", "rates": rates, "state": old_state}
 
+   # [아키텍트 수술] 코인 휩쏘(청산 빔) 가속기 주입
+    # Canary 센서를 읽어 시장에 펀딩비/유동성 스트레스가 감지되면
+    # RL 엔진이 인식하는 휩쏘 확률을 1.5배로 부풀려, 방어막(Ratchet)을 훨씬 빠르고 팽팽하게 조입니다.
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        stress = float(load_canary_state().get("crypto_liquidity_stress") or 0.0)
+        stress_multiplier = 1.5 if stress >= 0.5 else 1.0
+    except Exception:
+        stress_multiplier = 1.0
+
     new_state = xd.update_ratchet_kappa_rl(
         old_state,
-        whipsaw_rate=float(rates["whipsaw_rate"]),
+        whipsaw_rate=float(rates["whipsaw_rate"]) * stress_multiplier,
         giveback_rate=float(rates["giveback_rate"]),
     )
     new_state["updated_at"] = now.strftime("%Y-%m-%d %H:%M:%S")

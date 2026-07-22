@@ -1,0 +1,63 @@
+{
+  "shadow_mode": true,
+  "schema_version": 2,
+  "week_start": "2026-07-05",
+  "week_end": "2026-07-11",
+  "computed_at_utc": "2026-07-11T04:36:59.235797+00:00",
+  "markets": {
+    "SPOT": {
+      "pri_score": 48.29,
+      "regime": "SIDEWAYS",
+      "composite_z": -0.1143,
+      "components": {
+        "pass_rate_trend": 0.0,
+        "mfe_level": 0.0,
+        "mae_stress": 0.0,
+        "closed_vol": 0.0,
+        "dm_a_pressure": 0.0,
+        "starvation": -1.1429
+      },
+      "sample_counts": {
+        "funnel_slots": 0,
+        "closed_trades": 0,
+        "open_positions": 0,
+        "dm_a_events": 0,
+        "starvation_index": 0.9,
+        "vol_proxy": 1.0
+      },
+      "narrative_bullets": [],
+      "shadow_pnl_delta_pct": 0.0,
+      "cold_start": true
+    },
+    "FUTURES": {
+      "pri_score": 48.29,
+      "regime": "SIDEWAYS",
+      "composite_z": -0.1143,
+      "components": {
+        "pass_rate_trend": 0.0,
+        "mfe_level": 0.0,
+        "mae_stress": 0.0,
+        "closed_vol": 0.0,
+        "dm_a_pressure": 0.0,
+        "starvation": -1.1429
+      },
+      "sample_counts": {
+        "funnel_slots": 0,
+        "closed_trades": 0,
+        "open_positions": 0,
+        "dm_a_events": 0,
+        "starvation_index": 0.9,
+        "vol_proxy": 1.0
+      },
+      "narrative_bullets": [],
+      "shadow_pnl_delta_pct": 0.0,
+      "cold_start": true
+    }
+  },
+  "blended": {
+    "pri_score": 48.29,
+    "regime": "SIDEWAYS",
+    "composite_z": -0.1143,
+    "shadow_pnl_delta_pct": 0.0
+  }
+}

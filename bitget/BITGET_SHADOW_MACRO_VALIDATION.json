@@ -1,0 +1,16 @@
+{
+  "shadow_mode": true,
+  "market": "SPOT",
+  "liquidity_regime": "SIDEWAYS",
+  "institutional_liquidity_index": 50.0,
+  "simulation": {
+    "n": 3,
+    "actual_mean_pct": 2.0,
+    "shadow_mean_pct": 5.3167,
+    "improvement_pct": 3.3167,
+    "arm_weights": {
+      "A (오리지널)": 0.9975,
+      "B (초신성)": 0.0025
+    }
+  }
+}

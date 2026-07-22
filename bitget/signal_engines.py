@@ -391,8 +391,12 @@ def _doppelganger_adjustment(current_vec_7: np.ndarray, close_arr):
     best_kind = "NONE"
 
     for i in [1, 2, 3]:
-        a = SYS_CONFIG.get(f"DNA_ALPHA_RANK{i}")
-        t = SYS_CONFIG.get(f"DNA_TRAP_RANK{i}")
+        # [아키텍트 구조 수술] 코인 팩토리 전용 TRAP / ALPHA 유전자 탐색
+        # 블랙홀 헌터(Blackhole Hunter)와 전진 테스터(Forward Tester)가 
+        # 코인판에서 수집한 유전자를 'CRYPTO_DNA_' 이름으로 꽂아 넣으면 실시간으로 반영됩니다.
+        a = SYS_CONFIG.get(f"CRYPTO_DNA_ALPHA_RANK{i}", SYS_CONFIG.get(f"DNA_ALPHA_RANK{i}"))
+        t = SYS_CONFIG.get(f"CRYPTO_DNA_TRAP_RANK{i}", SYS_CONFIG.get(f"DNA_TRAP_RANK{i}"))
+        
         for kind, dna in (("ALPHA", a), ("TRAP", t)):
             if not isinstance(dna, dict):
                 continue
@@ -557,7 +561,21 @@ def compute_master_signal(df_raw: pd.DataFrame, idx_close: pd.Series, timeframe:
     marcap_eok = float(trade_value_24h / 100_000_000.0)
     recent_hits = signal_1[-252:-1].sum() + signal_4[-252:-1].sum() if len(c) > 252 else signal_1[:-1].sum() + signal_4[:-1].sum()
     freq_count = int(recent_hits)
-    total_score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
+
+    # [아키텍트 수술] 관제탑(SYS_CONFIG)의 진화 피드백을 실시간 수용하는 동적 가중치 공식
+    dyn_weights = SYS_CONFIG.get("DYNAMIC_FACTOR_WEIGHTS", {
+        "rs": 10.0, "ema": 9.0, "marcap": 8.0, "cpv": 7.0, "bbe": 6.0, "tb": 5.0
+    })
+    w_sum = sum(dyn_weights.values())
+    
+    total_score = (
+        score_rs * dyn_weights.get("rs", 10.0) +
+        score_ema * dyn_weights.get("ema", 9.0) +
+        score_marcap * dyn_weights.get("marcap", 8.0) +
+        score_cpv * dyn_weights.get("cpv", 7.0) +
+        score_bbe * dyn_weights.get("bbe", 6.0) +
+        score_tb * dyn_weights.get("tb", 5.0)
+    ) / (w_sum * 10.0) * 100.0
 
     vec7, meta7 = _auto_forward_style_7d_vector(df, idx_close)
     dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, c)
@@ -937,11 +955,34 @@ def compute_tv_short_v1(df: pd.DataFrame, idx_close: pd.Series, timeframe: str =
     freq_count = int(recent_hits)
     score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
 
+    # [아키텍트 수술] 코인 숏 스퀴즈(청산 빔) 억제기 및 비대칭 국면 페널티
+    # 코인에서 지표의 과매수는 하락 반전이 아니라 숏 뚝배기를 깨는 스퀴즈 로켓의 1단 점화일 확률이 높습니다.
+    # 펀딩비와 국면을 읽고 숏 시그널의 점수를 스스로 난도질하여 진짜 안전한 자리가 아니면 탈락시킵니다.
+    guard_comment = ""
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        canary = load_canary_state()
+        avg_funding = float(canary.get("components", {}).get("avg_funding_rate") or 0.0)
+        
+        # 1. 펀딩비가 극단적 양수(롱 과열)라면 숏 스퀴즈 빔 위험 -> 점수 50% 강제 삭감
+        if avg_funding >= 0.0003:
+            score *= 0.5
+            guard_comment += f"\n🚨 [숏 스퀴즈 경고] 롱 과열 펀딩비({avg_funding:.5f}). 숏 타점 점수 반토막 삭감.\n"
+            
+        # 2. 메타 인지 레이더가 대세 상승장(UP)으로 판별했다면 역배팅 꼬리 위험 -> 점수 30% 삭감
+        regime = SYS_CONFIG.get("META_REGIME_KEY", "UNKNOWN").upper()
+        if regime in ("UP", "BULL"):
+            score *= 0.7
+            guard_comment += f"\n🚨 [비대칭 국면] 대세 상승장({regime}) 역배팅 위험. 숏 점수 강제 삭감.\n"
+    except Exception:
+        pass
+
     # 💡 [코인 생태계 특화] 숏(Short) 포지션도 의사결정나무 및 도플갱어 검증 필수 수행
     vec7, meta7 = _auto_forward_style_7d_vector(out, idx_close)
     dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, out["Close"].values)
     score = float(np.clip(score + dd_adj, 0.0, 100.0))
-    guard_comment = ""
+    if dd_msg:
+        guard_comment += f"\n{dd_msg}\n"
 
     rej, reason = _tree_reject(float(cur_cpv))
     if rej:
@@ -1058,12 +1099,34 @@ def compute_tv_short_v2(df: pd.DataFrame, idx_close: pd.Series, timeframe: str =
     freq_count = int(recent_hits)
     score = (score_rs * 10 + score_ema * 9 + score_marcap * 8 + score_cpv * 7 + score_bbe * 6 + score_tb * 5) / 450 * 100
 
+    # [아키텍트 수술] 코인 숏 스퀴즈(청산 빔) 억제기 및 비대칭 국면 페널티
+    # 코인에서 지표의 과매수는 하락 반전이 아니라 숏 뚝배기를 깨는 스퀴즈 로켓의 1단 점화일 확률이 높습니다.
+    # 펀딩비와 국면을 읽고 숏 시그널의 점수를 스스로 난도질하여 진짜 안전한 자리가 아니면 탈락시킵니다.
+    guard_comment = ""
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        canary = load_canary_state()
+        avg_funding = float(canary.get("components", {}).get("avg_funding_rate") or 0.0)
+        
+        # 1. 펀딩비가 극단적 양수(롱 과열)라면 숏 스퀴즈 빔 위험 -> 점수 50% 강제 삭감
+        if avg_funding >= 0.0003:
+            score *= 0.5
+            guard_comment += f"\n🚨 [숏 스퀴즈 경고] 롱 과열 펀딩비({avg_funding:.5f}). 숏 타점 점수 반토막 삭감.\n"
+            
+        # 2. 메타 인지 레이더가 대세 상승장(UP)으로 판별했다면 역배팅 꼬리 위험 -> 점수 30% 삭감
+        regime = SYS_CONFIG.get("META_REGIME_KEY", "UNKNOWN").upper()
+        if regime in ("UP", "BULL"):
+            score *= 0.7
+            guard_comment += f"\n🚨 [비대칭 국면] 대세 상승장({regime}) 역배팅 위험. 숏 점수 강제 삭감.\n"
+    except Exception:
+        pass
+
     # 💡 [코인 생태계 특화] 숏(Short) 포지션도 의사결정나무 및 도플갱어 검증 필수 수행
     vec7, meta7 = _auto_forward_style_7d_vector(out, idx_close)
     dd_adj, dd_msg, dd_cos, dd_dtw = _doppelganger_adjustment(vec7, out["Close"].values)
     score = float(np.clip(score + dd_adj, 0.0, 100.0))
-    guard_comment = ""
-
+    if dd_msg:
+        guard_comment += f"\n{dd_msg}\n"
     rej, reason = _tree_reject(float(cur_cpv))
     if rej:
         score = 0.0

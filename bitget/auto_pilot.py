@@ -27,7 +27,7 @@ from bitget.infra.logging_setup import setup_logging, get_logger, log_exception
 from bitget.config_hub import load_config as hub_load_config, save_config_atomic as hub_save_config_atomic
 from bitget.schedule_lock import acquire as schedule_acquire
 
-from bitget.forward_tester import (
+ffrom bitget.forward_tester import (
     generate_mutant_strategies,
     init_forward_db,
     run_deep_dive_analysis,
@@ -36,6 +36,16 @@ from bitget.forward_tester import (
 from bitget.data_miner import run_bitget_data_miner
 from bitget.infra.data_paths import market_data_db_path, system_config_json_path
 from bitget.infra.shared_db_connector import get_connection
+
+# [아키텍트 수술] 동적 큐 라우팅(Dynamic Queue Routing) 강제 바인딩
+# 두뇌(auto_pilot)에서 뿜어져 나오는 일일/주간 결산, 팩터 자율 진화 리포트들이
+# 주식 팩토리로 증발하지 않고, 100% 코인 텔레그램망으로 꽂히도록 배관을 영구 결속합니다.
+import telegram_message_queue as _tmq
+from bitget.infra.data_paths import bitget_data_dir as _bitget_data_dir
+from bitget.infra.data_paths import message_queue_db_path as _bitget_queue_path
+_tmq._BOT_DIR = _bitget_data_dir()
+_tmq.MESSAGE_QUEUE_DB_PATH = _bitget_queue_path()
+_tmq._schema_ready = False
 
 
 def send_telegram_report(message):
@@ -488,6 +498,86 @@ def _engine6_oos_parallel_champion(cfg, df_closed: pd.DataFrame, report_lines: l
     report_lines.append("")
 
 
+
+def _evolve_dynamic_factor_weights(cfg, df_closed: pd.DataFrame, report_lines: list):
+    """
+    승/패 장부 데이터를 분석해 팩터별 기여도를 평가하고 가중치를 스스로 조절하는 메타 인지 함수.
+    """
+    report_lines.append("<b>[8. 머신러닝 팩터 가중치 자율 진화 (Self-Evolution)]</b>")
+    base_weights = {"rs": 10.0, "ema": 9.0, "marcap": 8.0, "cpv": 7.0, "bbe": 6.0, "tb": 5.0}
+
+    if df_closed is None or len(df_closed) < 50:
+        report_lines.append("▪️ 청산 표본 부족(최소 50건) — 팩터 진화 보류 및 베이스라인 유지.")
+        cfg["DYNAMIC_FACTOR_WEIGHTS"] = base_weights
+        report_lines.append("")
+        return cfg
+
+    try:
+        import json
+        def _parse_fact(row, key):
+            try:
+                # DB에 저장된 facts JSON 문자열에서 동적 롤링 스코어(dyn_*_score) 추출
+                d = json.loads(row)
+                return float(d.get(f"dyn_{key}_score") or d.get(f"v_{key}", np.nan))
+            except:
+                return np.nan
+
+        df = df_closed.copy()
+        if "facts" not in df.columns:
+            cfg["DYNAMIC_FACTOR_WEIGHTS"] = base_weights
+            report_lines.append("▪️ Facts 데이터 부재로 팩터 진화 스킵.")
+            report_lines.append("")
+            return cfg
+
+        # 분석할 핵심 4대 팩터 추출
+        for k in ["rs", "cpv", "tb", "bbe"]:
+            df[f"factor_{k}"] = df["facts"].apply(lambda x: _parse_fact(x, k))
+
+        # 승/패 그룹 분리
+        wins = df[pd.to_numeric(df["final_ret"], errors="coerce") > 0]
+        losses = df[pd.to_numeric(df["final_ret"], errors="coerce") <= 0]
+
+        # [아키텍트 수술] IQR(사분위수 범위) 기반 노이즈 필터링 함수 주입
+        # 상위 75%(Q3)와 하위 25%(Q1)의 범위를 벗어나는 비정상적인 빔(Outlier) 데이터를 통계적으로 절사하여 평균의 오염을 방지합니다.
+        def _iqr_filtered_mean(series):
+            s = series.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(s) < 5:
+                return s.mean()
+            q1 = s.quantile(0.25)
+            q3 = s.quantile(0.75)
+            iqr = q3 - q1
+            filtered = s[(s >= q1 - 1.5 * iqr) & (s <= q3 + 1.5 * iqr)]
+            return filtered.mean()
+
+        new_weights = {}
+        for k, bw in base_weights.items():
+            if k in ["ema", "marcap"]: # 추세 및 시총 팩터는 베이스라인 앵커로 유지
+                new_weights[k] = bw
+                continue
+
+            # 단순 평균 대신 노이즈가 제거된 순수 통계적 엣지(Edge)만 추출하여 가중치 계산
+            w_mean = _iqr_filtered_mean(wins[f"factor_{k}"])
+            l_mean = _iqr_filtered_mean(losses[f"factor_{k}"])
+
+            if pd.notna(w_mean) and pd.notna(l_mean) and l_mean > 0:
+                # 승리 캔들에서 해당 팩터가 얼마나 더 압도적이었는지(Edge) 계산
+                edge = (w_mean - l_mean) / l_mean
+                # 학습률(Learning Rate) 0.5 적용, 가중치 변동폭을 최대 ±30%로 제한하여 과적합(Overfitting) 방지
+                adjusted_w = bw * (1.0 + np.clip(edge * 0.5, -0.3, 0.3))
+                new_weights[k] = round(float(adjusted_w), 2)
+            else:
+                new_weights[k] = bw
+
+        cfg["DYNAMIC_FACTOR_WEIGHTS"] = new_weights
+        report_lines.append(f"▪️ 시장 적응 완료: RS({new_weights['rs']}) | CPV({new_weights['cpv']}) | TB({new_weights['tb']}) | BBE({new_weights['bbe']})")
+
+    except Exception as e:
+        report_lines.append(f"▪️ 팩터 진화 중 에러: {e}")
+        cfg["DYNAMIC_FACTOR_WEIGHTS"] = base_weights
+
+    report_lines.append("")
+    return cfg
+
 def run_autonomous_analysis():
     init_forward_db()
     cfg = _ensure_defaults(load_config())
@@ -619,6 +709,10 @@ def run_autonomous_analysis():
     report_lines.append("<b>[7. 레짐별 켈리 최종 클램프]</b>")
     report_lines.append(f"▪️ 레짐: <b>{regime}</b> · 클램프 전 {k_pre_clamp*100:.2f}% → 최종 <b>{kelly*100:.2f}%</b>")
     report_lines.append(f"▪️ 기록 시각: {cfg['AUTO_PILOT_UPDATED_AT']}")
+    report_lines.append("")
+
+    # [아키텍트 수술] 관제탑 분석의 피날레로 팩터 가중치 자율 진화(Self-Evolution) 엔진 가동
+    cfg = _evolve_dynamic_factor_weights(cfg, df_closed, report_lines)
 
     save_config_atomic(cfg)
     send_telegram_report("\n".join(report_lines))
@@ -683,6 +777,25 @@ def _run_daily_evolution_batch():
     ok, m = generate_mutant_strategies()
     cfg = _ensure_defaults(load_config())
     cfg, judge_msg = _judge_incubator_templates(cfg)
+    
+    # [아키텍트 수술 1] 메가 트렌드 킬스위치 자율 진화 가동
+    # 매일 자정, 최근 48시간의 롱 승률을 분석하여 탐욕의 끝자락(Climax) 차단 민감도를 스스로 조절합니다.
+    try:
+        from bitget.trading.mega_trend_kill_bg import evolve_mega_trend_kill_sensitivity
+        kill_res = evolve_mega_trend_kill_sensitivity(cfg)
+        kill_msg = f"민감도 {kill_res.get('sensitivity')} (승률 {kill_res.get('win_rate')})" if kill_res.get("updated") else "유지"
+    except Exception as e:
+        kill_msg = f"에러: {e}"
+
+    # [아키텍트 수술 2] 코인 전용 자가 면역 백신 압축기 가동
+    # 무한정 쌓이는 실패 패턴(ANTI_PATTERNS)을 K-Means로 압축하여 스캐너의 메모리 누수(OOM)를 차단합니다.
+    try:
+        from bitget.evolution.clustered_immune_vaccine_bg import run_clustered_immune_maintenance
+        vac_res = run_clustered_immune_maintenance(cfg)
+        vac_msg = vac_res.get("report", "압축 불필요")
+    except Exception as e:
+        vac_msg = f"에러: {e}"
+
     cfg["AUTO_PILOT_DAILY_EVOLUTION_AT"] = utc_datetime_str_tz()
     save_config_atomic(cfg)
     send_telegram_msg(
@@ -690,7 +803,9 @@ def _run_daily_evolution_batch():
         f"▪️ DeepDive: spot/futures 완료\n"
         f"▪️ DataMiner(AST/GMM): 완료\n"
         f"▪️ Mutant: {'생성' if ok else '스킵'} ({m})\n"
-        f"▪️ Incubator Judge: {judge_msg}"
+        f"▪️ Incubator: {judge_msg}\n"
+        f"▪️ Climax Kill: {kill_msg}\n"
+        f"▪️ Immune Vaccine: {vac_msg}"
     )
 
 

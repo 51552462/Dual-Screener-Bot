@@ -108,6 +108,16 @@ class BitgetElasticThreshold:
         starv = float(starvation if starvation is not None else self.compute_starvation_index())
         vol = float(vol_proxy if vol_proxy is not None else self.volatility_proxy())
 
+        # [아키텍트 수술] 코인 시장의 실시간 유동성 스트레스 융합 (고무줄 허들 강화)
+        # Canary 시스템이 감지한 현재의 유동성 마름(Stress) 현상을 변동성 프록시에 직접 주입합니다.
+        # 시장에 피바람이 불 조짐이 보이면 진입 커트라인을 대폭 높여 진짜 대장주만 잡게 만듭니다.
+        try:
+            from bitget.reports.canary_panel_bg import load_canary_state
+            stress = float(load_canary_state().get("crypto_liquidity_stress") or 0.0)
+            vol = vol + stress  # 스트레스 지수만큼 변동성 프록시를 뻥튀기
+        except Exception:
+            pass
+
         max_relief = float(self.cfg.get("ELASTIC_MAX_RELIEF", 0.18) or 0.18)
         vol_tighten = float(self.cfg.get("ELASTIC_VOL_TIGHTEN", 0.06) or 0.06)
         relief = starv * max_relief

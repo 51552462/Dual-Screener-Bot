@@ -267,7 +267,10 @@ def resolve_lock_timeout_sec(mode: str, *, explicit: Optional[float] = None) -> 
         return float(explicit)
     m = str(mode or "").strip().lower()
     if m == "daily_audit":
-        return 7200.0
+        # [아키텍트 수술] 일일 감사(daily_audit) 락 타임아웃 대폭 축소
+        # 2시간(7200초)의 무한 대기를 허용하면 코인 파이프라인 전체가 마비되는 단일 장애점(SPOF)이 됩니다.
+        # 최대 10분(600초) 내에 락을 풀고 다음 스캔으로 넘어가도록 강제 절단합니다.
+        return 600.0
     if is_staggered_scan_mode(m) or m.startswith("scan_"):
         return SCAN_LOCK_WAIT_SEC
     return 120.0

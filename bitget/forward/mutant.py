@@ -166,15 +166,20 @@ def _auto_tune_brain_from_closed_df(cfg: dict, closed_df: pd.DataFrame):
         cpv_m = float(pd.to_numeric(hi_mfe.get("dyn_cpv"), errors="coerce").dropna().mean())
         tb_m = float(pd.to_numeric(hi_mfe.get("dyn_tb"), errors="coerce").dropna().mean())
         bbe_m = float(pd.to_numeric(hi_mfe.get("v_energy"), errors="coerce").dropna().mean())
-        old = cfg.get("DNA_SUPERNOVA_MFE_WEIGHTED", {"cpv": cpv_m, "tb": tb_m, "bbe": bbe_m})
+        # [아키텍트 수술] 상대강도(dyn_rs) 차원 추가 추출
+        rs_m = float(pd.to_numeric(hi_mfe.get("dyn_rs"), errors="coerce").dropna().mean())
+        
+        # 주식 템플릿과 충돌하지 않도록 코인 전용 유전자(CRYPTO_DNA_SUPERNOVA)망에 저장합니다.
+        old = cfg.get("CRYPTO_DNA_SUPERNOVA_MFE_WEIGHTED", {"cpv": cpv_m, "tb": tb_m, "bbe": bbe_m, "rs": rs_m})
         alpha = 0.3
-        cfg["DNA_SUPERNOVA_MFE_WEIGHTED"] = {
+        cfg["CRYPTO_DNA_SUPERNOVA_MFE_WEIGHTED"] = {
             "cpv": round((float(old.get("cpv", cpv_m)) * (1 - alpha)) + (cpv_m * alpha), 4),
             "tb": round((float(old.get("tb", tb_m)) * (1 - alpha)) + (tb_m * alpha), 4),
             "bbe": round((float(old.get("bbe", bbe_m)) * (1 - alpha)) + (bbe_m * alpha), 4),
+            "rs": round((float(old.get("rs", rs_m)) * (1 - alpha)) + (rs_m * alpha), 4),
             "updated_at": utc_datetime_str(),
         }
-        msgs.append(f"MFE 황금타점 스무딩: 표본 {len(hi_mfe)}건 반영")
+        msgs.append(f"코인 4D 황금타점(MFE) 유전자 스무딩: 표본 {len(hi_mfe)}건 반영")
 
     if len(cdf) >= 12:
         ordered = cdf.sort_values("entry_date")

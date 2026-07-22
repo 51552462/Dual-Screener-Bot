@@ -200,6 +200,22 @@ def _compute_market_pri(
     cstd = ledger.get("closed_ret_std")
     z_vol = _decay_z((float(cstd) - 4.0) / 4.0, n_closed) if cstd is not None and n_closed >= MIN_SAMPLES_ANY else 0.0
 
+    # [아키텍트 수술] 코인 24/7 빔(Beam) 감지 센서 주입
+    # 주간 데이터를 통으로 평균 내지 않고, Canary 지표(스트레스)를 실시간 융합하여
+    # 최근 48시간 내에 유동성 경색이나 펀딩비 이상이 발생했다면 국면 점수(PRI)를 강제로 급락시킵니다.
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        canary = load_canary_state()
+        stress = float(canary.get("crypto_liquidity_stress") or 0.0)
+        contagion = bool(canary.get("macro_contagion_risk", False))
+        
+        # 스트레스가 0.6을 넘거나 매크로 전염이 발생하면, z_vol(변동성 스트레스) 페널티를 3배로 증폭
+        if stress >= 0.6 or contagion:
+            z_vol = z_vol * 3.0
+            z_mae = z_mae * 2.0
+    except Exception:
+        pass
+
     dm_a = 0
     if not events.empty:
         dm_a = int(events["event_type"].astype(str).str.contains("DM_A", na=False).sum())

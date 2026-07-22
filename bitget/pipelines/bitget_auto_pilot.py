@@ -14,6 +14,22 @@ import os
 import threading
 import time
 
+# [아키텍트 수술] 데몬 레벨의 큐 라우팅 격리(Air-Gap)
+# 팩토리의 심장이 감지하는 워치독 긴급 알럿(Dead/Hung 등)이 주식 방으로 새지 않도록,
+# 프로세스 구동 첫 순간부터 코인 큐 배관으로 시스템의 신경망을 하드와이어링 합니다.
+import telegram_message_queue as _tmq
+from bitget.infra.data_paths import bitget_data_dir as _bitget_data_dir
+from bitget.infra.data_paths import message_queue_db_path as _bitget_queue_path
+_tmq._BOT_DIR = _bitget_data_dir()
+_tmq.MESSAGE_QUEUE_DB_PATH = _bitget_queue_path()
+_tmq._schema_ready = False
+
+# [아키텍트 수술] 환경변수 레벨 큐 라우팅 강제화
+# 크론(Cron)이나 서브프로세스로 파생되는 모든 작업들이 주식 팩토리의 큐를 바라보지 못하도록
+# 시스템 환경변수 자체를 코인 큐로 덮어씌워 완벽한 물리적 격리(Air-Gap)를 완성합니다.
+os.environ["TELEGRAM_MESSAGE_QUEUE_DB_PATH"] = _bitget_queue_path()
+os.environ["DANTE_ASYNC_TELEGRAM_DAEMON"] = "1"
+
 from bitget.infra.daemon_loop import (
     DAEMON_ERROR_SLEEP_SEC,
     DAEMON_TICK_SLEEP_SEC,

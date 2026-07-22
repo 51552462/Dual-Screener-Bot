@@ -20,7 +20,10 @@ W_MIN = 0.20
 W_MAX = 0.80
 DEFAULT_ALPHA = 0.05
 PNL_SCALE_PCT = 5.0
-DIVERGENCE_EVAL_DAYS = 7
+# [아키텍트 수술] 코인 24/7 생태계에 맞춘 초단기 메타 인지 학습 사이클 적용
+# 7일(주식 기준)을 기다려 전략을 복기하면 청산당합니다. 
+# 24시간 단위(1일)로 내 전략(PRI)과 거시 시장(Regime) 중 누가 맞았는지 즉각 채점하여 신뢰도 가중치를 매일 갱신합니다.
+DIVERGENCE_EVAL_DAYS = 1
 PRI_Z_UP = 0.45
 PRI_Z_DOWN = -0.45
 _LOCK = threading.RLock()

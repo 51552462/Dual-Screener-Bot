@@ -10,6 +10,8 @@ from bitget.infra.bounded_reads import forward_dashboard_closed_sql
 from bitget.infra.data_paths import market_db_read_path
 from bitget.infra.shared_db_connector import get_connection
 from bitget.dashboard_ops_panel import render_ops_gauge_panel
+# [아키텍트 수술] 관제탑이 시스템의 뇌(Config) 상태를 실시간으로 스캔하도록 연결
+from bitget.config_hub import load_config as load_system_config
 
 st.set_page_config(page_title="Bitget Quant Factory Control Tower", layout="wide")
 st.title("Bitget Quant Factory Control Tower")
@@ -95,6 +97,43 @@ for side, color in (("LONG", "#00CC96"), ("SHORT", "#EF553B")):
     )
 fig.update_layout(template="plotly_dark", height=420, hovermode="x unified")
 st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+st.subheader("🧠 메타 인지 레이더 (실시간 팩터 가중치 진화 상태)")
+
+# 시스템 두뇌에서 전날 밤 학습된 최신 팩터 가중치를 추출
+sys_cfg = load_system_config()
+dyn_weights = sys_cfg.get("DYNAMIC_FACTOR_WEIGHTS", {
+    "rs": 10.0, "ema": 9.0, "marcap": 8.0, "cpv": 7.0, "bbe": 6.0, "tb": 5.0
+})
+
+# 레이더 차트 폴리곤을 닫기 위해 첫 번째 값을 끝에 추가
+categories = list(dyn_weights.keys())
+values = list(dyn_weights.values())
+categories.append(categories[0])
+values.append(values[0])
+
+fig_radar = go.Figure()
+fig_radar.add_trace(go.Scatterpolar(
+    r=values,
+    theta=[c.upper() for c in categories],
+    fill='toself',
+    name='Current Market Edge',
+    line_color='#FFD700',
+    fillcolor='rgba(255, 215, 0, 0.3)'
+))
+fig_radar.update_layout(
+    polar=dict(
+        radialaxis=dict(visible=True, range=[0, max(values) * 1.1])
+    ),
+    showlegend=False,
+    template="plotly_dark",
+    height=450
+)
+st.plotly_chart(fig_radar, use_container_width=True)
+st.info("💡 위 레이더는 시스템이 매일 밤 승/패 장부를 학습(IQR 필터링 적용)하여 스스로 조정한 '오늘 시장의 정답지(가중치)'입니다. 이 형태에 따라 스캐너의 포착 성향이 유기적으로 진화합니다.")
+
+st.markdown("---")
 
 st.subheader("🌌 코인 4D DNA 우주 분포 (CPV-TB-BBE-RS)")
 dna = df.dropna(subset=["dyn_cpv", "dyn_tb", "v_energy", "dyn_rs"]).copy()

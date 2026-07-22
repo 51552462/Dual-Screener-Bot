@@ -54,8 +54,9 @@ class ExecutionGateOutcome(str, Enum):
     CONCENTRATION_BLOCKED = "concentration_blocked"
     PRICE_SANITY_BLOCKED = "price_sanity_blocked"
     SLIPPAGE_BLOCKED = "slippage_blocked"
+    CATASTROPHIC_BLOCKED = "catastrophic_blocked"  # [신규 추가] 승률 붕괴 차단 상태
+    CLIMAX_KILL_BLOCKED = "climax_kill_blocked"    # [아키텍트 수술] 메가 트렌드 킬스위치 상태 추가
     APPROVED = "approved"
-
 
 @dataclass
 class GateResult:
@@ -85,6 +86,7 @@ class GateResult:
             ExecutionGateOutcome.CONCENTRATION_BLOCKED,
             ExecutionGateOutcome.PRICE_SANITY_BLOCKED,
             ExecutionGateOutcome.SLIPPAGE_BLOCKED,
+            ExecutionGateOutcome.CATASTROPHIC_BLOCKED,  # [신규 추가]
         )
 
 
@@ -544,9 +546,64 @@ def run_pre_execution_gates(
     Run config/orphan/NAV/gross/tail → doomsday → concentration → price sanity → slippage.
     Stops at first non-APPROVED (except DRY_RUN whichhalts before exchange).
     """
+    
+    # [아키텍트 수술] 펀딩비(Funding Rate) 기반 롱/숏 스퀴즈 빔 사전 회피 클러치
+    # 비트겟 선물 마켓에서 펀딩비가 한쪽으로 극단적으로 쏠려 있다면, 곧 반대 방향의 청산 빔이 떨어집니다.
+    # 스캐너가 신호를 주더라도 이 찰나의 스퀴즈 위험을 감지하면 즉시 주문을 거부(Block)합니다.
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        canary = load_canary_state()
+        avg_funding = float(canary.get("components", {}).get("avg_funding_rate") or 0.0)
+        
+        # 펀딩비가 극단적 음수(숏 과열) -> 롱 스퀴즈 빔 위험 -> 숏 진입 즉시 차단
+        if position_side.upper() == "SHORT" and avg_funding <= -0.001:
+            return GateResult(
+                ExecutionGateOutcome.EXECUTION_DISABLED,
+                message=f"Squeeze Danger: 극단적 음수 펀딩비({avg_funding})로 롱 스퀴즈 빔 폭발 직전. 숏 진입 실시간 차단.",
+                meta={"avg_funding": avg_funding}
+            )
+        # 펀딩비가 극단적 양수(롱 과열) -> 롱 뚝배기 빔 위험 -> 롱 진입 즉시 차단
+        elif position_side.upper() == "LONG" and avg_funding >= 0.001:
+            return GateResult(
+                ExecutionGateOutcome.EXECUTION_DISABLED,
+                message=f"Squeeze Danger: 극단적 양수 펀딩비({avg_funding})로 롱 청산 빔 폭발 직전. 롱 진입 실시간 차단.",
+                meta={"avg_funding": avg_funding}
+            )
+    except Exception:
+        pass
+
     config_result = evaluate_config_gates(cfg)
     if config_result.outcome != ExecutionGateOutcome.APPROVED:
         return config_result
+        
+    # [아키텍트 수술] 24시간 롤링 승률 붕괴(Catastrophic Day) 방어막 가동
+    # 시장이 갑작스럽게 미쳐서 내 로직이 연속으로 터져나갈 때, 무지성 추가 진입을 원천 차단합니다.
+    try:
+        from bitget.trading.catastrophic_day_guard_bg import evaluate_rolling_catastrophic_clutch
+        catastrophe = evaluate_rolling_catastrophic_clutch(market_type=market_type, sys_config=cfg)
+        if catastrophe.get("block_entry"):
+            return GateResult(
+                ExecutionGateOutcome.CATASTROPHIC_BLOCKED,
+                message=f"Catastrophic Loss Day 발동: 최근 24h 승률 붕괴({catastrophe.get('reason')}). 모든 신규 진입을 하드 블락합니다.",
+                meta={"catastrophic_day": catastrophe}
+            )
+    except Exception:
+        pass # 파일 누락이나 에러 시 멈추지 않고 다음 게이트로 패스(Soft Pass)
+
+    # [아키텍트 수술] 코인 자가 진화형 메가 트렌드 킬스위치 가동
+    # 펀딩비와 유동성 스트레스, 그리고 강화학습된 민감도를 바탕으로 탐욕의 끝자락을 원천 차단합니다.
+    try:
+        from bitget.trading.mega_trend_kill_bg import evaluate_crypto_climax_kill_switch
+        climax = evaluate_crypto_climax_kill_switch(cfg, position_side=position_side)
+        if climax.get("kill_active"):
+            return GateResult(
+                ExecutionGateOutcome.CLIMAX_KILL_BLOCKED,
+                message=climax.get("reason"),
+                meta={"climax_metrics": climax.get("metrics")}
+            )
+    except Exception:
+        pass # 파일 누락 시 멈추지 않고 다음 게이트로 패스
+
     doom = evaluate_doomsday_gate(cfg, position_side=position_side)
     if doom.outcome != ExecutionGateOutcome.APPROVED:
         return doom
@@ -636,6 +693,16 @@ def oms_defense_block_reason(
                 return "doomsday_defcon"
         except Exception:
             pass
+            
+        # [아키텍트 수술] OMS 최후의 방어선에 승률 붕괴(Catastrophic Day) 하드 블락 추가
+        try:
+            from bitget.trading.catastrophic_day_guard_bg import evaluate_rolling_catastrophic_clutch
+            catastrophe = evaluate_rolling_catastrophic_clutch(market_type=market_type, sys_config=cfg)
+            if catastrophe.get("block_entry"):
+                return "catastrophic_day_collapse"
+        except Exception:
+            pass
+
     if market_symbol and position_side:
         try:
             from bitget.trading.concentration_gate import concentration_entry_blocked

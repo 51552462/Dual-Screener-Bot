@@ -56,22 +56,37 @@ def _telegram_plain_from_html(chunk: str) -> str:
 def send_telegram_msg(text, *, parse_mode: str = "HTML"):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
+        
+    # [아키텍트 수술] 동기식(Sync) 발송을 비동기 큐(Queue) 방식으로 전환 및 코인망 결속
+    # 기존 requests.post 기반의 동기식 발송은 텔레그램 API Rate Limit에 걸리거나 타임아웃 발생 시
+    # 에러를 삼키고(pass) 리포트를 증발시켰습니다.
+    # 스캐너와 동일하게 비트겟 전용 큐(Queue) 시스템에 적재(Enqueue)하여 전송 유실을 100% 차단합니다.
+    import telegram_message_queue as _tmq
+    from bitget.infra.data_paths import bitget_data_dir as _bitget_data_dir
+    from bitget.infra.data_paths import message_queue_db_path as _bitget_queue_path
+    
+    # 코인 전용 배관 강제 결속
+    _tmq._BOT_DIR = _bitget_data_dir()
+    _tmq.MESSAGE_QUEUE_DB_PATH = _bitget_queue_path()
+    _tmq._schema_ready = False
+    
+    from telegram_message_queue import enqueue_telegram
+    
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         max_len = 4000
         chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
         use_html = str(parse_mode or "").upper() == "HTML"
+        
         for chunk in chunks:
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk}
-            if use_html:
-                payload["parse_mode"] = "HTML"
-            res = requests.post(url, json=payload, timeout=10)
-            if use_html and res.status_code == 400:
-                plain = _telegram_plain_from_html(chunk)
-                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
-            time.sleep(0.5)
-    except Exception:
-        pass
+            enqueue_telegram(
+                target_bot="MAIN",
+                image_path=None,
+                caption=chunk,
+                enabled=True,
+                send_profile="html" if use_html else "default"
+            )
+    except Exception as e:
+        logger.warning(f"Telegram enqueue failed: {e}")
 
 
 def load_system_config() -> dict:

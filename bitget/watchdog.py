@@ -448,11 +448,15 @@ def _circuit_threshold() -> int:
 
 
 def _circuit_reset_sec() -> float:
-    """OPEN 유지 시간. 경과 후 half-open(1회 탐침 허용). 기본 3600s."""
+    """
+    [아키텍트 수술] 코인 24/7 환경에 맞춘 초단기 서킷 브레이커 복구
+    스캔 에러로 회로가 차단되더라도, 주식처럼 1시간(3600초)을 버리지 않고
+    코인의 빠른 캔들 갱신에 맞춰 5분(300초) 만에 탐침(Half-open)을 재개하여 데드존(Dead Zone)을 없앱니다.
+    """
     try:
-        return max(60.0, float(os.environ.get("BITGET_SCAN_CB_RESET_SEC", "3600") or 3600))
+        return max(60.0, float(os.environ.get("BITGET_SCAN_CB_RESET_SEC", "300") or 300.0))
     except ValueError:
-        return 3600.0
+        return 300.0
 
 
 def _circuit_state_path() -> Path:

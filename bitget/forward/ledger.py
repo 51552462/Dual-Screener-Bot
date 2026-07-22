@@ -1305,10 +1305,17 @@ def track_daily_positions(market_type):
                             pass
 
             # ATR/TimeStop/TECH 2순위
-            if not do_exit:
+            iif not do_exit:
                 tf_u = str(r["timeframe"]).upper()
                 funding_stop_bars_map = {"1H": 24, "2H": 18, "4H": 12, "1D": 5}
                 funding_stop_bars = int(funding_stop_bars_map.get(tf_u, 12))
+                
+                # [아키텍트 수술 1] 세력 꼬리 헌팅(Wick Hunting) 방어막
+                # 순간적인 High/Low 꼬리 터치로 인한 무지성 강제 손절을 막고, 
+                # 캔들의 종가(Close)가 손절선을 완전히 이탈했는지를 확인하여 스마트하게 방어합니다.
+                is_sl_hit_by_close = (c >= sl_price if pos_side == "SHORT" else c <= sl_price)
+                # 극단적인 빔(ATR의 2.5배 초과)을 맞았을 때는 꼬리 여부를 떠나 즉각 시장가 탈출
+                is_fatal_beam = (h >= sl_price * 1.05 if pos_side == "SHORT" else l <= sl_price * 0.95)
                 is_futures = is_futures_row
                 bleed_max_profit = float(cfg.get("FUNDING_BLEED_MAX_ROE_PCT", 1.5))
                 th_fb = float(cfg.get("FUNDING_BLEED_RATE_THRESHOLD", 0.0003))
@@ -1322,24 +1329,30 @@ def track_daily_positions(market_type):
                 if funding_bleed:
                     do_exit = True
                     exit_rsn = (
-                        f"펀딩비(API) 불리 출혈 방어 rate={float(snap.get('funding_rate') or 0):.6f} "
-                        f"next={str(snap.get('next_funding_iso') or snap.get('next_funding_ts') or '').strip()} "
+                        f"🩸 펀딩비(API) 불리 출혈 방어 rate={float(snap.get('funding_rate') or 0):.6f} "
                         f"({tf_u} ≥{funding_stop_bars} bars)"
                     )
                     actual_exit_type = "FUNDING_BLEED_STOP"
-                elif new_bars >= opt_time_stop and current_ret_pct < 3.0:
+                    
+                # [아키텍트 수술 2] 동적 타임스탑 & 스퀴즈 빔 익절
+                # 펀딩비가 극단적으로 불리하면 타임스탑을 절반으로 앞당겨 도망칩니다.
+                elif new_bars >= (opt_time_stop // 2 if funding_bleed else opt_time_stop) and current_ret_pct < 3.0:
                     do_exit = True
-                    exit_rsn = f"타임스탑 ({opt_time_stop} bars)"
+                    exit_rsn = f"⏳ 동적 타임스탑 (지지부진 이탈)"
                     actual_exit_type = "TIME_STOP"
+                    
                 elif breadth_collapse and current_ret_pct < 1.5:
                     do_exit = True
-                    exit_rsn = f"시장폭 붕괴 청산 (entry {entry_breadth:.3f} -> now {breadth_now:.3f})"
+                    exit_rsn = f"📉 시장폭 붕괴 청산 (대세 하락 방어)"
                     actual_exit_type = "BREADTH_EXIT"
-                elif (h >= sl_price if pos_side == "SHORT" else l <= sl_price):
+                    
+                # [아키텍트 수술 3] 코인 전용 종가(Close) 기반 유연한 손절 (꼬리 헌팅 회피)
+                elif is_sl_hit_by_close or is_fatal_beam:
                     do_exit = True
-                    exit_rsn = f"ATR {opt_sl_atr:.2f}배 장중 방어 손절"
+                    exit_rsn = f"🛡️ ATR {opt_sl_atr:.2f}배 손절 (종가 이탈 or 치명적 빔)"
                     actual_exit_type = "ATR_STOP"
-                    actual_exit_price = sl_price
+                    # 종가 이탈이면 종가(c)로, 치명적 빔이면 손절가(sl_price) 부근 시장가로 엑시트 시뮬레이션
+                    actual_exit_price = sl_price if is_fatal_beam else c
                 elif is_tech_exit:
                     do_exit = True
                     exit_rsn = "기술적 추세 이탈 (ZLEMA/EMA10-20 데드)"

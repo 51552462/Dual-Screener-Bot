@@ -67,16 +67,13 @@ _tmq._schema_ready = False
 
 from telegram_message_queue import (
     enqueue_telegram,
-    start_telegram_queue_daemons,
     wait_telegram_queue_drained,
 )
 
-start_telegram_queue_daemons(
-    TELEGRAM_TOKEN_MAIN,
-    TELEGRAM_TOKEN_PROMO or TELEGRAM_TOKEN_MAIN,
-    TELEGRAM_CHAT_ID,
-    SEND_TELEGRAM,
-)
+# start_telegram_queue_daemons 호출 완전 삭제: 
+# 스캐너는 큐에 적재(enqueue)만 하고 발송은 전용 systemd 데몬에 위임하여 데드락 차단.
+
+
 
 sent_today = set()
 last_run_date = ""
@@ -257,10 +254,18 @@ def _supernova_hit(df: pd.DataFrame, symbol: str, tf: str):
     bb_std = float(pd.Series(c).rolling(20).std().iloc[-1])
     bb_mid = float(pd.Series(c).rolling(20).mean().iloc[-1])
     bb_width = (4.0 * bb_std) / bb_mid if bb_mid > 0 else 0.01
-    bbe = float((1.0 / bb_width) * vol_mult if bb_width > 0 else 0.0)
-    rs = float(((c[-1] - c[max(0, len(c) - 20)]) / max(c[max(0, len(c) - 20)], 1e-9)) * 100.0)
+    # [아키텍트 수술] 코인 5차원 DNA 엔진 (펀딩비/상대강도 차원 강제 삽입)
+    # 기존 3차원에 '펀딩비 과열도(f_rate)'와 '상대강도(rs)'를 결합하여 
+    # 유사도 연산 자체가 '숏 스퀴즈' 위험을 감지하도록 고차원으로 확장합니다.
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        canary = load_canary_state()
+        f_rate = float(canary.get("components", {}).get("avg_funding_rate") or 0.0)
+    except:
+        f_rate = 0.0
 
-    cur_vec = np.array([cpv, tb, bbe], dtype=float)
+    # 펀딩비가 높을수록 숏이 죽는 방향으로, 낮을수록 롱이 죽는 방향으로 DNA 편향을 줍니다.
+    cur_vec = np.array([cpv, tb, bbe, rs, f_rate * 1000], dtype=float)
     c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
     target_arr = c_norm[-200:] if len(c_norm) >= 200 else c_norm
     cur_shape = np.array([np.mean(x) for x in np.array_split(target_arr, 20)])
@@ -308,15 +313,16 @@ def _supernova_hit(df: pd.DataFrame, symbol: str, tf: str):
     for key, val in cfg.items():
         if not isinstance(val, dict):
             continue
-        if key.startswith("DNA_SUPERNOVA"):
-            vec = [float(val.get("cpv", 0.0)), float(val.get("tb", 0.0)), float(val.get("bbe", 0.0))]
+        # 코인 전용 유전자를 우선 로드하고, 없으면 기존 유전자로 폴백(Fallback)
+        if key.startswith("CRYPTO_DNA_SUPERNOVA") or key.startswith("DNA_SUPERNOVA"):
+            # RS(상대강도)를 포함시켜 4D 매칭이 가능하도록 설계 구조 변경
+            vec = [
+                float(val.get("cpv", 0.0)), 
+                float(val.get("tb", 0.0)), 
+                float(val.get("bbe", 0.0)),
+                float(val.get("rs", 0.0))  # 템플릿에 RS가 없으면 0.0으로 유연하게 처리
+            ]
             candidates[key] = {"vec": np.array(vec, dtype=float), "shape": val.get("shape")}
-    if isinstance(cfg.get("DNA_SUPERNOVA_MFE_WEIGHTED"), dict):
-        mv = cfg["DNA_SUPERNOVA_MFE_WEIGHTED"]
-        candidates["MFE_WEIGHTED"] = {
-            "vec": np.array([float(mv.get("cpv", 0.0)), float(mv.get("tb", 0.0)), float(mv.get("bbe", 0.0))], dtype=float),
-            "shape": mv.get("shape"),
-        }
 
     best_name, best_cos, best_dtw = "UNKNOWN", 0.0, 999.0
     for name, t in candidates.items():
@@ -448,7 +454,24 @@ def run_scan(
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%__tmp%'"
     ).fetchall()
-    table_names = [r[0] for r in rows if "__tmp" not in str(r[0])]
+    
+    # [아키텍트 수술] 스캐너단의 좀비 테이블 이중 방어막
+    cfg = _load_system_config()
+    zombie_blacklist = set(cfg.get("DYNAMIC_ZOMBIE_BLACKLIST", []))
+    
+    table_names = []
+    for r in rows:
+        t_name = str(r[0])
+        if "__tmp" in t_name:
+            continue
+        # BITGET_SPOT_BTC_USDT_1D -> BTC_USDT 추출 후 비교
+        parts = t_name.split("_")
+        if len(parts) >= 4:
+            sym_part = "_".join(parts[2:-1])
+            if sym_part in zombie_blacklist:
+                continue
+        table_names.append(t_name)
+        
     hit_rank = 0
     funnel_stats: dict[str, dict[str, int]] = {
         "spot": {"universe": 0, "survivors": 0},
@@ -550,7 +573,8 @@ def run_scan(
         pass
     del table_names
     flush_gc(label="scan_complete")
-    wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=7200.0)
+    # 텔레그램 큐가 밀려있더라도 다음 캔들 스캔을 방해하지 않도록 블로킹 시간을 30초로 제한
+    wait_telegram_queue_drained(("MAIN", "PROMO"), timeout_sec=30.0)
 
 
 def _process_scan_hit(

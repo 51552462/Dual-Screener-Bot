@@ -48,6 +48,21 @@ def resolve_leverage(
     from bitget.trading.execution_safety import max_leverage_cap
 
     cap = max_leverage_cap(cfg)
+    
+    # [아키텍트 수술] 코인 변동성 반비례 동적 레버리지 엔진 (Dynamic Leverage)
+    # 24시간 끊임없이 변하는 코인 시장의 특성상, 시장에 피바람(유동성 스트레스)이 불거나
+    # 펀딩비가 극단적일 때는 시스템이 스스로 생존을 위해 레버리지를 깎아내려(De-leveraging) 강제 청산 거리를 확보합니다.
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        canary = load_canary_state()
+        stress = float(canary.get("crypto_liquidity_stress") or 0.0)
+        
+        # 스트레스 지수에 따라 동적으로 레버리지를 깎아냅니다 (최소 1x 보장)
+        # 예: 기본 레버리지가 10x일 때, 스트레스가 0.8이면 레버리지를 2x로 강제 축소
+        dynamic_multiplier = max(0.1, 1.0 - stress) 
+    except Exception:
+        dynamic_multiplier = 1.0
+
     lev = float(default)
     if leverage_explicit is not None:
         try:
@@ -75,7 +90,11 @@ def resolve_leverage(
             lev = max(1.0, float(cfg.get("DEFAULT_REAL_EXECUTION_LEVERAGE", default)))
         except (TypeError, ValueError):
             lev = max(1.0, float(default))
-    return float(min(lev, cap))
+            
+    # 변동성에 따른 동적 레버리지 계산 적용
+    dynamic_lev = max(1.0, lev * dynamic_multiplier)
+    
+    return float(min(dynamic_lev, cap))
 
 
 def normalize_margin_mode_token(raw: Any) -> Optional[str]:
@@ -263,4 +282,17 @@ def prepare_futures_order_params(
     lev = resolve_leverage(cfg, strategy_key=strategy_key, leverage_explicit=leverage)
     meta["leverage_applied"] = lev
     meta["leverage_set_ok"] = apply_futures_leverage(ex, market_symbol, lev)
+    
+    # [아키텍트 수술] OMS(주문 엔진)로 넘어가는 메타데이터에 유동성 기반 자본 축소 배수(Size Multiplier) 추가
+    # OMS가 주문을 생성할 때, 이 배수를 읽어들여 펀딩비/스트레스가 극심할 경우 주문 수량(Notional) 자체를
+    # 절반, 혹은 1/4 토막으로 강제 축소하여 계좌의 총 리스크(Total Exposure)를 안전하게 잠급니다.
+    try:
+        from bitget.reports.canary_panel_bg import load_canary_state
+        stress = float(load_canary_state().get("crypto_liquidity_stress") or 0.0)
+        size_multiplier = max(0.1, 1.0 - stress)
+    except Exception:
+        size_multiplier = 1.0
+        
+    meta["dynamic_size_multiplier"] = size_multiplier
+
     return {"marginMode": mm}, meta

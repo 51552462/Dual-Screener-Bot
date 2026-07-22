@@ -189,9 +189,20 @@ def load_dynamic_universe(exchange, market_type: str, min_quote_volume_usdt: flo
     if not isinstance(tickers, dict):
         logger.warning("[%s] fetch_tickers failed after retries — empty universe", market_type)
         return []
+        
+    # [아키텍트 수술] 좀비 코인 다이내믹 블랙리스트 로드
+    # 시스템 두뇌(alt_data_miner)가 색출해 둔 거래량 0, 상폐 확정 코인들을 유니버스에서 원천적으로 배제하여 
+    # API 요청을 아끼고 속도를 극한으로 끌어올립니다.
+    cfg = load_config()
+    zombie_blacklist = set(cfg.get("DYNAMIC_ZOMBIE_BLACKLIST", []))
+    
     selected = []
 
     for symbol, market in exchange.markets.items():
+        # 추출된 심볼(예: BTC/USDT)의 앞단(BTC_USDT)을 블랙리스트와 대조
+        table_symbol = symbol.replace("/", "_").split(":")[0]
+        if table_symbol in zombie_blacklist:
+            continue
         if not market.get("active", False):
             continue
         if market.get("quote") != default_quote:
