@@ -69,7 +69,7 @@ def count_scout_cross_validation_weapons(
 def evaluate_scout_conditional_live(
     *,
     regime_key: Any,
-    fluid_scout: bool = True,
+    fluid_scout: bool = True, # 👑 더 이상 정찰병(scout) 여부를 따지지 않게 됩니다.
     sig_type: str = "",
     flow_bonus: float = 0.0,
     flow_divergence: float = 0.0,
@@ -78,13 +78,15 @@ def evaluate_scout_conditional_live(
     dart_net: float = 0.0,
 ) -> ScoutConditionalLiveVerdict:
     """
-    fluid_scout + BEAR/HIGH_VOL → 교차검증 기반 조건부 Live.
-    방어 국면·비-scout 는 needs_gate=False (기존 경로 유지).
+    [글로벌 위기 검문소] BEAR/HIGH_VOL 국면에서는 정찰병뿐만 아니라 모든 로직(S1, S4, 챔피언 등)이
+    교차검증(수급, 펀더멘털, 숏스퀴즈, DART) 중 하나 이상을 통과해야만 매수(Live)가 허용됩니다.
+    차트 점수가 아무리 높아도 가짜 돌파를 원천 차단합니다.
     """
-    if not fluid_scout:
-        return ScoutConditionalLiveVerdict(False, True, 0, ())
+    # 👑 [수술 1] fluid_scout 여부와 상관없이, 하락/변동성 국면이면 무조건 검문소를 가동합니다.
+    # if not fluid_scout: return ScoutConditionalLiveVerdict(False, True, 0, ()) <- 이 부분을 주석/삭제 처리
+
     if not is_defensive_regime(regime_key):
-        return ScoutConditionalLiveVerdict(False, True, 0, ())
+        return ScoutConditionalLiveVerdict(False, True, 0, ()) # 평화로운 장세에서는 검문 패스
 
     weapon_count, weapons = count_scout_cross_validation_weapons(
         sig_type=sig_type,
@@ -268,3 +270,5 @@ def route_fluid_scout_bear_shadow(
         False,
         f"🔭 [Elastic Scout Shadow] Live 거부 · OBSERVE 실패: {observe_msg}",
     )
+
+

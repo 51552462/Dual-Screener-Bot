@@ -1,0 +1,114 @@
+﻿
+============================================================
+1. 환경·경로
+============================================================
+factory_data_dir: C:\Users\GoodLife\dante_bots\Dual-Screener-Bot
+CONFIG_DB: C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\system_config.sqlite exists: True
+MARKET_DB: C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\market_data.sqlite exists: True
+READ_DB: C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\market_data.sqlite exists: True
+ENABLE_MEGA_TREND_UNLOCK: 1
+MEGA_TREND_KILL_RL_SECTOR_GUARD: (default 1)
+
+============================================================
+2. Mega-Trend 언락 상태
+============================================================
+unlock_enabled: True
+active: False
+primary_sector: None
+sectors: []
+ignited_at: None
+cooldown: {'active': False, 'reason': 'no_mega_trend_kill'}
+
+============================================================
+3. Kill RL 상태 (P3~P6)
+============================================================
+sector_guard: True
+rl_config: min_events=2 min_sector=1 min_purity=0.55
+win_rate_min_delta: 0.0
+flow_reversal_z_delta: 0.0
+consecutive_loss_delta: 0
+events_pending: 0
+events_evaluated: 0
+updated_at: None
+kill_events: 0
+sector_deltas keys: []
+sector_quarantine: []
+contamination_audit entries: 0
+
+============================================================
+4. forward_trades 장부
+============================================================
+{
+  "db": "C:\\Users\\GoodLife\\dante_bots\\Dual-Screener-Bot\\market_data.sqlite",
+  "exists": true,
+  "error": "no such table: forward_trades"
+}
+
+============================================================
+5. 주말 RL evolve (dry-run)
+============================================================
+updated: False
+reason: insufficient_evaluated_events
+lanes_updated: None
+sectors_updated: None
+sectors_quarantined: None
+rates_internal: n=0 opp=0.0 def=0.0
+rates_climax: n=0 opp=0.0 def=0.0
+last_evolve_summary (post-run):
+{
+  "updated": false,
+  "lanes_updated": [],
+  "sectors_updated": [],
+  "sectors_quarantined": [],
+  "contamination_guard": true,
+  "evaluated_at": "2026-07-10 11:07:25",
+  "rates_internal": {
+    "n": 0,
+    "kill_lane": "internal",
+    "sector": null,
+    "opportunity_cost_rate": 0.0,
+    "defense_success_rate": 0.0,
+    "neutral_rate": 0.0
+  },
+  "rates_climax": {
+    "n": 0,
+    "kill_lane": "external",
+    "sector": null,
+    "opportunity_cost_rate": 0.0,
+    "defense_success_rate": 0.0,
+    "neutral_rate": 0.0
+  },
+  "detail": [
+    "internal_n=0",
+    "climax_n=0"
+  ]
+}
+
+============================================================
+6. 리포트/Telegram 블록 미리보기
+============================================================
+
+--- Daily HTML preview (first 1200 chars) ---
+python : Traceback (most recent call last):
+위치 C:\Users\GoodLife\AppData\Local\Temp\ps-script-ca67c1f0-408e-4eff-ba76-f81f42d01476.ps1:103 문자:57
++ ... eener-Bot"; python scripts/validate_mega_trend_kill_live.py 2>&1 | Ou ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\GoodLife\Desktop\quant\Dual-Screener-Bot\scripts\validate_mega_trend_kill_live.py", line 291, in <modu
+le>
+    raise SystemExit(main())
+                     ~~~~^^
+
+  File "C:\Users\GoodLife\Desktop\quant\Dual-Screener-Bot\scripts\validate_mega_trend_kill_live.py", line 259, in main
+    _print_report_preview(cfg, evolve_out if isinstance(evolve_out, dict) else None)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+  File "C:\Users\GoodLife\Desktop\quant\Dual-Screener-Bot\scripts\validate_mega_trend_kill_live.py", line 188, in _prin
+t_report_preview
+    print((daily or "(empty \u2014 unlock disabled or no block)")[:1200])
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+UnicodeEncodeError: 'cp949' codec can't encode character '\U0001f9ec' in position 24: illegal multibyte sequence
+

@@ -742,6 +742,22 @@ def resolve_stealth_thresholds(regime: Optional[str] = None) -> Dict[str, float]
     반환: us_surge_mult, us_lowvol_pct, kr_price_cut, defensive(bool 0/1).
     """
     reg = (regime or _resolve_current_regime() or "UNKNOWN").strip().upper()
+    
+    # ===========================================================================
+    # 👑 [스마트머니 탐지기 부스터] 상승장 공격적 매집 포착망 전개
+    # 앙상블이 BULL(상승장)을 선언했을 때, 스마트머니는 호가를 긁으며 공격적으로 들어옵니다.
+    # 평시보다 가격이 더 많이 올라도(변동성이 커져도) 이를 '진성 매집'으로 인정하여 다 쓸어 담습니다.
+    # ===========================================================================
+    if "BULL" in reg:
+        return {
+            "regime": reg,
+            "us_surge_mult": 1.5, # 평시(2.0)보다 거래량이 덜 터져도 폭증으로 인정
+            "us_lowvol_pct": 3.5, # 당일 3.5%나 올라도 매집 캔들로 인정 (평시 2.0%)
+            "kr_price_cut": 4.0,  # KR 5일 동안 4.0%나 올라도 다이버전스로 통과 (평시 1.8%)
+            "defensive": 0.0,
+        }
+    # ===========================================================================
+
     defensive = reg in _DEFENSIVE_REGIMES
     if defensive:
         return {

@@ -476,13 +476,32 @@ def predict_next_sector_markov(
     market: str,
     *,
     db_path: Optional[str] = None,
+    sys_config: Optional[Dict[str, Any]] = None, # 👑 [추가] 국면 정보를 받기 위한 config 수신부
 ) -> Tuple[Optional[str], Optional[str], float]:
     """rollup + daily series → (predicted, from_state, confidence)."""
     series = _load_daily_series(market, days=90, db_path=db_path)
     if not series:
         return None, None, 0.0
 
-    rollups = top_rollup_transitions(market, window="30d", min_count=1, limit=200, db_path=db_path)
+    # ===========================================================================
+    # 👑 [핑퐁 프로토콜 5] 마르코프 체인 기억력(Memory) 동적 스위칭
+    # 횡보장에서는 어제 튄 섹터가 오늘 죽고 내일 다른 섹터가 튑니다. (단기 기억 7일만 의존)
+    # 상승장에서는 하나의 메가트렌드가 몇 달간 시장을 지배합니다. (장기 기억 90일 의존)
+    # ===========================================================================
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    curr_regime = str(cfg.get("CURRENT_REGIME_KEY", "")).upper()
+    
+    if "CHOP" in curr_regime or "SIDEWAYS" in curr_regime:
+        target_window = "7d"
+    elif "BULL" in curr_regime:
+        target_window = "90d"
+    else:
+        target_window = "30d"
+
+    # 기존 하드코딩된 "30d" 대신 target_window 변수를 투입합니다.
+    rollups = top_rollup_transitions(market, window=target_window, min_count=1, limit=200, db_path=db_path)
+    # ===========================================================================
+
     transitions: Dict[Tuple[str, str], int] = {}
     for r in rollups:
         transitions[(r["from"], r["to"])] = r["count"]
@@ -617,7 +636,8 @@ def refresh_predicted_sector_via_store(
             if st.get("suggest_disable_rotation_advantage"):
                 cfg["ROTATION_ADVANTAGE_ACTIVE"] = False
 
-    predicted, from_st, conf = predict_next_sector_markov(mkt, db_path=db_path)
+    # 👑 국면 데이터(cfg) 전달
+    predicted, from_st, conf = predict_next_sector_markov(mkt, db_path=db_path, sys_config=cfg)
     if not predicted:
         lg = str(cfg.get(f"{key}_LAST_GOOD") or "").strip()
         if lg and lg not in ("분석중", "NONE", ""):

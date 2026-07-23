@@ -332,6 +332,21 @@ def compute_factor_states(snap: FactorSnapshot) -> Dict[str, Optional[float]]:
         pen = _crypto_vix_penalty(snap)
         if pen > 0.0 and _canary_penalty_enabled():
             st["vix"] = max(-1.0, st["vix"] - pen)
+            
+        # 👑 [초월적 시차 전이 배선] 주말 크립토 변동성 팩터 결합 (Contagion Evaluation)
+        try:
+            # 하단에 대기 중인 크립토 모멘텀 엔진을 호출
+            crypto_weekend = calculate_crypto_weekend_factor()
+            btc_mom = crypto_weekend.get("btc_momentum", 0.0)
+            
+            # 비트코인 모멘텀이 마이너스(-)일 때, VIX 상태값에 하방 압력(전염 페널티) 가중
+            # VIX 팩터 자체에 결합되므로, 기계가 과거 PnL을 복기하며 이 전염성의 가중치를 스스로 학습함
+            if btc_mom < 0:
+                contagion_impact = (abs(btc_mom) / 20.0) * 0.35  # 최대 0.35 페널티
+                st["vix"] = max(-1.0, st["vix"] - contagion_impact)
+        except Exception:
+            pass
+            
     if snap.breadth_ratio is not None:
         st["breadth"] = _t((float(snap.breadth_ratio) - 1.0) / 0.03)
     if snap.pri_z is not None:
@@ -491,6 +506,23 @@ def run_regime_ensemble(
     n_days = dynamic_hysteresis_days(st)   # [Mission 1] RL 동적 히스테리시스(1~5일)
     hyst = st.get("hysteresis") if isinstance(st.get("hysteresis"), dict) else {}
 
+    # ===========================================================================
+    # 👑 [기관급 시너지] 프랙탈 예언(Early Bull) 수신 및 강제 오버라이드
+    # 후행 지표(이평선)가 하락을 가리켜도, 타임머신이 상승 초입을 확신하면 
+    # 사령탑의 뇌 구조를 강제로 '상승장(BULL)'으로 뒤틀어버립니다.
+    # ===========================================================================
+    is_early_bull = False
+    try:
+        from config_manager import get_config_value
+        analog_data = get_config_value("REGIME_ANALOG_SCORE", {})
+        if isinstance(analog_data, dict):
+            # 아날로그 점수가 75% 이상이고 EARLY_BULL_GENESIS 국면일 때
+            if analog_data.get("best_episode") == "EARLY_BULL_GENESIS" and float(analog_data.get("score", 0)) > 0.75:
+                is_early_bull = True
+    except Exception:
+        pass
+    # ===========================================================================
+
     # 1) 시장별 raw 판정
     decisions: Dict[str, MarketRegimeDecision] = {}
     for mk, snap in snapshots.items():
@@ -508,7 +540,13 @@ def run_regime_ensemble(
                 CRYPTO_STRESS_GATE, pen, enabled, states.get("vix"), vix_w,
                 (-vix_w * pen if enabled else 0.0),
             )
+            
         score = _weighted_score(states, weights)
+        
+        # 👑 [강제 점수 부스팅] 타임머신이 상승장을 선언했다면 후행 점수를 묵살하고 폭등시킵니다.
+        if is_early_bull:
+            score = max(0.25, score + 0.40) # 무조건 BULL 영역(0.18 이상)으로 끌어올림
+            
         raw_regime = _regime_from_score(score)
         crisis = is_vix_crisis(snap)
         decisions[mk] = MarketRegimeDecision(
@@ -1098,3 +1136,72 @@ if __name__ == "__main__":
           f"hysteresis_days={e.get('hysteresis_days')}")
     print("evolution:", out["evolution"].get("events_evaluated"), "factor-evaluated ·",
           out["hysteresis_evolution"].get("events_evaluated"), "hysteresis-evaluated")
+
+
+# ===========================================================================
+# [초월적 시차 전이] 주말 크립토(BTC) 변동성 팩터 추출 및 앙상블 주입기
+# ===========================================================================
+def calculate_crypto_weekend_factor(db_path: str = None) -> dict:
+    """
+    alt_data.sqlite의 macro_daily 테이블에서 비트코인(BTC) 종가를 읽어와,
+    단기(3일) 모멘텀을 계산하여 앙상블 모델의 가중치 팩터로 제공합니다.
+    """
+    import sqlite3
+    import os
+    
+    # 1. 대체 데이터(매크로/코인) DB 경로 로드
+    if db_path is None:
+        try:
+            from factory_data_paths import alt_data_db_path
+            db_path = alt_data_db_path()
+        except Exception:
+            return {"btc_momentum": 0.0, "status": "no_db_path"}
+            
+    if not os.path.isfile(db_path):
+        return {"btc_momentum": 0.0, "status": "db_not_found"}
+
+    # 2. 최근 3거래일(주말 포함) BTC 종가 추출
+    conn = sqlite3.connect(db_path, timeout=15.0)
+    try:
+        rows = conn.execute(
+            """
+            SELECT btc_close FROM macro_daily 
+            WHERE btc_close IS NOT NULL 
+            ORDER BY date DESC LIMIT 3
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+
+    # 3. 데이터가 부족하면 중립(0.0) 팩터 반환
+    if len(rows) < 2:
+        return {"btc_momentum": 0.0, "status": "insufficient_data"}
+
+    # 4. 주말 모멘텀(수익률) 산출
+    try:
+        latest_btc = float(rows[0][0])
+        past_btc = float(rows[-1][0])
+        
+        if past_btc <= 0:
+            return {"btc_momentum": 0.0, "status": "zero_division_guard"}
+            
+        # 퍼센트 단위 등락률 계산 (예: -5.5%)
+        momentum_pct = ((latest_btc - past_btc) / past_btc) * 100.0
+        
+        # 극단적 이상치(노이즈)를 방지하기 위해 -20% ~ +20% 사이로 클리핑(Clipping)
+        momentum_clipped = max(-20.0, min(20.0, momentum_pct))
+        
+        return {
+            "btc_momentum": round(momentum_clipped, 4), 
+            "status": "success",
+            "raw_latest": latest_btc,
+            "raw_past": past_btc
+        }
+    except (TypeError, ValueError):
+        return {"btc_momentum": 0.0, "status": "calculation_error"}
+
+# 💡 앙상블 모델(Ensemble Model) 연동 훅(Hook):
+# 기존 앙상블 점수 계산 로직에서 이 함수의 'btc_momentum' 값을 feature 배열에 append 하면, 
+# 기계학습 트리가 VIX 지수와 결합하여 비트코인 폭락의 전염성(Contagion) 여부를 스스로 판단합니다.

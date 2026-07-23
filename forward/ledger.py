@@ -649,6 +649,35 @@ def track_daily_positions(market):
                     + int(_ace_evo.min_hold_bars_extra),
                 )
 
+# =================================================================
+            # 👑 [초월적 방어 배선] 하락장 오버나이트 리스크 제로화 (EOD 강제 청산)
+            # =================================================================
+            # 1.5순위: 하락장이 감지된 상태에서 장 마감(EOD) 지정 시간에 도달하면 무조건 시장가 탈출
+            if not do_exit and _xdyn is not None and not _is_observe_only:
+                try:
+                    # 현재 해당 시장(KR/US)의 현지 시간 추출
+                    _now_time = datetime.now(tz_mkt).strftime('%H:%M:%S')
+                    # exit_dynamics에 이식해둔 뇌에서 현재 국면에 맞는 도주 시간(예: 14:30:00)을 받아옴
+                    _eod_limit_time = _xdyn.resolve_eod_exit_time(_meta_regime)
+                    
+                    # 방어 국면일 때만 작동 (상승장에서는 이 스위치가 꺼짐)
+                    if _meta_regime in ["BEAR", "BEAR_PANIC", "BEAR_ACCEL", "BEAR_GRIND", "HIGH_VOL"]:
+                        # 현재 시간이 기계가 정한 도주 시간을 넘겼다면 무조건 전량 현금화
+                        if _now_time >= _eod_limit_time:
+                            do_exit, exit_rsn, actual_exit_type = (
+                                True, 
+                                f"오버나이트 갭하락 리스크 원천 차단 (국면:{_meta_regime}, 타임스탑:{_eod_limit_time})", 
+                                "EOD_FLUID_STOP"
+                            )
+                            actual_exit_price = c  # 현재가/종가로 강제 청산
+                except Exception as _eod_ex:
+                    pass
+
+            # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산
+
+
+
+
             # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산
             if not do_exit:
                 if active_mode == "TECH":

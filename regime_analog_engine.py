@@ -44,8 +44,8 @@ MORPH_MIN_SCORE_KEY = "REGIME_ANALOG_MORPH_MIN_SCORE"
 GATE_FAIL_OPEN_KEY = "REGIME_ANALOG_GATE_FAIL_OPEN"
 EPISODE_PENALTY_KEY = "REGIME_EPISODE_QPENALTY"  # 면역 학습: 국면별 Q-페널티
 
-DEFAULT_FRONTRUN_MIN_SCORE = 0.80
-DEFAULT_MORPH_MIN_SCORE = 0.85
+DEFAULT_FRONTRUN_MIN_SCORE = 0.78 # 👑 [수정] 선취매 허들을 80%에서 78%로 살짝 낮춰 조금 더 빨리 반응하게 함
+DEFAULT_MORPH_MIN_SCORE = 0.82    # 👑 [수정] DNA 모핑 허들을 85%에서 82%로 낮춰 유연성 확보
 # RL 면역 페널티 기본 하이퍼파라미터
 DEFAULT_RL_ALPHA = 0.5
 DEFAULT_RL_GAMMA = 0.9
@@ -81,6 +81,20 @@ N_DIMS = len(VECTOR_DIMS)
 #   hist_win_proxy: 해당 국면 선취매 승률 프록시(0~1, 메타 정보)
 # ---------------------------------------------------------------------------
 HISTORICAL_EPISODES: Dict[str, Dict[str, Any]] = {
+    # ===========================================================================
+    # 👑 [상승장 선취매 프랙탈] 얼리 불 헌터 (Early Bull Hunter)
+    # 대중의 환희가 시작되기 전, 공포 속에서 스마트머니가 들어오며 변동성이 줄어드는
+    # '진짜 상승장 초입'의 14일 DTW 궤적을 주입하여 가장 먼저 포착합니다.
+    # ===========================================================================
+    "EARLY_BULL_GENESIS": {
+        "regime": "BULL",
+        "centroid": [0.03, 0.04, 0.4, 1.3, 1.0, 0.5],
+        "trajectory": [-1.2, -0.8, -0.5, 0.1, 0.5, 0.8, 0.9, 1.2, 1.4, 1.6, 1.7, 1.75, 1.8, 1.9],
+        "front_run_favorable": True,
+        "hist_win_proxy": 0.85,
+        "desc": "공포 속 스마트머니 은밀한 매집 (대세 상승 초입)",
+    },
+    # ===========================================================================
     "EXTREME_CRASH": {
         "regime": "DOWN",
         "centroid": [-0.12, -0.12, 1.8, -1.5, -1.4, 1.5],
@@ -116,8 +130,12 @@ HISTORICAL_EPISODES: Dict[str, Dict[str, Any]] = {
 }
 
 # 과거 국면별 '전설적 승자' DNA 기본 시드 (cpv, tb, bbe)
-#   build_regime_archetype_dna() 가 실측 백테스트 센트로이드로 덮어쓸 수 있다.
 DEFAULT_ARCHETYPE_DNA: Dict[str, Dict[str, Dict[str, float]]] = {
+    # 👑 [상승장 초입 유전자] 엄청난 응축 에너지(bbe)와 윗꼬리 최소화(cpv)가 특징
+    "EARLY_BULL_GENESIS": {
+        "KR": {"cpv": 0.82, "tb": 15.0, "bbe": 35.0},
+        "US": {"cpv": 0.78, "tb": 14.5, "bbe": 32.0},
+    },
     "V_RECOVERY": {
         "KR": {"cpv": 0.72, "tb": 13.5, "bbe": 31.0},
         "US": {"cpv": 0.68, "tb": 12.0, "bbe": 27.5},
@@ -593,6 +611,15 @@ def compute_regime_analog(
         # 🛡️ 면역 페널티: 실전에서 실패해 처벌된 국면은 매칭 가중치를 영구 삭감.
         imm_w = episode_match_weight(name, penalties)
         ensemble *= imm_w
+
+        # ===========================================================================
+        # 👑 [선취매 부스터] 상승 초입 프랙탈 부풀리기
+        # EARLY_BULL_GENESIS(상승 초입) 프랙탈과 65% 이상 유사하다면, 
+        # 시스템이 보수적으로 굴지 못하게 유사도(ensemble)에 1.25배 부스터를 걸어버립니다.
+        # ===========================================================================
+        if name == "EARLY_BULL_GENESIS" and ensemble > 0.65:
+            ensemble = min(0.99, ensemble * 1.25)
+        # ===========================================================================
 
         per_episode[name] = {
             "regime": ep["regime"],

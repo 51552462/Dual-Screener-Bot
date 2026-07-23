@@ -951,9 +951,23 @@ def run_autonomous_analysis():
             valid = [s for s in [t14, t30, t60] if isinstance(s, dict)]
             if len(valid) >= 2:
                 w = [0.5, 0.3, 0.2] if t14 and t30 and t60 else [1/len(valid)] * len(valid)
+                
+                raw_tp = sum(s['tp']*w[i] for i,s in enumerate(valid))
+                
+                # ===========================================================================
+                # 👑 [핑퐁 프로토콜 4] 횡보장 목표가(MFE) 천장 강제 락다운
+                # 횡보장에서는 교배소가 목표가를 아무리 높게 제안해도, 사령탑이 3.5%로 강제 압착합니다.
+                # 반대로 상승장(BULL)에서는 상한선을 없애 수익을 무한대로 열어둡니다.
+                # ===========================================================================
+                curr_regime = str(current_config.get("CURRENT_REGIME_KEY", "")).upper()
+                if "CHOP" in curr_regime or "SIDEWAYS" in curr_regime:
+                    raw_tp = min(raw_tp, 3.5) 
+                    report_lines.append(f" 👻 [횡보장 락다운] 목표가(MFE)를 {raw_tp:.1f}%로 강제 압착합니다.")
+                # ===========================================================================
+
                 current_config[cand_key] = {
                     "DYNAMIC_MAE_SL": round(sum(s['sl']*w[i] for i,s in enumerate(valid)), 2),
-                    "DYNAMIC_MFE_TP": round(sum(s['tp']*w[i] for i,s in enumerate(valid)), 2),
+                    "DYNAMIC_MFE_TP": round(raw_tp, 2),
                     "TREE_FATAL_CPV": round(sum(s['fatal_cpv']*w[i] for i,s in enumerate(valid)), 2),
                     "DYNAMIC_ALPHA_LIMIT": round(sum(s['alpha_limit']*w[i] for i,s in enumerate(valid)), 3),
                     "DYNAMIC_TRAP_LIMIT": round(sum(s['trap_limit']*w[i] for i,s in enumerate(valid)), 3),
@@ -961,27 +975,40 @@ def run_autonomous_analysis():
                 }
                 report_lines.append(f"▪️ 앙상블 생성: SL {current_config[cand_key]['DYNAMIC_MAE_SL']}% / TP {current_config[cand_key]['DYNAMIC_MFE_TP']}%")
 
-        # --- [엔진 5: 독립 STAT vs TECH 결투] ---
-        if 'sim_stat_ret' in ns_df.columns:
-            st_df = ns_df[ns_df['sim_stat_status'].str.contains('CLOSED', na=False)]
-            te_df = ns_df[ns_df['sim_tech_status'].str.contains('CLOSED', na=False)]
-            s_pf = (st_df[st_df['sim_stat_ret']>0]['sim_stat_ret'].sum()) / (abs(st_df[st_df['sim_stat_ret']<=0]['sim_stat_ret'].sum()) + 0.1) if len(st_df)>0 else 0
-            t_pf = (te_df[te_df['sim_tech_ret']>0]['sim_tech_ret'].sum()) / (abs(te_df[te_df['sim_tech_ret']<=0]['sim_tech_ret'].sum()) + 0.1) if len(te_df)>0 else 0
-            winner = "TECH" if t_pf > s_pf * 1.1 else "STAT"
-            current_config[f"{target_ns}_ACTIVE_EXIT_MODE"] = winner
-            report_lines.append(f"▪️ 청산 결투: {winner} 모드가 우세함")
-
-        # --- [엔진 5.5: 생존 호흡(bars_held) 기반 TIME_STOP 동기화] ---
+       # --- [엔진 5.5: 생존 호흡(bars_held) 기반 TIME_STOP 동기화 & 국면별 탈출/극대화] ---
         if 'bars_held' in ns_df.columns and 'entry_date' in ns_df.columns and 'final_ret' in ns_df.columns:
             thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
             breath_df = ns_df[(ns_df['entry_date'] >= thirty_days_ago) & (ns_df['final_ret'] > 0)].copy()
             breath_df = breath_df[breath_df['bars_held'].notna()]
+            
+            # 👑 [국면 맞춤형 생존 및 극대화 로직]
+            curr_regime = str(current_config.get("CURRENT_REGIME_KEY", "")).upper()
+            is_chop = "CHOP" in curr_regime or "SIDEWAYS" in curr_regime
+            is_bull = "BULL" in curr_regime
+            
             if not breath_df.empty:
                 avg_bars = float(breath_df['bars_held'].mean())
-                sync_time_stop = max(3, int(round(avg_bars * 1.2)))
+                
+                if is_chop:
+                    # 📉 [타임 길로틴 가동] 횡보장: 자금이 묶이면 죽는다. 호흡을 절반(0.5배)으로 극단적 압착 (최소 2일)
+                    sync_time_stop = max(2, int(round(avg_bars * 0.5)))
+                    regime_msg = f" 👻[횡보장 킬스위치 가동] (x0.5 압착)"
+                    
+                elif is_bull:
+                    # 🚀 [무한 홀딩 모드 (Uncapped Time)] 상승장: 수익 중인 주식을 시간이 지났다고 파는 것은 멍청한 짓이다.
+                    # 수익 중인 대장주는 타임스탑을 사실상 무한대(999일)로 풀어버리고, 오직 추세가 꺾일 때(Trailing Stop)만 판다.
+                    sync_time_stop = 999 
+                    regime_msg = f" 🚀[상승장 무한 홀딩 모드] 추세 꺾일 때까지 타임스탑 해제 (999일)"
+                    
+                else:
+                    # 일반장: 적절한 호흡 연장
+                    sync_time_stop = max(4, int(round(avg_bars * 1.5)))
+                    regime_msg = ""
+                    
                 current_config[f"{target_ns}_TIME_STOP"] = sync_time_stop
-                report_lines.append(f"▪️ 생존 호흡 동기화: bars_held 평균 {avg_bars:.1f}일 ➔ TIME_STOP {sync_time_stop}일")
+                report_lines.append(f"▪️ 생존 호흡 동기화: 평균 {avg_bars:.1f}일 ➔ TIME_STOP {sync_time_stop}일{regime_msg}")
 
+        
         # --- [엔진 6: 독립 OOS 진검승부 및 챔피언 승격] ---
         train_df = ns_df[ns_df['entry_date'] < oos_barrier]
         test_df = ns_df[ns_df['entry_date'] >= oos_barrier]

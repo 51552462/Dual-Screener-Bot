@@ -61,21 +61,28 @@ def compute_runner_rates(rows) -> Dict[str, Any]:
 
     giveback_rate = sum(givebacks) / len(givebacks)
 
-    # whipsaw: 트레일 청산인데 고점(mfe)이 하위 40퍼센타일 미만 = 추세 발달 전 조기 절단
+    # ===========================================================================
+    # 👑 [변동성 생존 모드 2] 조기 청산(Whipsaw) 학습 예민도 극대화
+    # 변동성 장세에서 기계가 "내가 너무 빨리 털렸구나"라고 느끼는 기준을
+    # 하위 40% 고점에서 하위 60% 고점(p60_mfe)으로 대폭 올립니다.
+    # 이렇게 하면 whipsaw_rate가 급등하여, 다음 주에는 기계가 스스로 트레일 폭(Kappa)을
+    # 크게 넓혀버립니다 (노이즈에 털리지 않도록 숨통을 틔움).
+    # ===========================================================================
     srt = sorted(mfes)
-    idx = max(0, int(0.40 * (len(srt) - 1)))
-    p40_mfe = srt[idx]
+    idx = max(0, int(0.60 * (len(srt) - 1))) # 👑 0.40 -> 0.60 (더 예민하게 Whipsaw를 감지)
+    p60_mfe = srt[idx]
     whips = sum(
         1 for (mfe_f, fr_f, et, gb) in parsed
-        if et == "RUNNER_TRAIL" and mfe_f <= p40_mfe
+        if et == "RUNNER_TRAIL" and mfe_f <= p60_mfe
     )
     whipsaw_rate = whips / len(parsed)
+    # ===========================================================================
 
     return {
         "n": len(parsed),
         "whipsaw_rate": round(whipsaw_rate, 4),
         "giveback_rate": round(giveback_rate, 4),
-        "p40_mfe": round(p40_mfe, 2),
+        "p60_mfe": round(p60_mfe, 2), # 👑 반환키 변경
     }
 
 

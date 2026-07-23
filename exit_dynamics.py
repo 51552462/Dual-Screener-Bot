@@ -46,17 +46,22 @@ def fluid_scale_out_fraction(
 ) -> float:
     """
     1차 목표가 도달 시 매도할 비율 F_out ∈ [0,1].
-
-      · 방어적 국면(BEAR/HIGH_VOL)일수록 ↑ (원금 방어, 70~80% 매도)
-      · BULL + 높은 edge_score 일수록 ↓ (프리러너 극대화, 10~20% 매도)
-      · 변동성↑ → 약간 ↑ (이익 보호)
     """
     reg = _norm_regime(regime)
     if reg in DEFENSIVE_REGIMES:
         base_f = 0.78
     elif reg in BULLISH_REGIMES:
         base_f = 0.18
-    else:  # CHOP / UNKNOWN
+        
+    # ===========================================================================
+    # 👑 [핑퐁 프로토콜 1] 횡보장 극단적 부분 익절 (Hit & Run)
+    # 횡보장(CHOP)에서는 1차 목표가에 도달하는 즉시 물량의 85%를 집어던져(매도)
+    # 수익을 가차 없이 확정 짓습니다. '조금 더 갈까?' 하는 미련 자체를 없앱니다.
+    # ===========================================================================
+    elif "CHOP" in reg or "SIDEWAYS" in reg:
+        base_f = 0.85
+    # ===========================================================================
+    else:  # UNKNOWN
         base_f = 0.45
 
     # 엣지가 강할수록 더 적게 팔아 러너 보존 (최대 -0.08 → BULL 하한 ≈10%)
@@ -74,7 +79,7 @@ RATCHET_STATE_KEY = "EXIT_RATCHET_STATE"
 DEFAULT_RATCHET_STATE: Dict[str, Any] = {
     "kappa_max": 0.12,   # 초기(러너 진입 직후) 트레일 폭 — 넓게 숨통
     "kappa_min": 0.05,   # 수익 팽창 후 최소 트레일 폭 — 이익 보호로 조임
-    "anchor_ret": 40.0,  # κ_min 으로 수렴하는 수익률 기준점(%)
+    "anchor_ret": 20.0,  # 👑 [수술 완료] 40.0 -> 20.0 (20% 수익부터 이익 보호 극대화)
     "convexity": 1.0,    # 1.0=선형, >1=볼록(초반 더 넓게), <1=오목
     "curve": "linear",
 }
@@ -146,6 +151,33 @@ def update_ratchet_kappa_rl(
     st["curve"] = "convex" if conv > 1.05 else ("concave" if conv < 0.95 else "linear")
     return st
 
+def apply_elastic_dna_to_ratchet(state: Dict[str, Any], trade: Mapping[str, Any], dna_pack: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    👑 [초월적 진화] DNA에 각인된 고무줄 유전자(trail_atr_mult, mfe_atr_mult)를 
+    실제 진입 변동성(entry_atr)에 곱해 래칫 상태(익절 목표 및 손절 조임)를 덮어씌웁니다.
+    """
+    out = dict(state)
+    e_atr = _safe_float(trade.get("entry_atr"))
+    e_price = _safe_float(trade.get("entry_price"))
+    
+    if e_atr <= 0 or e_price <= 0:
+        return out
+        
+    mfe_mult = float(dna_pack.get("mfe_atr_mult", 0.0))
+    trail_mult = float(dna_pack.get("trail_atr_mult", 0.0))
+    
+    # 1. 고무줄 목표가 재설정
+    if mfe_mult > 0:
+        out["anchor_ret"] = round(((e_atr * mfe_mult) / e_price) * 100.0, 2)
+        
+    # 2. 고무줄 래칫 강도(트레일링 폭) 재설정
+    if trail_mult > 0:
+        trail_pct = ((e_atr * trail_mult) / e_price)
+        out["kappa_min"] = round(max(0.02, trail_pct * 0.5), 4)
+        out["kappa_max"] = round(min(0.25, trail_pct * 1.5), 4)
+        
+    return out
+
 
 # ===========================================================================
 # Mission 3 — 우측 꼬리 자가 확장 메타튜닝 (Right-Tail Meta-Tuning)
@@ -153,18 +185,26 @@ def update_ratchet_kappa_rl(
 def target_percentile(regime: Any, fat_tail_ratio: float) -> float:
     """
     목표가 추적 퍼센타일. 50% 중앙값 앵커를 폐기하고 우측 꼬리로 끌어올린다.
-      · 평장(CHOP) 70 · 대세상승(BULL) 90 · 방어(BEAR/HIGH_VOL) 60
-      · fat_tail_ratio(=p90/p50 등) 가 클수록 추가 상향.
     """
     reg = _norm_regime(regime)
     if reg in BULLISH_REGIMES:
         base = 90.0
     elif reg in DEFENSIVE_REGIMES:
         base = 60.0
+        
+    # ===========================================================================
+    # 👑 [핑퐁 프로토콜 2] 횡보장 목표가 천장 강제 압착
+    # 횡보장에서는 목표가의 기준점(Percentile)을 하위 40%로 극단적으로 낮춥니다.
+    # 남들이 "아직 안 올랐네" 할 때, 우리 기계는 "벌써 목표가 도달"이라며 수익을 챙깁니다.
+    # ===========================================================================
+    elif "CHOP" in reg or "SIDEWAYS" in reg:
+        base = 40.0
+    # ===========================================================================
     else:
         base = 70.0
+        
     fat_bonus = _clamp((float(fat_tail_ratio) - 2.0) * 5.0, 0.0, 8.0)
-    return _clamp(base + fat_bonus, 55.0, 95.0)
+    return _clamp(base + fat_bonus, 35.0, 95.0) # 👑 하한선을 55.0에서 35.0으로 개방
 
 
 def fat_tail_ratio(p_hi: float, p_mid: float) -> float:
@@ -183,8 +223,7 @@ def fat_tail_ratio(p_hi: float, p_mid: float) -> float:
 # ===========================================================================
 PYRAMID_EDGE_THRESHOLD = 1.5
 PYRAMID_MAX_ADDS = 3
-PYRAMID_NAV_CAP_FRAC = 0.10  # 1회 추가매수는 NAV 의 최대 10%
-
+PYRAMID_NAV_CAP_FRAC = 0.04  # 👑 [수술 완료] 0.10 -> 0.04 (1회 추가매수는 NAV 의 최대 4%로 리스크 통제)
 
 def pyramid_decision(
     *,
@@ -281,9 +320,22 @@ def _mega_trend_internal_thresholds_base() -> Dict[str, Any]:
     }
 
 
-def mega_trend_internal_thresholds(sector: Optional[str] = None) -> Dict[str, Any]:
+def mega_trend_internal_thresholds(sector: Optional[str] = None, regime: Optional[str] = None) -> Dict[str, Any]:
     """내재적 킬스위치 1번 임계치 — env + Kill RL delta (P5: sector overlay)."""
     base = _mega_trend_internal_thresholds_base()
+    
+    # ===========================================================================
+    # 👑 [핑퐁 프로토콜 3] 횡보장 이익 반납 강제 차단 (Tight Breakeven)
+    # 횡보장(CHOP)에서는 본절(Breakeven Band)의 여유를 주지 않습니다.
+    # 1.5% 수익이 났다가 0.5%로 떨어지면 "본절이네" 하고 기다리는 게 아니라,
+    # 바로 쳐내고 빠져나옵니다. MFE 도달 목표치도 5.0%에서 2.5%로 압착합니다.
+    # ===========================================================================
+    reg = str(regime or "").strip().upper()
+    if "CHOP" in reg or "SIDEWAYS" in reg:
+        base["breakeven_band_pct"] = 0.5   # 본절 밴드를 1.5%에서 0.5%로 극단적 타이트
+        base["mfe_target_pct"] = 2.5       # 메가트렌드 목표치를 5.0%에서 2.5%로 압착
+    # ===========================================================================
+
     try:
         from mega_trend_kill_rl import apply_kill_rl_threshold_adjustments, load_kill_rl_state
 
@@ -349,19 +401,33 @@ def is_mfe_target_reached(
     trade: Mapping[str, Any],
     *,
     mfe_target_pct: float = 5.0,
+    dna_pack: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """MFE(최대 허용 수익) 목표 도달 여부."""
+    """
+    MFE(최대 허용 수익) 목표 도달 여부. 
+    👑 고정된 %가 아닌, 템플릿의 고무줄 유전자(ATR 배수)가 있다면 그것을 우선하여 환산합니다.
+    """
+    target = float(mfe_target_pct)
+    
+    # DNA팩이 존재하고 변동성 배수 유전자가 발현되어 있다면 % 타겟을 덮어씁니다.
+    if dna_pack and float(dna_pack.get("mfe_atr_mult", 0.0)) > 0:
+        e_atr = _safe_float(trade.get("entry_atr"))
+        e_price = _safe_float(trade.get("entry_price"))
+        if e_atr > 0 and e_price > 0:
+            target = ((e_atr * float(dna_pack["mfe_atr_mult"])) / e_price) * 100.0
+
     mfe = _safe_float(trade.get("mfe"))
-    if mfe >= float(mfe_target_pct):
+    if mfe >= target:
         return True
+        
     if str(trade.get("status") or "").upper() == "OPEN":
         entry = _safe_float(trade.get("entry_price"))
         max_high = _safe_float(trade.get("max_high"))
         if entry > 0 and max_high > 0:
             run_mfe = ((max_high - entry) / entry) * 100.0
-            return run_mfe >= float(mfe_target_pct)
+            return run_mfe >= target
+            
     return False
-
 
 def compute_internal_trade_metrics(
     trades: Sequence[Mapping[str, Any]],
@@ -532,3 +598,30 @@ def evaluate_internal_momentum_loss(
 
     return out
 
+
+
+# ===========================================================================
+# [초월적 방어] 국면 연동형 유동적 타임 스탑 (Fluid EOD Close)
+# ===========================================================================
+def resolve_eod_exit_time(bear_stress_phase: str) -> str:
+    """
+    dynamic_hedge_cap.py에서 분류된 하락장 강도(PANIC, ACCEL, GRIND) 및 
+    총사령관의 범용 국면(BEAR)에 맞춰 오버나이트 리스크를 차단합니다.
+    """
+    phase = str(bear_stress_phase).strip().upper()
+
+    # 1. 패닉장: 오후 투매 폭포수가 쏟아지기 전, 가장 빠르게 전량 현금화 (14:00)
+    if phase == "BEAR_PANIC":
+        return "14:00:00"
+        
+    # 2. 가속 하락장 및 범용 하락장(BEAR): 기관의 포트폴리오 조정 매물이 나오기 직전 회수 (14:30)
+    elif phase in ["BEAR_ACCEL", "BEAR"]:
+        return "14:30:00"
+        
+    # 3. 완만 하락장 / 고변동성장: 장중 알파를 최대한 취한 뒤 동시호가 전 회수 (15:15)
+    elif phase in ["BEAR_GRIND", "HIGH_VOL", "DEFENSE"]:
+        return "15:15:00"
+        
+    # 4. 중립 / 상승장 (BULL): EOD 강제 청산을 발동하지 않거나, 폴백(Fallback) 시간 적용
+    else:
+        return "15:20:00"

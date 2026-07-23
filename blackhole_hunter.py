@@ -714,3 +714,44 @@ def scan_blackhole_targets(max_us_tickers: int = DEFAULT_MAX_US_TICKERS) -> Dict
 
 if __name__ == "__main__":
     scan_blackhole_targets()
+
+
+# ===========================================================================
+# [초월적 시차 전이] 시가 갭 페이크(BLOCK) 종목을 블랙홀 숏 타겟으로 강제 이송
+# ===========================================================================
+def receive_gap_fake_target_for_short(
+    ticker_symbol: str,
+    ticker_name: str,
+    current_price: float,
+    gap_verdict: dict
+):
+    """
+    forward_market_guard에서 BLOCK 판정된 갭 페이크 종목을 수신하여,
+    블랙홀 숏 전용 데이터베이스(short_data.sqlite)에 강제 적재합니다.
+    """
+    if gap_verdict.get("status") != "BLOCK":
+        return False
+        
+    pattern_name = "GAP_FAKE_ANTI_PATTERN"
+    fake_dna = {
+        "dyn_cpv": 9.0,  # 숏에 최적화된 독성 수치 강제 주입
+        "dyn_tb": 1.0,
+        "v_energy": 0.0,
+        "dyn_rs": 1.0
+    }
+    
+    # blackhole_hunter 내부의 기존 저 장부 삽입 함수를 재사용합니다.
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    inserted = _insert_short_record(
+        ticker_symbol, 
+        ticker_name, 
+        pattern_name, 
+        fake_dna, 
+        current_price, 
+        today
+    )
+    if inserted:
+        print(f"💀 [시차전이 숏 포획] {ticker_symbol} ({ticker_name}) 갭 페이크 감지로 인해 숏 타겟 장부에 강제 수감.")
+    return inserted

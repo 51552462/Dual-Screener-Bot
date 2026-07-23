@@ -107,13 +107,29 @@ def apply_doomsday_dampening(
     *,
     sys_config: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
+    sig_type: str = "", # 👑 [추가] 시그널 종류를 판별하기 위한 인자
 ) -> float:
-    """켈리 비중에 동적 γ 감쇠를 곱한다(consumer 훅용 · 순수/무 I/O)."""
+    """켈리 비중에 동적 γ 감쇠를 곱한다(비대칭 역배팅 적용)."""
     score = global_score_from_config(sys_config)
     if score is None or score <= SCORE_FLOOR:
         return float(kelly_risk_pct)
+    
     gamma = resolve_gamma(meta, sys_config)
-    return float(kelly_risk_pct) * dampening_multiplier(score, gamma)
+    mult = dampening_multiplier(score, gamma)
+    
+    # ===========================================================================
+    # 👑 [비대칭 자본 밸브 (Asymmetric Capital Valve)]
+    # 시장이 붕괴하여 둠스데이 점수가 치솟을 때, 일반 롱(Long) 포지션은 숨통을 끊지만,
+    # 인버스(Inverse) 및 역배팅 포지션의 자금줄은 억압 강도에 비례하여 폭발적으로 열어줍니다.
+    # ===========================================================================
+    sig_upper = str(sig_type).upper()
+    if "[INVERSE_ETF]" in sig_upper or "TOXIC_FADE" in sig_upper:
+        # 롱 포지션이 받는 억압(1.0 - mult)을 역으로 계산하여 최대 2.5배까지 인버스 비중 증폭
+        inverse_boost = 1.0 + ((1.0 - mult) * 1.5)
+        print(f"🌋 [비대칭 밸브 개방] 둠스데이 스코어({score:.1f}) ➔ 역배팅 자본 {inverse_boost:.2f}배 증폭")
+        return float(kelly_risk_pct) * inverse_boost
+        
+    return float(kelly_risk_pct) * mult
 
 
 # ---------------------------------------------------------------------------

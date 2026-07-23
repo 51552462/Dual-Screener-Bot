@@ -453,10 +453,11 @@ def _build_overview_section(
 
 
 def _build_operator_section(mkt: str, rows: List[Dict[str, Any]], *, top_n: int) -> str:
-    head = f"{MARKET_FLAG[mkt]} <b>[{mkt} 실무자(로직)별 수익]</b>"
+    head = f"{MARKET_FLAG[mkt]} <b>[{mkt} 실무자(로직) KPI 목표 달성 현황]</b>"
     if not rows:
         return head + "\n   · 이번 기간 청산 표본 없음"
     lines = [head]
+    
     for i, e in enumerate(rows[:top_n]):
         if i == 0:
             m = "🥇"
@@ -468,16 +469,48 @@ def _build_operator_section(mkt: str, rows: List[Dict[str, Any]], *, top_n: int)
             m = "•"
         if e["pnl"] < 0:
             m = "📉"
+            
+        # =================================================================
+        # 👑 [KPI 대시보드 산출 엔진]
+        # 목표: 승률(WR) 60%, 손익비(PF) 2.0 이상을 100% 달성 기준으로 설정합니다.
+        # =================================================================
+        pf_target = 2.0
+        wr_target = 60.0
+        
+        pf_ratio = min(100.0, max(0.0, (e['pf'] / pf_target) * 100))
+        wr_ratio = min(100.0, max(0.0, (e['wr'] / wr_target) * 100))
+        
+        # 종합 목표 달성률 (승률과 손익비를 1:1로 반영)
+        achievement = (pf_ratio + wr_ratio) / 2.0
+        
+        # 10칸짜리 직관적인 프로그레스 바 시각화
+        filled = int(achievement // 10)
+        bar = "🟩" * filled + "⬜" * (10 - filled)
+        
+        # 실무자 등급 심사
+        if achievement >= 100:
+            status = "🌟 S급 (시드 증액 대상)"
+        elif achievement >= 80:
+            status = "✅ A급 (순항 중)"
+        elif achievement >= 50:
+            status = "⚠️ B급 (분발 요망)"
+        else:
+            status = "🚨 C급 (퇴출 및 재학습 위기)"
+            
+        # =================================================================
+            
         lines.append(
             f"{m} <b>{e['group']}</b>: {_signed_money(mkt, e['pnl'])}"
         )
+        lines.append(f"   ↳ 목표: [{bar}] <b>{achievement:.0f}% 달성</b>")
         lines.append(
-            f"   ↳ 승률 {e['wr']:.0f}% (PF {e['pf']:.2f}) · "
-            f"{e['n']}건 · 평균 {e['avg_ret']:+.1f}%"
+            f"   ↳ 실적: 승률 {e['wr']:.0f}% / PF {e['pf']:.2f} ({status})"
         )
+        
     pos = sum(1 for e in rows if e["pnl"] > 0)
     neg = sum(1 for e in rows if e["pnl"] < 0)
     lines.append(f"   ▸ 흑자 {pos} / 적자 {neg} (총 {len(rows)} 실무자)")
+    
     return "\n".join(lines)
 
 

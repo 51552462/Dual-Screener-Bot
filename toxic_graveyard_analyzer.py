@@ -499,13 +499,24 @@ def run_graveyard_autopsy():
         save_config(config)
         return
 
-    num_features = ["dyn_cpv", "dyn_tb", "v_energy", "dyn_rs"]
+   # ===========================================================================
+    # 👑 [변동성 면역 배양] 윗꼬리 가짜 돌파(Bull Trap) 집중 해부
+    # 머신러닝 트리가 '참사주'를 분류할 때, 단순 가격 정보(dyn_rs)를 빼버리고
+    # 윗꼬리의 악랄함(dyn_cpv)과 거래량 에너지(v_energy)의 상관관계에만
+    # 미친 듯이 집중(Overweight)하도록 Feature 공간을 좁혀버립니다.
+    # ===========================================================================
+    num_features = ["dyn_cpv", "v_energy"] # 👑 [수술 2] tb와 rs를 빼고 핵심 독성 인자만 남김
+    
+    # 가중치 뻥튀기: 윗꼬리가 길수록(cpv가 1에 가까울수록) 치명적임을 인식시키기 위해 스케일업
+    df["dyn_cpv"] = df["dyn_cpv"] * 2.0 
+    
     X_num = df[num_features].astype(float)
     X_cat = pd.get_dummies(
         df[["sector_bucket", "weekday"]].astype({"sector_bucket": str, "weekday": int}),
         columns=["sector_bucket", "weekday"],
         prefix=["sector", "weekday"],
     ).astype(float)
+    # ===========================================================================
     X = pd.concat([X_num, X_cat], axis=1)
     y = df["is_toxic"]
     feature_names = list(X.columns)

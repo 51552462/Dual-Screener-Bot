@@ -2349,6 +2349,47 @@ def try_add_virtual_position(
                 if sk and sk in incubator_templates:
                     incubator_match_name = sk
 
+# =================================================================
+            # 👑 [초월적 진화] 구조적 논리 유전자 (Structural Gene) 실시간 판독 엔진
+            # =================================================================
+            # 차트의 껍데기(모양)가 일치하더라도, 템플릿이 생존 조건으로 요구하는 
+            # 논리적 무기(DART 공시, 수급, 숏스퀴즈 등)가 없으면 즉시 오답노트로 격리합니다.
+            _matched_dna = {}
+            _core_tpl_name = ""
+            
+            if incubator_match_name:
+                _matched_dna = incubator_templates.get(incubator_match_name, {})
+                _core_tpl_name = incubator_match_name
+            else:
+                import re
+                _match = re.search(r"\[SUPERNOVA_COSINE\]\s*([^\s\[\]]+)", sig_type)
+                if _match:
+                    _core_tpl_name = _match.group(1)
+                    _matched_dna = sys_config.get(_core_tpl_name, {})
+                    if not _matched_dna:
+                        _matched_dna = sys_config.get(f"DNA_SUPERNOVA_{market}_MULTI", {}).get(_core_tpl_name, {})
+
+            if _matched_dna:
+                _missing_genes = []
+                # 템플릿 DNA에 논리 스위치가 켜져(True) 있는데, 실제 API 데이터가 미달할 경우 적발
+                if _matched_dna.get("req_dart_event") and dart_net_val <= 0:
+                    _missing_genes.append("DART공시")
+                if _matched_dna.get("req_short_squeeze") and short_net_val <= 0:
+                    _missing_genes.append("숏스퀴즈")
+                if _matched_dna.get("req_fund_good") and fund_net_val <= 0:
+                    _missing_genes.append("펀더우량")
+                if _matched_dna.get("req_flow_div") and flow_divergence_val <= 0:
+                    _missing_genes.append("수급다이버전스")
+                    
+                if _missing_genes:
+                    # 💡 [데이터 기아 방지] 아예 버리지 않고 💀[기각/관찰용] 태그를 달아 오답노트 생태계로 강등시킵니다.
+                    _missing_str = ",".join(_missing_genes)
+                    if "💀[기각/관찰용]" not in sig_type:
+                        sig_type = f"💀[기각/관찰용] {sig_type}"
+                    sig_type += f" #[유전자결핍:{_missing_str}]"
+                    print(f"🧬 [논리 유전자 판독] {market} {code_str}: {_core_tpl_name} 필수조건({_missing_str}) 미달 ➔ 관찰 표본으로 강제 강등")
+            # =================================================================
+
             # 진화 알파 팩터: 차단기가 아니라 코사인에 가산되는 알파 보너스(0~0.15)
             evolved_factors = sys_config.get("EVOLVED_ALPHA_FACTORS", {})
             if isinstance(evolved_factors, dict) and evolved_factors:
@@ -2410,11 +2451,35 @@ def try_add_virtual_position(
                     sig_type = f"💀[기각/관찰용] {sig_type}"
                     track_tag = "(참사 방어막 터치 - 관찰 표본)"
             
+            # =================================================================
+            # 👑 [초월적 수용] 형태의 족쇄 파괴 (Anomaly Cutoff Override)
+            # =================================================================
+            # 기계가 "우리가 알던 99% 일치하는 과거의 모양은 아니지만, 
+            # 거래량(tb)과 응축 에너지(bbe)가 비정상적으로 폭발하고 있다"고 감지하면,
+            # 스스로 코사인 합격선(dyn_cos_limit)을 15%~20% 낮춰서 새로운 진화종을 수용합니다.
+            anomaly_override_active = False
+            
+            # 수급(tb)이 평소의 5배 이상 터지고, 볼린저밴드 응축도(bbe)가 15 이상인 '에너지 폭발' 상태
+            if float(tb) >= 5.0 and float(bbe) >= 15.0:
+                anomaly_override_active = True
+                # 합격선을 15% 대폭 하향하여 낯선 모양도 받아들입니다.
+                dyn_cos_limit *= 0.85
+                
+                # DTW(궤적 거리) 허용치도 30% 늘려주어 궤적이 다소 거칠어도 통과시킵니다.
+                dyn_dtw_limit *= 1.30
+
             # 🚀 슈퍼 부스트 (코사인 + 알파 보너스 융합으로 합격 판정)
             # 💡 [100년 영속 진화 로직 적용: Cos-DTW Gate Decoupling]
             cutoff_passed = (max_alpha_cos_effective >= dyn_cos_limit) and (min_alpha_dtw <= dyn_dtw_limit)
-            if cutoff_passed:
+            
+            if anomaly_override_active and cutoff_passed:
+                sig_type += f" 🚀[진화수용:에너지폭발 (Cos:{max_alpha_cos_effective*100:.0f}%)]"
+                print(f"🌋 [Anomaly Override] {market} {code_str}: 모양은 낯설지만 압도적 에너지로 진화종 수용 (컷오프 파괴)")
+            elif cutoff_passed:
                 sig_type += f" [🌟시계열 자율판독 대장주 (Cos:{max_alpha_cos_effective*100:.0f}%|DTW:{min_alpha_dtw:.1f})]"
+                
+            # 👑 [수정 완료] Anomaly Override 여부와 무관하게, 합격했다면 정보 태그를 모두 부착합니다.
+            if cutoff_passed:
                 if rotation_prebuy_active:
                     sig_type += " [순환매 컷오프 특권 패스]"
                 if spillover_prebuy_active:
@@ -2505,35 +2570,42 @@ def try_add_virtual_position(
             # (score/100 ÷ cutoff, [0.8,1.5] 클램프)에 비례한 연속 스케일로 대체.
             # 부합도 1위가 자연스럽게 더 큰 자본을 받고, 턱걸이 합격은 축소된다.
             # 데이터 이상 시 scaler=1.0 → 완전 무영향(중립).
-            if "SUPERNOVA" in sig_type:
+           # =================================================================
+            # 👑 [궁극의 공격] 5D 코사인 확신도 기반 동적 자본 폭격 (Score-Weighted Kelly)
+            # =================================================================
+            # 5D 코사인 일치율(max_alpha_cos_effective)의 순도를 믿고, 
+            # 95% 이상 완벽한 쌍둥이 패턴이 뜨면 켈리 비중을 기하급수적으로 폭격합니다.
+            if "SUPERNOVA" in sig_type or "MLBOX" in sig_type:
                 try:
-                    from supernova_fluid_capital import supernova_continuous_kelly_scaler
+                    _sn_scaler = 1.0
+                    
+                    # 5D 코사인 융합 합격률 (0.0 ~ 1.0)
+                    _purity_score = max_alpha_cos_effective
+                    
+                    # 99% 이상 완벽 일치: 전설적 쌍둥이 ➔ 자본 2.0배 몰빵 (Conviction Overweight)
+                    if _purity_score >= 0.99:
+                        _sn_scaler = 2.0
+                        _bomb_reason = "99%쌍둥이_2배폭격"
+                    # 95% ~ 98.9%: 초강력 일치 ➔ 자본 1.5배 비중 확대
+                    elif _purity_score >= 0.95:
+                        _sn_scaler = 1.5
+                        _bomb_reason = "95%고순도_1.5배가산"
+                    # 90% ~ 94.9%: 평균 수준 합격 ➔ 자본 1.0배 유지 (Standard)
+                    elif _purity_score >= 0.90:
+                        _sn_scaler = 1.0
+                        _bomb_reason = "90%표준비중"
+                    # 89.9% 이하: 턱걸이 합격 ➔ 자본 0.5배 축소 (리스크 헷지 정찰병)
+                    else:
+                        _sn_scaler = 0.5
+                        _bomb_reason = "턱걸이_0.5배정찰"
 
-                    _sn_scaler, _sn_cutoff = supernova_continuous_kelly_scaler(
-                        score, sys_config, sig_type
-                    )
                     if abs(_sn_scaler - 1.0) > 1e-6:
                         kelly_risk_pct *= _sn_scaler
-                        sig_type += f" #부합도스케일(x{_sn_scaler:.2f})"
-                        print(
-                            f"🧬 [초신성 연속켈리스케일러] score={score} cutoff={_sn_cutoff:g} "
-                            f"→ 켈리 ×{_sn_scaler:.2f}"
-                        )
+                        sig_type += f" #[승부수:{_bomb_reason}]"
+                        print(f"🔥 [확신도 자본폭격] {market} {code_str}: 5D순도 {_purity_score*100:.1f}% ➔ 켈리 베팅 ×{_sn_scaler:.1f}배")
+                        
                 except Exception as _sn_scale_ex:
-                    print(f"⚠️ [초신성 연속켈리스케일러] 스킵(중립 진행): {_sn_scale_ex}")
-            try:
-                from meta_state_store import normalize_regime_key, resolve_config_regime_key
-
-                _rk_m = normalize_regime_key(
-                    load_meta_state_resolved().get("META_REGIME_KEY")
-                )
-                cur_regime = (
-                    _rk_m
-                    if _rk_m not in ("", "UNKNOWN")
-                    else resolve_config_regime_key(sys_config)
-                )
-            except Exception:
-                cur_regime = sys_config.get("CURRENT_REGIME_KEY", "UNKNOWN")
+                    print(f"⚠️ [확신도 자본폭격 엔진] 스킵(중립 진행): {_sn_scale_ex}")
 
             # 💡 [100년 영속 진화 로직 적용: Namespace Thompson Kelly Sampler]
             # try_add 시점에 시그널 네임스페이스를 추론해 [NS]_BETA_PARAMS 기반으로 켈리 배율을 동적 샘플링한다.
@@ -2842,8 +2914,14 @@ def try_add_virtual_position(
                 except Exception as _vt_ex:
                     print(f"⚠️ [변동성 타게팅] 스킵(중립 진행): {_vt_ex}")
 
-                # ☠️ [Ch.1 톡식 플로우태그 진입 가드] sig_type 내 `#태그` ↔ 페널티/레지스트리
-                # 정밀 매칭. 시장 일괄 최악 배수(P3-4) 대신 진입 시점 태그만 축소·차단한다.
+                # ===========================================================================
+                # 👑 [독성 태그 원천 차단 및 섀도우 격리 (Toxic Tag Hard Block & Shadowing)]
+                # 과거처럼 0.5배로 타협해서 들어가는 로직을 전면 폐기합니다.
+                # 기계가 "이 태그는 맹독성이다"라고 판정(_ft_reason 존재)하면, 
+                # 즉시 실자본 투입(Kelly)을 0으로 락다운하고 "💀[기각/관찰용]" 꼬리표를 달아
+                # 오답노트(Shadow Book)로 유배 보냅니다. 
+                # 기계는 내 피(Cash)를 흘리지 않고 독성의 생존 여부를 백그라운드에서 학습합니다.
+                # ===========================================================================
                 _ft_mult, _ft_reason = 1.0, ""
                 if sys_config.get("ENABLE_FLOW_TAG_TOXIC_KELLY_GUARD", True):
                     try:
@@ -2852,19 +2930,24 @@ def try_add_virtual_position(
                         _ft_mult, _ft_reason = resolve_flow_tag_entry_guard(
                             sys_config, market, sig_type
                         )
-                        if _ft_mult <= 0.0 and _ft_reason and sys_config.get(
-                            "ENABLE_FLOW_TAG_TOXIC_BLOCK_ENTRIES", True
-                        ):
-                            return False, f"☠️ 독성 태그 진입 차단: {_ft_reason}"
-                        if _ft_reason and abs(_ft_mult - 1.0) > 1e-6:
-                            kelly_risk_pct *= _ft_mult
-                            sig_type += f" #독성태그방어(x{_ft_mult:g}:{_ft_reason})"
+                        
+                        # 👑 어떤 페널티 배율(0.5든 0.8이든)이 나오더라도, 독성이 감지되면 무조건 하드 블락
+                        if _ft_reason:
+                            # 💡 [안티프래질 진화] 버리지 않고 섀도우 북으로 보내 기회비용을 측정
+                            if "💀[기각/관찰용]" not in sig_type:
+                                sig_type = f"💀[기각/관찰용] {sig_type}"
+                            sig_type += f" #독성태그격리({_ft_reason})"
+                            
+                            # 켈리 비중 즉시 0.0 압수 (실매매 원천 차단)
+                            kelly_risk_pct = 0.0 
+                            
                             print(
-                                f"☠️ [톡식 플로우태그 방어] {market}: 진입 태그 {_ft_reason} "
-                                f"→ 켈리 ×{_ft_mult:g}"
+                                f"☠️ [독성 철통 방어] {market} {code_str}: 맹독성 태그({_ft_reason}) 감지 ➔ 실매매 차단 및 관찰용으로 격리"
                             )
+                            
                     except Exception as _ft_ex:
                         print(f"⚠️ [톡식 플로우태그 방어] 스킵(중립 진행): {_ft_ex}")
+                # ===========================================================================
 
                 # 🛑 [Ch.4 Kelly 탄력성] 당일 클러치 + NAV 드로다운 통합 오버레이
                 _cat_mult, _cat_reason = 1.0, ""
@@ -2970,8 +3053,37 @@ def try_add_virtual_position(
                     group_current_seed * position_pct_for_cap,
                     available_cash,
                 )
+
+                # =================================================================
+                # 👑 [가혹한 현실 주입] 실매매 전환 대비 마찰 시뮬레이터 (Friction Overlay)
+                # =================================================================
+                # 자금(shares)을 계산하기 '직전'에 마찰을 계산하여 비싸진 단가(ep)를 구합니다.
+                try:
+                    from proprietary_friction_store import calculate_dynamic_friction_penalty
+                    
+                    marcap = float(facts.get('marcap_eok', 0) or 0)
+                    # max_invest_limit을 예상 투입금으로 사용하여 마찰을 계산합니다.
+                    adjusted_ep, friction_reason = calculate_dynamic_friction_penalty(
+                        ep=ep, 
+                        invest_amount=max_invest_limit, 
+                        marcap_eok=marcap, 
+                        tb=facts.get("dyn_tb", 1.0), 
+                        market=market
+                    )
+                    
+                    if adjusted_ep > ep:
+                        print(f"🧱 [마찰 시뮬레이터] {market} {code_str}: 기존단가 {ep:,.0f} ➔ 마찰단가 {adjusted_ep:,.0f} {friction_reason}")
+                        ep = adjusted_ep
+                        sig_type += f" #{friction_reason}"
+                        
+                        # 슬리피지로 진입 단가가 비싸졌으므로, 손절선(sl_price)까지의 위험 거리(risk_distance)도 늘어납니다.
+                        risk_distance = ep - sl_price
+                        
+                except Exception as _friction_ex:
+                    print(f"⚠️ [마찰 시뮬레이터 연동 실패] 기존 단가 유지: {_friction_ex}")
+                # =================================================================
                 
-                # 5. 실전 API로 넘어갈 '진짜 매수 수량(shares)' 산출 (미국장 환율 보정)
+                # 5. 실전 API로 넘어갈 '진짜 매수 수량(shares)' 산출 (마찰이 반영된 비싼 ep 기준)
                 exch_rate = 1350.0 if market == 'US' else 1.0
                 calc_ep = ep * exch_rate
                 calc_risk_dist = risk_distance * exch_rate
@@ -3002,7 +3114,7 @@ def try_add_virtual_position(
                     except Exception as _scout_cap_ex:
                         print(f"⚠️ scout cap skip: {_scout_cap_ex}")
                 
-                # V39.0 딥 다이브 비교를 위한 고정 2% 투입금도 동일한 그룹 시드 기반으로 보정
+                # V39.0 딥 다이브 비교를 위한 고정 2% 투입금 보정
                 raw_fixed_shares = max(1, int((group_current_seed * fixed_risk_pct) / risk_distance))
                 raw_fixed_invest = raw_fixed_shares * ep
                 
@@ -3010,33 +3122,20 @@ def try_add_virtual_position(
                     invest_amount = max_invest_limit
                 else:
                     invest_amount = raw_fixed_invest
-                # ☠️ [Ch.1] 고정 2% 비교축(invest_amount)에도 독성 태그 배수 동기화
-                if (
-                    _ft_reason
-                    and abs(_ft_mult - 1.0) > 1e-6
-                    and sys_config.get("ENABLE_FLOW_TAG_TOXIC_INVEST_GUARD", True)
-                ):
+
+                # ☠️ 독성 태그 배수 동기화
+                if (_ft_reason and abs(_ft_mult - 1.0) > 1e-6 and sys_config.get("ENABLE_FLOW_TAG_TOXIC_INVEST_GUARD", True)):
                     invest_amount *= _ft_mult
-                if (
-                    _cat_reason
-                    and abs(_elast_mult - 1.0) > 1e-6
-                    and sys_config.get("ENABLE_CATASTROPHIC_DAY_INVEST_GUARD", True)
-                ):
+                if (_cat_reason and abs(_elast_mult - 1.0) > 1e-6 and sys_config.get("ENABLE_CATASTROPHIC_DAY_INVEST_GUARD", True)):
                     invest_amount *= _elast_mult
-                # 👆👆 [패치 완료] 👆👆
+                
                 if incubator_match_name is not None:
                     invest_amount, shares, sim_kelly_invest = 0, 0, 0
                 elif _re_evol_shadow:
                     try:
-                        from re_evolution_strike_guard import (
-                            apply_shadow_entry_zero_notional,
-                        )
-
-                        sig_type, shares, invest_amount, sim_kelly_invest = (
-                            apply_shadow_entry_zero_notional(
-                                sig_type,
-                                strategy_id=_re_evol_sid,
-                            )
+                        from re_evolution_strike_guard import apply_shadow_entry_zero_notional
+                        sig_type, shares, invest_amount, sim_kelly_invest = apply_shadow_entry_zero_notional(
+                            sig_type, strategy_id=_re_evol_sid,
                         )
                     except Exception:
                         shares, invest_amount, sim_kelly_invest = 0, 0, 0
@@ -3045,9 +3144,8 @@ def try_add_virtual_position(
 
     except Exception as e:
         print(f"하이브리드 벡터 매칭 에러: {e}")
-    # 👆👆 [try 블록 완전 종료] 👆👆
 
-    # 👇👇 [추가] V24.0 진입 시점의 시장 폭(Breadth) 실시간 측정 👇👇
+    # 진입 시점 시장 폭(Breadth) 실시간 측정
     cur_breadth = 1.0
     try:
         b_df = yf.download("RSP SPY", period="5d", interval="1d", progress=False)
@@ -3055,11 +3153,14 @@ def try_add_virtual_position(
             cur_breadth = (b_df['Close']['RSP'].iloc[-1] / b_df['Close']['SPY'].iloc[-1]) / \
                           (b_df['Close']['RSP'].mean() / b_df['Close']['SPY'].mean())
     except: pass
-    # 👆👆 [추가 끝] 👆👆
 
+    # 호가 스프레드 보수적 추가 반영 (+0.5%)
     ep = ep * 1.005
+    
     _facts = facts if isinstance(facts, dict) else {}
     _sig_s = str(sig_type or "")
+    
+    # 💡 [정리 완료] 중복되어 있던 관찰 모드 체크 블록을 하나로 압축
     _is_observe = (
         "OBSERVE_ONLY" in _sig_s
         or "INCUBATOR_" in _sig_s
@@ -3074,7 +3175,8 @@ def try_add_virtual_position(
     if not _has_notional and not _is_observe:
         conn.close()
         return False, "BOOK_REJECT:zero_notional_open"
-    # 3. 가상 매매 장부에 팩트 데이터와 함께 기록 (V38.0 자금 통제 변수 추가)
+
+    # 3. 가상 매매 장부에 기록 (마찰이 전부 반영된 최종 회계 데이터)
     insert_row = {
         "entry_date": today_str,
         "market": market,
@@ -3105,7 +3207,6 @@ def try_add_virtual_position(
         "shares": shares,
         "sim_kelly_invest": sim_kelly_invest,
         "entry_regime": cur_regime,
-        # [P3-1] 교차검증 팩터 숫자 컬럼 — sig_type 텍스트 태그와 별개로 그대로 보존
         "flow_bonus": round(flow_bonus_val, 4),
         "flow_divergence": round(flow_divergence_val, 4),
         "short_net": round(short_net_val, 4),
@@ -3117,23 +3218,12 @@ def try_add_virtual_position(
         if satellite_tags is not None:
             try:
                 import shadow_tracking
-
                 logged_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
                 shadow_tracking.insert_virtual_trade_row(
-                    cursor,
-                    market,
-                    code_str,
-                    name,
-                    ep,
-                    sig_type,
-                    str(satellite_tags),
-                    logged_at,
+                    cursor, market, code_str, name, ep, sig_type, str(satellite_tags), logged_at,
                 )
             except Exception as shadow_exc:
-                print(
-                    f"⚠️ shadow_tracking INSERT 스킵 {code_str}: "
-                    f"{type(shadow_exc).__name__}: {shadow_exc}"
-                )
+                print(f"⚠️ shadow_tracking INSERT 스킵 {code_str}: {type(shadow_exc).__name__}: {shadow_exc}")
         conn.commit()
         return True, f"🎯 {tier_label} 가상매매 편입 성공: {name} ({score:.1f}점)"
     except sqlite3.Error as db_exc:

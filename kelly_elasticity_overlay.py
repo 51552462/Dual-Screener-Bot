@@ -38,9 +38,15 @@ def elasticity_thresholds(sys_config: Optional[Dict[str, Any]] = None) -> Dict[s
     rules = cfg.get("OVERSEER_AUDIT_RULES")
     base = rules if isinstance(rules, dict) else cfg
     return {
-        "nav_dd_start_pct": _cfg_f(base, "KELLY_NAV_DD_START_PCT", 2.0),
-        "nav_dd_full_pct": _cfg_f(base, "KELLY_NAV_DD_FULL_PCT", 8.0),
-        "nav_dd_min_mult": _cfg_f(base, "KELLY_NAV_DD_MIN_MULT", 0.25),
+        # ===========================================================================
+        # 👑 [변동성 생존 모드 3] 출혈 지혈(Elasticity) 속도 가속화
+        # 계좌 방어선 발동 지점을 고점 대비 -2.0%에서 -1.0%로 당기고,
+        # 최소 배팅 한계선(풀 방어) 도달 지점도 -8.0%에서 -5.0%로 당깁니다.
+        # 변동성 장세에서는 아주 작은 생채기만 나도 즉시 피를 멈추게(배팅액 축소) 만듭니다.
+        # ===========================================================================
+        "nav_dd_start_pct": _cfg_f(base, "KELLY_NAV_DD_START_PCT", 1.0), # 👑 2.0 -> 1.0
+        "nav_dd_full_pct": _cfg_f(base, "KELLY_NAV_DD_FULL_PCT", 5.0),   # 👑 8.0 -> 5.0
+        "nav_dd_min_mult": _cfg_f(base, "KELLY_NAV_DD_MIN_MULT", 0.15),  # 👑 최소 배수를 0.25 -> 0.15 (더 쪼그라들게 만듦)
         "inelastic_gap_ratio": _cfg_f(base, "KELLY_INELASTIC_GAP_RATIO", 0.90),
     }
 

@@ -109,3 +109,45 @@ def enforce_market_frame(
         logger.debug("%s: ops_logger skip: %s", ctx, ex)
 
     return out.loc[~leak_mask].copy()
+
+
+# ===========================================================================
+# [초월적 시차 전이] 아침 9시 갭 페이크(Gap Fake) 판별 및 스마트머니 강도 게이트
+# ===========================================================================
+def evaluate_gap_fake_and_intensity(
+    gap_pct: float,
+    smart_money_net_15m: float,
+    prev_day_volume: float,
+    *,
+    gap_threshold: float = 2.0,
+    intensity_threshold: float = 0.05
+) -> dict:
+    """
+    미국장 전이로 인해 한국장 아침에 갭상승(gap_threshold 이상) 출발한 종목을 검증.
+    15분간의 스마트머니(외인/기관) 순매수를 전일 거래대금으로 나눈 '수급 강도(Intensity)'를 평가.
+    """
+    # 1. 갭상승이 임계치 미만이면 일반 진입으로 패스
+    if gap_pct < gap_threshold:
+        return {"status": "PASS", "reason": "normal_start", "intensity": 0.0}
+    
+    # 2. 거래대금 데이터가 없으면 극도로 보수적 차단 (방어 우선)
+    if prev_day_volume <= 0:
+        return {"status": "BLOCK", "reason": "missing_volume_data", "intensity": 0.0}
+    
+    # 3. 수급 강도(Intensity) 산출
+    intensity = smart_money_net_15m / prev_day_volume
+    
+    # 4. 판별: 수급 강도가 약하거나 음수(-)면 개인 덤핑(Gap & Fade)으로 간주
+    if intensity < intensity_threshold:
+        return {
+            "status": "BLOCK", 
+            "reason": f"gap_fake_detected (Intensity: {intensity:.4f} < {intensity_threshold})",
+            "intensity": intensity
+        }
+    
+    # 5. 통과: 세력의 진짜 돌파 (Gap & Go)
+    return {
+        "status": "PASS", 
+        "reason": f"gap_and_go_confirmed (Intensity: {intensity:.4f})",
+        "intensity": intensity
+    }

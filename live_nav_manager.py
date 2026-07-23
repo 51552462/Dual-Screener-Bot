@@ -231,7 +231,35 @@ def live_notional(
     meta: Optional[Dict[str, Any]] = None,
 ) -> float:
     """포지션 노출액 = Live NAV × 유효 켈리. (40만 평면 폴백을 대체)"""
-    return live_nav(market) * resolve_effective_kelly(market, sys_config, meta)
+    nav = live_nav(market)
+    eff_kelly = resolve_effective_kelly(market, sys_config, meta)
+    
+    # ===========================================================================
+    # 👑 [승자 독식 2] 유휴 자본(Idle Cash) 집중 폭격 (Pyramiding Pipeline)
+    # 현재 시장의 팩토리 상태를 스캔하여, 상승장(BULL)이거나 
+    # 전략의 승률이 폭발하고 있을 때 남아도는 현금을 끌어와 베팅액에 1.5배 가중치를 줍니다.
+    # ===========================================================================
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    curr_regime = str(cfg.get("CURRENT_REGIME_KEY", "")).upper()
+    
+    is_aggressive_mode = False
+    if "BULL" in curr_regime:
+        is_aggressive_mode = True
+        
+    # 메타에서 승률이 압도적인지 팩토리 전수 조사
+    if isinstance(meta, dict):
+        health = meta.get("META_STRATEGY_HEALTH", {})
+        # 전체 로직 중 승률 60% 이상인 로직이 3개 이상이면 시장이 '돈 복사기' 상태임
+        good_strats = [v for k, v in health.items() if isinstance(v, dict) and float(v.get("rolling_wr", 0)) > 0.6]
+        if len(good_strats) >= 3:
+            is_aggressive_mode = True
+
+    if is_aggressive_mode:
+        # 유휴 자본을 영끌하여 기존 노출액의 1.5배를 배팅
+        eff_kelly = min(MAX_EFFECTIVE_KELLY, eff_kelly * 1.5)
+    # ===========================================================================
+    
+    return nav * eff_kelly
 
 
 def _apply_pnl_to_market_state(mst: Dict[str, Any], net_pnl: float, *, exit_date: Optional[str]) -> Dict[str, Any]:

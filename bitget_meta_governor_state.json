@@ -1,0 +1,139 @@
+{
+  "META_SCHEMA_VERSION": "1.0.0",
+  "META_GOVERNOR_LAST_RUN_AT": "2026-07-11T04:33:52.257586+00:00",
+  "META_GOVERNOR_LAST_RUN_STATUS": "OK",
+  "META_GOVERNOR_INPUT_HASH": "sha256:f2dda8544a99143de69beb72bba73ff3202ec290f106a9f01748bc95bca3fcc8",
+  "META_VOL_ATR_PCT_Q": {},
+  "META_VIX_LEVEL_Q": {
+    "vix_last": 15.03,
+    "vix_window_days": 60,
+    "vix_quantiles": {
+      "p10": 15.833000183105469,
+      "p25": 16.440000534057617,
+      "p50": 17.414999961853027,
+      "p75": 18.43250036239624,
+      "p90": 19.322999572753908
+    }
+  },
+  "META_BREADTH_THRESHOLDS": {},
+  "META_TIER_CUTS": {},
+  "META_SCORE_DIST_SNAPSHOT": {
+    "window_days_kst": 90,
+    "cutoff_exit_date_gte": "2026-04-12",
+    "KR_forward_trades": {
+      "n": 0
+    },
+    "US_forward_trades": {
+      "n": 0
+    },
+    "bitget_forward_trades": {
+      "n": 0
+    }
+  },
+  "META_GLOBAL_KELLY_MULT": 1.0,
+  "META_NS_KELLY_MULT": {},
+  "META_GROUP_KELLY_MULT": {},
+  "META_DEATHMATCH_KELLY_OVERLAY": {},
+  "META_DEATHMATCH_ALLOC_AS_OF": null,
+  "META_DEATHMATCH_ALLOC_MARKET": null,
+  "META_PIL_GROUP_STATUS": {},
+  "META_PIL_ZOMBIE_GROUPS": [],
+  "META_PIL_RETIRE_CANDIDATES": [],
+  "META_PIL_PENALTY_AS_OF": null,
+  "META_PIL_ZOMBIE_STREAK": {},
+  "META_PIL_FORCE_RETIRED": [],
+  "META_MAX_POSITION_PCT": null,
+  "META_STRATEGY_HEALTH": {
+    "__meta__": {
+      "window_days_kst": 60,
+      "base_window_days_kst": 90,
+      "asymmetric_regime": "SIDEWAYS",
+      "asymmetric_reason": "asymmetric_chop:SIDEWAYS→60d",
+      "cutoff_exit_date_gte": "2026-05-12",
+      "n_rows": 0
+    }
+  },
+  "META_TREASURY_MODE": "NORMAL",
+  "META_REGIME_KEY": "SIDEWAYS",
+  "META_REGIME_CONFIDENCE": 0.42,
+  "META_REGIME_ACTION": {
+    "kelly_cap": 0.018,
+    "kelly_floor": null,
+    "weight_s1_bounds": [
+      0.65,
+      1.25
+    ],
+    "weight_s4_bounds": [
+      0.85,
+      1.45
+    ],
+    "allow_trade_sources": [],
+    "block_trade_sources": [],
+    "notes": "REGIME_ANALYSIS=SIDEWAYS / BITGET_CURRENT=SIDEWAYS"
+  },
+  "META_STRATEGY_REGISTRY": [],
+  "META_REGISTRY_CYCLE_STATS": {
+    "discovery_new": 0,
+    "promoted_live": 0,
+    "fast_track_promoted": 0,
+    "demoted_cooled": 0,
+    "retired": 0,
+    "promoted_live_by_market": {
+      "KR": 0,
+      "US": 0,
+      "BG": 0
+    },
+    "demoted_7d": 0,
+    "re_evolution_redemption_promoted": 0,
+    "re_evolution_warm_start_promoted": 0,
+    "re_evolution_ev_full_ramp": 0,
+    "re_evolution_ev_shadow_recall": 0,
+    "today_kst": "2026-07-11",
+    "counts": {
+      "OBSERVING": 0,
+      "CANDIDATE": 0,
+      "LIVE": 0,
+      "COOLED": 0,
+      "RETIRED": 0
+    },
+    "by_market": {},
+    "n_registry": 0
+  },
+  "META_LIVE_STRATEGY_IDS": [],
+  "META_RETIRED_STRATEGY_IDS": [],
+  "META_CHANGELOG": [
+    {
+      "at": "2026-07-04T07:59:51.223012+00:00",
+      "key": "META_REGIME_KEY",
+      "new": "SIDEWAYS",
+      "old": "UNKNOWN",
+      "reason": "regime_resolve"
+    }
+  ],
+  "META_OPERATOR_FLAGS": {},
+  "META_SATELLITE_INTEL": {},
+  "_collect_debug": {
+    "forward_db": null,
+    "system_config": null,
+    "bitget_db": "C:\\Users\\GoodLife\\Desktop\\quant\\Dual-Screener-Bot\\bitget\\bitget_market_data.sqlite",
+    "bitget_system_config": "C:\\Users\\GoodLife\\AppData\\Local\\Temp\\.bitget_gov_cfg_mul9svjn.json",
+    "windows": {
+      "health_rolling_n": 30,
+      "dist_lookback_days": 90,
+      "calibrator_lookback_days": 90,
+      "atr_quantile_window_bars": 60,
+      "treasury_lookback_days": 90,
+      "treasury_min_trades": 10,
+      "treasury_max_consecutive_losses": 5,
+      "treasury_wr_hard": 0.34,
+      "treasury_wr_soft": 0.42,
+      "treasury_mdd_pct_floor": -30.0
+    }
+  },
+  "META_TREASURY_ASYMMETRIC_WINDOW": {
+    "regime_key": "SIDEWAYS",
+    "lookback_days": 60,
+    "base_days": 90,
+    "reason": "asymmetric_chop:SIDEWAYS→60d"
+  }
+}

@@ -875,6 +875,7 @@ def resolve_correlation_kelly_sizing(
     portfolio_concentrated: bool = False,
     portfolio_neutral: bool = True,
     portfolio_max_corr: float = 0.0,
+    current_regime: str = "", # 👑 [추가] 현재 국면 데이터를 수신합니다.
 ) -> Dict[str, Any]:
     """
     [3번] 1번(로직 직교) + 2번(Concentration) → Kelly 배수·진입 허용 판정.
@@ -899,6 +900,15 @@ def resolve_correlation_kelly_sizing(
     if not portfolio_neutral and not portfolio_diversified:
         if float(portfolio_max_corr) >= port_thr:
             port_tail = True
+
+    # ===========================================================================
+    # 👑 [기관급 시너지 1] 상승장(BULL) 상관관계 면제부 (The Wave Rider)
+    # 대세 상승장에서는 주도 섹터 종목들이 다 같이 오르는 것이 정상이므로, 
+    # 상관관계가 높다고 페널티를 주어 수익을 깎아먹는 바보 같은 짓을 원천 차단합니다.
+    # ===========================================================================
+    if port_tail and "BULL" in current_regime:
+        port_tail = False 
+    # ===========================================================================
 
     out: Dict[str, Any] = {
         "action": "standard",
@@ -976,11 +986,16 @@ def resolve_correlation_kelly_sizing(
 
 def resolve_correlation_kelly_from_profile(
     profile: Mapping[str, Any],
+    sys_config: Optional[Mapping[str, Any]] = None, # 👑 [추가] config 수신
 ) -> Dict[str, Any]:
     """evaluate_champion_convergence_risk_profile → Kelly sizing."""
     conc = profile.get("concentration") if isinstance(profile.get("concentration"), dict) else {}
     pairwise = profile.get("pairwise") or []
     pair0 = pairwise[0] if pairwise and isinstance(pairwise[0], dict) else {}
+    
+    # 👑 국면 추출
+    curr_regime = str((sys_config or {}).get("CURRENT_REGIME_KEY", "")).upper()
+
     sizing = resolve_correlation_kelly_sizing(
         convergence_detected=bool(profile.get("convergence_detected")),
         orthogonal=bool(profile.get("orthogonal", True)),
@@ -992,6 +1007,7 @@ def resolve_correlation_kelly_from_profile(
         portfolio_max_corr=float(
             profile.get("portfolio_max_corr") or conc.get("max_corr") or 0.0
         ),
+        current_regime=curr_regime, # 👑 밸브 개방 조건 전달
     )
     sizing["profile"] = dict(profile)
     return sizing
@@ -1308,15 +1324,19 @@ def apply_entry_correlation_kelly_overlay(
     sizing_detail: Dict[str, Any]
 
     if pre_action in ("joint_attack", "mega_trend_unlock") and facts_in.get("_convergence_profile"):
+        # 👑 [정상 복구 완료] 프로필 해석
         sizing_detail = resolve_correlation_kelly_from_profile(
-            facts_in["_convergence_profile"]
+            facts_in["_convergence_profile"],
+            sys_config=sys_config or facts_in.get("_sys_config") 
         )
+        # 👑 [정상 복구 완료] 메가트렌드 면죄부 따로 호출
         sizing_detail = apply_mega_trend_correlation_forgiveness(
             sizing_detail,
             sys_config=sys_config or facts_in.get("_sys_config"),
             candidate_sector=candidate_sector or facts_in.get("sector"),
             candidate_code=code,
         )
+        
         if pre_action == "mega_trend_unlock" or sizing_detail.get("mega_trend_forgiveness"):
             sizing_detail["action"] = "mega_trend_unlock"
             sizing_detail["kelly_mult"] = 1.0
@@ -1326,6 +1346,7 @@ def apply_entry_correlation_kelly_overlay(
             out_kelly *= pre_mult
         else:
             out_kelly *= float(sizing_detail.get("kelly_mult", 1.0) or 1.0)
+            
     elif pre_action in ("joint_attack", "mega_trend_unlock"):
         sizing_detail = {
             "action": pre_action,
@@ -1334,8 +1355,10 @@ def apply_entry_correlation_kelly_overlay(
             "mega_trend_forgiveness": pre_action == "mega_trend_unlock",
         }
     elif pre_action == "penalty" and facts_in.get("_convergence_profile"):
+        # 👑 [들여쓰기 정상 복구 완료]
         sizing_detail = resolve_correlation_kelly_from_profile(
-            facts_in["_convergence_profile"]
+            facts_in["_convergence_profile"],
+            sys_config=sys_config or facts_in.get("_sys_config")
         )
         sizing_detail["kelly_mult"] = pre_mult
         sizing_detail["action"] = "penalty"
@@ -1362,6 +1385,7 @@ def apply_entry_correlation_kelly_overlay(
             portfolio_concentrated=bool(conc.get("concentrated", False)),
             portfolio_neutral=bool(conc.get("neutral", True)),
             portfolio_max_corr=float(conc.get("max_corr", 0.0) or 0.0),
+            current_regime=str((sys_config or {}).get("CURRENT_REGIME_KEY", "")).upper() # 👑 국면 전달 완료
         )
         sizing_detail["concentration"] = conc
         mult = float(sizing_detail.get("kelly_mult", 1.0) or 1.0)
@@ -1396,5 +1420,29 @@ def apply_entry_correlation_kelly_overlay(
                 tag = f" #CorrKelly분산(ρ{mx:.2f})"
     if tag and tag not in sig_type:
         sig_type = sig_type + tag
+
+    # ===========================================================================
+    # 👑 [기관급 시너지 2] 유동성 슬리피지 원천 차단 (Liquidity Capacity Bound)
+    # ===========================================================================
+    try:
+        if facts_in:
+            vol = float(facts_in.get("Volume", facts_in.get("volume", 0)) or 0)
+            close_px = float(facts_in.get("Close", facts_in.get("close", 0)) or 0)
+            
+            if vol > 0 and close_px > 0:
+                daily_turnover = vol * close_px
+                liquidity_cap_krw = daily_turnover * 0.015 # 당일 거래대금 1.5% 상한
+                
+                cfg_ref = sys_config or facts_in.get("_sys_config") or {}
+                account_size = float(cfg_ref.get("ACCOUNT_SIZE", 20000000))
+                
+                if account_size > 0:
+                    max_kelly_by_liquidity = liquidity_cap_krw / account_size
+                    if out_kelly > max_kelly_by_liquidity:
+                        out_kelly = max_kelly_by_liquidity
+                        sig_type += f" 💧[유동성캡:최대{liquidity_cap_krw/10000:,.0f}만]"
+    except Exception:
+        pass
+    # ===========================================================================
 
     return out_kelly, sig_type, sizing_detail

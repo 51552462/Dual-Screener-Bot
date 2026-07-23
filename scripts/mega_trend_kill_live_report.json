@@ -1,0 +1,53 @@
+{
+  "at": "2026-07-10T11:15:59",
+  "forward_stats": {
+    "db": "C:\\Users\\GoodLife\\dante_bots\\Dual-Screener-Bot\\market_data.sqlite",
+    "exists": true,
+    "kr_total": 0,
+    "kr_open": 0,
+    "kr_megatrend": 0,
+    "recent": []
+  },
+  "evolve": {
+    "updated": false,
+    "reason": "insufficient_evaluated_events",
+    "lanes_updated": null,
+    "sectors_updated": null,
+    "sectors_quarantined": null,
+    "last_evolve_summary": {
+      "updated": false,
+      "lanes_updated": [],
+      "sectors_updated": [],
+      "sectors_quarantined": [],
+      "contamination_guard": true,
+      "evaluated_at": "2026-07-10 11:15:59",
+      "rates_internal": {
+        "n": 0,
+        "kill_lane": "internal",
+        "sector": null,
+        "opportunity_cost_rate": 0.0,
+        "defense_success_rate": 0.0,
+        "neutral_rate": 0.0
+      },
+      "rates_climax": {
+        "n": 0,
+        "kill_lane": "external",
+        "sector": null,
+        "opportunity_cost_rate": 0.0,
+        "defense_success_rate": 0.0,
+        "neutral_rate": 0.0
+      },
+      "detail": [
+        "internal_n=0",
+        "climax_n=0"
+      ]
+    }
+  },
+  "checks": [
+    "[ ] ENABLE_MEGA_TREND_UNLOCK=1 확인됨",
+    "[x] forward DB 접근 가능",
+    "[ ] kill_events 없음 — 킬 발동 이력 필요 (실전 RL 학습 대기)",
+    "[x] P6 contamination guard ON",
+    "[ ] evolve: 평가 완료 이벤트 부족 (정상 — 표본 쌓일 때까지 대기)"
+  ]
+}

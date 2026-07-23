@@ -601,8 +601,17 @@ def _oos_forward_returns_at_signals(expr: str, ev: pd.DataFrame) -> Optional[np.
             sig = pd.eval(expr, local_dict=local_base, engine="python")
         except Exception:
             return None
-    sig = pd.Series(sig).fillna(False).astype(bool)
-    fwd1 = ev["close"].shift(-1) / ev["close"] - 1.0
+   sig = pd.Series(sig).fillna(False).astype(bool)
+    
+    # ===========================================================================
+    # 👑 [안티프래질 지옥훈련] 가상 변동성 쇼크 (Synthetic Whipsaw Shock)
+    # 실데이터(OOS) 검증을 할 때, 원래 다음 날 수익률(fwd1)에서 
+    # 무조건 -1.5%의 슬리피지(호가 밀림)와 노이즈 페널티를 강제로 빼버립니다.
+    # 이 '가상의 지옥' 속에서도 초과 알파를 내는 돌연변이만이 진정한 다이아몬드입니다.
+    # ===========================================================================
+    fwd1 = (ev["close"].shift(-1) / ev["close"] - 1.0) - 0.015 # 👑 [수술 3] -1.5% 가상 출혈 주입
+    # ===========================================================================
+    
     m = np.asarray(sig, dtype=bool)
     r = np.asarray(fwd1, dtype=np.float64)
     valid = m & np.isfinite(r)

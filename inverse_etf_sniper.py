@@ -738,11 +738,24 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
         if px is None or px <= 0:
             continue
 
-        key = _tail_fund_key(mkt)
+       key = _tail_fund_key(mkt)
         tail_bal = _numeric_tail_balance(key)
         cap_pct, cap_meta = _resolve_inverse_cap_pct(mkt, cfg)
         cap_reason = str(cap_meta.get("reason") or "")
+        
+        # ===========================================================================
+        # 👑 [승자 독식 3] 인버스 스나이퍼 피의 축제 (Panic Accelerate)
+        # 시장의 붕괴(PANIC, HIGH_VOL)가 감지되면, 시스템은 방어적 캡(Cap)을 무시하고
+        # 테일 펀드 잔액의 최대 80%~100%까지 인버스에 영끌하여 피를 수익으로 환전합니다.
+        # ===========================================================================
+        curr_regime = str(cfg.get("CURRENT_REGIME_KEY", "")).upper()
+        if "BEAR" in curr_regime or "HIGH_VOL" in curr_regime:
+            # 하락장 가속도 감지 시, 인버스 베팅 한도를 최대 80%까지 극단적으로 열어버림
+            cap_pct = max(cap_pct, 0.80) 
+            cap_reason += " | 🩸[피의 축제] 하락장 가속 감지: 인버스 영끌(Max 80%) 베팅"
+        
         max_inv = max(0.0, tail_bal * cap_pct)
+        # ===========================================================================
         if max_inv <= 0:
             # [Shadow Inverse Ledger] 잔액 0 → return False 대신 가상거래로 표본 축적
             try:
@@ -781,7 +794,17 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
             summary["dynamic_cap"] = cap_meta
             break
 
-        try:
+        ttry:
+            # ===========================================================================
+            # 👑 [블랙스완 헌터 엑셀러레이터] 무제한 익절(Uncapped TP) 및 타이트 추적(Trailing)
+            # 폭락장(BEAR/HIGH_VOL)에서는 인버스의 목표 수익률 족쇄(Ceiling)를 박살내어 무한대로 열어두고,
+            # 오직 타이트한 트레일링 스탑(추세 추종)으로 수익을 끝까지 쥐어짜냅니다.
+            # ===========================================================================
+            curr_regime = str(cfg.get("CURRENT_REGIME_KEY", "")).upper()
+            accel_tag = ""
+            if "BEAR" in curr_regime or "HIGH_VOL" in curr_regime:
+                accel_tag = " 🚀[UNCAPPED_TP:무제한익절] 🪝[TRAIL_TIGHT:타이트추적]"
+                
             _insert_inverse_forward_trade(
                 conn,
                 market=mkt,
@@ -790,6 +813,8 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
                 entry_price=px,
                 invest_amount=invest,
                 shares=shares,
+                status="OPEN",
+                sig_type=f"Dante_INVERSE_ETF_Sniper[V1]{INVERSE_SIG_MARKER}{accel_tag}",
             )
             conn.commit()
             summary["entered"] = {"market": mkt, "code": code, "invest": invest, "hedge_5d_ret": r5}
@@ -876,8 +901,19 @@ def fade_long_to_inverse(
             inv_mkt, sys_config if isinstance(sys_config, dict) else load_system_config()
         )
         max_inv = max(0.0, tail_bal * cap_pct)
+        
+        # ===========================================================================
+        # 👑 [블랙스완 헌터 엑셀러레이터] 톡식 페이드 역배팅 무제한 익절 주입
+        # 붕괴하는 섹터를 정조준한 역배팅 역시, 족쇄를 풀고 바닥이 나올 때까지 수익을 빨아들입니다.
+        # ===========================================================================
+        cfg_for_regime = sys_config if isinstance(sys_config, dict) else load_system_config()
+        curr_regime = str(cfg_for_regime.get("CURRENT_REGIME_KEY", "")).upper()
+        accel_tag = ""
+        if "BEAR" in curr_regime or "HIGH_VOL" in curr_regime:
+            accel_tag = " 🚀[UNCAPPED_TP:무제한익절] 🪝[TRAIL_TIGHT:타이트추적]"
+
         fade_sig = (
-            f"Dante_TOXIC_FADE[{cand.get('sector_key')}]{FADE_SIG_MARKER}{INVERSE_SIG_MARKER}"
+            f"Dante_TOXIC_FADE[{cand.get('sector_key')}]{FADE_SIG_MARKER}{INVERSE_SIG_MARKER}{accel_tag}"
             f" ◀{str(src_code)[:8]}/{str(src_sig)[:32]}"
         )
 

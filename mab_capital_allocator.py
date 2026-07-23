@@ -241,6 +241,38 @@ class MABCapitalAllocator:
                 arm.bucket = "neutral"
                 group_mult[arm.group_key] = neutral
 
+
+# =====================================================================
+        # 👑 [초월적 공격 배선] 하락장 잉여 자본 듀얼-트랙 역방향 라우팅
+        # =====================================================================
+        # 총사령관(MetaGovernor)이 판단한 현재 국면을 가져옴
+        regime = str(self.cfg.get("META_REGIME_KEY", "UNKNOWN")).upper()
+        # 글로벌 켈리 압착으로 인해 롱(Long) 포지션에 투입되지 못하고 남은 '유휴 현금(Idle Cash)' 비율 산출 (1.0 - 글로벌 켈리 승수)
+        global_kelly = float(self.cfg.get("META_GLOBAL_KELLY_MULT", 1.0))
+        idle_cash_ratio = max(0.0, 1.0 - global_kelly)
+        
+        # 하락장이며 유휴 현금이 10% 이상 발생했을 때 숏/인버스로 자금 우회
+        if idle_cash_ratio >= 0.10:
+            route_result = route_bear_market_capital(
+                market=market,
+                idle_cash=idle_cash_ratio,
+                regime_key=regime,
+                sys_config=self.cfg,
+                db_path=_db_path()
+            )
+            # 듀얼 트랙 라우터가 자금을 성공적으로 분배했다면, 결과를 MAB 엔진의 결과에 합산하여 리턴
+            if route_result.get("routed", False):
+                # 기존 롱(Long) 전략(exploit/explore)의 가중치를 0으로 완전히 무력화시키지 않고, 
+                # 남아있는 글로벌 켈리 승수만큼은 비중을 유지하도록 놔둔 채 숏/인버스 비중 정보를 추가함
+                route_target = route_result.get("target")
+                allocated_cash = route_result.get("allocated_cash")
+                
+                # 가상 그룹키 'BEAR_ROUTER'를 생성하여 숏/인버스에 가중치를 배분
+                group_mult["BEAR_ROUTER"] = allocated_cash
+                
+                # MAB 모드에 라우팅 정보를 덧붙임
+                self.mode = f"{self.mode}_+_{route_target}_({allocated_cash*100:.1f}%)"
+        # =====================================================================
         return MABAllocationResult(
             exploit_ratio=self.exploit_ratio,
             explore_ratio=self.explore_ratio,
@@ -275,3 +307,68 @@ def blend_deathmatch_and_mab(
 def stable_arm_id(market: str, group_key: str) -> str:
     raw = f"{market.upper()}|{group_key}"
     return "mab:" + hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+# ===========================================================================
+# [초월적 공격] 듀얼-트랙 역방향 자본 라우팅 (Dual-Track Reverse Routing)
+# ===========================================================================
+def route_bear_market_capital(
+    market: str, 
+    idle_cash: float, 
+    regime_key: str, 
+    sys_config: dict, 
+    db_path: str = None
+) -> dict:
+    """
+    하락장(BEAR) 진입 시 켈리 압착으로 발생한 '유휴 현금(Idle Cash)'을 
+    시장의 특성(US/KR)에 맞춰 숏(Short)과 인버스(Inverse)로 자동 분배합니다.
+    """
+    try:
+        from bear_defense_booster_guard import is_defensive_regime
+    except ImportError:
+        # 모듈 로드 실패 시 보수적 현금 보유
+        return {"routed": False, "target": "TREASURY_LOCK", "allocated_cash": 0.0}
+    
+    # 1. 상승장(BULL)이거나 유휴 현금이 없으면 라우팅 패스 (MAB 본연의 롱 전략 유지)
+    if not is_defensive_regime(regime_key) or idle_cash <= 0:
+        return {"routed": False, "target": "LONG_MAB", "allocated_cash": 0.0}
+        
+    mkt = str(market).strip().upper()
+    
+    # 2. 미국장(US): 공매도가 자유로우므로 숏 전용 엔진(blackhole_hunter)으로 라우팅
+    if mkt == "US":
+        # 블랙홀 헌터가 독성 주식을 포획할 수 있도록 가상 예산으로 이관
+        return {
+            "routed": True, 
+            "target": "BLACKHOLE_SHORT", 
+            "allocated_cash": idle_cash,
+            "reason": f"US_BEAR_ROUTING ({regime_key})"
+        }
+        
+    # 3. 한국장(KR): 공매도 불가로 인해 인버스 ETF 엔진으로 라우팅하되, 
+    # dynamic_hedge_cap.py의 RL(강화학습) 피드백 밸브를 거쳐 휩쏘(Whipsaw)를 방어
+    elif mkt == "KR":
+        try:
+            from dynamic_hedge_cap import resolve_dynamic_inverse_cap_pct
+            
+            # RL 기반의 동적 인버스 투입 한도(%) 산출
+            final_cap_pct, audit_meta = resolve_dynamic_inverse_cap_pct(
+                mkt, sys_config, db_path=db_path
+            )
+            
+            # 유휴 현금 중 강화학습(RL)이 허락한 한도까지만 인버스로 투입
+            inverse_allocation = idle_cash * final_cap_pct
+            
+            return {
+                "routed": True,
+                "target": "INVERSE_ETF",
+                "allocated_cash": inverse_allocation,
+                "reason": f"KR_BEAR_INVERSE (Cap: {final_cap_pct*100:.1f}%)",
+                "audit": audit_meta
+            }
+        except ImportError:
+            # 안전 장치: 모듈 로드 실패 시 극단적 방어를 위해 현금 100% 보관 (Treasury)
+            return {"routed": False, "target": "TREASURY_LOCK", "allocated_cash": 0.0}
+            
+    # 기타 시장 (방어적 보관)
+    return {"routed": False, "target": "TREASURY_LOCK", "allocated_cash": 0.0}

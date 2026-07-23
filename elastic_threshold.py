@@ -156,18 +156,36 @@ class ElasticThreshold:
         max_relief = float(self.cfg.get("ELASTIC_MAX_RELIEF", 0.18) or 0.18)
         vol_tighten = float(self.cfg.get("ELASTIC_VOL_TIGHTEN", 0.06) or 0.06)
 
+        # 기본 로직: 기아 상태면 허들을 낮추고(relief), 변동성이 크면 허들을 높임(tighten)
         relief = starv * max_relief
         tighten = max(0.0, vol - 1.0) * vol_tighten
 
-        floor = float(self.cfg.get("ELASTIC_CUTOFF_FLOOR", 0.32) or 0.32)
-        ceil = float(self.cfg.get("ELASTIC_CUTOFF_CEIL", 0.92) or 0.92)
+        # =====================================================================
+        # 👑 [초월적 진화] 거시 국면(Macro Regime) 기반 하드코어 방어막 주입
+        # =====================================================================
+        # 하락장에서 기아(Starvation)를 핑계로 쓰레기 패턴이 가상 장부에 유입되는 논리적 모순을 차단.
+        regime = str(self.meta.get("META_REGIME_KEY") or "UNKNOWN").upper()
+        regime_penalty = 0.0
+        
+        if regime in ["BEAR_PANIC", "BEAR_ACCEL"]:
+            regime_penalty = 0.15  # 패닉장: 컷오프를 극단적으로 찢어올려 완벽한 패턴 외엔 전면 차단
+            relief = 0.0           # 패닉장에서는 기아 구제(Relief) 전면 무효화
+        elif regime in ["BEAR_GRIND", "HIGH_VOL"]:
+            regime_penalty = 0.08  # 완만하락장: 컷오프 상향
+            relief = relief * 0.3  # 기아 구제 효과 70% 삭감
+        elif regime in ["BULL", "BULL_STRONG"]:
+            regime_penalty = -0.03 # 상승장: 허들을 약간 낮춰 진입 기회 극대화
 
-        cos = _clip(float(base_cos) * (1.0 + tighten) - relief, floor, ceil)
-        ml = _clip(float(base_ml) * (1.0 + tighten) - relief, floor, ceil)
+        floor = float(self.cfg.get("ELASTIC_CUTOFF_FLOOR", 0.32) or 0.32)
+        ceil = float(self.cfg.get("ELASTIC_CUTOFF_CEIL", 0.98) or 0.98) # 상한선을 0.98로 확장하여 극강의 방어 허용
+
+        # 최종 컷오프 산출 (기존 로직 + 국면 패널티 결합)
+        cos = _clip(float(base_cos) * (1.0 + tighten) - relief + regime_penalty, floor, ceil)
+        ml = _clip(float(base_ml) * (1.0 + tighten) - relief + regime_penalty, floor, ceil)
 
         base_gap = float(self.cfg.get("ELASTIC_SCOUT_BASE_GAP", 0.07) or 0.07)
         scout_gap = _clip(base_gap + starv * 0.14, 0.05, 0.22)
-        stretch = 1.0 + tighten - relief
+        stretch = 1.0 + tighten - relief + regime_penalty
 
         return ElasticThresholdState(
             cos_cutoff=round(cos, 4),

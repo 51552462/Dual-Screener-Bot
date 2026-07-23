@@ -1182,14 +1182,47 @@ def hunt_supernovas(market):
         stealth_dnas = [d for d in dnas if d['bbe'] <= median_bbe]
         volatile_dnas = [d for d in dnas if d['bbe'] > median_bbe]
         
+        # 👑 [초월적 진화] 승자-패자 대조 학습 (Contrastive Learning) 및 노이즈 제거
         def make_template(sub_dnas):
             if not sub_dnas: return None
+            
+            # 1. 관제탑에서 참사주(패자)들의 독성 오답노트를 로드
+            anti_patterns = config.get('ANTI_PATTERNS', {})
+            _ml_toxic = _toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS"))
+            if isinstance(_ml_toxic, dict) and _ml_toxic:
+                anti_patterns = {**anti_patterns, **_ml_toxic}
+                
+            pure_dnas = []
+            for d in sub_dnas:
+                is_toxic = False
+                for t_name, bounds in anti_patterns.items():
+                    if not isinstance(bounds, dict): continue
+                    match_flags = []
+                    if 'dyn_cpv_max' in bounds: match_flags.append(d['cpv'] <= bounds['dyn_cpv_max'])
+                    if 'dyn_cpv_min' in bounds: match_flags.append(d['cpv'] > bounds['dyn_cpv_min'])
+                    if 'dyn_tb_max' in bounds: match_flags.append(d['tb'] <= bounds['dyn_tb_max'])
+                    if 'dyn_tb_min' in bounds: match_flags.append(d['tb'] > bounds['dyn_tb_min'])
+                    if 'v_energy_max' in bounds: match_flags.append(d['bbe'] <= bounds['v_energy_max'])
+                    if 'v_energy_min' in bounds: match_flags.append(d['bbe'] > bounds['v_energy_min'])
+                    
+                    if match_flags and all(match_flags):
+                        is_toxic = True
+                        break
+                
+                # 독성 패턴(패자)과 겹치는 '운 좋은 가짜 승자'는 템플릿 생성에서 과감히 폐기
+                if not is_toxic:
+                    pure_dnas.append(d)
+                    
+            # 살아남은 순수 승자가 없으면 (모두 독성에 오염되었다면) 어쩔 수 없이 원본 사용
+            final_dnas = pure_dnas if pure_dnas else sub_dnas
+            
+            # 2. 회색 융합체(Grey Centroid) 방지: 극단값 왜곡을 막기 위해 Mean(평균) 대신 Median(중앙값) 사용
             return {
-                'cpv': np.mean([d['cpv'] for d in sub_dnas]),
-                'tb': np.mean([d['tb'] for d in sub_dnas]),
-                'bbe': np.mean([d['bbe'] for d in sub_dnas]),
-                'rs': np.mean([d['rs'] for d in sub_dnas]),
-                'shape': np.mean([d['shape'] for d in sub_dnas], axis=0).tolist()
+                'cpv': float(np.median([d['cpv'] for d in final_dnas])),
+                'tb': float(np.median([d['tb'] for d in final_dnas])),
+                'bbe': float(np.median([d['bbe'] for d in final_dnas])),
+                'rs': float(np.median([d['rs'] for d in final_dnas])),
+                'shape': np.median([d['shape'] for d in final_dnas], axis=0).tolist()
             }
             
         if stealth_dnas:
@@ -1356,8 +1389,20 @@ def execute_supernova_live_scan(market):
     surviving_templates.update(_tm_snap.get(multi_key) or {})
     surviving_templates.update(config.get(multi_key) or {})
     
+    # [기존 3D 템플릿 로드 로직을 5D 다차원 벡터로 완벽하게 확장]
     for t_name, t_dna in surviving_templates.items():
-        ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
+        try:
+            # 과거에는 shape와 rs가 없었을 수 있으므로 안전망(get) 처리
+            rs_val = t_dna.get('rs', 5.0) 
+            shape_val = t_dna.get('shape', [0.0] * 20) 
+            
+            # 형태(Shape, 20차원)와 4대 핵심 에너지(cpv, tb, bbe, rs)를 하나의 거대한 24차원(5D 논리) 벡터로 융합
+            ideal_templates[t_name] = np.array(
+                shape_val + [t_dna['cpv'], t_dna['tb'], t_dna['bbe'], rs_val]
+            )
+        except Exception:
+            # 구형 데이터로 인한 에러 방지
+            ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
     
     # [초월적 진화 M1] 고정 RANK 템플릿 폐기 → system_config 의 유동화된 베이스 템플릿 로드.
     # (실전 승자 DNA 로 EMA 모핑되는 살아있는 벡터. 최초 1회는 DEFAULT 시드로 동작 동일.)
@@ -1706,16 +1751,28 @@ def execute_supernova_live_scan(market):
                 _toxic_forgiveness = True
                 _toxic_forgiveness_rule = str(_tg.rule_name or "")
 
-            # 1. 코사인 유사도 연산 (템플릿별 컷: 인큐베이터는 cos_cutoff, 그 외는 DYNAMIC_SUPERNOVA_CUTOFF)
+            # 1. 👑 [초월적 진화] 5D 다차원 벡터 코사인 유사도 연산 (가격 형태 + 4대 에너지 융합)
             best_sim = 0.0
             best_pattern_name = "UNKNOWN"
             best_pass_sim = 0.0
             best_pass_name = "UNKNOWN"
             is_pass_cosine = False
-            current_vec_3d = np.nan_to_num(np.array([cpv, tb, bbe]))
+            
+            # 현재 종목의 5D 스펙 추출 (형태 + 위치 + 매수세 + 응축도 + 주도력)
+            c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
+            current_shape = np.mean(np.array_split(c_norm, 20), axis=1).tolist()
+            # 24차원 거대 벡터 생성
+            current_vec_5d = np.nan_to_num(np.array(current_shape + [cpv, tb, bbe, dyn_rs_live]))
             
             for t_name, base_vec in ideal_templates.items():
-                sim = get_similarity(current_vec_3d, base_vec)
+                # 템플릿이 구형(3D)인지 신형(5D/24차원)인지 차원을 맞춰서 비교하는 안전망
+                if len(base_vec) == len(current_vec_5d):
+                    sim = get_similarity(current_vec_5d, base_vec)
+                elif len(base_vec) == 3: # 기존의 3D 데이터로만 구성된 경우
+                    sim = get_similarity(np.array([cpv, tb, bbe]), base_vec)
+                else:
+                    sim = 0.0
+                    
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name

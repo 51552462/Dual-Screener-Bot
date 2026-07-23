@@ -41,13 +41,20 @@ DEFAULT_META_STATE_PATH = os.path.join(_BASE_DIR, "meta_governor_state.json")
 
 # 거시 국면 → 메타 행동 맵 (소비자가 kelly_cap / weight bounds 해석)
 ACTION_BY_REGIME: Dict[str, Dict[str, Any]] = {
+    # ===========================================================================
+    # 👑 [변동성 생존 모드 1] 글로벌 켈리 락다운 (Volatility Targeting)
+    # 변동성이 평소의 2배가 넘는 HIGH_VOL 국면에서는, 똑같은 금액을 배팅하면
+    # 계좌의 리스크가 2배가 됩니다. 켈리 상한(Cap)을 1.2%에서 0.6%로 반토막 내어
+    # 팩토리 전체의 자금줄을 물리적으로 옥죕니다.
+    # ===========================================================================
     "HIGH_VOL": {
-        "kelly_cap": 0.012,
+        "kelly_cap": 0.006, # 👑 [수정] 0.012 -> 0.006 (0.6%로 극단적 락다운)
         "kelly_floor": None,
-        "weight_s1_bounds": [0.45, 1.05],
-        "weight_s4_bounds": [0.9, 1.55],
-        "notes": "고변동: 켈리 상한 축소, S1 상한 억제·S4 방어 가중 허용",
+        "weight_s1_bounds": [0.30, 0.85], # 돌파 매매(S1) 비중 더 강력하게 억제
+        "weight_s4_bounds": [1.10, 1.65], # 눌림목 방어(S4) 비중 확대
+        "notes": "극단적 고변동: 켈리 상한 반토막 락다운, 가짜 돌파 원천 차단",
     },
+    # ===========================================================================
     "BEAR": {
         "kelly_cap": 0.01,
         "kelly_floor": None,
@@ -1130,10 +1137,16 @@ class MetaGovernor:
             v for v in health.values() if isinstance(v, dict) and int(v.get("n", 0) or 0) >= min_trades
         ]
         zeroed = sum(1 for v in actionable if float(v.get("mult", 1.0) or 1.0) <= 0.0)
+        # [기존 로직] 기본 켈리 계산
         if actionable and (zeroed / len(actionable)) >= 0.45:
-            self._working["META_GLOBAL_KELLY_MULT"] = round(max(0.5, prior_g * 0.88), 4)
+            base_kelly = round(max(0.5, prior_g * 0.88), 4)
         else:
-            self._working["META_GLOBAL_KELLY_MULT"] = prior_g
+            base_kelly = prior_g
+
+        # 👑 [초월적 방어 배선] 진화형 둠스데이 감쇠기를 통한 글로벌 켈리 하드코어 압착
+        final_kelly = compress_global_kelly_by_evolution(base_kelly, self._system_cfg_snapshot)
+        self._working["META_GLOBAL_KELLY_MULT"] = final_kelly
+        
         self._working["META_TREASURY_MODE"] = "DEFENSE" if zeroed > 0 else "NORMAL"
 
     # --- 4 Regime ---
@@ -1146,7 +1159,7 @@ class MetaGovernor:
 
         vix_block = self._working.get("META_VIX_LEVEL_Q") or {}
         if isinstance(vix_block, dict) and vix_block.get("skipped"):
-            note = (note or "") + " | VIX 스킵(오프라인/설정) — VIX> p90 HIGH_VOL 규칙 미적용"
+            note = (note or "") + " | VIX 스킵(오프라인/설정)"
         if isinstance(vix_block, dict) and not vix_block.get("skipped"):
             vlast = vix_block.get("vix_last")
             vqs = vix_block.get("vix_quantiles") or {}
@@ -1159,21 +1172,42 @@ class MetaGovernor:
                 ):
                     rk = "HIGH_VOL"
                     conf = max(float(conf), 0.86)
-                    note = (note or "") + " | VIX>롤링p90 → HIGH_VOL 승격"
+                    note = (note or "") + " | VIX>p90 → HIGH_VOL 승격"
             except (TypeError, ValueError):
                 pass
+
+        # 👑 [AI 신경망 피드백] 오답노트(독성 패턴) 급증 감지 시 거시 국면 강제 전환
+        # 부검소(toxic_graveyard)에서 참사 패턴이 쏟아진다면 시장이 망가지고 있다는 선행 지표입니다.
+        sat_intel = self._working.get("META_SATELLITE_INTEL", {})
+        toxic_count = int(sat_intel.get("antipattern_rule_count", 0))
+        
+        dynamic_penalty = 1.0
+        if toxic_count >= 5:
+            if rk == "BULL":
+                rk = "HIGH_VOL"  # 상승장 취소, 고변동성/경계 태세로 강제 격하
+                note = (note or "") + f" | 🚨독성패턴 급증({toxic_count}개): BULL➔HIGH_VOL 강제격하"
+            elif rk in ("SIDEWAYS", "UNKNOWN"):
+                rk = "BEAR"
+                note = (note or "") + f" | 🚨독성패턴 급증({toxic_count}개): BEAR 강제선언"
+                
+            if "HIGH_VOL" in rk or "BEAR" in rk:
+                # 독이 많을수록 팩토리 전체의 최고 자금 한도(Cap)를 스스로 옥죕니다 (최대 70% 삭감)
+                dynamic_penalty = max(0.3, 1.0 - (toxic_count * 0.05)) 
+                note += f" | 🔒AI자본압착(x{dynamic_penalty:.2f})"
 
         self._working["META_REGIME_KEY"] = rk
         self._working["META_REGIME_CONFIDENCE"] = float(conf)
         action_template = dict(ACTION_BY_REGIME.get(rk, ACTION_BY_REGIME["UNKNOWN"]))
         base_ra = {**default_meta_state()["META_REGIME_ACTION"], **action_template}
+        
+        # 👑 동적 페널티가 있다면 전체 시스템의 켈리 캡(Cap)을 물리적으로 축소
+        if dynamic_penalty < 1.0 and base_ra.get("kelly_cap"):
+            base_ra["kelly_cap"] = round(base_ra["kelly_cap"] * dynamic_penalty, 4)
+            
         base_ra["notes"] = (note or "").strip()
-        # [P2-2] 국면별 kelly_cap 자가조정 + floor 도입(기본 OFF). META_KELLY_LEARN_ENABLED=1
-        # 일 때만 실현 Sharpe 로 cap 을 0.5~1.5× 클램프 조정하고 floor 를 부여(0 락아웃 방지).
-        # 비활성/데이터부족/오류 시 제자리 무변경 → 기존 하드코딩 동작과 완전 동일(라이브 무영향).
+
         try:
             from regime_kelly_learner import overlay_action_for_regime
-
             fdb = getattr(self._ctx, "forward_db_path", None) if self._ctx else None
             overlay_action_for_regime(rk, base_ra, fdb)
         except Exception:
@@ -1208,6 +1242,10 @@ class MetaGovernor:
         # (forward_db_path=None, bitget_db_path만 세팅)에서는 코인 전용 레지스트리를
         # Bitget 자체 DB에 격리 — 주식 forward_db_path 미설정 시 stock market_data.sqlite
         # 로 폴백되어 코인 파생 레지스트리 행이 주식 운영 DB에 오염되는 것을 방지한다.
+        # 레지스트리 DB 대상: forward_db_path(주식) 우선. Bitget 단독 사이클
+        # (forward_db_path=None, bitget_db_path만 세팅)에서는 코인 전용 레지스트리를
+        # Bitget 자체 DB에 격리 — 주식 forward_db_path 미설정 시 stock market_data.sqlite
+        # 로 폴백되어 코인 파생 레지스트리 행이 주식 운영 DB에 오염되는 것을 방지한다.
         registry_db_path = ctx.forward_db_path or ctx.bitget_db_path
 
         reg, cycle_stats = run_registry_lifecycle(
@@ -1218,6 +1256,87 @@ class MetaGovernor:
             forward_db_path=registry_db_path,
             meta_working=self._working,
         )
+
+        # ===========================================================================
+        # 👑 [실매매 졸업 심사대 (The Graduation Gate) - 진화형]
+        # 시장 국면(Regime)에 따라 졸업 기준을 고무줄처럼 유연하게 조절합니다.
+        # 평화로운 장세에서는 30번을 깐깐하게 검증하지만, 
+        # 위기 상황(BEAR/HIGH_VOL)에서는 방어 병력이 급하므로 10번만 검증하고 
+        # 패스트트랙(Fast-Track)으로 즉각 실전에 투입합니다.
+        # ===========================================================================
+        curr_regime = str(self._working.get("META_REGIME_KEY", "")).upper()
+        
+        for row in reg:
+            gk = str(row.get("group_key", ""))
+            state = str(row.get("state", "")).upper()
+            
+            # LIVE(실전 배치) 상태인 전략만 심사
+            if state == "LIVE":
+                h_data = health.get(gk) or health.get(f"KR|{gk}") or health.get(f"US|{gk}") or {}
+                n_trades = int(h_data.get("n", 0))
+                pf = float(h_data.get("rolling_pf", 0.0))
+                mdd = float(h_data.get("mdd_pct", 0.0))
+                
+                # 1. 위기 상황(BEAR/HIGH_VOL): 팩토리 방어를 위해 패스트트랙 가동
+                if "BEAR" in curr_regime or "HIGH_VOL" in curr_regime:
+                    req_trades = 10  # 👑 위기 시에는 10번만 검증해도 즉각 투입
+                    req_pf = 2.5     # 대신 손익비(PF) 커트라인은 2.5로 더 엄격하게 요구
+                # 2. 평화 상황(BULL/SIDEWAYS): 운으로 올라온 놈들을 철저히 검증
+                else:
+                    req_trades = 30  # 👑 평시에는 30번을 꽉 채워야 승격
+                    req_pf = 2.0
+                    
+                if n_trades >= req_trades and pf >= req_pf and mdd >= -8.0:
+                    row["is_live_approved"] = True
+                    row["graduation_reason"] = f"PF:{pf:.2f}_MDD:{mdd:.1f}%_N:{n_trades}"
+                    
+                    # 영광의 훈장 수여 (텔레그램 및 장부 표시용)
+                    if "🏅LIVE_APPROVED" not in str(row.get("display_name", "")):
+                        row["display_name"] = f"🏅LIVE_APPROVED {row.get('display_name', gk)}"
+                else:
+                    row["is_live_approved"] = False
+                    row["display_name"] = str(row.get("display_name", "")).replace("🏅LIVE_APPROVED ", "").strip()
+        # ===========================================================================
+            prior_registry=prior_list,
+            health=health,
+            system_cfg=self._system_cfg_snapshot,
+            validated_mutants_path=ctx.validated_mutants_path,
+            forward_db_path=registry_db_path,
+            meta_working=self._working,
+        )
+
+        # ===========================================================================
+        # 👑 [실매매 졸업 심사대 (The Graduation Gate)]
+        # 가혹한 마찰(Friction) 시뮬레이터를 거친 장부에서 '진짜 우상향'을 증명한
+        # 템플릿에게만 내 피 같은 시드(Real Money)를 만질 수 있는 최종 API 권한을 부여합니다.
+        # ===========================================================================
+        for row in reg:
+            gk = str(row.get("group_key", ""))
+            state = str(row.get("state", "")).upper()
+            
+            # LIVE(실전 배치) 상태인 전략만 심사
+            if state == "LIVE":
+                h_data = health.get(gk) or health.get(f"KR|{gk}") or health.get(f"US|{gk}") or {}
+                n_trades = int(h_data.get("n", 0))
+                pf = float(h_data.get("rolling_pf", 0.0))
+                mdd = float(h_data.get("mdd_pct", 0.0))
+                
+                # [하드코어 절대 기준]
+                # 1. 통계적 유의성: 최소 30번 이상의 거래를 완료할 것 (운이 아닌 실력 증명)
+                # 2. 압도적 엣지: Profit Factor (총수익/총손실) 2.0 이상일 것
+                # 3. 방어력 증명: 어떤 하락장에서도 MDD(최대 낙폭)가 -8.0% 이내일 것
+                if n_trades >= 30 and pf >= 2.0 and mdd >= -8.0:
+                    row["is_live_approved"] = True
+                    row["graduation_reason"] = f"PF:{pf:.2f}_MDD:{mdd:.1f}%_N:{n_trades}"
+                    
+                    # 영광의 훈장 수여 (텔레그램 및 장부 표시용)
+                    if "🏅LIVE_APPROVED" not in str(row.get("display_name", "")):
+                        row["display_name"] = f"🏅LIVE_APPROVED {row.get('display_name', gk)}"
+                else:
+                    row["is_live_approved"] = False
+                    # 기준 미달 시 훈장 즉각 박탈 (실매매 권한 압수)
+                    row["display_name"] = str(row.get("display_name", "")).replace("🏅LIVE_APPROVED ", "").strip()
+        # ===========================================================================
 
         pil_cands = self._prior.get("META_PIL_RETIRE_CANDIDATES")
         if isinstance(pil_cands, list):
@@ -1362,3 +1481,31 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ===========================================================================
+# [초월적 방어] 진화형 둠스데이 감쇠기를 통한 글로벌 켈리 압착 (Global Kelly Compression)
+# ===========================================================================
+def compress_global_kelly_by_evolution(base_kelly_mult: float, sys_config: dict) -> float:
+    """
+    doomsday_dampener의 진화하는 Gamma(γ) 값을 기반으로 글로벌 켈리 승수를 압착합니다.
+    하락장(GlobalScore 상승) 시 롱(Long) 포지션의 자본줄을 물리적으로 틀어막아 MDD 3%를 방어합니다.
+    """
+    try:
+        from doomsday_dampener import apply_doomsday_dampening
+        
+        # 기계가 스스로 학습한 감마(γ) 값에 따라 베이스 켈리 승수를 깎아냅니다.
+        compressed_kelly = apply_doomsday_dampening(base_kelly_mult, sys_config=sys_config)
+        
+        # [절대 방어 락다운] 
+        # 압착된 켈리 승수가 0.15 미만으로 떨어질 정도로 시장이 위험하다면,
+        # 어설픈 매매를 원천 차단하기 위해 켈리 승수를 0.05(초미세 정찰 비중)로 극단적 하드 락(Hard Lock)을 겁니다.
+        if compressed_kelly < 0.15:
+            print("🚨 [System Alert] 진화형 둠스데이 감쇠 발동: 글로벌 켈리 승수 0.05로 락다운 (MDD 철통 방어)")
+            return 0.05
+            
+        return round(compressed_kelly, 4)
+        
+    except ImportError:
+        # 모듈이 없을 경우를 대비한 안전 장치 (Fail-safe)
+        return base_kelly_mult

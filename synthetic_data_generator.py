@@ -32,12 +32,12 @@ TICKER_PREFIX = "SYN_"
 RNG = np.random.default_rng()
 
 # ── [유체 방어 #3] 장중 플래시 크래시(Intrabar Low Spike) — 합성 훈련용 ──────
-#   BLACK_SWAN/HIGH_VOL 국면 봉에 확률적으로 긴 하단 꼬리(고가·시가 대비 15~20%)를
+#   BLACK_SWAN/HIGH_VOL 국면 봉에 확률적으로 긴 하단 꼬리(고가·시가 대비 20~30%)를
 #   순간 주입했다가 종가에 회복시킨다. 종가(close)는 불변 → 무조건 드리프트 0 보정 유지.
 FLASH_CRASH_REGIMES: Tuple[str, ...] = ("BLACK_SWAN", "HIGH_VOL")  # 미정의 국면은 자동 무시
-FLASH_CRASH_PROB = 0.18          # 해당 국면 일자당 스파이크 발생 확률
-FLASH_CRASH_MIN_DEPTH = 0.15     # 저가 깊이 하한(min(open,close) 대비)
-FLASH_CRASH_MAX_DEPTH = 0.20     # 저가 깊이 상한
+FLASH_CRASH_PROB = 0.25          # 👑 [개조] 공황장 스파이크 발생 확률 극대화 (18% ➔ 25%)
+FLASH_CRASH_MIN_DEPTH = 0.20     # 👑 [개조] 저가 깊이 하한 (15% ➔ 20%)
+FLASH_CRASH_MAX_DEPTH = 0.30     # 👑 [개조] 저가 깊이 상한 (20% ➔ 30% 플래시 크래시)
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +59,15 @@ REGIMES: Tuple[Regime, ...] = (
     Regime("SIDEWAYS",   0.00000,  0.0110, 0.020,  0.000,   0.020,   1.00),
     Regime("BULL",       0.00120,  0.0130, 0.020,  0.006,   0.022,   1.15),
     Regime("BEAR",      -0.00110,  0.0210, 0.055, -0.012,   0.035,   1.40),
-    Regime("BLACK_SWAN",-0.00450,  0.0480, 0.320, -0.040,   0.065,   3.20),
+    
+    # ===========================================================================
+    # 👑 [타임머신 도축장] 리먼 브라더스 & 코로나 빔 통합 구현 (Synthetic Hell)
+    # 무거운 과거 데이터를 받지 않고, 수학적으로 매일 -2.5%가 녹아내리며(mu),
+    # 갑자기 하루아침에 -15% 갭하락(mu_jump)을 때려버리는 미지의 붕괴장을 창조합니다.
+    # 거래량은 평소의 5배(vol_surge)로 폭발시켜 투매 패닉을 모사합니다.
+    # ===========================================================================
+    Regime("BLACK_SWAN",-0.02500,  0.0800, 0.450, -0.150,   0.090,   5.00),
 )
-REGIME_INDEX: Dict[str, int] = {r.name: i for i, r in enumerate(REGIMES)}
 
 # 행: from-state, 열: to-state. SIDEWAYS 가 끈적(sticky)하고 BLACK_SWAN 은 짧게 머문다.
 #                 →SIDE   →BULL   →BEAR   →SWAN
