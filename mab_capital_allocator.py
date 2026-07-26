@@ -1,5 +1,9 @@
 """
-MAB Capital Allocator — Thompson Sampling / UCB 기반 70% 활용 · 30% 탐험.
+MAB Capital Allocator — ContextualLinUCB 기반 70% 활용 · 30% 탐험.
+
+각 활성 DNA 템플릿을 LinUCB arm 으로 매핑하고, build_context_vector 로 현재
+시장 문맥(VIX·BEAR·글로벌 켈리)을 추출한 뒤 allocation_weights 로 켈리 승수를
+분배한다. 기존 Thompson/UCB 승률 샘플링은 ArmStats 감사(audit)용으로만 유지.
 
 데스매치(과거 영광) 오버레이와 곱셈/혼합하지 않고 **병렬 신호**로 낸 뒤
 fluid_evolution_bridge 가 MetaGovernor overlay 와 블렌드한다.
@@ -13,7 +17,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -157,21 +161,115 @@ def _seed_explore_arms(
                 arms[gk] = ArmStats(group_key=gk, is_incubator=True, n=0)
 
 
+def _resolve_active_arms(
+    sys_config: Dict[str, Any],
+    market: str,
+    arms_map: Dict[str, ArmStats],
+) -> List[str]:
+    """활성 DNA 템플릿 + DB 거래 arm 을 LinUCB arm 순서로 병합."""
+    from template_bandit import enumerate_active_dna_templates
+
+    merged: List[str] = []
+    seen: set[str] = set()
+
+    for raw_name in enumerate_active_dna_templates(sys_config, market):
+        gk = _parse_group_key(raw_name)
+        if gk not in seen:
+            seen.add(gk)
+            merged.append(gk)
+
+    for gk in sorted(arms_map.keys()):
+        if gk not in seen:
+            seen.add(gk)
+            merged.append(gk)
+
+    return merged
+
+
+def _weights_to_group_mult(
+    weights: np.ndarray,
+    arm_keys: Sequence[str],
+    *,
+    neutral: float = 1.0,
+    cap: float = 1.45,
+    floor: float = 0.10,
+) -> Dict[str, float]:
+    """LinUCB softmax 가중치 → group_key 켈리 오버레이 배수."""
+    n = len(arm_keys)
+    if n == 0:
+        return {}
+
+    w = np.asarray(weights, dtype=np.float64).reshape(-1)
+    if w.shape[0] != n:
+        w = np.full(n, 1.0 / n, dtype=np.float64)
+
+    uniform = 1.0 / n
+    out: Dict[str, float] = {}
+    w_max = float(np.max(w)) if n else uniform
+
+    for i, gk in enumerate(arm_keys):
+        if w_max > uniform + 1e-12:
+            rel = (float(w[i]) - uniform) / (w_max - uniform)
+        else:
+            rel = 0.0
+        mult = neutral + rel * (cap - neutral)
+        mult = max(floor, min(cap, mult))
+        out[str(gk)] = round(mult, 4)
+    return out
+
+
+def _linucb_allocate(
+    sys_config: Dict[str, Any],
+    market: str,
+    arm_keys: List[str],
+    *,
+    temperature: float = 0.25,
+    min_weight: float = 0.02,
+) -> Tuple[np.ndarray, str]:
+    """ContextualLinUCB allocation_weights — arm_keys 순서와 1:1."""
+    from template_bandit import (
+        build_context_vector,
+        load_bandit_state,
+        save_bandit_state,
+    )
+
+    if not arm_keys:
+        return np.array([], dtype=np.float64), "linucb_empty"
+
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    temp = float(cfg.get("MAB_LINUCB_TEMPERATURE", temperature) or temperature)
+    min_w = float(cfg.get("MAB_LINUCB_MIN_WEIGHT", min_weight) or min_weight)
+
+    bandit = load_bandit_state(cfg, market, arm_keys)
+    context = build_context_vector(cfg, market)
+    weights = bandit.allocation_weights(
+        context,
+        temperature=temp,
+        min_weight=min_w,
+    )
+    save_bandit_state(bandit, cfg, market, arm_keys)
+    cfg["MAB_LAST_MARKET"] = str(market or "KR").upper()
+    try:
+        from config_manager import update_system_config
+        from template_bandit import LINUCB_STATE_KEY
+
+        if isinstance(cfg.get(LINUCB_STATE_KEY), dict):
+            update_system_config({LINUCB_STATE_KEY: cfg[LINUCB_STATE_KEY]})
+    except Exception:
+        pass
+    return weights, "linucb"
+
+
 def _thompson_sample(arm: ArmStats, *, prior_a: float = 1.0, prior_b: float = 1.0) -> float:
+    """ArmStats 감사용 레거시 Thompson 샘플(배분 SSOT 아님)."""
     if arm.n == 0:
-        # 탐험 보너스: 불확실 arm 에 높은 분산
         return float(np.random.beta(1.2, 1.2))
 
-    # [Magnitude-Aware] 승패 횟수에 수익금/손실금의 크기(Magnitude)를 스케일링하여 가중치로 합산
-    # 예: reward_scale = 0.1 일 때, 10% 수익을 낸 1승은 단순 1승보다 훨씬 높은 알파(a) 파라미터를 얻어 자본 배분 확률이 급증함.
     reward_scale = 0.1
-
     adj_wins = arm.wins + (arm.gross_profit * reward_scale)
     adj_losses = arm.losses + (arm.gross_loss * reward_scale)
-
     a = prior_a + max(0.0, adj_wins)
     b = prior_b + max(0.0, adj_losses)
-
     return float(np.random.beta(a, b))
 
 
@@ -207,84 +305,107 @@ class MABCapitalAllocator:
         arms_map = _load_closed_arms(market, lookback_days=lb)
         _seed_explore_arms(arms_map, self.cfg, market)
 
-        arms = list(arms_map.values())
-        if not arms:
+        arm_keys = _resolve_active_arms(self.cfg, market, arms_map)
+        neutral = float(self.cfg.get("MAB_NEUTRAL_MULT", 1.0) or 1.0)
+        cap = float(self.cfg.get("MAB_OVERLAY_CAP", 1.45) or 1.45)
+        floor = float(self.cfg.get("MAB_FLOOR_MULT", 0.10) or 0.10)
+
+        if not arm_keys:
             return MABAllocationResult(
                 exploit_ratio=self.exploit_ratio,
                 explore_ratio=self.explore_ratio,
-                mode=self.mode,
+                mode="linucb_empty",
                 as_of=datetime.now().strftime("%Y-%m-%d %H:%M"),
             )
 
+        weights, alloc_mode = _linucb_allocate(self.cfg, market, arm_keys)
+        group_mult = _weights_to_group_mult(
+            weights,
+            arm_keys,
+            neutral=neutral,
+            cap=cap,
+            floor=floor,
+        )
+        self.mode = alloc_mode
+
+        arms = list(arms_map.values())
         total_n = sum(a.n for a in arms) or 1
+        weight_by_key = {
+            arm_keys[i]: float(weights[i]) if i < len(weights) else 0.0
+            for i in range(len(arm_keys))
+        }
+        sorted_keys = sorted(
+            arm_keys,
+            key=lambda k: weight_by_key.get(k, 0.0),
+            reverse=True,
+        )
+
         for arm in arms:
-            if self.mode == "ucb":
+            if self.mode == "ucb" or str(self.cfg.get("MAB_MODE", "")).lower() == "ucb":
                 arm.sample_score = _ucb_score(arm, total_n)
             else:
                 arm.sample_score = _thompson_sample(arm)
+            arm.sample_score = weight_by_key.get(arm.group_key, arm.sample_score)
 
-        ranked = sorted(arms, key=lambda a: (a.sample_score, a.mean_ret, a.n), reverse=True)
-        n_arms = len(ranked)
+        ranked = sorted(
+            arms,
+            key=lambda a: (weight_by_key.get(a.group_key, 0.0), a.sample_score, a.mean_ret),
+            reverse=True,
+        )
+        n_arms = len(arm_keys)
         n_exploit = max(1, int(round(n_arms * self.exploit_ratio))) if n_arms else 0
         n_explore = max(1, n_arms - n_exploit) if n_arms else 0
 
-        exploit_set = {a.group_key for a in ranked[:n_exploit]}
-        explore_candidates = [
-            a for a in ranked[n_exploit:]
-            if a.is_incubator or a.is_archived or a.n < 5
-        ]
-        if not explore_candidates:
-            explore_candidates = ranked[n_exploit : n_exploit + n_explore]
-        explore_set = {a.group_key for a in explore_candidates[: max(1, n_explore)]}
+        exploit_set = set(sorted_keys[:n_exploit])
+        explore_set = set(sorted_keys[n_exploit : n_exploit + n_explore])
 
-        boost = float(self.cfg.get("MAB_EXPLOIT_MULT", 1.22) or 1.22)
-        explore_mult = float(self.cfg.get("MAB_EXPLORE_MULT", 1.08) or 1.08)
-        neutral = float(self.cfg.get("MAB_NEUTRAL_MULT", 1.0) or 1.0)
-        cap = float(self.cfg.get("MAB_OVERLAY_CAP", 1.45) or 1.45)
-
-        group_mult: Dict[str, float] = {}
-        for arm in ranked:
-            if arm.group_key in exploit_set:
-                arm.bucket = "exploit"
-                group_mult[arm.group_key] = min(boost, cap)
-            elif arm.group_key in explore_set:
-                arm.bucket = "explore"
-                group_mult[arm.group_key] = min(explore_mult, cap)
+        for gk, mult in group_mult.items():
+            if gk in exploit_set:
+                for arm in ranked:
+                    if arm.group_key == gk:
+                        arm.bucket = "exploit"
+                        break
+            elif gk in explore_set:
+                for arm in ranked:
+                    if arm.group_key == gk:
+                        arm.bucket = "explore"
+                        break
             else:
-                arm.bucket = "neutral"
-                group_mult[arm.group_key] = neutral
+                for arm in ranked:
+                    if arm.group_key == gk:
+                        arm.bucket = "linucb_weighted"
+                        break
 
+        for gk in arm_keys:
+            if gk not in arms_map:
+                ranked.append(
+                    ArmStats(
+                        group_key=gk,
+                        sample_score=weight_by_key.get(gk, 0.0),
+                        bucket="explore" if gk in explore_set else "exploit",
+                    )
+                )
 
-# =====================================================================
+        # =====================================================================
         # 👑 [초월적 공격 배선] 하락장 잉여 자본 듀얼-트랙 역방향 라우팅
         # =====================================================================
-        # 총사령관(MetaGovernor)이 판단한 현재 국면을 가져옴
         regime = str(self.cfg.get("META_REGIME_KEY", "UNKNOWN")).upper()
-        # 글로벌 켈리 압착으로 인해 롱(Long) 포지션에 투입되지 못하고 남은 '유휴 현금(Idle Cash)' 비율 산출 (1.0 - 글로벌 켈리 승수)
         global_kelly = float(self.cfg.get("META_GLOBAL_KELLY_MULT", 1.0))
         idle_cash_ratio = max(0.0, 1.0 - global_kelly)
-        
-        # 하락장이며 유휴 현금이 10% 이상 발생했을 때 숏/인버스로 자금 우회
+
         if idle_cash_ratio >= 0.10:
             route_result = route_bear_market_capital(
                 market=market,
                 idle_cash=idle_cash_ratio,
                 regime_key=regime,
                 sys_config=self.cfg,
-                db_path=_db_path()
+                db_path=_db_path(),
             )
-            # 듀얼 트랙 라우터가 자금을 성공적으로 분배했다면, 결과를 MAB 엔진의 결과에 합산하여 리턴
             if route_result.get("routed", False):
-                # 기존 롱(Long) 전략(exploit/explore)의 가중치를 0으로 완전히 무력화시키지 않고, 
-                # 남아있는 글로벌 켈리 승수만큼은 비중을 유지하도록 놔둔 채 숏/인버스 비중 정보를 추가함
                 route_target = route_result.get("target")
                 allocated_cash = route_result.get("allocated_cash")
-                
-                # 가상 그룹키 'BEAR_ROUTER'를 생성하여 숏/인버스에 가중치를 배분
                 group_mult["BEAR_ROUTER"] = allocated_cash
-                
-                # MAB 모드에 라우팅 정보를 덧붙임
-                self.mode = f"{self.mode}_+_{route_target}_({allocated_cash*100:.1f}%)"
+                self.mode = f"{self.mode}_+_{route_target}_({allocated_cash * 100:.1f}%)"
         # =====================================================================
         return MABAllocationResult(
             exploit_ratio=self.exploit_ratio,

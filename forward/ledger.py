@@ -929,7 +929,12 @@ def track_daily_positions(market):
                 # 승격 템플릿의 sig_type 일 때만 동작(아니면 무 I/O).
                 try:
                     from template_bandit import update_bandit_for_closure
-                    update_bandit_for_closure(row_scalar(r, 'sig_type', ''), won=(float(ret) > 0))
+                    update_bandit_for_closure(
+                        row_scalar(r, 'sig_type', ''),
+                        won=(float(ret) > 0),
+                        reward=float(ret),
+                        market=market,
+                    )
                 except Exception:
                     pass
 
