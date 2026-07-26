@@ -242,6 +242,87 @@ def load_ratchet_state(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return base
 
 
+def nonlinear_trailing_ratchet_kappa(
+    run_ret_pct: float,
+    entry_atr: float,
+    entry_price: float,
+    mfe_atr_mult: float,
+    trail_atr_mult: float,
+) -> float:
+    """
+    ATR 유전자와 목표 수익 길이에 따라 비선형 트레일 계수 κ를 계산한다.
+
+    수식
+    ----
+    anchor_ret = (entry_atr * mfe_atr_mult / entry_price) * 100
+
+    progress = clip(run_ret_pct / anchor_ret, 0, 1)
+
+    장기 추세 유전자일수록 convexity p가 증가:
+        u = clip((mfe_atr_mult - 1.5) / (15.0 - 1.5), 0, 1)
+        p = 1 + 3 * smoothstep(u)       # p ∈ [1, 4]
+
+    트레일 폭:
+        trail_pct = entry_atr * trail_atr_mult / entry_price
+        kappa_max = clip(1.5 * trail_pct, 0.02, 0.30)
+        kappa_min = clip(0.5 * trail_pct, 0.01, kappa_max)
+
+    최종 래칫:
+        κ = kappa_max - (kappa_max - kappa_min) * progress**p
+
+    p > 1이면 초반 progress**p가 작으므로 κ가 천천히 감소하고,
+    목표 수익률 부근에서 빠르게 kappa_min으로 수렴한다.
+    """
+    import math
+
+    values = (
+        run_ret_pct,
+        entry_atr,
+        entry_price,
+        mfe_atr_mult,
+        trail_atr_mult,
+    )
+
+    try:
+        values = tuple(float(value) for value in values)
+    except (TypeError, ValueError, OverflowError):
+        return 0.05
+
+    if not all(math.isfinite(value) for value in values):
+        return 0.05
+
+    run_ret, atr, price, mfe_mult, trail_mult = values
+
+    if atr <= 0.0 or price <= 0.0:
+        return 0.05
+
+    # 유전자 허용 범위를 벗어난 값은 안전하게 제한한다.
+    mfe_mult = _clamp(mfe_mult, 1.5, 15.0)
+    trail_mult = _clamp(trail_mult, 0.5, 5.0)
+    run_ret = max(0.0, run_ret)
+
+    anchor_ret = (atr * mfe_mult / price) * 100.0
+    if anchor_ret <= 1e-12:
+        return 0.05
+
+    progress = _clamp(run_ret / anchor_ret, 0.0, 1.0)
+
+    # 장기 목표 유전자일수록 강한 볼록성을 부여한다.
+    normalized_mfe = (mfe_mult - 1.5) / (15.0 - 1.5)
+    smooth_mfe = normalized_mfe**2 * (3.0 - 2.0 * normalized_mfe)
+    convexity = 1.0 + 3.0 * smooth_mfe
+
+    trail_pct = atr * trail_mult / price
+
+    kappa_max = _clamp(1.5 * trail_pct, 0.02, 0.30)
+    kappa_min = _clamp(0.5 * trail_pct, 0.01, kappa_max)
+
+    shape = progress**convexity
+    kappa = kappa_max - (kappa_max - kappa_min) * shape
+
+    return round(_clamp(kappa, 0.01, 0.30), 6)
+
+
 def convex_ratchet_kappa(run_ret_pct: float, state: Optional[Dict[str, Any]] = None) -> float:
     """
     러너 수익률(run_ret_pct, 진입 대비 고점 수익 %)에 따른 트레일 계수 κ.
@@ -249,6 +330,44 @@ def convex_ratchet_kappa(run_ret_pct: float, state: Optional[Dict[str, Any]] = N
     convexity>1 이면 초반을 더 넓게 유지(볼록).
     """
     st = state or DEFAULT_RATCHET_STATE
+
+    e_atr = st.get("entry_atr")
+    e_price = st.get("entry_price")
+    mfe_mult = st.get("mfe_atr_mult")
+    trail_mult = st.get("trail_atr_mult")
+    if (
+        e_atr is not None
+        and e_price is not None
+        and mfe_mult is not None
+        and trail_mult is not None
+    ):
+        try:
+            e_atr_f = float(e_atr)
+            e_price_f = float(e_price)
+            mfe_mult_f = float(mfe_mult)
+            trail_mult_f = float(trail_mult)
+        except (TypeError, ValueError, OverflowError):
+            pass
+        else:
+            import math
+
+            if (
+                math.isfinite(e_atr_f)
+                and math.isfinite(e_price_f)
+                and math.isfinite(mfe_mult_f)
+                and math.isfinite(trail_mult_f)
+                and e_atr_f > 0.0
+                and e_price_f > 0.0
+                and mfe_mult_f > 0.0
+                and trail_mult_f > 0.0
+            ):
+                return nonlinear_trailing_ratchet_kappa(
+                    run_ret_pct,
+                    e_atr_f,
+                    e_price_f,
+                    mfe_mult_f,
+                    trail_mult_f,
+                )
     k_max = float(st.get("kappa_max", 0.12))
     k_min = float(st.get("kappa_min", 0.05))
     anchor = max(1.0, float(st.get("anchor_ret", 40.0)))
@@ -440,6 +559,11 @@ def apply_elastic_dna_to_ratchet(state: Dict[str, Any], trade: Mapping[str, Any]
         
     mfe_mult = float(dna_pack.get("mfe_atr_mult", 0.0))
     trail_mult = float(dna_pack.get("trail_atr_mult", 0.0))
+
+    out["entry_atr"] = e_atr
+    out["entry_price"] = e_price
+    out["mfe_atr_mult"] = mfe_mult
+    out["trail_atr_mult"] = trail_mult
     
     # 1. 고무줄 목표가 재설정
     if mfe_mult > 0:
