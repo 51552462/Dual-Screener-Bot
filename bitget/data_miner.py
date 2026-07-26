@@ -438,18 +438,18 @@ def evolve_bitget_ast_formulas(timeframe: str = "1D"):
 
     for f in elites:
         push_formula(f)
-    for _ in range(260):
+    for _ in range(50):
         base = random.choice(elites) if elites else generate_random_alpha_formula()
         mf = _mutate_alpha_formula_ast(base) or generate_random_alpha_formula()
         push_formula(mf)
     if len(elites) >= 2:
-        for _ in range(140):
+        for _ in range(30):
             p1, p2 = random.sample(elites, 2)
             cf = _crossover_alpha_formula_ast(p1, p2)
             if not cf:
                 continue
             push_formula(cf)
-    for _ in range(600):
+    for _ in range(100):
         push_formula(generate_random_alpha_formula())
 
     if not scored:
