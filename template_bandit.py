@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 import numpy as np
 
 from contextual_linucb import ContextualLinUCB
+from linucb_apoptosis import check_apoptosis
 
 BANDIT_KEY = "TEMPLATE_BANDIT_STATE"
 LINUCB_STATE_KEY = "CONTEXTUAL_LINUCB_STATE"
@@ -42,6 +43,7 @@ CONTEXT_DIM = 4
 LINUCB_DEFAULT_ALPHA = 0.5
 LINUCB_DEFAULT_RIDGE = 1.0
 LINUCB_DEFAULT_REWARD_CLIP = 0.20
+LINUCB_DEFAULT_APOPTOSIS_LOSS_THRESHOLD = -1.5
 
 PRIOR_A = 1.0
 PRIOR_B = 1.0
@@ -731,6 +733,252 @@ def _compute_mae_pct(trade: dict) -> float:
         return 0.0
 
 
+def _apoptosis_loss_threshold(cfg: Dict[str, Any]) -> float:
+    try:
+        val = float(
+            cfg.get("LINUCB_APOPTOSIS_LOSS_THRESHOLD", LINUCB_DEFAULT_APOPTOSIS_LOSS_THRESHOLD)
+            or LINUCB_DEFAULT_APOPTOSIS_LOSS_THRESHOLD
+        )
+    except (TypeError, ValueError):
+        val = LINUCB_DEFAULT_APOPTOSIS_LOSS_THRESHOLD
+    return val if np.isfinite(val) else LINUCB_DEFAULT_APOPTOSIS_LOSS_THRESHOLD
+
+
+def _resolve_min_weight(cfg: Dict[str, Any]) -> float:
+    try:
+        val = float(cfg.get("MAB_LINUCB_MIN_WEIGHT", 0.02) or 0.02)
+    except (TypeError, ValueError):
+        val = 0.02
+    return val if np.isfinite(val) and val >= 0.0 else 0.02
+
+
+def _extract_template_dna(
+    cfg: Dict[str, Any],
+    name: str,
+    market: str,
+) -> Optional[List[float]]:
+    """활성 레지스트리에서 cpv/tb/bbe DNA 추출 — register_failed_template 입력용."""
+    mk = str(market or "KR").upper()
+    n = str(name or "").strip()
+    if not n:
+        return None
+
+    candidates: List[Dict[str, Any]] = []
+
+    multi_key = f"DNA_SUPERNOVA_{mk}_MULTI"
+    pool = cfg.get(multi_key) or {}
+    if isinstance(pool, dict):
+        tpl = pool.get(n)
+        if isinstance(tpl, dict):
+            candidates.append(tpl)
+
+    inc = cfg.get("INCUBATOR_TEMPLATES") or {}
+    if isinstance(inc, dict):
+        tpl = inc.get(n)
+        if isinstance(tpl, dict):
+            candidates.append(tpl)
+
+    deep = cfg.get("DEEP_EVOLVED_DEPLOYED") or {}
+    if isinstance(deep, dict):
+        meta = deep.get(n)
+        if isinstance(meta, dict):
+            dna = meta.get("dna")
+            if isinstance(dna, (list, tuple)) and len(dna) >= 3:
+                try:
+                    return [float(dna[0]), float(dna[1]), float(dna[2])]
+                except (TypeError, ValueError):
+                    pass
+            if isinstance(meta, dict):
+                candidates.append(meta)
+
+    base = cfg.get("DNA_BASE_TEMPLATES") or {}
+    if isinstance(base, dict):
+        region = base.get(mk) or {}
+        if isinstance(region, dict):
+            tpl = region.get(n)
+            if isinstance(tpl, dict):
+                candidates.append(tpl)
+
+    for tpl in candidates:
+        try:
+            cpv = float(tpl.get("cpv") or tpl.get("dyn_cpv") or 0.0)
+            tb = float(tpl.get("tb") or tpl.get("dyn_tb") or 0.0)
+            bbe = float(tpl.get("bbe") or tpl.get("v_energy") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if cpv == 0.0 and tb == 0.0 and bbe == 0.0:
+            continue
+        return [cpv, tb, bbe]
+
+    return None
+
+
+def _remove_active_template(
+    cfg: Dict[str, Any],
+    name: str,
+    market: str,
+) -> bool:
+    """자멸사 Arm을 활성 Bandit/DNA 레지스트리에서 영구 퇴출."""
+    mk = str(market or "KR").upper()
+    n = str(name or "").strip()
+    if not n:
+        return False
+
+    removed = False
+
+    bandit_st = cfg.get(BANDIT_KEY)
+    if isinstance(bandit_st, dict) and n in bandit_st:
+        bandit_st.pop(n, None)
+        removed = True
+
+    multi_key = f"DNA_SUPERNOVA_{mk}_MULTI"
+    pool = cfg.get(multi_key)
+    if isinstance(pool, dict) and n in pool:
+        pool.pop(n, None)
+        removed = True
+
+    inc = cfg.get("INCUBATOR_TEMPLATES")
+    if isinstance(inc, dict) and n in inc:
+        inc.pop(n, None)
+        removed = True
+
+    deep = cfg.get("DEEP_EVOLVED_DEPLOYED")
+    if isinstance(deep, dict) and n in deep:
+        deep.pop(n, None)
+        removed = True
+
+    base = cfg.get("DNA_BASE_TEMPLATES") or {}
+    if isinstance(base, dict):
+        region = base.get(mk)
+        if isinstance(region, dict) and n in region:
+            region.pop(n, None)
+            removed = True
+
+    return removed
+
+
+def _free_incubator_min_weight(
+    cfg: Dict[str, Any],
+    market: str,
+    n_removed: int,
+    *,
+    min_weight: float,
+) -> float:
+    """퇴출 Arm이 예약하던 min_weight를 인큐베이터 슬롯 예산으로 반환."""
+    if n_removed <= 0:
+        return 0.0
+
+    freed = float(n_removed) * float(min_weight)
+    mk = str(market or "KR").upper()
+
+    budget = cfg.get("MAB_INCUBATOR_WEIGHT_BUDGET")
+    if not isinstance(budget, dict):
+        budget = {}
+    budget[mk] = round(float(budget.get(mk, 0.0)) + freed, 6)
+    cfg["MAB_INCUBATOR_WEIGHT_BUDGET"] = budget
+
+    slots = cfg.get("MAB_INCUBATOR_FREED_SLOTS")
+    if not isinstance(slots, dict):
+        slots = {}
+    slots[mk] = int(slots.get(mk, 0)) + int(n_removed)
+    cfg["MAB_INCUBATOR_FREED_SLOTS"] = slots
+    return freed
+
+
+def _run_apoptosis_sweep(
+    cfg: Dict[str, Any],
+    market: str,
+    bandit: ContextualLinUCB,
+    arm_names: Sequence[str],
+    recent_contexts: np.ndarray,
+) -> Dict[str, Any]:
+    """
+    보상 피드백 직후 모든 활성 Arm에 check_apoptosis 실행.
+    자멸 판정 Arm → 레지스트리 퇴출 + ANTI_PATTERNS 백신 등록 + min_weight 반환.
+    """
+    from clustered_immune_vaccine import register_failed_template
+
+    loss_threshold = _apoptosis_loss_threshold(cfg)
+    min_weight = _resolve_min_weight(cfg)
+    names = list(arm_names)
+    doomed: List[str] = []
+    vaccines: List[Dict[str, Any]] = []
+
+    for arm_idx, name in enumerate(names):
+        try:
+            triggered, _fatal = check_apoptosis(
+                bandit,
+                arm_idx,
+                recent_contexts,
+                loss_threshold,
+            )
+        except Exception as ex:
+            logger.warning(
+                "check_apoptosis failed market=%s arm=%s idx=%s: %s",
+                market,
+                name,
+                arm_idx,
+                ex,
+            )
+            continue
+
+        if not triggered:
+            continue
+
+        dna = _extract_template_dna(cfg, name, market)
+        if dna is not None:
+            reg = register_failed_template(
+                cfg,
+                name=name,
+                dna=dna,
+                market=str(market or "KR").upper(),
+            )
+            vaccines.append(
+                {
+                    "name": name,
+                    "registered": bool(reg.get("registered")),
+                    "dna": dna,
+                }
+            )
+        else:
+            vaccines.append({"name": name, "registered": False, "reason": "no_dna"})
+
+        if _remove_active_template(cfg, name, market):
+            doomed.append(name)
+            logger.info(
+                "💀 [Apoptosis] 전략 퇴출 및 백신 등록 완료: %s (market=%s)",
+                name,
+                market,
+            )
+
+    freed_min_weight = 0.0
+    if doomed:
+        freed_min_weight = _free_incubator_min_weight(
+            cfg,
+            market,
+            len(doomed),
+            min_weight=min_weight,
+        )
+        surviving = [n for n in names if n not in set(doomed)]
+        mk = str(market or "KR").upper()
+        if surviving:
+            rebuilt = load_bandit_state(cfg, mk, surviving)
+            save_bandit_state(rebuilt, cfg, market, surviving)
+        else:
+            store = _linucb_store(cfg)
+            if mk in store:
+                store.pop(mk, None)
+
+    return {
+        "removed": doomed,
+        "freed_min_weight": round(freed_min_weight, 6),
+        "freed_slots": len(doomed),
+        "min_weight_per_arm": round(min_weight, 6),
+        "loss_threshold": loss_threshold,
+        "vaccines": vaccines,
+    }
+
+
 def _load_closed_trades_for_bandit_feed(
     db_path: str,
     *,
@@ -808,7 +1056,10 @@ def feed_rewards_to_bandit(
         "persisted": False,
         "db_path": db,
         "lookback_days": lookback_days,
+        "apoptosis_removed": 0,
     }
+
+    config_dirty = False
 
     if not os.path.isfile(db):
         summary["error"] = f"db_not_found:{db}"
@@ -843,6 +1094,7 @@ def feed_rewards_to_bandit(
         mkt_skipped_arm = 0
         mkt_skipped_reward = 0
         local_max_id = last_id
+        recent_context_rows: List[np.ndarray] = []
 
         for trade in trades:
             tid = int(trade.get("id") or 0)
@@ -871,12 +1123,33 @@ def feed_rewards_to_bandit(
                 continue
 
             context = _build_entry_context_vector(trade, cfg, mk)
+            recent_context_rows.append(context)
             bandit.update(arm_idx, context, reward)
             mkt_updated += 1
+
+        if recent_context_rows:
+            recent_contexts = np.vstack(recent_context_rows)
+        else:
+            recent_contexts = build_context_vector(cfg, mk).reshape(1, -1)
 
         block = save_bandit_state(bandit, cfg, mk, arm_names)
         block["last_feed_trade_id"] = int(local_max_id)
         block["last_feed_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        apoptosis = _run_apoptosis_sweep(cfg, mk, bandit, arm_names, recent_contexts)
+        if apoptosis.get("removed"):
+            config_dirty = True
+            summary["apoptosis_removed"] += len(apoptosis["removed"])
+            arm_names = enumerate_active_dna_templates(cfg, mk)
+            if arm_names:
+                bandit = load_bandit_state(cfg, mk, arm_names)
+                block = save_bandit_state(bandit, cfg, mk, arm_names)
+                block["last_feed_trade_id"] = int(local_max_id)
+                block["last_feed_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                store = _linucb_store(cfg)
+                if mk in store:
+                    store.pop(mk, None)
 
         summary["updated"] += mkt_updated
         summary["skipped_no_arm"] += mkt_skipped_arm
@@ -890,13 +1163,36 @@ def feed_rewards_to_bandit(
             "cutoff_date": cutoff,
             "last_feed_trade_id": local_max_id,
             "load_error": load_error,
+            "apoptosis": apoptosis,
         }
 
-    if persist and summary["updated"] > 0:
+    if persist and (summary["updated"] > 0 or config_dirty):
         try:
             from config_manager import update_system_config
 
-            update_system_config({LINUCB_STATE_KEY: cfg[LINUCB_STATE_KEY]})
+            patches: Dict[str, Any] = {LINUCB_STATE_KEY: cfg[LINUCB_STATE_KEY]}
+            if config_dirty:
+                if isinstance(cfg.get(BANDIT_KEY), dict):
+                    patches[BANDIT_KEY] = cfg[BANDIT_KEY]
+                if cfg.get("ANTI_PATTERNS") is not None:
+                    patches["ANTI_PATTERNS"] = cfg["ANTI_PATTERNS"]
+                if isinstance(cfg.get("INCUBATOR_TEMPLATES"), dict):
+                    patches["INCUBATOR_TEMPLATES"] = cfg["INCUBATOR_TEMPLATES"]
+                if isinstance(cfg.get("DEEP_EVOLVED_DEPLOYED"), dict):
+                    patches["DEEP_EVOLVED_DEPLOYED"] = cfg["DEEP_EVOLVED_DEPLOYED"]
+                if isinstance(cfg.get("MAB_INCUBATOR_WEIGHT_BUDGET"), dict):
+                    patches["MAB_INCUBATOR_WEIGHT_BUDGET"] = cfg["MAB_INCUBATOR_WEIGHT_BUDGET"]
+                if isinstance(cfg.get("MAB_INCUBATOR_FREED_SLOTS"), dict):
+                    patches["MAB_INCUBATOR_FREED_SLOTS"] = cfg["MAB_INCUBATOR_FREED_SLOTS"]
+                for mk in target_markets:
+                    multi_key = f"DNA_SUPERNOVA_{mk}_MULTI"
+                    if isinstance(cfg.get(multi_key), dict):
+                        patches[multi_key] = cfg[multi_key]
+                    base = cfg.get("DNA_BASE_TEMPLATES")
+                    if isinstance(base, dict) and isinstance(base.get(mk), dict):
+                        patches.setdefault("DNA_BASE_TEMPLATES", dict(base))
+
+            update_system_config(patches)
             summary["persisted"] = True
         except Exception as ex:
             summary["persist_error"] = str(ex)
