@@ -18,7 +18,7 @@ from bitget.infra.memory_policy import (
     OMS_ORPHAN_STREAK_PROPOSE_KILL,
 )
 
-from bitget.forward_tester import init_forward_db, load_system_config, save_system_config, send_telegram_msg
+from bitget.forward.shared import init_forward_db, load_system_config, save_system_config, send_telegram_msg
 from bitget.infra.data_paths import market_data_db_path
 from bitget.infra.logging_setup import get_logger, setup_logging
 from bitget.infra.network_retry import call_with_retry

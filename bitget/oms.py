@@ -8,11 +8,12 @@ Import paths preserved for legacy callers:
 """
 from bitget.trading.execution_safety import meta_kill_switch_active
 from bitget.trading.oms_core import create_trade_exchange, generate_client_oid, oms_place_market_order
-from bitget.trading.reconciliation import (
-    detect_orphan_positions,
-    reconcile_phantom_opens,
-    run_scheduled_reconciliation,
-)
+
+_RECON_EXPORTS = frozenset({
+    "detect_orphan_positions",
+    "reconcile_phantom_opens",
+    "run_scheduled_reconciliation",
+})
 
 __all__ = [
     "create_trade_exchange",
@@ -23,3 +24,11 @@ __all__ = [
     "reconcile_phantom_opens",
     "run_scheduled_reconciliation",
 ]
+
+
+def __getattr__(name: str):
+    if name in _RECON_EXPORTS:
+        from bitget.trading import reconciliation as _recon
+
+        return getattr(_recon, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
