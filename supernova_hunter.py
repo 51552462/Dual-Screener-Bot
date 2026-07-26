@@ -33,6 +33,7 @@ from fast_safety_audit_runtime import (
     create_fast_safety_audit_runtime,
     drain_fast_safety_audit_runtime,
 )
+from fast_safety_ops_sink import create_fast_safety_ops_sink
 from fast_safety_runtime_shadow import (
     FastSafetyShadowContext,
     evaluate_supernova_fast_safety_shadow,
@@ -3162,6 +3163,47 @@ def execute_supernova_live_scan_with_fast_safety_audit(
                 pass
 
 
+def execute_supernova_live_scan_with_fast_safety_ops_audit(
+    market,
+    *,
+    fast_safety_shadow_enabled: bool = False,
+    fast_safety_ops_writer: object | None = None,
+):
+    effective_shadow_enabled = fast_safety_shadow_enabled is True
+
+    if not effective_shadow_enabled:
+        return execute_supernova_live_scan_with_fast_safety_audit(
+            market,
+            fast_safety_shadow_enabled=False,
+            fast_safety_audit_sink=None,
+        )
+
+    resolved_writer = None
+    audit_sink = None
+
+    if callable(fast_safety_ops_writer):
+        resolved_writer = fast_safety_ops_writer
+    elif fast_safety_ops_writer is None:
+        try:
+            from ops_logger import insert_ops_event
+
+            resolved_writer = insert_ops_event
+        except Exception:
+            resolved_writer = None
+
+    if callable(resolved_writer):
+        try:
+            audit_sink = create_fast_safety_ops_sink(resolved_writer)
+        except Exception:
+            audit_sink = None
+
+    return execute_supernova_live_scan_with_fast_safety_audit(
+        market,
+        fast_safety_shadow_enabled=True,
+        fast_safety_audit_sink=audit_sink,
+    )
+
+
 # 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
 def run_miner_scheduler():
     """1주일에 한 번 과거 데이터를 마이닝하여 템플릿 갱신 및 CSV 추출을 수행하는 봇"""
@@ -3242,18 +3284,16 @@ def run_live_sniper_scheduler():
             # both (default): cron + daemon 모두 허용
             
             if time_str in kr_target_times:
-                execute_supernova_live_scan_with_fast_safety_audit(
+                execute_supernova_live_scan_with_fast_safety_ops_audit(
                     'KR',
                     fast_safety_shadow_enabled=False,
-                    fast_safety_audit_sink=None,
                 )
                 time.sleep(65) 
                 
             elif ny_time_str in us_target_times:
-                execute_supernova_live_scan_with_fast_safety_audit(
+                execute_supernova_live_scan_with_fast_safety_ops_audit(
                     'US',
                     fast_safety_shadow_enabled=False,
-                    fast_safety_audit_sink=None,
                 )
                 time.sleep(65) 
 
