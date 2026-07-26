@@ -153,11 +153,22 @@ def _minute_ops_snapshot_and_inverse_cycle() -> None:
     if mono - st["last_mono"] < 60.0:
         return
     st["last_mono"] = mono
-    try:
-        summary = run_inverse_etf_sniper_cycle()
-    except Exception as e:
-        print(f"⚠️ [오토파일럿] run_inverse_etf_sniper_cycle 실패: {e}")
-        summary = {"kill_closed": 0, "skipped": None, "entered": None}
+    summary = {"kill_closed": 0, "skipped": None, "entered": None}
+    cfg = load_system_config_kv()
+    current_regime = str(cfg.get("CURRENT_REGIME_KEY", "")).upper()
+    active_signals = cfg.get("ACTIVE_TRAP_SIGNALS", [])
+    if not isinstance(active_signals, (list, tuple)):
+        active_signals = []
+
+    # 하락장(BEAR/HIGH_VOL)이거나, 폭락 대기 종목(Top 3)이 1개라도 있으면 스나이퍼 가동
+    if "BEAR" in current_regime or "HIGH_VOL" in current_regime or len(active_signals) > 0:
+        try:
+            summary = run_inverse_etf_sniper_cycle(active_signals)
+            if summary.get("entered"):
+                print(f"🎯 [AutoPilot] 인버스 스나이퍼 진입 성공: {summary['entered']}")
+        except Exception as e:
+            print(f"⚠️ [AutoPilot] 인버스 스나이퍼 가동 실패: {e}")
+            summary = {"kill_closed": 0, "skipped": None, "entered": None}
     try:
         record_ops_snapshot_from_live_state()
     except Exception as e:
