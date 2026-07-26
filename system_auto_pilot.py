@@ -1454,49 +1454,65 @@ def run_autonomous_analysis():
     # 👑 엔진 9: [V56.0 초신성 내부 서브-데스매치 & 컷오프 자율 튜닝]
     # ---------------------------------------------------------
     report_lines.append("\n⚙️ <b>[V56.0 초신성 내부 결투 및 자율 튜닝]</b>")
-    
-    # 코사인 진영과 ML박스 진영의 유동적 컷오프 자율 튜닝 (독립 진행)
-    for tag_key, config_key in [("COSINE", "DYNAMIC_SUPERNOVA_CUTOFF"), ("MLBOX", "DYNAMIC_ML_BOX_CUTOFF")]:
-        sub_df = df[(df['sig_type'].str.contains(tag_key, na=False)) & (df['status'].str.contains('CLOSED', na=False))]
-        
-        curr_val = current_config.get(config_key, 0.50) # 기본 50%
-        
-        if len(sub_df) >= 5:
-            wr = len(sub_df[sub_df['final_ret'] > 0]) / len(sub_df)
-            pf = sub_df[sub_df['final_ret'] > 0]['final_ret'].sum() / (abs(sub_df[sub_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
-            
-            report_lines.append(f"▪️ [{tag_key} 타점]: 승률 {wr*100:.1f}% | PF {pf:.2f} (표본 {len(sub_df)}개)")
-            
-            if wr < 0.45: # 승률 낮으면 허들 조이기
-                new_val = min(0.90, curr_val + 0.05)
-                current_config[config_key] = round(new_val, 2)
-                report_lines.append(f" 🚨 <b>[방어력 강화]</b> 승률 저조 ➔ 허들을 {new_val*100:.0f}%로 상향 조율")
-            elif wr > 0.65 and len(sub_df) < 10: # 승률 좋은데 표본 적으면 그물 넓히기
-                new_val = max(0.40, curr_val - 0.03)
-                current_config[config_key] = round(new_val, 2)
-                report_lines.append(f" 🔥 <b>[공격적 포착]</b> 승률 우수 ➔ 허들을 {new_val*100:.0f}%로 하향 조율")
-            else:
-                report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
-        else:
-            # 💡 [100년 영속 진화 로직 적용: Cutoff Death-Spiral Relief Valve]
-            try:
-                from elastic_threshold import ElasticThreshold
 
-                _et = ElasticThreshold.from_system_config(current_config, market="KR")
-                new_val, reason = _et.relief_adjust_autonomous_cutoff(
-                    config_key, float(curr_val), n_closed=len(sub_df)
-                )
-                current_config[config_key] = new_val
-                report_lines.append(
-                    f"▪️ [{tag_key} 타점]: 표본 기아 elastic 완화 {curr_val*100:.0f}% ➔ "
-                    f"{new_val*100:.0f}% ({reason})"
-                )
-            except Exception:
-                current_config[config_key] = round(max(0.40, curr_val - 0.02), 2)
-                report_lines.append(
-                    f"▪️ [{tag_key} 타점]: 표본 기아 완화로 커트라인 {curr_val*100:.0f}% ➔ "
-                    f"{current_config[config_key]*100:.0f}% (표본 데이터 수집 중)"
-                )
+    _dd = current_config.get("DOOMSDAY_DEFCON") or {}
+    try:
+        _defcon_level = int(_dd.get("level", 99))
+    except (TypeError, ValueError):
+        _defcon_level = 99
+    is_hardcore_defense_active = (
+        _defcon_level <= 2 or bool(current_config.get("INVERSE_MODE_ACTIVE", False))
+    )
+
+    if is_hardcore_defense_active:
+        for _lock_key in ("DYNAMIC_SUPERNOVA_CUTOFF", "DYNAMIC_ML_BOX_CUTOFF"):
+            current_config[_lock_key] = 0.85
+        report_lines.append(
+            "🚨 [절대 방어 락다운] 폭락장/인버스 모드 가동으로 표본 기아 구제 전면 무효화 및 허들 극단적 상향"
+        )
+    else:
+        # 코사인 진영과 ML박스 진영의 유동적 컷오프 자율 튜닝 (독립 진행)
+        for tag_key, config_key in [("COSINE", "DYNAMIC_SUPERNOVA_CUTOFF"), ("MLBOX", "DYNAMIC_ML_BOX_CUTOFF")]:
+            sub_df = df[(df['sig_type'].str.contains(tag_key, na=False)) & (df['status'].str.contains('CLOSED', na=False))]
+
+            curr_val = current_config.get(config_key, 0.50) # 기본 50%
+
+            if len(sub_df) >= 5:
+                wr = len(sub_df[sub_df['final_ret'] > 0]) / len(sub_df)
+                pf = sub_df[sub_df['final_ret'] > 0]['final_ret'].sum() / (abs(sub_df[sub_df['final_ret'] <= 0]['final_ret'].sum()) + 0.1)
+
+                report_lines.append(f"▪️ [{tag_key} 타점]: 승률 {wr*100:.1f}% | PF {pf:.2f} (표본 {len(sub_df)}개)")
+
+                if wr < 0.45: # 승률 낮으면 허들 조이기
+                    new_val = min(0.90, curr_val + 0.05)
+                    current_config[config_key] = round(new_val, 2)
+                    report_lines.append(f" 🚨 <b>[방어력 강화]</b> 승률 저조 ➔ 허들을 {new_val*100:.0f}%로 상향 조율")
+                elif wr > 0.65 and len(sub_df) < 10: # 승률 좋은데 표본 적으면 그물 넓히기
+                    new_val = max(0.40, curr_val - 0.03)
+                    current_config[config_key] = round(new_val, 2)
+                    report_lines.append(f" 🔥 <b>[공격적 포착]</b> 승률 우수 ➔ 허들을 {new_val*100:.0f}%로 하향 조율")
+                else:
+                    report_lines.append(f" ✅ <b>[최적 균형]</b> 현재 커트라인({curr_val*100:.0f}%) 유지")
+            else:
+                # 💡 [100년 영속 진화 로직 적용: Cutoff Death-Spiral Relief Valve]
+                try:
+                    from elastic_threshold import ElasticThreshold
+
+                    _et = ElasticThreshold.from_system_config(current_config, market="KR")
+                    new_val, reason = _et.relief_adjust_autonomous_cutoff(
+                        config_key, float(curr_val), n_closed=len(sub_df)
+                    )
+                    current_config[config_key] = new_val
+                    report_lines.append(
+                        f"▪️ [{tag_key} 타점]: 표본 기아 elastic 완화 {curr_val*100:.0f}% ➔ "
+                        f"{new_val*100:.0f}% ({reason})"
+                    )
+                except Exception:
+                    current_config[config_key] = round(max(0.40, curr_val - 0.02), 2)
+                    report_lines.append(
+                        f"▪️ [{tag_key} 타점]: 표본 기아 완화로 커트라인 {curr_val*100:.0f}% ➔ "
+                        f"{current_config[config_key]*100:.0f}% (표본 데이터 수집 중)"
+                    )
 
     # ---------------------------------------------------------
     # 💀 엔진 10: [V60.0 초신성 템플릿 생존 토너먼트 및 국고 환수]

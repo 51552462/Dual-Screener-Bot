@@ -1143,8 +1143,40 @@ class MetaGovernor:
         else:
             base_kelly = prior_g
 
-        # 👑 [초월적 방어 배선] 진화형 둠스데이 감쇠기를 통한 글로벌 켈리 하드코어 압착
-        final_kelly = compress_global_kelly_by_evolution(base_kelly, self._system_cfg_snapshot)
+        # 👑 [Fast Safety Kernel] 당일 승률 붕괴 클러치 — KR/US 중 더 보수적인 kelly_mult
+        catastrophic_mult = 1.0
+        if ctx.forward_db_path and os.path.isfile(ctx.forward_db_path):
+            cat_conn = None
+            try:
+                from catastrophic_day_guard import evaluate_catastrophic_day_clutch_for_market
+
+                uri = f"file:{ctx.forward_db_path.replace(chr(92), '/')}?mode=ro"
+                cat_conn = sqlite3.connect(uri, uri=True, timeout=30)
+                for mkt in ("KR", "US"):
+                    ev = evaluate_catastrophic_day_clutch_for_market(
+                        cat_conn,
+                        mkt,
+                        sys_config=self._system_cfg_snapshot,
+                    )
+                    mult = float(ev.get("kelly_mult", 1.0) or 1.0)
+                    catastrophic_mult = min(catastrophic_mult, mult)
+            except Exception as e:
+                logger.warning(
+                    "MetaGovernor treasury: catastrophic day clutch skip: %s", e
+                )
+            finally:
+                if cat_conn is not None:
+                    try:
+                        cat_conn.close()
+                    except Exception:
+                        pass
+
+        # 👑 [초월적 방어 배선] 둠스데이 + 당일클러치 이중 브레이크 통합
+        final_kelly = compress_global_kelly_by_evolution(
+            base_kelly,
+            self._system_cfg_snapshot,
+            catastrophic_mult=catastrophic_mult,
+        )
         self._working["META_GLOBAL_KELLY_MULT"] = final_kelly
         
         self._working["META_TREASURY_MODE"] = "DEFENSE" if zeroed > 0 else "NORMAL"
@@ -1297,13 +1329,6 @@ class MetaGovernor:
                     row["is_live_approved"] = False
                     row["display_name"] = str(row.get("display_name", "")).replace("🏅LIVE_APPROVED ", "").strip()
         # ===========================================================================
-            prior_registry=prior_list,
-            health=health,
-            system_cfg=self._system_cfg_snapshot,
-            validated_mutants_path=ctx.validated_mutants_path,
-            forward_db_path=registry_db_path,
-            meta_working=self._working,
-        )
 
         # ===========================================================================
         # 👑 [실매매 졸업 심사대 (The Graduation Gate)]
@@ -1486,26 +1511,45 @@ if __name__ == "__main__":
 # ===========================================================================
 # [초월적 방어] 진화형 둠스데이 감쇠기를 통한 글로벌 켈리 압착 (Global Kelly Compression)
 # ===========================================================================
-def compress_global_kelly_by_evolution(base_kelly_mult: float, sys_config: dict) -> float:
+def compress_global_kelly_by_evolution(
+    base_kelly_mult: float,
+    sys_config: dict,
+    *,
+    catastrophic_mult: float = 1.0,
+) -> float:
     """
-    doomsday_dampener의 진화하는 Gamma(γ) 값을 기반으로 글로벌 켈리 승수를 압착합니다.
-    하락장(GlobalScore 상승) 시 롱(Long) 포지션의 자본줄을 물리적으로 틀어막아 MDD 3%를 방어합니다.
+    doomsday_dampener의 진화하는 Gamma(γ) 값과 당일 승률 붕괴 클러치를 통합해
+    글로벌 켈리 승수를 압착합니다. 두 감쇠 중 더 보수적인(낮은) 승수만 base_kelly에 곱합니다.
     """
+    base = float(base_kelly_mult or 0.0)
+    cat_mult = max(0.0, min(1.0, float(catastrophic_mult or 1.0)))
+
     try:
         from doomsday_dampener import apply_doomsday_dampening
-        
-        # 기계가 스스로 학습한 감마(γ) 값에 따라 베이스 켈리 승수를 깎아냅니다.
-        compressed_kelly = apply_doomsday_dampening(base_kelly_mult, sys_config=sys_config)
-        
-        # [절대 방어 락다운] 
+
+        doomsday_kelly = apply_doomsday_dampening(base, sys_config=sys_config)
+        if base > 1e-12:
+            doomsday_factor = doomsday_kelly / base
+        else:
+            doomsday_factor = doomsday_kelly
+
+        conservative_factor = min(doomsday_factor, cat_mult)
+        compressed_kelly = base * conservative_factor
+
+        # [절대 방어 락다운]
         # 압착된 켈리 승수가 0.15 미만으로 떨어질 정도로 시장이 위험하다면,
         # 어설픈 매매를 원천 차단하기 위해 켈리 승수를 0.05(초미세 정찰 비중)로 극단적 하드 락(Hard Lock)을 겁니다.
         if compressed_kelly < 0.15:
-            print("🚨 [System Alert] 진화형 둠스데이 감쇠 발동: 글로벌 켈리 승수 0.05로 락다운 (MDD 철통 방어)")
+            print(
+                "🚨 [System Alert] 진화형 둠스데이·당일클러치 이중 감쇠 발동: "
+                "글로벌 켈리 승수 0.05로 락다운 (MDD 철통 방어)"
+            )
             return 0.05
-            
+
         return round(compressed_kelly, 4)
-        
+
     except ImportError:
-        # 모듈이 없을 경우를 대비한 안전 장치 (Fail-safe)
-        return base_kelly_mult
+        compressed_kelly = base * cat_mult
+        if compressed_kelly < 0.15:
+            return 0.05
+        return round(compressed_kelly, 4)
