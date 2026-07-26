@@ -856,6 +856,83 @@ def _safe_float(v: object, default: float = 0.0) -> float:
         return default
 
 
+def _extract_close_volume_series(
+    trade: Mapping[str, Any],
+) -> tuple[Optional[List[float]], Optional[List[float]]]:
+    """trade 딕셔너리·봉 시퀀스에서 종가/거래량 리스트를 추출한다."""
+    for close_key, volume_key in (
+        ("close_series", "volume_series"),
+        ("closes", "volumes"),
+        ("bar_closes", "bar_volumes"),
+        ("close_prices", "volume_prices"),
+    ):
+        raw_close = trade.get(close_key)
+        raw_volume = trade.get(volume_key)
+        if raw_close is None or raw_volume is None:
+            continue
+        try:
+            close_series = [float(v) for v in raw_close]
+            volume_series = [float(v) for v in raw_volume]
+        except (TypeError, ValueError):
+            continue
+        if close_series and volume_series and len(close_series) == len(volume_series):
+            return close_series, volume_series
+
+    for bars_key in ("bars", "ohlcv_bars", "bar_history", "recent_bars"):
+        bars = trade.get(bars_key)
+        if not isinstance(bars, (list, tuple)) or not bars:
+            continue
+
+        close_series: List[float] = []
+        volume_series: List[float] = []
+        for bar in bars:
+            if not isinstance(bar, Mapping):
+                continue
+            close_val = bar.get("close")
+            if close_val is None:
+                close_val = bar.get("Close")
+            if close_val is None:
+                close_val = bar.get("c")
+            volume_val = bar.get("volume")
+            if volume_val is None:
+                volume_val = bar.get("Volume")
+            if volume_val is None:
+                volume_val = bar.get("v")
+            if close_val is None or volume_val is None:
+                continue
+            try:
+                close_series.append(float(close_val))
+                volume_series.append(float(volume_val))
+            except (TypeError, ValueError):
+                continue
+
+        if close_series and volume_series and len(close_series) == len(volume_series):
+            return close_series, volume_series
+
+    return None, None
+
+
+def _resolve_volume_divergence_from_trade(
+    trade: Mapping[str, Any],
+    *,
+    lookback: int = 10,
+) -> float:
+    """종가/거래량 시계열이 부족하거나 계산 실패 시 0.0으로 폴백한다."""
+    try:
+        close_series, volume_series = _extract_close_volume_series(trade)
+        if not close_series or not volume_series:
+            return 0.0
+        if len(close_series) < lookback or len(volume_series) < lookback:
+            return 0.0
+        return compute_volume_divergence(
+            close_series,
+            volume_series,
+            lookback=lookback,
+        )
+    except Exception:
+        return 0.0
+
+
 def _classify_via_dynamic_exit_models(
     trade: Mapping[str, Any],
     *,
@@ -886,7 +963,7 @@ def _classify_via_dynamic_exit_models(
             or trade.get("sector_regime")
             or "UNKNOWN"
         )
-        volume_divergence = _safe_float(trade.get("volume_divergence"), 0.0)
+        volume_divergence = _resolve_volume_divergence_from_trade(trade, lookback=10)
         mfe = _safe_float(trade.get("mfe"))
         band = float(breakeven_band_pct)
 
@@ -1510,3 +1587,120 @@ class AlphaDecayTakeProfit:
         probability = self._stable_logistic(z)
         should_take_profit = probability >= self.trigger_probability
         return float(probability), bool(should_take_profit)
+
+
+# ===========================================================================
+# Mission 6b — 거래량 약화 지표 (Volume Divergence, 순수 math · 무 I/O)
+# ===========================================================================
+def _smoothstep(u: float) -> float:
+    """[0, 1] smoothstep: u²(3 - 2u)."""
+    import math
+
+    x = max(0.0, min(1.0, float(u)))
+    if not math.isfinite(x):
+        return 0.0
+    return x * x * (3.0 - 2.0 * x)
+
+
+def _stable_price_position(
+    close_series: Sequence[float],
+    lookback: int,
+) -> float:
+    """
+    lookback 구간에서 마지막 종가의 상대 위치 [0, 1].
+    0 = 구간 최저, 1 = 구간 최고.
+    """
+    import math
+
+    if lookback < 2:
+        return 0.0
+
+    window = list(close_series)[-lookback:]
+    clean: List[float] = []
+    for value in window:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed):
+            clean.append(parsed)
+
+    if len(clean) < 2:
+        return 0.0
+
+    lo = min(clean)
+    hi = max(clean)
+    last = clean[-1]
+    span = hi - lo
+    eps = 1e-12
+    if span <= eps:
+        return 0.5
+
+    return max(0.0, min(1.0, (last - lo) / span))
+
+
+def _stable_volume_ratio(
+    volume_series: Sequence[float],
+    lookback: int,
+) -> float:
+    """
+    최근 봉 거래량 / 직전 lookback-1 평균 거래량.
+    수치 안정성을 위해 분모에 epsilon을 둔다.
+    """
+    import math
+
+    if lookback < 2:
+        return 0.0
+
+    window = list(volume_series)[-lookback:]
+    clean: List[float] = []
+    for value in window:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed) and parsed >= 0.0:
+            clean.append(parsed)
+
+    if len(clean) < 2:
+        return 0.0
+
+    recent = clean[-1]
+    prior = clean[:-1]
+    avg_prior = sum(prior) / len(prior)
+    eps = 1e-12
+    if avg_prior <= eps:
+        return 1.0 if recent > eps else 0.0
+
+    ratio = recent / avg_prior
+    if not math.isfinite(ratio):
+        return 0.0
+    return max(0.0, ratio)
+
+
+def compute_volume_divergence(
+    close_series: Sequence[float],
+    volume_series: Sequence[float],
+    lookback: int = 10,
+) -> float:
+    """
+    가격 고점 대비 거래량 약화(negative volume divergence) 지수 [0, 1].
+
+    가격이 lookback 구간 상단에 위치하는데 거래량이 평균 대비 약하면
+    높은 divergence score를 반환한다.
+    """
+    if lookback < 2:
+        return 0.0
+
+    closes = list(close_series) if close_series is not None else []
+    volumes = list(volume_series) if volume_series is not None else []
+    if len(closes) < lookback or len(volumes) < lookback:
+        return 0.0
+
+    price_pos = _stable_price_position(closes, lookback)
+    volume_ratio = _stable_volume_ratio(volumes, lookback)
+
+    # ratio=1.0 -> 중립, ratio>=2.0 -> 강한 거래량, ratio<=0.5 -> 약화.
+    volume_strength = _smoothstep(min(1.0, volume_ratio / 2.0))
+    raw_divergence = price_pos * (1.0 - volume_strength)
+    return _smoothstep(raw_divergence)
