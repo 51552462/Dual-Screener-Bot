@@ -177,7 +177,7 @@ GAP_HEAL_MAX_AGE_SEC: float = 120.0
 GAP_HEAL_MAX_SYMBOLS_SCAN: int = 50
 
 # OHLCV bar limits (use-case별)
-OHLCV_SIGNAL_BAR_LIMIT: int = 300      # scanner / supernova / data_miner
+OHLCV_SIGNAL_BAR_LIMIT: int = 250      # scanner / supernova / data_miner (4GB RAM OOM 방지)
 OHLCV_REGIME_BAR_LIMIT: int = 220       # EMA200 · regime (auto_pilot bench)
 GATES_BREADTH_BENCH_BAR_LIMIT: int = 80   # gates.py BTC/ETH breadth benchmark tail
 OHLCV_FORENSICS_BAR_LIMIT: int = 400     # pump/forensics 1D scan

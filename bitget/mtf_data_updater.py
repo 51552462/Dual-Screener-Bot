@@ -467,8 +467,7 @@ def run_mtf_update():
     timeframes = config.get("timeframes", ["1d", "4h", "2h", "1h"])
     ohlcv_limit = int(config.get("ohlcv_limit", 500))
     default_quote = str(config.get("default_quote", "USDT"))
-    workers = int(config.get("parallel", {}).get("max_workers_per_market_type", 8))
-    workers = max(1, min(workers, 5))  # 서버 안정성 기준 상한
+    workers = 1  # 4GB RAM OOM 방지: 데이터 수집 스레드 최소화
     uni_cfg = config.get("universe", {})
 
     started = utc_datetime_str_tz()

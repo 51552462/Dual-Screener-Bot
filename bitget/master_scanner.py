@@ -78,7 +78,7 @@ from telegram_message_queue import (
 sent_today = set()
 last_run_date = ""
 LOG_FILE = os.path.join(logs_dir(), "sent_log_bitget_master.txt")
-MAX_SCAN_WORKERS = 4
+MAX_SCAN_WORKERS = 1
 
 
 _SCANNER_ENGINE_ALLOWLIST = {
