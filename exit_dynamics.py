@@ -91,6 +91,17 @@ def load_ratchet_state(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         st = cfg.get(RATCHET_STATE_KEY)
         if isinstance(st, dict):
             base.update({k: st[k] for k in st if k in DEFAULT_RATCHET_STATE})
+
+    regime = str(cfg.get("CURRENT_REGIME_KEY", "")).upper() if isinstance(cfg, dict) else "UNKNOWN"
+
+    if "CHOP" in regime or "SIDEWAYS" in regime:
+        base["kappa_max"] = min(float(base.get("kappa_max", 0.12)), 0.05)
+        base["kappa_min"] = min(float(base.get("kappa_min", 0.05)), 0.02)
+        base["anchor_ret"] = min(float(base.get("anchor_ret", 20.0)), 5.0)
+    elif "BEAR" in regime or "HIGH_VOL" in regime:
+        base["kappa_max"] = min(float(base.get("kappa_max", 0.12)), 0.08)
+        base["anchor_ret"] = min(float(base.get("anchor_ret", 20.0)), 10.0)
+
     return base
 
 
