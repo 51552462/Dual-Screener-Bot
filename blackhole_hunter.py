@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import random
 import sqlite3
@@ -38,6 +39,25 @@ DEFAULT_MAX_US_TICKERS = 120
 YF_CHUNK = 8
 OHLCV_MIN_BARS = 260
 SPY_PERIOD = "730d"
+
+# ===========================================================================
+# Active Trapping — 즉각적 폭락(Decay) 확률 설정
+# ===========================================================================
+# 아래 값은 규칙 기반 초기값입니다. 실제 청산 데이터가 충분히 쌓이면 재학습 대상으로 사용합니다.
+ACTIVE_TRAP_MIN_DECAY_PROBABILITY = 0.60
+DECAY_BBE_HALF_RISK = 8.0
+
+DECAY_INTERCEPT = -3.50
+DECAY_BETA_CPV = 1.25
+DECAY_BETA_TB_WEAK = 0.85
+DECAY_BETA_BBE_WEAK = 1.40
+DECAY_BETA_RS_WEAK = 1.80
+DECAY_BETA_BBE_RS_INTERACTION = 1.10
+
+DECAY_SQUEEZE_FLAG_PENALTY = 4.00
+DECAY_SHORT_INTEREST_PENALTY = 5.00
+DECAY_SHORT_CENTER = 0.13
+DECAY_SHORT_TRANSITION = 0.015
 
 
 def load_config(max_retries: int = 5) -> dict:
@@ -108,10 +128,32 @@ def init_short_db() -> None:
                 v_energy REAL,
                 dyn_rs REAL,
                 entry_price REAL,
+                decay_probability REAL,
+                short_percent REAL,
+                short_ratio REAL,
+                squeeze_risk INTEGER,
                 created_at TEXT
             )
             """
         )
+
+        # 기존 short_data.sqlite에도 신규 컬럼을 자동 추가합니다.
+        # SQLite의 ADD COLUMN은 기존 데이터와 인덱스를 보존합니다.
+        existing_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(short_forward_trades)").fetchall()
+        }
+        migration_columns = {
+            "decay_probability": "REAL",
+            "short_percent": "REAL",
+            "short_ratio": "REAL",
+            "squeeze_risk": "INTEGER",
+        }
+        for column_name, column_type in migration_columns.items():
+            if column_name not in existing_columns:
+                conn.execute(
+                    f'ALTER TABLE short_forward_trades ADD COLUMN "{column_name}" {column_type}'
+                )
+
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS ux_short_code_entrydate
@@ -406,24 +448,42 @@ def _squeeze_guard_skip(df: pd.DataFrame) -> bool:
     return False
 
 
-def is_squeeze_risk(ticker_symbol: str) -> Optional[bool]:
-    """
-    3값 스퀴즈 가드: True=고위험, False=양 지표 모두 수치상 저위험, None=정보 없음·API 실패(블라인드).
+def _normalize_short_percent(short_percent: float) -> float:
+    """0.15와 15.0 형식을 모두 0.15로 정규화."""
+    value = float(short_percent)
+    if not math.isfinite(value):
+        raise ValueError("short_percent가 유한한 숫자가 아닙니다.")
+    value = max(0.0, value)
+    if value > 1.0:
+        value /= 100.0
+    return float(min(1.0, value))
 
-    - 한쪽이라도 임계 초과면 True.
-    - shortPercentOfFloat(또는 snake_case)와 shortRatio(또는 short_ratio)를 **둘 다**
-      유효하게 읽고 각각 임계 이하일 때만 False.
-    - 그 외(예외, 빈 info, 필드 누락, 파싱 불가, NaN/Inf)는 None — 숏 진입 금지(방어적 배제).
+
+def get_squeeze_risk_metrics(
+    ticker_symbol: str,
+) -> Tuple[Optional[bool], Optional[float], Optional[float]]:
+    """
+    스퀴즈 위험과 원시 지표를 한 번의 yfinance 호출로 반환합니다.
+
+    Returns
+    -------
+    (flag, short_percent, short_ratio)
+      - flag=True: short float 15% 이상 또는 short ratio 5 초과
+      - flag=False: 두 지표가 모두 정상적으로 수집되고 임계 미만
+      - flag=None: API 실패 또는 지표 일부 누락. 숏 진입을 방어적으로 배제
+      - short_percent는 0.15 == 15% 형식으로 반환
     """
     sym = str(ticker_symbol).strip()
     if not sym:
-        return None
+        return None, None, None
+
     try:
         info = yf.Ticker(sym).info
     except Exception:
-        return None
+        return None, None, None
+
     if not isinstance(info, dict) or not info:
-        return None
+        return None, None, None
 
     spf_raw = info.get("shortPercentOfFloat")
     if spf_raw is None:
@@ -433,35 +493,116 @@ def is_squeeze_risk(ticker_symbol: str) -> Optional[bool]:
     if sr_raw is None:
         sr_raw = info.get("short_ratio")
 
-    spf_ok = False
-    spf_high = False
+    short_percent: Optional[float] = None
+    short_ratio: Optional[float] = None
+
     if spf_raw is not None:
         try:
-            spf = float(spf_raw)
-            if not (np.isnan(spf) or np.isinf(spf)):
-                if spf > 1.0:
-                    spf /= 100.0
-                spf_ok = True
-                spf_high = spf > 0.15
-        except (TypeError, ValueError):
-            pass
+            short_percent = _normalize_short_percent(float(spf_raw))
+        except (TypeError, ValueError, OverflowError):
+            short_percent = None
 
-    sr_ok = False
-    sr_high = False
     if sr_raw is not None:
         try:
-            sr = float(sr_raw)
-            if not (np.isnan(sr) or np.isinf(sr)):
-                sr_ok = True
-                sr_high = sr > 5.0
-        except (TypeError, ValueError):
-            pass
+            parsed_ratio = float(sr_raw)
+            if math.isfinite(parsed_ratio) and parsed_ratio >= 0.0:
+                short_ratio = parsed_ratio
+        except (TypeError, ValueError, OverflowError):
+            short_ratio = None
 
-    if spf_high or sr_high:
-        return True
-    if spf_ok and sr_ok and (not spf_high) and (not sr_high):
-        return False
-    return None
+    # 기존 방어 원칙 유지: 두 값이 모두 있어야 정상 판정합니다.
+    if short_percent is None or short_ratio is None:
+        return None, short_percent, short_ratio
+
+    squeeze_flag = bool(short_percent >= 0.15 or short_ratio > 5.0)
+    return squeeze_flag, short_percent, short_ratio
+
+
+def is_squeeze_risk(ticker_symbol: str) -> Optional[bool]:
+    """
+    기존 외부 호출과의 호환성을 위한 래퍼.
+    상세 수치는 get_squeeze_risk_metrics()를 사용합니다.
+    """
+    flag, _short_percent, _short_ratio = get_squeeze_risk_metrics(ticker_symbol)
+    return flag
+
+
+def _clip01(value: float) -> float:
+    return float(min(1.0, max(0.0, float(value))))
+
+
+def _stable_sigmoid(value: float) -> float:
+    """overflow를 방지하는 수치적으로 안정적인 시그모이드."""
+    x = float(value)
+    if x >= 0.0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
+def calculate_decay_probability(
+    cpv: float,
+    tb: float,
+    bbe: float,
+    rs: float,
+    is_squeeze_risk_flag: bool,
+    short_percent: float,
+) -> float:
+    """
+    독성 바운딩 박스 종목의 단기 Decay 확률을 0.0~1.0으로 반환합니다.
+
+    현재 시스템 정의에 맞춰 다음 방향으로 계산합니다.
+      CPV 높음 + TB 낮음 + BBE 낮음 + RS 낮음 -> Decay 상승
+      squeeze flag 또는 높은 short percent -> Decay 강한 하향 패널티
+
+    반환값은 규칙 기반 초기 확률 점수입니다. 실제 확률 교정은 향후 청산 데이터로 수행합니다.
+    """
+    try:
+        cpv_f = float(cpv)
+        tb_f = float(tb)
+        bbe_f = float(bbe)
+        rs_f = float(rs)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("cpv, tb, bbe, rs는 숫자여야 합니다.") from exc
+
+    if not all(math.isfinite(v) for v in (cpv_f, tb_f, bbe_f, rs_f)):
+        raise ValueError("cpv, tb, bbe, rs에 NaN 또는 Inf가 있습니다.")
+
+    short_fraction = _normalize_short_percent(short_percent)
+
+    # dyn_cpv/dyn_tb/dyn_rs는 현재 시스템의 1~10 동적 점수입니다.
+    cpv_toxicity = _clip01((cpv_f - 1.0) / 9.0)
+    tb_weakness = 1.0 - _clip01((tb_f - 1.0) / 9.0)
+    rs_weakness = 1.0 - _clip01((rs_f - 1.0) / 9.0)
+
+    # BBE는 무상한 원시값이므로 0에서 1, DECAY_BBE_HALF_RISK에서 0.5가 되는 포화 변환.
+    bbe_weakness = 1.0 / (1.0 + max(0.0, bbe_f) / DECAY_BBE_HALF_RISK)
+
+    # 낮은 에너지와 낮은 시장 강도가 동시에 발생할 때 붕괴 위험을 추가 증폭.
+    structural_collapse = bbe_weakness * rs_weakness
+
+    base_logit = (
+        DECAY_INTERCEPT
+        + DECAY_BETA_CPV * cpv_toxicity
+        + DECAY_BETA_TB_WEAK * tb_weakness
+        + DECAY_BETA_BBE_WEAK * bbe_weakness
+        + DECAY_BETA_RS_WEAK * rs_weakness
+        + DECAY_BETA_BBE_RS_INTERACTION * structural_collapse
+    )
+
+    # 13% 부근부터 부드럽게 증가하고 15% 이상에서 강해지는 공매도 혼잡 패널티.
+    short_squeeze_pressure = _stable_sigmoid(
+        (short_fraction - DECAY_SHORT_CENTER) / DECAY_SHORT_TRANSITION
+    )
+
+    final_logit = (
+        base_logit
+        - DECAY_SQUEEZE_FLAG_PENALTY * (1.0 if bool(is_squeeze_risk_flag) else 0.0)
+        - DECAY_SHORT_INTEREST_PENALTY * short_squeeze_pressure
+    )
+
+    return _clip01(_stable_sigmoid(final_logit))
 
 
 def compute_us_4d_dna_last(
@@ -547,7 +688,13 @@ def _insert_short_record(
     dna: Dict[str, float],
     price: float,
     entry_date: str,
+    *,
+    decay_probability: Optional[float] = None,
+    short_percent: Optional[float] = None,
+    short_ratio: Optional[float] = None,
+    squeeze_risk: Optional[bool] = None,
 ) -> bool:
+    """숏 후보와 Active Trap 진단값을 숏 전용 장부에 기록합니다."""
     init_short_db()
     conn = sqlite3.connect(SHORT_DB_PATH, timeout=45)
     try:
@@ -555,8 +702,9 @@ def _insert_short_record(
             """
             INSERT OR IGNORE INTO short_forward_trades
             (entry_date, market, code, name, trade_type, status, matched_pattern,
-             dyn_cpv, dyn_tb, v_energy, dyn_rs, entry_price, created_at)
-            VALUES (?, 'US', ?, ?, 'SHORT', 'OPEN', ?, ?, ?, ?, ?, ?, ?)
+             dyn_cpv, dyn_tb, v_energy, dyn_rs, entry_price, decay_probability,
+             short_percent, short_ratio, squeeze_risk, created_at)
+            VALUES (?, 'US', ?, ?, 'SHORT', 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry_date,
@@ -568,12 +716,17 @@ def _insert_short_record(
                 dna.get("v_energy"),
                 dna.get("dyn_rs"),
                 price,
+                float(decay_probability) if decay_probability is not None else None,
+                float(short_percent) if short_percent is not None else None,
+                float(short_ratio) if short_ratio is not None else None,
+                int(bool(squeeze_risk)) if squeeze_risk is not None else None,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
         conn.commit()
         return (cur.rowcount or 0) > 0
-    except Exception:
+    except Exception as exc:
+        logger.exception("blackhole_hunter: short record insert failed for %s: %s", code, exc)
         return False
     finally:
         conn.close()
@@ -588,6 +741,16 @@ def scan_blackhole_targets(max_us_tickers: int = DEFAULT_MAX_US_TICKERS) -> Dict
     init_short_db()
     cfg = load_config()
     merged_rules = _load_us_toxic_ml_patterns()
+
+    # system_config.json에서 임계값을 선택적으로 조정할 수 있습니다.
+    # 값이 잘못되면 안전한 기본값 0.60을 사용합니다.
+    try:
+        active_trap_threshold = float(
+            cfg.get("ACTIVE_TRAP_MIN_DECAY_PROBABILITY", ACTIVE_TRAP_MIN_DECAY_PROBABILITY)
+        )
+        active_trap_threshold = min(0.95, max(0.05, active_trap_threshold))
+    except (TypeError, ValueError):
+        active_trap_threshold = ACTIVE_TRAP_MIN_DECAY_PROBABILITY
     today = datetime.now().strftime("%Y-%m-%d")
     now_us = datetime.now(ZoneInfo("America/New_York"))
 
@@ -638,6 +801,7 @@ def scan_blackhole_targets(max_us_tickers: int = DEFAULT_MAX_US_TICKERS) -> Dict
 
     # DB에 실제 삽입된 행만 집계(INSERT OR IGNORE 시 중복·무시는 rowcount==0 → 팬텀 히트 방지)
     hits_verified: List[str] = []
+    inserted_targets = []
 
     for i in range(0, len(tickers), YF_CHUNK):
         chunk = tickers[i : i + YF_CHUNK]
@@ -681,26 +845,73 @@ def scan_blackhole_targets(max_us_tickers: int = DEFAULT_MAX_US_TICKERS) -> Dict
             if not matched:
                 continue
 
-            squeeze = is_squeeze_risk(tk)
-            if squeeze is True:
-                print(f"⚠️ [스퀴즈 위험] {tk} 잔고 과다 배제")
-                continue
-            if squeeze is None:
+            squeeze, short_percent, short_ratio = get_squeeze_risk_metrics(tk)
+            if squeeze is None or short_percent is None:
                 print(
-                    f"⚠️ [API 블라인드] {tk} 데이터 수집 실패로 인한 방어적 배제 (Defensive Skip)"
+                    f"⚠️ [API 블라인드] {tk} 공매도 데이터 불완전 — 방어적 배제 (Defensive Skip)"
+                )
+                continue
+
+            try:
+                decay_probability = calculate_decay_probability(
+                    cpv=cpv,
+                    tb=tb,
+                    bbe=bbe,
+                    rs=drs,
+                    is_squeeze_risk_flag=squeeze,
+                    short_percent=short_percent,
+                )
+            except ValueError as exc:
+                print(f"⚠️ [Decay 계산 실패] {tk}: {exc}")
+                continue
+
+            # 독성 박스에 들어왔더라도 즉각적 붕괴 확률이 낮으면 능동 함정을 발동하지 않습니다.
+            if decay_probability < active_trap_threshold:
+                squeeze_note = " · 스퀴즈 패널티" if squeeze else ""
+                print(
+                    f"🪤 [함정 미발동] {tk} Decay={decay_probability:.1%} "
+                    f"< 기준 {active_trap_threshold:.0%}{squeeze_note}"
                 )
                 continue
 
             nm = tmap.get(tk, tk)
-            inserted = _insert_short_record(tk, nm, matched, dna, price, today)
+            inserted = _insert_short_record(
+                tk,
+                nm,
+                matched,
+                dna,
+                price,
+                today,
+                decay_probability=decay_probability,
+                short_percent=short_percent,
+                short_ratio=short_ratio,
+                squeeze_risk=squeeze,
+            )
             if inserted:
                 if tk not in hits_verified:
                     hits_verified.append(tk)
-                print(f"   💀 SHORT 타겟: {tk} ({nm}) ← {matched}")
+                inserted_targets.append({
+                    "symbol": tk,
+                    "name": nm,
+                    "decay_prob": decay_probability,
+                    "sig_type": f"{matched}_TOXIC_FADE",
+                    "price": price
+                })
+                print(
+                    f"   🕳️ ACTIVE TRAP: {tk} ({nm}) "
+                    f"Decay={decay_probability:.1%} · ShortFloat={short_percent:.1%} ← {matched}"
+                )
+
+    # Decay Probability 기준 내림차순 정렬 후 Top 3 추출
+    inserted_targets.sort(key=lambda x: x["decay_prob"], reverse=True)
+    top_targets = inserted_targets[:3]
+    cfg["ACTIVE_TRAP_SIGNALS"] = top_targets
 
     out = {
         "count": len(hits_verified),
         "symbols": hits_verified,
+        "active_trap_threshold": round(active_trap_threshold, 4),
+        "active_trap_signals": top_targets,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
     cfg["BLACKHOLE_TOXIC_COUNT"] = out
