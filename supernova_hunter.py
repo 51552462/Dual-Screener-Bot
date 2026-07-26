@@ -3242,11 +3242,19 @@ def run_live_sniper_scheduler():
             # both (default): cron + daemon 모두 허용
             
             if time_str in kr_target_times:
-                execute_supernova_live_scan('KR')
+                execute_supernova_live_scan_with_fast_safety_audit(
+                    'KR',
+                    fast_safety_shadow_enabled=False,
+                    fast_safety_audit_sink=None,
+                )
                 time.sleep(65) 
                 
             elif ny_time_str in us_target_times:
-                execute_supernova_live_scan('US')
+                execute_supernova_live_scan_with_fast_safety_audit(
+                    'US',
+                    fast_safety_shadow_enabled=False,
+                    fast_safety_audit_sink=None,
+                )
                 time.sleep(65) 
 
             try:
