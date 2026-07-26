@@ -2012,6 +2012,38 @@ def run_autonomous_analysis():
     # ==========================================
     # 🚀 최종 저장 및 발송 (중복 제거 완료)
     # ==========================================
+    # [M2] 주간 Ratchet RL — forward_trades 7일 lookback → EXIT_RATCHET_STATE 갱신
+    try:
+        from exit_dynamics import RATCHET_STATE_KEY
+        from exit_ratchet_rl import build_ratchet_brief, run_weekly_ratchet_rl_pipeline
+
+        _rl = run_weekly_ratchet_rl_pipeline(
+            sys_config=current_config,
+            db_path=DB_PATH,
+            lookback_days=7,
+            eta=0.04,
+            persist=True,
+        )
+        if _rl.get("update_applied") and isinstance(_rl.get("new_state"), dict):
+            current_config[RATCHET_STATE_KEY] = _rl["new_state"]
+        report_lines.append(build_ratchet_brief(_rl))
+        logger.info("Ratchet RL: %s", _rl.get("log_msg", ""))
+        try:
+            ops_logger.record_gauge_snapshot(
+                "weekly_ratchet_rl",
+                {
+                    "whipsaw_rate": _rl.get("whipsaw_rate"),
+                    "giveback_rate": _rl.get("giveback_rate"),
+                    "sample_count": _rl.get("sample_count"),
+                    "kappa_max_delta": (_rl.get("state_delta") or {}).get("kappa_max"),
+                },
+            )
+        except Exception:
+            pass
+    except Exception as _rl_ex:
+        report_lines.append(f"⚠️ Ratchet RL skip: {_rl_ex}")
+        logger.exception("weekly ratchet rl failed")
+
     try:
         from evolution.fluid_evolution_bridge import run_fluid_evolution_weekend_hooks
 
@@ -2053,10 +2085,17 @@ def send_weekly_flow_master_report():
         print(f"⚠️ [Doomsday-γ] skip: {_gv_ex}")
     # [M2] 프리러너 볼록 래칫 κ 곡선의 주간 RL 자율 갱신(조기청산·이익반납 학습).
     try:
-        from exit_ratchet_rl import evolve_ratchet_kappa
+        from exit_ratchet_rl import build_ratchet_brief, run_weekly_ratchet_rl_pipeline
 
-        _kv = evolve_ratchet_kappa()
-        print(f"🪝 [Ratchet-κ] {_kv.get('rates')} → {_kv.get('state')}")
+        _kv = run_weekly_ratchet_rl_pipeline(
+            sys_config=load_or_create_config(),
+            db_path=DB_PATH,
+            lookback_days=7,
+            eta=0.04,
+            persist=True,
+        )
+        print(f"🪝 [Ratchet-κ] {_kv.get('log_msg', _kv.get('rates'))}")
+        send_telegram_report(build_ratchet_brief(_kv))
     except Exception as _kv_ex:
         print(f"⚠️ [Ratchet-κ] skip: {_kv_ex}")
     # [Mega-Trend 3번] 내부 킬스위치 민감도 RL (기회비용 vs 방어성공).
