@@ -28,6 +28,11 @@ from yf_download_flatten import flatten_yf_download_df
 from market_db_paths import market_db_read_path
 from scanner_funnel import ScanFunnelTracker, format_supernova_scan_report
 from system_config_atomic import CONFIG_DIR, CONFIG_PATH, load_config, update_config
+from fast_safety_runtime_shadow import (
+    FastSafetyShadowContext,
+    evaluate_supernova_fast_safety_shadow,
+    prepare_fast_safety_shadow_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1330,7 +1335,49 @@ def hunt_supernovas(market):
 # ==========================================
 # 🚀 [V101.0 신규 엔진] 초신성 실시간 멀티스레드 스나이퍼
 # ==========================================
-def execute_supernova_live_scan(market):
+def _prepare_fast_safety_shadow_for_scan(
+    market: object,
+    *,
+    shadow_enabled: bool,
+    emitter: object | None,
+) -> FastSafetyShadowContext | None:
+    try:
+        return prepare_fast_safety_shadow_context(
+            market,
+            shadow_enabled=shadow_enabled,
+            emitter=emitter,
+        )
+    except Exception:
+        return None
+
+
+def _evaluate_fast_safety_shadow_candidate(
+    context: FastSafetyShadowContext | None,
+    *,
+    route: object,
+    best_pass_name: object = None,
+    best_pattern_name: object = None,
+    ml_pattern_name: object = None,
+) -> None:
+    if context is None:
+        return
+    try:
+        evaluate_supernova_fast_safety_shadow(
+            context,
+            route=route,
+            best_pass_name=best_pass_name,
+            best_pattern_name=best_pattern_name,
+            ml_pattern_name=ml_pattern_name,
+        )
+    except Exception:
+        return
+
+
+def execute_supernova_live_scan(
+    market,
+    fast_safety_shadow_enabled: bool = False,
+    fast_safety_audit_emitter: object | None = None,
+):
     import time as _time
     from market_session_gate import evaluate_session_deduplication, is_market_open
 
@@ -1732,6 +1779,12 @@ def execute_supernova_live_scan(market):
         market=market,
         universe_size=len(tickers),
         profile="SUPERNOVA",
+    )
+
+    fast_safety_shadow_context = _prepare_fast_safety_shadow_for_scan(
+        market,
+        shadow_enabled=fast_safety_shadow_enabled,
+        emitter=fast_safety_audit_emitter,
     )
 
     def get_similarity(vec1, vec2):
@@ -2454,6 +2507,14 @@ def execute_supernova_live_scan(market):
                         ),
                     )
 
+                    _evaluate_fast_safety_shadow_candidate(
+                        fast_safety_shadow_context,
+                        route="SCOUT",
+                        best_pass_name=best_pass_name,
+                        best_pattern_name=best_pattern_name,
+                        ml_pattern_name=ml_pattern_name,
+                    )
+
                     return {
                         "code": code,
                         "name": _nm_sc,
@@ -2817,6 +2878,19 @@ def execute_supernova_live_scan(market):
                     pass_path=pass_path,
                     final_sig=str(final_sig),
                     final_score=float(final_score),
+                )
+
+                _fast_safety_shadow_route = (
+                    "UNDERDOG_MLBOX"
+                    if pass_path == "UNDERDOG"
+                    else pass_path
+                )
+                _evaluate_fast_safety_shadow_candidate(
+                    fast_safety_shadow_context,
+                    route=_fast_safety_shadow_route,
+                    best_pass_name=best_pass_name,
+                    best_pattern_name=best_pattern_name,
+                    ml_pattern_name=ml_pattern_name,
                 )
 
                 return {
