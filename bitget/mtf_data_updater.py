@@ -340,7 +340,7 @@ def fetch_and_store_benchmarks(market_type: str, timeframes, ohlcv_limit: int):
                 time.sleep(0.06)  # API ban 방어용 미세 지연
                 lim = ohlcv_limit
                 if str(tf).lower() == "1h" and need_2h:
-                    lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
+                    lim = min(ohlcv_limit * 2 + 32, 1000)
                 ohlcv = call_with_retry(
                     lambda s=sym, t=tf, l=lim: exchange.fetch_ohlcv(
                         symbol=s, timeframe=t, limit=l
@@ -435,7 +435,7 @@ def fetch_symbol_ohlcv_payload(
             time.sleep(0.06)  # API ban 방어용 미세 지연
             lim = ohlcv_limit
             if str(tf).lower() == "1h" and need_2h:
-                lim = max(ohlcv_limit, min(ohlcv_limit * 2 + 32, 1500))
+                lim = min(ohlcv_limit * 2 + 32, 1000)
             ohlcv = call_with_retry(
                 lambda t=tf, l=lim: exchange.fetch_ohlcv(
                     symbol=symbol, timeframe=t, limit=l
