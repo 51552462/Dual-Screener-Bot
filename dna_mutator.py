@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
 import random
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 DYNAMIC_DNA_REGISTRY: Dict[str, Dict[str, Any]] = {
     "cpv": {"bounds": (0.05, 2.5), "expression_weight": 1.0},
@@ -41,6 +44,154 @@ MUTATION_HARD_BOUNDARIES: Dict[str, Tuple[float, float]] = {
     "max_drawdown_pct": (0.05, 0.25),
     "trailing_stop_pct": (0.01, 0.10),
 }
+
+# Mahalanobis 적합도 — 4D DNA 벡터 [cpv, tb, bbe, rs]
+_DNA_FITNESS_KEYS = ("cpv", "tb", "bbe", "rs")
+_DNA_FITNESS_DEFAULTS: Dict[str, float] = {
+    "cpv": 0.5,
+    "tb": 1.0,
+    "bbe": 1.0,
+    "rs": 100.0,
+}
+_TOXIC_BBOX_FIELDS = (
+    ("cpv", "dyn_cpv_min", "dyn_cpv_max"),
+    ("tb", "dyn_tb_min", "dyn_tb_max"),
+    ("bbe", "v_energy_min", "v_energy_max"),
+    ("rs", "dyn_rs_min", "dyn_rs_max"),
+)
+_MUTATION_CANDIDATE_COUNT = 20
+
+
+def _anti_pattern_items(ap: Any) -> List[Dict[str, Any]]:
+    """ANTI_PATTERNS(dict|list) → entry dict 리스트."""
+    if isinstance(ap, dict):
+        return [v for v in ap.values() if isinstance(v, dict)]
+    if isinstance(ap, list):
+        return [v for v in ap if isinstance(v, dict)]
+    return []
+
+
+def _bbox_axis_centroid(
+    bounds: Dict[str, Any],
+    dna_key: str,
+    min_key: str,
+    max_key: str,
+    parent: Dict[str, Any],
+) -> float:
+    """bbox min/max 중심 → 없으면 부모 DNA 또는 기본값."""
+    lo = bounds.get(min_key)
+    hi = bounds.get(max_key)
+    if lo is not None and hi is not None:
+        try:
+            return (float(lo) + float(hi)) / 2.0
+        except (TypeError, ValueError):
+            pass
+    raw = bounds.get(dna_key)
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    if dna_key in parent:
+        try:
+            return float(parent[dna_key])
+        except (TypeError, ValueError):
+            pass
+    return float(_DNA_FITNESS_DEFAULTS[dna_key])
+
+
+def build_toxic_centroids(
+    sys_config: Optional[Dict[str, Any]],
+    parent: Dict[str, Any],
+) -> np.ndarray:
+    """
+    sys_config.ANTI_PATTERNS 각 항목의 bbox 중심 → [N, 4] (cpv, tb, bbe, rs).
+    """
+    ap = (sys_config or {}).get("ANTI_PATTERNS")
+    centroids: List[List[float]] = []
+    for bounds in _anti_pattern_items(ap):
+        vec = [
+            _bbox_axis_centroid(bounds, dna_key, lo_k, hi_k, parent)
+            for dna_key, lo_k, hi_k in _TOXIC_BBOX_FIELDS
+        ]
+        centroids.append(vec)
+    if not centroids:
+        return np.zeros((0, 4), dtype=np.float64)
+    return np.asarray(centroids, dtype=np.float64)
+
+
+def _candidate_dna_vector(candidate: Dict[str, Any]) -> np.ndarray:
+    return np.array(
+        [
+            float(candidate.get(k, _DNA_FITNESS_DEFAULTS[k]))
+            for k in _DNA_FITNESS_KEYS
+        ],
+        dtype=np.float64,
+    )
+
+
+def _estimate_dna_inv_cov(centroids: np.ndarray) -> np.ndarray:
+    """독성 중심군 공분산 → ridge 정규화 역행렬 (표본 부족 시 대각 폴백)."""
+    d = len(_DNA_FITNESS_KEYS)
+    tc = np.asarray(centroids, dtype=np.float64)
+    if tc.ndim == 1:
+        tc = tc.reshape(1, -1)
+    if tc.shape[0] < d + 1:
+        var = np.array(
+            [
+                max(
+                    1e-6,
+                    ((DYNAMIC_DNA_REGISTRY[k]["bounds"][1] - DYNAMIC_DNA_REGISTRY[k]["bounds"][0]) / 6.0) ** 2,
+                )
+                for k in _DNA_FITNESS_KEYS
+            ],
+            dtype=np.float64,
+        )
+        return np.diag(1.0 / var)
+    try:
+        cov = np.cov(tc, rowvar=False)
+        cov = cov + 1e-6 * np.eye(d)
+        inv = np.linalg.pinv(cov)
+        if np.all(np.isfinite(inv)):
+            return inv
+    except np.linalg.LinAlgError:
+        pass
+    return np.eye(d)
+
+
+def dna_fitness(
+    candidate: Dict[str, Any],
+    toxic_centroids: np.ndarray,
+    *,
+    expected_return: float = 1.0,
+) -> float:
+    """
+    Mahalanobis 거리 기반 DNA 적합도.
+
+    독성 패턴 중심(toxic_centroids)으로부터 멀수록, expected_return이 높을수록
+    점수가 상승한다. (높을수록 우수)
+    """
+    from regime_analog_engine import mahalanobis_distance
+
+    x = _candidate_dna_vector(candidate)
+    er = max(0.0, float(expected_return))
+
+    tc = np.asarray(toxic_centroids, dtype=np.float64)
+    if tc.size == 0:
+        return er
+    if tc.ndim == 1:
+        tc = tc.reshape(1, -1)
+
+    inv_cov = _estimate_dna_inv_cov(tc)
+    min_dist = min(
+        mahalanobis_distance(x, np.asarray(c, dtype=np.float64), inv_cov)
+        for c in tc
+    )
+    if not math.isfinite(min_dist):
+        return er
+
+    repulsion = math.tanh(min_dist / 3.0)
+    return er * (1.0 + repulsion)
 
 
 def _clip_key(key: str, val: float) -> float:
@@ -83,20 +234,21 @@ def mutate_dna_template(
     name_suffix: Optional[str] = None,
     sys_config: Optional[Dict[str, Any]] = None, # 👑 관제탑(sys_config) 연결
 ) -> Dict[str, Any]:
-    
-    # 👑 [AI 진화 나침반] 부검소에서 만든 오답노트(Anti-Patterns) 로드
+    toxic_centroids = build_toxic_centroids(sys_config, template)
     try:
-        from toxic_antipattern_core import evaluate_toxic_bbox_match, collect_merged_antipattern_rules
-        merged_anti = collect_merged_antipattern_rules(sys_config) if sys_config else {}
-    except Exception:
-        merged_anti = {}
+        expected_return = float(
+            template.get("win_rate") or template.get("wr") or 1.0
+        )
+    except (TypeError, ValueError):
+        expected_return = 1.0
+    expected_return = max(0.0, expected_return)
 
-    best_out = None
-    
-    # 👑 최대 5세대에 걸친 자가 학습 루프 (독성 지대 회피)
-    for attempt in range(5):
+    best_score = float("-inf")
+    best_out: Optional[Dict[str, Any]] = None
+
+    for _ in range(_MUTATION_CANDIDATE_COUNT):
         out = copy.deepcopy(template)
-        
+
         # 1. 연속형 변수(숫자) 미세 변이
         for k in DYNAMIC_DNA_REGISTRY:
             if k in out:
@@ -104,45 +256,28 @@ def mutate_dna_template(
                     out[k] = mutate_gene_value(k, float(out[k]), rate=rate)
                 except (TypeError, ValueError):
                     continue
-                    
+
         # 2. 논리 구조(스위치) 대규모 돌연변이 (Structural Mutation)
         for k in _STRUCTURAL_GENES:
             current_state = bool(out.get(k, False))
-            if random.random() < 0.10:  
+            if random.random() < 0.10:
                 out[k] = not current_state
 
         out = apply_mutation_hard_boundaries(out)
-
-        # 3. 👑 오답노트 검증 (Anti-Pattern Repulsion)
-        is_toxic = False
-        if merged_anti:
-            cpv = float(out.get("cpv", 0.0))
-            tb = float(out.get("tb", 0.0))
-            bbe = float(out.get("bbe", 0.0))
-            rs = float(out.get("rs", 0.0))
-            
-            # 가상의 중립 섹터로 테스트하여 순수하게 '형태와 에너지' 자체의 맹독성만 판별
-            for _, bounds in merged_anti.items():
-                if not isinstance(bounds, dict): continue
-                try:
-                    if evaluate_toxic_bbox_match(bounds, cpv, tb, bbe, rs, "기타/혼합"):
-                        is_toxic = True
-                        break # 독성 감지! 이 돌연변이는 폐기하고 다음 시도로 넘어감
-                except Exception:
-                    pass
-        
-        # 독성이 없다면 완벽한 진화체로 채택하고 루프 종료
-        if not is_toxic:
+        score = dna_fitness(
+            out,
+            toxic_centroids,
+            expected_return=expected_return,
+        )
+        if score > best_score:
+            best_score = score
             best_out = out
-            break
-            
-    # 5번의 시도에도 독성 지대를 빠져나오지 못했다면 강제 마킹 (관찰용)
-    if best_out is None:
-        best_out = out  
-        best_out["mutation_kind"] = "structural_mutate_toxic_warning"
-    else:
-        best_out["mutation_kind"] = "structural_mutate"
 
+    if best_out is None:
+        best_out = copy.deepcopy(template)
+
+    best_out["mutation_kind"] = "structural_mutate"
+    best_out["fitness_score"] = round(best_score, 6)
     best_out["status"] = "INCUBATING"
     best_out["mutated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     best_out["mutation_rate"] = rate
