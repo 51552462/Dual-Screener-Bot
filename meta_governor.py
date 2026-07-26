@@ -1171,6 +1171,10 @@ class MetaGovernor:
                     except Exception:
                         pass
 
+        # 🩸 [자본 출혈 지혈 밸브] 데스매치 켈리 과열 페널티 → 글로벌 켈리 비중 즉시 압착
+        overheat_penalty = float(self._system_cfg_snapshot.get("META_KELLY_OVERHEAT_PENALTY", 1.0))
+        base_kelly = round(base_kelly * overheat_penalty, 4)
+
         # 👑 [초월적 방어 배선] 둠스데이 + 당일클러치 이중 브레이크 통합
         final_kelly = compress_global_kelly_by_evolution(
             base_kelly,

@@ -1366,6 +1366,31 @@ def run_autonomous_analysis():
     # 💡 [핵심] 인위적인 WEIGHT(1.6 vs 0.4) 강제 배분 로직 완전 삭제
     report_lines.append("✅ <b>알림:</b> 인위적 가중치(WEIGHT) 배분 로직이 삭제되었습니다. 개별 시드의 복리 성장이 곧 자본 배분입니다.")
 
+    # 🩸 [자본 출혈 지혈 밸브] 데스매치 켈리 과열 진단 → META_KELLY_OVERHEAT_PENALTY
+    try:
+        from capital_deathmatch import CapitalDeathmatchAnalyzer
+
+        df_closed = df[df['status'].str.contains('CLOSED', na=False)]
+        analyzer = CapitalDeathmatchAnalyzer(reference_capital=20000000)
+        block = analyzer.analyze(df_closed)
+
+        if block.mdd_diff_pp < -1.0:
+            penalty = max(0.5, 1.0 + (block.mdd_diff_pp / 10.0))
+        else:
+            penalty = 1.0
+
+        current_config["META_KELLY_OVERHEAT_PENALTY"] = round(penalty, 2)
+
+        if block.mdd_diff_pp < -1.0:
+            report_lines.append(
+                f"🩸 <b>[자본 출혈 진단]</b> 켈리 베팅 과열 감지 ➔ "
+                f"글로벌 켈리 페널티 {penalty}x 적용 "
+                f"(MDD 차이: {block.mdd_diff_pp:.2f}%p)"
+            )
+    except Exception as _bleed_ex:
+        current_config["META_KELLY_OVERHEAT_PENALTY"] = 1.0
+        report_lines.append(f"⚠️ [자본 출혈 진단] 스킵: {_bleed_ex}")
+
     # ---------------------------------------------------------
     # 👑 엔진 8: [V55.0 초신성 실전 흐름 역추적 및 MFE 가중치 템플릿 진화]
     # ---------------------------------------------------------
