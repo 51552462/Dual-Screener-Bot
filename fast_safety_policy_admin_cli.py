@@ -1,40 +1,83 @@
-"""Fast Safety Policy Admin CLI — read-only inspect, validate, backup, verify (Chapter 3-B0D2B3B2)."""
+"""Fast Safety Policy Admin CLI — inspect, validate, backup, verify, apply (Chapter 3-B0D2B3B3)."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from fast_safety_policy_admin import (
+    ApplyResult,
     FastSafetyReadStatus,
+    apply_disabled_policy,
+    apply_enabled_policy,
     create_backup_record,
     inspect_fast_safety_policy,
     validate_admin_apply_document,
     verify_fast_safety_policy,
 )
 from fast_safety_policy_admin_artifacts import (
+    BackupRecord,
+    applied_checkpoint_to_document,
     decode_artifact_json,
     encode_artifact_json,
+    load_approval_manifest,
+    load_backup_record,
+    save_applied_checkpoint,
     save_backup_record,
+    validate_approval_manifest_for_enabled_policy,
 )
 from fast_safety_policy_store import FAST_SAFETY_POLICY_KEYS, policy_key_for_market
 
 EXIT_OK = 0
 EXIT_VALIDATION_ERROR = 1
 EXIT_OPERATIONAL_ERROR = 2
+EXIT_CONCURRENCY_ERROR = 3
+EXIT_RECOVERY_REQUIRED = 4
 
-_COMMANDS = frozenset({"inspect", "validate", "backup", "verify"})
+_CONCURRENCY_REASON = "concurrency conflict"
+
+_COMMANDS = frozenset(
+    {"inspect", "validate", "backup", "verify", "apply-disabled", "apply-enabled"}
+)
 
 _INSPECT_ALLOWED = frozenset({"market", "db_path"})
 _VALIDATE_ALLOWED = frozenset({"document", "expected_enabled"})
 _BACKUP_ALLOWED = frozenset({"market", "db_path", "created_at", "output", "overwrite"})
 _VERIFY_ALLOWED = frozenset(
     {"market", "db_path", "expected_status", "expected_policy_sha256"}
+)
+_APPLY_DISABLED_ALLOWED = frozenset(
+    {
+        "market",
+        "db_path",
+        "backup",
+        "generated_at",
+        "checkpoint_created_at",
+        "checkpoint_output",
+        "execute",
+        "overwrite",
+    }
+)
+_APPLY_ENABLED_ALLOWED = frozenset(
+    {
+        "market",
+        "db_path",
+        "backup",
+        "document",
+        "approval",
+        "checkpoint_created_at",
+        "checkpoint_output",
+        "execute",
+        "overwrite",
+    }
 )
 
 _OPTIONAL_FIELDS = (
@@ -46,6 +89,11 @@ _OPTIONAL_FIELDS = (
     "output",
     "expected_status",
     "expected_policy_sha256",
+    "backup",
+    "approval",
+    "generated_at",
+    "checkpoint_created_at",
+    "checkpoint_output",
 )
 
 _EXPECTED_ENABLED_MAP = {
@@ -113,6 +161,8 @@ def _forbidden_optionals(args: argparse.Namespace, allowed: frozenset[str]) -> l
             forbidden.append(field)
     if "overwrite" not in allowed and args.overwrite:
         forbidden.append("overwrite")
+    if "execute" not in allowed and args.execute:
+        forbidden.append("execute")
     return forbidden
 
 
@@ -126,6 +176,10 @@ def _validate_command_args(args: argparse.Namespace) -> str | None:
         allowed = _BACKUP_ALLOWED
     elif command == "verify":
         allowed = _VERIFY_ALLOWED
+    elif command == "apply-disabled":
+        allowed = _APPLY_DISABLED_ALLOWED
+    elif command == "apply-enabled":
+        allowed = _APPLY_ENABLED_ALLOWED
     else:
         return "unknown command"
 
@@ -156,6 +210,45 @@ def _validate_command_args(args: argparse.Namespace) -> str | None:
             return "missing output"
         if not isinstance(args.output, str) or not args.output.strip():
             return "missing output"
+
+    if command in {"apply-disabled", "apply-enabled"}:
+        if args.market is None:
+            return "missing market"
+        if args.db_path is None:
+            return "missing db-path"
+        if not isinstance(args.db_path, str) or not args.db_path.strip():
+            return "missing db-path"
+        if args.backup is None:
+            return "missing backup"
+        if not isinstance(args.backup, str) or not args.backup.strip():
+            return "missing backup"
+        if args.checkpoint_created_at is None:
+            return "missing checkpoint-created-at"
+        if (
+            not isinstance(args.checkpoint_created_at, str)
+            or not args.checkpoint_created_at.strip()
+        ):
+            return "missing checkpoint-created-at"
+        if args.checkpoint_output is None:
+            return "missing checkpoint-output"
+        if not isinstance(args.checkpoint_output, str) or not args.checkpoint_output.strip():
+            return "missing checkpoint-output"
+
+    if command == "apply-disabled":
+        if args.generated_at is None:
+            return "missing generated-at"
+        if not isinstance(args.generated_at, str) or not args.generated_at.strip():
+            return "missing generated-at"
+
+    if command == "apply-enabled":
+        if args.document is None:
+            return "missing document"
+        if not isinstance(args.document, str) or not args.document.strip():
+            return "missing document"
+        if args.approval is None:
+            return "missing approval"
+        if not isinstance(args.approval, str) or not args.approval.strip():
+            return "missing approval"
 
     return None
 
@@ -522,6 +615,714 @@ def _run_verify(args: argparse.Namespace) -> int:
     return EXIT_OK if result.ok else EXIT_VALIDATION_ERROR
 
 
+def _apply_response(
+    command: str,
+    *,
+    ok: bool,
+    reason: str,
+    executed: bool,
+    market: str | None,
+    config_key: str | None,
+    expected_classification: str,
+    backup_previous_absent: bool | None,
+    checkpoint_artifact_written: bool = False,
+    checkpoint: Mapping[str, Any] | None = None,
+    requires_rollback: bool = False,
+    recovery_required: bool = False,
+    policy_document_sha256: str | None = None,
+) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "command": command,
+        "ok": ok,
+        "reason": reason,
+        "executed": executed,
+        "market": market,
+        "config_key": config_key,
+        "expected_classification": expected_classification,
+        "backup_previous_absent": backup_previous_absent,
+        "checkpoint_artifact_written": checkpoint_artifact_written,
+        "checkpoint": _to_json_value(checkpoint) if checkpoint is not None else None,
+        "requires_rollback": requires_rollback,
+        "recovery_required": recovery_required,
+    }
+    if policy_document_sha256 is not None:
+        document["policy_document_sha256"] = policy_document_sha256
+    return document
+
+
+def _check_backup_against_current_state(
+    backup: BackupRecord,
+    *,
+    db_path: str,
+) -> tuple[bool, str, int]:
+    inspection = inspect_fast_safety_policy(backup.market, db_path=db_path)
+    status = inspection.status
+
+    if status is FastSafetyReadStatus.READ_ERROR:
+        return False, inspection.error or "read error", EXIT_OPERATIONAL_ERROR
+
+    if status in {
+        FastSafetyReadStatus.PRESENT_INVALID_DOCUMENT,
+        FastSafetyReadStatus.PRESENT_UNDECODABLE_JSON,
+    }:
+        return False, "apply blocked", EXIT_VALIDATION_ERROR
+
+    if backup.previous_absent:
+        if status is not FastSafetyReadStatus.ABSENT:
+            return False, "stale backup", EXIT_CONCURRENCY_ERROR
+        return True, "", EXIT_OK
+
+    if status.value != backup.previous_classification:
+        return False, "stale backup", EXIT_CONCURRENCY_ERROR
+    if inspection.row_version != backup.previous_row_version:
+        return False, "stale backup", EXIT_CONCURRENCY_ERROR
+    if inspection.value_json_sha256 != backup.backup_value_json_sha256:
+        return False, "stale backup", EXIT_CONCURRENCY_ERROR
+    return True, "", EXIT_OK
+
+
+def _preflight_checkpoint_output(
+    path: str | os.PathLike[str],
+    *,
+    overwrite: bool,
+) -> None:
+    path_text = os.fspath(path).strip()
+    if not path_text:
+        raise ValueError("empty checkpoint output path")
+
+    target = Path(path_text)
+    parent = target.parent
+    if not parent.exists():
+        raise FileNotFoundError("parent directory does not exist")
+    if not parent.is_dir():
+        raise NotADirectoryError("parent path is not a directory")
+    if not overwrite and target.exists():
+        raise FileExistsError("target already exists")
+
+    fd, temp_path_str = tempfile.mkstemp(
+        prefix=".fast_safety_checkpoint_preflight_",
+        suffix=".tmp",
+        dir=str(parent),
+    )
+    os.close(fd)
+    os.unlink(temp_path_str)
+
+
+def _load_backup_artifact(path: str) -> tuple[BackupRecord | None, str, int]:
+    try:
+        return load_backup_record(path), "", EXIT_OK
+    except OSError:
+        sys.stderr.write("file-read-error\n")
+        return None, "file-read-error", EXIT_OPERATIONAL_ERROR
+    except json.JSONDecodeError:
+        return None, "malformed backup", EXIT_VALIDATION_ERROR
+    except (TypeError, ValueError):
+        return None, "invalid backup", EXIT_VALIDATION_ERROR
+    except Exception:
+        return None, "internal-error", EXIT_OPERATIONAL_ERROR
+
+
+def _load_enabled_policy_document(
+    path: str,
+) -> tuple[Mapping[str, Any] | None, str | None, int]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        sys.stderr.write("file-read-error\n")
+        return None, None, EXIT_OPERATIONAL_ERROR
+
+    try:
+        document = decode_artifact_json(text)
+    except json.JSONDecodeError:
+        return None, "malformed json", EXIT_VALIDATION_ERROR
+    except (TypeError, ValueError):
+        return None, "document must be a mapping", EXIT_VALIDATION_ERROR
+    except Exception:
+        return None, "internal-error", EXIT_OPERATIONAL_ERROR
+
+    validation = validate_admin_apply_document(document, expected_enabled=True)
+    if not validation.ok:
+        return None, validation.reason or "invalid policy document", EXIT_VALIDATION_ERROR
+    if validation.policy_document_sha256 is None:
+        return None, "missing policy checksum", EXIT_VALIDATION_ERROR
+    return document, validation.policy_document_sha256, EXIT_OK
+
+
+def _validate_enabled_approval(
+    approval_path: str,
+    *,
+    market: str,
+    config_key: str,
+    policy_document: Mapping[str, Any],
+) -> tuple[bool, str, int]:
+    try:
+        manifest = load_approval_manifest(approval_path)
+    except OSError:
+        sys.stderr.write("file-read-error\n")
+        return False, "file-read-error", EXIT_OPERATIONAL_ERROR
+    except json.JSONDecodeError:
+        return False, "malformed manifest", EXIT_VALIDATION_ERROR
+    except (TypeError, ValueError):
+        return False, "invalid manifest", EXIT_VALIDATION_ERROR
+    except Exception:
+        return False, "internal-error", EXIT_OPERATIONAL_ERROR
+
+    if manifest.market != market:
+        return False, "market mismatch", EXIT_VALIDATION_ERROR
+    if manifest.config_key != config_key:
+        return False, "config key mismatch", EXIT_VALIDATION_ERROR
+
+    result = validate_approval_manifest_for_enabled_policy(manifest, policy_document)
+    if not result.ok:
+        return False, result.reason, EXIT_VALIDATION_ERROR
+    return True, "", EXIT_OK
+
+
+def _apply_result_exit_code(result: ApplyResult) -> int:
+    if result.reason == _CONCURRENCY_REASON:
+        return EXIT_CONCURRENCY_ERROR
+    if result.reason in {"write failed"}:
+        return EXIT_OPERATIONAL_ERROR
+    return EXIT_VALIDATION_ERROR
+
+
+def _handle_apply_result(
+    result: ApplyResult,
+    *,
+    command: str,
+    checkpoint_output: str,
+    overwrite: bool,
+    market: str,
+    config_key: str,
+    expected_classification: str,
+    backup_previous_absent: bool,
+    policy_document_sha256: str | None = None,
+) -> int:
+    if result.requires_rollback and result.checkpoint is None:
+        return _operational_error()
+    if result.ok and (result.checkpoint is None or result.requires_rollback):
+        return _operational_error()
+    if not result.ok and result.checkpoint is None and result.requires_rollback:
+        return _operational_error()
+
+    if (
+        result.ok
+        and result.checkpoint is not None
+        and not result.requires_rollback
+    ):
+        checkpoint_doc = applied_checkpoint_to_document(result.checkpoint)
+        try:
+            save_applied_checkpoint(
+                checkpoint_output,
+                result.checkpoint,
+                overwrite=overwrite,
+            )
+        except OSError:
+            sys.stderr.write("checkpoint-artifact-error\n")
+            _emit_json(
+                _apply_response(
+                    command,
+                    ok=False,
+                    reason="checkpoint-artifact-write-failed",
+                    executed=True,
+                    market=market,
+                    config_key=config_key,
+                    expected_classification=expected_classification,
+                    backup_previous_absent=backup_previous_absent,
+                    checkpoint_artifact_written=False,
+                    checkpoint=checkpoint_doc,
+                    requires_rollback=result.requires_rollback,
+                    recovery_required=True,
+                    policy_document_sha256=policy_document_sha256,
+                )
+            )
+            return EXIT_RECOVERY_REQUIRED
+
+        _emit_json(
+            _apply_response(
+                command,
+                ok=True,
+                reason="",
+                executed=True,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup_previous_absent,
+                checkpoint_artifact_written=True,
+                checkpoint=checkpoint_doc,
+                requires_rollback=False,
+                recovery_required=False,
+                policy_document_sha256=policy_document_sha256,
+            )
+        )
+        return EXIT_OK
+
+    if (
+        not result.ok
+        and result.checkpoint is not None
+        and result.requires_rollback
+    ):
+        checkpoint_doc = applied_checkpoint_to_document(result.checkpoint)
+        artifact_written = False
+        try:
+            save_applied_checkpoint(
+                checkpoint_output,
+                result.checkpoint,
+                overwrite=overwrite,
+            )
+            artifact_written = True
+        except OSError:
+            pass
+
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=result.reason,
+                executed=True,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup_previous_absent,
+                checkpoint_artifact_written=artifact_written,
+                checkpoint=checkpoint_doc,
+                requires_rollback=True,
+                recovery_required=True,
+                policy_document_sha256=policy_document_sha256,
+            )
+        )
+        return EXIT_RECOVERY_REQUIRED
+
+    if not result.ok and result.checkpoint is None and not result.requires_rollback:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=result.reason,
+                executed=True,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup_previous_absent,
+                checkpoint_artifact_written=False,
+                checkpoint=None,
+                requires_rollback=False,
+                recovery_required=False,
+                policy_document_sha256=policy_document_sha256,
+            )
+        )
+        return _apply_result_exit_code(result)
+
+    return _operational_error()
+
+
+def _run_apply_disabled(args: argparse.Namespace) -> int:
+    command = "apply-disabled"
+    expected_classification = FastSafetyReadStatus.PRESENT_DISABLED_VALID.value
+
+    market, config_key, market_reason = _validate_market(args.market)
+    if market is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=market_reason,
+                executed=False,
+                market=args.market.strip().upper()
+                if isinstance(args.market, str)
+                else "",
+                config_key=None,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    db_path, _ = _require_non_empty_str(args.db_path, "db-path")
+    assert db_path is not None
+    backup_path, _ = _require_non_empty_str(args.backup, "backup")
+    assert backup_path is not None
+    generated_at, generated_reason = _require_non_empty_str(args.generated_at, "generated-at")
+    if generated_at is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=generated_reason or "missing generated-at",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+    checkpoint_created_at, checkpoint_reason = _require_non_empty_str(
+        args.checkpoint_created_at,
+        "checkpoint-created-at",
+    )
+    if checkpoint_created_at is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=checkpoint_reason or "missing checkpoint-created-at",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+    checkpoint_output, output_reason = _require_non_empty_str(
+        args.checkpoint_output,
+        "checkpoint-output",
+    )
+    if checkpoint_output is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=output_reason or "missing checkpoint-output",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    backup, backup_reason, backup_code = _load_backup_artifact(backup_path)
+    if backup is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=backup_reason,
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return backup_code
+
+    if backup.market != market or backup.config_key != config_key:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason="backup market/key mismatch",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    try:
+        _preflight_checkpoint_output(checkpoint_output, overwrite=args.overwrite)
+    except FileExistsError:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason="checkpoint output exists",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+            )
+        )
+        return EXIT_OPERATIONAL_ERROR
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError, ValueError):
+        return _operational_error()
+
+    state_ok, state_reason, state_code = _check_backup_against_current_state(
+        backup,
+        db_path=db_path,
+    )
+    if not state_ok:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=state_reason,
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+            )
+        )
+        if state_code == EXIT_OPERATIONAL_ERROR:
+            sys.stderr.write("read-error\n")
+        return state_code
+
+    if not args.execute:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=True,
+                reason="validated-no-write",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+            )
+        )
+        return EXIT_OK
+
+    try:
+        result = apply_disabled_policy(
+            market,
+            generated_at,
+            backup,
+            checkpoint_created_at=checkpoint_created_at,
+            db_path=db_path,
+        )
+    except Exception:
+        return _operational_error()
+
+    return _handle_apply_result(
+        result,
+        command=command,
+        checkpoint_output=checkpoint_output,
+        overwrite=args.overwrite,
+        market=market,
+        config_key=config_key,
+        expected_classification=expected_classification,
+        backup_previous_absent=backup.previous_absent,
+    )
+
+
+def _run_apply_enabled(args: argparse.Namespace) -> int:
+    command = "apply-enabled"
+    expected_classification = FastSafetyReadStatus.PRESENT_ENABLED_VALID.value
+
+    market, config_key, market_reason = _validate_market(args.market)
+    if market is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=market_reason,
+                executed=False,
+                market=args.market.strip().upper()
+                if isinstance(args.market, str)
+                else "",
+                config_key=None,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    db_path, _ = _require_non_empty_str(args.db_path, "db-path")
+    assert db_path is not None
+    backup_path, _ = _require_non_empty_str(args.backup, "backup")
+    assert backup_path is not None
+    document_path, _ = _require_non_empty_str(args.document, "document")
+    assert document_path is not None
+    approval_path, _ = _require_non_empty_str(args.approval, "approval")
+    assert approval_path is not None
+    checkpoint_created_at, checkpoint_reason = _require_non_empty_str(
+        args.checkpoint_created_at,
+        "checkpoint-created-at",
+    )
+    if checkpoint_created_at is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=checkpoint_reason or "missing checkpoint-created-at",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+    checkpoint_output, output_reason = _require_non_empty_str(
+        args.checkpoint_output,
+        "checkpoint-output",
+    )
+    if checkpoint_output is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=output_reason or "missing checkpoint-output",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    backup, backup_reason, backup_code = _load_backup_artifact(backup_path)
+    if backup is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=backup_reason,
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=None,
+            )
+        )
+        return backup_code
+
+    if backup.market != market or backup.config_key != config_key:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason="backup market/key mismatch",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    policy_document, policy_sha256, policy_code = _load_enabled_policy_document(
+        document_path
+    )
+    if policy_document is None:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=policy_sha256 or "invalid policy document",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+            )
+        )
+        return policy_code
+
+    approval_ok, approval_reason, approval_code = _validate_enabled_approval(
+        approval_path,
+        market=market,
+        config_key=config_key,
+        policy_document=policy_document,
+    )
+    if not approval_ok:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=approval_reason,
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+                policy_document_sha256=policy_sha256,
+            )
+        )
+        return approval_code
+
+    try:
+        _preflight_checkpoint_output(checkpoint_output, overwrite=args.overwrite)
+    except FileExistsError:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason="checkpoint output exists",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+                policy_document_sha256=policy_sha256,
+            )
+        )
+        return EXIT_OPERATIONAL_ERROR
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError, ValueError):
+        return _operational_error()
+
+    state_ok, state_reason, state_code = _check_backup_against_current_state(
+        backup,
+        db_path=db_path,
+    )
+    if not state_ok:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=False,
+                reason=state_reason,
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+                policy_document_sha256=policy_sha256,
+            )
+        )
+        if state_code == EXIT_OPERATIONAL_ERROR:
+            sys.stderr.write("read-error\n")
+        return state_code
+
+    if not args.execute:
+        _emit_json(
+            _apply_response(
+                command,
+                ok=True,
+                reason="validated-no-write",
+                executed=False,
+                market=market,
+                config_key=config_key,
+                expected_classification=expected_classification,
+                backup_previous_absent=backup.previous_absent,
+                policy_document_sha256=policy_sha256,
+            )
+        )
+        return EXIT_OK
+
+    try:
+        result = apply_enabled_policy(
+            policy_document,
+            backup,
+            checkpoint_created_at=checkpoint_created_at,
+            db_path=db_path,
+        )
+    except Exception:
+        return _operational_error()
+
+    return _handle_apply_result(
+        result,
+        command=command,
+        checkpoint_output=checkpoint_output,
+        overwrite=args.overwrite,
+        market=market,
+        config_key=config_key,
+        expected_classification=expected_classification,
+        backup_previous_absent=backup.previous_absent,
+        policy_document_sha256=policy_sha256,
+    )
+
+
 def _dispatch(args: argparse.Namespace) -> int:
     validation_error = _validate_command_args(args)
     if validation_error is not None:
@@ -535,6 +1336,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _run_backup(args)
     if args.command == "verify":
         return _run_verify(args)
+    if args.command == "apply-disabled":
+        return _run_apply_disabled(args)
+    if args.command == "apply-enabled":
+        return _run_apply_enabled(args)
     return _usage_error()
 
 
@@ -557,6 +1362,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument("--expected-status", default=None)
     parser.add_argument("--expected-policy-sha256", default=None)
+    parser.add_argument("--backup", default=None)
+    parser.add_argument("--approval", default=None)
+    parser.add_argument("--generated-at", default=None)
+    parser.add_argument("--checkpoint-created-at", default=None)
+    parser.add_argument("--checkpoint-output", default=None)
+    parser.add_argument("--execute", action="store_true", default=False)
     return parser
 
 
