@@ -266,12 +266,40 @@ def track_daily_positions(market):
         _meta_regime = str(load_meta_state_resolved().get("META_REGIME_KEY") or "UNKNOWN").upper()
     except Exception:
         _meta_regime = "UNKNOWN"
+        # [WIRING 1 · 기존 ratchet 로딩 블록 전체 교체]
     try:
         import exit_dynamics as _xdyn
-        _ratchet_state = _xdyn.load_ratchet_state(sys_config)
+        _ratchet_state = _xdyn.load_ratchet_state(
+            sys_config
+        )
     except Exception:
         _xdyn = None
-        _ratchet_state = None
+        _ratchet_state = {}
+
+    # 이미 로딩한 RL 상태에서 Hit-and-Run 지수를 한 번만 추출한다.
+    #
+    # 안전장치:
+    # - 키가 없으면 0.0
+    # - None, 문자열 오류, NaN, 무한대도 0.0
+    # - 정상 값도 최종적으로 0.0~1.0 범위로 제한
+    try:
+        _hri = safe_float_cast(
+            (_ratchet_state or {}).get(
+                "hit_and_run_index",
+                0.0,
+            ),
+            0.0,
+        )
+
+        if not np.isfinite(_hri):
+            _hri = 0.0
+
+        _hri = max(
+            0.0,
+            min(1.0, float(_hri)),
+        )
+    except Exception:
+        _hri = 0.0
 
     for _, r in df_active.iterrows():
         try:
@@ -478,8 +506,62 @@ def track_daily_positions(market):
             dyn_mae_sl = safe_float_cast(ns_live_params.get("DYNAMIC_MAE_SL", -3.5), -3.5)
             if breadth_collapse:
                 dyn_mae_sl *= 0.5
-            dyn_mfe_tp = safe_float_cast(ns_live_params.get("DYNAMIC_MFE_TP", 10.0), 10.0)
-            od_hurdle = safe_float_cast(sys_config.get("DYNAMIC_OD_HURDLE", 20.0), 20.0)
+                        # [WIRING 2 · dyn_mfe_tp 산출 부분 교체]
+            # 기존 전략별 1차 목표가를 먼저 읽는다.
+            dyn_mfe_tp = safe_float_cast(
+                ns_live_params.get(
+                    "DYNAMIC_MFE_TP",
+                    10.0,
+                ),
+                10.0,
+            )
+
+            # Hit-and-Run 지수에 따라 목표가를 연속적으로 압축한다.
+            #
+            # _hri = 0.0 → 승수 1.00 → 기존 목표가 유지
+            # _hri = 1.0 → 승수 0.25 → 기존 목표가의 1/4
+            #
+            # 새 함수가 없거나 실행에 실패하면 1.0으로 폴백하므로
+            # 기존 목표가를 그대로 유지한다.
+            _mfe_target_mult = 1.0
+
+            if _xdyn is not None:
+                try:
+                    _mfe_target_mult = safe_float_cast(
+                        _xdyn.dynamic_mfe_target_multiplier(
+                            _hri
+                        ),
+                        1.0,
+                    )
+                except Exception as _mfe_mult_ex:
+                    logger.debug(
+                        "dynamic MFE multiplier fallback "
+                        "id=%s code=%s: %s",
+                        r.get("id"),
+                        code,
+                        _mfe_mult_ex,
+                    )
+                    _mfe_target_mult = 1.0
+
+            # 승수는 CTO 설계 범위인 0.25~1.00으로 방어한다.
+            _mfe_target_mult = max(
+                0.25,
+                min(
+                    1.0,
+                    float(_mfe_target_mult),
+                ),
+            )
+
+            dyn_mfe_tp *= _mfe_target_mult
+
+            # 기존 Overdrive 로직은 압축된 목표가 위에 그대로 적용한다.
+            od_hurdle = safe_float_cast(
+                sys_config.get(
+                    "DYNAMIC_OD_HURDLE",
+                    20.0,
+                ),
+                20.0,
+            )
             is_overdrive_on = row_scalar(r, 'v_energy', 0.0) >= od_hurdle
             if is_overdrive_on:
                 dyn_mfe_tp *= 1.10
@@ -549,7 +631,14 @@ def track_daily_positions(market):
                 _vol_pct = (cur_atr / ep * 100.0) if (ep > 0 and np.isfinite(cur_atr)) else 5.0
                 _edge_pre = (current_ret_pct / max(1, int(new_bars))) * (row_scalar(r, 'v_energy', 1.0) / 10.0)
                 if _xdyn is not None:
-                    f_out = _xdyn.fluid_scale_out_fraction(_meta_regime, _vol_pct, _edge_pre)
+                                        # [WIRING 3 · 기존 3인자 호출을 4인자 호출로 교체]
+                    # 네 번째 인자로 RL에서 학습한 Hit-and-Run 지수를 전달한다.
+                    f_out = _xdyn.fluid_scale_out_fraction(
+                        _meta_regime,
+                        _vol_pct,
+                        _edge_pre,
+                        _hri,
+                    )
                 else:
                     f_out = 0.5
                 if f_out >= 0.999:

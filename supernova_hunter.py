@@ -1334,6 +1334,26 @@ def execute_supernova_live_scan(market):
     import time as _time
     from market_session_gate import evaluate_session_deduplication, is_market_open
 
+    # [HOTFIX · 교체 코드]
+    # 함수 최상단에서 load_system_config를 지연 로딩한다.
+    #
+    # 원래 이름인 load_system_config를 그대로 지역 변수로 만들지 않고
+    # _load_system_config_safe라는 전용 별칭을 사용해 이름 충돌과
+    # UnboundLocalError를 원천 차단한다.
+    try:
+        from config_manager import (
+            load_system_config as _load_system_config_safe,
+        )
+    except Exception as _config_import_ex:
+        _load_system_config_safe = None
+        logger.warning(
+            "[%s] load_system_config lazy import failed; "
+            "empty config fallback: %s",
+            market,
+            _config_import_ex,
+            exc_info=True,
+        )
+
     ok, gate_msg = is_market_open(market)
     if not ok:
         print(f"🛑 [{market}] {gate_msg}")
@@ -1342,26 +1362,40 @@ def execute_supernova_live_scan(market):
     dedup_ok, dedup_msg = evaluate_session_deduplication(market)
     if not dedup_ok:
         print(f"🛡️ [{market}] SessionDeduplicationGuard ABORT — {dedup_msg}")
-        print(f"   (오픈 포지션 트래킹은 ledger 경로 유지 · 신규 스캔만 차단)")
+        print("   (오픈 포지션 트래킹은 ledger 경로 유지 · 신규 스캔만 차단)")
         try:
             send_telegram_msg(
                 f"🛡️ <b>[{market} 스캔 스킵 · SessionDedup]</b>\n"
                 f"<i>{html.escape(str(dedup_msg)[:320], quote=False)}</i>\n"
-                f"유효 OPEN 없으면 다음 크론 슬롯에서 재시도됩니다."
+                "유효 OPEN 없으면 다음 크론 슬롯에서 재시도됩니다."
             )
         except Exception:
             pass
+
         try:
-            from evolution.proprietary_synergy_bridge import run_offline_rnd_on_scan_abort
+            from evolution.proprietary_synergy_bridge import (
+                run_offline_rnd_on_scan_abort,
+            )
             from session_deduplication_guard import SessionDeduplicationGuard
 
-            run_offline_rnd_on_scan_abort(market, SessionDeduplicationGuard().evaluate(market))
+            run_offline_rnd_on_scan_abort(
+                market,
+                SessionDeduplicationGuard().evaluate(market),
+            )
         except Exception as _rnd_ex:
             print(f"⚠️ [{market}] Offline R&D sandbox 전환 실패: {_rnd_ex}")
-        return {"status": "ABORT_STALE_SESSION", "reason": dedup_msg, "market": market}
+
+        return {
+            "status": "ABORT_STALE_SESSION",
+            "reason": dedup_msg,
+            "market": market,
+        }
 
     _scan_t0 = _time.time()
-    print(f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 (15배속 비동기 병렬 스캔)...")
+    print(
+        f"\n🦅 [{market}] 초신성 멀티스레드 스나이퍼 가동 "
+        "(15배속 비동기 병렬 스캔)..."
+    )
 
     try:
         from doomsday_bridge import refresh_doomsday_from_file
@@ -1376,73 +1410,206 @@ def execute_supernova_live_scan(market):
 
     # 1. 템플릿 및 기준값 로드
     ideal_templates = {}
-    config = load_config()
+
+        # [ROBUSTNESS · 교체 코드]
+    # 설정 파일 Import 또는 실행이 실패해도 스캐너를 중단하지 않는다.
+    # 모든 실패 경로에서 config는 안전한 빈 딕셔너리로 유지된다.
+    config = {}
+
+    try:
+        if not callable(_load_system_config_safe):
+            raise RuntimeError(
+                "load_system_config is unavailable"
+            )
+
+        _loaded_config = _load_system_config_safe()
+
+        if isinstance(_loaded_config, dict):
+            config = _loaded_config
+        else:
+            logger.warning(
+                "[%s] load_system_config returned %s; "
+                "scanner continues with empty config",
+                market,
+                type(_loaded_config).__name__,
+            )
+
+    except Exception as _config_load_ex:
+        logger.warning(
+            "[%s] system config load failed; "
+            "scanner continues with empty config: %s",
+            market,
+            _config_load_ex,
+            exc_info=True,
+        )
+        config = {}
+
+    except Exception as _config_load_ex:
+        logger.warning(
+            "[%s] system config load failed; "
+            "scanner continues with empty config: %s",
+            market,
+            _config_load_ex,
+            exc_info=True,
+        )
+        config = {}
+
+    # 보조 설정 수화 단계도 반환 타입을 검증한다.
+    # 실패하거나 dict가 아닌 값을 반환하면 기존의 안전한 config를 유지한다.
     try:
         from scanner_regime_ssot import hydrate_intraday_scanner_config
 
-        config = hydrate_intraday_scanner_config(config, market=market)
+        _hydrated_config = hydrate_intraday_scanner_config(
+            config,
+            market=market,
+        )
+
+        if isinstance(_hydrated_config, dict):
+            config = _hydrated_config
+        else:
+            logger.warning(
+                "[%s] hydrate_intraday_scanner_config returned %s; "
+                "keeping safe config",
+                market,
+                type(_hydrated_config).__name__,
+            )
     except Exception as _ssot_e:
         print(f"⚠️ [{market}] scanner Kelly SSOT 스킵: {_ssot_e}")
+
     multi_key = f"DNA_SUPERNOVA_{market}_MULTI"
+
     _tm_snap = _load_time_machine_cache()
     surviving_templates = {}
     surviving_templates.update(_tm_snap.get(multi_key) or {})
     surviving_templates.update(config.get(multi_key) or {})
-    
-    # [기존 3D 템플릿 로드 로직을 5D 다차원 벡터로 완벽하게 확장]
+
+    # [기존 3D 템플릿 로드 로직을 5D 다차원 벡터로 확장]
     for t_name, t_dna in surviving_templates.items():
         try:
-            # 과거에는 shape와 rs가 없었을 수 있으므로 안전망(get) 처리
-            rs_val = t_dna.get('rs', 5.0) 
-            shape_val = t_dna.get('shape', [0.0] * 20) 
-            
-            # 형태(Shape, 20차원)와 4대 핵심 에너지(cpv, tb, bbe, rs)를 하나의 거대한 24차원(5D 논리) 벡터로 융합
+            # 과거 데이터에는 shape와 rs가 없을 수 있으므로 기본값 적용
+            rs_val = t_dna.get("rs", 5.0)
+            shape_val = t_dna.get("shape", [0.0] * 20)
+
             ideal_templates[t_name] = np.array(
-                shape_val + [t_dna['cpv'], t_dna['tb'], t_dna['bbe'], rs_val]
+                shape_val
+                + [
+                    t_dna["cpv"],
+                    t_dna["tb"],
+                    t_dna["bbe"],
+                    rs_val,
+                ]
             )
         except Exception:
-            # 구형 데이터로 인한 에러 방지
-            ideal_templates[t_name] = np.array([t_dna['cpv'], t_dna['tb'], t_dna['bbe']])
-    
-    # [초월적 진화 M1] 고정 RANK 템플릿 폐기 → system_config 의 유동화된 베이스 템플릿 로드.
-    # (실전 승자 DNA 로 EMA 모핑되는 살아있는 벡터. 최초 1회는 DEFAULT 시드로 동작 동일.)
+            # 구형 3D 템플릿 호환
+            try:
+                ideal_templates[t_name] = np.array(
+                    [
+                        t_dna["cpv"],
+                        t_dna["tb"],
+                        t_dna["bbe"],
+                    ]
+                )
+            except Exception as _template_ex:
+                logger.debug(
+                    "[%s] invalid supernova template skipped name=%s: %s",
+                    market,
+                    t_name,
+                    _template_ex,
+                )
+
+    # 고정 RANK 템플릿 대신 system_config의 유동 베이스 템플릿 로드
     try:
         from template_evolution import load_base_templates
 
         for _tname, _tvec in load_base_templates(config, market).items():
             try:
                 ideal_templates[_tname] = np.array(
-                    [float(_tvec[0]), float(_tvec[1]), float(_tvec[2])]
+                    [
+                        float(_tvec[0]),
+                        float(_tvec[1]),
+                        float(_tvec[2]),
+                    ]
                 )
             except (TypeError, ValueError, IndexError):
                 continue
     except Exception as _morph_ex:
-        print(f"⚠️ [{market}] 유동 템플릿 로드 스킵 → 하드코딩 폴백: {_morph_ex}")
-        if market == 'KR':
-            ideal_templates['RANK_A_장기매집'] = np.array([0.75, 11.8, 27.15])
-            ideal_templates['RANK_B_중기스윙'] = np.array([0.75, 10.0, 27.35])
-            ideal_templates['RANK_C_단기테마'] = np.array([0.60, 8.0, 19.70])
-            ideal_templates['RANK_D_초단기밈'] = np.array([0.60, 8.0, 24.45])
-        elif market == 'US':
-            ideal_templates['US_RANK_A_장기매집'] = np.array([0.70, 10.5, 25.0])
-            ideal_templates['US_RANK_B_중기스윙'] = np.array([0.66, 9.2, 21.5])
-            ideal_templates['US_RANK_C_단기테마'] = np.array([0.60, 8.1, 17.0])
-            ideal_templates['US_RANK_D_초단기밈'] = np.array([0.55, 7.5, 13.5])
-            ideal_templates['US_MEME_슈팅'] = np.array([0.55, 8.8, 12.80])
+        print(
+            f"⚠️ [{market}] 유동 템플릿 로드 스킵 → "
+            f"하드코딩 폴백: {_morph_ex}"
+        )
+
+        if market == "KR":
+            ideal_templates["RANK_A_장기매집"] = np.array(
+                [0.75, 11.8, 27.15]
+            )
+            ideal_templates["RANK_B_중기스윙"] = np.array(
+                [0.75, 10.0, 27.35]
+            )
+            ideal_templates["RANK_C_단기테마"] = np.array(
+                [0.60, 8.0, 19.70]
+            )
+            ideal_templates["RANK_D_초단기밈"] = np.array(
+                [0.60, 8.0, 24.45]
+            )
+
+        elif market == "US":
+            ideal_templates["US_RANK_A_장기매집"] = np.array(
+                [0.70, 10.5, 25.0]
+            )
+            ideal_templates["US_RANK_B_중기스윙"] = np.array(
+                [0.66, 9.2, 21.5]
+            )
+            ideal_templates["US_RANK_C_단기테마"] = np.array(
+                [0.60, 8.1, 17.0]
+            )
+            ideal_templates["US_RANK_D_초단기밈"] = np.array(
+                [0.55, 7.5, 13.5]
+            )
+            ideal_templates["US_MEME_슈팅"] = np.array(
+                [0.55, 8.8, 12.80]
+            )
 
     mfe_weighted = config.get("DNA_SUPERNOVA_MFE_WEIGHTED")
-    if mfe_weighted:
-        ideal_templates['MFE_진화형_황금타점'] = np.array([mfe_weighted['cpv'], mfe_weighted['tb'], mfe_weighted.get('bbe', 20.0)])
+    if isinstance(mfe_weighted, dict):
+        try:
+            ideal_templates["MFE_진화형_황금타점"] = np.array(
+                [
+                    float(mfe_weighted["cpv"]),
+                    float(mfe_weighted["tb"]),
+                    float(mfe_weighted.get("bbe", 20.0)),
+                ]
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning(
+                "[%s] invalid DNA_SUPERNOVA_MFE_WEIGHTED ignored",
+                market,
+            )
 
-    # 관제탑 컷오프(정규직/인큐베이터 기본 밸브에 사용)
-    dynamic_cos_cutoff = config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
-    dynamic_ml_cutoff = config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+    # 관제탑 컷오프
+    try:
+        dynamic_cos_cutoff = float(
+            config.get("DYNAMIC_SUPERNOVA_CUTOFF", 0.50)
+        )
+    except (TypeError, ValueError):
+        dynamic_cos_cutoff = 0.50
+
+    try:
+        dynamic_ml_cutoff = float(
+            config.get("DYNAMIC_ML_BOX_CUTOFF", 0.50)
+        )
+    except (TypeError, ValueError):
+        dynamic_ml_cutoff = 0.50
+
     try:
         from scanner_synergy_engine import load_scan_synergy_context
 
         _scan_synergy_ctx = load_scan_synergy_context(config, market)
     except Exception as _syn_load_ex:
-        logger.warning("[%s] scan synergy context skip: %s", market, _syn_load_ex)
+        logger.warning(
+            "[%s] scan synergy context skip: %s",
+            market,
+            _syn_load_ex,
+        )
         _scan_synergy_ctx = None
 
     try:
@@ -1451,63 +1618,114 @@ def execute_supernova_live_scan(market):
 
         _meta_for_fluid = load_meta_state_resolved()
         _hidden_theme_ctx = load_hidden_theme_context(
-            config, market, meta=_meta_for_fluid
+            config,
+            market,
+            meta=_meta_for_fluid,
         )
+
         if _hidden_theme_ctx.active:
-            rk = str((_meta_for_fluid or {}).get("META_REGIME_KEY") or "UNKNOWN")
-            gkm = float((_meta_for_fluid or {}).get("META_GLOBAL_KELLY_MULT") or 1.0)
+            rk = str(
+                (_meta_for_fluid or {}).get("META_REGIME_KEY")
+                or "UNKNOWN"
+            )
+            gkm = float(
+                (_meta_for_fluid or {}).get(
+                    "META_GLOBAL_KELLY_MULT",
+                    1.0,
+                )
+                or 1.0
+            )
             print(
-                f"🔬 [{market}] Alpha Consumer: {_hidden_theme_ctx.theme_key} "
+                f"🔬 [{market}] Alpha Consumer: "
+                f"{_hidden_theme_ctx.theme_key} "
                 f"tickers={len(_hidden_theme_ctx.tickers)} "
                 f"sector={_hidden_theme_ctx.sector_hint or '-'} "
                 f"conf={_hidden_theme_ctx.confidence:.2f} | "
                 f"regime={rk} kelly={gkm:.3f}"
             )
     except Exception as _ht_load_ex:
-        logger.warning("[%s] hidden theme context skip: %s", market, _ht_load_ex)
+        logger.warning(
+            "[%s] hidden theme context skip: %s",
+            market,
+            _ht_load_ex,
+        )
         _hidden_theme_ctx = None
         _meta_for_fluid = None
 
-    # DNA_ALPHA_ / NEW_EVOLUTION_ 정규직 승격 템플릿 — 이상형 3D + 스나이퍼 cos_cutoff 밸브
+    # 정규직 승격 템플릿 로드
     ideal_template_cutoffs = {}
+
     for _k, _v in config.items():
-        if not (_k.startswith("DNA_ALPHA_") or _k.startswith("NEW_EVOLUTION_")):
+        if not (
+            str(_k).startswith("DNA_ALPHA_")
+            or str(_k).startswith("NEW_EVOLUTION_")
+        ):
             continue
+
         if not isinstance(_v, dict):
             continue
+
         try:
-            ideal_templates[_k] = np.nan_to_num(np.array([
-                float(_v.get("cpv", 0.0)),
-                float(_v.get("tb", 0.0)),
-                float(_v.get("bbe", 0.0)),
-            ], dtype=float))
-            ideal_template_cutoffs[_k] = float(_v.get("cos_cutoff", dynamic_cos_cutoff))
+            ideal_templates[_k] = np.nan_to_num(
+                np.array(
+                    [
+                        float(_v.get("cpv", 0.0)),
+                        float(_v.get("tb", 0.0)),
+                        float(_v.get("bbe", 0.0)),
+                    ],
+                    dtype=float,
+                )
+            )
+            ideal_template_cutoffs[_k] = float(
+                _v.get("cos_cutoff", dynamic_cos_cutoff)
+            )
         except (TypeError, ValueError):
             continue
 
-    # 인큐베이터 돌연변이 템플릿을 스나이퍼 이상형 풀에 편입 (3D cpv/tb/bbe, 코사인은 각 cos_cutoff 적용)
+    # 인큐베이터 돌연변이 템플릿 편입
     incubator_cfg = config.get("INCUBATOR_TEMPLATES", {})
+
     if isinstance(incubator_cfg, dict):
         for iname, itpl in incubator_cfg.items():
             if not isinstance(itpl, dict):
                 continue
+
             try:
-                # 💡 키 불일치 방지를 위해 iname을 그대로 사용
-                ideal_templates[iname] = np.nan_to_num(np.array([
-                    float(itpl.get("cpv", 0.0)),
-                    float(itpl.get("tb", 0.0)),
-                    float(itpl.get("bbe", 0.0)),
-                ], dtype=float))
-                ideal_template_cutoffs[iname] = float(itpl.get("cos_cutoff", 0.80))
+                ideal_templates[iname] = np.nan_to_num(
+                    np.array(
+                        [
+                            float(itpl.get("cpv", 0.0)),
+                            float(itpl.get("tb", 0.0)),
+                            float(itpl.get("bbe", 0.0)),
+                        ],
+                        dtype=float,
+                    )
+                )
+                ideal_template_cutoffs[iname] = float(
+                    itpl.get("cos_cutoff", 0.80)
+                )
             except (TypeError, ValueError):
                 continue
 
-    live_clusters = config.get('LIVE_CLUSTER_TEMPLATES', {})
-    ud_clusters = config.get('UNDERDOG_CLUSTER_TEMPLATES', {}) # 💡 언더독 템플릿 로드
+    live_clusters = config.get("LIVE_CLUSTER_TEMPLATES", {})
+    if not isinstance(live_clusters, dict):
+        live_clusters = {}
+
+    ud_clusters = config.get("UNDERDOG_CLUSTER_TEMPLATES", {})
+    if not isinstance(ud_clusters, dict):
+        ud_clusters = {}
 
     # 대상 종목 및 현재 보유 현황 로드
-    stock_list = get_krx_list() if market == 'KR' else get_us_list()
-    tickers = stock_list['Code'].tolist()
+    stock_list = get_krx_list() if market == "KR" else get_us_list()
+
+    if stock_list is None or stock_list.empty or "Code" not in stock_list:
+        logger.warning("[%s] empty stock universe; scan aborted safely", market)
+        return {
+            "status": "EMPTY_UNIVERSE",
+            "market": market,
+        }
+
+    tickers = stock_list["Code"].tolist()
 
     funnel = ScanFunnelTracker(
         scanner_id="SUPERNOVA",
@@ -1517,299 +1735,575 @@ def execute_supernova_live_scan(market):
     )
 
     def get_similarity(vec1, vec2):
-        n1, n2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
-        return np.dot(vec1, vec2) / (n1 * n2) if n1 > 0 and n2 > 0 else 0
+        try:
+            vec1 = np.asarray(vec1, dtype=float)
+            vec2 = np.asarray(vec2, dtype=float)
+            n1 = np.linalg.norm(vec1)
+            n2 = np.linalg.norm(vec2)
+
+            if n1 <= 0 or n2 <= 0:
+                return 0.0
+
+            return float(np.dot(vec1, vec2) / (n1 * n2))
+        except Exception:
+            return 0.0
 
     try:
         conn = sqlite3.connect(aft.DB_PATH, timeout=10)
-        cursor = conn.cursor()
-        cursor.execute("SELECT code FROM forward_trades WHERE market=? AND status='OPEN'", (market,))
-        open_positions = {row[0] for row in cursor.fetchall()}
-        conn.close()
-    except: open_positions = set()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT code
+                FROM forward_trades
+                WHERE market=? AND status='OPEN'
+                """,
+                (market,),
+            )
+            open_positions = {
+                str(row[0]).strip()
+                for row in cursor.fetchall()
+                if row and row[0] is not None
+            }
+        finally:
+            conn.close()
+    except Exception as _open_pos_ex:
+        logger.warning(
+            "[%s] open position lookup failed; using empty set: %s",
+            market,
+            _open_pos_ex,
+        )
+        open_positions = set()
 
     benchmark_close_sr = None
-    if market == 'KR':
+
+    if market == "KR":
         try:
-            _kd = fdr.DataReader('KOSPI', (datetime.now() - timedelta(days=120)).strftime('%Y-%m-%d'))
-            benchmark_close_sr = _kd['Close'] if _kd is not None and not _kd.empty else None
+            _kd = fdr.DataReader(
+                "KOSPI",
+                (
+                    datetime.now() - timedelta(days=120)
+                ).strftime("%Y-%m-%d"),
+            )
+            benchmark_close_sr = (
+                _kd["Close"]
+                if _kd is not None and not _kd.empty
+                else None
+            )
         except Exception:
             benchmark_close_sr = None
     else:
         try:
-            _spy = yf.download('SPY', period='3mo', progress=False)
+            _spy = yf.download(
+                "SPY",
+                period="3mo",
+                progress=False,
+            )
             _spy = flatten_yf_download_df(_spy)
-            benchmark_close_sr = _spy['Close'] if _spy is not None and not _spy.empty else None
+            benchmark_close_sr = (
+                _spy["Close"]
+                if _spy is not None and not _spy.empty
+                else None
+            )
         except Exception:
             benchmark_close_sr = None
 
     us_data_dict = {}
-    if market == 'US':
+
+    if market == "US":
         _chunk_sz = 100
+
         for _ci in range(0, len(tickers), _chunk_sz):
             _chunk = tickers[_ci:_ci + _chunk_sz]
+
             try:
                 _raw_panel = yf.download(
-                    " ".join(_chunk), period="2mo", group_by="ticker", progress=False, threads=False
+                    " ".join(_chunk),
+                    period="2mo",
+                    group_by="ticker",
+                    progress=False,
+                    threads=False,
                 )
             except Exception:
                 _raw_panel = None
-            if _raw_panel is None or getattr(_raw_panel, "empty", True):
+
+            if _raw_panel is None or getattr(
+                _raw_panel,
+                "empty",
+                True,
+            ):
                 continue
+
             try:
                 if len(_chunk) == 1:
                     _tk0 = _chunk[0]
-                    _sub = flatten_yf_download_df(_raw_panel.copy())
+                    _sub = flatten_yf_download_df(
+                        _raw_panel.copy()
+                    )
                     if _sub is not None and not _sub.empty:
                         us_data_dict[_tk0] = _sub
                 else:
                     _lvl0 = (
                         _raw_panel.columns.get_level_values(0)
-                        if isinstance(_raw_panel.columns, pd.MultiIndex)
+                        if isinstance(
+                            _raw_panel.columns,
+                            pd.MultiIndex,
+                        )
                         else None
                     )
+
                     for _tk in _chunk:
                         try:
-                            if isinstance(_raw_panel.columns, pd.MultiIndex):
+                            if isinstance(
+                                _raw_panel.columns,
+                                pd.MultiIndex,
+                            ):
                                 if _tk not in _lvl0:
                                     continue
                                 _sub = _raw_panel[_tk].copy()
                             else:
                                 _sub = _raw_panel.copy()
+
                             _sub = flatten_yf_download_df(_sub)
-                            if _sub is not None and not _sub.empty:
+
+                            if (
+                                _sub is not None
+                                and not _sub.empty
+                            ):
                                 us_data_dict[_tk] = _sub
                         except Exception:
                             continue
             except Exception:
                 continue
-        print(f"   ↳ [US 배치 OHLCV] {len(us_data_dict)}/{len(tickers)} 종목 선로드 완료")
-        funnel.set_us_preloaded(len(us_data_dict), len(tickers))
 
-    # 💡 [핵심 1] 단일 스레드 병목 탈출을 위한 "개별 종목 연산 작업(Worker)" 분리
+        print(
+            f"   ↳ [US 배치 OHLCV] "
+            f"{len(us_data_dict)}/{len(tickers)} 종목 선로드 완료"
+        )
+        funnel.set_us_preloaded(
+            len(us_data_dict),
+            len(tickers),
+        )
+
+    # 개별 종목 연산 Worker
     _doomsday_halt_lock = threading.Lock()
     _doomsday_halt_notified = [False]
 
     def process_live_ticker(code):
-        # 🚨 [최상위 방어막] 매크로 둠스데이 레이더 확인
-        _dd = config.get('DOOMSDAY_DEFCON') or {}
-        defcon = _dd.get('level', 5) if isinstance(_dd, dict) else 5
+        _dd = config.get("DOOMSDAY_DEFCON") or {}
+        defcon = (
+            _dd.get("level", 5)
+            if isinstance(_dd, dict)
+            else 5
+        )
+
         try:
             defcon = int(defcon)
         except (TypeError, ValueError):
             defcon = 5
-        # DEFCON 1만 스캔 전면 중단. 2 이하는 신호 산출 유지(가상매매 gate에서 soft-fail).
+
+        # DEFCON 1만 스캔 전면 중단
         if defcon <= 1:
             with _doomsday_halt_lock:
                 if not _doomsday_halt_notified[0]:
                     _doomsday_halt_notified[0] = True
+
                     try:
                         try:
-                            _halt_name = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
+                            _halt_name = stock_list.loc[
+                                stock_list["Code"] == code,
+                                "Name",
+                            ].values[0]
                         except Exception:
                             _halt_name = str(code)
+
                         shadow_tracking.record_blocked_trade(
-                            code, _halt_name, "DOOMSDAY_DEFCON", 0.0
+                            code,
+                            _halt_name,
+                            "DOOMSDAY_DEFCON",
+                            0.0,
                         )
                     except Exception:
                         pass
+
                     funnel.drop("DOOMSDAY_HALT")
+
                     return {
-                        'code': code,
-                        'name': "SYSTEM_HALT",
-                        'final_sig': "🛑[둠스데이 차단] 거시경제 발작 감지",
-                        'final_score': 0,
-                        'current_close': 0,
-                        'facts': {},
-                        'msg_type': "🛑 매크로 신용경색 경보 (DEFCON 1). 팩토리 롱 포지션 전면 차단.",
-                        'trade_source': "DOOMSDAY_HALT",
+                        "code": code,
+                        "name": "SYSTEM_HALT",
+                        "final_sig": (
+                            "🛑[둠스데이 차단] "
+                            "거시경제 발작 감지"
+                        ),
+                        "final_score": 0,
+                        "current_close": 0,
+                        "facts": {},
+                        "msg_type": (
+                            "🛑 매크로 신용경색 경보 "
+                            "(DEFCON 1). "
+                            "팩토리 롱 포지션 전면 차단."
+                        ),
+                        "trade_source": "DOOMSDAY_HALT",
                     }
+
             funnel.drop("DOOMSDAY_HALT")
             return None
 
-        if code in open_positions or was_scanned_today(market, code):
+        code_key = str(code).strip()
+
+        if (
+            code_key in open_positions
+            or was_scanned_today(market, code_key)
+        ):
             funnel.drop("SKIP_POSITION")
             return None
-            
+
         try:
-            # 병목의 원인인 API 호출을 각 스레드가 동시에 분산해서 처리
-            if market == 'KR':
+            if market == "KR":
                 try:
-                    df = fdr.DataReader(code, (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d'))
+                    df = fdr.DataReader(
+                        code,
+                        (
+                            datetime.now() - timedelta(days=40)
+                        ).strftime("%Y-%m-%d"),
+                    )
                 except Exception:
                     funnel.add_fetch_failed(1)
                     funnel.drop("DATA_FAIL")
                     return None
             else:
                 df = us_data_dict.get(code)
+
                 if df is None or getattr(df, "empty", True):
                     funnel.add_fetch_failed(1)
                     funnel.drop("DATA_FAIL")
                     return None
-            if df.empty or len(df) < 20:
+
+            if df is None or df.empty or len(df) < 20:
                 funnel.add_fetch_failed(1)
                 funnel.drop("DATA_FAIL")
                 return None
 
-            # 관제탑 EVOLVED_ALPHA_FACTORS → 실시간 알파 (ML N차원 바운딩 박스용)
             current_alphas = {}
             _evolved = config.get("EVOLVED_ALPHA_FACTORS")
+
             if isinstance(_evolved, dict):
                 for _slot_key, _formula in _evolved.items():
-                    if not isinstance(_formula, str) or not str(_formula).strip():
+                    if (
+                        not isinstance(_formula, str)
+                        or not _formula.strip()
+                    ):
                         continue
-                    _ser = evaluate_alpha_formula(df, _formula.strip())
+
+                    _ser = evaluate_alpha_formula(
+                        df,
+                        _formula.strip(),
+                    )
+
                     if _ser is not None and len(_ser) > 0:
                         current_alphas[_slot_key] = _ser
-            
-            c, o, h, l, v = df['Close'].values, df['Open'].values, df['High'].values, df['Low'].values, df['Volume'].values
+
+            c = df["Close"].values
+            v = df["Volume"].values
             current_close = c[-1]
-            
-            if market == 'KR' and current_close < 1000:
+
+            if market == "KR" and current_close < 1000:
                 funnel.drop("LIQUIDITY")
                 return None
-            if market == 'US' and current_close < 0.5:
+
+            if market == "US" and current_close < 0.5:
                 funnel.drop("LIQUIDITY")
                 return None
-            # KR: 5일 평균 거래량(주). US: KRW 5만주 기준을 그대로 쓰면 고가·저유동 미국주 대량 탈락.
+
             _min_vol = 50_000.0
-            if market == 'US':
+
+            if market == "US":
                 _us_dollar_floor = 300_000.0
-                _min_vol = max(2_000.0, _us_dollar_floor / max(float(current_close), 0.01))
+                _min_vol = max(
+                    2_000.0,
+                    _us_dollar_floor
+                    / max(float(current_close), 0.01),
+                )
+
             if np.mean(v[-5:]) < _min_vol:
                 funnel.drop("LIQUIDITY")
                 return None
-            
-            # DNA 벡터 3차원 추출 (실패 시 scan_resilience 폴백 — 종목 전체 폐기 방지)
-            tz_market = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
-            now_mkt = datetime.now(tz_market)
-            from scan_resilience import fallback_dna_features, safe_supernova_dna_features
 
-            _dna = safe_supernova_dna_features(df, market=market, now_mkt=now_mkt)
+            tz_market = (
+                pytz.timezone("Asia/Seoul")
+                if market == "KR"
+                else pytz.timezone("America/New_York")
+            )
+            now_mkt = datetime.now(tz_market)
+
+            from scan_resilience import (
+                fallback_dna_features,
+                safe_supernova_dna_features,
+            )
+
+            _dna = safe_supernova_dna_features(
+                df,
+                market=market,
+                now_mkt=now_mkt,
+            )
+
             if _dna is None:
                 _dna = fallback_dna_features(df)
-                logger.debug("[%s] DNA fallback defaults code=%s", market, code)
+                logger.debug(
+                    "[%s] DNA fallback defaults code=%s",
+                    market,
+                    code,
+                )
+
+            if not isinstance(_dna, dict):
+                funnel.drop("DATA_FAIL")
+                return None
+
             cpv = float(_dna["cpv"])
             tb = float(_dna["tb"])
             bbe = float(_dna["bbe"])
-            current_close = float(_dna.get("current_close", current_close))
+            current_close = float(
+                _dna.get("current_close", current_close)
+            )
 
             eff_cos_cutoff = float(dynamic_cos_cutoff)
             eff_ml_cutoff = float(dynamic_ml_cutoff)
+
             try:
                 from elastic_threshold import ElasticThreshold
 
-                _et = ElasticThreshold.from_system_config(config, market=market)
-                _est = _et.apply_pair(eff_cos_cutoff, eff_ml_cutoff)
+                _et = ElasticThreshold.from_system_config(
+                    config,
+                    market=market,
+                )
+                _est = _et.apply_pair(
+                    eff_cos_cutoff,
+                    eff_ml_cutoff,
+                )
                 eff_cos_cutoff = _est.cos_cutoff
                 eff_ml_cutoff = _est.ml_cutoff
             except Exception as _et_ex:
                 _est = None
-                logger.debug("elastic threshold skip: %s", _et_ex)
+                logger.debug(
+                    "elastic threshold skip: %s",
+                    _et_ex,
+                )
+
             _scan_bonus_pts = 0.0
-            _sector_live = _resolve_enroll_sector(market, code, stock_list)
+            _scan_has_rotation = False
+            _scan_has_spillover = False
+            _scan_macro_mult = 1.0
+            _sector_live = _resolve_enroll_sector(
+                market,
+                code,
+                stock_list,
+            )
+
             if _scan_synergy_ctx is not None:
                 try:
-                    from scanner_synergy_engine import per_ticker_scan_adjustments
+                    from scanner_synergy_engine import (
+                        per_ticker_scan_adjustments,
+                    )
 
                     _syn_adj = per_ticker_scan_adjustments(
-                        _scan_synergy_ctx, sector=_sector_live, cfg=config
+                        _scan_synergy_ctx,
+                        sector=_sector_live,
+                        cfg=config,
                     )
-                    eff_cos_cutoff *= float(_syn_adj.cos_cutoff_mult)
-                    eff_ml_cutoff *= float(_syn_adj.ml_cutoff_mult)
-                    _scan_bonus_pts = float(_syn_adj.score_bonus_pts)
+                    eff_cos_cutoff *= float(
+                        _syn_adj.cos_cutoff_mult
+                    )
+                    eff_ml_cutoff *= float(
+                        _syn_adj.ml_cutoff_mult
+                    )
+                    # 실제 점수는 base_score가 결정된 뒤 비선형 함수로 계산한다.
+                    # score_bonus_pts는 구형 소비자용 참고값일 뿐 여기서는 직접 더하지 않는다.
+                    _scan_has_rotation = bool(
+                        _syn_adj.has_rotation
+                    )
+                    _scan_has_spillover = bool(
+                        _syn_adj.has_spillover
+                    )
+                    _scan_macro_mult = float(
+                        _syn_adj.macro_mult
+                    )
                 except Exception as _syn_tick_ex:
-                    logger.debug("per_ticker synergy %s: %s", code, _syn_tick_ex)
+                    logger.debug(
+                        "per_ticker synergy %s: %s",
+                        code,
+                        _syn_tick_ex,
+                    )
 
-            dyn_rs_live = _approx_dyn_rs_vs_benchmark(df, benchmark_close_sr)
+            dyn_rs_live = _approx_dyn_rs_vs_benchmark(
+                df,
+                benchmark_close_sr,
+            )
+
             _toxic_forgiveness = False
             _toxic_forgiveness_rule = ""
+
             try:
-                from toxic_decay_bandit import evaluate_toxic_ml_gate
+                from toxic_decay_bandit import (
+                    evaluate_toxic_ml_gate,
+                )
 
                 _tg = evaluate_toxic_ml_gate(
-                    config, cpv, tb, bbe, dyn_rs_live, market=market
+                    config,
+                    cpv,
+                    tb,
+                    bbe,
+                    dyn_rs_live,
+                    market=market,
                 )
             except Exception as _tg_ex:
-                logger.debug("toxic_decay_gate skip: %s", _tg_ex)
+                logger.debug(
+                    "toxic_decay_gate skip: %s",
+                    _tg_ex,
+                )
                 _tg = None
 
             if _tg is not None and _tg.action == "block":
                 try:
                     try:
-                        _bn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
+                        _bn = stock_list.loc[
+                            stock_list["Code"] == code,
+                            "Name",
+                        ].values[0]
                     except Exception:
                         _bn = str(code)
+
                     shadow_tracking.record_blocked_trade(
-                        code, _bn, "TOXIC_ML_TREE", float(current_close)
+                        code,
+                        _bn,
+                        "TOXIC_ML_TREE",
+                        float(current_close),
                     )
                 except Exception:
                     pass
+
                 funnel.drop("TOXIC_ML_TREE")
                 return None
-            if _tg is not None and _tg.action == "forgiveness_scout":
-                _toxic_forgiveness = True
-                _toxic_forgiveness_rule = str(_tg.rule_name or "")
 
-            # 1. 👑 [초월적 진화] 5D 다차원 벡터 코사인 유사도 연산 (가격 형태 + 4대 에너지 융합)
+            if (
+                _tg is not None
+                and _tg.action == "forgiveness_scout"
+            ):
+                _toxic_forgiveness = True
+                _toxic_forgiveness_rule = str(
+                    _tg.rule_name or ""
+                )
+
+            # 5D 다차원 벡터 코사인 유사도
             best_sim = 0.0
             best_pattern_name = "UNKNOWN"
             best_pass_sim = 0.0
             best_pass_name = "UNKNOWN"
             is_pass_cosine = False
-            
-            # 현재 종목의 5D 스펙 추출 (형태 + 위치 + 매수세 + 응축도 + 주도력)
-            c_norm = (c - np.min(c)) / (np.max(c) - np.min(c) + 1e-9)
-            current_shape = np.mean(np.array_split(c_norm, 20), axis=1).tolist()
-            # 24차원 거대 벡터 생성
-            current_vec_5d = np.nan_to_num(np.array(current_shape + [cpv, tb, bbe, dyn_rs_live]))
-            
+
+            c_norm = (
+                (c - np.min(c))
+                / (np.max(c) - np.min(c) + 1e-9)
+            )
+            current_shape = np.mean(
+                np.array_split(c_norm, 20),
+                axis=1,
+            ).tolist()
+
+            current_vec_5d = np.nan_to_num(
+                np.array(
+                    current_shape
+                    + [
+                        cpv,
+                        tb,
+                        bbe,
+                        dyn_rs_live,
+                    ]
+                )
+            )
+
             for t_name, base_vec in ideal_templates.items():
-                # 템플릿이 구형(3D)인지 신형(5D/24차원)인지 차원을 맞춰서 비교하는 안전망
                 if len(base_vec) == len(current_vec_5d):
-                    sim = get_similarity(current_vec_5d, base_vec)
-                elif len(base_vec) == 3: # 기존의 3D 데이터로만 구성된 경우
-                    sim = get_similarity(np.array([cpv, tb, bbe]), base_vec)
+                    sim = get_similarity(
+                        current_vec_5d,
+                        base_vec,
+                    )
+                elif len(base_vec) == 3:
+                    sim = get_similarity(
+                        np.array([cpv, tb, bbe]),
+                        base_vec,
+                    )
                 else:
                     sim = 0.0
-                    
+
                 if sim > best_sim:
                     best_sim = sim
                     best_pattern_name = t_name
-                t_cut = ideal_template_cutoffs.get(t_name, eff_cos_cutoff)
+
+                t_cut = ideal_template_cutoffs.get(
+                    t_name,
+                    eff_cos_cutoff,
+                )
+
                 if sim >= t_cut:
                     is_pass_cosine = True
-                    # 💡 [핵심] 인큐베이터(돌연변이)는 발견 즉시 우선순위 부여 (일반 템플릿에 이름이 덮어씌워지는 것 방지)
-                    if str(t_name).startswith("INCUBATOR_") or sim > best_pass_sim:
+
+                    if (
+                        str(t_name).startswith("INCUBATOR_")
+                        or sim > best_pass_sim
+                    ):
                         best_pass_sim = sim
                         best_pass_name = t_name
-            
-            # 2. ML 클러스터 바운딩 박스 연산
+
+            # ML 클러스터 바운딩 박스
             is_pass_ml_box = False
-            ml_match_count = 0 
             ml_pattern_name = "UNKNOWN"
             ml_score = 0.0
             best_ml_ratio = 0.0
-            
+
             for c_name, bounds in live_clusters.items():
                 if not isinstance(bounds, dict):
                     continue
+
                 ml_match_count = 0
                 total_dims = 3
-                if bounds.get('cpv_min', -99) <= cpv <= bounds.get('cpv_max', 99): ml_match_count += 1
-                if bounds.get('tb_min', -99) <= tb <= bounds.get('tb_max', 999): ml_match_count += 1
-                if bounds.get('bbe_min', -99) <= bbe <= bounds.get('bbe_max', 999): ml_match_count += 1
-                for slot_key in current_alphas:
-                    akmin = f'alpha_{slot_key}_min'
-                    akmax = f'alpha_{slot_key}_max'
-                    if akmin not in bounds or akmax not in bounds:
+
+                if (
+                    bounds.get("cpv_min", -99)
+                    <= cpv
+                    <= bounds.get("cpv_max", 99)
+                ):
+                    ml_match_count += 1
+
+                if (
+                    bounds.get("tb_min", -99)
+                    <= tb
+                    <= bounds.get("tb_max", 999)
+                ):
+                    ml_match_count += 1
+
+                if (
+                    bounds.get("bbe_min", -99)
+                    <= bbe
+                    <= bounds.get("bbe_max", 999)
+                ):
+                    ml_match_count += 1
+
+                for slot_key, _ser in current_alphas.items():
+                    akmin = f"alpha_{slot_key}_min"
+                    akmax = f"alpha_{slot_key}_max"
+
+                    if (
+                        akmin not in bounds
+                        or akmax not in bounds
+                    ):
                         continue
+
                     try:
                         lo = float(bounds[akmin])
                         hi = float(bounds[akmax])
                     except (TypeError, ValueError):
                         continue
-                    _ser = current_alphas[slot_key]
+
                     try:
                         aval = float(_ser.iloc[-1])
                     except Exception:
@@ -1817,32 +2311,72 @@ def execute_supernova_live_scan(market):
                             aval = float(_ser.values[-1])
                         except Exception:
                             continue
+
                     if np.isnan(aval):
                         continue
+
                     total_dims += 1
+
                     if lo <= aval <= hi:
                         ml_match_count += 1
-                ml_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
-                best_ml_ratio = max(best_ml_ratio, ml_score)
-                
+
+                ml_score = (
+                    ml_match_count / float(total_dims)
+                    if total_dims > 0
+                    else 0.0
+                )
+                best_ml_ratio = max(
+                    best_ml_ratio,
+                    ml_score,
+                )
+
                 if ml_score >= eff_ml_cutoff:
                     is_pass_ml_box = True
                     ml_pattern_name = c_name
                     break
 
-            # 💡 [추가] 오리지널에 합격하지 못했다면 언더독(잡주 반란) 박스에 들어가는지 검사
+            # 오리지널 불합격 시 언더독 박스 검사
             is_underdog = False
+
             if not is_pass_ml_box and not is_pass_cosine:
                 for c_name, bounds in ud_clusters.items():
-                    if not isinstance(bounds, dict): continue
+                    if not isinstance(bounds, dict):
+                        continue
+
                     ml_match_count = 0
                     total_dims = 3
-                    if bounds.get('dyn_cpv_min', -99) <= cpv <= bounds.get('dyn_cpv_max', 99): ml_match_count += 1
-                    if bounds.get('dyn_tb_min', -99) <= tb <= bounds.get('dyn_tb_max', 999): ml_match_count += 1
-                    if bounds.get('v_energy_min', -99) <= bbe <= bounds.get('v_energy_max', 999): ml_match_count += 1
-                    
-                    ud_score = ml_match_count / float(total_dims) if total_dims > 0 else 0.0
-                    best_ml_ratio = max(best_ml_ratio, ud_score)
+
+                    if (
+                        bounds.get("dyn_cpv_min", -99)
+                        <= cpv
+                        <= bounds.get("dyn_cpv_max", 99)
+                    ):
+                        ml_match_count += 1
+
+                    if (
+                        bounds.get("dyn_tb_min", -99)
+                        <= tb
+                        <= bounds.get("dyn_tb_max", 999)
+                    ):
+                        ml_match_count += 1
+
+                    if (
+                        bounds.get("v_energy_min", -99)
+                        <= bbe
+                        <= bounds.get("v_energy_max", 999)
+                    ):
+                        ml_match_count += 1
+
+                    ud_score = (
+                        ml_match_count / float(total_dims)
+                        if total_dims > 0
+                        else 0.0
+                    )
+                    best_ml_ratio = max(
+                        best_ml_ratio,
+                        ud_score,
+                    )
+
                     if ud_score >= eff_ml_cutoff:
                         is_pass_ml_box = True
                         is_underdog = True
@@ -1852,140 +2386,334 @@ def execute_supernova_live_scan(market):
 
             if not (is_pass_ml_box or is_pass_cosine):
                 _scout = None
+
                 try:
-                    from elastic_threshold import ElasticThreshold, evaluate_scout_candidate
+                    from elastic_threshold import (
+                        ElasticThreshold,
+                        evaluate_scout_candidate,
+                    )
 
                     if _est is None:
-                        _et2 = ElasticThreshold.from_system_config(config, market=market)
-                        _est = _et2.apply_pair(eff_cos_cutoff, eff_ml_cutoff)
-                    _ml_for_scout = float(best_ml_ratio)
+                        _et2 = ElasticThreshold.from_system_config(
+                            config,
+                            market=market,
+                        )
+                        _est = _et2.apply_pair(
+                            eff_cos_cutoff,
+                            eff_ml_cutoff,
+                        )
+
                     _scout = evaluate_scout_candidate(
                         is_pass_cosine=is_pass_cosine,
                         is_pass_ml_box=is_pass_ml_box,
                         best_cos_sim=float(best_sim),
-                        eff_cos_cutoff=float(eff_cos_cutoff),
-                        ml_score=float(_ml_for_scout if _ml_for_scout else 0.0),
-                        eff_ml_cutoff=float(eff_ml_cutoff),
+                        eff_cos_cutoff=float(
+                            eff_cos_cutoff
+                        ),
+                        ml_score=float(best_ml_ratio),
+                        eff_ml_cutoff=float(
+                            eff_ml_cutoff
+                        ),
                         state=_est,
                         sys_config=config,
                     )
                 except Exception as _sc_ex:
-                    logger.debug("scout eval skip: %s", _sc_ex)
+                    logger.debug(
+                        "scout eval skip: %s",
+                        _sc_ex,
+                    )
 
                 if _scout and _scout.eligible:
-                    is_pass_cosine = _scout.path.startswith("COSINE")
-                    is_pass_ml_box = _scout.path.startswith("MLBOX")
-                    fdict_scout = {"dyn_cpv": cpv, "dyn_tb": tb, "v_energy": bbe, "_fluid_scout": True}
-                    _nm_sc = stock_list[stock_list["Code"] == code]["Name"].values[0]
+                    is_pass_cosine = _scout.path.startswith(
+                        "COSINE"
+                    )
+                    is_pass_ml_box = _scout.path.startswith(
+                        "MLBOX"
+                    )
+
+                    fdict_scout = {
+                        "dyn_cpv": cpv,
+                        "dyn_tb": tb,
+                        "v_energy": bbe,
+                        "_fluid_scout": True,
+                    }
+
+                    _nm_sc = stock_list[
+                        stock_list["Code"] == code
+                    ]["Name"].values[0]
+
                     funnel.add_final_candidate(
                         code=str(code),
                         name=str(_nm_sc),
                         pass_path="SCOUT",
-                        final_sig=f"[🔭SCOUT] NEAR_{_scout.path}",
-                        final_score=float(_scout.best_metric * 100),
+                        final_sig=(
+                            f"[🔭SCOUT] NEAR_{_scout.path}"
+                        ),
+                        final_score=float(
+                            _scout.best_metric * 100
+                        ),
                     )
+
                     return {
                         "code": code,
                         "name": _nm_sc,
-                        "final_sig": f"[🔭SCOUT] {_scout.path}",
-                        "final_score": float(_scout.best_metric * 100),
+                        "final_sig": (
+                            f"[🔭SCOUT] {_scout.path}"
+                        ),
+                        "final_score": float(
+                            _scout.best_metric * 100
+                        ),
                         "current_close": current_close,
                         "facts": fdict_scout,
-                        "msg_type": f"🔭 정찰병 진입 (기아지수 {_est.starvation_index:.0%})",
+                        "msg_type": (
+                            "🔭 정찰병 진입 "
+                            f"(기아지수 "
+                            f"{_est.starvation_index:.0%})"
+                        ),
                         "trade_source": "FLUID_SCOUT",
                     }
 
                 funnel.drop("DNA_FAIL")
                 return None
 
-            # 합격한 종목만 선별하여 데이터 반환 (DB 저장은 여기서 하지 않음 - 락 방어)
             if is_pass_ml_box or is_pass_cosine:
-                fdict = {'dyn_cpv': cpv, 'dyn_tb': tb, 'v_energy': bbe}
+                fdict = {
+                    "dyn_cpv": cpv,
+                    "dyn_tb": tb,
+                    "v_energy": bbe,
+                }
+
                 if _toxic_forgiveness:
                     fdict["_fluid_scout"] = True
-                    fdict["_toxic_forgiveness"] = _toxic_forgiveness_rule
+                    fdict["_toxic_forgiveness"] = (
+                        _toxic_forgiveness_rule
+                    )
                     fdict["_toxic_decay_strength"] = float(
-                        getattr(_tg, "decay_strength", 0.0) or 0.0
+                        getattr(
+                            _tg,
+                            "decay_strength",
+                            0.0,
+                        )
+                        or 0.0
                     )
 
-                # 💡 [방어막 작동] 오답노트(블랙박스) 독성 패턴 검사
-                anti_patterns = config.get('ANTI_PATTERNS', {})
+                anti_patterns = config.get(
+                    "ANTI_PATTERNS",
+                    {},
+                )
+
                 if not isinstance(anti_patterns, dict):
                     anti_patterns = {}
-                _ml_toxic = _toxic_ml_antipatterns_rule_map(config.get("TOXIC_ML_ANTIPATTERNS"))
+
+                _ml_toxic = (
+                    _toxic_ml_antipatterns_rule_map(
+                        config.get(
+                            "TOXIC_ML_ANTIPATTERNS"
+                        )
+                    )
+                )
+
                 if isinstance(_ml_toxic, dict) and _ml_toxic:
-                    anti_patterns = {**anti_patterns, **_ml_toxic}
+                    anti_patterns = {
+                        **anti_patterns,
+                        **_ml_toxic,
+                    }
+
                 is_toxic = False
-                for t_name, bounds in anti_patterns.items():
+
+                for _, bounds in anti_patterns.items():
                     if not isinstance(bounds, dict):
                         continue
+
                     match_flags = []
-                    if 'dyn_cpv_max' in bounds:
-                        match_flags.append(cpv <= bounds['dyn_cpv_max'])
-                    if 'dyn_cpv_min' in bounds:
-                        match_flags.append(cpv > bounds['dyn_cpv_min'])
-                    if 'dyn_tb_max' in bounds:
-                        match_flags.append(tb <= bounds['dyn_tb_max'])
-                    if 'dyn_tb_min' in bounds:
-                        match_flags.append(tb > bounds['dyn_tb_min'])
-                    if 'v_energy_max' in bounds:
-                        match_flags.append(bbe <= bounds['v_energy_max'])
-                    if 'v_energy_min' in bounds:
-                        match_flags.append(bbe > bounds['v_energy_min'])
-                    if 'dyn_rs_max' in bounds and not (isinstance(dyn_rs_live, float) and np.isnan(dyn_rs_live)):
-                        match_flags.append(float(dyn_rs_live) <= float(bounds['dyn_rs_max']))
-                    if 'dyn_rs_min' in bounds and not (isinstance(dyn_rs_live, float) and np.isnan(dyn_rs_live)):
-                        match_flags.append(float(dyn_rs_live) > float(bounds['dyn_rs_min']))
+
+                    if "dyn_cpv_max" in bounds:
+                        match_flags.append(
+                            cpv <= bounds["dyn_cpv_max"]
+                        )
+
+                    if "dyn_cpv_min" in bounds:
+                        match_flags.append(
+                            cpv > bounds["dyn_cpv_min"]
+                        )
+
+                    if "dyn_tb_max" in bounds:
+                        match_flags.append(
+                            tb <= bounds["dyn_tb_max"]
+                        )
+
+                    if "dyn_tb_min" in bounds:
+                        match_flags.append(
+                            tb > bounds["dyn_tb_min"]
+                        )
+
+                    if "v_energy_max" in bounds:
+                        match_flags.append(
+                            bbe <= bounds["v_energy_max"]
+                        )
+
+                    if "v_energy_min" in bounds:
+                        match_flags.append(
+                            bbe > bounds["v_energy_min"]
+                        )
+
+                    if (
+                        "dyn_rs_max" in bounds
+                        and not np.isnan(dyn_rs_live)
+                    ):
+                        match_flags.append(
+                            float(dyn_rs_live)
+                            <= float(bounds["dyn_rs_max"])
+                        )
+
+                    if (
+                        "dyn_rs_min" in bounds
+                        and not np.isnan(dyn_rs_live)
+                    ):
+                        match_flags.append(
+                            float(dyn_rs_live)
+                            > float(bounds["dyn_rs_min"])
+                        )
+
                     if match_flags and all(match_flags):
                         is_toxic = True
                         break
 
                 if is_toxic:
                     funnel.drop("ANTI_TOXIC")
+
                     try:
                         try:
-                            _tn = stock_list.loc[stock_list["Code"] == code, "Name"].values[0]
+                            _tn = stock_list.loc[
+                                stock_list["Code"] == code,
+                                "Name",
+                            ].values[0]
                         except Exception:
                             _tn = str(code)
+
                         shadow_tracking.record_blocked_trade(
-                            code, _tn, "TOXIC_ANTI_PATTERN", float(current_close)
+                            code,
+                            _tn,
+                            "TOXIC_ANTI_PATTERN",
+                            float(current_close),
                         )
                     except Exception:
                         pass
+
                     return {
-                        'code': code,
-                        'name': stock_list[stock_list['Code']==code]['Name'].values[0],
-                        'final_sig': f"💀[기각/관찰용] TOXIC_TRAP",
-                        'final_score': 0,
-                        'current_close': current_close,
-                        'facts': fdict,
-                        'msg_type': f"💀 독성 오답노트 패턴 감지 (매수 차단)",
-                        'trade_source': "TOXIC_TRAP",
+                        "code": code,
+                        "name": stock_list[
+                            stock_list["Code"] == code
+                        ]["Name"].values[0],
+                        "final_sig": (
+                            "💀[기각/관찰용] TOXIC_TRAP"
+                        ),
+                        "final_score": 0,
+                        "current_close": current_close,
+                        "facts": fdict,
+                        "msg_type": (
+                            "💀 독성 오답노트 패턴 감지 "
+                            "(매수 차단)"
+                        ),
+                        "trade_source": "TOXIC_TRAP",
                     }
 
                 if is_underdog:
-                    final_sig = f"[UNDERDOG_MLBOX] 🧟{ml_pattern_name}"
-                    final_score = ml_score * 100 + _scan_bonus_pts
-                    msg_type = f"🧟 언더독 반란 포착 (기준:{eff_ml_cutoff*100:.0f}%)"
+                    final_sig = (
+                        f"[UNDERDOG_MLBOX] "
+                        f"🧟{ml_pattern_name}"
+                    )
+                    _base_match_score = float(ml_score)
+                    msg_type = (
+                        "🧟 언더독 반란 포착 "
+                        f"(기준:{eff_ml_cutoff * 100:.0f}%)"
+                    )
                 elif is_pass_ml_box:
-                    final_sig = f"[SUPERNOVA_MLBOX] 🤖{ml_pattern_name}"
-                    final_score = ml_score * 100 + _scan_bonus_pts
-                    msg_type = f"🤖 ML 클러스터 통과 (기준:{eff_ml_cutoff*100:.0f}%)"
+                    final_sig = (
+                        f"[SUPERNOVA_MLBOX] "
+                        f"🤖{ml_pattern_name}"
+                    )
+                    _base_match_score = float(ml_score)
+                    msg_type = (
+                        "🤖 ML 클러스터 통과 "
+                        f"(기준:{eff_ml_cutoff * 100:.0f}%)"
+                    )
                 else:
-                    _cos_label = best_pass_name if best_pass_name != "UNKNOWN" else best_pattern_name
-                    _cos_sim = best_pass_sim if best_pass_name != "UNKNOWN" else best_sim
-                    final_sig = f"[SUPERNOVA_COSINE] {_cos_label}"
-                    final_score = _cos_sim * 100 + _scan_bonus_pts
-                    _cut_used = ideal_template_cutoffs.get(_cos_label, eff_cos_cutoff)
-                    msg_type = f"🦅 코사인 컷오프 통과 (기준:{float(_cut_used)*100:.0f}%)"
-                if _scan_bonus_pts > 0:
-                    msg_type = f"🌐시너지+{_scan_bonus_pts:.0f}pt | " + msg_type
+                    _cos_label = (
+                        best_pass_name
+                        if best_pass_name != "UNKNOWN"
+                        else best_pattern_name
+                    )
+                    _cos_sim = (
+                        best_pass_sim
+                        if best_pass_name != "UNKNOWN"
+                        else best_sim
+                    )
+                    final_sig = (
+                        f"[SUPERNOVA_COSINE] "
+                        f"{_cos_label}"
+                    )
+                    _base_match_score = float(_cos_sim)
+                    _cut_used = ideal_template_cutoffs.get(
+                        _cos_label,
+                        eff_cos_cutoff,
+                    )
+                    msg_type = (
+                        "🦅 코사인 컷오프 통과 "
+                        f"(기준:{float(_cut_used) * 100:.0f}%)"
+                    )
+
+                _base_score_pts = max(0.0, min(100.0, _base_match_score * 100.0))
+                try:
+                    from scanner_synergy_engine import (
+                        calculate_synergy_final_score,
+                    )
+
+                    final_score = calculate_synergy_final_score(
+                        _base_match_score,
+                        _scan_has_rotation,
+                        _scan_has_spillover,
+                        _scan_macro_mult,
+                    )
+                except Exception as _syn_score_ex:
+                    logger.debug(
+                        "nonlinear synergy score %s: %s",
+                        code,
+                        _syn_score_ex,
+                    )
+                    final_score = _base_score_pts
+
+                _scan_bonus_pts = float(final_score) - _base_score_pts
+                fdict["base_match_score"] = round(_base_match_score, 6)
+                fdict["synergy_rotation"] = bool(_scan_has_rotation)
+                fdict["synergy_spillover"] = bool(_scan_has_spillover)
+                fdict["synergy_macro_mult"] = round(_scan_macro_mult, 6)
+                fdict["synergy_score_delta"] = round(_scan_bonus_pts, 4)
+
+                if _scan_bonus_pts > 0.05:
+                    msg_type = (
+                        f"🌐비선형시너지+{_scan_bonus_pts:.1f}pt | "
+                        + msg_type
+                    )
+                elif _scan_bonus_pts < -0.05:
+                    msg_type = (
+                        f"🌧️거시억제{_scan_bonus_pts:.1f}pt | "
+                        + msg_type
+                    )
 
                 _pre_hidden_score = float(final_score)
-                try:
-                    from proprietary_alpha_consumer import apply_hidden_theme_score_boost
 
-                    final_score, _ht_mult, _ht_tag, _fluid_log = apply_hidden_theme_score_boost(
+                try:
+                    from proprietary_alpha_consumer import (
+                        apply_hidden_theme_score_boost,
+                    )
+
+                    (
+                        final_score,
+                        _ht_mult,
+                        _ht_tag,
+                        _fluid_log,
+                    ) = apply_hidden_theme_score_boost(
                         _pre_hidden_score,
                         ctx=_hidden_theme_ctx,
                         ticker_code=str(code),
@@ -1994,39 +2722,95 @@ def execute_supernova_live_scan(market):
                         cfg=config,
                         meta=_meta_for_fluid,
                     )
+
                     if _ht_tag:
                         if _fluid_log:
-                            print(f"{_fluid_log} | {market}/{code}")
-                            logger.info("%s | %s/%s", _fluid_log, market, code)
+                            print(
+                                f"{_fluid_log} | "
+                                f"{market}/{code}"
+                            )
+                            logger.info(
+                                "%s | %s/%s",
+                                _fluid_log,
+                                market,
+                                code,
+                            )
+
                         msg_type = (
                             f"🔬{_ht_tag}×{_ht_mult:.2f} "
                             f"(+{final_score - _pre_hidden_score:.1f}pt) | "
                             + msg_type
                         )
-                        fdict["hidden_theme_boost"] = float(_ht_mult)
-                        fdict["hidden_theme_tag"] = str(_ht_tag)
-                        if _fluid_log:
-                            fdict["fluid_premium_log"] = str(_fluid_log)
-                except Exception as _ht_boost_ex:
-                    logger.debug("[%s] hidden theme boost skip code=%s: %s", market, code, _ht_boost_ex)
+                        fdict["hidden_theme_boost"] = float(
+                            _ht_mult
+                        )
+                        fdict["hidden_theme_tag"] = str(
+                            _ht_tag
+                        )
 
-                if (not is_pass_ml_box) and str(best_pass_name).startswith("INCUBATOR_"):
-                    fdict["incubator_sniper_key"] = str(best_pass_name)[len("INCUBATOR_"):]
-                # 💡 SSOT: SMART_MONEY_RADAR.picks 만 (smart_money_tracker.py → system_config.json)
+                        if _fluid_log:
+                            fdict["fluid_premium_log"] = str(
+                                _fluid_log
+                            )
+                except Exception as _ht_boost_ex:
+                    logger.debug(
+                        "[%s] hidden theme boost skip "
+                        "code=%s: %s",
+                        market,
+                        code,
+                        _ht_boost_ex,
+                    )
+
+                if (
+                    not is_pass_ml_box
+                    and str(best_pass_name).startswith(
+                        "INCUBATOR_"
+                    )
+                ):
+                    fdict["incubator_sniper_key"] = str(
+                        best_pass_name
+                    )[len("INCUBATOR_"):]
+
                 try:
-                    estimated_avg_f = float(aft.get_smart_money_avg_price_from_ssot(config, code))
+                    estimated_avg_f = float(
+                        aft.get_smart_money_avg_price_from_ssot(
+                            config,
+                            code,
+                        )
+                    )
                 except Exception:
                     estimated_avg_f = 0.0
-                if estimated_avg_f > 0 and abs(current_close - estimated_avg_f) / estimated_avg_f <= 0.03:
-                    msg_type = f"🕵️ [세력 매집 포착] 평단가({estimated_avg_f:,.0f}원) 근접! | " + msg_type
-                    final_sig = final_sig.replace("]", "_SMART]")
+
+                if (
+                    estimated_avg_f > 0
+                    and abs(
+                        current_close - estimated_avg_f
+                    )
+                    / estimated_avg_f
+                    <= 0.03
+                ):
+                    msg_type = (
+                        "🕵️ [세력 매집 포착] "
+                        f"평단가({estimated_avg_f:,.0f}원) "
+                        "근접! | "
+                        + msg_type
+                    )
+                    final_sig = final_sig.replace(
+                        "]",
+                        "_SMART]",
+                    )
+
                 if is_underdog:
                     pass_path = "UNDERDOG"
                 elif is_pass_ml_box:
                     pass_path = "MLBOX"
                 else:
                     pass_path = "COSINE"
-                _nm = stock_list[stock_list['Code'] == code]['Name'].values[0]
+
+                _nm = stock_list[
+                    stock_list["Code"] == code
+                ]["Name"].values[0]
+
                 funnel.add_final_candidate(
                     code=str(code),
                     name=str(_nm),
@@ -2034,20 +2818,28 @@ def execute_supernova_live_scan(market):
                     final_sig=str(final_sig),
                     final_score=float(final_score),
                 )
+
                 return {
-                    'code': code,
-                    'name': _nm,
-                    'final_sig': final_sig,
-                    'final_score': final_score,
-                    'current_close': current_close,
-                    'facts': fdict,
-                    'msg_type': msg_type,
-                    'trade_source': "UNDERDOG" if is_underdog else "SUPERNOVA",
+                    "code": code,
+                    "name": _nm,
+                    "final_sig": final_sig,
+                    "final_score": final_score,
+                    "current_close": current_close,
+                    "facts": fdict,
+                    "msg_type": msg_type,
+                    "trade_source": (
+                        "UNDERDOG"
+                        if is_underdog
+                        else "SUPERNOVA"
+                    ),
                 }
+
             return None
+
         except Exception as _live_tick_ex:
             logger.warning(
-                "process_live_ticker failed market=%s code=%s: %s",
+                "process_live_ticker failed "
+                "market=%s code=%s: %s",
                 market,
                 code,
                 _live_tick_ex,
@@ -2056,91 +2848,196 @@ def execute_supernova_live_scan(market):
             funnel.drop("DATA_FAIL")
             return None
 
-    # 💡 [핵심 2] ThreadPoolExecutor를 이용한 15배속 동시 타격 (병목 돌파)
-    valid_targets: list = []
-    import concurrent.futures
+    # ThreadPoolExecutor를 이용한 병렬 스캔
+    valid_targets = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        for result in executor.map(process_live_ticker, tickers):
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=15
+    ) as executor:
+        for result in executor.map(
+            process_live_ticker,
+            tickers,
+        ):
             if not result:
                 continue
-            if result.get("trade_source") == "DOOMSDAY_HALT" or result.get("name") == "SYSTEM_HALT":
+
+            if (
+                result.get("trade_source")
+                == "DOOMSDAY_HALT"
+                or result.get("name") == "SYSTEM_HALT"
+            ):
                 continue
-            if "TOXIC_TRAP" in str(result.get("final_sig", "")):
+
+            if "TOXIC_TRAP" in str(
+                result.get("final_sig", "")
+            ):
                 continue
+
             valid_targets.append(result)
 
-    # 💡 [핵심 3] 발굴된 종목 장부 기록 (DB 락 방지를 위해 메인 스레드에서 순차적 기록)
+    # 발굴된 종목을 메인 스레드에서 순차 기록
     _doomsday_tg_sent = False
+
     for target in valid_targets:
-        if target.get('name') == 'SYSTEM_HALT' or '둠스데이 차단' in str(target.get('final_sig', '')):
-            funnel.set_pipeline_result(str(target['code']), "SKIPPED_DOOMSDAY")
+        if (
+            target.get("name") == "SYSTEM_HALT"
+            or "둠스데이 차단"
+            in str(target.get("final_sig", ""))
+        ):
+            funnel.set_pipeline_result(
+                str(target["code"]),
+                "SKIPPED_DOOMSDAY",
+            )
+
             if not _doomsday_tg_sent:
                 _doomsday_tg_sent = True
                 send_telegram_msg(
-                    "<b>🛑[둠스데이 차단] 거시경제 발작 감지</b>\n"
-                    "🛑 매크로 신용경색 경보 (DEFCON 2 이하). 팩토리 롱 포지션 전면 차단."
+                    "<b>🛑[둠스데이 차단] "
+                    "거시경제 발작 감지</b>\n"
+                    "🛑 매크로 신용경색 경보 "
+                    "(DEFCON 1). "
+                    "팩토리 롱 포지션 전면 차단."
                 )
-            continue
-        if 'TOXIC_TRAP' in str(target.get('final_sig', '')):
-            funnel.set_pipeline_result(str(target['code']), "SKIPPED_TOXIC")
-            continue
-        enroll_sector = _resolve_enroll_sector(market, target["code"], stock_list)
-        try:
-            from cross_market_ssot import kr_stock_matches_spillover
 
-            if market == "KR" and kr_stock_matches_spillover(enroll_sector, config):
-                target["final_sig"] = str(target.get("final_sig", "")) + " [🌐스필오버 선취매]"
+            continue
+
+        if "TOXIC_TRAP" in str(
+            target.get("final_sig", "")
+        ):
+            funnel.set_pipeline_result(
+                str(target["code"]),
+                "SKIPPED_TOXIC",
+            )
+            continue
+
+        enroll_sector = _resolve_enroll_sector(
+            market,
+            target["code"],
+            stock_list,
+        )
+
+        try:
+            from cross_market_ssot import (
+                kr_stock_matches_spillover,
+            )
+
+            if (
+                market == "KR"
+                and kr_stock_matches_spillover(
+                    enroll_sector,
+                    config,
+                )
+            ):
+                target["final_sig"] = (
+                    str(target.get("final_sig", ""))
+                    + " [🌐스필오버 선취매]"
+                )
         except Exception as _sp_tag_ex:
-            logger.debug("spillover tag skip %s: %s", target.get("code"), _sp_tag_ex)
+            logger.debug(
+                "spillover tag skip %s: %s",
+                target.get("code"),
+                _sp_tag_ex,
+            )
 
         is_success, msg = aft.try_add_virtual_position(
             market=market,
-            code=target['code'],
-            name=target['name'],
-            sig_type=target['final_sig'],
-            score=target['final_score'],
-            ep=target['current_close'],
-            facts=target['facts'],
+            code=target["code"],
+            name=target["name"],
+            sig_type=target["final_sig"],
+            score=target["final_score"],
+            ep=target["current_close"],
+            facts=target["facts"],
             sector=enroll_sector,
-            trade_source=target.get('trade_source', "SUPERNOVA"),
-            satellite_tags=shadow_tracking.build_satellite_tags(config),
+            trade_source=target.get(
+                "trade_source",
+                "SUPERNOVA",
+            ),
+            satellite_tags=(
+                shadow_tracking.build_satellite_tags(config)
+            ),
         )
 
         if is_success:
-            funnel.set_pipeline_result(str(target['code']), "ENROLLED")
-            mark_scanned_today(market, target['code'])
+            funnel.set_pipeline_result(
+                str(target["code"]),
+                "ENROLLED",
+            )
+            mark_scanned_today(
+                market,
+                target["code"],
+            )
+
             _is_scout_shadow = (
                 "ScoutBearShadow" in str(msg or "")
                 or "OBSERVE_ONLY" in str(msg or "")
             )
+
             if _is_scout_shadow:
                 print(msg)
             else:
-                dispatch_code = str(target.get('code', '')).strip()
-                if was_dispatched_today(market, dispatch_code):
-                    print(f"🧯 [{market}] 당일 중복 발송 차단: {dispatch_code}")
+                dispatch_code = str(
+                    target.get("code", "")
+                ).strip()
+
+                if was_dispatched_today(
+                    market,
+                    dispatch_code,
+                ):
+                    print(
+                        f"🧯 [{market}] 당일 중복 발송 차단: "
+                        f"{dispatch_code}"
+                    )
                 else:
                     send_telegram_msg(
-                        f"<b>{target['msg_type']}</b>\n{dispatch_code} / {target['final_sig']}\n"
-                        f"일치율: {target['final_score']:.1f}%\n가상매매 장부에 정밀 분리되어 편입되었습니다."
+                        f"<b>{target['msg_type']}</b>\n"
+                        f"{dispatch_code} / "
+                        f"{target['final_sig']}\n"
+                        f"일치율: "
+                        f"{target['final_score']:.1f}%\n"
+                        "가상매매 장부에 정밀 분리되어 "
+                        "편입되었습니다."
                     )
-                    mark_dispatched_today(market, dispatch_code)
+                    mark_dispatched_today(
+                        market,
+                        dispatch_code,
+                    )
         else:
-            funnel.record_db_failure(msg or "UNKNOWN")
-            funnel.set_pipeline_result(str(target['code']), "FAILED_DB")
-            if msg and "DB_INSERT" in str(msg):
-                print(f"⚠️ [{market}] forward_trades 등재 실패 {target['code']}: {msg}")
+            funnel.record_db_failure(
+                msg or "UNKNOWN"
+            )
+            funnel.set_pipeline_result(
+                str(target["code"]),
+                "FAILED_DB",
+            )
 
-    report = funnel.finalize(elapsed_min=(_time.time() - _scan_t0) / 60.0)
-    print(
-        f"✅ [{market}] 멀티스레드 스나이퍼 완료 | 최종합격 {len(report.survivors_final)} | "
-        f"등재 {len(report.enrolled)} | DATA_FAIL {report.fetch_failed}"
+            if msg and "DB_INSERT" in str(msg):
+                print(
+                    f"⚠️ [{market}] forward_trades 등재 실패 "
+                    f"{target['code']}: {msg}"
+                )
+
+    report = funnel.finalize(
+        elapsed_min=(
+            _time.time() - _scan_t0
+        )
+        / 60.0
     )
+
+    print(
+        f"✅ [{market}] 멀티스레드 스나이퍼 완료 | "
+        f"최종합격 {len(report.survivors_final)} | "
+        f"등재 {len(report.enrolled)} | "
+        f"DATA_FAIL {report.fetch_failed}"
+    )
+
     try:
-        send_telegram_msg(format_supernova_scan_report(report))
+        send_telegram_msg(
+            format_supernova_scan_report(report)
+        )
     except Exception:
         pass
+
+    return report
 # 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
 def run_miner_scheduler():
     """1주일에 한 번 과거 데이터를 마이닝하여 템플릿 갱신 및 CSV 추출을 수행하는 봇"""
