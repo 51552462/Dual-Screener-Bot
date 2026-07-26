@@ -25,6 +25,7 @@ from fast_safety_policy_admin import (
     BackupRecord,
     FastSafetyReadStatus,
     InspectResult,
+    RollbackResult,
     compute_policy_document_sha256,
     create_backup_record,
     inspect_fast_safety_policy,
@@ -36,6 +37,7 @@ from fast_safety_policy_admin_artifacts import (
     FastSafetyApprovalManifest,
     load_applied_checkpoint,
     load_backup_record,
+    save_applied_checkpoint,
     save_approval_manifest,
     save_backup_record,
     validate_admin_apply_document,
@@ -227,6 +229,67 @@ def _apply_enabled_argv(
     if overwrite:
         argv.append("--overwrite")
     return argv
+
+
+def _rollback_value_argv(
+    db: str,
+    backup_path: str,
+    checkpoint_path: str,
+    *,
+    execute: bool = False,
+) -> list[str]:
+    argv = [
+        "rollback-value",
+        "--db-path",
+        db,
+        "--backup",
+        backup_path,
+        "--checkpoint",
+        checkpoint_path,
+    ]
+    if execute:
+        argv.append("--execute")
+    return argv
+
+
+def _rollback_absent_argv(
+    db: str,
+    backup_path: str,
+    checkpoint_path: str,
+    *,
+    execute: bool = False,
+) -> list[str]:
+    argv = [
+        "rollback-absent",
+        "--db-path",
+        db,
+        "--backup",
+        backup_path,
+        "--checkpoint",
+        checkpoint_path,
+    ]
+    if execute:
+        argv.append("--execute")
+    return argv
+
+
+def _apply_and_checkpoint(
+    db: str,
+    backup_path: str,
+    checkpoint_path: str,
+    *,
+    execute: bool = True,
+) -> None:
+    code, _, stderr = _run_cli(
+        _apply_disabled_argv(
+            db,
+            backup_path,
+            checkpoint_path,
+            execute=execute,
+            overwrite=True,
+        )
+    )
+    assert code == 0, stderr
 
 
 def _insert_raw_json(
@@ -1340,6 +1403,783 @@ class FastSafetyPolicyAdminCliTests(unittest.TestCase):
             self.assertTrue(payload["recovery_required"])
             self.assertTrue(payload["requires_rollback"])
             self.assertIsNotNone(payload["checkpoint"])
+
+    def test_28_rollback_value_dry_run_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            raw_enabled = (
+                ' {"enabled": true, "market": "KR", '
+                f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                f'"generated_at": 100.0, '
+                f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                '"absolute_kelly_cap": 0.10} '
+            )
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            before = read_config_kv_row(key, db_path=db)
+            with patch(
+                "fast_safety_policy_admin_cli.rollback_policy_value",
+            ) as mock_rollback:
+                code, stdout, stderr = _run_cli(
+                    _rollback_value_argv(db, backup_path, checkpoint_path)
+                )
+                mock_rollback.assert_not_called()
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout.strip())
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["executed"])
+            self.assertEqual(payload["reason"], "validated-no-write")
+            after = read_config_kv_row(key, db_path=db)
+            assert before is not None and after is not None
+            self.assertEqual(after.version, before.version)
+            self.assertEqual(after.value_json, before.value_json)
+
+    def test_29_rollback_value_execute_exact_raw_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            raw_enabled = (
+                ' {"enabled": true, "market": "KR", '
+                f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                f'"generated_at": 100.0, '
+                f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                '"absolute_kelly_cap": 0.10} '
+            )
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            code, stdout, stderr = _run_cli(
+                _rollback_value_argv(
+                    db,
+                    backup_path,
+                    checkpoint_path,
+                    execute=True,
+                )
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout.strip())
+            self.assertTrue(payload["executed"])
+            row = read_config_kv_row(key, db_path=db)
+            assert row is not None
+            self.assertEqual(row.value_json, raw_enabled)
+            self.assertEqual(sha256_utf8(row.value_json), record.backup_value_json_sha256)
+            self.assertEqual(
+                payload["final_status"],
+                FastSafetyReadStatus.PRESENT_ENABLED_VALID.value,
+            )
+            self.assertTrue(os.path.isfile(backup_path))
+            self.assertTrue(os.path.isfile(checkpoint_path))
+
+    def test_30_rollback_absent_dry_run_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            backup_path = _write_backup(db, tmp_dir)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            with patch(
+                "fast_safety_policy_admin_cli.rollback_policy_absent",
+            ) as mock_rollback:
+                code, stdout, stderr = _run_cli(
+                    _rollback_absent_argv(db, backup_path, checkpoint_path)
+                )
+                mock_rollback.assert_not_called()
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout.strip())
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["executed"])
+            self.assertIsNotNone(read_config_kv_row(key, db_path=db))
+
+    def test_31_rollback_absent_execute_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            backup_path = _write_backup(db, tmp_dir)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            code, stdout, stderr = _run_cli(
+                _rollback_absent_argv(
+                    db,
+                    backup_path,
+                    checkpoint_path,
+                    execute=True,
+                )
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout.strip())
+            self.assertTrue(payload["executed"])
+            self.assertEqual(payload["final_status"], FastSafetyReadStatus.ABSENT.value)
+            verify = inspect_fast_safety_policy("KR", db_path=db)
+            self.assertEqual(verify.status, FastSafetyReadStatus.ABSENT)
+            self.assertIsNone(read_config_kv_row(key, db_path=db))
+            self.assertTrue(os.path.isfile(backup_path))
+            self.assertTrue(os.path.isfile(checkpoint_path))
+
+    def test_32_rollback_command_backup_mode_mismatch(self) -> None:
+        with patch(
+            "fast_safety_policy_admin_cli.rollback_policy_value",
+        ) as mock_value, patch(
+            "fast_safety_policy_admin_cli.rollback_policy_absent",
+        ) as mock_absent:
+            with self.subTest(case="value-with-absent-backup"):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    db = _db_path(tmp_dir)
+                    key = FAST_SAFETY_POLICY_KEYS["KR"]
+                    absent_backup_path = os.path.join(tmp_dir, "absent-backup.json")
+                    absent_record = create_backup_record(
+                        "KR",
+                        created_at=_CREATED_AT,
+                        db_path=db,
+                    )
+                    assert absent_record is not None
+                    save_backup_record(absent_backup_path, absent_record)
+                    checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+                    _apply_and_checkpoint(db, absent_backup_path, checkpoint_path)
+                    before = read_config_kv_row(key, db_path=db)
+                    mock_value.reset_mock()
+                    mock_absent.reset_mock()
+                    code, stdout, stderr = _run_cli(
+                        _rollback_value_argv(
+                            db,
+                            absent_backup_path,
+                            checkpoint_path,
+                            execute=True,
+                        )
+                    )
+                    mock_value.assert_not_called()
+                    mock_absent.assert_not_called()
+                    self.assertEqual(code, EXIT_VALIDATION_ERROR)
+                    after = read_config_kv_row(key, db_path=db)
+                    assert before is not None and after is not None
+                    self.assertEqual(after.version, before.version)
+                    self.assertEqual(after.value_json, before.value_json)
+
+            with self.subTest(case="absent-with-present-backup"):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    db = _db_path(tmp_dir)
+                    key = FAST_SAFETY_POLICY_KEYS["KR"]
+                    raw_enabled = (
+                        ' {"enabled": true, "market": "KR", '
+                        f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                        f'"generated_at": 100.0, '
+                        f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                        '"absolute_kelly_cap": 0.10} '
+                    )
+                    _insert_raw_json(db, key, raw_enabled, version=1)
+                    present_backup_path = os.path.join(tmp_dir, "present-backup.json")
+                    present_record = create_backup_record(
+                        "KR",
+                        created_at=_CREATED_AT,
+                        db_path=db,
+                    )
+                    assert present_record is not None
+                    save_backup_record(present_backup_path, present_record)
+                    checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+                    _apply_and_checkpoint(db, present_backup_path, checkpoint_path)
+                    before = read_config_kv_row(key, db_path=db)
+                    mock_value.reset_mock()
+                    mock_absent.reset_mock()
+                    code, stdout, stderr = _run_cli(
+                        _rollback_absent_argv(
+                            db,
+                            present_backup_path,
+                            checkpoint_path,
+                            execute=True,
+                        )
+                    )
+                    mock_value.assert_not_called()
+                    mock_absent.assert_not_called()
+                    self.assertEqual(code, EXIT_VALIDATION_ERROR)
+                    after = read_config_kv_row(key, db_path=db)
+                    assert before is not None and after is not None
+                    self.assertEqual(after.version, before.version)
+                    self.assertEqual(after.value_json, before.value_json)
+
+    def test_33_rollback_artifact_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            raw_enabled = (
+                ' {"enabled": true, "market": "KR", '
+                f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                f'"generated_at": 100.0, '
+                f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                '"absolute_kelly_cap": 0.10} '
+            )
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            loaded_checkpoint = load_applied_checkpoint(checkpoint_path)
+            us_backup_path = os.path.join(tmp_dir, "us-backup.json")
+            us_record = create_backup_record(
+                "US",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert us_record is not None
+            save_backup_record(us_backup_path, us_record, overwrite=True)
+            wrong_key_backup = BackupRecord(
+                backup_version=record.backup_version,
+                created_at=record.created_at,
+                market=record.market,
+                config_key="wrong.key",
+                previous_absent=record.previous_absent,
+                previous_row_version=record.previous_row_version,
+                previous_value_json=record.previous_value_json,
+                backup_value_json_sha256=record.backup_value_json_sha256,
+                previous_classification=record.previous_classification,
+            )
+            wrong_key_path = os.path.join(tmp_dir, "wrong-key-backup.json")
+            save_backup_record(wrong_key_path, wrong_key_backup, overwrite=True)
+            malformed_checkpoint_path = os.path.join(tmp_dir, "malformed-checkpoint.json")
+            with open(malformed_checkpoint_path, "w", encoding="utf-8") as handle:
+                handle.write("{not-json")
+            bad_version_checkpoint_path = os.path.join(tmp_dir, "bad-version-checkpoint.json")
+            bad_version = AppliedCheckpoint(
+                checkpoint_version="wrong-version",
+                created_at=loaded_checkpoint.created_at,
+                market=loaded_checkpoint.market,
+                config_key=loaded_checkpoint.config_key,
+                row_version=loaded_checkpoint.row_version,
+                value_json_sha256=loaded_checkpoint.value_json_sha256,
+                policy_document_sha256=loaded_checkpoint.policy_document_sha256,
+                classification=loaded_checkpoint.classification,
+            )
+            save_applied_checkpoint(
+                bad_version_checkpoint_path,
+                bad_version,
+                overwrite=True,
+            )
+            missing_backup = os.path.join(tmp_dir, "missing-backup.json")
+            cases = (
+                ("market-mismatch", us_backup_path, checkpoint_path, EXIT_VALIDATION_ERROR),
+                ("config-key-mismatch", wrong_key_path, checkpoint_path, EXIT_VALIDATION_ERROR),
+                ("malformed-checkpoint", backup_path, malformed_checkpoint_path, EXIT_VALIDATION_ERROR),
+                ("invalid-checkpoint-version", backup_path, bad_version_checkpoint_path, EXIT_VALIDATION_ERROR),
+                ("missing-backup", missing_backup, checkpoint_path, EXIT_OPERATIONAL_ERROR),
+            )
+            before = read_config_kv_row(key, db_path=db)
+            for label, case_backup, case_checkpoint, expected_code in cases:
+                with self.subTest(case=label):
+                    with patch(
+                        "fast_safety_policy_admin_cli.rollback_policy_value",
+                    ) as mock_rollback:
+                        code, stdout, stderr = _run_cli(
+                            _rollback_value_argv(
+                                db,
+                                case_backup,
+                                case_checkpoint,
+                                execute=True,
+                            )
+                        )
+                        mock_rollback.assert_not_called()
+                    self.assertEqual(code, expected_code)
+                    self.assertNotIn("Traceback", stderr)
+                    after = read_config_kv_row(key, db_path=db)
+                    assert before is not None and after is not None
+                    self.assertEqual(after.version, before.version)
+                    self.assertEqual(after.value_json, before.value_json)
+
+    def test_34_stale_checkpoint_preflight_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            raw_enabled = (
+                ' {"enabled": true, "market": "KR", '
+                f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                f'"generated_at": 100.0, '
+                f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                '"absolute_kelly_cap": 0.10} '
+            )
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            loaded_checkpoint = load_applied_checkpoint(checkpoint_path)
+            stale_version_path = os.path.join(tmp_dir, "stale-version-checkpoint.json")
+            stale_version = AppliedCheckpoint(
+                checkpoint_version=loaded_checkpoint.checkpoint_version,
+                created_at=loaded_checkpoint.created_at,
+                market=loaded_checkpoint.market,
+                config_key=loaded_checkpoint.config_key,
+                row_version=loaded_checkpoint.row_version + 10,
+                value_json_sha256=loaded_checkpoint.value_json_sha256,
+                policy_document_sha256=loaded_checkpoint.policy_document_sha256,
+                classification=loaded_checkpoint.classification,
+            )
+            save_applied_checkpoint(stale_version_path, stale_version, overwrite=True)
+            stale_hash_path = os.path.join(tmp_dir, "stale-hash-checkpoint.json")
+            stale_hash = AppliedCheckpoint(
+                checkpoint_version=loaded_checkpoint.checkpoint_version,
+                created_at=loaded_checkpoint.created_at,
+                market=loaded_checkpoint.market,
+                config_key=loaded_checkpoint.config_key,
+                row_version=loaded_checkpoint.row_version,
+                value_json_sha256="0" * 64,
+                policy_document_sha256=loaded_checkpoint.policy_document_sha256,
+                classification=loaded_checkpoint.classification,
+            )
+            save_applied_checkpoint(stale_hash_path, stale_hash, overwrite=True)
+            absent_checkpoint_path = os.path.join(tmp_dir, "absent-checkpoint.json")
+            save_applied_checkpoint(absent_checkpoint_path, loaded_checkpoint, overwrite=True)
+            before = read_config_kv_row(key, db_path=db)
+            cases = (
+                ("version-mismatch", stale_version_path),
+                ("hash-mismatch", stale_hash_path),
+                ("current-absent", absent_checkpoint_path),
+            )
+            for label, case_checkpoint in cases:
+                with self.subTest(case=label):
+                    if label == "current-absent":
+                        conn = sqlite3.connect(db, timeout=30.0)
+                        try:
+                            conn.execute("DELETE FROM config_kv WHERE key = ?", (key,))
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    with patch(
+                        "fast_safety_policy_admin_cli.rollback_policy_value",
+                    ) as mock_rollback:
+                        code, stdout, stderr = _run_cli(
+                            _rollback_value_argv(
+                                db,
+                                backup_path,
+                                case_checkpoint,
+                                execute=True,
+                            )
+                        )
+                        mock_rollback.assert_not_called()
+                    self.assertEqual(code, EXIT_CONCURRENCY_ERROR)
+                    if label != "current-absent":
+                        after = read_config_kv_row(key, db_path=db)
+                        assert before is not None and after is not None
+                        self.assertEqual(after.version, before.version)
+                        self.assertEqual(after.value_json, before.value_json)
+                    else:
+                        self.assertIsNone(read_config_kv_row(key, db_path=db))
+
+    def test_35_stop_and_read_error_rollback_blocked(self) -> None:
+        checkpoint_path_name = "checkpoint.json"
+        for label, expected_code in (
+            ("invalid", EXIT_VALIDATION_ERROR),
+            ("undecodable", EXIT_VALIDATION_ERROR),
+            ("read-error", EXIT_OPERATIONAL_ERROR),
+        ):
+            with self.subTest(state=label):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    db = _db_path(tmp_dir)
+                    key = FAST_SAFETY_POLICY_KEYS["KR"]
+                    raw_enabled = (
+                        ' {"enabled": true, "market": "KR", '
+                        f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                        f'"generated_at": 100.0, '
+                        f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                        '"absolute_kelly_cap": 0.10} '
+                    )
+                    _insert_raw_json(db, key, raw_enabled, version=1)
+                    backup_path = os.path.join(tmp_dir, "backup.json")
+                    record = create_backup_record(
+                        "KR",
+                        created_at=_CREATED_AT,
+                        db_path=db,
+                    )
+                    assert record is not None
+                    save_backup_record(backup_path, record)
+                    checkpoint_path = os.path.join(tmp_dir, checkpoint_path_name)
+                    _apply_and_checkpoint(db, backup_path, checkpoint_path)
+                    if label == "invalid":
+                        row = read_config_kv_row(key, db_path=db)
+                        assert row is not None
+                        invalid_json = json.dumps(
+                            _valid_enabled_document(market="US"),
+                            separators=(",", ":"),
+                        )
+                        conn = sqlite3.connect(db, timeout=30.0)
+                        try:
+                            conn.execute(
+                                "UPDATE config_kv SET value_json = ? WHERE key = ?",
+                                (invalid_json, key),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    elif label == "undecodable":
+                        _insert_raw_json(db, key, "{bad", version=99)
+                    inspect_patch = patch(
+                        "fast_safety_policy_admin_cli.inspect_fast_safety_policy",
+                        return_value=InspectResult(
+                            market="KR",
+                            config_key=key,
+                            status=FastSafetyReadStatus.READ_ERROR,
+                            row_version=None,
+                            value_json_sha256=None,
+                            document=None,
+                            error="RuntimeError",
+                        ),
+                    )
+                    with patch(
+                        "fast_safety_policy_admin_cli.rollback_policy_value",
+                    ) as mock_rollback, inspect_patch if label == "read-error" else contextlib.nullcontext():
+                        code, stdout, stderr = _run_cli(
+                            _rollback_value_argv(
+                                db,
+                                backup_path,
+                                checkpoint_path,
+                                execute=True,
+                            )
+                        )
+                        mock_rollback.assert_not_called()
+                    self.assertEqual(code, expected_code)
+                    self.assertNotIn("Traceback", stderr)
+
+    def test_36_rollback_core_concurrency_race_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            raw_enabled = (
+                ' {"enabled": true, "market": "KR", '
+                f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                f'"generated_at": 100.0, '
+                f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                '"absolute_kelly_cap": 0.10} '
+            )
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            before = read_config_kv_row(key, db_path=db)
+            with patch(
+                "fast_safety_policy_admin_cli.rollback_policy_value",
+                return_value=RollbackResult(
+                    ok=False,
+                    reason="concurrency conflict",
+                    final_status=FastSafetyReadStatus.PRESENT_DISABLED_VALID,
+                ),
+            ) as mock_rollback:
+                code, stdout, stderr = _run_cli(
+                    _rollback_value_argv(
+                        db,
+                        backup_path,
+                        checkpoint_path,
+                        execute=True,
+                    )
+                )
+                mock_rollback.assert_called_once()
+            self.assertEqual(code, EXIT_CONCURRENCY_ERROR)
+            payload = json.loads(stdout.strip())
+            self.assertFalse(payload["ok"])
+            self.assertTrue(payload["executed"])
+            self.assertFalse(payload["recovery_required"])
+            after = read_config_kv_row(key, db_path=db)
+            assert before is not None and after is not None
+            self.assertEqual(after.version, before.version)
+            self.assertEqual(after.value_json, before.value_json)
+
+    def test_37_post_rollback_verification_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            raw_enabled = (
+                ' {"enabled": true, "market": "KR", '
+                f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                f'"generated_at": 100.0, '
+                f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                '"absolute_kelly_cap": 0.10} '
+            )
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            with patch(
+                "fast_safety_policy_admin_cli.rollback_policy_value",
+                return_value=RollbackResult(
+                    ok=False,
+                    reason="restored hash mismatch",
+                    final_status=FastSafetyReadStatus.PRESENT_DISABLED_VALID,
+                ),
+            ) as mock_value, patch(
+                "fast_safety_policy_admin_cli.rollback_policy_absent",
+            ) as mock_absent:
+                code, stdout, stderr = _run_cli(
+                    _rollback_value_argv(
+                        db,
+                        backup_path,
+                        checkpoint_path,
+                        execute=True,
+                    )
+                )
+                mock_value.assert_called_once()
+                mock_absent.assert_not_called()
+            self.assertEqual(code, EXIT_RECOVERY_REQUIRED)
+            self.assertIn("rollback-verification-error", stderr)
+            self.assertNotIn("Traceback", stderr)
+            self.assertNotIn(db, stdout)
+            self.assertNotIn(backup_path, stdout)
+            self.assertNotIn(checkpoint_path, stdout)
+            payload = json.loads(stdout.strip())
+            self.assertTrue(payload["recovery_required"])
+            self.assertIsNotNone(payload["final_status"])
+
+    def test_38_rollback_artifact_preservation_and_json_safety(self) -> None:
+        raw_enabled = (
+            ' {"enabled": true, "market": "KR", '
+            f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+            f'"generated_at": 100.0, '
+            f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+            '"absolute_kelly_cap": 0.10} '
+        )
+        success_stdout = ""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            with open(backup_path, encoding="utf-8") as handle:
+                backup_before = handle.read()
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            with open(checkpoint_path, encoding="utf-8") as handle:
+                checkpoint_before = handle.read()
+            success_code, success_stdout, success_stderr = _run_cli(
+                _rollback_value_argv(
+                    db,
+                    backup_path,
+                    checkpoint_path,
+                    execute=True,
+                )
+            )
+            self.assertEqual(success_code, 0)
+            self.assertEqual(success_stderr, "")
+            with open(backup_path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), backup_before)
+            with open(checkpoint_path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), checkpoint_before)
+
+        fail_stdout = ""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+            _insert_raw_json(db, key, raw_enabled, version=1)
+            backup_path = os.path.join(tmp_dir, "backup.json")
+            record = create_backup_record(
+                "KR",
+                created_at=_CREATED_AT,
+                db_path=db,
+            )
+            assert record is not None
+            save_backup_record(backup_path, record)
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.json")
+            _apply_and_checkpoint(db, backup_path, checkpoint_path)
+            with patch(
+                "fast_safety_policy_admin_cli.rollback_policy_value",
+                return_value=RollbackResult(
+                    ok=False,
+                    reason="restored hash mismatch",
+                    final_status=FastSafetyReadStatus.PRESENT_DISABLED_VALID,
+                ),
+            ):
+                fail_code, fail_stdout, fail_stderr = _run_cli(
+                    _rollback_value_argv(
+                        db,
+                        backup_path,
+                        checkpoint_path,
+                        execute=True,
+                    )
+                )
+            self.assertEqual(fail_code, EXIT_RECOVERY_REQUIRED)
+            self.assertTrue(os.path.isfile(backup_path))
+            self.assertTrue(os.path.isfile(checkpoint_path))
+
+        for stdout in (success_stdout, fail_stdout):
+                lines = stdout.splitlines()
+                self.assertEqual(len(lines), 1)
+                payload = json.loads(lines[0])
+                self.assertNotIn("previous_value_json", stdout)
+                self.assertNotIn(raw_enabled.strip(), stdout)
+                self.assertNotIn(db, stdout)
+                self.assertNotIn(backup_path, stdout)
+                self.assertNotIn(checkpoint_path, stdout)
+                required = {
+                    "command",
+                    "ok",
+                    "reason",
+                    "executed",
+                    "market",
+                    "config_key",
+                    "backup_previous_absent",
+                    "backup_previous_classification",
+                    "checkpoint_row_version",
+                    "checkpoint_value_json_sha256",
+                    "checkpoint_classification",
+                    "current_status",
+                    "final_status",
+                    "recovery_required",
+                }
+                self.assertTrue(required.issubset(payload.keys()))
+
+    def test_39_end_to_end_cli_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = _db_path(tmp_dir)
+            key = FAST_SAFETY_POLICY_KEYS["KR"]
+
+            with self.subTest(flow="value"):
+                raw_enabled = (
+                    ' {"enabled": true, "market": "KR", '
+                    f'"version": "{FAST_SAFETY_POLICY_VERSION}", '
+                    f'"generated_at": 100.0, '
+                    f'"base_kelly_by_strategy": {{"{_STRATEGY_ID}": 0.08}}, '
+                    '"absolute_kelly_cap": 0.10} '
+                )
+                _insert_raw_json(db, key, raw_enabled, version=1)
+                backup_path = os.path.join(tmp_dir, "value-backup.json")
+                backup_code, _, backup_stderr = _run_cli(
+                    [
+                        "backup",
+                        "--market",
+                        "KR",
+                        "--db-path",
+                        db,
+                        "--created-at",
+                        _CREATED_AT,
+                        "--output",
+                        backup_path,
+                    ]
+                )
+                self.assertEqual(backup_code, 0, backup_stderr)
+                checkpoint_path = os.path.join(tmp_dir, "value-checkpoint.json")
+                apply_code, _, apply_stderr = _run_cli(
+                    _apply_disabled_argv(
+                        db,
+                        backup_path,
+                        checkpoint_path,
+                        execute=True,
+                    )
+                )
+                self.assertEqual(apply_code, 0, apply_stderr)
+                rollback_code, rollback_stdout, rollback_stderr = _run_cli(
+                    _rollback_value_argv(
+                        db,
+                        backup_path,
+                        checkpoint_path,
+                        execute=True,
+                    )
+                )
+                self.assertEqual(rollback_code, 0)
+                self.assertEqual(rollback_stderr, "")
+                row = read_config_kv_row(key, db_path=db)
+                assert row is not None
+                self.assertEqual(row.value_json, raw_enabled)
+                payload = json.loads(rollback_stdout.strip())
+                self.assertTrue(payload["ok"])
+
+            with self.subTest(flow="absent"):
+                conn = sqlite3.connect(db, timeout=30.0)
+                try:
+                    conn.execute("DELETE FROM config_kv WHERE key = ?", (key,))
+                    conn.commit()
+                finally:
+                    conn.close()
+                absent_backup_path = os.path.join(tmp_dir, "absent-backup.json")
+                absent_backup_code, _, absent_backup_stderr = _run_cli(
+                    [
+                        "backup",
+                        "--market",
+                        "KR",
+                        "--db-path",
+                        db,
+                        "--created-at",
+                        _CREATED_AT,
+                        "--output",
+                        absent_backup_path,
+                    ]
+                )
+                self.assertEqual(absent_backup_code, 0, absent_backup_stderr)
+                absent_checkpoint_path = os.path.join(tmp_dir, "absent-checkpoint.json")
+                absent_apply_code, _, absent_apply_stderr = _run_cli(
+                    _apply_disabled_argv(
+                        db,
+                        absent_backup_path,
+                        absent_checkpoint_path,
+                        execute=True,
+                        overwrite=True,
+                    )
+                )
+                self.assertEqual(absent_apply_code, 0, absent_apply_stderr)
+                absent_rollback_code, absent_rollback_stdout, absent_rollback_stderr = _run_cli(
+                    _rollback_absent_argv(
+                        db,
+                        absent_backup_path,
+                        absent_checkpoint_path,
+                        execute=True,
+                    )
+                )
+                self.assertEqual(absent_rollback_code, 0)
+                self.assertEqual(absent_rollback_stderr, "")
+                verify = inspect_fast_safety_policy("KR", db_path=db)
+                self.assertEqual(verify.status, FastSafetyReadStatus.ABSENT)
+                absent_payload = json.loads(absent_rollback_stdout.strip())
+                self.assertEqual(
+                    absent_payload["final_status"],
+                    FastSafetyReadStatus.ABSENT.value,
+                )
 
 
 if __name__ == "__main__":

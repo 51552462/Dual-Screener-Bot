@@ -1,4 +1,4 @@
-"""Fast Safety Policy Admin CLI — inspect, validate, backup, verify, apply (Chapter 3-B0D2B3B3)."""
+"""Fast Safety Policy Admin CLI — inspect, validate, backup, verify, apply, rollback (Chapter 3-B0D2B3B4)."""
 
 from __future__ import annotations
 
@@ -16,18 +16,23 @@ from typing import Any
 from fast_safety_policy_admin import (
     ApplyResult,
     FastSafetyReadStatus,
+    RollbackResult,
     apply_disabled_policy,
     apply_enabled_policy,
     create_backup_record,
     inspect_fast_safety_policy,
+    rollback_policy_absent,
+    rollback_policy_value,
     validate_admin_apply_document,
     verify_fast_safety_policy,
 )
 from fast_safety_policy_admin_artifacts import (
+    AppliedCheckpoint,
     BackupRecord,
     applied_checkpoint_to_document,
     decode_artifact_json,
     encode_artifact_json,
+    load_applied_checkpoint,
     load_approval_manifest,
     load_backup_record,
     save_applied_checkpoint,
@@ -45,7 +50,16 @@ EXIT_RECOVERY_REQUIRED = 4
 _CONCURRENCY_REASON = "concurrency conflict"
 
 _COMMANDS = frozenset(
-    {"inspect", "validate", "backup", "verify", "apply-disabled", "apply-enabled"}
+    {
+        "inspect",
+        "validate",
+        "backup",
+        "verify",
+        "apply-disabled",
+        "apply-enabled",
+        "rollback-value",
+        "rollback-absent",
+    }
 )
 
 _INSPECT_ALLOWED = frozenset({"market", "db_path"})
@@ -79,6 +93,59 @@ _APPLY_ENABLED_ALLOWED = frozenset(
         "overwrite",
     }
 )
+_ROLLBACK_ALLOWED = frozenset({"db_path", "backup", "checkpoint", "execute"})
+
+_PRESENT_CLASSIFICATIONS = frozenset(
+    {
+        FastSafetyReadStatus.PRESENT_ENABLED_VALID.value,
+        FastSafetyReadStatus.PRESENT_DISABLED_VALID.value,
+    }
+)
+
+_ROLLBACK_CONCURRENCY_REASONS = frozenset(
+    {
+        "concurrency conflict",
+        "checkpoint mismatch",
+        "current row missing",
+    }
+)
+_ROLLBACK_VALIDATION_REASONS = frozenset(
+    {
+        "backup was absent",
+        "backup was not absent",
+        "backup version mismatch",
+        "market mismatch",
+        "config key mismatch",
+        "config key not whitelisted",
+        "created_at missing",
+        "absent backup has row version",
+        "absent backup has value json",
+        "absent backup has checksum",
+        "absent backup classification mismatch",
+        "invalid previous row version",
+        "previous value json missing",
+        "backup checksum missing",
+        "backup checksum format invalid",
+        "backup checksum mismatch",
+        "invalid previous classification",
+        "backup json invalid",
+        "backup classification stale",
+        "checkpoint version mismatch",
+        "checkpoint market/key mismatch",
+        "missing backup value json",
+        "backup classification mismatch",
+    }
+)
+_ROLLBACK_READ_ERROR_REASONS = frozenset({"read failed"})
+_ROLLBACK_VERIFICATION_REASONS = frozenset(
+    {
+        "restored hash mismatch",
+        "restored classification mismatch",
+        "row still present",
+        "not absent after rollback",
+        "rollback failed",
+    }
+)
 
 _OPTIONAL_FIELDS = (
     "market",
@@ -94,6 +161,7 @@ _OPTIONAL_FIELDS = (
     "generated_at",
     "checkpoint_created_at",
     "checkpoint_output",
+    "checkpoint",
 )
 
 _EXPECTED_ENABLED_MAP = {
@@ -180,6 +248,8 @@ def _validate_command_args(args: argparse.Namespace) -> str | None:
         allowed = _APPLY_DISABLED_ALLOWED
     elif command == "apply-enabled":
         allowed = _APPLY_ENABLED_ALLOWED
+    elif command in {"rollback-value", "rollback-absent"}:
+        allowed = _ROLLBACK_ALLOWED
     else:
         return "unknown command"
 
@@ -249,6 +319,20 @@ def _validate_command_args(args: argparse.Namespace) -> str | None:
             return "missing approval"
         if not isinstance(args.approval, str) or not args.approval.strip():
             return "missing approval"
+
+    if command in {"rollback-value", "rollback-absent"}:
+        if args.db_path is None:
+            return "missing db-path"
+        if not isinstance(args.db_path, str) or not args.db_path.strip():
+            return "missing db-path"
+        if args.backup is None:
+            return "missing backup"
+        if not isinstance(args.backup, str) or not args.backup.strip():
+            return "missing backup"
+        if args.checkpoint is None:
+            return "missing checkpoint"
+        if not isinstance(args.checkpoint, str) or not args.checkpoint.strip():
+            return "missing checkpoint"
 
     return None
 
@@ -917,6 +1001,359 @@ def _handle_apply_result(
     return _operational_error()
 
 
+def _rollback_response(
+    command: str,
+    *,
+    ok: bool,
+    reason: str,
+    executed: bool,
+    market: str | None,
+    config_key: str | None,
+    backup: BackupRecord | None,
+    checkpoint: AppliedCheckpoint | None,
+    current_status: str | None,
+    final_status: FastSafetyReadStatus | None,
+    recovery_required: bool,
+) -> dict[str, Any]:
+    return {
+        "command": command,
+        "ok": ok,
+        "reason": reason,
+        "executed": executed,
+        "market": market,
+        "config_key": config_key,
+        "backup_previous_absent": backup.previous_absent if backup is not None else None,
+        "backup_previous_classification": (
+            backup.previous_classification if backup is not None else None
+        ),
+        "checkpoint_row_version": checkpoint.row_version if checkpoint is not None else None,
+        "checkpoint_value_json_sha256": (
+            checkpoint.value_json_sha256 if checkpoint is not None else None
+        ),
+        "checkpoint_classification": (
+            checkpoint.classification if checkpoint is not None else None
+        ),
+        "current_status": current_status,
+        "final_status": final_status.value if final_status is not None else None,
+        "recovery_required": recovery_required,
+    }
+
+
+def _load_checkpoint_artifact(path: str) -> tuple[AppliedCheckpoint | None, str, int]:
+    try:
+        return load_applied_checkpoint(path), "", EXIT_OK
+    except OSError:
+        sys.stderr.write("file-read-error\n")
+        return None, "file-read-error", EXIT_OPERATIONAL_ERROR
+    except json.JSONDecodeError:
+        return None, "malformed checkpoint", EXIT_VALIDATION_ERROR
+    except (TypeError, ValueError):
+        return None, "invalid checkpoint", EXIT_VALIDATION_ERROR
+    except Exception:
+        return None, "internal-error", EXIT_OPERATIONAL_ERROR
+
+
+def _validate_rollback_command_mode(
+    backup: BackupRecord,
+    *,
+    value_mode: bool,
+) -> tuple[bool, str]:
+    if value_mode:
+        if backup.previous_absent:
+            return False, "backup was absent"
+        if backup.previous_classification not in _PRESENT_CLASSIFICATIONS:
+            return False, "invalid previous classification"
+        if (
+            backup.previous_row_version is None
+            or isinstance(backup.previous_row_version, bool)
+            or backup.previous_row_version <= 0
+        ):
+            return False, "invalid previous row version"
+        if not isinstance(backup.previous_value_json, str):
+            return False, "previous value json missing"
+        if backup.backup_value_json_sha256 is None:
+            return False, "backup checksum missing"
+        return True, ""
+
+    if not backup.previous_absent:
+        return False, "backup was not absent"
+    if backup.previous_classification != FastSafetyReadStatus.ABSENT.value:
+        return False, "backup classification mismatch"
+    return True, ""
+
+
+def _validate_rollback_artifact_consistency(
+    backup: BackupRecord,
+    checkpoint: AppliedCheckpoint,
+) -> tuple[bool, str]:
+    _, config_key, market_reason = _validate_market(backup.market)
+    if config_key is None:
+        return False, market_reason
+    if backup.market != checkpoint.market:
+        return False, "market mismatch"
+    if backup.config_key != checkpoint.config_key:
+        return False, "config key mismatch"
+    expected_key = policy_key_for_market(backup.market)
+    if expected_key is None or backup.config_key != expected_key:
+        return False, "config key mismatch"
+    if backup.config_key not in FAST_SAFETY_POLICY_KEYS.values():
+        return False, "config key not whitelisted"
+    return True, ""
+
+
+def _check_checkpoint_against_current_state(
+    backup: BackupRecord,
+    checkpoint: AppliedCheckpoint,
+    *,
+    db_path: str,
+) -> tuple[bool, str, int, FastSafetyReadStatus | None]:
+    inspection = inspect_fast_safety_policy(checkpoint.market, db_path=db_path)
+    current_status = inspection.status
+
+    if current_status is FastSafetyReadStatus.READ_ERROR:
+        return (
+            False,
+            inspection.error or "read error",
+            EXIT_OPERATIONAL_ERROR,
+            current_status,
+        )
+
+    if current_status is FastSafetyReadStatus.ABSENT:
+        return False, "stale checkpoint", EXIT_CONCURRENCY_ERROR, current_status
+
+    if current_status in {
+        FastSafetyReadStatus.PRESENT_INVALID_DOCUMENT,
+        FastSafetyReadStatus.PRESENT_UNDECODABLE_JSON,
+    }:
+        return False, "rollback blocked", EXIT_VALIDATION_ERROR, current_status
+
+    if (
+        inspection.status.value != checkpoint.classification
+        or inspection.row_version != checkpoint.row_version
+        or inspection.value_json_sha256 != checkpoint.value_json_sha256
+    ):
+        return False, "stale checkpoint", EXIT_CONCURRENCY_ERROR, current_status
+
+    return True, "", EXIT_OK, current_status
+
+
+def _rollback_exit_code(result: RollbackResult) -> tuple[int, bool]:
+    reason = result.reason
+    if not reason:
+        return EXIT_OK, False
+    if reason in _ROLLBACK_CONCURRENCY_REASONS:
+        return EXIT_CONCURRENCY_ERROR, False
+    if reason in _ROLLBACK_VALIDATION_REASONS:
+        return EXIT_VALIDATION_ERROR, False
+    if reason in _ROLLBACK_READ_ERROR_REASONS:
+        return EXIT_OPERATIONAL_ERROR, False
+    if reason in _ROLLBACK_VERIFICATION_REASONS:
+        return EXIT_RECOVERY_REQUIRED, True
+    return EXIT_RECOVERY_REQUIRED, True
+
+
+def _run_rollback(args: argparse.Namespace, *, value_mode: bool) -> int:
+    command = "rollback-value" if value_mode else "rollback-absent"
+
+    db_path, _ = _require_non_empty_str(args.db_path, "db-path")
+    assert db_path is not None
+    backup_path, _ = _require_non_empty_str(args.backup, "backup")
+    assert backup_path is not None
+    checkpoint_path, _ = _require_non_empty_str(args.checkpoint, "checkpoint")
+    assert checkpoint_path is not None
+
+    backup, backup_reason, backup_code = _load_backup_artifact(backup_path)
+    if backup is None:
+        _emit_json(
+            _rollback_response(
+                command,
+                ok=False,
+                reason=backup_reason,
+                executed=False,
+                market=None,
+                config_key=None,
+                backup=None,
+                checkpoint=None,
+                current_status=None,
+                final_status=None,
+                recovery_required=False,
+            )
+        )
+        return backup_code
+
+    checkpoint, checkpoint_reason, checkpoint_code = _load_checkpoint_artifact(
+        checkpoint_path
+    )
+    if checkpoint is None:
+        _emit_json(
+            _rollback_response(
+                command,
+                ok=False,
+                reason=checkpoint_reason,
+                executed=False,
+                market=backup.market,
+                config_key=backup.config_key,
+                backup=backup,
+                checkpoint=None,
+                current_status=None,
+                final_status=None,
+                recovery_required=False,
+            )
+        )
+        return checkpoint_code
+
+    consistency_ok, consistency_reason = _validate_rollback_artifact_consistency(
+        backup,
+        checkpoint,
+    )
+    if not consistency_ok:
+        _emit_json(
+            _rollback_response(
+                command,
+                ok=False,
+                reason=consistency_reason,
+                executed=False,
+                market=backup.market,
+                config_key=backup.config_key,
+                backup=backup,
+                checkpoint=checkpoint,
+                current_status=None,
+                final_status=None,
+                recovery_required=False,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    mode_ok, mode_reason = _validate_rollback_command_mode(
+        backup,
+        value_mode=value_mode,
+    )
+    if not mode_ok:
+        _emit_json(
+            _rollback_response(
+                command,
+                ok=False,
+                reason=mode_reason,
+                executed=False,
+                market=backup.market,
+                config_key=backup.config_key,
+                backup=backup,
+                checkpoint=checkpoint,
+                current_status=None,
+                final_status=None,
+                recovery_required=False,
+            )
+        )
+        return EXIT_VALIDATION_ERROR
+
+    state_ok, state_reason, state_code, current_status = (
+        _check_checkpoint_against_current_state(
+            backup,
+            checkpoint,
+            db_path=db_path,
+        )
+    )
+    current_status_value = (
+        current_status.value if current_status is not None else None
+    )
+    if not state_ok:
+        _emit_json(
+            _rollback_response(
+                command,
+                ok=False,
+                reason=state_reason,
+                executed=False,
+                market=backup.market,
+                config_key=backup.config_key,
+                backup=backup,
+                checkpoint=checkpoint,
+                current_status=current_status_value,
+                final_status=None,
+                recovery_required=False,
+            )
+        )
+        if state_code == EXIT_OPERATIONAL_ERROR:
+            sys.stderr.write("read-error\n")
+        return state_code
+
+    if not args.execute:
+        _emit_json(
+            _rollback_response(
+                command,
+                ok=True,
+                reason="validated-no-write",
+                executed=False,
+                market=backup.market,
+                config_key=backup.config_key,
+                backup=backup,
+                checkpoint=checkpoint,
+                current_status=current_status_value,
+                final_status=None,
+                recovery_required=False,
+            )
+        )
+        return EXIT_OK
+
+    try:
+        if value_mode:
+            result = rollback_policy_value(
+                backup,
+                checkpoint,
+                db_path=db_path,
+            )
+        else:
+            result = rollback_policy_absent(
+                backup,
+                checkpoint,
+                db_path=db_path,
+            )
+    except Exception:
+        return _operational_error()
+
+    if result.ok:
+        if value_mode:
+            success = result.final_status.value == backup.previous_classification
+        else:
+            success = result.final_status is FastSafetyReadStatus.ABSENT
+        if success:
+            _emit_json(
+                _rollback_response(
+                    command,
+                    ok=True,
+                    reason="",
+                    executed=True,
+                    market=backup.market,
+                    config_key=backup.config_key,
+                    backup=backup,
+                    checkpoint=checkpoint,
+                    current_status=current_status_value,
+                    final_status=result.final_status,
+                    recovery_required=False,
+                )
+            )
+            return EXIT_OK
+
+    exit_code, recovery_required = _rollback_exit_code(result)
+    _emit_json(
+        _rollback_response(
+            command,
+            ok=False,
+            reason=result.reason,
+            executed=True,
+            market=backup.market,
+            config_key=backup.config_key,
+            backup=backup,
+            checkpoint=checkpoint,
+            current_status=current_status_value,
+            final_status=result.final_status,
+            recovery_required=recovery_required,
+        )
+    )
+    if exit_code == EXIT_RECOVERY_REQUIRED:
+        sys.stderr.write("rollback-verification-error\n")
+    return exit_code
+
+
 def _run_apply_disabled(args: argparse.Namespace) -> int:
     command = "apply-disabled"
     expected_classification = FastSafetyReadStatus.PRESENT_DISABLED_VALID.value
@@ -1340,6 +1777,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _run_apply_disabled(args)
     if args.command == "apply-enabled":
         return _run_apply_enabled(args)
+    if args.command == "rollback-value":
+        return _run_rollback(args, value_mode=True)
+    if args.command == "rollback-absent":
+        return _run_rollback(args, value_mode=False)
     return _usage_error()
 
 
@@ -1367,6 +1808,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--generated-at", default=None)
     parser.add_argument("--checkpoint-created-at", default=None)
     parser.add_argument("--checkpoint-output", default=None)
+    parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--execute", action="store_true", default=False)
     return parser
 
