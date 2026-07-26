@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import time
 import urllib.error
 import urllib.request
@@ -51,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from bitget.infra.clock import parse_utc_iso, utc_now, utc_now_iso
 from bitget.infra.logging_setup import get_logger, log_exception, setup_logging
+from bitget.infra.shared_db_connector import get_connection
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -88,10 +88,8 @@ def _resolve_watchdog_components() -> tuple[str, ...]:
 def _latest_heartbeat_ts_for_component(db_path: str, component: str) -> str | None:
     if not os.path.isfile(db_path):
         return None
-    uri = f"file:{db_path.replace(os.sep, '/')}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
+    conn = get_connection(db_path, read_only=True, check_same_thread=False)
     try:
-        conn.execute("PRAGMA query_only=ON;")
         comp = (component or "").strip()
         if comp:
             row = conn.execute(
@@ -368,10 +366,8 @@ def _latest_heartbeat_row(
     if not os.path.isfile(db_path):
         return None, None, {}
 
-    uri = f"file:{db_path.replace(os.sep, '/')}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
+    conn = get_connection(db_path, read_only=True, check_same_thread=False)
     try:
-        conn.execute("PRAGMA query_only=ON;")
         for comp in components:
             row = conn.execute(
                 """

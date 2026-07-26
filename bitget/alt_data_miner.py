@@ -70,8 +70,7 @@ def _load_last_row() -> Optional[Dict[str, Any]]:
     path = alt_data_db_path()
     if not os.path.isfile(path):
         return None
-    conn = sqlite3.connect(path, timeout=30)
-    conn.row_factory = sqlite3.Row
+    conn = get_connection(path, read_only=True, row_factory=sqlite3.Row)
     try:
         row = conn.execute(macro_daily_last_row_sql()).fetchone()
         return {k: row[k] for k in row.keys()} if row else None

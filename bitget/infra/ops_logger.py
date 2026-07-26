@@ -19,13 +19,13 @@ import traceback
 import time
 from typing import Any, Optional
 
-import low_ram_sqlite_pragmas
 import memory_bounds
 import sqlite_schema_guard
 
 from bitget.infra.clock import utc_hours_ago_iso, utc_now_iso
 from bitget.infra.data_paths import bitget_data_dir, ops_events_db_path
 from bitget.infra.memory_policy import OPS_EVENTS_KEEP_DAYS, RETENTION_SWEEP_MIN_INTERVAL_SEC
+from bitget.infra.shared_db_connector import get_connection
 
 _BOT_DIR = bitget_data_dir()
 OPS_EVENTS_DB_PATH = ops_events_db_path()
@@ -76,9 +76,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _connect_write() -> sqlite3.Connection:
     os.makedirs(_BOT_DIR, exist_ok=True)
-    conn = sqlite3.connect(OPS_EVENTS_DB_PATH, timeout=30.0, check_same_thread=False)
+    conn = get_connection(OPS_EVENTS_DB_PATH, check_same_thread=False)
     _ensure_schema(conn)
-    low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
     return conn
 
 
@@ -235,13 +234,7 @@ def fetch_recent_rows(*, hours: float = 1.0, limit: int = 500) -> list[dict[str,
     since = utc_hours_ago_iso(hours)
     out: list[dict[str, Any]] = []
     try:
-        uri = f"file:{OPS_EVENTS_DB_PATH.replace(os.sep, '/')}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
-        try:
-            conn.execute("PRAGMA query_only=ON;")
-        except sqlite3.OperationalError:
-            pass
-        low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
+        conn = get_connection(OPS_EVENTS_DB_PATH, read_only=True, check_same_thread=False)
         cur = conn.execute(
             """
             SELECT ts_utc, component, severity, event, payload_json
@@ -278,13 +271,7 @@ def fetch_heartbeat_ticks(*, hours: float = 2.0, limit: int = 4000) -> list[dict
     since = utc_hours_ago_iso(hours)
     out: list[dict[str, Any]] = []
     try:
-        uri = f"file:{OPS_EVENTS_DB_PATH.replace(os.sep, '/')}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
-        try:
-            conn.execute("PRAGMA query_only=ON;")
-        except sqlite3.OperationalError:
-            pass
-        low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
+        conn = get_connection(OPS_EVENTS_DB_PATH, read_only=True, check_same_thread=False)
         cur = conn.execute(
             """
             SELECT ts_utc, component, severity, event, payload_json

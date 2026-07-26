@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from bitget.infra.bounded_reads import macro_daily_lookback_sql
 from bitget.infra.clock import utc_date_key
 from bitget.infra.memory_policy import MACRO_DAILY_LOOKBACK_MAX_ROWS
+from bitget.infra.shared_db_connector import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,7 @@ def _load_macro_row_lookback(*, max_rows: int = _MACRO_LOOKBACK_MAX_ROWS) -> Opt
         path = alt_data_db_path()
         if not path or not os.path.isfile(path):
             return None
-        conn = sqlite3.connect(path, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection(path, read_only=True, row_factory=sqlite3.Row)
         try:
             q, params = macro_daily_lookback_sql(max_rows=max_rows)
             rows = conn.execute(q, params).fetchall()

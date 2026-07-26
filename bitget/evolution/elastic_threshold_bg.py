@@ -21,6 +21,7 @@ from bitget.infra.bounded_reads import (
 from bitget.infra.clock import utc_date_days_ago_str
 from bitget.infra.memory_policy import ELASTIC_VOL_OPEN_LIMIT
 from bitget.infra.proprietary_friction_store_bg import normalize_friction_market
+from bitget.infra.shared_db_connector import get_connection
 
 
 def _clip(v: float, lo: float, hi: float) -> float:
@@ -62,7 +63,7 @@ class BitgetElasticThreshold:
         if not db or not os.path.isfile(db):
             return 0.85
         try:
-            conn = sqlite3.connect(db, timeout=20)
+            conn = get_connection(db)
             try:
                 ent = conn.execute(
                     """
@@ -152,7 +153,7 @@ def internal_ledger_volatility_proxy(market_type: str, *, lookback_days: int = 2
     if not db or not os.path.isfile(db):
         return 1.0
     try:
-        conn = sqlite3.connect(db, timeout=20)
+        conn = get_connection(db)
         try:
             open_q, open_params = forward_pri_open_metrics_sql(
                 market_type=mk,

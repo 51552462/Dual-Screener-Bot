@@ -16,7 +16,6 @@ import threading
 import time
 from typing import Any, Callable, Mapping, Optional
 
-import low_ram_sqlite_pragmas
 import sqlite_schema_guard
 
 from bitget.infra.data_paths import (
@@ -25,6 +24,7 @@ from bitget.infra.data_paths import (
     system_config_json_path,
 )
 from bitget.infra.logging_setup import get_logger, log_exception
+from bitget.infra.shared_db_connector import get_connection
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(TOKEN|SECRET|PASSPHRASE|PASSWORD|PRIVATE[_-]?KEY|API[_-]?KEY|CREDENTIAL|AUTHORIZATION|WEBHOOK)",
@@ -86,10 +86,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _connect() -> sqlite3.Connection:
     _ensure_config_dir()
-    conn = sqlite3.connect(CONFIG_DB_PATH, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
+    conn = get_connection(CONFIG_DB_PATH, row_factory=sqlite3.Row)
     _ensure_schema(conn)
     return conn
 
@@ -140,7 +137,7 @@ def config_persisted() -> bool:
     if not os.path.isfile(CONFIG_DB_PATH):
         return False
     try:
-        conn = sqlite3.connect(CONFIG_DB_PATH, timeout=30.0)
+        conn = get_connection(CONFIG_DB_PATH)
         try:
             cur = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='config_kv' LIMIT 1"
