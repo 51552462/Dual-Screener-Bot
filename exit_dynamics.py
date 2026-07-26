@@ -43,34 +43,170 @@ def fluid_scale_out_fraction(
     regime: Any,
     volatility_pct: float,
     edge_score: float,
+    hit_and_run_index: float = 0.0,
 ) -> float:
     """
-    1차 목표가 도달 시 매도할 비율 F_out ∈ [0,1].
+    1차 목표가 도달 시 매도할 비율 F_out ∈ [0.0, 0.99].
+
+    기존 3개 인자 호출은 그대로 동작한다.
+    hit_and_run_index가 전달되지 않으면 0.0을 사용한다.
+
+    하드코딩된 국면별 매도비율 대신 다음 상태를 연속 곡선으로 결합한다.
+
+    - Hit-and-Run 지수가 높을수록 더 많이 매도
+    - 방어·횡보 국면일수록 더 많이 매도
+    - 변동성이 높을수록 더 많이 매도
+    - 엣지가 강할수록 러너 보존을 위해 덜 매도
     """
+    import math
+
+    def _finite_float(value: Any, default: float) -> float:
+        """NaN, 무한대, 잘못된 입력을 안전한 기본값으로 변환한다."""
+        try:
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else float(default)
+        except (TypeError, ValueError):
+            return float(default)
+
     reg = _norm_regime(regime)
-    if reg in DEFENSIVE_REGIMES:
-        base_f = 0.78
-    elif reg in BULLISH_REGIMES:
-        base_f = 0.18
-        
-    # ===========================================================================
-    # 👑 [핑퐁 프로토콜 1] 횡보장 극단적 부분 익절 (Hit & Run)
-    # 횡보장(CHOP)에서는 1차 목표가에 도달하는 즉시 물량의 85%를 집어던져(매도)
-    # 수익을 가차 없이 확정 짓습니다. '조금 더 갈까?' 하는 미련 자체를 없앱니다.
-    # ===========================================================================
-    elif "CHOP" in reg or "SIDEWAYS" in reg:
-        base_f = 0.85
-    # ===========================================================================
-    else:  # UNKNOWN
-        base_f = 0.45
 
-    # 엣지가 강할수록 더 적게 팔아 러너 보존 (최대 -0.08 → BULL 하한 ≈10%)
-    edge_adj = -_clamp((float(edge_score) - 1.0) * 0.05, 0.0, 0.08)
-    # 변동성이 클수록 더 많이 팔아 방어 (최대 +0.12)
-    vol_adj = _clamp((float(volatility_pct) - 5.0) / 100.0, 0.0, 0.12)
+    volatility = max(
+        0.0,
+        _finite_float(volatility_pct, 0.0),
+    )
+    edge = _finite_float(edge_score, 1.0)
+    hri = _clamp(
+        _finite_float(hit_and_run_index, 0.0),
+        0.0,
+        1.0,
+    )
 
-    return round(_clamp(base_f + edge_adj + vol_adj, 0.0, 1.0), 4)
+    # 국면을 특정 매도비율로 직접 연결하지 않고
+    # -1.0~1.0 사이의 연속 계산 입력값으로 변환한다.
+    defensive_signal = float(reg in DEFENSIVE_REGIMES)
+    bullish_signal = float(reg in BULLISH_REGIMES)
+    choppy_signal = float(
+        ("CHOP" in reg) or ("SIDEWAYS" in reg)
+    )
 
+    regime_pressure = _clamp(
+        0.85 * defensive_signal
+        + 1.00 * choppy_signal
+        - 0.70 * bullish_signal,
+        -1.0,
+        1.0,
+    )
+
+    # tanh를 사용해 극단적인 숫자가 들어와도 계산값이 폭주하지 않게 한다.
+    volatility_signal = math.tanh(
+        (volatility - 5.0) / 8.0
+    )
+    edge_signal = math.tanh(
+        (edge - 1.0) / 0.75
+    )
+
+    # hit_and_run_index의 0~1 범위를 -1~1 범위로 변환한다.
+    hit_and_run_signal = 2.0 * hri - 1.0
+
+    # 상태 벡터를 하나의 연속 점수로 결합한다.
+    features = (
+        1.0,
+        hit_and_run_signal,
+        regime_pressure,
+        volatility_signal,
+        edge_signal,
+    )
+    weights = (
+        -0.15,  # 중립 절편
+        1.50,   # 이익 반납 학습값
+        1.20,   # 방어·횡보 국면 압력
+        0.85,   # 변동성 압력
+        -0.95,  # 엣지가 강하면 매도비율 감소
+    )
+
+    logit = sum(
+        weight * feature
+        for weight, feature in zip(weights, features)
+    )
+
+    # 안정적인 Sigmoid 연속 곡선.
+    # 결과는 0에 가까운 값부터 1에 가까운 값까지 부드럽게 움직인다.
+    fraction = 0.5 * (
+        1.0 + math.tanh(logit / 2.0)
+    )
+
+    return round(
+        _clamp(fraction, 0.0, 0.99),
+        4,
+    )
+
+def dynamic_mfe_target_multiplier(
+    hit_and_run_index: float,
+    *,
+    min_multiplier: float = 0.25,
+    max_multiplier: float = 1.0,
+) -> float:
+    """
+    Hit-and-Run 지수에 반비례하여 1차 MFE 목표가를 압축한다.
+
+    기본값 기준:
+        hit_and_run_index = 0.0 → 승수 1.00
+        hit_and_run_index = 1.0 → 승수 0.25
+
+    실제 적용 예:
+        adjusted_target = original_target * multiplier
+    """
+    import math
+
+    def _finite_float(value: Any, default: float) -> float:
+        """NaN, 무한대, 잘못된 입력을 안전한 기본값으로 변환한다."""
+        try:
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else float(default)
+        except (TypeError, ValueError):
+            return float(default)
+
+    hri = _clamp(
+        _finite_float(hit_and_run_index, 0.0),
+        0.0,
+        1.0,
+    )
+
+    parsed_min = _finite_float(
+        min_multiplier,
+        0.25,
+    )
+    parsed_max = _finite_float(
+        max_multiplier,
+        1.0,
+    )
+
+    lower = _clamp(
+        min(parsed_min, parsed_max),
+        0.0,
+        1.0,
+    )
+    upper = _clamp(
+        max(parsed_min, parsed_max),
+        lower,
+        1.0,
+    )
+
+    # Smoothstep 연속 곡선:
+    # hri가 0과 1 부근에서 목표가가 갑자기 튀지 않고 부드럽게 움직인다.
+    compression = (
+        hri * hri * (3.0 - 2.0 * hri)
+    )
+
+    multiplier = (
+        upper
+        - (upper - lower) * compression
+    )
+
+    return round(
+        _clamp(multiplier, lower, upper),
+        4,
+    )
 
 # ===========================================================================
 # Mission 2 — 진화형 볼록성 트레일링 래칫 (Evolutionary Convex Ratchet)
@@ -79,9 +215,10 @@ RATCHET_STATE_KEY = "EXIT_RATCHET_STATE"
 DEFAULT_RATCHET_STATE: Dict[str, Any] = {
     "kappa_max": 0.12,   # 초기(러너 진입 직후) 트레일 폭 — 넓게 숨통
     "kappa_min": 0.05,   # 수익 팽창 후 최소 트레일 폭 — 이익 보호로 조임
-    "anchor_ret": 20.0,  # 👑 [수술 완료] 40.0 -> 20.0 (20% 수익부터 이익 보호 극대화)
-    "convexity": 1.0,    # 1.0=선형, >1=볼록(초반 더 넓게), <1=오목
+    "anchor_ret": 20.0,  # 20% 수익부터 이익 보호 극대화
+    "convexity": 1.0,    # 1.0=선형, >1=볼록, <1=오목
     "curve": "linear",
+    "hit_and_run_index": 0.0,
 }
 
 
@@ -136,30 +273,157 @@ def update_ratchet_kappa_rl(
     eta: float = 0.04,
 ) -> Dict[str, Any]:
     """
-    주간 RL 업데이트.
-      · whipsaw_rate (조기 청산 비율) 높음 → 트레일이 너무 빡빡 → κ 확대 + 곡선 볼록화
-      · giveback_rate (이익 반납 비율) 높음 → 트레일이 너무 헐거움 → κ 축소 + 곡선 선형/오목화
-    그래디언트: Δ = eta · (whipsaw_rate − giveback_rate)
+    주간 RL 상태 업데이트.
+
+    - whipsaw_rate가 높으면 조기 청산이 많으므로 트레일 폭을 넓힌다.
+    - giveback_rate가 높으면 이익 반납이 많으므로 트레일 폭을 좁힌다.
+    - 두 지표를 이용해 hit_and_run_index를 0.0~1.0 범위로 학습한다.
     """
-    st = dict(DEFAULT_RATCHET_STATE)
-    if isinstance(state, dict):
-        st.update({k: state[k] for k in state if k in DEFAULT_RATCHET_STATE})
+    import math
 
-    w = _clamp(whipsaw_rate, 0.0, 1.0)
-    g = _clamp(giveback_rate, 0.0, 1.0)
-    delta = float(eta) * (w - g)
+    def _finite_float(value: Any, default: float) -> float:
+        """NaN, 무한대, 잘못된 입력을 안전한 기본값으로 변환한다."""
+        try:
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else float(default)
+        except (TypeError, ValueError):
+            return float(default)
 
-    st["kappa_max"] = round(_clamp(float(st["kappa_max"]) + delta, 0.04, 0.30), 4)
-    st["kappa_min"] = round(_clamp(float(st["kappa_min"]) + delta * 0.5, 0.02, float(st["kappa_max"])), 4)
+    # 기존 state의 추가 데이터는 보존하고,
+    # 누락된 기본 래칫 항목만 기본값으로 채운다.
+    st = dict(state) if isinstance(state, dict) else {}
 
-    # 곡선 형태 진화: 초기 조기청산이 지배적이면 볼록(초반 더 넓게), 반대면 선형화
-    conv = float(st["convexity"])
-    if w - g > 0.15:
-        conv = _clamp(conv + 0.20, 0.5, 3.0)
-    elif g - w > 0.15:
-        conv = _clamp(conv - 0.20, 0.5, 3.0)
-    st["convexity"] = round(conv, 3)
-    st["curve"] = "convex" if conv > 1.05 else ("concave" if conv < 0.95 else "linear")
+    for key, default_value in DEFAULT_RATCHET_STATE.items():
+        st.setdefault(key, default_value)
+
+    w = _clamp(
+        _finite_float(whipsaw_rate, 0.0),
+        0.0,
+        1.0,
+    )
+    g = _clamp(
+        _finite_float(giveback_rate, 0.0),
+        0.0,
+        1.0,
+    )
+    learning_rate = _clamp(
+        _finite_float(eta, 0.04),
+        0.0,
+        1.0,
+    )
+
+    kappa_max = _finite_float(
+        st.get("kappa_max"),
+        DEFAULT_RATCHET_STATE["kappa_max"],
+    )
+    kappa_min = _finite_float(
+        st.get("kappa_min"),
+        DEFAULT_RATCHET_STATE["kappa_min"],
+    )
+    convexity = _finite_float(
+        st.get("convexity"),
+        DEFAULT_RATCHET_STATE["convexity"],
+    )
+
+    # 양수이면 조기 청산이 더 많고,
+    # 음수이면 이익 반납이 더 많다.
+    imbalance = w - g
+    delta = learning_rate * imbalance
+
+    kappa_max = _clamp(
+        kappa_max + delta,
+        0.04,
+        0.30,
+    )
+    kappa_min = _clamp(
+        kappa_min + delta * 0.5,
+        0.02,
+        kappa_max,
+    )
+
+    st["kappa_max"] = round(kappa_max, 4)
+    st["kappa_min"] = round(kappa_min, 4)
+
+    # 기존의 if/elif 임계 구간 대신 tanh 연속 곡선을 사용한다.
+    # 주간 변화량은 최대 ±0.20 범위에서 부드럽게 움직인다.
+    convexity_step = (
+        0.20 * math.tanh(imbalance / 0.15)
+    )
+    convexity = _clamp(
+        convexity + convexity_step,
+        0.5,
+        3.0,
+    )
+
+    st["convexity"] = round(convexity, 3)
+
+    # curve는 실제 계산 분기가 아니라 사람이 확인하기 위한 상태 이름이다.
+    curve_labels = (
+        "concave",
+        "linear",
+        "convex",
+    )
+    curve_index = (
+        int(convexity >= 0.95)
+        + int(convexity > 1.05)
+    )
+    st["curve"] = curve_labels[curve_index]
+
+    # -----------------------------------------------------------------------
+    # Hit-and-Run Index 계산
+    # -----------------------------------------------------------------------
+    # 이익 반납률이 커질수록 비선형적으로 1에 가까워진다.
+    giveback_pressure = g ** 1.5
+
+    # 조기 청산 비율이 높다면 이미 청산이 과민할 가능성이 있으므로
+    # Hit-and-Run 압력을 조금 완화한다.
+    whipsaw_relief = (1.0 - w) ** 1.2
+
+    numerator = giveback_pressure * (
+        0.80 + 0.20 * whipsaw_relief
+    )
+    denominator = (
+        numerator + (1.0 - g) ** 1.5
+    )
+
+    observed_hit_and_run = _clamp(
+        numerator / max(denominator, 1e-12),
+        0.0,
+        1.0,
+    )
+
+    # 이전에 학습된 값을 읽는다.
+    previous_hit_and_run = _clamp(
+        _finite_float(
+            st.get("hit_and_run_index"),
+            observed_hit_and_run,
+        ),
+        0.0,
+        1.0,
+    )
+
+    # EMA 형태로 갱신해 주간 데이터가 한 번 튀었다고
+    # 지수가 갑자기 크게 변하지 않도록 한다.
+    adaptation_rate = (
+        1.0 - math.exp(-8.0 * learning_rate)
+    )
+
+    hit_and_run_index = (
+        previous_hit_and_run
+        + adaptation_rate
+        * (
+            observed_hit_and_run
+            - previous_hit_and_run
+        )
+    )
+
+    st["hit_and_run_index"] = round(
+        _clamp(hit_and_run_index, 0.0, 1.0),
+        6,
+    )
+    st["whipsaw_rate"] = round(w, 6)
+    st["giveback_rate"] = round(g, 6)
+
     return st
 
 def apply_elastic_dna_to_ratchet(state: Dict[str, Any], trade: Mapping[str, Any], dna_pack: Dict[str, Any]) -> Dict[str, Any]:
@@ -193,40 +457,265 @@ def apply_elastic_dna_to_ratchet(state: Dict[str, Any], trade: Mapping[str, Any]
 # ===========================================================================
 # Mission 3 — 우측 꼬리 자가 확장 메타튜닝 (Right-Tail Meta-Tuning)
 # ===========================================================================
+FAT_TAIL_RATIO_MIN = 1.0
+FAT_TAIL_RATIO_MAX = 3.0
+FAT_TAIL_MIN_SAMPLES = 8
+FAT_TAIL_FULL_CONFIDENCE_N = 40
+TARGET_PERCENTILE_MAX = 99.0
+
+
+def _linear_quantile(sorted_values: Sequence[float], probability: float) -> float:
+    """외부 통계 패키지 없이 선형 보간 백분위수를 계산한다."""
+    import math
+
+    values = list(sorted_values)
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return float(values[0])
+
+    q = _clamp(float(probability), 0.0, 1.0)
+    position = (len(values) - 1) * q
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+
+    if lower == upper:
+        return float(values[lower])
+
+    weight = position - lower
+    return float(
+        values[lower] * (1.0 - weight)
+        + values[upper] * weight
+    )
+
+
+def calculate_dynamic_fat_tail_ratio(mfe_list: Sequence[Any]) -> float:
+    """
+    최근 청산 거래의 MFE(%)로 우측 꼬리 팽창도를 1.0~3.0으로 계산한다.
+
+    강건 통계 구성:
+      1) 음수 MFE는 0으로 치환하고 NaN/Inf/비수치 값은 제거한다.
+      2) 상위 2.5%에서 winsorize하여 단일 극단값의 영향력을 제한한다.
+      3) P90·P95 혼합 꼬리비율, Bowley skewness, Moors kurtosis를 결합한다.
+      4) 표본이 40건보다 적으면 1.0 쪽으로 수축(shrinkage)한다.
+
+    Returns
+    -------
+    float
+        1.0 = 꼬리 팽창 근거 없음
+        3.0 = 강한 우측 fat-tail
+    """
+    import math
+
+    clean: List[float] = []
+    for raw in mfe_list or []:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value):
+            continue
+        clean.append(max(0.0, value))
+
+    n = len(clean)
+    if n < FAT_TAIL_MIN_SAMPLES:
+        return FAT_TAIL_RATIO_MIN
+
+    clean.sort()
+
+    # 단일 초대형 MFE가 P95와 첨도 지표를 지배하지 못하도록 상위 2.5% 윈저라이징.
+    upper_cap = _linear_quantile(clean, 0.975)
+    robust = sorted(min(value, upper_cap) for value in clean)
+
+    p125 = _linear_quantile(robust, 0.125)
+    p25 = _linear_quantile(robust, 0.25)
+    p375 = _linear_quantile(robust, 0.375)
+    p50 = _linear_quantile(robust, 0.50)
+    p625 = _linear_quantile(robust, 0.625)
+    p75 = _linear_quantile(robust, 0.75)
+    p875 = _linear_quantile(robust, 0.875)
+    p90 = _linear_quantile(robust, 0.90)
+    p95 = _linear_quantile(robust, 0.95)
+
+    iqr = max(0.0, p75 - p25)
+    eps = 1e-12
+
+    # -----------------------------------------------------------------------
+    # 1. 우측 꼬리 백분위 비율
+    # -----------------------------------------------------------------------
+    # P95 하나에만 의존하지 않고 P90 60% + P95 40%로 꼬리 앵커를 만든다.
+    tail_anchor = 0.60 * p90 + 0.40 * p95
+
+    # 중앙값이 0에 가까운 MFE 분포에서도 분모가 폭발하지 않도록 강건 바닥을 둔다.
+    median_floor = max(p50, 0.25 * p75, 0.25)
+    percentile_ratio = max(1.0, tail_anchor / median_floor)
+
+    # ratio 1.5 이하는 평범, 8 이상은 극단 꼬리로 포화시키는 로그 스케일.
+    log_low = math.log(1.5)
+    log_high = math.log(8.0)
+    percentile_score = _clamp(
+        (math.log(percentile_ratio) - log_low) / (log_high - log_low),
+        0.0,
+        1.0,
+    )
+
+    # -----------------------------------------------------------------------
+    # 2. Bowley skewness — 사분위수 기반 강건 비대칭도
+    # -----------------------------------------------------------------------
+    # (Q3 + Q1 - 2Q2) / (Q3 - Q1), 이론 범위 [-1, 1].
+    if iqr <= eps:
+        bowley_skewness = 0.0
+    else:
+        bowley_skewness = (
+            p75 + p25 - 2.0 * p50
+        ) / iqr
+    skew_score = _clamp(bowley_skewness, 0.0, 1.0)
+
+    # -----------------------------------------------------------------------
+    # 3. Moors kurtosis — 팔분위수 기반 강건 첨도
+    # -----------------------------------------------------------------------
+    # 고전적 4차 모멘트 첨도보다 극단값에 훨씬 덜 민감하다.
+    if iqr <= eps:
+        moors_kurtosis = 1.0
+    else:
+        moors_kurtosis = (
+            (p875 - p625) + (p375 - p125)
+        ) / iqr
+
+    # 정규형 분포의 Moors 값(약 1.23) 부근은 0,
+    # 2.8 이상이면 강한 첨도로 포화한다.
+    kurtosis_score = _clamp(
+        (moors_kurtosis - 1.23) / (2.80 - 1.23),
+        0.0,
+        1.0,
+    )
+
+    # 우측 꼬리 자체를 가장 크게 반영하고, 비대칭도와 첨도를 보조 신호로 사용한다.
+    raw_energy = _clamp(
+        0.60 * percentile_score
+        + 0.25 * skew_score
+        + 0.15 * kurtosis_score,
+        0.0,
+        1.0,
+    )
+
+    # Smoothstep: 중간 구간은 민감하되 0과 1 근처에서는 변화율을 완만하게 한다.
+    smooth_energy = raw_energy * raw_energy * (3.0 - 2.0 * raw_energy)
+
+    # 작은 표본에서 나온 극단적 모양을 전적으로 믿지 않고 1.0 방향으로 수축한다.
+    sample_confidence = min(
+        1.0,
+        math.sqrt(n / float(FAT_TAIL_FULL_CONFIDENCE_N)),
+    )
+
+    ratio = FAT_TAIL_RATIO_MIN + (
+        FAT_TAIL_RATIO_MAX - FAT_TAIL_RATIO_MIN
+    ) * smooth_energy * sample_confidence
+
+    return round(
+        _clamp(ratio, FAT_TAIL_RATIO_MIN, FAT_TAIL_RATIO_MAX),
+        6,
+    )
+
+
+def update_target_percentile(
+    base_percentile: float,
+    fat_tail_ratio_value: float,
+    *,
+    max_percentile: float = TARGET_PERCENTILE_MAX,
+) -> float:
+    """
+    Base Percentile을 fat-tail 강도에 따라 최대 99%까지 부드럽게 확장한다.
+
+        u = clip((FatTailRatio - 1) / 2, 0, 1)
+        s(u) = u²(3 - 2u)
+        Target = Base + (Max - Base) × s(u)
+
+    FatTailRatio=1이면 Base 유지, 3이면 Max에 도달한다.
+    """
+    import math
+
+    try:
+        base = float(base_percentile)
+    except (TypeError, ValueError):
+        base = 70.0
+    if not math.isfinite(base):
+        base = 70.0
+
+    try:
+        ratio = float(fat_tail_ratio_value)
+    except (TypeError, ValueError):
+        ratio = FAT_TAIL_RATIO_MIN
+    if not math.isfinite(ratio):
+        ratio = FAT_TAIL_RATIO_MIN
+
+    maximum = _clamp(float(max_percentile), 50.0, 99.0)
+    base = _clamp(base, 0.0, maximum)
+    ratio = _clamp(ratio, FAT_TAIL_RATIO_MIN, FAT_TAIL_RATIO_MAX)
+
+    normalized = (ratio - FAT_TAIL_RATIO_MIN) / (
+        FAT_TAIL_RATIO_MAX - FAT_TAIL_RATIO_MIN
+    )
+    smooth = normalized * normalized * (3.0 - 2.0 * normalized)
+
+    target = base + (maximum - base) * smooth
+    return round(_clamp(target, base, maximum), 4)
+
+
 def target_percentile(regime: Any, fat_tail_ratio: float) -> float:
     """
-    목표가 추적 퍼센타일. 50% 중앙값 앵커를 폐기하고 우측 꼬리로 끌어올린다.
+    국면별 Base Percentile에 강건 우측꼬리 비율을 적용한다.
+
+    기존 호출 형식 target_percentile(regime, fat_tail_ratio)은 그대로 유지된다.
     """
     reg = _norm_regime(regime)
     if reg in BULLISH_REGIMES:
         base = 90.0
     elif reg in DEFENSIVE_REGIMES:
         base = 60.0
-        
-    # ===========================================================================
-    # 👑 [핑퐁 프로토콜 2] 횡보장 목표가 천장 강제 압착
-    # 횡보장에서는 목표가의 기준점(Percentile)을 하위 40%로 극단적으로 낮춥니다.
-    # 남들이 "아직 안 올랐네" 할 때, 우리 기계는 "벌써 목표가 도달"이라며 수익을 챙깁니다.
-    # ===========================================================================
     elif "CHOP" in reg or "SIDEWAYS" in reg:
         base = 40.0
-    # ===========================================================================
     else:
         base = 70.0
-        
-    fat_bonus = _clamp((float(fat_tail_ratio) - 2.0) * 5.0, 0.0, 8.0)
-    return _clamp(base + fat_bonus, 35.0, 95.0) # 👑 하한선을 55.0에서 35.0으로 개방
+
+    return update_target_percentile(
+        base,
+        fat_tail_ratio,
+        max_percentile=TARGET_PERCENTILE_MAX,
+    )
+
+
+def target_percentile_from_mfe(regime: Any, mfe_list: Sequence[Any]) -> float:
+    """MFE 리스트에서 fat-tail 비율 계산과 목표 퍼센타일 갱신을 한 번에 수행한다."""
+    ratio = calculate_dynamic_fat_tail_ratio(mfe_list)
+    return target_percentile(regime, ratio)
 
 
 def fat_tail_ratio(p_hi: float, p_mid: float) -> float:
-    """우측 꼬리 팽창도 = 상위분위 MFE / 중앙 MFE (안전 가드)."""
+    """
+    레거시 호환 함수.
+
+    기존 호출부가 p_hi / p_mid를 직접 전달하는 경우를 깨뜨리지 않되,
+    반환값은 새 모델과 동일한 안전 범위 1.0~3.0으로 제한한다.
+    신규 코드는 calculate_dynamic_fat_tail_ratio(mfe_list)를 사용한다.
+    """
+    import math
+
     try:
-        mid = float(p_mid)
-        if mid <= 1e-6:
-            return 1.0
-        return max(1.0, float(p_hi) / mid)
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 1.0
+        hi = max(0.0, float(p_hi))
+        mid = max(0.0, float(p_mid))
+    except (TypeError, ValueError):
+        return FAT_TAIL_RATIO_MIN
+
+    if not (math.isfinite(hi) and math.isfinite(mid)):
+        return FAT_TAIL_RATIO_MIN
+    if mid <= 1e-6:
+        return FAT_TAIL_RATIO_MIN
+
+    return round(
+        _clamp(hi / mid, FAT_TAIL_RATIO_MIN, FAT_TAIL_RATIO_MAX),
+        6,
+    )
 
 
 # ===========================================================================
@@ -367,6 +856,94 @@ def _safe_float(v: object, default: float = 0.0) -> float:
         return default
 
 
+def _classify_via_dynamic_exit_models(
+    trade: Mapping[str, Any],
+    *,
+    ret: float,
+    breakeven_band_pct: float,
+) -> Optional[str]:
+    """
+    Mission 6 — ATR 동적 손절 / 알파 붕괴 익절로 조기 분류.
+    필수 키(entry_price, entry_atr 등)가 없거나 계산 실패 시 None → 정적 로직 폴백.
+    """
+    try:
+        entry_price = _safe_float(trade.get("entry_price"))
+        entry_atr = _safe_float(trade.get("entry_atr"))
+        if entry_price <= 0.0 or entry_atr <= 0.0:
+            return None
+
+        bars_raw = trade.get("bars_held")
+        try:
+            bars_held = int(bars_raw) if bars_raw is not None else 0
+        except (TypeError, ValueError):
+            bars_held = 0
+        if bars_held < 0:
+            bars_held = 0
+
+        regime = str(
+            trade.get("regime")
+            or trade.get("entry_regime")
+            or trade.get("sector_regime")
+            or "UNKNOWN"
+        )
+        volume_divergence = _safe_float(trade.get("volume_divergence"), 0.0)
+        mfe = _safe_float(trade.get("mfe"))
+        band = float(breakeven_band_pct)
+
+        current_price = _safe_float(
+            trade.get("current_price") or trade.get("exit_price")
+        )
+        if current_price <= 0.0:
+            current_price = entry_price * (1.0 + ret / 100.0)
+        if current_price <= 0.0:
+            return None
+
+        side = str(trade.get("side") or "LONG").strip().upper()
+        if side not in {"LONG", "SHORT"}:
+            side = "LONG"
+
+        sl = AtrDynamicStopLoss(entry_price=entry_price, side=side)  # type: ignore[arg-type]
+
+        max_high = _safe_float(trade.get("max_high"))
+        max_low = _safe_float(trade.get("max_low"))
+        peak_bar = max(0, bars_held - 1) if bars_held > 0 else 0
+
+        if side == "LONG" and max_high > entry_price:
+            sl.update_and_check(max_high, entry_atr, peak_bar, regime)
+        elif side == "SHORT" and max_low > 0.0 and max_low < entry_price:
+            sl.update_and_check(max_low, entry_atr, peak_bar, regime)
+
+        _, should_stop = sl.update_and_check(
+            current_price, entry_atr, bars_held, regime
+        )
+
+        alpha = AlphaDecayTakeProfit()
+        _, should_take_profit = alpha.evaluate_decay(
+            peak_mfe=mfe,
+            current_profit=ret,
+            volume_divergence=volume_divergence,
+        )
+
+        if should_stop:
+            if -band <= ret <= band:
+                return "bounce_stop"
+            return "loss"
+
+        if should_take_profit:
+            if -band <= ret <= band:
+                return "bounce_stop"
+            if ret > band:
+                return "win"
+            if ret > 0.0:
+                return "win"
+            return "bounce_stop"
+
+    except Exception:
+        return None
+
+    return None
+
+
 def classify_mega_trend_trade_outcome(
     trade: Mapping[str, Any],
     *,
@@ -385,15 +962,27 @@ def classify_mega_trend_trade_outcome(
     exit_type = str(trade.get("exit_type") or "").strip().upper()
     exit_reason = str(trade.get("exit_reason") or "")
 
+    band = float(breakeven_band_pct)
+    ret = sim_ret if status == "OPEN" else _safe_float(final_ret, sim_ret)
+
+    dynamic_outcome = _classify_via_dynamic_exit_models(
+        trade,
+        ret=ret,
+        breakeven_band_pct=band,
+    )
+    if dynamic_outcome is not None:
+        if status == "OPEN":
+            if dynamic_outcome == "loss":
+                return "loss"
+            return "open_live"
+        return dynamic_outcome
+
     if status == "OPEN":
         if sim_ret > breakeven_band_pct:
             return "open_live"
         if sim_ret <= -breakeven_band_pct:
             return "loss"
         return "open_live"
-
-    ret = _safe_float(final_ret, sim_ret)
-    band = float(breakeven_band_pct)
 
     if exit_type in _BOUNCE_EXIT_TYPES:
         return "bounce_stop"
@@ -636,3 +1225,288 @@ def resolve_eod_exit_time(bear_stress_phase: str) -> str:
     # 4. 중립 / 상승장 (BULL): EOD 강제 청산을 발동하지 않거나, 폴백(Fallback) 시간 적용
     else:
         return "15:20:00"
+
+
+# ===========================================================================
+# Mission 6 — 실시간 ATR·시간감쇠 동적 손절 / 알파붕괴 익절
+# ===========================================================================
+import math as _math
+from dataclasses import dataclass as _dataclass, field as _field
+from typing import Literal as _Literal, Tuple as _Tuple
+
+
+_PositionSide = _Literal["LONG", "SHORT"]
+
+
+def _finite_float(name: str, value: float) -> float:
+    """실시간 리스크 계산에 NaN/inf가 침투하지 않도록 유한 실수만 허용한다."""
+    x = float(value)
+    if not _math.isfinite(x):
+        raise ValueError(f"{name} must be finite, got {value!r}")
+    return x
+
+
+@_dataclass(slots=True)
+class AtrDynamicStopLoss:
+    """
+    단일 Tick/Bar 단위 ATR + Time-Decay 동적 손절 엔진.
+
+    기본 손절 거리:
+        D_t = ATR_t × m_regime × exp(-lambda_regime × bars_held)
+
+    단, 시간이 매우 길어졌을 때 D_t -> 0으로 붕괴하여 미세 노이즈에도
+    즉시 청산되는 것을 막기 위해 ATR 배수 하한 m_min을 적용한다.
+
+        effective_mult_t = max(m_min, m_regime × exp(-lambda_regime × bars_held))
+        D_t = ATR_t × effective_mult_t
+
+    Regime 조정:
+        HIGH_VOL: m_regime = base_multiplier × 1.5
+        CHOP:     lambda_regime = base_lambda × 2.0
+
+    LONG:
+        best_t = max(best_{t-1}, current_price)
+        candidate_stop_t = best_t - D_t
+        stop_t = max(stop_{t-1}, candidate_stop_t)  # 절대 완화하지 않는 래칫
+
+    SHORT:
+        best_t = min(best_{t-1}, current_price)
+        candidate_stop_t = best_t + D_t
+        stop_t = min(stop_{t-1}, candidate_stop_t)
+    """
+
+    entry_price: float
+    side: _PositionSide = "LONG"
+    atr_multiplier: float = 3.0
+    decay_lambda: float = 0.03
+    min_atr_multiplier: float = 0.50
+    high_vol_multiplier: float = 1.50
+    chop_decay_multiplier: float = 2.00
+
+    _best_price: float = _field(init=False, repr=False)
+    _stop_price: float | None = _field(default=None, init=False, repr=False)
+    _last_bars_held: int = _field(default=-1, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.entry_price = _finite_float("entry_price", self.entry_price)
+        if self.entry_price <= 0.0:
+            raise ValueError("entry_price must be > 0")
+
+        normalized_side = str(self.side).strip().upper()
+        if normalized_side not in {"LONG", "SHORT"}:
+            raise ValueError("side must be 'LONG' or 'SHORT'")
+        self.side = normalized_side  # type: ignore[assignment]
+
+        self.atr_multiplier = _finite_float("atr_multiplier", self.atr_multiplier)
+        self.decay_lambda = _finite_float("decay_lambda", self.decay_lambda)
+        self.min_atr_multiplier = _finite_float(
+            "min_atr_multiplier", self.min_atr_multiplier
+        )
+        self.high_vol_multiplier = _finite_float(
+            "high_vol_multiplier", self.high_vol_multiplier
+        )
+        self.chop_decay_multiplier = _finite_float(
+            "chop_decay_multiplier", self.chop_decay_multiplier
+        )
+
+        if self.atr_multiplier <= 0.0:
+            raise ValueError("atr_multiplier must be > 0")
+        if self.decay_lambda < 0.0:
+            raise ValueError("decay_lambda must be >= 0")
+        if not 0.0 < self.min_atr_multiplier <= self.atr_multiplier:
+            raise ValueError(
+                "min_atr_multiplier must be > 0 and <= atr_multiplier"
+            )
+        if self.high_vol_multiplier < 1.0:
+            raise ValueError("high_vol_multiplier must be >= 1")
+        if self.chop_decay_multiplier < 1.0:
+            raise ValueError("chop_decay_multiplier must be >= 1")
+
+        self._best_price = self.entry_price
+
+    @property
+    def stop_price(self) -> float | None:
+        """아직 update 전이면 None, 이후에는 현재 래칫 손절가를 반환한다."""
+        return self._stop_price
+
+    @property
+    def best_price(self) -> float:
+        """LONG은 보유 중 최고가, SHORT는 보유 중 최저가."""
+        return self._best_price
+
+    def reset(self, entry_price: float | None = None) -> None:
+        """동일 객체를 새 포지션에 재사용할 때 내부 상태를 초기화한다."""
+        if entry_price is not None:
+            new_entry = _finite_float("entry_price", entry_price)
+            if new_entry <= 0.0:
+                raise ValueError("entry_price must be > 0")
+            self.entry_price = new_entry
+
+        self._best_price = self.entry_price
+        self._stop_price = None
+        self._last_bars_held = -1
+
+    def _distance(self, atr: float, bars_held: int, regime: str) -> float:
+        reg = str(regime or "UNKNOWN").strip().upper()
+
+        regime_multiplier = self.atr_multiplier
+        if "HIGH_VOL" in reg:
+            regime_multiplier *= self.high_vol_multiplier
+
+        regime_lambda = self.decay_lambda
+        if "CHOP" in reg:
+            regime_lambda *= self.chop_decay_multiplier
+
+        decayed_multiplier = regime_multiplier * _math.exp(
+            -regime_lambda * float(bars_held)
+        )
+        effective_multiplier = max(self.min_atr_multiplier, decayed_multiplier)
+        return atr * effective_multiplier
+
+    def update_and_check(
+        self,
+        current_price: float,
+        atr: float,
+        bars_held: int,
+        regime: str,
+    ) -> _Tuple[float, bool]:
+        """
+        현재 Tick/Bar를 반영하고 ``(stop_price, should_exit)``를 반환한다.
+
+        ``bars_held``는 동일 포지션 안에서 단조 증가해야 한다. 과거 Bar가 뒤늦게
+        들어와 손절폭이 다시 넓어지는 데이터 순서 오류를 조기에 차단한다.
+        """
+        price = _finite_float("current_price", current_price)
+        atr_value = _finite_float("atr", atr)
+
+        if price <= 0.0:
+            raise ValueError("current_price must be > 0")
+        if atr_value <= 0.0:
+            raise ValueError("atr must be > 0")
+        if isinstance(bars_held, bool) or not isinstance(bars_held, int):
+            raise TypeError("bars_held must be an int")
+        if bars_held < 0:
+            raise ValueError("bars_held must be >= 0")
+        if bars_held < self._last_bars_held:
+            raise ValueError(
+                "bars_held cannot decrease within the same position; call reset()"
+            )
+        self._last_bars_held = bars_held
+
+        distance = self._distance(atr_value, bars_held, regime)
+
+        if self.side == "LONG":
+            self._best_price = max(self._best_price, price)
+            candidate_stop = self._best_price - distance
+            self._stop_price = (
+                candidate_stop
+                if self._stop_price is None
+                else max(self._stop_price, candidate_stop)
+            )
+            should_exit = price <= self._stop_price
+        else:
+            self._best_price = min(self._best_price, price)
+            candidate_stop = self._best_price + distance
+            self._stop_price = (
+                candidate_stop
+                if self._stop_price is None
+                else min(self._stop_price, candidate_stop)
+            )
+            should_exit = price >= self._stop_price
+
+        return float(self._stop_price), bool(should_exit)
+
+
+@_dataclass(slots=True)
+class AlphaDecayTakeProfit:
+    """
+    MFE 이익 반납률과 거래량 약화 지수를 융합한 알파 붕괴 확률 모델.
+
+    1) MFE 대비 이익 반납률:
+
+        giveback = clip((peak_mfe - current_profit) / peak_mfe, 0, max_giveback)
+
+    2) 특징 결합:
+
+        x = w_mfe × giveback + w_volume × volume_divergence
+
+    3) Logistic 확률:
+
+        P(decay) = 1 / (1 + exp(-k × (x - x0)))
+
+       P(decay) >= trigger_probability이면 익절/청산 신호가 True다.
+    """
+
+    k: float = 10.0
+    x0: float = 0.50
+    mfe_weight: float = 0.70
+    volume_weight: float = 0.30
+    trigger_probability: float = 0.80
+    min_peak_mfe: float = 1e-6
+    max_giveback_ratio: float = 2.0
+
+    def __post_init__(self) -> None:
+        self.k = _finite_float("k", self.k)
+        self.x0 = _finite_float("x0", self.x0)
+        self.mfe_weight = _finite_float("mfe_weight", self.mfe_weight)
+        self.volume_weight = _finite_float("volume_weight", self.volume_weight)
+        self.trigger_probability = _finite_float(
+            "trigger_probability", self.trigger_probability
+        )
+        self.min_peak_mfe = _finite_float("min_peak_mfe", self.min_peak_mfe)
+        self.max_giveback_ratio = _finite_float(
+            "max_giveback_ratio", self.max_giveback_ratio
+        )
+
+        if self.k <= 0.0:
+            raise ValueError("k must be > 0")
+        if self.mfe_weight < 0.0 or self.volume_weight < 0.0:
+            raise ValueError("feature weights must be >= 0")
+        if self.mfe_weight + self.volume_weight <= 0.0:
+            raise ValueError("at least one feature weight must be > 0")
+        if not 0.0 < self.trigger_probability < 1.0:
+            raise ValueError("trigger_probability must be in (0, 1)")
+        if self.min_peak_mfe <= 0.0:
+            raise ValueError("min_peak_mfe must be > 0")
+        if self.max_giveback_ratio <= 0.0:
+            raise ValueError("max_giveback_ratio must be > 0")
+
+    @staticmethod
+    def _stable_logistic(z: float) -> float:
+        """큰 |z|에서도 exp overflow가 발생하지 않는 수치 안정형 sigmoid."""
+        if z >= 0.0:
+            return 1.0 / (1.0 + _math.exp(-z))
+        exp_z = _math.exp(z)
+        return exp_z / (1.0 + exp_z)
+
+    def evaluate_decay(
+        self,
+        peak_mfe: float,
+        current_profit: float,
+        volume_divergence: float,
+    ) -> _Tuple[float, bool]:
+        """``(decay_probability, should_take_profit)``를 반환한다."""
+        peak = _finite_float("peak_mfe", peak_mfe)
+        current = _finite_float("current_profit", current_profit)
+        volume = _finite_float("volume_divergence", volume_divergence)
+
+        if peak <= self.min_peak_mfe:
+            giveback_ratio = 0.0
+        else:
+            raw_giveback = (peak - current) / peak
+            giveback_ratio = max(
+                0.0, min(self.max_giveback_ratio, raw_giveback)
+            )
+
+        volume_score = max(0.0, min(1.0, volume))
+
+        weight_sum = self.mfe_weight + self.volume_weight
+        x = (
+            self.mfe_weight * giveback_ratio
+            + self.volume_weight * volume_score
+        ) / weight_sum
+
+        z = self.k * (x - self.x0)
+        probability = self._stable_logistic(z)
+        should_take_profit = probability >= self.trigger_probability
+        return float(probability), bool(should_take_profit)
