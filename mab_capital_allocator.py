@@ -158,11 +158,20 @@ def _seed_explore_arms(
 
 
 def _thompson_sample(arm: ArmStats, *, prior_a: float = 1.0, prior_b: float = 1.0) -> float:
-    a = prior_a + arm.wins
-    b = prior_b + arm.losses
     if arm.n == 0:
         # 탐험 보너스: 불확실 arm 에 높은 분산
         return float(np.random.beta(1.2, 1.2))
+
+    # [Magnitude-Aware] 승패 횟수에 수익금/손실금의 크기(Magnitude)를 스케일링하여 가중치로 합산
+    # 예: reward_scale = 0.1 일 때, 10% 수익을 낸 1승은 단순 1승보다 훨씬 높은 알파(a) 파라미터를 얻어 자본 배분 확률이 급증함.
+    reward_scale = 0.1
+
+    adj_wins = arm.wins + (arm.gross_profit * reward_scale)
+    adj_losses = arm.losses + (arm.gross_loss * reward_scale)
+
+    a = prior_a + max(0.0, adj_wins)
+    b = prior_b + max(0.0, adj_losses)
+
     return float(np.random.beta(a, b))
 
 
