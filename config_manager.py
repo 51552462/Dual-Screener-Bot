@@ -17,6 +17,7 @@ DB가 비어 있으면 기존 JSON(legacy + 샤드 파일)을 읽기 전용으�
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -24,6 +25,7 @@ import re
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
 import low_ram_sqlite_pragmas
@@ -83,7 +85,14 @@ LOCK_PATH = os.path.join(CONFIG_DIR, ".config_kv.lock")
 
 
 class ConfigConcurrencyError(RuntimeError):
-    """update_config_value 가 max_retries 안에 OCC 성공하지 못했을 때."""
+    """Raised when a config_kv compare-and-swap precondition fails."""
+
+
+@dataclass(frozen=True)
+class ConfigKvRow:
+    key: str
+    value_json: str
+    version: int
 
 
 ModifierFunc = Callable[[Any], Any]
@@ -98,8 +107,18 @@ def _ensure_config_dir() -> None:
 
 
 def _connect() -> sqlite3.Connection:
-    _ensure_config_dir()
-    conn = sqlite3.connect(CONFIG_DB_PATH, timeout=30.0)
+    return _connect_config_db(None)
+
+
+def _connect_config_db(db_path: str | None = None) -> sqlite3.Connection:
+    path = CONFIG_DB_PATH if db_path is None else db_path
+    if db_path is None:
+        _ensure_config_dir()
+    else:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     low_ram_sqlite_pragmas.apply_oom_safe_pragmas(conn)
@@ -210,6 +229,310 @@ def _decode_json(text: str) -> Any:
 
 def _encode_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def sha256_utf8(text: str) -> str:
+    """Return the lowercase SHA-256 hex digest of UTF-8 text."""
+    if not isinstance(text, str):
+        raise TypeError("text must be str")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _require_config_key(key: str) -> None:
+    if not key:
+        raise ValueError("config key must be non-empty")
+
+
+def _require_positive_int_version(expected_version: int) -> None:
+    if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+        raise ValueError("expected_version must be a positive int")
+    if expected_version <= 0:
+        raise ValueError("expected_version must be a positive int")
+
+
+def _require_sha256_hex(expected_value_json_sha256: str) -> None:
+    if not isinstance(expected_value_json_sha256, str):
+        raise TypeError("expected_value_json_sha256 must be str")
+    if not _HEX64_RE.fullmatch(expected_value_json_sha256):
+        raise ValueError("expected_value_json_sha256 must be a 64-char lowercase hex digest")
+
+
+def _reject_non_standard_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
+def read_config_kv_row(
+    key: str,
+    *,
+    db_path: str | None = None,
+) -> ConfigKvRow | None:
+    _require_config_key(key)
+
+    def _read() -> ConfigKvRow | None:
+        conn = _connect_config_db(db_path)
+        try:
+            cur = conn.execute(
+                "SELECT value_json, version FROM config_kv WHERE key = ?",
+                (key,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return ConfigKvRow(
+                key=key,
+                value_json=str(row["value_json"]),
+                version=int(row["version"]),
+            )
+        finally:
+            conn.close()
+
+    return _retry_on_locked(_read)
+
+
+def insert_config_kv_if_absent(
+    key: str,
+    value: Any,
+    *,
+    db_path: str | None = None,
+) -> ConfigKvRow:
+    _require_config_key(key)
+    payload = _encode_json(value)
+
+    def _insert() -> ConfigKvRow:
+        conn = _connect_config_db(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute("SELECT 1 FROM config_kv WHERE key = ?", (key,))
+            if cur.fetchone() is not None:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} already exists"
+                )
+            conn.execute(
+                "INSERT INTO config_kv (key, value_json, version) VALUES (?, ?, 1)",
+                (key, payload),
+            )
+            conn.commit()
+            return ConfigKvRow(key=key, value_json=payload, version=1)
+        except ConfigConcurrencyError:
+            raise
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            raise ConfigConcurrencyError(
+                f"config_kv key {key!r} already exists"
+            ) from None
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    return _retry_on_locked(_insert)
+
+
+def update_config_kv_if_match(
+    key: str,
+    *,
+    expected_version: int,
+    expected_value_json_sha256: str,
+    new_value: Any,
+    db_path: str | None = None,
+) -> ConfigKvRow:
+    _require_config_key(key)
+    _require_positive_int_version(expected_version)
+    _require_sha256_hex(expected_value_json_sha256)
+    new_json = _encode_json(new_value)
+
+    def _update() -> ConfigKvRow:
+        conn = _connect_config_db(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "SELECT value_json, version FROM config_kv WHERE key = ?",
+                (key,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} does not exist"
+                )
+            current_json = str(row["value_json"])
+            current_version = int(row["version"])
+            if current_version != expected_version:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} version mismatch "
+                    f"(expected {expected_version}, found {current_version})"
+                )
+            if sha256_utf8(current_json) != expected_value_json_sha256:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} value_json hash mismatch"
+                )
+            new_version = current_version + 1
+            cur2 = conn.execute(
+                """
+                UPDATE config_kv
+                SET value_json = ?, version = ?
+                WHERE key = ? AND version = ?
+                """,
+                (new_json, new_version, key, current_version),
+            )
+            if cur2.rowcount != 1:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} update lost race"
+                )
+            conn.commit()
+            return ConfigKvRow(key=key, value_json=new_json, version=new_version)
+        except ConfigConcurrencyError:
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    return _retry_on_locked(_update)
+
+
+def replace_config_kv_json_if_match(
+    key: str,
+    *,
+    expected_version: int,
+    expected_value_json_sha256: str,
+    replacement_value_json: str,
+    db_path: str | None = None,
+) -> ConfigKvRow:
+    _require_config_key(key)
+    _require_positive_int_version(expected_version)
+    _require_sha256_hex(expected_value_json_sha256)
+    if not isinstance(replacement_value_json, str):
+        raise TypeError("replacement_value_json must be str")
+    json.loads(
+        replacement_value_json,
+        parse_constant=_reject_non_standard_json_constant,
+    )
+
+    def _replace() -> ConfigKvRow:
+        conn = _connect_config_db(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "SELECT value_json, version FROM config_kv WHERE key = ?",
+                (key,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} does not exist"
+                )
+            current_json = str(row["value_json"])
+            current_version = int(row["version"])
+            if current_version != expected_version:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} version mismatch "
+                    f"(expected {expected_version}, found {current_version})"
+                )
+            if sha256_utf8(current_json) != expected_value_json_sha256:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} value_json hash mismatch"
+                )
+            new_version = current_version + 1
+            cur2 = conn.execute(
+                """
+                UPDATE config_kv
+                SET value_json = ?, version = ?
+                WHERE key = ? AND version = ?
+                """,
+                (replacement_value_json, new_version, key, current_version),
+            )
+            if cur2.rowcount != 1:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} replace lost race"
+                )
+            conn.commit()
+            return ConfigKvRow(
+                key=key,
+                value_json=replacement_value_json,
+                version=new_version,
+            )
+        except ConfigConcurrencyError:
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    return _retry_on_locked(_replace)
+
+
+def delete_config_kv_if_match(
+    key: str,
+    *,
+    expected_version: int,
+    expected_value_json_sha256: str,
+    db_path: str | None = None,
+) -> None:
+    _require_config_key(key)
+    _require_positive_int_version(expected_version)
+    _require_sha256_hex(expected_value_json_sha256)
+
+    def _delete() -> None:
+        conn = _connect_config_db(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "SELECT value_json, version FROM config_kv WHERE key = ?",
+                (key,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} does not exist"
+                )
+            current_json = str(row["value_json"])
+            current_version = int(row["version"])
+            if current_version != expected_version:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} version mismatch "
+                    f"(expected {expected_version}, found {current_version})"
+                )
+            if sha256_utf8(current_json) != expected_value_json_sha256:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} value_json hash mismatch"
+                )
+            cur2 = conn.execute(
+                "DELETE FROM config_kv WHERE key = ? AND version = ?",
+                (key, current_version),
+            )
+            if cur2.rowcount != 1:
+                conn.rollback()
+                raise ConfigConcurrencyError(
+                    f"config_kv key {key!r} delete lost race"
+                )
+            conn.commit()
+        except ConfigConcurrencyError:
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    _retry_on_locked(_delete)
 
 
 def _archive_daily_config_snapshot_after_save(*, max_retries: int = 5) -> None:
