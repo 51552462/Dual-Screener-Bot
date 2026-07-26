@@ -28,6 +28,11 @@ from yf_download_flatten import flatten_yf_download_df
 from market_db_paths import market_db_read_path
 from scanner_funnel import ScanFunnelTracker, format_supernova_scan_report
 from system_config_atomic import CONFIG_DIR, CONFIG_PATH, load_config, update_config
+from fast_safety_audit_runtime import (
+    FastSafetyAuditRuntime,
+    create_fast_safety_audit_runtime,
+    drain_fast_safety_audit_runtime,
+)
 from fast_safety_runtime_shadow import (
     FastSafetyShadowContext,
     evaluate_supernova_fast_safety_shadow,
@@ -3112,6 +3117,51 @@ def execute_supernova_live_scan(
         pass
 
     return report
+
+
+def execute_supernova_live_scan_with_fast_safety_audit(
+    market,
+    *,
+    fast_safety_shadow_enabled: bool = False,
+    fast_safety_audit_sink: object | None = None,
+):
+    effective_shadow_enabled = fast_safety_shadow_enabled is True
+
+    runtime = None
+    effective_emitter = None
+
+    if effective_shadow_enabled and callable(fast_safety_audit_sink):
+        try:
+            runtime = create_fast_safety_audit_runtime(
+                shadow_enabled=True,
+            )
+        except Exception:
+            runtime = None
+
+        if (
+            isinstance(runtime, FastSafetyAuditRuntime)
+            and runtime.ready is True
+            and runtime.emitter is not None
+        ):
+            effective_emitter = runtime.emitter
+
+    try:
+        return execute_supernova_live_scan(
+            market,
+            fast_safety_shadow_enabled=effective_shadow_enabled,
+            fast_safety_audit_emitter=effective_emitter,
+        )
+    finally:
+        if runtime is not None and callable(fast_safety_audit_sink):
+            try:
+                drain_fast_safety_audit_runtime(
+                    runtime,
+                    fast_safety_audit_sink,
+                )
+            except Exception:
+                pass
+
+
 # 👇👇 [기존 run_miner_scheduler 함수를 이걸로 덮어쓰세요] 👇👇
 def run_miner_scheduler():
     """1주일에 한 번 과거 데이터를 마이닝하여 템플릿 갱신 및 CSV 추출을 수행하는 봇"""
