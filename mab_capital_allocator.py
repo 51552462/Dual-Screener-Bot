@@ -38,6 +38,8 @@ class ArmStats:
     losses: int = 0
     n: int = 0
     mean_ret: float = 0.0
+    gross_profit: float = 0.0
+    gross_loss: float = 0.0
     is_incubator: bool = False
     is_archived: bool = False
     sample_score: float = 0.0
@@ -109,8 +111,10 @@ def _load_closed_arms(
         arm.n += 1
         if r > 0:
             arm.wins += 1
+            arm.gross_profit += r
         else:
             arm.losses += 1
+            arm.gross_loss += abs(r)
         arm.mean_ret += r
 
     for arm in out.values():
