@@ -21,10 +21,16 @@ ContextualLinUCB — MAB 자본 배분용 문맥 밴딧(MABCapitalAllocator 연�
 """
 from __future__ import annotations
 
+import json
+import logging
 import math
+import os
 import random
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+import sqlite3
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 
@@ -543,3 +549,357 @@ def update_linucb_on_closure(
     bandit.update(arm_idx, context, float(reward))
     save_bandit_state(bandit, cfg, mk, arm_names)
     return True
+
+
+# ---------------------------------------------------------------------------
+# LinUCB 리스크 조정 보상 · forward_trades 배치 피드백
+# ---------------------------------------------------------------------------
+def calculate_trade_reward(
+    final_ret: float,
+    mae: float,
+    bars_held: int,
+    *,
+    mae_weight: float = 0.50,
+    time_weight: float = 0.10,
+    reward_scale: float = 10.0,
+) -> float:
+    """
+    개별 청산 거래의 LinUCB용 리스크 조정 보상을 계산한다.
+
+    U = final_ret - mae_weight*|MAE| - time_weight*log(1+bars_held)
+    Reward = clip(tanh(U / reward_scale), -1, 1)
+    """
+    try:
+        ret = float(final_ret)
+        adverse_excursion = abs(float(mae))
+        holding_bars = float(bars_held)
+        mae_penalty_weight = float(mae_weight)
+        time_penalty_weight = float(time_weight)
+        scale = float(reward_scale)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+    values = np.array(
+        [
+            ret,
+            adverse_excursion,
+            holding_bars,
+            mae_penalty_weight,
+            time_penalty_weight,
+            scale,
+        ],
+        dtype=np.float64,
+    )
+
+    if not np.all(np.isfinite(values)):
+        return 0.0
+
+    if holding_bars < 0.0 or scale <= 0.0:
+        return 0.0
+
+    mae_penalty_weight = max(0.0, mae_penalty_weight)
+    time_penalty_weight = max(0.0, time_penalty_weight)
+
+    mae_penalty = mae_penalty_weight * adverse_excursion
+    time_penalty = time_penalty_weight * np.log1p(holding_bars)
+
+    raw_utility = ret - mae_penalty - time_penalty
+    normalized_reward = np.tanh(raw_utility / scale)
+
+    return float(np.clip(normalized_reward, -1.0, 1.0))
+
+
+def _bandit_db_path() -> str:
+    try:
+        from market_db_paths import report_db_read_path
+
+        return report_db_read_path()
+    except Exception:
+        try:
+            from market_db_paths import MARKET_DATA_DB_PATH
+
+            return MARKET_DATA_DB_PATH
+        except Exception:
+            from factory_data_paths import factory_data_dir
+
+            return os.path.join(factory_data_dir(), "market_data.sqlite")
+
+
+def _feed_watermark(cfg: Dict[str, Any], market: str) -> Tuple[int, str]:
+    """LinUCB 블록에 저장된 마지막 배치 피드 워터마크."""
+    block = (_linucb_store(cfg).get(str(market or "KR").upper()) or {})
+    last_id = int(block.get("last_feed_trade_id") or 0)
+    last_at = str(block.get("last_feed_at") or "")[:10]
+    return last_id, last_at
+
+
+def _extract_facts_from_trade(trade: dict) -> dict:
+    """forward_trades 행에서 facts 유사 dict 추출(flow_tags JSON·컬럼 fallback)."""
+    facts: Dict[str, Any] = {}
+    flow = str(trade.get("flow_tags") or "").strip()
+    if flow.startswith("{") and flow.endswith("}"):
+        try:
+            parsed = json.loads(flow)
+            if isinstance(parsed, dict):
+                facts.update(parsed)
+        except json.JSONDecodeError:
+            pass
+
+    for col in (
+        "entry_regime",
+        "entry_breadth",
+        "market_breadth",
+        "dyn_rs",
+        "dyn_cpv",
+        "dyn_tb",
+        "v_energy",
+    ):
+        if trade.get(col) is not None:
+            facts.setdefault(col, trade[col])
+    return facts
+
+
+def _build_entry_context_vector(
+    trade: dict,
+    sys_config: dict,
+    market: str,
+) -> np.ndarray:
+    """
+    진입 시점 VIX·국면·(facts/_sys_config) 스냅샷으로 build_context_vector 재구성.
+    진입 데이터가 없으면 현재 sys_config 문맥으로 근사한다.
+    """
+    cfg = dict(sys_config) if isinstance(sys_config, dict) else {}
+    facts = _extract_facts_from_trade(trade)
+
+    vix_val: Optional[float] = None
+    for key in ("vix_index", "vix", "VIX"):
+        try:
+            v = float(facts.get(key) or 0)
+            if v > 0:
+                vix_val = v
+                break
+        except (TypeError, ValueError):
+            continue
+
+    snap = facts.get("_sys_config")
+    if isinstance(snap, dict):
+        snap_vix = _resolve_vix(snap)
+        if snap_vix > 0 and (vix_val is None or snap_vix != 20.0):
+            vix_val = snap_vix
+        gk = snap.get("META_GLOBAL_KELLY_MULT")
+        if gk is not None:
+            try:
+                cfg["META_GLOBAL_KELLY_MULT"] = float(gk)
+            except (TypeError, ValueError):
+                pass
+        rk = snap.get("META_REGIME_KEY") or (snap.get("REGIME_ANALYSIS") or {}).get(
+            "regime_key"
+        )
+        if rk and str(rk).strip().upper() not in ("", "UNKNOWN"):
+            cfg["META_REGIME_KEY"] = str(rk)
+
+    if vix_val is not None and vix_val > 0:
+        macro = dict(cfg.get("MACRO_DAILY_LATEST") or {})
+        macro["vix_index"] = vix_val
+        cfg["MACRO_DAILY_LATEST"] = macro
+
+    regime = facts.get("entry_regime") or trade.get("entry_regime")
+    if regime and str(regime).strip().upper() not in ("", "UNKNOWN"):
+        cfg["META_REGIME_KEY"] = str(regime)
+
+    breadth = facts.get("entry_breadth")
+    if breadth is None:
+        breadth = trade.get("entry_breadth")
+    if breadth is not None:
+        try:
+            cfg.setdefault("BANDIT_ENTRY_BREADTH_HINT", float(breadth))
+        except (TypeError, ValueError):
+            pass
+
+    return build_context_vector(cfg, market)
+
+
+def _compute_mae_pct(trade: dict) -> float:
+    """min_low·entry_price 기반 MAE(%)."""
+    try:
+        ep = float(trade.get("entry_price") or 0)
+        low = float(trade.get("min_low") if trade.get("min_low") is not None else ep)
+        if ep <= 0:
+            return 0.0
+        return (low - ep) / ep * 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _load_closed_trades_for_bandit_feed(
+    db_path: str,
+    *,
+    market: str,
+    cutoff_date: str,
+    min_trade_id: int,
+) -> List[dict]:
+    """market_data.sqlite forward_trades — CLOSED% 청산 + 워터마크 이후."""
+    uri = str(db_path).replace("\\", "/")
+    conn = sqlite3.connect(f"file:{uri}?mode=ro", uri=True, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.execute(
+            """
+            SELECT *
+            FROM forward_trades
+            WHERE market = ?
+              AND status LIKE 'CLOSED%'
+              AND id > ?
+              AND substr(
+                    IFNULL(NULLIF(TRIM(exit_date), ''), entry_date),
+                    1,
+                    10
+                  ) >= ?
+            ORDER BY id ASC
+            """,
+            (str(market or "KR").upper(), int(min_trade_id), str(cutoff_date)[:10]),
+        )
+        return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def feed_rewards_to_bandit(
+    *,
+    sys_config: Optional[Dict[str, Any]] = None,
+    db_path: Optional[str] = None,
+    lookback_days: int = 7,
+    markets: Optional[Sequence[str]] = None,
+    persist: bool = True,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    forward_trades 청산 원장 → calculate_trade_reward → LinUCB 배치 갱신.
+
+    조회 창: max(lookback_days, 마지막 feed_rewards_to_bandit 이후) + id 워터마크.
+    완료 후 save_bandit_state + system_config 영속화.
+    """
+    own_cfg = sys_config is None
+    cfg: Dict[str, Any]
+    if own_cfg:
+        try:
+            from config_manager import load_system_config
+
+            cfg = dict(load_system_config() or {})
+        except Exception:
+            cfg = {}
+    else:
+        cfg = sys_config  # type: ignore[assignment]
+
+    now = now or datetime.now()
+    seven_cutoff = (now - timedelta(days=int(lookback_days))).strftime("%Y-%m-%d")
+    db = db_path or _bandit_db_path()
+    target_markets = [
+        str(m).upper()
+        for m in (markets or ("KR", "US"))
+        if str(m).strip()
+    ]
+
+    summary: Dict[str, Any] = {
+        "updated": 0,
+        "skipped_no_arm": 0,
+        "skipped_bad_reward": 0,
+        "markets": {},
+        "persisted": False,
+        "db_path": db,
+        "lookback_days": lookback_days,
+    }
+
+    if not os.path.isfile(db):
+        summary["error"] = f"db_not_found:{db}"
+        return summary
+
+    for mk in target_markets:
+        arm_names = enumerate_active_dna_templates(cfg, mk)
+        if not arm_names:
+            summary["markets"][mk] = {"arms": 0, "updated": 0}
+            continue
+
+        last_id, last_at = _feed_watermark(cfg, mk)
+        cutoff = seven_cutoff
+        if last_at and last_at > cutoff:
+            cutoff = last_at[:10]
+
+        trades: List[dict] = []
+        load_error = ""
+        try:
+            trades = _load_closed_trades_for_bandit_feed(
+                db,
+                market=mk,
+                cutoff_date=cutoff,
+                min_trade_id=last_id,
+            )
+        except Exception as ex:
+            load_error = str(ex)
+            logger.warning("feed_rewards_to_bandit load failed market=%s: %s", mk, ex)
+
+        bandit = load_bandit_state(cfg, mk, arm_names)
+        mkt_updated = 0
+        mkt_skipped_arm = 0
+        mkt_skipped_reward = 0
+        local_max_id = last_id
+
+        for trade in trades:
+            tid = int(trade.get("id") or 0)
+            local_max_id = max(local_max_id, tid)
+
+            arm_idx = _match_arm_index(arm_names, trade.get("sig_type"))
+            if arm_idx is None:
+                mkt_skipped_arm += 1
+                continue
+
+            try:
+                final_ret = float(trade.get("final_ret") or 0.0)
+                mae = _compute_mae_pct(trade)
+                bars = int(trade.get("bars_held") or 0)
+            except (TypeError, ValueError):
+                mkt_skipped_reward += 1
+                continue
+
+            reward = calculate_trade_reward(
+                final_ret=final_ret,
+                mae=mae,
+                bars_held=bars,
+            )
+            if not np.isfinite(reward):
+                mkt_skipped_reward += 1
+                continue
+
+            context = _build_entry_context_vector(trade, cfg, mk)
+            bandit.update(arm_idx, context, reward)
+            mkt_updated += 1
+
+        block = save_bandit_state(bandit, cfg, mk, arm_names)
+        block["last_feed_trade_id"] = int(local_max_id)
+        block["last_feed_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        summary["updated"] += mkt_updated
+        summary["skipped_no_arm"] += mkt_skipped_arm
+        summary["skipped_bad_reward"] += mkt_skipped_reward
+        summary["markets"][mk] = {
+            "arms": len(arm_names),
+            "loaded": len(trades),
+            "updated": mkt_updated,
+            "skipped_no_arm": mkt_skipped_arm,
+            "skipped_bad_reward": mkt_skipped_reward,
+            "cutoff_date": cutoff,
+            "last_feed_trade_id": local_max_id,
+            "load_error": load_error,
+        }
+
+    if persist and summary["updated"] > 0:
+        try:
+            from config_manager import update_system_config
+
+            update_system_config({LINUCB_STATE_KEY: cfg[LINUCB_STATE_KEY]})
+            summary["persisted"] = True
+        except Exception as ex:
+            summary["persist_error"] = str(ex)
+            logger.warning("feed_rewards_to_bandit persist failed: %s", ex)
+
+    return summary
