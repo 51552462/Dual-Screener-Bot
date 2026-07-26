@@ -4,10 +4,15 @@ import os
 from bitget.config_hub import load_config
 from bitget.infra.clock import utc_datetime_str_tz
 from bitget.infra.logging_setup import get_logger, setup_logging
-from bitget.oms import create_trade_exchange, generate_client_oid, oms_place_market_order
+from bitget.oms import create_trade_exchange, generate_client_oid
 from bitget.symbol_utils import normalize_market_symbol
 from bitget.trading.execution_safety import ExecutionGateOutcome, run_pre_execution_gates
 from bitget.trading.leverage_manager import prepare_futures_order_params, resolve_leverage, resolve_margin_mode
+from bitget.trading.order_routing import (
+    execute_routed_orders,
+    routing_decision_to_meta,
+    safe_evaluate_routing,
+)
 from bitget.trading.position_manager import ccxt_order_side, normalize_position_side
 
 setup_logging()
@@ -127,6 +132,12 @@ def execute_real_order(
     strategy_key=None,
     margin_mode=None,
     amount_source: str = "raw",
+    *,
+    signal_score=None,
+    atr_pct=None,
+    atr_value=None,
+    orderbook_imbalance=None,
+    order_size_usd=None,
 ):
     """
     Bitget live order — safety gates → normalization → leverage (futures) → OMS.
@@ -145,7 +156,8 @@ def execute_real_order(
      11. Bad-tick / flash-crash price sanity
      12. Pre-trade slippage gate
      13. Leverage / margin manager (futures; MAX_LEVERAGE)
-     14. OMS market order (oms_core defense-in-depth)
+     14. DynamicOrderRouter (TAKER / MAKER / HYBRID split)
+     15. OMS routed order (oms_core defense-in-depth)
 
     amount_source:
       - ``virtual_kelly`` / ``paper_kelly`` / ``ledger`` → qty already includes
@@ -201,6 +213,24 @@ def execute_real_order(
 
     if gate.is_dry_run:
         dr_prefix = str(cfg.get("EXEC_CLIENT_OID_PREFIX") or "bg")[:12]
+        dr_size_usd = order_size_usd
+        if dr_size_usd is None:
+            try:
+                dr_size_usd = max(float(qty), 1.0)
+            except (TypeError, ValueError):
+                dr_size_usd = 1.0
+        routing = safe_evaluate_routing(
+            signal_score=signal_score if signal_score is not None else 0.0,
+            atr_pct=atr_pct,
+            atr_value=atr_value,
+            current_price=None,
+            orderbook_imbalance=orderbook_imbalance,
+            order_size_usd=dr_size_usd,
+            symbol=symbol,
+            market_type=market_type,
+            market_symbol=market_symbol,
+        )
+        meta_out.update(routing_decision_to_meta(routing))
         return {
             "ok": True,
             "status": "dry_run",
@@ -329,26 +359,48 @@ def execute_real_order(
                 }
 
         prefix = str(cfg.get("EXEC_CLIENT_OID_PREFIX") or "bg")[:12]
-        coid = generate_client_oid(prefix)
-        om = oms_place_market_order(
+        resolved_size_usd = order_size_usd
+        if resolved_size_usd is None and px_ref > 0.0:
+            resolved_size_usd = float(qty) * float(px_ref)
+        routing = safe_evaluate_routing(
+            signal_score=signal_score if signal_score is not None else 0.0,
+            atr_pct=atr_pct,
+            atr_value=atr_value,
+            current_price=px_ref if px_ref > 0.0 else None,
+            orderbook_imbalance=orderbook_imbalance,
+            order_size_usd=resolved_size_usd if resolved_size_usd is not None else max(float(qty), 1.0),
+            symbol=symbol,
+            market_type=market_type,
+            ex=ex,
+            market_symbol=market_symbol,
+        )
+        meta_out.update(routing_decision_to_meta(routing))
+
+        om = execute_routed_orders(
             ex,
-            market_symbol,
-            order_side,
-            qty,
+            market_symbol=market_symbol,
+            order_side=order_side,
+            position_side=side_u,
+            qty=qty,
+            px_ref=px_ref,
+            routing=routing,
             params_base=params,
-            client_oid=coid,
+            client_oid_prefix=prefix,
             max_attempts=int(cfg.get("OMS_ORDER_MAX_ATTEMPTS", 3)),
             market_type=market_type,
-            position_side=side_u,
         )
         meta_out.update(
             {
-                "client_order_id": om.get("client_order_id", coid),
+                "client_order_id": om.get("client_order_id", ""),
                 "oms_status": om.get("status"),
                 "filled": om.get("filled"),
                 "remaining": om.get("remaining"),
             }
         )
+        if om.get("limit_price") is not None:
+            meta_out["limit_price"] = om.get("limit_price")
+        if om.get("hybrid_legs"):
+            meta_out["hybrid_legs"] = om.get("hybrid_legs")
 
         if not om.get("ok", False):
             return {
@@ -378,7 +430,7 @@ def execute_real_order(
             "amount": qty,
             "leverage": lev,
             "order_id": oid_out,
-            "client_order_id": str(om.get("client_order_id") or coid),
+            "client_order_id": str(om.get("client_order_id") or ""),
             "balance_before": bal_before,
             "balance_after": bal_after,
             "realized_pnl_usdt": pnl,

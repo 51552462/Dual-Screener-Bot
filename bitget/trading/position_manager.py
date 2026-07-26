@@ -183,6 +183,11 @@ def open_position(
     leverage: float = 3.0,
     strategy_key: Optional[str] = None,
     margin_mode: Optional[str] = None,
+    signal_score=None,
+    atr_pct=None,
+    atr_value=None,
+    orderbook_imbalance=None,
+    order_size_usd=None,
 ) -> dict[str, Any]:
     """High-level entry — delegates to executor (dry-run gate preserved)."""
     from bitget.executor import execute_real_order
@@ -196,4 +201,9 @@ def open_position(
         market_type=market_type,
         strategy_key=strategy_key,
         margin_mode=margin_mode,
+        signal_score=signal_score,
+        atr_pct=atr_pct,
+        atr_value=atr_value,
+        orderbook_imbalance=orderbook_imbalance,
+        order_size_usd=order_size_usd,
     )

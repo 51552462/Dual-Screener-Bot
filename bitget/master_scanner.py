@@ -667,6 +667,12 @@ def _process_scan_hit(
                     order_amount = (default_notional / px) if px > 0 else 0.0
                     amount_source = "fallback_min_notional"
             order_lev = float(dbg.get("leverage", 3.0) or 3.0)
+            px = float(dbg.get("last_close", last_close) or 0.0)
+            atr_val = float(dbg.get("entry_atr", dbg.get("atr", 0.0)) or 0.0)
+            atr_pct_val = None
+            if atr_val > 0.0 and px > 0.0:
+                atr_pct_val = (atr_val / px) * 100.0
+            order_notional = order_amount * px if px > 0.0 else None
             exec_result = execute_real_order(
                 symbol=symbol,
                 side=order_side,
@@ -675,6 +681,10 @@ def _process_scan_hit(
                 market_type=market_type,
                 strategy_key=str(engine_name or ""),
                 amount_source=amount_source,
+                signal_score=score,
+                atr_pct=atr_pct_val,
+                atr_value=atr_val if atr_val > 0.0 else None,
+                order_size_usd=order_notional,
             )
             vt_id = _lookup_virtual_trade_id(
                 market_type=market_type,
