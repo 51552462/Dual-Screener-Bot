@@ -45,6 +45,82 @@ fi
 echo "  venv python: $DANTE_PY"
 
 # [1/7] git pull 전: *.sqlite + 핵심 파생 상태 파일을 타임스탬프 디렉터리에 백업
+PREUPDATE_BACKUP_KEEP="${PREUPDATE_BACKUP_KEEP:-5}"
+
+_dante_prune_pre_update_backups() {
+  local root="${1:-}"
+  local keep="${2:-$PREUPDATE_BACKUP_KEEP}"
+  local root_canon name target target_canon
+  local pattern='^[0-9]{8}_[0-9]{6}_utc$'
+  local i
+  local ignored=0
+  local -a dirs=()
+
+  if [[ ! "$keep" =~ ^[0-9]+$ ]]; then
+    echo "  WARN: invalid PREUPDATE_BACKUP_KEEP='$keep'; fallback=5" >&2
+    keep=5
+  fi
+  if (( keep < 1 )); then
+    echo "  WARN: PREUPDATE_BACKUP_KEEP must be >= 1; clamp=1" >&2
+    keep=1
+  fi
+
+  if [[ -z "$root" || "$root" != /* || "$root" == "/" ]]; then
+    echo "  WARN: pre-update retention unsafe root: ${root:-<empty>}" >&2
+    return 1
+  fi
+  [[ -d "$root" ]] || return 0
+
+  root_canon="$(readlink -f -- "$root" 2>/dev/null || true)"
+  if [[ -z "$root_canon" || "$root_canon" == "/" || ! -d "$root_canon" ]]; then
+    echo "  WARN: pre-update retention unresolved root: $root" >&2
+    return 1
+  fi
+
+  while IFS= read -r name; do
+    if [[ "$name" =~ $pattern ]]; then
+      dirs+=("${root_canon}/${name}")
+    else
+      ignored=$((ignored + 1))
+    fi
+  done < <(
+    find "$root_canon" \
+      -mindepth 1 \
+      -maxdepth 1 \
+      -type d \
+      -printf '%f\n' 2>/dev/null \
+    | LC_ALL=C sort -r
+  )
+
+  if (( ${#dirs[@]} <= keep )); then
+    echo "  pre-update retention: keep=${keep}, total=${#dirs[@]}, delete=0, ignored=${ignored}"
+    return 0
+  fi
+
+  for ((i=keep; i<${#dirs[@]}; i++)); do
+    target="${dirs[$i]}"
+    target_canon="$(readlink -f -- "$target" 2>/dev/null || true)"
+
+    if [[ -z "$target_canon" \
+      || "$target_canon" != "$root_canon/"* \
+      || "$(dirname -- "$target_canon")" != "$root_canon" \
+      || ! "$(basename -- "$target_canon")" =~ $pattern \
+      || ! -d "$target_canon" ]]; then
+      echo "  WARN: pre-update retention unsafe target: $target" >&2
+      return 1
+    fi
+
+    if ! rm -rf --one-file-system -- "$target_canon"; then
+      echo "  WARN: pre-update retention delete failed: $target_canon" >&2
+      return 1
+    fi
+
+    echo "  pre-update retention deleted: $target_canon"
+  done
+
+  echo "  pre-update retention: keep=${keep}, total=${#dirs[@]}, deleted=$((${#dirs[@]} - keep)), ignored=${ignored}"
+}
+
 _dante_pre_update_sqlite_backup() {
   local stamp dest f base extra_dir
   stamp="$(date -u +%Y%m%d_%H%M%S_utc)"
@@ -194,6 +270,9 @@ for db in paths:
   fi
 
   echo "  pre-update backup → $dest (sqlite + artifacts, zero deletion)"
+  if ! _dante_prune_pre_update_backups "$(dirname -- "$dest")" "$PREUPDATE_BACKUP_KEEP"; then
+    echo "  WARN: pre-update retention failed; update continues" >&2
+  fi
 }
 
 # 구버전(.venv) 인터프리터로 INSTALL_ROOT 아래에서 돌아가는 잔존 프로세스만 종료 (DB/JSON untouched)
