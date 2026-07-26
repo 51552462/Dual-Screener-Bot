@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from decimal import Decimal
 from typing import Any
 
 from fast_safety_policy_store import (
@@ -28,6 +29,20 @@ def _valid_enabled_document(
         "base_kelly_by_strategy": base or {"strat:abc123456789abcd": 0.08},
         "absolute_kelly_cap": cap,
     }
+
+
+_STRATEGY_ID = "strat:abc123456789abcd"
+
+
+def _assert_canonical_enabled_payload(payload: dict[str, Any]) -> None:
+    for value in payload["base_kelly_by_strategy"].values():
+        assert isinstance(value, float)
+    assert isinstance(payload["absolute_kelly_cap"], float)
+    assert "alpha_overlay_by_strategy" in payload
+    assert "max_alpha_overlay" in payload
+    for value in payload["alpha_overlay_by_strategy"].values():
+        assert isinstance(value, float)
+    assert isinstance(payload["max_alpha_overlay"], float)
 
 
 class FastSafetyPolicyStoreTests(unittest.TestCase):
@@ -183,9 +198,51 @@ class FastSafetyPolicyStoreTests(unittest.TestCase):
             write_fast_safety_policy_document(doc, set_value=setter)
         )
         self.assertEqual(captured["key"], FAST_SAFETY_POLICY_KEYS["US"])
-        self.assertEqual(captured["value"]["enabled"], True)
-        self.assertEqual(captured["value"]["market"], "US")
-        self.assertEqual(captured["value"]["version"], FAST_SAFETY_POLICY_VERSION)
+        stored = captured["value"]
+        self.assertEqual(stored["enabled"], True)
+        self.assertEqual(stored["market"], "US")
+        self.assertEqual(stored["version"], FAST_SAFETY_POLICY_VERSION)
+        _assert_canonical_enabled_payload(stored)
+        self.assertEqual(
+            stored["alpha_overlay_by_strategy"],
+            {_STRATEGY_ID: 1.0},
+        )
+        self.assertEqual(stored["max_alpha_overlay"], 1.0)
+
+        canonical_doc = {
+            "enabled": True,
+            "market": "US",
+            "version": FAST_SAFETY_POLICY_VERSION,
+            "generated_at": 100.0,
+            "base_kelly_by_strategy": {_STRATEGY_ID: "0.08"},
+            "absolute_kelly_cap": "0.10",
+            "alpha_overlay_by_strategy": {_STRATEGY_ID: "1.0"},
+            "max_alpha_overlay": "1.0",
+        }
+        captured.clear()
+        store.clear()
+        self.assertTrue(
+            write_fast_safety_policy_document(canonical_doc, set_value=setter)
+        )
+        typed = captured["value"]
+        _assert_canonical_enabled_payload(typed)
+        self.assertEqual(typed["base_kelly_by_strategy"][_STRATEGY_ID], 0.08)
+        self.assertEqual(typed["absolute_kelly_cap"], 0.10)
+        self.assertEqual(typed["alpha_overlay_by_strategy"][_STRATEGY_ID], 1.0)
+        self.assertEqual(typed["max_alpha_overlay"], 1.0)
+
+        decimal_doc = _valid_enabled_document(
+            market="US",
+            base={_STRATEGY_ID: Decimal("0.07")},
+        )
+        captured.clear()
+        store.clear()
+        self.assertTrue(
+            write_fast_safety_policy_document(decimal_doc, set_value=setter)
+        )
+        decimal_stored = captured["value"]
+        _assert_canonical_enabled_payload(decimal_stored)
+        self.assertEqual(decimal_stored["base_kelly_by_strategy"][_STRATEGY_ID], 0.07)
 
         def getter(key: str, default: Any = None) -> Any:
             return store.get(key, default)
@@ -241,17 +298,26 @@ class FastSafetyPolicyStoreTests(unittest.TestCase):
             captured["value"] = value
 
         source = _valid_enabled_document(market="KR")
+        source["base_kelly_by_strategy"] = {_STRATEGY_ID: "0.08"}
+        source["absolute_kelly_cap"] = "0.10"
+        source["alpha_overlay_by_strategy"] = {_STRATEGY_ID: "1.0"}
+        source["max_alpha_overlay"] = "1.0"
         source["metadata"] = {"owner": "ops"}
         self.assertTrue(
             write_fast_safety_policy_document(source, set_value=setter)
         )
 
         stored = captured["value"]
-        source["base_kelly_by_strategy"]["strat:abc123456789abcd"] = 0.99
+        _assert_canonical_enabled_payload(stored)
+        self.assertEqual(stored["base_kelly_by_strategy"][_STRATEGY_ID], 0.08)
+        self.assertEqual(stored["absolute_kelly_cap"], 0.10)
+        self.assertEqual(stored["alpha_overlay_by_strategy"][_STRATEGY_ID], 1.0)
+        self.assertEqual(stored["max_alpha_overlay"], 1.0)
+        source["base_kelly_by_strategy"][_STRATEGY_ID] = 0.99
         source["metadata"]["owner"] = "mutated"
 
         self.assertEqual(
-            stored["base_kelly_by_strategy"]["strat:abc123456789abcd"],
+            stored["base_kelly_by_strategy"][_STRATEGY_ID],
             0.08,
         )
         self.assertEqual(stored["metadata"]["owner"], "ops")
