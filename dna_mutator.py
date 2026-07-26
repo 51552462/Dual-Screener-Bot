@@ -12,18 +12,14 @@ import random
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-_DNA_KEYS = (
-    "cpv", "tb", "bbe", "rs", "cos_cutoff",
-    "mfe_atr_mult", "trail_atr_mult" # 👑 [미래 대응형] 고무줄 청산 유전자 (변동성 배수)
-)
-_FLOAT_BOUNDS = {
-    "cpv": (0.05, 2.5),
-    "tb": (0.05, 50.0),
-    "bbe": (0.05, 5.0),
-    "rs": (50.0, 300.0),
-    "cos_cutoff": (0.45, 0.95),
-    "mfe_atr_mult": (1.5, 15.0),   # ATR(하루 평균 진폭)의 1.5배 ~ 15배 목표
-    "trail_atr_mult": (0.5, 5.0),  # ATR의 0.5배 ~ 5배 트레일링 래칫 조임
+DYNAMIC_DNA_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "cpv": {"bounds": (0.05, 2.5), "expression_weight": 1.0},
+    "tb": {"bounds": (0.05, 50.0), "expression_weight": 1.0},
+    "bbe": {"bounds": (0.05, 5.0), "expression_weight": 1.0},
+    "rs": {"bounds": (50.0, 300.0), "expression_weight": 1.0},
+    "cos_cutoff": {"bounds": (0.45, 0.95), "expression_weight": 1.0},
+    "mfe_atr_mult": {"bounds": (1.5, 15.0), "expression_weight": 1.0},   # ATR(하루 평균 진폭)의 1.5배 ~ 15배 목표
+    "trail_atr_mult": {"bounds": (0.5, 5.0), "expression_weight": 1.0},  # ATR의 0.5배 ~ 5배 트레일링 래칫 조임
 }
 
 # 👑 [초월적 진화] 논리적 스위치 유전자 (Structural Boolean Genes)
@@ -48,7 +44,8 @@ MUTATION_HARD_BOUNDARIES: Dict[str, Tuple[float, float]] = {
 
 
 def _clip_key(key: str, val: float) -> float:
-    lo, hi = _FLOAT_BOUNDS.get(key, (0.0, 999.0))
+    entry = DYNAMIC_DNA_REGISTRY.get(key)
+    lo, hi = entry["bounds"] if entry else (0.0, 999.0)
     if key in MUTATION_HARD_BOUNDARIES:
         hlo, hhi = MUTATION_HARD_BOUNDARIES[key]
         lo, hi = max(lo, hlo), min(hi, hhi)
@@ -101,7 +98,7 @@ def mutate_dna_template(
         out = copy.deepcopy(template)
         
         # 1. 연속형 변수(숫자) 미세 변이
-        for k in _DNA_KEYS:
+        for k in DYNAMIC_DNA_REGISTRY:
             if k in out:
                 try:
                     out[k] = mutate_gene_value(k, float(out[k]), rate=rate)
@@ -472,7 +469,7 @@ def crossover_dna_templates(
     out = copy.deepcopy(loser)
     
     # 1. 연속형 변수(숫자) 선형 교배
-    for k in _DNA_KEYS:
+    for k in DYNAMIC_DNA_REGISTRY:
         if k not in loser or k not in champion:
             continue
         try:
@@ -558,7 +555,7 @@ def mutate_dna_for_failure_diagnosis(
                 "cos_cutoff", float(out["cos_cutoff"]) + 0.02
             )
 
-    for k in _DNA_KEYS:
+    for k in DYNAMIC_DNA_REGISTRY:
         if k in out:
             try:
                 out[k] = mutate_gene_value(k, float(out[k]), rate=rate * 0.6)
