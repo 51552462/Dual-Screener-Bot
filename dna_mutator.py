@@ -148,6 +148,27 @@ def mutate_dna_template(
     best_out["mutation_rate"] = rate
     if name_suffix:
         best_out["parent_lineage"] = str(name_suffix)
+
+    # 👑 [유전자 Dropout] data_miner 피처 가중치 기반 노이즈 유전자 제거
+    _feature_to_dna = {
+        "[D_Day_당일] 평균_CPV": "cpv",
+        "[D_Day_당일] 평균_진짜양봉(TB)": "tb",
+        "[D_Day_당일] 평균_응축에너지(BBE)": "bbe",
+        "[D_Day_당일] 평균_시장강도(RS)": "rs",
+    }
+    feature_weights = (sys_config or {}).get("DYNAMIC_FEATURE_WEIGHTS", {})
+    silenced_genes: List[str] = []
+    for feature_name, dna_key in _feature_to_dna.items():
+        if feature_name not in feature_weights:
+            continue
+        try:
+            if float(feature_weights[feature_name]) < 0.25 and dna_key in best_out:
+                best_out.pop(dna_key, None)
+                silenced_genes.append(dna_key)
+        except (TypeError, ValueError):
+            continue
+    if silenced_genes:
+        best_out["silenced_genes"] = silenced_genes
         
     return best_out
 
