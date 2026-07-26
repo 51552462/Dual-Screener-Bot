@@ -10,10 +10,10 @@ Evolutionary Shape-Shifting Doomsday Dampener — 둠스데이 위험점수 → 
     γ > 1    → 볼록(Convex, 급제동)
     γ < 1    → 오목(Concave, 완만)
 
-자율 진화(주말):  방어 성공(Avoided Loss) > 기회비용(Missed Profit) 이면 γ↑(브레이크 예민),
-반대면 γ↓(브레이크 완화). 경사하강 형태:
+자율 진화(주말):  방어 성공(Avoided Loss) > 기회비용(Missed Profit) 이면 γ↓(브레이크 강화),
+반대면 γ↑(브레이크 완화). 경사하강 + 평균회귀 형태:
 
-    γ(t+1) = clip( γ(t) + η · tanh( (AvoidedLoss − MissedProfit) / scale ),  0.5, 3.0 )
+    γ(t+1) = clip( γ(t) − η · tanh( (AvoidedLoss − MissedProfit) / scale ) + 0.02·(γ_init−γ(t)),  0.5, 3.0 )
 
 상태 SSOT: system_config (DOOMSDAY_DEFCON 등과 동일 위치).
 - DOOMSDAY_DAMPEN_GAMMA: 현재 γ
@@ -127,7 +127,7 @@ def apply_doomsday_dampening(
         # 롱 포지션이 받는 억압(1.0 - mult)을 역으로 계산하여 최대 2.5배까지 인버스 비중 증폭
         inverse_boost = 1.0 + ((1.0 - mult) * 1.5)
         print(f"🌋 [비대칭 밸브 개방] 둠스데이 스코어({score:.1f}) ➔ 역배팅 자본 {inverse_boost:.2f}배 증폭")
-        return float(kelly_risk_pct) * inverse_boost
+        return min(float(kelly_risk_pct) * inverse_boost, 0.08)
         
     return float(kelly_risk_pct) * mult
 
@@ -205,8 +205,8 @@ def evolve_gamma(
 ) -> Dict[str, Any]:
     """
     지난주 브레이크 발동 구간의 반사실 성과로 γ 를 경사하강 갱신.
-      AvoidedLoss / MissedProfit = brake_intensity × |realized PnL%|
-      γ(t+1) = clip( γ + η·tanh((Avoided−Missed)/scale), 0.5, 3.0 )
+      AvoidedLoss / MissedProfit = brake_intensity × |avg realized PnL%|
+      γ(t+1) = clip( γ − η·tanh((Avoided−Missed)/scale) + 0.02·(γ_init−γ), 0.5, 3.0 )
     """
     now = now or datetime.now()
     if sys_config is None:
@@ -245,16 +245,19 @@ def evolve_gamma(
     if braked:
         brake_intensity = sum(1.0 - float(e["mult"]) for e in braked) / len(braked)  # 0..1
         fwd_pnl, n = _forward_net_pnl_pct(db_path or "", win_start, win_end)
+        fwd_pnl_avg = fwd_pnl / max(1, n)
         if fwd_pnl < 0:
-            avoided = brake_intensity * abs(fwd_pnl)   # 하락장에서 제동 = 방어 성공
+            avoided = brake_intensity * abs(fwd_pnl_avg)   # 하락장에서 제동 = 방어 성공
             reason = "defense_success"
         elif fwd_pnl > 0:
-            missed = brake_intensity * fwd_pnl         # 상승장에서 제동 = 기회비용
+            missed = brake_intensity * fwd_pnl_avg         # 상승장에서 제동 = 기회비용
             reason = "opportunity_cost"
         else:
             reason = "flat"
         gradient = avoided - missed
-        gamma_new = _clamp_gamma(gamma + ETA * math.tanh(gradient / GRADIENT_SCALE))
+        gamma_new = _clamp_gamma(
+            gamma - ETA * math.tanh(gradient / GRADIENT_SCALE) + 0.02 * (GAMMA_INIT - gamma)
+        )
 
     hist: List[Dict[str, Any]] = [h for h in (state.get("history") or []) if isinstance(h, dict)]
     hist.append(
