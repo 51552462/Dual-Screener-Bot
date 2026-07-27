@@ -20,15 +20,22 @@ import factory_pipelines
 import supernova_hunter as snh
 
 REPO_ROOT = Path(__file__).resolve().parent
-WRAPPER_NAME = "execute_supernova_live_scan_with_fast_safety_audit"
+OPS_WRAPPER_NAME = "execute_supernova_live_scan_with_fast_safety_ops_audit"
+LIFECYCLE_WRAPPER_NAME = "execute_supernova_live_scan_with_fast_safety_audit"
 SCAN_NAME = "execute_supernova_live_scan"
+READER_NAME = "resolve_fast_safety_shadow_enabled"
+ACTIVATION_KEY_STRINGS = (
+    "FAST_SAFETY_SHADOW_KR",
+    "FAST_SAFETY_SHADOW_US",
+)
 
 FORBIDDEN_ACTIVATION_PATTERNS = (
     "os.getenv",
     "os.environ",
     "get_config_value",
     "ENABLE_FAST",
-    "FAST_SAFETY_SHADOW",
+    "FAST_SAFETY_SHADOW_KR",
+    "FAST_SAFETY_SHADOW_US",
     "FEATURE_FAST",
 )
 
@@ -81,8 +88,46 @@ def _wrapper_calls(fn_node: ast.FunctionDef) -> list[ast.Call]:
     return [
         node
         for node in ast.walk(fn_node)
-        if isinstance(node, ast.Call) and _call_name(node) == WRAPPER_NAME
+        if isinstance(node, ast.Call) and _call_name(node) == OPS_WRAPPER_NAME
     ]
+
+
+def _keyword_bool_true(call: ast.Call, name: str) -> bool:
+    for kw in call.keywords:
+        if kw.arg != name:
+            continue
+        if isinstance(kw.value, ast.Constant) and kw.value.value is True:
+            return True
+    return False
+
+
+def _reader_call_market(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Call) or _call_name(node) != READER_NAME:
+        return None
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
+def _assert_ops_wrapper_uses_reader(call: ast.Call, *, expected_market: str) -> None:
+    assert not _keyword_bool_true(call, "fast_safety_shadow_enabled"), (
+        "fast_safety_shadow_enabled=True literal is forbidden at production call sites"
+    )
+    for kw in call.keywords:
+        if kw.arg == "fast_safety_shadow_enabled":
+            market = _reader_call_market(kw.value)
+            assert market == expected_market, (
+                f"expected resolve_fast_safety_shadow_enabled({expected_market!r})"
+            )
+            return
+        if kw.arg in ("fast_safety_ops_writer", "fast_safety_audit_sink"):
+            raise AssertionError(
+                f"production call must not pass {kw.arg!r}"
+            )
+    raise AssertionError("fast_safety_shadow_enabled must use activation reader")
 
 
 def _keyword_bool_false(call: ast.Call, name: str) -> bool:
@@ -113,11 +158,9 @@ def _market_arg(call: ast.Call) -> str | None:
 
 
 def _assert_wrapper_explicit_off(call: ast.Call) -> None:
-    assert _keyword_bool_false(call, "fast_safety_shadow_enabled"), (
-        "fast_safety_shadow_enabled=False must be explicit"
-    )
-    assert _keyword_none(call, "fast_safety_audit_sink"), (
-        "fast_safety_audit_sink=None must be explicit"
+    _assert_ops_wrapper_uses_reader(
+        call,
+        expected_market=_market_arg(call) or "",
     )
 
 
@@ -140,32 +183,38 @@ def _git_diff_added_lines(*paths: str) -> list[str]:
 
 
 class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
-    def test_kr_factory_uses_wrapper(self) -> None:
+    def test_kr_factory_uses_ops_wrapper_with_reader(self) -> None:
         with patch.object(
             factory_pipelines, "_require_market_session_for_scan"
-        ), patch.object(
-            snh, WRAPPER_NAME
+        ), patch(
+            "fast_safety_shadow_activation.resolve_fast_safety_shadow_enabled",
+            return_value=False,
+        ) as reader_mock, patch.object(
+            snh, OPS_WRAPPER_NAME
         ) as wrapper_mock:
             factory_pipelines._step_supernova_kr()
 
+        reader_mock.assert_called_once_with("KR")
         wrapper_mock.assert_called_once_with(
             "KR",
             fast_safety_shadow_enabled=False,
-            fast_safety_audit_sink=None,
         )
 
-    def test_us_factory_uses_wrapper(self) -> None:
+    def test_us_factory_uses_ops_wrapper_with_reader(self) -> None:
         with patch.object(
             factory_pipelines, "_require_market_session_for_scan"
-        ), patch.object(
-            snh, WRAPPER_NAME
+        ), patch(
+            "fast_safety_shadow_activation.resolve_fast_safety_shadow_enabled",
+            return_value=False,
+        ) as reader_mock, patch.object(
+            snh, OPS_WRAPPER_NAME
         ) as wrapper_mock:
             factory_pipelines._step_supernova_us()
 
+        reader_mock.assert_called_once_with("US")
         wrapper_mock.assert_called_once_with(
             "US",
             fast_safety_shadow_enabled=False,
-            fast_safety_audit_sink=None,
         )
 
     def test_kr_factory_no_direct_scan(self) -> None:
@@ -205,11 +254,9 @@ class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
         fn_node = _function_def(source, "run_live_sniper_scheduler")
         self.assertEqual(_direct_scan_calls(fn_node), [])
 
-    def test_all_production_wrapper_calls_explicit_off(self) -> None:
+    def test_all_production_ops_wrapper_calls_use_reader(self) -> None:
         factory_source = inspect.getsource(factory_pipelines)
-        factory_tree = ast.parse(factory_source)
         scheduler_source = inspect.getsource(snh.run_live_sniper_scheduler)
-        scheduler_tree = ast.parse(scheduler_source)
 
         production_fns = (
             _function_def(factory_source, "_step_supernova_kr"),
@@ -223,30 +270,50 @@ class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(all_wrapper_calls), 4)
         for call in all_wrapper_calls:
-            with self.subTest(call=ast.unparse(call)):
-                _assert_wrapper_explicit_off(call)
+            market = _market_arg(call)
+            with self.subTest(call=ast.unparse(call), market=market):
+                assert market in ("KR", "US")
+                _assert_ops_wrapper_uses_reader(call, expected_market=market)
 
     def test_no_unapproved_activation_source(self) -> None:
-        added_lines = _git_diff_added_lines(
+        call_site_added = _git_diff_added_lines(
             "factory_pipelines.py",
             "supernova_hunter.py",
-            "test_fast_safety_supernova_production_off_gate.py",
         )
-        joined = "\n".join(added_lines)
+        joined_call_sites = "\n".join(call_site_added)
         for pattern in FORBIDDEN_ACTIVATION_PATTERNS:
             if pattern == "os.environ":
-                if "os.environ" in joined and "FACTORY_SCAN_OWNER" not in joined:
+                if (
+                    "os.environ" in joined_call_sites
+                    and "FACTORY_SCAN_OWNER" not in joined_call_sites
+                ):
                     self.fail(f"forbidden activation source in diff: {pattern}")
                 continue
-            self.assertNotIn(pattern, joined, msg=f"forbidden pattern: {pattern}")
+            self.assertNotIn(
+                pattern,
+                joined_call_sites,
+                msg=f"forbidden pattern in call-site diff: {pattern}",
+            )
+        self.assertNotIn(
+            "fast_safety_shadow_enabled=True",
+            joined_call_sites,
+            msg="literal production shadow ON forbidden in diff",
+        )
 
         for fn_name in ("_step_supernova_kr", "_step_supernova_us"):
             fn_source = inspect.getsource(getattr(factory_pipelines, fn_name))
             self.assertNotIn("load_system_config", fn_source)
+            self.assertNotIn("get_config_value", fn_source)
+            for key in ACTIVATION_KEY_STRINGS:
+                self.assertNotIn(key, fn_source)
+            self.assertIn(READER_NAME, fn_source)
 
         scheduler_source = inspect.getsource(snh.run_live_sniper_scheduler)
-        for pattern in ("get_config_value", "load_system_config", "ENABLE_FAST", "FAST_SAFETY_SHADOW"):
+        for pattern in ("get_config_value", "load_system_config", "ENABLE_FAST"):
             self.assertNotIn(pattern, scheduler_source)
+        for key in ACTIVATION_KEY_STRINGS:
+            self.assertNotIn(key, scheduler_source)
+        self.assertIn(READER_NAME, scheduler_source)
 
     def test_wrapper_off_execution_no_runtime(self) -> None:
         expected = {"status": "production-off"}
@@ -330,6 +397,8 @@ class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
                 "--",
                 "factory_pipelines.py",
                 "supernova_hunter.py",
+                "fast_safety_shadow_activation.py",
+                "test_fast_safety_shadow_activation.py",
                 "test_fast_safety_supernova_production_off_gate.py",
             ],
             cwd=REPO_ROOT,
@@ -346,6 +415,11 @@ class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
         }
         self.assertIn("factory_pipelines.py", chapter_changed)
         self.assertIn("supernova_hunter.py", chapter_changed)
+        reader_path = REPO_ROOT / "fast_safety_shadow_activation.py"
+        self.assertTrue(
+            reader_path.is_file(),
+            msg="fast_safety_shadow_activation.py must exist",
+        )
 
         for immutable in IMMUTABLE_FILES:
             self.assertNotIn(

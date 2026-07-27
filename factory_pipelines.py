@@ -658,21 +658,23 @@ def _require_market_session_for_scan(market: str) -> None:
 
 def _step_supernova_kr() -> None:
     _require_market_session_for_scan("KR")
+    from fast_safety_shadow_activation import resolve_fast_safety_shadow_enabled
     from supernova_hunter import execute_supernova_live_scan_with_fast_safety_ops_audit
 
     execute_supernova_live_scan_with_fast_safety_ops_audit(
         "KR",
-        fast_safety_shadow_enabled=False,
+        fast_safety_shadow_enabled=resolve_fast_safety_shadow_enabled("KR"),
     )
 
 
 def _step_supernova_us() -> None:
     _require_market_session_for_scan("US")
+    from fast_safety_shadow_activation import resolve_fast_safety_shadow_enabled
     from supernova_hunter import execute_supernova_live_scan_with_fast_safety_ops_audit
 
     execute_supernova_live_scan_with_fast_safety_ops_audit(
         "US",
-        fast_safety_shadow_enabled=False,
+        fast_safety_shadow_enabled=resolve_fast_safety_shadow_enabled("US"),
     )
 
 

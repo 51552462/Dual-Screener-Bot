@@ -3260,6 +3260,8 @@ def run_miner_scheduler():
 
 def run_live_sniper_scheduler():
     """매일 4번 지정된 시간에 실시간 시장을 스캔하고 쏘는 봇"""
+    from fast_safety_shadow_activation import resolve_fast_safety_shadow_enabled
+
     tz_kr = pytz.timezone('Asia/Seoul')
     print("🕒 [초신성 실시간 스나이퍼] 대기 중...")
     print(" - 🇰🇷 한국 타격: 09:00, 09:30, 15:00, 16:00 (KST)")
@@ -3286,14 +3288,14 @@ def run_live_sniper_scheduler():
             if time_str in kr_target_times:
                 execute_supernova_live_scan_with_fast_safety_ops_audit(
                     'KR',
-                    fast_safety_shadow_enabled=False,
+                    fast_safety_shadow_enabled=resolve_fast_safety_shadow_enabled("KR"),
                 )
                 time.sleep(65) 
                 
             elif ny_time_str in us_target_times:
                 execute_supernova_live_scan_with_fast_safety_ops_audit(
                     'US',
-                    fast_safety_shadow_enabled=False,
+                    fast_safety_shadow_enabled=resolve_fast_safety_shadow_enabled("US"),
                 )
                 time.sleep(65) 
 
