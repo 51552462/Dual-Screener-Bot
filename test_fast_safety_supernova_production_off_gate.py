@@ -182,6 +182,66 @@ def _git_diff_added_lines(*paths: str) -> list[str]:
     ]
 
 
+def _activation_kw_text(call: ast.Call) -> str:
+    for kw in call.keywords:
+        if kw.arg == "fast_safety_shadow_enabled":
+            return ast.unparse(kw.value)
+    return ""
+
+
+def _assert_production_call_site_trade_boundary(
+    fn_node: ast.FunctionDef,
+    *,
+    expected_market: str,
+    fn_source: str,
+    check_fn_source_for_activation_reads: bool,
+) -> None:
+    ops_calls = [
+        call
+        for call in _wrapper_calls(fn_node)
+        if _market_arg(call) == expected_market
+    ]
+    if not ops_calls:
+        raise AssertionError(
+            f"expected at least one {OPS_WRAPPER_NAME} call for {expected_market}"
+        )
+
+    for call in ops_calls:
+        _assert_ops_wrapper_uses_reader(call, expected_market=expected_market)
+        call_text = ast.unparse(call)
+        activation_text = _activation_kw_text(call)
+        for symbol in TRADE_BOUNDARY_SYMBOLS:
+            if symbol in call_text:
+                raise AssertionError(
+                    f"trade boundary symbol {symbol!r} in ops wrapper call"
+                )
+            if symbol in activation_text:
+                raise AssertionError(
+                    f"trade boundary symbol {symbol!r} in activation expression"
+                )
+        for forbidden in ("get_config_value", "os.getenv", "os.environ"):
+            if forbidden in activation_text:
+                raise AssertionError(
+                    f"forbidden activation read {forbidden!r} in activation expression"
+                )
+
+    if check_fn_source_for_activation_reads:
+        for forbidden in ("get_config_value", "os.getenv", "os.environ"):
+            if forbidden in fn_source:
+                raise AssertionError(
+                    f"forbidden activation read {forbidden!r} in call-site function"
+                )
+        for key in ACTIVATION_KEY_STRINGS:
+            if key in fn_source:
+                raise AssertionError(
+                    f"activation key {key!r} must not appear outside reader module"
+                )
+        if READER_NAME not in fn_source:
+            raise AssertionError(
+                f"call site must invoke {READER_NAME!r}"
+            )
+
+
 class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
     def test_kr_factory_uses_ops_wrapper_with_reader(self) -> None:
         with patch.object(
@@ -382,50 +442,75 @@ class FastSafetySupernovaProductionOffGateTests(unittest.TestCase):
             check=False,
         ).stdout or ""
 
-        for symbol in TRADE_BOUNDARY_SYMBOLS:
-            self.assertNotIn(
-                f"+{symbol}",
-                diff_text,
-                msg=f"trade boundary symbol must not change: {symbol}",
-            )
+        if diff_text.strip():
+            for symbol in TRADE_BOUNDARY_SYMBOLS:
+                self.assertNotIn(
+                    f"+{symbol}",
+                    diff_text,
+                    msg=f"trade boundary symbol must not change: {symbol}",
+                )
 
-        chapter_diff_names = subprocess.run(
-            [
-                "git",
-                "diff",
-                "--name-only",
-                "--",
-                "factory_pipelines.py",
-                "supernova_hunter.py",
-                "fast_safety_shadow_activation.py",
-                "test_fast_safety_shadow_activation.py",
-                "test_fast_safety_supernova_production_off_gate.py",
-            ],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        ).stdout or ""
-        chapter_changed = {
-            line.strip()
-            for line in chapter_diff_names.splitlines()
-            if line.strip()
-        }
-        self.assertIn("factory_pipelines.py", chapter_changed)
-        self.assertIn("supernova_hunter.py", chapter_changed)
+            chapter_diff_names = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    "--",
+                    "factory_pipelines.py",
+                    "supernova_hunter.py",
+                    "fast_safety_shadow_activation.py",
+                    "test_fast_safety_shadow_activation.py",
+                    "test_fast_safety_supernova_production_off_gate.py",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            ).stdout or ""
+            chapter_changed = {
+                line.strip()
+                for line in chapter_diff_names.splitlines()
+                if line.strip()
+            }
+            for immutable in IMMUTABLE_FILES:
+                self.assertNotIn(
+                    immutable,
+                    chapter_changed,
+                    msg=f"chapter diff must not touch {immutable}",
+                )
+
         reader_path = REPO_ROOT / "fast_safety_shadow_activation.py"
         self.assertTrue(
             reader_path.is_file(),
             msg="fast_safety_shadow_activation.py must exist",
         )
 
-        for immutable in IMMUTABLE_FILES:
-            self.assertNotIn(
-                immutable,
-                chapter_changed,
-                msg=f"chapter diff must not touch {immutable}",
+        for fn_name, market in (
+            ("_step_supernova_kr", "KR"),
+            ("_step_supernova_us", "US"),
+        ):
+            fn_source = inspect.getsource(getattr(factory_pipelines, fn_name))
+            fn_node = _function_def(fn_source, fn_name)
+            self.assertEqual(_direct_scan_calls(fn_node), [])
+            _assert_production_call_site_trade_boundary(
+                fn_node,
+                expected_market=market,
+                fn_source=fn_source,
+                check_fn_source_for_activation_reads=True,
+            )
+
+        scheduler_source = inspect.getsource(snh.run_live_sniper_scheduler)
+        scheduler_fn = _function_def(scheduler_source, "run_live_sniper_scheduler")
+        self.assertEqual(_direct_scan_calls(scheduler_fn), [])
+        self.assertIn(READER_NAME, scheduler_source)
+        for market in ("KR", "US"):
+            _assert_production_call_site_trade_boundary(
+                scheduler_fn,
+                expected_market=market,
+                fn_source=scheduler_source,
+                check_fn_source_for_activation_reads=False,
             )
 
         status = subprocess.run(
