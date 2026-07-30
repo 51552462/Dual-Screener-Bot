@@ -1182,7 +1182,18 @@ class MetaGovernor:
             catastrophic_mult=catastrophic_mult,
         )
         self._working["META_GLOBAL_KELLY_MULT"] = final_kelly
-        
+
+        # 👑 [성과예산 거버너] 누적 드로다운 예산 소진율 SSOT 동기화
+        try:
+            from performance_budget_governor import sync_performance_budget_to_config_kv
+
+            pb_result = sync_performance_budget_to_config_kv(
+                sys_config=self._system_cfg_snapshot
+            )
+            self._working["META_PERFORMANCE_BUDGET"] = pb_result
+        except Exception as e:
+            logger.warning("MetaGovernor: performance budget governor sync failed: %s", e)
+
         self._working["META_TREASURY_MODE"] = "DEFENSE" if zeroed > 0 else "NORMAL"
 
     # --- 4 Regime ---

@@ -265,7 +265,6 @@ def nav_overlay_from_market(
         return nav_drawdown_kelly_mult(
             st.get("nav"),
             st.get("hwm"),
-            mdd_pct=st.get("mdd_pct"),
             sys_config=sys_config,
         )
     except Exception as ex:

@@ -123,6 +123,42 @@ def apply_meta_weight_bounds_clamp(
     return out1, out4
 
 
+def _resolve_performance_budget_mult(
+    sys_config: Optional[Dict[str, Any]],
+    entry_facts: Optional[Dict[str, Any]],
+) -> float:
+    """
+    성과예산 거버너(performance_budget_governor.py) 출력 — market 특정 가능하면
+    시장별 KELLY_THROTTLE_MULT_KR/US, 안 되면 KR/US 중 더 보수적인 합성값(KELLY_THROTTLE_MULT).
+    """
+    if not isinstance(sys_config, dict):
+        return 1.0
+    mkt = None
+    if isinstance(entry_facts, dict):
+        mkt = entry_facts.get("market") or entry_facts.get("MARKET")
+    if mkt:
+        mkt = "US" if "US" in str(mkt).upper() else "KR"
+        return float(sys_config.get(f"KELLY_THROTTLE_MULT_{mkt}", 1.0) or 1.0)
+    return float(sys_config.get("KELLY_THROTTLE_MULT", 1.0) or 1.0)
+
+
+def _resolve_kelly_market_key(
+    entry_facts: Optional[Dict[str, Any]],
+    ns_prefix: str,
+) -> str:
+    """apply_meta_kelly_merge 시장 키 — facts.market 우선, ns_prefix(KR_/US_) 폴백."""
+    if isinstance(entry_facts, dict):
+        raw = entry_facts.get("market") or entry_facts.get("MARKET")
+        if raw:
+            m = str(raw).upper().strip()
+            if m in ("KR", "US"):
+                return m
+    pref = str(ns_prefix or "").upper()
+    if pref.startswith("US"):
+        return "US"
+    return "KR"
+
+
 def apply_meta_kelly_merge(
     kelly_risk_pct: float,
     meta: Optional[Dict[str, Any]],
@@ -153,7 +189,9 @@ def apply_meta_kelly_merge(
         return 0.0
 
     if meta is None:
-        return float(kelly_risk_pct)
+        return float(kelly_risk_pct) * _resolve_performance_budget_mult(
+            sys_config, entry_facts
+        )
 
     flags = _flags(meta)
     if bool(flags.get("KILL_SWITCH")):
@@ -340,7 +378,10 @@ def apply_meta_kelly_merge(
                 evaluate_kelly_elasticity_overlay,
             )
 
-            _ov = evaluate_kelly_elasticity_overlay(sys_config=sys_config, market="KR")
+            _mkt_el = _resolve_kelly_market_key(entry_facts, ns_prefix)
+            _ov = evaluate_kelly_elasticity_overlay(
+                sys_config=sys_config, market=_mkt_el
+            )
             out, _ = apply_elasticity_to_effective_kelly(out, _ov)
         except Exception:
             pass
@@ -350,9 +391,7 @@ def apply_meta_kelly_merge(
         try:
             from re_evolution_warm_start import apply_warm_start_kelly_scaler
 
-            mkt = "KR"
-            if isinstance(entry_facts, dict):
-                mkt = str(entry_facts.get("market") or entry_facts.get("MARKET") or mkt).upper()
+            mkt = _resolve_kelly_market_key(entry_facts, ns_prefix)
             out = apply_warm_start_kelly_scaler(
                 out,
                 meta,
@@ -363,7 +402,7 @@ def apply_meta_kelly_merge(
         except Exception:
             pass
 
-    return float(out)
+    return float(out) * _resolve_performance_budget_mult(sys_config, entry_facts)
 
 
 def effective_max_position_pct(sys_config: Dict[str, Any], meta: Optional[Dict[str, Any]]) -> float:

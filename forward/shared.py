@@ -1723,8 +1723,22 @@ def try_add_virtual_position(
     pre_sys_config = load_system_config()
     facts["_sys_config"] = pre_sys_config
     facts["sector"] = sector
+    # [4-1] Kelly merge / 성과예산 시장 키 SSOT — apply_meta_kelly_merge 가 facts.market 을 읽음
+    facts["market"] = str(market or "").upper()
     if pre_sys_config.get("GLOBAL_CIRCUIT_BREAKER", "OFF") == "ON":
         return False, "🚫 글로벌 서킷 브레이커 ON: 블랙스완 방어 모드로 신규 진입이 차단되었습니다."
+
+    # [성과예산 거버너] MDD 10% 예산 소진 — 락다운 게이트
+    try:
+        from performance_budget_governor import is_block_new_entries
+
+        if is_block_new_entries(pre_sys_config, facts["market"]):
+            return False, (
+                f"🛑 [성과예산 거버너] {facts['market']}장 MDD 예산 90%+ 소진 — "
+                f"신규진입 전면중단(청산만 허용)"
+            )
+    except Exception as _pb_ex:
+        print(f"⚠️ [성과예산 거버너] 게이트 스킵(중립 진행): {_pb_ex}")
 
     # 🏛️ [Ch.5 MetaGovernor/Treasury] KILL_SWITCH · DEFENSE · block_trade_sources 조기 게이트
     try:
@@ -2141,9 +2155,21 @@ def try_add_virtual_position(
 
     cursor.execute("SELECT COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN'", (market,))
     current_open_count = cursor.fetchone()[0] or 0
-    if current_open_count >= 20:
+    try:
+        from performance_budget_governor import resolve_max_open_positions
+
+        _max_open = resolve_max_open_positions(pre_sys_config, market)
+    except Exception:
+        _max_open = 20
+    if _max_open <= 0:
         conn.close()
-        return False, f"🚨 시장 쿼터 초과: {market}장 최대 보유 한도(20개)에 도달하여 신규 진입을 차단합니다."
+        return False, f"🛑 [성과예산] {market}장 포지션 쿼터=0 — 신규 진입 차단"
+    if current_open_count >= _max_open:
+        conn.close()
+        return False, (
+            f"🚨 시장 쿼터 초과: {market}장 최대 보유 한도({_max_open}개)에 도달하여 "
+            f"신규 진입을 차단합니다."
+        )
         
     # 2. 👑 [V23.0 포트폴리오 다중화: 주도섹터 폭격(2) + 차기섹터 정찰(2)]
     # 현재 포트폴리오의 1위 주도 섹터 파악 (자금 쏠림 감지)
