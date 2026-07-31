@@ -1341,6 +1341,32 @@ def hunt_supernovas(market):
 # ==========================================
 # 🚀 [V101.0 신규 엔진] 초신성 실시간 멀티스레드 스나이퍼
 # ==========================================
+def _load_supernova_scan_config(market: object) -> dict:
+    """
+    Live scan용 system config 로드.
+
+    execute_supernova_live_scan 본문에서 load_system_config 를 직접 import/호출하면
+    함수 전체 스코프에 지역 변수로 잡혀 UnboundLocalError 가 날 수 있다.
+    """
+    try:
+        loaded = load_config()
+        if isinstance(loaded, dict):
+            return loaded
+        logger.warning(
+            "[%s] load_config returned %s; scanner continues with empty config",
+            market,
+            type(loaded).__name__,
+        )
+    except Exception as ex:
+        logger.warning(
+            "[%s] system config load failed; scanner continues with empty config: %s",
+            market,
+            ex,
+            exc_info=True,
+        )
+    return {}
+
+
 def _prepare_fast_safety_shadow_for_scan(
     market: object,
     *,
@@ -1386,26 +1412,6 @@ def execute_supernova_live_scan(
 ):
     import time as _time
     from market_session_gate import evaluate_session_deduplication, is_market_open
-
-    # [HOTFIX · 교체 코드]
-    # 함수 최상단에서 load_system_config를 지연 로딩한다.
-    #
-    # 원래 이름인 load_system_config를 그대로 지역 변수로 만들지 않고
-    # _load_system_config_safe라는 전용 별칭을 사용해 이름 충돌과
-    # UnboundLocalError를 원천 차단한다.
-    try:
-        from config_manager import (
-            load_system_config as _load_system_config_safe,
-        )
-    except Exception as _config_import_ex:
-        _load_system_config_safe = None
-        logger.warning(
-            "[%s] load_system_config lazy import failed; "
-            "empty config fallback: %s",
-            market,
-            _config_import_ex,
-            exc_info=True,
-        )
 
     ok, gate_msg = is_market_open(market)
     if not ok:
@@ -1463,49 +1469,7 @@ def execute_supernova_live_scan(
 
     # 1. 템플릿 및 기준값 로드
     ideal_templates = {}
-
-        # [ROBUSTNESS · 교체 코드]
-    # 설정 파일 Import 또는 실행이 실패해도 스캐너를 중단하지 않는다.
-    # 모든 실패 경로에서 config는 안전한 빈 딕셔너리로 유지된다.
-    config = {}
-
-    try:
-        if not callable(_load_system_config_safe):
-            raise RuntimeError(
-                "load_system_config is unavailable"
-            )
-
-        _loaded_config = _load_system_config_safe()
-
-        if isinstance(_loaded_config, dict):
-            config = _loaded_config
-        else:
-            logger.warning(
-                "[%s] load_system_config returned %s; "
-                "scanner continues with empty config",
-                market,
-                type(_loaded_config).__name__,
-            )
-
-    except Exception as _config_load_ex:
-        logger.warning(
-            "[%s] system config load failed; "
-            "scanner continues with empty config: %s",
-            market,
-            _config_load_ex,
-            exc_info=True,
-        )
-        config = {}
-
-    except Exception as _config_load_ex:
-        logger.warning(
-            "[%s] system config load failed; "
-            "scanner continues with empty config: %s",
-            market,
-            _config_load_ex,
-            exc_info=True,
-        )
-        config = {}
+    config = _load_supernova_scan_config(market)
 
     # 보조 설정 수화 단계도 반환 타입을 검증한다.
     # 실패하거나 dict가 아닌 값을 반환하면 기존의 안전한 config를 유지한다.
