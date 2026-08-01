@@ -15,17 +15,29 @@ config_kv 에 SSOT 로 기록한다.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional
 
 from config_manager import set_config_value
 from live_nav_manager import get_market_state, normalize_market
+from meta_state_store import normalize_regime_key
 
 logger = logging.getLogger(__name__)
 
 CONFIG_KEY_PREFIX = "PERFORMANCE_BUDGET"
+CONFIG_KEY_POSITION_QUOTA_REGIME_MAP = "POSITION_QUOTA_REGIME_MAP"
 DEFAULT_MDD_CAP_PCT = 10.0
 DEFAULT_BASE_MAX_OPEN = 20
+
+# A-3 SSOT: 국면별 base max OPEN (POSITION_QUOTA_MULT와 곱연산 — min 아님)
+DEFAULT_POSITION_QUOTA_REGIME_MAP: Dict[str, int] = {
+    "BULL": 20,
+    "SIDEWAYS": 15,
+    "HIGH_VOL": 10,
+    "BEAR": 8,
+    "DEFAULT": DEFAULT_BASE_MAX_OPEN,
+}
 
 DEFAULT_BUDGET_BANDS: List[Dict[str, Any]] = [
     {
@@ -178,8 +190,13 @@ def sync_performance_budget_to_config_kv(
 
     # 패치 D: NAV 드로다운 켈리 감쇠는 성과예산 거버너 일원화 — Ch.4 elasticity NAV축 비활성
     set_config_value("ENABLE_KELLY_NAV_DD_OVERLAY", False)
+    set_config_value(
+        CONFIG_KEY_POSITION_QUOTA_REGIME_MAP,
+        resolve_position_quota_regime_map(cfg),
+    )
     if isinstance(cfg, dict):
         cfg["ENABLE_KELLY_NAV_DD_OVERLAY"] = False
+        cfg[CONFIG_KEY_POSITION_QUOTA_REGIME_MAP] = resolve_position_quota_regime_map(cfg)
 
     results: Dict[str, Any] = {}
     combined_kelly_mult = 1.0
@@ -233,6 +250,42 @@ def is_block_new_entries(
     return bool(v)
 
 
+def resolve_config_float(
+    sys_config: Optional[Mapping[str, Any]],
+    key: str,
+    *,
+    default: float = 1.0,
+) -> float:
+    """
+    config dict에서 float 읽기 — `or default` 로 falsy 0.0 을 치환하지 않음 (A-1-R1).
+    키 없음 / None → default.
+    """
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if key not in cfg:
+        return default
+    raw = cfg.get(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def resolve_kelly_throttle_mult(
+    sys_config: Optional[Mapping[str, Any]],
+    market: Optional[str] = None,
+) -> float:
+    """KELLY_THROTTLE_MULT_{KR|US} 우선, 없으면 합성 KELLY_THROTTLE_MULT."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if market:
+        mkt = normalize_market(market)
+        mkey = f"KELLY_THROTTLE_MULT_{mkt}"
+        if mkey in cfg:
+            return max(0.0, resolve_config_float(cfg, mkey, default=1.0))
+    return max(0.0, resolve_config_float(cfg, "KELLY_THROTTLE_MULT", default=1.0))
+
+
 def resolve_position_quota_mult(
     sys_config: Optional[Mapping[str, Any]],
     market: str,
@@ -240,19 +293,86 @@ def resolve_position_quota_mult(
     cfg = sys_config if isinstance(sys_config, dict) else {}
     mkt = normalize_market(market)
     key = f"POSITION_QUOTA_MULT_{mkt}"
-    try:
-        return max(0.0, float(cfg.get(key, 1.0) or 1.0))
-    except (TypeError, ValueError):
-        return 1.0
+    return max(0.0, resolve_config_float(cfg, key, default=1.0))
+
+
+def resolve_position_quota_regime_map(
+    sys_config: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, int]:
+    """A-3 SSOT — config_kv POSITION_QUOTA_REGIME_MAP 또는 모듈 기본값."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    raw = cfg.get(CONFIG_KEY_POSITION_QUOTA_REGIME_MAP)
+    if isinstance(raw, dict) and raw:
+        out: Dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                out[str(k).strip().upper()] = max(0, int(v))
+            except (TypeError, ValueError):
+                continue
+        if out:
+            out.setdefault("DEFAULT", DEFAULT_BASE_MAX_OPEN)
+            return out
+    return dict(DEFAULT_POSITION_QUOTA_REGIME_MAP)
+
+
+def resolve_market_regime_key(
+    sys_config: Optional[Mapping[str, Any]],
+    market: str,
+) -> str:
+    """
+    시장별 현재 국면 — predictive_regime_ensemble 가 기록한 config 키만 읽음.
+    KR_REGIME_KEY / US_REGIME_KEY → REGIME_ENSEMBLE.markets.{KR|US}.regime 폴백.
+    """
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    mkt = normalize_market(market)
+    mkt_key = f"{mkt}_REGIME_KEY"
+    rk = normalize_regime_key(cfg.get(mkt_key))
+    if rk not in ("", "UNKNOWN"):
+        return rk
+    ens = cfg.get("REGIME_ENSEMBLE")
+    if isinstance(ens, dict):
+        markets = ens.get("markets")
+        if isinstance(markets, dict):
+            blk = markets.get(mkt)
+            if isinstance(blk, dict):
+                rk_ens = normalize_regime_key(blk.get("regime"))
+                if rk_ens not in ("", "UNKNOWN"):
+                    return rk_ens
+    return "UNKNOWN"
+
+
+def resolve_regime_base_max_open(
+    sys_config: Optional[Mapping[str, Any]],
+    market: str,
+) -> int:
+    """국면 base max OPEN — 미매핑/UNKNOWN → DEFAULT(20)."""
+    regime_map = resolve_position_quota_regime_map(sys_config)
+    rk = resolve_market_regime_key(sys_config, market)
+    if rk in regime_map:
+        return int(regime_map[rk])
+    return int(regime_map.get("DEFAULT", DEFAULT_BASE_MAX_OPEN))
 
 
 def resolve_max_open_positions(
     sys_config: Optional[Mapping[str, Any]],
     market: str,
     *,
-    base_max: int = DEFAULT_BASE_MAX_OPEN,
+    base_max: Optional[int] = None,
 ) -> int:
+    """
+    A-3: regime_base × POSITION_QUOTA_MULT_{market} (곱연산, floor).
+    mult<=0 (LOCKDOWN) → 0 (min-1 보정 없음).
+    mult>0 이고 floor 결과 <1 → 1.
+    """
     mult = resolve_position_quota_mult(sys_config, market)
     if mult <= 0.0:
         return 0
-    return max(0, int(round(float(base_max) * mult)))
+    if base_max is not None:
+        regime_base = max(0, int(base_max))
+    else:
+        regime_base = resolve_regime_base_max_open(sys_config, market)
+    raw = float(regime_base) * mult
+    max_open = int(math.floor(raw))
+    if max_open < 1:
+        max_open = 1
+    return max_open

@@ -15,3 +15,9 @@
 
 4. [리스크 절대 방어]
 - 전체 MDD 통제, 자본 링펜싱(Ring-Fencing), 메타 국면(DEFCON) 강제 청산 등 시스템의 근간이 되는 방어 로직을 수정할 때는 극도로 보수적으로 접근하라.
+
+5. [듀얼 AI 협업 루프 — Claude Handoff → Cursor 구현]
+- Claude Pro(또는 Gemini) Handoff 프롬프트 없이 sub-phase 구현을 시작하지 마라. Handoff는 `docs/work_phases/07_듀얼AI_협업루프.md` 및 `CAT-HANDOFF_템플릿.md` 형식을 따른다.
+- 한 세션 = sub-phase **하나** (예: A-3만). Targeted diff only.
+- 세션 **종료 전 필수**: `docs/work_phases/05_진행로그.md` 해당 sub-phase 섹션 + `docs/work_phases/00_전체현황판.md` (Phase 표·SSOT 용어집) 갱신. 디렉터용 3줄 요약 출력.
+- Claude OK 전 해당 sub-phase를 Done 처리하지 마라. 충돌 시 Adapter 제안 후 디렉터 Ask — 무리 적용 금지.

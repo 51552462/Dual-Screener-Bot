@@ -133,13 +133,14 @@ def _resolve_performance_budget_mult(
     """
     if not isinstance(sys_config, dict):
         return 1.0
+    from performance_budget_governor import resolve_kelly_throttle_mult
+
     mkt = None
     if isinstance(entry_facts, dict):
         mkt = entry_facts.get("market") or entry_facts.get("MARKET")
     if mkt:
-        mkt = "US" if "US" in str(mkt).upper() else "KR"
-        return float(sys_config.get(f"KELLY_THROTTLE_MULT_{mkt}", 1.0) or 1.0)
-    return float(sys_config.get("KELLY_THROTTLE_MULT", 1.0) or 1.0)
+        return resolve_kelly_throttle_mult(sys_config, str(mkt))
+    return resolve_kelly_throttle_mult(sys_config)
 
 
 def _resolve_kelly_market_key(
