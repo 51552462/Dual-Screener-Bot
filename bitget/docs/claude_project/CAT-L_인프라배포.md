@@ -60,6 +60,7 @@ systemd units, cron, venv, snapshot, watchdog, backup, log rotation, resource li
 
 - **현행**: unlimited timestamp log files → disk exhaustion
 - **목표**: logrotate or RotatingFileHandler + `disk_manager` hook
+- **L-1 (2026-08-02)**: `install_bitget_logrotate.sh` + journal vacuum timer — see `05` L-1
 
 ---
 

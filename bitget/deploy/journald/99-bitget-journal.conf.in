@@ -1,0 +1,8 @@
+# Optional journald drop-in for Bitget-dedicated or coin-primary servers.
+# Installed when BITGET_INSTALL_JOURNALD_DROPIN=1 (install_bitget_logrotate.sh).
+# On shared stock+coin servers, prefer BITGET_JOURNAL_MAX_USE timer vacuum only.
+
+[Journal]
+SystemMaxUse=@@BITGET_JOURNAL_SYSTEM_MAX_USE@@
+SystemKeepFree=2G
+MaxRetentionSec=@@BITGET_JOURNAL_MAX_RETENTION_SEC@@

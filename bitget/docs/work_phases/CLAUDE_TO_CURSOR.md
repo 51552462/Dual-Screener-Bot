@@ -4,13 +4,28 @@
 
 ---
 
-## 상태
+## [CAT-L] L-1 — Log Rotation (P0-1) · **구현 완료 (Cursor)**
 
-**묶음A 1단계 완료** — A-1~A-5 Claude OK ✅  
-**다음 Handoff**: B-1 (Phase 9 Done + 디렉터 지시 후 · Claude Pro 새 창)
+### sub-phase ID
+L-1
 
-현재 `NEXT_ACTION`: **`WAIT_DIRECTOR`** — 디렉터 Critical 승인 + paper 배포 대기.
+### SSOT
+- `bitget/deploy/install_bitget_logrotate.sh`
+- `deploy/logrotate/bitget-dante.conf.in`
+- `deploy/scripts/bitget_journal_vacuum.sh`
+- `dante-bitget-journal-vacuum.{service,timer}`
+
+### 디렉터 승인
+병렬 🟢 (A paper 관측 중 착수)
 
 ---
 
-_(B-1 Handoff는 Phase 9 3단계 통과 후 본 파일에 작성)_
+## 상태
+
+| 트랙 | sub | status |
+|------|-----|--------|
+| A paper | A-1~A-5 | 배포·`06` 대기 |
+| 병렬 L | **L-1** | **Claude OK ✅** · 디렉터 서버 검증 |
+| 다음 | **B-1** | Claude Handoff (market key 정규화, 🟢) |
+
+---

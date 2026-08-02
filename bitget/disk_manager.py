@@ -69,6 +69,13 @@ def cleanup_stamped_shell_logs(
     root = log_dir or _logs_dir()
     if not os.path.isdir(root):
         return 0
+    if retention_days is None:
+        env_raw = (os.environ.get("BITGET_STAMPED_LOG_RETENTION_DAYS") or "").strip()
+        if env_raw:
+            try:
+                retention_days = max(1, int(env_raw))
+            except ValueError:
+                retention_days = None
     days = int(STAMPED_LOG_RETENTION_DAYS if retention_days is None else retention_days)
     if days < 1:
         days = int(STAMPED_LOG_RETENTION_DAYS)

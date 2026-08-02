@@ -2,28 +2,36 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | 묶음A (A-1~A-5) |
-| **status** | `WAIT_DIRECTOR` (paper 배포) |
+| **sub-phase** | L-1 (서버 검증) → **B-1** Handoff 대기 |
+| **status** | `WAIT_DIRECTOR` |
 
 ---
 
-## 지금 담당: 디렉터
+## 디렉터
 
-**Critical 승인 5건** — **완료 2026-08-02** ✅
+1. **L-1 서버 검증** — `sudo INSTALL_ROOT=... bitget/deploy/install_bitget_logrotate.sh --test` (설치 + dry-run)
+2. **L-1 `06`** — 30일 disk usage 관측 시작
+3. **A paper** — 배포·관측 병행 (기존 트랙)
 
-### 다음 액션
+---
 
-1. **paper 배포** — A-1~A-5를 24/7 스캔 사이클에 연결
-   - A-5: 배포 직후 `meta_sync` → `config write rejected` 로그 확인
-2. **2~4주 후** — `06_검증체크리스트_및_실패기록.md` 효과 기록표 채우기
-3. **판정** — 유지 / 롤백 / 추가조정 (NAV MDD 악화 → 무조건 롤백)
-4. **통과 시** — `00` Phase 9 완료 → B-1 Handoff (Claude Pro **새 창**)
+## Claude Pro
 
-### 롤백 킬스위치
+- **다음 Handoff**: **B-1** (deathmatch market key `BG`→`SPOT`/`FUT` 정규화, 🟢)
+- L-1 1단계 OK 완료 — 서버 검증은 디렉터 몫
 
-| sub | env/config |
-|-----|------------|
-| A-1 | `PORTFOLIO_MDD_BREAKER_ENABLED=false` |
-| A-2 | `TAIL_FUND_CONSUMPTION_ENABLED=false` |
-| A-4 | `GROSS_NOTIONAL_CAP_ENABLED=false` |
-| A-5 | `CONFIG_WRITE_VALIDATION_ENABLED=false` |
+---
+
+## Cursor
+
+- B-1 Handoff 수신 후 `WAIT_CURSOR_IMPL`
+
+---
+
+## 병렬 트랙
+
+| 트랙 | 상태 |
+|------|------|
+| A paper | `06` 2~4주 대기 |
+| L-1 | Claude OK ✅ · **서버 설치·30d `06`** |
+| B-1 | Handoff 대기 (Claude) |

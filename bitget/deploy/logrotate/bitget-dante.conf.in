@@ -1,0 +1,38 @@
+# Bitget file logs — stamped shell logs (bitget.sh) + RotatingFileHandler safety net.
+# Installed by bitget/deploy/install_bitget_logrotate.sh → /etc/logrotate.d/bitget-dante
+# SSOT: RotatingFileHandler → bitget.log (infra/logging_setup.py); this covers overflow + stamped logs.
+
+@@BITGET_LOG_DIR@@/bitget_*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        # No service reload — file logs are append-only; stamped logs are not held open long-term.
+        :
+    endscript
+}
+
+# Safety net if in-process rotation is disabled or bitget.log grows unbounded.
+@@BITGET_LOG_DIR@@/bitget.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    copytruncate
+    missingok
+    notifempty
+    size 50M
+}
+
+@@BITGET_LOG_DIR@@/bitget.log.[0-9]* {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+}
