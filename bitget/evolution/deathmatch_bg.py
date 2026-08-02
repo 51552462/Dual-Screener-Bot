@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from typing import Any, Optional, Tuple
 
 from bitget.infra.data_paths import market_data_db_path
-from bitget.infra.market_keys import to_deathmatch_key
+from bitget.evolution.market_key_normalize import normalize_market_key
 
 
 @contextmanager
@@ -26,7 +26,11 @@ def bitget_deathmatch_ssot():
     orig_db = dms._db_path
 
     def _load(db_path: Optional[str] = None):
-        return orig_load(bg_db if db_path is None else db_path)
+        from bitget.evolution.registry_lifecycle_bg import load_registry_rows_normalized
+
+        if db_path is None:
+            return load_registry_rows_normalized(bg_db)
+        return orig_load(db_path)
 
     def _save(*args, db_path: Optional[str] = None, **kwargs):
         return orig_save(*args, db_path=bg_db if db_path is None else db_path, **kwargs)
@@ -64,7 +68,7 @@ def run_bitget_battle_royal(
 ):
     from evolution.deathmatch_battle_royale import run_battle_royal
 
-    mk = to_deathmatch_key(market_type)
+    mk = normalize_market_key(market_type)
     with bitget_deathmatch_ssot():
         return run_battle_royal(
             df_closed,

@@ -67,7 +67,12 @@ def is_bitget_registry_market(market: str) -> bool:
 
 def to_deathmatch_key(market_type: str) -> str:
     """데스매치·ACE·리포트 섹션 라벨: ``SPOT`` | ``FUT``."""
-    return "FUT" if normalize_market_type(market_type) == "futures" else "SPOT"
+    try:
+        from bitget.evolution.market_key_normalize import normalize_market_key
+
+        return normalize_market_key(market_type)
+    except Exception:
+        return "FUT" if normalize_market_type(market_type) == "futures" else "SPOT"
 
 
 def to_db_key(market_type: str) -> str:

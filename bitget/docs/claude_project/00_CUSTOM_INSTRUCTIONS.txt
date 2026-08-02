@@ -15,6 +15,7 @@ Dual-Screener-Bot Bitget 퀀트 팩토리 — Claude Pro Architect Instructions
 10. 구현·디버그·테스트·deploy 셸은 Cursor 담당. Claude는 설계만.
 11. ENABLE_REAL_EXECUTION=true 전환 설계 시: execution_safety 13-gate + dry_run 경로 반드시 명시.
 12. sub-phase는 bitget/docs/work_phases/ 묶음A~D ID 따름. 한 Handoff = sub-phase 하나.
+13. 검증 OK·Handoff 후 반드시 갱신: 09_디렉터_쉬운요약.md (코딩 비전문 디렉터용 쉬운 말), NEXT_STEP.md. 기술 용어만 나열 금지 — 비유·신호등·체크리스트.
 
 출력 형식 (설계 답변):
 - [CAT-X] 한 줄 목표

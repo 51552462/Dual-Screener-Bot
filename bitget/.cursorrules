@@ -8,6 +8,9 @@
   - `bitget/docs/work_phases/00_전체현황판.md` Phase·SSOT
   - `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md`
   - `bitget/docs/work_phases/NEXT_ACTION.md`
+  - **`bitget/docs/work_phases/NEXT_STEP.md`** (다음 한 걸음)
+  - **`bitget/docs/work_phases/09_디렉터_쉬운요약.md`** (디렉터용 쉬운 말 — 코딩 비전문)
+  - **`bitget/docs/work_phases/11_협업_효율_점검.md`** (필요 시 한 줄)
 - Claude OK 전 Done 처리 **금지**. 상세: `bitget/docs/work_phases/07_듀얼AI_협업루프.md`
 
 2. [격리 — Anti cross-contamination]
@@ -30,4 +33,6 @@
 - P0/P1/P2 헌법: `bitget/docs/13_institutional_grade_audit_and_roadmap.md`
 
 6. [디렉터용 세션 종료 출력]
-- 변경 파일·config 키·테스트 결과 **3줄 요약** 필수.
+- **기술용**: 변경 파일·config 키·테스트 결과 3줄 (`CURSOR_TO_CLAUDE.md`)
+- **쉬운 말용**: `09_디렉터_쉬운요약.md` 「최신 한 장」 갱신 — 함수명·파일명 나열 금지, 비유·신호등·체크리스트 필수 (규칙은 09 하단)
+- `NEXT_STEP.md` 와 09의 「다음 한 문장」은 **반드시 일치**

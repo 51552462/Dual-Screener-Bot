@@ -538,6 +538,19 @@ def try_add_virtual_position(
         position_side=position_side,
     )
 
+    try:
+        from bitget.evolution.deathmatch_allocation_shadow import observe_kelly_chain_shadow
+
+        kelly_risk_pct = observe_kelly_chain_shadow(
+            kelly_risk_pct,
+            core_group=core_group,
+            market_type=market_type,
+            meta_state=_meta_state,
+            cfg=cfg,
+        )
+    except Exception:
+        pass
+
     # [동적 탐험예산 — 7일 롤링 MAB] 최종 Kelly 비중에 챔피언(LIVE)/탐험
     # (OBSERVING·CANDIDATE) 역할 스케일러를 곱한다. 국면전환 방어 중이거나
     # 미분류(NEUTRAL) 그룹은 스케일러 1.0(무변경). 실패 시 항상 안전 폴백.

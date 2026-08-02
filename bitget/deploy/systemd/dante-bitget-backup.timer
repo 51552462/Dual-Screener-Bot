@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Bitget DB integrity backup (L-2 P0-5)
+
+[Timer]
+OnBootSec=20min
+OnCalendar=*-*-* 00:30:00
+AccuracySec=1h
+Persistent=true
+Unit=dante-bitget-backup.service
+
+[Install]
+WantedBy=timers.target

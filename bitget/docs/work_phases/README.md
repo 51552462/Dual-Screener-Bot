@@ -41,7 +41,10 @@
 | `07_듀얼AI_협업루프.md` | Claude↔Cursor 6단계 SSOT |
 | `08_디렉터_중계_가이드.md` | 디렉터 복붙 템플릿 |
 | `10_작업함_프로토콜.md` | INBOX/OUTBOX · 연속 작업 SSOT |
-| `NEXT_ACTION.md` | 지금 누가/뭘 (양쪽 첫 읽기) |
+| `NEXT_ACTION.md` | 지금 누가/뭘 (AI용) |
+| **`NEXT_STEP.md`** | **다음 한 걸음** (디렉터·AI 공용) |
+| **`09_디렉터_쉬운요약.md`** | **비개발자용** 작업 끝 요약 (신호등·체크리스트) |
+| **`11_협업_효율_점검.md`** | Claude↔Cursor 루프 효율·개선 |
 | `CLAUDE_TO_CURSOR.md` | Claude → Cursor Handoff INBOX |
 | `CURSOR_TO_CLAUDE.md` | Cursor → Claude 검증 OUTBOX |
 
@@ -59,9 +62,9 @@ A-1→A-2→A-3→A-4→A-5 → B-1→B-2→B-3→B-4 → C-1→C-2→C-3 → D-
 
 ## Claude Pro — 지금부터 이렇게
 
-**연속 작업이 끊기면** → `10_작업함_프로토콜.md` + **`NEXT_ACTION.md`** 먼저.
+**연속 작업이 끊기면** → `10_작업함_프로토콜.md` + **`NEXT_STEP.md`** + **`09_디렉터_쉬운요약.md`** 먼저.
 
-1. Knowledge: `NEXT_ACTION`, `CLAUDE_TO_CURSOR`, `CURSOR_TO_CLAUDE`, `05`, `00`, `10`, `08`, `01`, `bitget/docs/claude_project/CAT-*`
+1. Knowledge: `NEXT_STEP`, `09`, `NEXT_ACTION`, `CLAUDE_TO_CURSOR`, `CURSOR_TO_CLAUDE`, `05`, `00`, `10`, `08`, `11`, `01`, `bitget/docs/claude_project/CAT-*`
 2. **Claude에게 한 줄**: `NEXT_ACTION.md` status대로
 3. **Cursor에게 한 줄**: 「`CLAUDE_TO_CURSOR.md` 구현만, 끝에 CURSOR_TO_CLAUDE·05·00·NEXT_ACTION 갱신」
 

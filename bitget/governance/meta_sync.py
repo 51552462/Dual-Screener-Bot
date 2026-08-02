@@ -409,6 +409,17 @@ def _run_bitget_meta_governor_cycle() -> str:
                 pass
 
     save_bitget_meta_unified(state, meta_path)
+    try:
+        from bitget.evolution.registry_lifecycle_bg import normalize_bitget_registry_after_lifecycle
+
+        reg = state.get("META_STRATEGY_REGISTRY")
+        meta_list = reg if isinstance(reg, list) else None
+        normalize_bitget_registry_after_lifecycle(
+            db_path=db_path if os.path.isfile(db_path) else None,
+            meta_registry=meta_list,
+        )
+    except Exception as ex:
+        logger.warning("registry market_key normalize after lifecycle skip: %s", ex)
     sync_config_regime_from_meta(state, force=True)
     try:
         from bitget.governance.meta_consumer import invalidate_meta_state_cache

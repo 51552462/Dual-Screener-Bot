@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from bitget.infra.market_keys import to_deathmatch_key
+from bitget.evolution.market_key_normalize import normalize_market_key
 from bitget.reports.bitget_report_context import BitgetReportContext, BitgetReportMarketSlice
 
 
@@ -24,7 +24,7 @@ def _tier_dm_a(
     n_open: int,
     n_min: int,
 ) -> str:
-    mk = to_deathmatch_key(market_type)
+    mk = normalize_market_key(market_type)
     tk = ctx.timekeeper_for(market_type)
     wm = tk.db_watermark_exit or "—"
     lag = ctx.lag_for(market_type)
@@ -41,7 +41,7 @@ def _tier_dm_a(
 
 
 def _tier_dm_b(ctx: BitgetReportContext, market_type: str, *, n_closed: int) -> str:
-    mk = to_deathmatch_key(market_type)
+    mk = normalize_market_key(market_type)
     tk = ctx.timekeeper_for(market_type)
     wl = _esc(f"{tk.rolling_cutoff}~{tk.session_anchor}")
     return (
@@ -60,7 +60,7 @@ def _tier_dm_c(
     n_observing: int,
     n_ranked: int,
 ) -> str:
-    mk = to_deathmatch_key(market_type)
+    mk = normalize_market_key(market_type)
     tk = ctx.timekeeper_for(market_type)
     wl = _esc(f"{tk.rolling_cutoff}~{tk.session_anchor}")
     return (
@@ -90,7 +90,7 @@ def build_deathmatch_section(
     from bitget.evolution.deathmatch_bg import build_bitget_nway_deathmatch_registry
     from evolution.deathmatch_battle_royale import format_battle_royal_telegram
 
-    mk = to_deathmatch_key(market_type)
+    mk = normalize_market_key(market_type)
     n_closed = int(len(df_closed)) if df_closed is not None else 0
     n_real = int(len(mkt_slice.df_real))
     n_open = int(mkt_slice.n_open_valid)
@@ -116,6 +116,21 @@ def build_deathmatch_section(
         maybe_apply_bitget_deathmatch_allocation(
             br, dm, _cfg_dm, market_type=market_type
         )
+
+    try:
+        from bitget.evolution.deathmatch_allocation_shadow import (
+            record_deathmatch_shadow_from_battle_royale,
+        )
+
+        meta_h_shadow = meta_h if isinstance(meta_h, dict) else None
+        record_deathmatch_shadow_from_battle_royale(
+            br,
+            market_type=market_type,
+            sys_config=sys_config,
+            meta_health=meta_h_shadow,
+        )
+    except Exception:
+        pass
 
     # 챔피언 탄생 전조(Genesis) 축적 — Bitget 자체 DB에만 기록(주식 SSOT 미참조).
     # 데스매치 랭킹 산출 직후 훅(비침습·항상 안전 폴백).

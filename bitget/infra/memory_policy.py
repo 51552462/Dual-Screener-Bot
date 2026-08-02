@@ -39,6 +39,10 @@ PORTFOLIO_MDD_HALT_PCT: float = 0.30
 PORTFOLIO_MDD_REDUCE_SIZE_MULT: float = 0.5
 DEFAULT_MAX_LEVERAGE: float = 5.0  # hard cap floor for resolve_leverage
 CONFIG_WRITE_VALIDATION_ENABLED: bool = True  # A-5: reject out-of-range Kelly/leverage writes
+DEATHMATCH_KEY_NORMALIZE_ENABLED: bool = True  # B-1: BG→SPOT/FUT registry/deathmatch SSOT
+DEATHMATCH_ALLOCATION_SHADOW_ENABLED: bool = True  # B-2: log-only deathmatch alloc shadow
+WALK_FORWARD_SHADOW_ENABLED: bool = True  # B-3: log-only walk-forward OOS shadow judgment
+WALK_FORWARD_PROMOTION_BLOCK_ENABLED: bool = False  # B-3: live registry block — defer (shadow only)
 # OMS orphan escalation (exchange-only positions — block new entries, never flatten)
 OMS_ORPHAN_STREAK_PROPOSE_KILL: int = 2  # consecutive recon hits → propose KILL_SWITCH
 OMS_ORPHAN_ALERT_MIN_INTERVAL_SEC: float = 3600.0
@@ -235,6 +239,10 @@ CHART_IMAGE_RETENTION_DAYS: int = 3
 STAMPED_LOG_RETENTION_DAYS: int = 5
 # Integrity-verified tar.gz archives (institutional_db_backup) — keep newest N
 DB_BACKUP_KEEP_ARCHIVES: int = 7
+# L-2 — BITGET_DB_STORAGE_PATH scoped backup (P0-5)
+BITGET_BACKUP_ENABLED: bool = True
+BITGET_BACKUP_RETENTION_DAYS: int = 7   # daily retention window
+BITGET_BACKUP_WEEKLY_KEEP: int = 4      # weekly snapshots beyond daily window
 
 # production logging (RotatingFileHandler SSOT)
 LOG_ROTATE_MAX_BYTES: int = 50 * 1024 * 1024  # 50MB per file

@@ -301,6 +301,13 @@ def _step_weekly_evolution() -> None:
     run_autonomous_analysis()
 
 
+def _step_walk_forward_shadow() -> None:
+    """B-3 — weekly walk-forward OOS shadow judgment (factory scan loop 밖)."""
+    from bitget.validation.walk_forward_shadow_bg import run_walk_forward_shadow_job
+
+    run_walk_forward_shadow_job()
+
+
 def _step_weekly_flow_master() -> None:
     """주식 factory weekly_master → weekly_flow_master 패리티."""
     from bitget.auto_pilot import send_weekly_flow_master_report
@@ -822,6 +829,7 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
     return _with_guard(
         [
             StepSpec("weekly_evolution", _step_weekly_evolution, critical=True, delay_after_sec=1.0),
+            StepSpec("walk_forward_shadow", _step_walk_forward_shadow, critical=False),
             StepSpec("weekly_coin_pri", _step_weekly_coin_pri, critical=False),
             StepSpec("weekly_coin_regime_archive", _step_weekly_coin_regime_archive, critical=False),
             StepSpec("regime_deep_archive", _step_regime_deep_archive_bg, critical=False),
