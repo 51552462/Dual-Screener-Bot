@@ -67,7 +67,10 @@ class TestConfigHardBounds(unittest.TestCase):
 
         with patch.object(cm, "_retry_on_locked") as retry, patch.object(
             cm, "invalidate_runtime_system_config_cache"
-        ), patch.object(cm, "_encode_json", side_effect=lambda v: f"json:{v}") as enc:
+        ), patch.object(cm, "_encode_json", side_effect=lambda v: f"json:{v}") as enc, patch(
+            "bitget.infra.config_bounds.config_write_validation_enabled",
+            return_value=False,
+        ):
             retry.side_effect = lambda fn, max_retries=5: None
             cm.set_config_value("DYNAMIC_KELLY_RISK", 0.9)
             enc.assert_called()

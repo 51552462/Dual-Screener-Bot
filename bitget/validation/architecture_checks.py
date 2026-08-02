@@ -786,6 +786,7 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
         "def evaluate_concentration_gate",
         "def oms_defense_block_reason",
         "def max_leverage_cap",
+        "def resolve_max_leverage",
         "ORPHAN_BLOCKED",
         "NAV_BLOCKED",
         "GROSS_BLOCKED",

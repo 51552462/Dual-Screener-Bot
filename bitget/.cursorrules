@@ -1,0 +1,33 @@
+# BITGET QUANT FACTORY — CURSOR RULES (Director: Owner, Architect: Claude Pro, Lead Engineer: Cursor)
+
+1. [듀얼 AI 협업 — Bitget 전용]
+- Claude Pro Handoff 없이 sub-phase 구현 **금지**. Handoff SSOT: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md`
+- 한 세션 = sub-phase **하나**. Targeted diff only.
+- 세션 **종료 전 필수**:
+  - `bitget/docs/work_phases/05_진행로그.md` 해당 sub 섹션
+  - `bitget/docs/work_phases/00_전체현황판.md` Phase·SSOT
+  - `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md`
+  - `bitget/docs/work_phases/NEXT_ACTION.md`
+- Claude OK 전 Done 처리 **금지**. 상세: `bitget/docs/work_phases/07_듀얼AI_협업루프.md`
+
+2. [격리 — Anti cross-contamination]
+- **수정 허용**: `bitget/**` only
+- **읽기 전용 import 허용**: 루트 `practitioner_intelligence`, `reports/*`, `llm_gemini_core`, `telegram_message_queue`
+- **절대 수정 금지**: 루트 `forward/`, `factory_pipelines.py`, `system_auto_pilot.py`, `performance_budget_governor.py`, `deploy/systemd/dante-*` (주식)
+- 주식 SSOT를 bitget에 **무리 복사** 금지 — Adapter 패attern (`governance/meta_consumer.py` 등)
+
+3. [토큰·에러 방지]
+- 전체 파일 rewrite 금지. 충돌 시 Adapter 제안 또는 디렉터 Ask.
+- 동일 에러 3회 → 중단, 로그 요약, Claude Pro에 spec 질의.
+
+4. [리스크 절대 방어]
+- `ENABLE_REAL_EXECUTION`, portfolio MDD, MAX_LEVERAGE, KILL_SWITCH 변경 시 **극보수적** diff.
+- execution_safety 13-gate 우회 **금지**.
+
+5. [CAT·문서 SSOT]
+- 구조·경계: `bitget/docs/claude_project/` (@CAT-*)
+- 실행·진행: `bitget/docs/work_phases/`
+- P0/P1/P2 헌법: `bitget/docs/13_institutional_grade_audit_and_roadmap.md`
+
+6. [디렉터용 세션 종료 출력]
+- 변경 파일·config 키·테스트 결과 **3줄 요약** 필수.

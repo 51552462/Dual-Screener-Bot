@@ -1,5 +1,18 @@
 # Bitget 구현 기록 인덱스
 
+## 듀얼 AI 협업 (Claude Pro + Cursor) — **2026-08-01 신설**
+
+| 폴더 | 역할 | 시작점 |
+|------|------|--------|
+| [claude_project/](./claude_project/00_README_사용법.md) | CAT A–Q · MAP · SPOT-FUT · Handoff · Custom Instructions | `00_README_사용법.md` |
+| [work_phases/](./work_phases/README.md) | 묶음A–D · 진행로그 · 검증 · INBOX/OUTBOX | `00_마스터_로드맵.md` → `NEXT_ACTION.md` |
+
+**Claude Pro Project Instructions**: `claude_project/00_CUSTOM_INSTRUCTIONS.txt` 붙여넣기  
+**Cursor 규칙**: `bitget/.cursorrules`  
+**다음 작업**: `work_phases/NEXT_ACTION.md` — A-1 Handoff 대기
+
+---
+
 | Phase | 문서 | 상태 |
 |-------|------|------|
 | **1단계 진단** | [01_architecture_mapping_and_diagnosis.md](./01_architecture_mapping_and_diagnosis.md) · [루트 복사본](../01_architecture_mapping_and_diagnosis.md) | 완료 |

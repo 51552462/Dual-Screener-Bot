@@ -13,7 +13,7 @@ Execution safety gate chain — every live order must pass in order:
  10. BTC-proxy concentration (high-β same-side cluster — block new entries)
  11. Bad-tick / flash-crash price sanity (OHLCV outlier — block new entries)
  12. Pre-trade slippage gate (WS orderbook spread)
- 13. Leverage / margin manager (futures — MAX_LEVERAGE in resolve_leverage)
+ 13. Leverage / margin manager (futures — resolve_max_leverage / MAX_LEVERAGE)
  14. OMS market order (oms_core — defense-in-depth risk checks)
 
 NAV / orphan / gross / tail / doomsday / concentration / price-sanity stages
@@ -30,11 +30,17 @@ from bitget.governance.meta_consumer import load_meta_state_resolved
 from bitget.infra.memory_policy import (
     DEFAULT_MAX_LEVERAGE,
     GROSS_NOTIONAL_MAX_PCT,
+    GROSS_NOTIONAL_CAP_ENABLED,
+    MAX_GROSS_NOTIONAL_PCT,
     NAV_DD_ALERT_MIN_INTERVAL_SEC,
     NAV_DD_BLOCK_PCT,
     NAV_DD_HALT_PCT,
     NAV_DD_REDUCE_PCT,
     NAV_DD_REDUCE_SIZE_MULT,
+    PORTFOLIO_MDD_BLOCK_PCT,
+    PORTFOLIO_MDD_HALT_PCT,
+    PORTFOLIO_MDD_REDUCE_PCT,
+    PORTFOLIO_MDD_REDUCE_SIZE_MULT,
 )
 from bitget.trading.slippage_guard import run_pre_trade_gate
 
@@ -118,25 +124,284 @@ def _cfg_float(cfg: dict, key: str, default: float) -> float:
         return float(default)
 
 
+def _cfg_bool(cfg: dict, key: str, default: bool = True) -> bool:
+    raw = (cfg or {}).get(key, default)
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("true", "1", "yes", "on")
+    if raw is None:
+        return bool(default)
+    return bool(raw)
+
+
+def portfolio_treasury_nav(cfg: dict) -> float:
+    """NAV SSOT for portfolio MDD: TREASURY_SPOT_USDT + TREASURY_FUTURES_USDT."""
+    spot = _cfg_float(cfg, "TREASURY_SPOT_USDT", 0.0)
+    fut = _cfg_float(cfg, "TREASURY_FUTURES_USDT", 0.0)
+    return spot + fut
+
+
+def portfolio_mdd_breaker_enabled(cfg: dict) -> bool:
+    return _cfg_bool(cfg, "PORTFOLIO_MDD_BREAKER_ENABLED", True)
+
+
+def _portfolio_nav_peak_init(cfg: dict) -> float:
+    try:
+        total = float(cfg.get("ACCOUNT_SIZE_USDT", 100_000.0) or 100_000.0)
+    except (TypeError, ValueError):
+        total = 100_000.0
+    return total if total > 0 else 100_000.0
+
+
+def resolve_portfolio_nav_peak(cfg: dict, nav_current: float) -> float:
+    """Monotonic HWM — never auto-resets below ACCOUNT_SIZE_USDT seed."""
+    peak = _cfg_float(cfg, "PORTFOLIO_NAV_PEAK", 0.0)
+    if peak <= 0:
+        peak = _portfolio_nav_peak_init(cfg)
+    return max(peak, nav_current)
+
+
+def evaluate_portfolio_mdd_tier(
+    nav_current: float,
+    nav_peak: float,
+    cfg: Optional[dict] = None,
+) -> dict[str, Any]:
+    """
+    Pure tier evaluation (ratio drawdown).
+    dd_pct = (nav_peak - nav_current) / nav_peak
+    """
+    cfg = cfg or {}
+    if nav_peak <= 0:
+        dd_pct = 0.0
+    else:
+        dd_pct = max(0.0, (nav_peak - nav_current) / nav_peak)
+
+    reduce_at = _cfg_float(cfg, "PORTFOLIO_MDD_REDUCE_PCT", PORTFOLIO_MDD_REDUCE_PCT)
+    block_at = _cfg_float(cfg, "PORTFOLIO_MDD_BLOCK_PCT", PORTFOLIO_MDD_BLOCK_PCT)
+    halt_at = _cfg_float(cfg, "PORTFOLIO_MDD_HALT_PCT", PORTFOLIO_MDD_HALT_PCT)
+    reduce_mult = _cfg_float(
+        cfg, "PORTFOLIO_MDD_REDUCE_SIZE_MULT", PORTFOLIO_MDD_REDUCE_SIZE_MULT
+    )
+    if reduce_mult <= 0 or reduce_mult > 1:
+        reduce_mult = float(PORTFOLIO_MDD_REDUCE_SIZE_MULT)
+
+    if dd_pct >= halt_at:
+        return {
+            "tier": "HALT",
+            "size_mult": 0.0,
+            "dd_pct": dd_pct,
+            "blocks_entry": True,
+        }
+    if dd_pct >= block_at:
+        return {
+            "tier": "BLOCK",
+            "size_mult": 0.0,
+            "dd_pct": dd_pct,
+            "blocks_entry": True,
+        }
+    if dd_pct >= reduce_at:
+        return {
+            "tier": "REDUCE",
+            "size_mult": reduce_mult,
+            "dd_pct": dd_pct,
+            "blocks_entry": False,
+        }
+    return {
+        "tier": "NORMAL",
+        "size_mult": 1.0,
+        "dd_pct": dd_pct,
+        "blocks_entry": False,
+    }
+
+
+def _persist_portfolio_mdd_state(cfg: dict, nav_peak: float, tier: str) -> bool:
+    """Single writer: execution_safety → config_kv state keys. Returns False on DB failure."""
+    try:
+        from bitget.infra import config_manager
+
+        prev_peak = _cfg_float(cfg, "PORTFOLIO_NAV_PEAK", 0.0)
+        prev_tier = str(cfg.get("PORTFOLIO_MDD_CURRENT_TIER") or "NORMAL")
+        if nav_peak != prev_peak:
+            config_manager.set_config_value("PORTFOLIO_NAV_PEAK", float(nav_peak))
+            cfg["PORTFOLIO_NAV_PEAK"] = float(nav_peak)
+        if tier != prev_tier:
+            config_manager.set_config_value("PORTFOLIO_MDD_CURRENT_TIER", str(tier))
+            cfg["PORTFOLIO_MDD_CURRENT_TIER"] = str(tier)
+        return True
+    except Exception as exc:
+        try:
+            from bitget.infra.logging_setup import get_logger
+
+            get_logger("bitget.trading.execution_safety").warning(
+                "portfolio_mdd state persist failed: %s", exc
+            )
+        except Exception:
+            pass
+        return False
+
+
+def _maybe_portfolio_halt_alert(tier: str, prev_tier: str, snap: dict[str, Any]) -> None:
+    """HALT tier transition only — no repeat while staying in HALT."""
+    if tier != "HALT" or prev_tier == "HALT":
+        return
+    try:
+        from bitget.governance.meta_alerts import send_meta_critical_alert
+
+        dd = float(snap.get("dd_pct") or 0.0) * 100.0
+        send_meta_critical_alert(
+            "Portfolio NAV MDD HALT",
+            (
+                f"tier=HALT dd_pct={dd:.2f}% "
+                f"nav={snap.get('nav_current')} peak={snap.get('nav_peak')} "
+                f"— new entries blocked (no auto-flatten)"
+            ),
+            prefix="PORTFOLIO_MDD_HALT",
+        )
+    except Exception:
+        pass
+
+
+def evaluate_portfolio_mdd_gate(cfg: dict) -> dict[str, Any]:
+    """Shared SSOT for paper try_add + execution_safety config gate 6 (NAV MDD)."""
+    if not portfolio_mdd_breaker_enabled(cfg):
+        return {
+            "enabled": False,
+            "bypassed": True,
+            "tier": "NORMAL",
+            "size_mult": 1.0,
+            "dd_pct": 0.0,
+            "blocks_entry": False,
+            "nav_current": portfolio_treasury_nav(cfg),
+            "nav_peak": 0.0,
+        }
+
+    nav_current = portfolio_treasury_nav(cfg)
+    prev_tier = str(cfg.get("PORTFOLIO_MDD_CURRENT_TIER") or "NORMAL")
+    nav_peak = resolve_portfolio_nav_peak(cfg, nav_current)
+    result = evaluate_portfolio_mdd_tier(nav_current, nav_peak, cfg)
+    result["enabled"] = True
+    result["bypassed"] = False
+    result["nav_current"] = nav_current
+    result["nav_peak"] = nav_peak
+    persisted = _persist_portfolio_mdd_state(cfg, nav_peak, str(result["tier"]))
+    if persisted and str(result["tier"]) == "HALT" and prev_tier != "HALT":
+        _maybe_portfolio_halt_alert(str(result["tier"]), prev_tier, result)
+    return result
+
+
 def portfolio_mdd_pct() -> float:
     try:
-        from bitget.live_nav_manager import portfolio_nav_snapshot
+        from bitget.config_hub import load_config
 
-        snap = portfolio_nav_snapshot()
-        return float(snap.get("mdd_pct") or 0.0)
+        cfg = load_config()
+        if not portfolio_mdd_breaker_enabled(cfg):
+            return 0.0
+        snap = evaluate_portfolio_mdd_gate(cfg)
+        return float(snap.get("dd_pct") or 0.0) * 100.0
     except Exception:
         return 0.0
 
 
 def nav_entry_blocked(cfg: dict) -> bool:
     """True when portfolio MDD reaches block/halt — OMS defense helper."""
-    mdd = portfolio_mdd_pct()
-    block = _cfg_float(cfg, "NAV_DD_BLOCK_PCT", NAV_DD_BLOCK_PCT)
-    return mdd >= block
+    if not portfolio_mdd_breaker_enabled(cfg):
+        return False
+    snap = evaluate_portfolio_mdd_gate(cfg)
+    return bool(snap.get("blocks_entry"))
 
 
 def portfolio_open_gross_usdt() -> float:
-    """Sum of OPEN sim_kelly_invest across spot+futures (virtual book SSOT)."""
+    """Sum OPEN mark notional (quantity×entry_price) — A-4 SSOT, leverage-independent."""
+    try:
+        from bitget.infra.bounded_reads import forward_open_mark_notional_sum_sql
+        from bitget.infra.data_paths import market_data_db_path
+        from bitget.infra.shared_db_connector import get_connection
+
+        q, p = forward_open_mark_notional_sum_sql()
+        conn = get_connection(market_data_db_path())
+        try:
+            row = conn.execute(q, p).fetchone()
+            return float((row[0] if row else 0.0) or 0.0)
+        finally:
+            conn.close()
+    except Exception:
+        return 0.0
+
+
+def gross_notional_cap_enabled(cfg: dict) -> bool:
+    return _cfg_bool(cfg, "GROSS_NOTIONAL_CAP_ENABLED", GROSS_NOTIONAL_CAP_ENABLED)
+
+
+def resolve_max_gross_notional_pct(cfg: Optional[dict] = None) -> float:
+    """MAX_GROSS_NOTIONAL_PCT (A-4) with legacy GROSS_NOTIONAL_MAX_PCT fallback."""
+    cfg = cfg or {}
+    raw_new = cfg.get("MAX_GROSS_NOTIONAL_PCT")
+    if raw_new is not None and raw_new != "":
+        return _cfg_float(cfg, "MAX_GROSS_NOTIONAL_PCT", MAX_GROSS_NOTIONAL_PCT)
+    return _cfg_float(cfg, "GROSS_NOTIONAL_MAX_PCT", GROSS_NOTIONAL_MAX_PCT)
+
+
+def gross_gate_nav_current(cfg: dict) -> float:
+    """nav_current from A-1 snap cache — no standalone treasury re-sum."""
+    if portfolio_mdd_breaker_enabled(cfg):
+        snap = get_portfolio_mdd_snap_cached(cfg)
+        return float(snap.get("nav_current") or 0.0)
+    return portfolio_treasury_nav(cfg)
+
+
+def evaluate_gross_notional_gate_values(
+    nav_current: float,
+    gross_notional: float,
+    cfg: dict,
+) -> dict[str, Any]:
+    """Pure gate 7 evaluation — shared by evaluate_gross_notional_gate + try_add."""
+    if not gross_notional_cap_enabled(cfg):
+        return {
+            "enabled": False,
+            "bypassed": True,
+            "blocked": False,
+            "block_new_entries": False,
+            "gross_notional": round(float(gross_notional), 4),
+            "nav_current": float(nav_current),
+            "gross_notional_pct": 0.0,
+            "gross_gate": "cap_disabled",
+        }
+    max_pct = resolve_max_gross_notional_pct(cfg)
+    if max_pct <= 0:
+        return {
+            "enabled": True,
+            "bypassed": False,
+            "blocked": False,
+            "block_new_entries": False,
+            "gross_notional": round(float(gross_notional), 4),
+            "nav_current": float(nav_current),
+            "gross_notional_pct": 0.0,
+            "max_gross_notional_pct": max_pct,
+            "gross_gate": "threshold_disabled",
+        }
+    nav = float(nav_current)
+    gross = float(gross_notional)
+    gross_pct = (gross / nav * 100.0) if nav > 0 else (0.0 if gross <= 0 else 9999.0)
+    blocked = gross_pct >= max_pct
+    return {
+        "enabled": True,
+        "bypassed": False,
+        "blocked": blocked,
+        "block_new_entries": blocked,
+        "gross_notional": round(gross, 4),
+        "nav_current": nav,
+        "gross_notional_pct": round(gross_pct, 4),
+        "max_gross_notional_pct": max_pct,
+        "gross_gate": "block" if blocked else "ok",
+        # legacy meta aliases for OMS/tests
+        "gross_usdt": round(gross, 4),
+        "nav": nav,
+        "gross_pct": round(gross_pct, 4),
+        "gross_notional_max_pct": max_pct,
+    }
+
+
+def portfolio_open_gross_usdt_legacy_sim_kelly() -> float:
+    """Deprecated sum(sim_kelly_invest) — retained for diagnostics only."""
     try:
         from bitget.infra.bounded_reads import forward_open_gross_notional_sum_sql
         from bitget.infra.data_paths import market_data_db_path
@@ -154,39 +419,30 @@ def portfolio_open_gross_usdt() -> float:
 
 
 def portfolio_gross_snapshot(cfg: Optional[dict] = None) -> dict[str, Any]:
-    """Open gross notional vs portfolio NAV — shared by live gates + paper ledger."""
+    """Open gross notional vs A-1 nav_current — gate 7 + try_add SSOT."""
+    cfg = cfg or {}
     try:
-        from bitget.live_nav_manager import portfolio_nav_snapshot
-
-        nav_snap = portfolio_nav_snapshot()
-        nav = float(nav_snap.get("nav") or 0.0)
+        nav_current = gross_gate_nav_current(cfg)
+        gross = portfolio_open_gross_usdt()
+        return evaluate_gross_notional_gate_values(nav_current, gross, cfg)
     except Exception as e:
         return {
             "nav": 0.0,
+            "nav_current": 0.0,
             "gross_usdt": 0.0,
+            "gross_notional": 0.0,
             "gross_pct": 0.0,
+            "gross_notional_pct": 0.0,
             "error": str(e)[:120],
         }
-    gross = portfolio_open_gross_usdt()
-    gross_pct = (gross / nav * 100.0) if nav > 0 else (0.0 if gross <= 0 else 9999.0)
-    max_pct = _cfg_float(cfg or {}, "GROSS_NOTIONAL_MAX_PCT", GROSS_NOTIONAL_MAX_PCT)
-    return {
-        "nav": nav,
-        "gross_usdt": round(gross, 4),
-        "gross_pct": round(gross_pct, 4),
-        "gross_notional_max_pct": max_pct,
-    }
 
 
 def gross_entry_blocked(cfg: dict) -> bool:
-    """True when open gross notional / NAV reaches configured cap (≤0 pct = disabled)."""
-    max_pct = _cfg_float(cfg, "GROSS_NOTIONAL_MAX_PCT", GROSS_NOTIONAL_MAX_PCT)
-    if max_pct <= 0:
-        return False
+    """True when open gross notional / nav_current reaches configured cap."""
     snap = portfolio_gross_snapshot(cfg)
-    if snap.get("error"):
-        return False  # soft-pass on read failure (hot path must not crash)
-    return float(snap.get("gross_pct") or 0.0) >= max_pct
+    if snap.get("error") or snap.get("bypassed"):
+        return False
+    return bool(snap.get("blocked") or snap.get("block_new_entries"))
 
 
 def _maybe_nav_halt_alert(mdd: float, snap: dict[str, Any]) -> None:
@@ -210,67 +466,100 @@ def _maybe_nav_halt_alert(mdd: float, snap: dict[str, Any]) -> None:
         pass
 
 
-def evaluate_nav_risk_gate(cfg: dict) -> GateResult:
-    """Gate 6: portfolio NAV drawdown — reduce / block / halt (no flatten)."""
-    try:
-        from bitget.live_nav_manager import portfolio_nav_snapshot
+def _portfolio_mdd_snap_fingerprint(cfg: dict) -> str:
+    spot = (cfg or {}).get("TREASURY_SPOT_USDT")
+    fut = (cfg or {}).get("TREASURY_FUTURES_USDT")
+    peak = (cfg or {}).get("PORTFOLIO_NAV_PEAK")
+    tier = (cfg or {}).get("PORTFOLIO_MDD_CURRENT_TIER")
+    return f"{spot}|{fut}|{peak}|{tier}"
 
-        snap = portfolio_nav_snapshot()
-    except Exception as e:
+
+def get_portfolio_mdd_snap_cached(cfg: dict) -> dict[str, Any]:
+    """
+    Per-request cache — config gate 6 (NAV MDD) and gate 8 (tail) share one A-1 eval.
+
+    SSOT: calls evaluate_portfolio_mdd_gate only (no NAV/dd_pct recompute here).
+    That gate → portfolio_treasury_nav + resolve_portfolio_nav_peak
+    → evaluate_portfolio_mdd_tier (pure tier).
+    """
+    fp = _portfolio_mdd_snap_fingerprint(cfg)
+    cached = cfg.get("_PORTFOLIO_MDD_GATE_SNAP")
+    if (
+        isinstance(cached, dict)
+        and cached.get("tier") is not None
+        and cfg.get("_PORTFOLIO_MDD_GATE_SNAP_FP") == fp
+    ):
+        return cached
+    snap = evaluate_portfolio_mdd_gate(cfg)
+    cfg["_PORTFOLIO_MDD_GATE_SNAP"] = snap
+    cfg["_PORTFOLIO_MDD_GATE_SNAP_FP"] = fp
+    cfg.pop("_TAIL_FUND_DEBIT_DONE", None)
+    return snap
+
+
+def evaluate_nav_risk_gate(cfg: dict) -> GateResult:
+    """Config gate 6: portfolio treasury NAV MDD — reduce / block / halt (no flatten)."""
+    if not portfolio_mdd_breaker_enabled(cfg):
         return GateResult(
             ExecutionGateOutcome.APPROVED,
-            message="nav_snapshot_unavailable_soft_pass",
-            meta={"nav_error": str(e)[:120]},
+            message="portfolio_mdd_breaker_disabled",
+            meta={
+                "portfolio_mdd_enabled": False,
+                "nav_risk_stage": "ok",
+                "nav_size_mult": 1.0,
+                "portfolio_mdd_tier": "NORMAL",
+            },
         )
 
-    mdd = float(snap.get("mdd_pct") or 0.0)
-    reduce_at = _cfg_float(cfg, "NAV_DD_REDUCE_PCT", NAV_DD_REDUCE_PCT)
-    block_at = _cfg_float(cfg, "NAV_DD_BLOCK_PCT", NAV_DD_BLOCK_PCT)
-    halt_at = _cfg_float(cfg, "NAV_DD_HALT_PCT", NAV_DD_HALT_PCT)
-    size_mult = _cfg_float(cfg, "NAV_DD_REDUCE_SIZE_MULT", NAV_DD_REDUCE_SIZE_MULT)
-    if size_mult <= 0 or size_mult > 1:
-        size_mult = float(NAV_DD_REDUCE_SIZE_MULT)
+    snap = get_portfolio_mdd_snap_cached(cfg)
+    try:
+        from bitget.trading.tail_risk_gate import process_tail_fund_drawdown_on_snap
+
+        process_tail_fund_drawdown_on_snap(cfg, snap)
+    except Exception:
+        pass
+    dd_pct_ratio = float(snap.get("dd_pct") or 0.0)
+    dd_pct_display = dd_pct_ratio * 100.0
+    tier_raw = str(snap.get("tier") or "NORMAL")
+    tier_key = tier_raw.lower()
+    size_mult = float(snap.get("size_mult") or 1.0)
 
     base_meta = {
-        "nav": snap.get("nav"),
-        "hwm": snap.get("hwm"),
-        "mdd_pct": mdd,
-        "nav_dd_reduce_pct": reduce_at,
-        "nav_dd_block_pct": block_at,
-        "nav_dd_halt_pct": halt_at,
+        "portfolio_mdd_enabled": True,
+        "nav_current": snap.get("nav_current"),
+        "nav_peak": snap.get("nav_peak"),
+        "nav": snap.get("nav_current"),
+        "hwm": snap.get("nav_peak"),
+        "mdd_pct": round(dd_pct_display, 4),
+        "dd_pct": dd_pct_ratio,
+        "portfolio_mdd_tier": tier_raw,
+        "nav_size_mult": size_mult,
     }
 
-    if mdd >= halt_at:
-        _maybe_nav_halt_alert(mdd, snap)
+    if snap.get("blocks_entry"):
+        stage = "halt" if tier_key == "halt" else "block"
         return GateResult(
             ExecutionGateOutcome.NAV_BLOCKED,
-            message=f"portfolio NAV MDD {mdd:.2f}% >= halt {halt_at:.1f}%",
-            meta={**base_meta, "nav_risk_stage": "halt", "nav_size_mult": 0.0},
+            message=(
+                f"portfolio MDD {dd_pct_display:.2f}% — tier {tier_raw} "
+                f"(peak={snap.get('nav_peak')} nav={snap.get('nav_current')})"
+            ),
+            meta={**base_meta, "nav_risk_stage": stage, "nav_size_mult": 0.0},
         )
-    if mdd >= block_at:
-        return GateResult(
-            ExecutionGateOutcome.NAV_BLOCKED,
-            message=f"portfolio NAV MDD {mdd:.2f}% >= block {block_at:.1f}%",
-            meta={**base_meta, "nav_risk_stage": "block", "nav_size_mult": 0.0},
-        )
-    if mdd >= reduce_at:
+    if tier_key == "reduce":
         return GateResult(
             ExecutionGateOutcome.APPROVED,
-            message=f"portfolio NAV MDD {mdd:.2f}% — reduce size ×{size_mult}",
-            meta={
-                **base_meta,
-                "nav_risk_stage": "reduce",
-                "nav_size_mult": size_mult,
-            },
+            message=f"portfolio MDD {dd_pct_display:.2f}% — reduce size ×{size_mult}",
+            meta={**base_meta, "nav_risk_stage": "reduce"},
         )
     return GateResult(
         ExecutionGateOutcome.APPROVED,
-        meta={**base_meta, "nav_risk_stage": "ok", "nav_size_mult": 1.0},
+        meta={**base_meta, "nav_risk_stage": "ok"},
     )
 
 
 def evaluate_orphan_gate(cfg: dict) -> GateResult:
-    """Gate 5: exchange-only orphan inventory — block new entries (never flatten)."""
+    """Config gate 5: exchange-only orphan inventory — block new entries (never flatten)."""
     if not oms_orphan_active(cfg):
         return GateResult(ExecutionGateOutcome.APPROVED, meta={"oms_orphan_active": "OFF"})
     count = 0
@@ -295,13 +584,7 @@ def evaluate_orphan_gate(cfg: dict) -> GateResult:
 
 
 def evaluate_gross_notional_gate(cfg: dict) -> GateResult:
-    """Gate 7: portfolio open gross notional / NAV — block new entries (never flatten)."""
-    max_pct = _cfg_float(cfg, "GROSS_NOTIONAL_MAX_PCT", GROSS_NOTIONAL_MAX_PCT)
-    if max_pct <= 0:
-        return GateResult(
-            ExecutionGateOutcome.APPROVED,
-            meta={"gross_gate": "disabled", "gross_notional_max_pct": max_pct},
-        )
+    """Config gate 7: portfolio open gross notional / nav_current — block new entries (never flatten)."""
     snap = portfolio_gross_snapshot(cfg)
     if snap.get("error"):
         return GateResult(
@@ -309,19 +592,21 @@ def evaluate_gross_notional_gate(cfg: dict) -> GateResult:
             message="gross_snapshot_unavailable_soft_pass",
             meta={"gross_error": snap.get("error")},
         )
-    gross_pct = float(snap.get("gross_pct") or 0.0)
-    base_meta = {
-        "gross_usdt": snap.get("gross_usdt"),
-        "gross_nav": snap.get("nav"),
-        "gross_pct": gross_pct,
-        "gross_notional_max_pct": max_pct,
-    }
-    if gross_pct >= max_pct:
+    if snap.get("bypassed"):
+        return GateResult(
+            ExecutionGateOutcome.APPROVED,
+            message="gross_notional_cap_disabled",
+            meta=dict(snap),
+        )
+    gross_pct = float(snap.get("gross_notional_pct") or snap.get("gross_pct") or 0.0)
+    max_pct = float(snap.get("max_gross_notional_pct") or snap.get("gross_notional_max_pct") or 0.0)
+    base_meta = dict(snap)
+    if snap.get("blocked"):
         return GateResult(
             ExecutionGateOutcome.GROSS_BLOCKED,
             message=(
-                f"portfolio gross {gross_pct:.1f}% of NAV >= cap {max_pct:.1f}% "
-                f"(gross={snap.get('gross_usdt')} nav={snap.get('nav')}; no auto-flatten)"
+                f"portfolio gross {gross_pct:.1f}% of nav_current >= cap {max_pct:.1f}% "
+                f"(gross={snap.get('gross_notional')} nav={snap.get('nav_current')}; no auto-flatten)"
             ),
             meta={**base_meta, "gross_risk_stage": "block"},
         )
@@ -332,7 +617,7 @@ def evaluate_gross_notional_gate(cfg: dict) -> GateResult:
 
 
 def evaluate_tail_risk_gate(cfg: dict) -> GateResult:
-    """Gate 8: tail reserve — underfund size mult; empty+DD block (never flatten)."""
+    """Config gate 8: tail reserve — A-2 consumption + underfund size mult (never flatten)."""
     try:
         from bitget.trading.tail_risk_gate import tail_risk_entry_blocked
 
@@ -344,12 +629,20 @@ def evaluate_tail_risk_gate(cfg: dict) -> GateResult:
             meta={"tail_risk_error": str(e)[:120], "tail_risk_size_mult": 1.0},
         )
     if blocked:
-        return GateResult(
-            ExecutionGateOutcome.TAIL_RISK_BLOCKED,
-            message=(
+        gate_label = str(meta.get("tail_risk_gate") or "")
+        if gate_label == "escalate_block_exhausted":
+            msg = (
+                "tail-risk fund exhausted under BLOCK tier — "
+                "HALT-grade entry block (auxiliary; portfolio tier unchanged)"
+            )
+        else:
+            msg = (
                 f"tail-risk reserve empty under NAV DD "
                 f"(fund={meta.get('fund_usdt')} mdd={meta.get('mdd_pct')}%; no auto-flatten)"
-            ),
+            )
+        return GateResult(
+            ExecutionGateOutcome.TAIL_RISK_BLOCKED,
+            message=msg,
             meta=dict(meta),
         )
     return GateResult(
@@ -734,10 +1027,36 @@ def oms_defense_block_reason(
 
 
 def max_leverage_cap(cfg: Optional[dict] = None) -> float:
-    """Hard upper bound for resolve_leverage (config MAX_LEVERAGE or SSOT default)."""
+    """Configured MAX_LEVERAGE upper bound (default DEFAULT_MAX_LEVERAGE=5)."""
     try:
         raw = (cfg or {}).get("MAX_LEVERAGE", DEFAULT_MAX_LEVERAGE)
         cap = float(raw if raw is not None else DEFAULT_MAX_LEVERAGE)
     except (TypeError, ValueError):
         cap = float(DEFAULT_MAX_LEVERAGE)
     return max(1.0, cap)
+
+
+def resolve_max_leverage(requested: float, cfg: Optional[dict] = None) -> float:
+    """
+    FUT SSOT clamp — min(requested, MAX_LEVERAGE). Reject-free; logs when clamped.
+    SPOT paths must not call this function.
+    """
+    try:
+        req = max(1.0, float(requested))
+    except (TypeError, ValueError):
+        req = 1.0
+    cap = max_leverage_cap(cfg)
+    if req > cap:
+        try:
+            from bitget.infra.logging_setup import get_logger
+
+            get_logger("bitget.trading.execution_safety").info(
+                "MAX_LEVERAGE clamp: requested=%.4f cap=%.4f applied=%.4f",
+                req,
+                cap,
+                cap,
+            )
+        except Exception:
+            pass
+        return float(cap)
+    return float(req)

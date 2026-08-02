@@ -32,12 +32,20 @@ NAV_DD_BLOCK_PCT: float = 20.0    # stage: block new entries
 NAV_DD_HALT_PCT: float = 30.0     # stage: block + throttled CRITICAL
 NAV_DD_REDUCE_SIZE_MULT: float = 0.5
 NAV_DD_ALERT_MIN_INTERVAL_SEC: float = 3600.0
+# Portfolio MDD breaker (treasury NAV ratio — A-1 SSOT; 0.15 = 15% drawdown)
+PORTFOLIO_MDD_REDUCE_PCT: float = 0.15
+PORTFOLIO_MDD_BLOCK_PCT: float = 0.20
+PORTFOLIO_MDD_HALT_PCT: float = 0.30
+PORTFOLIO_MDD_REDUCE_SIZE_MULT: float = 0.5
 DEFAULT_MAX_LEVERAGE: float = 5.0  # hard cap floor for resolve_leverage
+CONFIG_WRITE_VALIDATION_ENABLED: bool = True  # A-5: reject out-of-range Kelly/leverage writes
 # OMS orphan escalation (exchange-only positions — block new entries, never flatten)
 OMS_ORPHAN_STREAK_PROPOSE_KILL: int = 2  # consecutive recon hits → propose KILL_SWITCH
 OMS_ORPHAN_ALERT_MIN_INTERVAL_SEC: float = 3600.0
-# Portfolio gross notional cap (open sim_kelly_invest sum / portfolio NAV)
-# ≤0 disables the gate. Default 200% = 2× NAV before blocking new entries.
+# Portfolio gross notional cap (A-4 — open mark notional sum / nav_current)
+MAX_GROSS_NOTIONAL_PCT: float = 80.0       # % of A-1 nav_current; block new entries above
+GROSS_NOTIONAL_CAP_ENABLED: bool = True    # false → gate bypass (A-1/A-2 kill-switch pattern)
+# Legacy alias — used when MAX_GROSS_NOTIONAL_PCT key absent in config_kv
 GROSS_NOTIONAL_MAX_PCT: float = 200.0
 # BTC-proxy concentration (high corr same-side cluster / NAV) — ≤0 disables
 CORR_BTC_MIN: float = 0.60          # pearson vs BTC → high-β cluster
@@ -63,6 +71,7 @@ TAIL_RISK_MIN_COVERAGE_PCT: float = 0.5     # fund/NAV %; below → size shrink 
 TAIL_RISK_UNDERFUND_SIZE_MULT: float = 0.5
 TAIL_RISK_CRISIS_ATR_PCT: float = 6.0       # BEAR + BTC_ATR >= this → 1:1 release
 TAIL_RISK_EMPTY_BLOCK: bool = True          # empty fund + MDD>=reduce → block new entries
+TAIL_FUND_CONSUMPTION_ENABLED: bool = True  # A-2: debit on BLOCK/HALT drawdown; false → accrual-only legacy
 # Bad-tick / flash-crash price sanity (≤0 on a threshold disables that sub-check)
 BAD_TICK_LOOKBACK_BARS: int = 5
 BAD_TICK_MAX_GAP_PCT: float = 15.0          # |px/prev_close−1|%

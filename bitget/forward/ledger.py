@@ -27,12 +27,14 @@ from bitget.forward.gates import (
     _calc_atr14,
     _calc_market_breadth,
     _extract_4d_dna_from_facts,
+    _extract_core_group,
     _facts_cos_scalar_01,
     _is_blocked_by_anti_patterns,
     _load_bench_close,
     _load_hist,
     _table_name,
     _tf_weight,
+    _thompson_ns_prefix,
     compute_evolved_alpha_bonus_score,
     evaluate_evolved_alpha_formula,
 )
@@ -248,9 +250,13 @@ def try_add_virtual_position(
         nav_size_mult = 1.0
 
     try:
-        from bitget.trading.execution_safety import gross_entry_blocked
+        from bitget.trading.execution_safety import (
+            ExecutionGateOutcome,
+            evaluate_gross_notional_gate,
+        )
 
-        if gross_entry_blocked(cfg):
+        _gross = evaluate_gross_notional_gate(cfg)
+        if _gross.outcome == ExecutionGateOutcome.GROSS_BLOCKED:
             conn.close()
             return False, "🚨 포트폴리오 명목노출 상한 (gross notional cap)"
     except Exception:
@@ -265,6 +271,9 @@ def try_add_virtual_position(
         _tail_block, _tail_meta = tail_risk_entry_blocked(cfg)
         if _tail_block:
             conn.close()
+            _gate = str(_tail_meta.get("tail_risk_gate") or "")
+            if _gate == "escalate_block_exhausted":
+                return False, "🚨 테일리스크 고갈 — BLOCK tier HALT급 진입 차단 (tail auxiliary)"
             return False, "🚨 테일리스크 적립금 고갈 + NAV DD (tail-risk reserve)"
         try:
             _tm = float(_tail_meta.get("tail_risk_size_mult") or _tail_risk_size_mult(cfg) or 1.0)
@@ -599,14 +608,17 @@ def try_add_virtual_position(
         conn.close()
         return False, f"{treasury_key} 잔고 부족"
 
-    leverage = 1.0 if market_type == "spot" else float(cfg.get("FUTURES_LEVERAGE", 3.0))
+    leverage = 1.0 if market_type == "spot" else 0.0
     if market_type != "spot":
         try:
-            from bitget.trading.execution_safety import max_leverage_cap
+            from bitget.trading.leverage_manager import resolve_leverage
 
-            leverage = min(float(leverage), float(max_leverage_cap(cfg)))
+            leverage = resolve_leverage(
+                cfg,
+                leverage_explicit=cfg.get("FUTURES_LEVERAGE", 3.0),
+            )
         except Exception:
-            pass
+            leverage = 3.0
     max_invest_limit = min(group_current_seed * max_position_pct, available_cash, treasury_balance)
 
     raw_qty = float((group_current_seed * kelly_risk_pct) / risk_distance)

@@ -199,12 +199,24 @@ def set_config_value(key: str, value: Any) -> None:
             f"config key {key!r} looks like a secret; use .env (BITGET_* ) instead"
         )
 
-    from bitget.infra.config_bounds import clamp_config_value
+    from bitget.infra.config_bounds import (
+        CONFIG_WRITE_REJECT_BOUNDS,
+        clamp_config_value,
+        config_write_validation_enabled,
+        validate_config_write_reject,
+    )
 
-    before = value
-    value = clamp_config_value(str(key), value)
-    if value != before:
-        logger.warning("config hard-bound clamp %s: %r → %r", key, before, value)
+    a5_bounded = str(key) in CONFIG_WRITE_REJECT_BOUNDS
+    if a5_bounded and config_write_validation_enabled():
+        ok, reason = validate_config_write_reject(str(key), value)
+        if not ok:
+            logger.warning("config write rejected %s=%r (%s)", key, value, reason)
+            return
+    else:
+        before = value
+        value = clamp_config_value(str(key), value)
+        if value != before:
+            logger.warning("config hard-bound clamp %s: %r → %r", key, before, value)
 
     payload = _encode_json(
         strip_sensitive_from_config_obj(value) if isinstance(value, (dict, list)) else value

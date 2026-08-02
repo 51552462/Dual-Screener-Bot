@@ -412,6 +412,15 @@ def forward_open_exposure_sum_sql(*, market_type: str) -> tuple[str, tuple]:
     )
 
 
+def forward_open_mark_notional_sum_sql() -> tuple[str, tuple]:
+    """Portfolio gross (A-4) — Σ quantity×entry_price OPEN, leverage-independent."""
+    return (
+        "SELECT COALESCE(SUM(quantity * entry_price),0) FROM bitget_forward_trades "
+        "WHERE status='OPEN'",
+        (),
+    )
+
+
 def forward_open_gross_notional_sum_sql() -> tuple[str, tuple]:
     """Portfolio gross — all-market OPEN notional (spot+futures) scalar."""
     return (

@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 from bitget.infra.memory_policy import (
     NAV_DD_REDUCE_PCT,
+    PORTFOLIO_MDD_BLOCK_PCT,
+    TAIL_FUND_CONSUMPTION_ENABLED,
     TAIL_RISK_ACCRUAL_PCT,
     TAIL_RISK_CRISIS_ATR_PCT,
     TAIL_RISK_EMPTY_BLOCK,
@@ -148,7 +150,181 @@ def tail_risk_size_mult(cfg: Optional[dict] = None) -> float:
     return float(mult)
 
 
+def tail_fund_consumption_enabled(cfg: Optional[dict]) -> bool:
+    return _cfg_bool(cfg or {}, "TAIL_FUND_CONSUMPTION_ENABLED", TAIL_FUND_CONSUMPTION_ENABLED)
+
+
+def compute_tail_fund_debit_amount(
+    nav_peak: float,
+    dd_pct: float,
+    block_pct: float,
+    tail_fund_balance: float,
+) -> float:
+    """A-2 SSOT — excess drawdown below BLOCK tier × peak, capped by fund balance."""
+    if nav_peak <= 0 or tail_fund_balance <= 0:
+        return 0.0
+    excess = max(0.0, float(dd_pct) - float(block_pct))
+    if excess <= 0:
+        return 0.0
+    return min(float(tail_fund_balance), nav_peak * excess)
+
+
+def evaluate_tail_fund_gate(tail_fund_balance: float, portfolio_mdd_tier: str) -> dict[str, Any]:
+    """
+    Pure tail consumption gate — does not mutate PORTFOLIO_MDD_CURRENT_TIER or HALT alerts.
+    escalate_block: exhausted fund + BLOCK tier → HALT-grade entry block (auxiliary only).
+    """
+    tier = str(portfolio_mdd_tier or "NORMAL").upper()
+    exhausted = float(tail_fund_balance) <= 1e-6
+    escalate_block = exhausted and tier == "BLOCK"
+    return {
+        "tail_exhausted": exhausted,
+        "escalate_block": escalate_block,
+        "portfolio_mdd_tier": tier,
+        "tail_fund_balance": round(float(tail_fund_balance), 4),
+    }
+
+
+def _apply_tail_fund_debit(cfg: dict, amount: float) -> float:
+    """Debit pooled tail fund (spot first, then futures). Mutates cfg. Returns debited."""
+    remaining = max(0.0, float(amount))
+    if remaining <= 0:
+        return 0.0
+    debited = 0.0
+    for key in ("TAIL_RISK_FUND_SPOT", "TAIL_RISK_FUND_FUTURES"):
+        if remaining <= 0:
+            break
+        try:
+            bal = float(cfg.get(key, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            bal = 0.0
+        take = min(bal, remaining)
+        if take > 0:
+            cfg[key] = round(bal - take, 4)
+            remaining -= take
+            debited += take
+    return round(debited, 4)
+
+
+def _persist_tail_fund_balances(cfg: dict) -> bool:
+    try:
+        from bitget.infra import config_manager
+
+        for key in ("TAIL_RISK_FUND_SPOT", "TAIL_RISK_FUND_FUTURES"):
+            if key in cfg:
+                config_manager.set_config_value(key, float(cfg[key]))
+        return True
+    except Exception as exc:
+        try:
+            from bitget.infra.logging_setup import get_logger
+
+            get_logger("bitget.trading.tail_risk_gate").warning(
+                "tail fund persist failed: %s", exc
+            )
+        except Exception:
+            pass
+        return False
+
+
+def process_tail_fund_drawdown_on_snap(cfg: dict, mdd_snap: dict) -> dict[str, Any]:
+    """
+    A-2 consumption cycle — drawdown_event(BLOCK/HALT) debits tail fund (paper).
+    Once per request (nav+tail share). Does not touch PORTFOLIO_MDD tier state.
+    """
+    if not tail_fund_consumption_enabled(cfg):
+        return {"consumption_enabled": False, "drawdown_event": False, "debited": 0.0}
+
+    if cfg.get("_TAIL_FUND_DEBIT_DONE"):
+        balance = tail_fund_total_usdt(cfg)
+        tier = str(mdd_snap.get("tier") or "NORMAL").upper()
+        gate = evaluate_tail_fund_gate(balance, tier)
+        return {**gate, "consumption_enabled": True, "drawdown_event": tier in ("BLOCK", "HALT"), "debited": 0.0}
+
+    tier = str(mdd_snap.get("tier") or "NORMAL").upper()
+    drawdown_event = tier in ("BLOCK", "HALT")
+    cfg["_TAIL_FUND_DEBIT_DONE"] = True
+
+    if not drawdown_event:
+        balance = tail_fund_total_usdt(cfg)
+        gate = evaluate_tail_fund_gate(balance, tier)
+        return {**gate, "consumption_enabled": True, "drawdown_event": False, "debited": 0.0}
+
+    nav_peak = float(mdd_snap.get("nav_peak") or 0.0)
+    dd_pct = float(mdd_snap.get("dd_pct") or 0.0)
+    block_pct = _cfg_float(cfg, "PORTFOLIO_MDD_BLOCK_PCT", PORTFOLIO_MDD_BLOCK_PCT)
+    balance_before = tail_fund_total_usdt(cfg)
+    debit = compute_tail_fund_debit_amount(nav_peak, dd_pct, block_pct, balance_before)
+
+    if debit > 0:
+        _apply_tail_fund_debit(cfg, debit)
+        _persist_tail_fund_balances(cfg)
+
+    balance_after = tail_fund_total_usdt(cfg)
+    gate = evaluate_tail_fund_gate(balance_after, tier)
+    return {
+        **gate,
+        "consumption_enabled": True,
+        "drawdown_event": True,
+        "debited": debit,
+        "debit_amount": debit,
+        "nav_peak": nav_peak,
+        "dd_pct": dd_pct,
+        "portfolio_mdd_block_pct": block_pct,
+    }
+
+
 def tail_risk_entry_blocked(cfg: Optional[dict] = None) -> tuple[bool, dict[str, Any]]:
+    """
+    True → block new entries.
+    A-2 (consumption enabled): uses A-1 portfolio MDD snap + tail fund debit/gate.
+    Legacy (consumption disabled): coverage / live_nav_manager path unchanged.
+    """
+    cfg = cfg or {}
+    if tail_fund_consumption_enabled(cfg):
+        return _tail_risk_entry_blocked_consumption(cfg)
+    return _tail_risk_entry_blocked_legacy(cfg)
+
+
+def _tail_risk_entry_blocked_consumption(cfg: dict) -> tuple[bool, dict[str, Any]]:
+    from bitget.trading.execution_safety import get_portfolio_mdd_snap_cached
+
+    snap = get_portfolio_mdd_snap_cached(cfg)
+    consumption = process_tail_fund_drawdown_on_snap(cfg, snap)
+    meta: dict[str, Any] = {
+        **consumption,
+        "tail_risk_size_mult": tail_risk_size_mult(cfg),
+        "portfolio_mdd_tier": snap.get("tier"),
+        "dd_pct": snap.get("dd_pct"),
+        "nav_peak": snap.get("nav_peak"),
+    }
+
+    if consumption.get("escalate_block"):
+        meta["tail_risk_gate"] = "escalate_block_exhausted"
+        return True, meta
+
+    tier = str(snap.get("tier") or "NORMAL").upper()
+    if tier == "HALT":
+        meta["tail_risk_gate"] = "portfolio_halt_primary"
+        return False, meta
+
+    # Underfund size shrink (coverage) — independent of consumption debit
+    min_cov = _cfg_float(cfg, "TAIL_RISK_MIN_COVERAGE_PCT", TAIL_RISK_MIN_COVERAGE_PCT)
+    if min_cov > 0:
+        fund = tail_fund_total_usdt(cfg)
+        nav_current = float(snap.get("nav_current") or 0.0)
+        if nav_current > 0:
+            coverage = fund / nav_current * 100.0
+            meta["coverage_pct"] = round(coverage, 4)
+            meta["min_coverage_pct"] = min_cov
+            if coverage < min_cov and fund > 1e-6:
+                meta["tail_risk_gate"] = "underfund_size_only"
+                return False, meta
+
+    meta["tail_risk_gate"] = "ok"
+    return False, meta
+
+
+def _tail_risk_entry_blocked_legacy(cfg: dict) -> tuple[bool, dict[str, Any]]:
     """
     True → block new entries when reserve empty AND NAV already in reduce territory.
     Never flatten. Soft-pass if NAV/fund unreadable or empty-block disabled.

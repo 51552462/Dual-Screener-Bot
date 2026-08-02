@@ -138,17 +138,20 @@ class TestExecutionSafety(unittest.TestCase):
             "REAL_EXECUTION_DRY_RUN": False,
             "GLOBAL_CIRCUIT_BREAKER": "OFF",
             "OMS_ORPHAN_ACTIVE": "OFF",
-            "NAV_DD_REDUCE_PCT": 15,
-            "NAV_DD_BLOCK_PCT": 20,
-            "NAV_DD_HALT_PCT": 30,
-            "NAV_DD_REDUCE_SIZE_MULT": 0.5,
+            "PORTFOLIO_MDD_BREAKER_ENABLED": True,
+            "PORTFOLIO_NAV_PEAK": 1000.0,
+            "TREASURY_SPOT_USDT": 425.0,
+            "TREASURY_FUTURES_USDT": 425.0,
+            "PORTFOLIO_MDD_REDUCE_PCT": 0.15,
+            "PORTFOLIO_MDD_BLOCK_PCT": 0.20,
+            "PORTFOLIO_MDD_HALT_PCT": 0.30,
+            "PORTFOLIO_MDD_REDUCE_SIZE_MULT": 0.5,
             # Funded reserve so empty+DD tail block does not mask NAV reduce stage
             "TAIL_RISK_FUND_SPOT": 50.0,
             "TAIL_RISK_FUND_FUTURES": 50.0,
         }
-        snap = {"nav": 850.0, "hwm": 1000.0, "mdd_pct": 15.0}
         with patch("bitget.trading.execution_safety.meta_kill_switch_active", return_value=False), patch(
-            "bitget.live_nav_manager.portfolio_nav_snapshot", return_value=snap
+            "bitget.trading.execution_safety._persist_portfolio_mdd_state"
         ):
             r = evaluate_config_gates(cfg)
         self.assertEqual(r.outcome, ExecutionGateOutcome.APPROVED)
@@ -164,23 +167,33 @@ class TestExecutionSafety(unittest.TestCase):
             "ENABLE_REAL_EXECUTION": True,
             "REAL_EXECUTION_DRY_RUN": False,
             "GLOBAL_CIRCUIT_BREAKER": "OFF",
-            "NAV_DD_REDUCE_PCT": 15,
-            "NAV_DD_BLOCK_PCT": 20,
-            "NAV_DD_HALT_PCT": 30,
+            "PORTFOLIO_MDD_BREAKER_ENABLED": True,
+            "PORTFOLIO_NAV_PEAK": 1000.0,
+            "PORTFOLIO_MDD_REDUCE_PCT": 0.15,
+            "PORTFOLIO_MDD_BLOCK_PCT": 0.20,
+            "PORTFOLIO_MDD_HALT_PCT": 0.30,
         }
         with patch("bitget.trading.execution_safety.meta_kill_switch_active", return_value=False), patch(
-            "bitget.live_nav_manager.portfolio_nav_snapshot",
-            return_value={"nav": 800.0, "hwm": 1000.0, "mdd_pct": 20.0},
+            "bitget.trading.execution_safety._persist_portfolio_mdd_state"
         ):
-            blocked = evaluate_config_gates(cfg)
+            blocked_cfg = {
+                **cfg,
+                "TREASURY_SPOT_USDT": 400.0,
+                "TREASURY_FUTURES_USDT": 400.0,
+            }
+            blocked = evaluate_config_gates(blocked_cfg)
         self.assertEqual(blocked.outcome, ExecutionGateOutcome.NAV_BLOCKED)
         self.assertEqual(blocked.meta.get("nav_risk_stage"), "block")
 
         with patch("bitget.trading.execution_safety.meta_kill_switch_active", return_value=False), patch(
-            "bitget.live_nav_manager.portfolio_nav_snapshot",
-            return_value={"nav": 700.0, "hwm": 1000.0, "mdd_pct": 30.0},
-        ), patch("bitget.trading.execution_safety._maybe_nav_halt_alert"):
-            halted = evaluate_config_gates(cfg)
+            "bitget.trading.execution_safety._persist_portfolio_mdd_state"
+        ), patch("bitget.trading.execution_safety._maybe_portfolio_halt_alert"):
+            halted_cfg = {
+                **cfg,
+                "TREASURY_SPOT_USDT": 350.0,
+                "TREASURY_FUTURES_USDT": 350.0,
+            }
+            halted = evaluate_config_gates(halted_cfg)
         self.assertEqual(halted.outcome, ExecutionGateOutcome.NAV_BLOCKED)
         self.assertEqual(halted.meta.get("nav_risk_stage"), "halt")
 
@@ -273,7 +286,14 @@ class TestExecutionSafety(unittest.TestCase):
             oms_defense_block_reason,
         )
 
-        snap = {"nav": 1000.0, "gross_usdt": 2500.0, "gross_pct": 250.0, "gross_notional_max_pct": 200.0}
+        snap = {
+            "nav": 1000.0,
+            "gross_usdt": 2500.0,
+            "gross_pct": 250.0,
+            "gross_notional_max_pct": 200.0,
+            "blocked": True,
+            "bypassed": False,
+        }
         with patch(
             "bitget.trading.execution_safety.portfolio_gross_snapshot", return_value=snap
         ):
@@ -309,8 +329,11 @@ class TestExecutionSafety(unittest.TestCase):
                 "gross_notional_cap",
             )
 
-        disabled = evaluate_gross_notional_gate({"GROSS_NOTIONAL_MAX_PCT": 0})
+        disabled = evaluate_gross_notional_gate(
+            {"GROSS_NOTIONAL_CAP_ENABLED": False, "MAX_GROSS_NOTIONAL_PCT": 80}
+        )
         self.assertEqual(disabled.outcome, ExecutionGateOutcome.APPROVED)
+        self.assertTrue(disabled.meta.get("bypassed"))
 
     def test_concentration_gate_blocks_and_soft_passes(self):
         from unittest.mock import patch
@@ -483,7 +506,8 @@ class TestPaperNavLiveParity(unittest.TestCase):
         self.assertIn("evaluate_nav_risk_gate", src)
         self.assertIn("NAV_BLOCKED", src)
         self.assertIn("nav_size_mult", src)
-        self.assertIn("max_leverage_cap", src)
+        self.assertIn("resolve_leverage", src)
+        self.assertNotIn("max_leverage_cap", src)
         self.assertIn("NAV 드로다운", src)
 
     def test_nav_reduce_and_block_outcomes(self):
@@ -493,34 +517,43 @@ class TestPaperNavLiveParity(unittest.TestCase):
             ExecutionGateOutcome,
             evaluate_nav_risk_gate,
             max_leverage_cap,
+            resolve_max_leverage,
         )
+        from bitget.trading.leverage_manager import resolve_leverage
 
         cfg = {
-            "NAV_DD_REDUCE_PCT": 15,
-            "NAV_DD_BLOCK_PCT": 20,
-            "NAV_DD_HALT_PCT": 30,
-            "NAV_DD_REDUCE_SIZE_MULT": 0.5,
+            "PORTFOLIO_MDD_BREAKER_ENABLED": True,
+            "PORTFOLIO_NAV_PEAK": 1000.0,
+            "PORTFOLIO_MDD_REDUCE_PCT": 0.15,
+            "PORTFOLIO_MDD_BLOCK_PCT": 0.20,
+            "PORTFOLIO_MDD_HALT_PCT": 0.30,
+            "PORTFOLIO_MDD_REDUCE_SIZE_MULT": 0.5,
             "MAX_LEVERAGE": 5,
             "FUTURES_LEVERAGE": 20,
+            "TREASURY_SPOT_USDT": 425.0,
+            "TREASURY_FUTURES_USDT": 425.0,
         }
-        with patch(
-            "bitget.live_nav_manager.portfolio_nav_snapshot",
-            return_value={"nav": 850.0, "hwm": 1000.0, "mdd_pct": 15.0},
-        ):
+        with patch("bitget.trading.execution_safety._persist_portfolio_mdd_state"):
             reduced = evaluate_nav_risk_gate(cfg)
         self.assertEqual(reduced.outcome, ExecutionGateOutcome.APPROVED)
         self.assertAlmostEqual(float(reduced.meta.get("nav_size_mult")), 0.5)
 
-        with patch(
-            "bitget.live_nav_manager.portfolio_nav_snapshot",
-            return_value={"nav": 750.0, "hwm": 1000.0, "mdd_pct": 25.0},
-        ):
-            blocked = evaluate_nav_risk_gate(cfg)
+        block_cfg = {
+            **cfg,
+            "TREASURY_SPOT_USDT": 375.0,
+            "TREASURY_FUTURES_USDT": 375.0,
+        }
+        with patch("bitget.trading.execution_safety._persist_portfolio_mdd_state"):
+            blocked = evaluate_nav_risk_gate(block_cfg)
         self.assertEqual(blocked.outcome, ExecutionGateOutcome.NAV_BLOCKED)
 
-        # paper path clamps FUTURES_LEVERAGE via the same helper as live
+        # paper FUT path uses resolve_leverage → resolve_max_leverage (same as executor)
         self.assertEqual(max_leverage_cap(cfg), 5.0)
-        self.assertEqual(min(float(cfg["FUTURES_LEVERAGE"]), max_leverage_cap(cfg)), 5.0)
+        self.assertAlmostEqual(resolve_max_leverage(20.0, cfg), 5.0)
+        self.assertAlmostEqual(
+            resolve_leverage(cfg, leverage_explicit=cfg["FUTURES_LEVERAGE"]),
+            5.0,
+        )
 
 
 class TestTailRiskReserve(unittest.TestCase):
@@ -572,6 +605,7 @@ class TestTailRiskReserve(unittest.TestCase):
             "TAIL_RISK_MIN_COVERAGE_PCT": 0.5,
             "TAIL_RISK_UNDERFUND_SIZE_MULT": 0.5,
             "TAIL_RISK_EMPTY_BLOCK": True,
+            "TAIL_FUND_CONSUMPTION_ENABLED": False,
             "NAV_DD_REDUCE_PCT": 15,
         }
         with patch(

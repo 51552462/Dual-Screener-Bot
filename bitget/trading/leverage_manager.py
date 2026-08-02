@@ -45,21 +45,15 @@ def resolve_leverage(
     leverage_explicit=None,
     default: float = 3.0,
 ) -> float:
-    from bitget.trading.execution_safety import max_leverage_cap
+    from bitget.trading.execution_safety import resolve_max_leverage
 
-    cap = max_leverage_cap(cfg)
-    
     # [아키텍트 수술] 코인 변동성 반비례 동적 레버리지 엔진 (Dynamic Leverage)
-    # 24시간 끊임없이 변하는 코인 시장의 특성상, 시장에 피바람(유동성 스트레스)이 불거나
-    # 펀딩비가 극단적일 때는 시스템이 스스로 생존을 위해 레버리지를 깎아내려(De-leveraging) 강제 청산 거리를 확보합니다.
     try:
         from bitget.reports.canary_panel_bg import load_canary_state
+
         canary = load_canary_state()
         stress = float(canary.get("crypto_liquidity_stress") or 0.0)
-        
-        # 스트레스 지수에 따라 동적으로 레버리지를 깎아냅니다 (최소 1x 보장)
-        # 예: 기본 레버리지가 10x일 때, 스트레스가 0.8이면 레버리지를 2x로 강제 축소
-        dynamic_multiplier = max(0.1, 1.0 - stress) 
+        dynamic_multiplier = max(0.1, 1.0 - stress)
     except Exception:
         dynamic_multiplier = 1.0
 
@@ -90,11 +84,9 @@ def resolve_leverage(
             lev = max(1.0, float(cfg.get("DEFAULT_REAL_EXECUTION_LEVERAGE", default)))
         except (TypeError, ValueError):
             lev = max(1.0, float(default))
-            
-    # 변동성에 따른 동적 레버리지 계산 적용
+
     dynamic_lev = max(1.0, lev * dynamic_multiplier)
-    
-    return float(min(dynamic_lev, cap))
+    return resolve_max_leverage(dynamic_lev, cfg)
 
 
 def normalize_margin_mode_token(raw: Any) -> Optional[str]:
