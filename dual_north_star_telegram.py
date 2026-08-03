@@ -172,7 +172,7 @@ def send_north_star_digest(
 
     try:
         import telegram_env
-        from telegram_message_queue import enqueue_telegram
+        from system_auto_pilot import send_telegram_report
 
         token = (telegram_env.get_report_token() or "").strip()
         chat_id = (telegram_env.get_report_chat_id() or "").strip()
@@ -183,20 +183,11 @@ def send_north_star_digest(
         max_len = 4000
         chunks = [html_msg[i : i + max_len] for i in range(0, len(html_msg), max_len)] or [html_msg]
         for chunk in chunks:
-            msg_id = enqueue_telegram(
-                "MAIN",
-                None,
-                chunk,
-                enabled=True,
-                send_profile="html",
-            )
-            if msg_id is None:
-                result["error"] = "enqueue_telegram failed (MAIN)"
+            if not send_telegram_report(chunk):
+                result["error"] = "send_telegram_report failed (REPORT_BOT)"
                 return result
         result["sent"] = True
-        result["queue_note"] = (
-            "enqueue_telegram(MAIN): FIFO per SQLite queue; async daemon 소비 · REPORT_BOT_* 사용"
-        )
+        result["delivery"] = "direct_http (cron-safe; dante-async 불필요)"
     except Exception as exc:
         result["error"] = str(exc)[:200]
 
