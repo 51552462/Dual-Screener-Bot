@@ -28,9 +28,10 @@ L-1
 | 병렬 L | **L-1** | **Claude OK ✅** · 디렉터 서버 검증 |
 | B-1 | Claude OK ✅ | |
 | B-2 | Claude OK ✅ · **4w shadow 관측** | |
-| B-3 | **Claude OK ✅** · **4w shadow 관측** (weekly batch) | |
+| B-3 | Claude OK ✅ · **4w shadow 관측** (weekly batch) | |
+| B-4 | **Claude OK ✅** · MAB log 관측 (소비처 없음) | |
 | L-2 | **Claude OK ✅** · 서버 install·drill 대기 | |
-| 다음 | A `06` 1차(2주) 후 | B-4 또는 Kelly Go/No-Go Handoff |
+| 다음 | A `06` 1차(2주) 후 | B-4b · C-1 · Kelly Go/No-Go Handoff |
 
 ---
 

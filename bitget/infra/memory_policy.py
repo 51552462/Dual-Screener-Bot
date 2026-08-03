@@ -42,7 +42,12 @@ CONFIG_WRITE_VALIDATION_ENABLED: bool = True  # A-5: reject out-of-range Kelly/l
 DEATHMATCH_KEY_NORMALIZE_ENABLED: bool = True  # B-1: BG→SPOT/FUT registry/deathmatch SSOT
 DEATHMATCH_ALLOCATION_SHADOW_ENABLED: bool = True  # B-2: log-only deathmatch alloc shadow
 WALK_FORWARD_SHADOW_ENABLED: bool = True  # B-3: log-only walk-forward OOS shadow judgment
-WALK_FORWARD_PROMOTION_BLOCK_ENABLED: bool = False  # B-3: live registry block — defer (shadow only)
+LIFECYCLE_EXPLORE_BUDGET_ENABLED: bool = True  # B-4: lifecycle MAB explore budget compute+log
+MAB_EXPLORE_BUDGET_DEFAULT: float = 0.0  # B-4: default when no churn (consumer not wired)
+MAB_EXPLORE_BUDGET_BASE: float = 0.10  # B-4: floor when churn present
+MAB_EXPLORE_BUDGET_CEILING: float = 0.50  # B-4: cap for computed ratio
+MAB_EXPLORE_PER_RETIRED: float = 0.02  # B-4: +ratio per deduped RETIRED group
+MAB_EXPLORE_PER_COOLED: float = 0.01  # B-4: +ratio per deduped COOLED group
 # OMS orphan escalation (exchange-only positions — block new entries, never flatten)
 OMS_ORPHAN_STREAK_PROPOSE_KILL: int = 2  # consecutive recon hits → propose KILL_SWITCH
 OMS_ORPHAN_ALERT_MIN_INTERVAL_SEC: float = 3600.0
