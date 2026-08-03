@@ -123,6 +123,22 @@ class TestDualNorthStarLedger(unittest.TestCase):
         self.assertTrue(gate.get("g3_blocked"))
         self.assertIn("not_candidate_reason", gate)
 
+    @patch("telegram_message_queue.enqueue_telegram", return_value=1)
+    @patch("telegram_env.get_report_chat_id", return_value="123")
+    @patch("telegram_env.get_report_token", return_value="tok")
+    @patch.object(ledger, "run_north_star_digest")
+    def test_send_uses_enqueue_main_signature(self, mock_run, _tok, _chat, mock_enqueue) -> None:
+        from dual_north_star_telegram import send_north_star_digest
+
+        mock_run.return_value = {"cadence": "daily", "tracks": {}, "comparison": {}, "meta": {}}
+        out = send_north_star_digest(persist=False)
+        self.assertTrue(out.get("sent"))
+        mock_enqueue.assert_called_once()
+        args, kwargs = mock_enqueue.call_args
+        self.assertEqual(args[0], "MAIN")
+        self.assertIsNone(args[1])
+        self.assertEqual(kwargs.get("send_profile"), "html")
+
 
 if __name__ == "__main__":
     unittest.main()

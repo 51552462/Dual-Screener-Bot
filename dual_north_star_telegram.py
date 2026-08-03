@@ -179,16 +179,23 @@ def send_north_star_digest(
         if not token or not chat_id:
             result["error"] = "REPORT_BOT_TOKEN / REPORT_BOT_CHAT_ID 미설정"
             return result
-        enqueue_telegram(
-            chat_id=chat_id,
-            text=html_msg,
-            bot_token=token,
-            send_profile="html",
-            target="MAIN",
-        )
+
+        max_len = 4000
+        chunks = [html_msg[i : i + max_len] for i in range(0, len(html_msg), max_len)] or [html_msg]
+        for chunk in chunks:
+            msg_id = enqueue_telegram(
+                "MAIN",
+                None,
+                chunk,
+                enabled=True,
+                send_profile="html",
+            )
+            if msg_id is None:
+                result["error"] = "enqueue_telegram failed (MAIN)"
+                return result
         result["sent"] = True
         result["queue_note"] = (
-            "enqueue_telegram: FIFO per SQLite queue; 동시 트리거 시 INSERT 순서대로 async daemon 소비"
+            "enqueue_telegram(MAIN): FIFO per SQLite queue; async daemon 소비 · REPORT_BOT_* 사용"
         )
     except Exception as exc:
         result["error"] = str(exc)[:200]
