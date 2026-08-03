@@ -156,6 +156,24 @@ def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _send_report_html(message: str) -> bool:
+    """REPORT_BOT direct HTTP — cron 위성 job용 (dante-async 큐 불필요)."""
+    import requests
+    import telegram_env
+
+    token = (telegram_env.get_report_token() or "").strip()
+    chat_id = (telegram_env.get_report_chat_id() or "").strip()
+    if not token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def send_north_star_digest(
     *,
     cadence: str = "daily",
@@ -172,7 +190,6 @@ def send_north_star_digest(
 
     try:
         import telegram_env
-        from system_auto_pilot import send_telegram_report
 
         token = (telegram_env.get_report_token() or "").strip()
         chat_id = (telegram_env.get_report_chat_id() or "").strip()
@@ -183,8 +200,8 @@ def send_north_star_digest(
         max_len = 4000
         chunks = [html_msg[i : i + max_len] for i in range(0, len(html_msg), max_len)] or [html_msg]
         for chunk in chunks:
-            if not send_telegram_report(chunk):
-                result["error"] = "send_telegram_report failed (REPORT_BOT)"
+            if not _send_report_html(chunk):
+                result["error"] = "send_report_html failed (REPORT_BOT HTTP)"
                 return result
         result["sent"] = True
         result["delivery"] = "direct_http (cron-safe; dante-async 불필요)"

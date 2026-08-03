@@ -123,7 +123,7 @@ class TestDualNorthStarLedger(unittest.TestCase):
         self.assertTrue(gate.get("g3_blocked"))
         self.assertIn("not_candidate_reason", gate)
 
-    @patch("system_auto_pilot.send_telegram_report", return_value=True)
+    @patch("dual_north_star_telegram._send_report_html", return_value=True)
     @patch("telegram_env.get_report_chat_id", return_value="123")
     @patch("telegram_env.get_report_token", return_value="tok")
     @patch.object(ledger, "run_north_star_digest")
