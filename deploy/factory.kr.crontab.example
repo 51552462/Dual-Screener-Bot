@@ -48,5 +48,10 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # --- Month-end grand report (self-gated; 23:30 KST=14:30 UTC, no KR/US/bitget overlap) ---
 30 23 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --monthly
 
+# --- Dual North Star digest (director: stock+bitget goal progress → REPORT_BOT) ---
+30 19 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest daily
+0  11 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest weekly
+5  0  1 * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest monthly
+
 # --- Legacy weekend brain surgery (optional) ---
 0 10 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && /home/ubuntu/dante_bots/Dual-Screener-Bot/venv/bin/python system_auto_pilot.py --run-autonomous-analysis-only >>/home/ubuntu/dante_bots/Dual-Screener-Bot/logs/autonomous_ubuntu.log 2>&1

@@ -58,6 +58,8 @@ Usage: ./factory.sh <flag>
     --daily         full daily chain (KR then US)
     --weekly        weekly Flow master report (+ 주말 실무자 결산·진화 리포트)
     --monthly       month-end grand report (self-gated: 월 마지막 날에만 발송)
+    --north-star-digest [daily|weekly|monthly]
+                    듀얼 북극성 진행장부 → 디렉터 텔레그램 (주식+Bitget 비교)
     --data-refresh  KR/US per-ticker OHLCV bulk refresh (legacy 07:00 bulk, lock-serialized)
 
   Satellite intel (legacy --daemon jobs, now first-class lock-serialized cron):
@@ -89,6 +91,13 @@ while [[ $# -gt 0 ]]; do
     --daily)     MODE="daily_audit" ;;
     --weekly)    MODE="weekly_master" ;;
     --monthly)   MODE="monthly_master" ;;
+    --north-star-digest)
+      shift
+      CADENCE="${1:-daily}"
+      case "$CADENCE" in daily|weekly|monthly|yearly) ;; *) CADENCE="daily" ;; esac
+      python "${ROOT}/scripts/north_star_digest.py" --cadence "$CADENCE"
+      exit $?
+      ;;
     --data-refresh) MODE="data_refresh" ;;
     --smart-money)  MODE="smart_money_refresh" ;;
     --limit-up)     MODE="limit_up_forensics" ;;

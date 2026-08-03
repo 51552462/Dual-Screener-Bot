@@ -2,50 +2,38 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **B-4 Claude OK ✅** — 묶음B (B-1~B-4) **1단계 구현·스펙 전부 완료** |
-| **status** | `SHADOW_OBSERVING` (A `06` + B-2 + B-3 + **B-4 로그** 병렬 · 코드 변경 없음) |
+| **sub-phase** | **NS-1** Claude **조건부 OK ✅** (2026-08-03) — R1~R6 Cursor 반영 완료 |
+| **status** | `SHADOW_OBSERVING` + **NS-1 digest** (cron 등록·2주 ledger 관측) |
 
-> **디렉터**: **`09_디렉터_쉬운요약.md`** · **`NEXT_STEP.md`**
+> **디렉터**: **`09_디렉터_쉬운요약.md`** · 서버 **cron 3줄** 등록
 
 ---
 
 ## 디렉터
 
-- **조치 없음** — 4-track 관측 **계속** (가상매매 + B-2 + B-3 + B-4 config 로그)
-- L-1/L-2 서버 설치는 여유 시
+1. 서버 cron: `factory.sh --north-star-digest` daily/weekly/monthly (`12_...md`)
+2. 4-track 관측 **계속**
+3. 2주 후 ledger·텔레그램 페이스 확인
 
 ---
 
 ## Claude Pro
 
-- B-4 OK ✅ · 묶음B 1단계 완료
-- **다음 착수 후보**: A `06` 1차(2주) 후 — **B-4b MAB 소비 배선** vs **C-1** vs Kelly Go/No-Go
+- NS-1 조건부 OK ✅ — 추가 수정 없으면 **NS-1b**(30일+ 연환산) Handoff 시점만 상의
 
 ---
 
 ## Cursor
 
-- **대기** — B-4b / C-1 Handoff 또는 A `06` 결과 기반 Kelly Go/No-Go
-- MAB 소비 배선 · Kelly prod — Handoff 전 착수 금지
+- NS-1 조건부 수정 **완료** · **대기** (NS-1b / C-1 / B-4b Handoff)
 
 ---
 
-## 병렬 트랙 (4-track)
+## 병렬 트랙
 
 | 트랙 | 상태 |
 |------|------|
-| A paper | `06` 관측 중 |
-| B-2 shadow | `SHADOW_OBSERVING` |
-| B-3 shadow | `SHADOW_OBSERVING` (weekly) |
-| B-4 MAB log | `SHADOW_OBSERVING` (config_kv 현재값 · 소비처 없음) |
+| A paper `06` | 관측 중 |
+| B-2/B-3/B-4 shadow | `SHADOW_OBSERVING` |
+| **NS-1 ledger/telegram** | ✅ 조건부 OK 반영 · cron 대기 |
 | L-1/L-2 | 서버 설치 대기 |
-
----
-
-## 여유 작업 후보
-
-| 후보 | 위험 | 메모 |
-|------|------|------|
-| **B-4b** MAB 소비 배선 | 🟡 | cap 0.50 재검토 · 값 시계열 로그 |
-| **C-1** bad tick | 🟢 | 관측 병렬 가능 |
-| **Kelly 실효** | 🔴 | A `06` 1차 + Go/No-Go |
