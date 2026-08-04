@@ -45,6 +45,7 @@
 | `12_듀얼북극성_진행장부_및_상품화.md` | Track A/B 비교 |
 | `CLAUDE_TO_CURSOR.md` | Claude → Cursor Handoff INBOX |
 | `CURSOR_TO_CLAUDE.md` | Cursor → Claude 검증 OUTBOX |
+| **`ARCHITECT_MIRROR.md`** | Claude 능동 구조 제안·Mirror 로그 (bitget 대칭) |
 
 ---
 
@@ -83,9 +84,9 @@ A-1→A-2→A-3→A-4→A-5 → B-1→B-2→B-3→B-4 → C-1→C-2→[C-3] → 
 
 ## Claude Pro — 지금부터 이렇게 (요약)
 
-**연속 작업이 끊기면** → `10_작업함_프로토콜.md` + **`NEXT_ACTION.md`** 먼저.
+**연속 작업이 끊기면** → `10_작업함_프로토콜.md` + **`NEXT_STEP.md`** + **`09_디렉터_쉬운요약.md`** 먼저.
 
-1. Knowledge: `NEXT_ACTION`, `CLAUDE_TO_CURSOR`, `CURSOR_TO_CLAUDE`, `05`, `00`, `10`, `08`, `01` …
+1. Knowledge: `NEXT_STEP`, `09`, `NEXT_ACTION`, `CURSOR_TO_CLAUDE`, **`ARCHITECT_MIRROR`**, `CLAUDE_TO_CURSOR`, `05`, `00`, `10`, `08`, `11`, `01` …
 2. **Claude에게 한 줄**: `NEXT_ACTION.md` status대로 — 보통 「CURSOR_TO_CLAUDE.md 검증, OK면 CLAUDE_TO_CURSOR.md에 Handoff」
 3. **Cursor에게 한 줄**: 「CLAUDE_TO_CURSOR.md 구현만, 끝에 CURSOR_TO_CLAUDE·05·00·NEXT_ACTION 갱신」
 
