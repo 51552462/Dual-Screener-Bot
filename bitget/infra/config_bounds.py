@@ -52,6 +52,10 @@ CONFIG_NUMERIC_BOUNDS: dict[str, tuple[float, float]] = {
     "BAD_TICK_MAX_GAP_PCT": (0.0, 100.0),
     "BAD_TICK_MAX_VS_MEDIAN_PCT": (0.0, 100.0),
     "BAD_TICK_MAX_BAR_RANGE_PCT": (0.0, 200.0),
+    "BAD_TICK_ATR_MULT": (1.0, 30.0),
+    "BAD_TICK_GAP_PCT": (0.01, 1.0),
+    "BAD_TICK_SKIP_SUMMARY_WINDOW_DAYS": (1.0, 90.0),
+    "AI_PROPOSAL_SUMMARY_WINDOW_DAYS": (1.0, 90.0),
 }
 
 # A-5 write-time REJECT bounds (CAT-K) — stricter than CONFIG_NUMERIC_BOUNDS clamps.

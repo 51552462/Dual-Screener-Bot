@@ -1,6 +1,7 @@
 import json
 import os
-from typing import Dict, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -1402,3 +1403,181 @@ def compute_practitioner_27(df_raw, idx_close, timeframe="1D"): return _practiti
 def compute_practitioner_28(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P28_BB_MID_CROSS_LONG"], "P28_BB_MID_CROSS_LONG", timeframe)
 def compute_practitioner_29(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P29_BB_MID_CROSS_SHORT"], "P29_BB_MID_CROSS_SHORT", timeframe)
 def compute_practitioner_30(df_raw, idx_close, timeframe="1D"): return _practitioner_signal(df_raw, idx_close, PRACTITIONER_RULES["P30_MTF_MOMENTUM_LONG"], "P30_MTF_MOMENTUM_LONG", timeframe)
+
+
+# ---------------------------------------------------------------------------
+# C-1 · Bad tick / flash crash filter (pre-try_add scanner path)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BadTickResult:
+    is_bad: bool
+    deviation_ratio: float
+    gap_pct: float
+    atr: float
+    true_range: float
+    reason: str
+    action: str
+
+
+def _bad_tick_cfg_bool(cfg: Mapping[str, Any], key: str, default: bool) -> bool:
+    raw = (cfg or {}).get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _bad_tick_cfg_float(cfg: Mapping[str, Any], key: str, default: float) -> float:
+    try:
+        raw = (cfg or {}).get(key, default)
+        if raw is None or raw == "":
+            return float(default)
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _bad_tick_cfg_int(cfg: Mapping[str, Any], key: str, default: int) -> int:
+    try:
+        return max(2, int(float((cfg or {}).get(key, default) or default)))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _ohlcv_arrays(ohlcv_window: Union[pd.DataFrame, Mapping[str, Any]]) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    if isinstance(ohlcv_window, pd.DataFrame):
+        df = ohlcv_window.copy()
+        for col in ("Open", "High", "Low", "Close"):
+            if col not in df.columns:
+                return None
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["Open", "High", "Low", "Close"])
+        if len(df) < 3:
+            return None
+        o = df["Open"].to_numpy(dtype=float)
+        h = df["High"].to_numpy(dtype=float)
+        l = df["Low"].to_numpy(dtype=float)
+        c = df["Close"].to_numpy(dtype=float)
+        return o, h, l, c
+    if isinstance(ohlcv_window, Mapping):
+        try:
+            o = np.asarray(ohlcv_window["Open"], dtype=float)
+            h = np.asarray(ohlcv_window["High"], dtype=float)
+            l = np.asarray(ohlcv_window["Low"], dtype=float)
+            c = np.asarray(ohlcv_window["Close"], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            return None
+        if min(len(o), len(h), len(l), len(c)) < 3:
+            return None
+        n = min(len(o), len(h), len(l), len(c))
+        return o[-n:], h[-n:], l[-n:], c[-n:]
+    return None
+
+
+def _true_range_series(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+    tr = np.empty(len(close), dtype=float)
+    tr[0] = max(high[0] - low[0], 0.0)
+    for i in range(1, len(close)):
+        tr[i] = max(
+            high[i] - low[i],
+            abs(high[i] - close[i - 1]),
+            abs(low[i] - close[i - 1]),
+        )
+    return tr
+
+
+def evaluate_bad_tick(
+    symbol: str,
+    market_type: str,
+    ohlcv_window: Union[pd.DataFrame, Mapping[str, Any]],
+    config: Optional[Mapping[str, Any]] = None,
+) -> BadTickResult:
+    """
+    C-1 SSOT: ATR deviation AND gap_pct must both exceed thresholds.
+    Soft-pass when disabled or insufficient OHLCV (never invent prices).
+    """
+    from bitget.infra.memory_policy import (
+        BAD_TICK_ACTION,
+        BAD_TICK_ATR_MULT,
+        BAD_TICK_C1_LOOKBACK_BARS,
+        BAD_TICK_FILTER_ENABLED,
+        BAD_TICK_GAP_PCT,
+    )
+
+    cfg = config if config is not None else SYS_CONFIG
+    action = str((cfg or {}).get("BAD_TICK_ACTION") or BAD_TICK_ACTION).strip().lower() or "skip"
+    if not _bad_tick_cfg_bool(cfg, "BAD_TICK_FILTER_ENABLED", BAD_TICK_FILTER_ENABLED):
+        return BadTickResult(False, 0.0, 0.0, 0.0, 0.0, "disabled", action)
+
+    lookback = _bad_tick_cfg_int(cfg, "BAD_TICK_LOOKBACK_BARS", BAD_TICK_C1_LOOKBACK_BARS)
+    atr_mult = _bad_tick_cfg_float(cfg, "BAD_TICK_ATR_MULT", BAD_TICK_ATR_MULT)
+    gap_thr = _bad_tick_cfg_float(cfg, "BAD_TICK_GAP_PCT", BAD_TICK_GAP_PCT)
+
+    arrays = _ohlcv_arrays(ohlcv_window)
+    if arrays is None:
+        return BadTickResult(False, 0.0, 0.0, 0.0, 0.0, "soft_pass_insufficient_ohlcv", action)
+
+    _o, h, l, c = arrays
+    if len(c) < lookback + 2:
+        return BadTickResult(False, 0.0, 0.0, 0.0, 0.0, "soft_pass_short_history", action)
+
+    prev_close = float(c[-2])
+    last_close = float(c[-1])
+    if prev_close <= 0 or last_close <= 0:
+        return BadTickResult(True, 0.0, 0.0, 0.0, 0.0, "non_positive_close", action)
+
+    tr = _true_range_series(h, l, c)
+    atr = float(np.mean(tr[-(lookback + 1) : -1]))
+    true_range = float(tr[-1])
+    deviation_ratio = (true_range / atr) if atr > 0 else 0.0
+    gap_pct = abs(last_close - prev_close) / prev_close
+
+    is_bad = (deviation_ratio > atr_mult) and (gap_pct > gap_thr)
+    reason = "bad_tick_spike" if is_bad else "ok"
+    if not is_bad:
+        return BadTickResult(False, deviation_ratio, gap_pct, atr, true_range, reason, action)
+
+    _ = symbol
+    _ = market_type
+    return BadTickResult(True, deviation_ratio, gap_pct, atr, true_range, reason, action)
+
+
+def bad_tick_should_skip_candidate(
+    symbol: str,
+    market_type: str,
+    ohlcv_window: Union[pd.DataFrame, Mapping[str, Any]],
+    config: Optional[Mapping[str, Any]] = None,
+    *,
+    scanner: str = "unknown",
+) -> bool:
+    """Return True when candidate should be dropped (v1: skip + ops_events)."""
+    result = evaluate_bad_tick(symbol, market_type, ohlcv_window, config)
+    if not result.is_bad:
+        return False
+    if result.action != "skip":
+        return False
+    try:
+        from bitget.infra.ops_logger import insert_ops_event
+
+        insert_ops_event(
+            component=f"scanner.{scanner}"[:128],
+            severity="INFO",
+            event="bad_tick_filtered",
+            payload={
+                "symbol": symbol,
+                "market_type": market_type,
+                "scanner": scanner,
+                "deviation_ratio": round(result.deviation_ratio, 6),
+                "gap_pct": round(result.gap_pct, 6),
+                "atr": round(result.atr, 8),
+                "true_range": round(result.true_range, 8),
+                "reason": result.reason,
+                "action": result.action,
+            },
+        )
+    except Exception:
+        pass
+    return True

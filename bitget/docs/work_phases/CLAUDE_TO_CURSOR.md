@@ -1,6 +1,31 @@
 # CLAUDE → CURSOR (Bitget Handoff INBOX)
 
-> **갱신**: 2026-08-02
+> **갱신**: 2026-08-04 · **C-1 Handoff** (Cursor 구현 완료 → Claude OK 대기)
+
+---
+
+## [CAT-C] C-1 — Bad Tick / Flash Crash Filter · **Cursor 구현 완료**
+
+### sub-phase ID
+C-1
+
+### SSOT (변경 금지 unless noted)
+- `bitget/signal_engines.py` — `evaluate_bad_tick` · `bad_tick_should_skip_candidate`
+- `bitget/supernova_hunter.py` · `bitget/master_scanner.py` — 호출부
+- `blackhole_hunter` / `underdog_miner` — N/A (closed-trade analytics, 주석만)
+- config: `BAD_TICK_FILTER_ENABLED` · `BAD_TICK_LOOKBACK_BARS` · `BAD_TICK_ATR_MULT` · `BAD_TICK_GAP_PCT` · `BAD_TICK_ACTION`
+
+### Cursor 구현 요약 (2026-08-04)
+- ATR deviation **AND** gap_pct 동시 초과 시 skip
+- `ops_events` `bad_tick_filtered` 기록
+- P0-6: `master_scanner` 기존 `bse` import 유지 — 별도 수정 불필요
+- 테스트: `bitget/tests/test_bad_tick_filter_c1.py` **5 passed**
+
+### 디렉터 Ask (P0-6)
+**옵션 A 채택** — master_scanner는 이미 `import bitget.signal_engines as bse` 로 해결됨.
+
+### C-2
+명시적 **defer** (close PnL attribution).
 
 ---
 

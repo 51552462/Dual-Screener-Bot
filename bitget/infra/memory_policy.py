@@ -87,6 +87,29 @@ BAD_TICK_MAX_GAP_PCT: float = 15.0          # |px/prev_close−1|%
 BAD_TICK_MAX_VS_MEDIAN_PCT: float = 20.0    # |px/median(N)−1|%
 BAD_TICK_MAX_BAR_RANGE_PCT: float = 40.0    # (high−low)/close %
 BAD_TICK_OHLCV_TF: str = "1H"               # live path default OHLCV TF
+# C-1 scanner pre-filter (signal_engines.evaluate_bad_tick — pre try_add)
+BAD_TICK_FILTER_ENABLED: bool = True
+BAD_TICK_C1_LOOKBACK_BARS: int = 20         # C-1 default when key absent (price_sanity may use BAD_TICK_LOOKBACK_BARS)
+BAD_TICK_ATR_MULT: float = 6.0
+BAD_TICK_GAP_PCT: float = 0.15              # ratio |close-prev|/prev
+BAD_TICK_ACTION: str = "skip"
+# C-1b weekly ops_events aggregate (read-only)
+BAD_TICK_SKIP_SUMMARY_ENABLED: bool = True
+BAD_TICK_SKIP_SUMMARY_WINDOW_DAYS: int = 7
+# D-1 structured LLM proposal validate/persist (config_kv 미접촉)
+AI_PROPOSAL_STRUCTURED_ENABLED: bool = True
+# D-1b weekly LLM proposal observability (read-only)
+AI_PROPOSAL_SUMMARY_ENABLED: bool = True
+AI_PROPOSAL_SUMMARY_WINDOW_DAYS: int = 7
+# D-2 human approval gate (config via set_config_value only after approve)
+AI_PROPOSAL_APPROVAL_GATE_ENABLED: bool = True
+# D-2 poll — REPORT_BOT getUpdates for /proposal_approve|reject
+AI_PROPOSAL_APPROVAL_POLL_ENABLED: bool = True
+# D-3a weekly cost observability (read-only)
+COST_REPORT_ENABLED: bool = True
+COST_REPORT_WINDOW_DAYS: int = 7
+# D-3b paper vs real parity (scaffold — default dormant, no pipeline hook)
+PARITY_MONITOR_ENABLED: bool = False
 # Live WS/OMS smoke (read-only observational — never starts sockets / places orders)
 WS_OMS_SMOKE_HEARTBEAT_MAX_AGE_SEC: float = 180.0  # auto_pilot HB is 60s
 WS_OMS_SMOKE_HB_LOOKBACK_HOURS: float = 2.0

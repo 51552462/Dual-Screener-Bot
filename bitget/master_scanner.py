@@ -29,6 +29,7 @@ from bitget.executor import execute_real_order
 from bitget.forward_tester import generate_mutant_strategies, log_real_execution, track_daily_positions, try_add_virtual_position
 import bitget.signal_engines as bse
 from bitget.signal_engines import (
+    bad_tick_should_skip_candidate,
     compute_ema5_signal,
     compute_master_signal,
     compute_nulrim_signal,
@@ -368,12 +369,16 @@ def _scan_one_table(
         if df is None or len(df) < 240:
             return []
         symbol = "_".join(tbl.split("_")[2:-1])
+        mkt = "futures" if "_FUT_" in tbl else "spot"
+        scan_cfg = _load_system_config()
         hits = []
         rank = hit_rank_start
         engine_pool = _build_engine_pool(engine_filter)
         for engine_name, engine in engine_pool:
             hit, sig_type, out_df, dbg = engine(df, idx_close, tf)
             if hit:
+                if bad_tick_should_skip_candidate(symbol, mkt, df, scan_cfg, scanner="master_scanner"):
+                    continue
                 rank += 1
                 signal_side = str(dbg.get("side", "LONG")).upper()
                 chart_main = save_chart(out_df, f"{symbol}_{tf}_{engine_name}", rank, show_volume=True, is_promo=False, side=signal_side)
@@ -387,6 +392,10 @@ def _scan_one_table(
         if include_embedded_supernova:
             sn = _supernova_hit(df, symbol, tf)
         else:
+            sn = None
+        if sn is not None and bad_tick_should_skip_candidate(
+            symbol, mkt, df, scan_cfg, scanner="master_scanner_supernova"
+        ):
             sn = None
         if sn is not None:
             rank += 1

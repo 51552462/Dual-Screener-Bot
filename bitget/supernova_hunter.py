@@ -523,6 +523,11 @@ def execute_supernova_live_scan(market_type, timeframe):
             if not allowed:
                 return None
 
+            from bitget.signal_engines import bad_tick_should_skip_candidate
+
+            if bad_tick_should_skip_candidate(symbol, market_type, df, cfg, scanner="supernova"):
+                return None
+
             facts = {
                 "v_cpv": float(cpv),
                 "v_yang": float(tb),

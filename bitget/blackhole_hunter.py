@@ -1,3 +1,7 @@
+"""
+Blackhole hunter — closed-trade SHORT squeeze DNA learning.
+C-1 bad-tick filter: N/A (no scanner→try_add candidate path).
+"""
 import json
 import os
 import sqlite3

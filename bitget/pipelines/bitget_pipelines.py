@@ -308,6 +308,27 @@ def _step_walk_forward_shadow() -> None:
     run_walk_forward_shadow_job()
 
 
+def _step_bad_tick_skip_summary() -> None:
+    """C-1b — weekly bad_tick_filtered ops_events aggregate (read-only)."""
+    from bitget.observability.bad_tick_skip_summary_bg import run_bad_tick_skip_summary_job
+
+    run_bad_tick_skip_summary_job()
+
+
+def _step_llm_proposal_summary() -> None:
+    """D-1b — weekly bitget_llm_proposals + parse_error ops aggregate (read-only)."""
+    from bitget.observability.llm_proposal_summary_bg import run_llm_proposal_summary_job
+
+    run_llm_proposal_summary_job()
+
+
+def _step_cost_report() -> None:
+    """D-3a — weekly Gemini cost proxy + paper notional rollup (read-only)."""
+    from bitget.observability.cost_report_bg import run_cost_report_job
+
+    run_cost_report_job()
+
+
 def _step_weekly_flow_master() -> None:
     """주식 factory weekly_master → weekly_flow_master 패리티."""
     from bitget.auto_pilot import send_weekly_flow_master_report
@@ -830,6 +851,9 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
         [
             StepSpec("weekly_evolution", _step_weekly_evolution, critical=True, delay_after_sec=1.0),
             StepSpec("walk_forward_shadow", _step_walk_forward_shadow, critical=False),
+            StepSpec("bad_tick_skip_summary", _step_bad_tick_skip_summary, critical=False),
+            StepSpec("llm_proposal_summary", _step_llm_proposal_summary, critical=False),
+            StepSpec("cost_report", _step_cost_report, critical=False),
             StepSpec("weekly_coin_pri", _step_weekly_coin_pri, critical=False),
             StepSpec("weekly_coin_regime_archive", _step_weekly_coin_regime_archive, critical=False),
             StepSpec("regime_deep_archive", _step_regime_deep_archive_bg, critical=False),

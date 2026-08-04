@@ -1,35 +1,39 @@
 # NEXT_STEP — 다음 한 걸음
 
-> **갱신**: 2026-08-03 · NS-1 Claude 조건부 OK · Cursor 반영 완료
+> **갱신**: 2026-08-04 · C-1 Claude OK · Mirror 첫 블록 반영
 
 ---
 
 | 필드 | 값 |
 |------|-----|
-| **지금 단계** | 4-track 관측 + **NS-1 텔레그램 다이제스트** (cron 켜면 매일 리포트) |
-| **status** | `SHADOW_OBSERVING` |
-| **한 줄** | cron 3줄 등록 → 2주 ledger 쌓기 → 페이스·게이트 의미 확인 |
+| **지금 단계** | C-1 ✅ → **ops 관측 미니잡** Handoff 요청 |
+| **status** | `SHADOW_OBSERVING` + `WAIT_CLAUDE_HANDOFF` (C-1 ops) |
+| **한 줄** | price_sanity 통합 아님 — 다음은 skip률 보이게 만든 뒤 D-1 |
 
 ---
 
 ## 당신 체크리스트
 
-- [ ] 서버 cron 3줄 (`12_듀얼북극성_진행장부_및_상품화.md`)
-- [ ] `REPORT_BOT_TOKEN` / `REPORT_BOT_CHAT_ID` 확인
-- [ ] 4-track 관측 계속
-- [ ] (여유) L-1/L-2 서버 설치
+- [ ] Claude에게 **C-1 ops 미니잡** Handoff 요청 (`ARCHITECT_MIRROR` #1)
+- [ ] 4-track · NS-1 관측 계속
+- [ ] (비차단) C-1 ↔ price_sanity threshold 1회 대조 (코드 변경 없음)
+- [ ] L-1/L-2 서버 (Layer 1)
 
 ---
 
-## 텔레그램에서 보이는 것 (NS-1)
+## Claude가 확정한 것 (C-1 Mirror)
 
-- **28일 미만**: "초기 관측 중 · 페이스 미확정" 배너
-- **Bitget**: "paper 미검증(C-2 전)" 배너 (C-2 통과 전까지)
-- **B0**: 리더 없음 — 주식·코인 나란히만
-- **B1+**: 리더 = 목표달성률% (숫자 혼용 아님)
+- **C-1 OK** — blackhole/underdog N/A 수용
+- **price_sanity와 분리 유지** — 통합 안 함
+- **다음 순서**: ops 미니잡 → D-1 → P1-7 뒤로
 
 ---
 
-## 다음 코드 (급하지 않음)
+## 다음 코드 우선순위
 
-🟡 NS-1b (30일+ 연환산) · 🟡 B-4b · 🟢 C-1 · 🔴 Kelly 실효
+| 순서 | ID | 등급 |
+|------|-----|------|
+| **1 (지금)** | **C-1 ops 관측 미니** | 🟡 read-only |
+| 2 | D-1 JSON proposal | 🟢 |
+| 3 | P1-7 watchdog | 낮음 |
+| 금지 | C-2 · MDD 5% · alloc live | 🔴 |

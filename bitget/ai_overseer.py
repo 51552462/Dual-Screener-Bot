@@ -53,6 +53,15 @@ def send_telegram_alert(text):
         log_exception(logger, "telegram send failed: %s", e)
 
 
+def _process_structured_llm_proposal(raw_text: str) -> None:
+    """D-1 — validate/persist structured JSON proposal; never writes config_kv."""
+    try:
+        from bitget.governance.ai_proposal_schema_bg import process_structured_llm_proposal
+    except ImportError:
+        return
+    process_structured_llm_proposal(raw_text, telegram_alert=send_telegram_alert)
+
+
 GEMINI_RAW_FALLBACK_PREFIX = "⚠️ [AI 요약 실패 - API 한도 초과] 규칙 감사 본문은 유지됩니다."
 
 
@@ -191,11 +200,24 @@ def run_ai_auditor():
     try:
         ai_res = safe_generate_content(model="gemini-2.5-flash", contents=prompt)
         ai_text = (getattr(ai_res, "text", "") or "").strip() or f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}"
+        _process_structured_llm_proposal(ai_text)
         send_telegram_alert(ai_text)
         logger.info("[AI overseer] telegram report sent")
     except Exception as e:
         log_exception(logger, "[AI overseer] gemini/analysis error: %s", e)
         send_telegram_alert(f"{GEMINI_RAW_FALLBACK_PREFIX}\n\n{prompt}\n\n(상세: {e})")
+
+
+def _poll_proposal_approval_commands() -> None:
+    """D-2 poll — non-blocking getUpdates (timeout=0) each overseer tick."""
+    try:
+        from bitget.governance.proposal_approval_poll_bg import run_proposal_approval_poll_job
+    except ImportError:
+        return
+    try:
+        run_proposal_approval_poll_job(timeout=0)
+    except Exception as ex:
+        log_exception(logger, "proposal approval poll error: %s", ex)
 
 
 def overseer_loop():
@@ -234,6 +256,7 @@ def overseer_loop():
                 )
                 continue
             loop_error = False
+            _poll_proposal_approval_commands()
             sleep_or_backoff(normal_sec=OVERSEER_POLL_SEC, after_error=loop_error)
         except Exception as e:
             log_exception(logger, "overseer scheduler error: %s", e)

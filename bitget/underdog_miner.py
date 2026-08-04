@@ -1,3 +1,7 @@
+"""
+Underdog miner — closed-trade GMM clustering.
+C-1 bad-tick filter: N/A (no scanner→try_add candidate path).
+"""
 import json
 import os
 import random
