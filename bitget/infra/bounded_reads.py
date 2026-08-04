@@ -224,11 +224,16 @@ def overseer_daily_closed_sql(
 
 
 def overseer_rnd_day_count_sql(*, today: str) -> tuple[str, tuple]:
-    """R&D row count — single scalar COUNT (no LIMIT row fetch)."""
+    """Research/incubator entry count — Bitget-native sig types + legacy [R&D_*]."""
     day = str(today)[:10]
     sql = """
         SELECT COUNT(*) AS cnt FROM bitget_forward_trades
-        WHERE entry_date=? AND sig_type LIKE '%[R&D_%'
+        WHERE entry_date=?
+          AND (
+            IFNULL(sig_type, '') LIKE '%[R&D_%'
+            OR IFNULL(sig_type, '') LIKE '%INCUBATOR%'
+            OR IFNULL(sig_type, '') LIKE '%SUPERNOVA%'
+          )
     """
     return sql, (day,)
 

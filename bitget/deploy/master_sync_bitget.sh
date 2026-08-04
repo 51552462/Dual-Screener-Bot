@@ -36,6 +36,9 @@ bash "${SCRIPT_DIR}/reset_bitget_pipeline.sh" || {
 echo "========== STEP 1: OHLCV 전체 갱신 (data_refresh) =========="
 BITGET_REPORT_HYDRATE_FULL=1 bash "$BG" --data-refresh --force-scan || echo "(data_refresh degraded — 계속)"
 
+echo "========== STEP 1b: Supernova CSV / 클러스터 템플릿 복구 =========="
+bash "$BG" --recover-artifacts || echo "(recover-artifacts 실패 — OHLCV 부족 시 로그 확인)"
+
 echo "========== STEP 2: 일일 감사 + 리포트 (daily_audit) =========="
 bash "$BG" --daily-audit --lock-timeout 900 || echo "(daily_audit 일부 실패 — 로그 확인)"
 

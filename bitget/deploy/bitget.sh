@@ -79,6 +79,7 @@ Usage: bitget/deploy/bitget.sh <flag>
   --monthly-grand     monthly grand settlement report (self-gated: month-end only)
   --reconcile         OMS reconciliation
   --data-refresh      full MTF OHLCV update
+  --recover-artifacts rebuild Supernova CSV + cluster templates (data_miner)
   --canary            export crypto canary state JSON (file bridge → stock regime)
   --gap-heal          WS stale -> REST backfill
   --snapshot          CQRS market DB backup (read replica)
@@ -131,6 +132,7 @@ while [[ $# -gt 0 ]]; do
     --monthly-grand)   MODE="monthly_grand" ;;
     --reconcile)        MODE="reconcile" ;;
     --data-refresh)     MODE="data_refresh" ;;
+    --recover-artifacts) MODE="recover_artifacts" ;;
     --canary)           MODE="canary" ;;
     --gap-heal)         MODE="gap_heal" ;;
     --snapshot)         MODE="snapshot" ;;
@@ -241,6 +243,11 @@ if [[ "$MODE" == "data_refresh" ]]; then
   echo "[bitget.sh] data_refresh hard timeout=${DR_TIMEOUT}s"
   exec timeout --signal=TERM --kill-after=120 "${DR_TIMEOUT}" \
     python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1
+fi
+
+if [[ "$MODE" == "recover_artifacts" ]]; then
+  echo "[bitget.sh] recover_artifacts → python -m bitget.data_miner (Supernova CSV + LIVE_CLUSTER_TEMPLATES)"
+  exec python -m bitget.data_miner >>"$LOG_FILE" 2>&1
 fi
 
 exec python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1

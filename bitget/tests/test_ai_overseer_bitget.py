@@ -96,4 +96,6 @@ def test_overseer_rnd_day_count_sql_is_scalar_count():
     sql, params = overseer_rnd_day_count_sql(today="2026-07-11")
     assert "COUNT(*)" in sql
     assert "LIMIT" not in sql
+    assert "INCUBATOR" in sql
+    assert "SUPERNOVA" in sql
     assert params == ("2026-07-11",)
