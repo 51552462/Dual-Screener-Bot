@@ -7,7 +7,20 @@
 #     락 파일과 schedule_lock_state 만 정리.
 #
 #   bash bitget/deploy/reset_bitget_pipeline.sh
+#   bash bitget/deploy/reset_bitget_pipeline.sh --no-restart   # data_refresh 단독 실행 전
 set -euo pipefail
+
+NO_RESTART=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-restart) NO_RESTART=1 ;;
+    -h|--help)
+      echo "Usage: bash bitget/deploy/reset_bitget_pipeline.sh [--no-restart]"
+      echo "  --no-restart  락만 정리하고 systemd 재기동 생략 (data_refresh 단독 실행용)"
+      exit 0
+      ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BITGET_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -79,13 +92,18 @@ fi
 echo "locks cleared"
 
 echo "=== [6/6] systemd 재기동 (ws → async → factory) ==="
-sudo systemctl daemon-reload 2>/dev/null || true
-for unit in dante-bitget-ws dante-bitget-async dante-bitget-factory; do
-  if systemctl list-unit-files 2>/dev/null | grep -q "^${unit}.service"; then
-    sudo systemctl restart "$unit" 2>/dev/null || true
-    sudo systemctl is-active "$unit" 2>/dev/null || true
-  fi
-done
+if [[ "$NO_RESTART" -eq 1 ]]; then
+  echo "SKIP (--no-restart): data_refresh/recover 단독 실행 후 수동 start 하세요"
+  echo "  sudo systemctl start dante-bitget-ws dante-bitget-async dante-bitget-factory"
+else
+  sudo systemctl daemon-reload 2>/dev/null || true
+  for unit in dante-bitget-ws dante-bitget-async dante-bitget-factory; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${unit}.service"; then
+      sudo systemctl restart "$unit" 2>/dev/null || true
+      sudo systemctl is-active "$unit" 2>/dev/null || true
+    fi
+  done
+fi
 
 echo "=== 완료 — 락 재확인 ==="
 ls -la "$RUNTIME_LOCK" "$DR_LOCK" 2>/dev/null || echo "lock clear"
