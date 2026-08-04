@@ -40,6 +40,7 @@ meta_trust_matrix.json
 # 덮어쓰거나(운영 사고 위험), "untracked working tree files would be
 # overwritten by merge" 로 git pull 자체를 막는다 — 절대 버전관리 대상 아님.
 meta_governor_state.json
+bitget_meta_governor_state.json
 system_config.json
 system_config.sqlite
 Supernova_Flow_Tracking_Master.csv

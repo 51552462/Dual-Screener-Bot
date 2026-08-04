@@ -166,6 +166,7 @@ _dante_pre_update_sqlite_backup() {
     for rel in \
       Supernova_Flow_Tracking_Master.csv \
       meta_governor_state.json \
+      bitget_meta_governor_state.json \
       validated_live_mutants.json \
       system_config.json \
       news_data.sqlite; do
