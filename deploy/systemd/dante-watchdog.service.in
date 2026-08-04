@@ -8,6 +8,9 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Environment=DANTE_OPS_EVENTS_DB=@@INSTALL_ROOT@@/ops_events.sqlite
+# 운영 SSOT: .env 에 DB_STORAGE_PATH=/var/lib/quant-factory/data 이면
+# DANTE_OPS_EVENTS_DB=/var/lib/quant-factory/data/ops_events.sqlite 로 override 필수
+# (watchdog.py는 미설정 시 factory_data_dir()/ops_events.sqlite 자동 사용)
 Environment=WATCHDOG_STATE_DIR=/var/lib/dante-watchdog
 EnvironmentFile=-@@INSTALL_ROOT@@/.env
 ExecStart=@@INSTALL_ROOT@@/venv/bin/python -u @@INSTALL_ROOT@@/watchdog.py

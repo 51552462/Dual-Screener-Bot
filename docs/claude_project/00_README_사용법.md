@@ -88,13 +88,18 @@ Claude Pro Project Knowledge에는 **전부 올리되**, 대화 시 **필요한 
        → 🔴 Critical(F/G/N/B) → 디렉터 승인
 ```
 
----
-
-## 5. 상세 depth가 더 필요할 때
-
-로컬 `docs/한미_퀀트_전체구조_100%_아키텍처.md` — Claude Knowledge에 **넣지 말 것**(너무 큼).  
-디렉터가 특정 장 번호를 지정하면 Cursor가 해당 섹션만 인용.
+**실행 SSOT**: `docs/work_phases/` — `00_마스터_로드맵.md`, `07`, `10`, `NEXT_STEP.md`, `09`
 
 ---
 
-*버전 2026-07-31 · 상위 문서: `docs/한미_퀀트_듀얼AI_카테고리_구성가이드.md`*
+## 6. Bitget 프로젝트와의 관계
+
+| | 본 폴더 | `bitget/docs/claude_project/` |
+|---|---------|-------------------------------|
+| 범위 | KR/US | Bitget |
+| MDD | 10% | 5% |
+| work_phases | `docs/work_phases/` | `bitget/docs/work_phases/` |
+
+---
+
+*버전 2026-08-04 · 상위: `docs/work_phases/README.md`*

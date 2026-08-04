@@ -1,6 +1,6 @@
 # 작업 Phase 문서 — 통합본 (Claude Pro + Cursor + 로컬)
 
-> **갱신**: 2026-08-01 — 기존묶음·확장 sub-phase·로컬 코드 대조·진행로그·검증체크리스트 **전부 병합**.
+> **갱신**: 2026-08-04 — bitget 구조 이식 + M-R0 복구
 
 ---
 
@@ -10,7 +10,7 @@
 |------|------|------|
 | `docs/claude_project/` | Cursor 카테고리 분해 | 구조·SSOT·경계·상수 (bitget 제외) |
 | **`docs/work_phases/` (본 폴더)** | Claude Pro + Cursor | **실행 로드맵·작업 스펙·로컬 현황·진행·검증** |
-| `00_마스터_로드맵.md` (Desktop 또는 레포) | Claude Pro | 헌법 (MDD 10%) |
+| **`00_마스터_로드맵.md`** | Claude Pro + Cursor | **헌법 (MDD 10%)** |
 
 ### Desktop `클로드 프로/` 와의 관계
 
@@ -38,7 +38,11 @@
 | `07_듀얼AI_협업루프.md` | **Claude↔Cursor 6단계 SSOT** · Claude Pro 시작 멘트 |
 | `08_디렉터_중계_가이드.md` | **디렉터 복붙 템플릿** · 검증 요청·OK 형식 |
 | `10_작업함_프로토콜.md` | **INBOX/OUTBOX** · 연속 작업 SSOT |
-| `NEXT_ACTION.md` | 지금 누가/뭘 (양쪽 첫 읽기) |
+| `NEXT_ACTION.md` | AI status SSOT |
+| **`NEXT_STEP.md`** | 디렉터 다음 한 걸음 |
+| **`09_디렉터_쉬운요약.md`** | 비개발 한 장 요약 |
+| **`11_협업_효율_점검.md`** | COLLAB_HEALTH |
+| `12_듀얼북극성_진행장부_및_상품화.md` | Track A/B 비교 |
 | `CLAUDE_TO_CURSOR.md` | Claude → Cursor Handoff INBOX |
 | `CURSOR_TO_CLAUDE.md` | Cursor → Claude 검증 OUTBOX |
 

@@ -50,6 +50,13 @@ def _ops_db_path() -> str:
         v = (os.environ.get(key) or "").strip()
         if v:
             return v
+    # SSOT: ops_logger와 동일 — DB_STORAGE_PATH/data/ops_events.sqlite
+    try:
+        from factory_data_paths import factory_data_dir
+
+        return os.path.join(factory_data_dir(), "ops_events.sqlite")
+    except Exception:
+        pass
     from ops_logger import OPS_EVENTS_DB_PATH
 
     return OPS_EVENTS_DB_PATH

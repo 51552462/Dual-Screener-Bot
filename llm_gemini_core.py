@@ -62,6 +62,7 @@ class LlmCallSpec:
     user_payload: str
     system_prompt: str = ""
     model: str = "gemini-2.0-flash"
+    provider: str = "gemini"
     timeout_sec: float = 25.0
     cache_key: Optional[str] = None
     use_cache: bool = True
@@ -203,12 +204,15 @@ def _cache_put(key: str, text: str) -> None:
 
 
 def _make_cache_key(spec: LlmCallSpec) -> str:
+    prov = (spec.provider or "gemini").strip().lower()
+    model = (spec.model or "default").strip()
+    prefix = f"{prov}:{model}:"
     if spec.cache_key:
-        return f"{spec.task_id}:{spec.cache_key}"
+        return f"{prefix}{spec.task_id}:{spec.cache_key}"
     h = hashlib.sha256(
         (spec.task_id + "|" + spec.system_prompt + "|" + spec.user_payload).encode("utf-8")
     ).hexdigest()[:32]
-    return f"{spec.task_id}:{h}"
+    return f"{prefix}{spec.task_id}:{h}"
 
 
 def sanitize_user_visible_text(text: str, *, task_id: str = "") -> str:

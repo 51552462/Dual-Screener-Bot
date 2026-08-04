@@ -627,9 +627,15 @@ def dispatch_factory_mode(
 
     try:
         with factory_job_lock(mode, timeout_sec=lock_timeout_sec):
+            try:
+                from overseer_quality import begin_pipeline_run
+
+                begin_pipeline_run(mode)
+            except Exception:
+                pass
             aborted = False
             for spec in pipeline:
-                if aborted:
+                if aborted and spec.name != "ai_overseer":
                     report.steps.append(
                         StepResult(
                             name=spec.name,
@@ -643,11 +649,19 @@ def dispatch_factory_mode(
                 report.steps.append(result)
                 if not result.ok and result.critical:
                     aborted = True
+                    try:
+                        from overseer_quality import record_pipeline_critical_failure
+
+                        record_pipeline_critical_failure(spec.name)
+                    except Exception:
+                        pass
                     logger.error(
                         "factory pipeline aborted at critical step %s — "
-                        "remaining steps (incl. ai_overseer) will not execute",
+                        "remaining steps skipped except ai_overseer (degraded audit)",
                         spec.name,
                     )
+                    if spec.name == "ai_overseer":
+                        continue
                     continue
                 if spec.delay_after_sec > 0:
                     time.sleep(spec.delay_after_sec)

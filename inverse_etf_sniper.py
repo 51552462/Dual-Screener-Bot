@@ -738,7 +738,7 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
         if px is None or px <= 0:
             continue
 
-       key = _tail_fund_key(mkt)
+        key = _tail_fund_key(mkt)
         tail_bal = _numeric_tail_balance(key)
         cap_pct, cap_meta = _resolve_inverse_cap_pct(mkt, cfg)
         cap_reason = str(cap_meta.get("reason") or "")
@@ -794,7 +794,7 @@ def run_inverse_etf_sniper_cycle() -> dict[str, Any]:
             summary["dynamic_cap"] = cap_meta
             break
 
-        ttry:
+        try:
             # ===========================================================================
             # 👑 [블랙스완 헌터 엑셀러레이터] 무제한 익절(Uncapped TP) 및 타이트 추적(Trailing)
             # 폭락장(BEAR/HIGH_VOL)에서는 인버스의 목표 수익률 족쇄(Ceiling)를 박살내어 무한대로 열어두고,

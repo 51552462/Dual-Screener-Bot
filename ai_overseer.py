@@ -166,6 +166,12 @@ def run_ai_auditor():
     """Rules-first 감사(Anomaly) → SSOT 본문 → 선택적 LLM 해석."""
     print("🛡️ [AI 최고 감시자] Rules-first 감사 스캔 중...")
     try:
+        from overseer_quality import reset_session_llm_failures
+
+        reset_session_llm_failures()
+    except Exception:
+        pass
+    try:
         from factory_artifact_guard import ensure_factory_artifacts
 
         heal = ensure_factory_artifacts()
@@ -184,21 +190,17 @@ def run_ai_auditor():
         meta = {}
 
     try:
-        from meta_state_store import is_meta_state_degraded
+        from overseer_quality import (
+            format_degraded_audit_banner,
+            format_overseer_quality_footer_html,
+            record_overseer_anomaly,
+            resolve_overseer_audit_mode,
+        )
 
-        if is_meta_state_degraded(meta):
-            rk = meta.get("META_REGIME_KEY", "UNKNOWN")
-            st = meta.get("META_GOVERNOR_LAST_RUN_STATUS", "NEVER")
-            at = meta.get("META_GOVERNOR_LAST_RUN_AT", "—")
-            raise RuntimeError(
-                "overseer blocked: meta state degraded "
-                f"(regime={rk} status={st} last_at={at}) — "
-                "fix meta_governor_sync before audit report"
-            )
-    except RuntimeError:
-        raise
+        audit_mode, audit_reason = resolve_overseer_audit_mode(cfg, meta)
     except Exception as e:
-        print(f"⚠️ meta degraded check skipped: {e}")
+        print(f"⚠️ audit mode resolve skipped: {e}")
+        audit_mode, audit_reason = "full", ""
 
     dossier = build_overseer_audit_dossier(
         sys_config=cfg,
@@ -209,32 +211,56 @@ def run_ai_auditor():
     anomalies = detect_audit_anomalies(dossier, sys_config=cfg)
 
     msg = format_overseer_audit_html(dossier, anomalies)
-
-    if (os.environ.get("GEMINI_API_KEY") or "").strip():
+    if audit_mode == "degraded_rules_only":
+        msg = format_degraded_audit_banner(audit_reason) + msg
         try:
-            from llm_gemini_core import LlmCallSpec, generate_text_sync
+            record_overseer_anomaly(kind="degraded_audit", detail=audit_reason)
+        except Exception:
+            pass
+
+    llm_active = audit_mode == "full" and (
+        (os.environ.get("GEMINI_API_KEY") or "").strip()
+        or (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    )
+    narr_provider = "gemini"
+
+    if llm_active:
+        try:
+            from llm_provider_core import generate, resolve_llm_provider
             from overseer_llm_narrative import (
                 format_overseer_llm_html_section,
                 process_overseer_llm_narrative,
             )
+            from overseer_quality import (
+                record_narrative_outcome,
+                record_session_llm_failure,
+            )
 
             user_prompt = build_llm_narrative_prompt(dossier, anomalies)
-            spec = LlmCallSpec(
-                task_id="overseer_audit",
+            resolved = resolve_llm_provider("overseer_audit", cfg)
+            narr_provider = str(resolved.get("provider") or "gemini")
+            ai_text = generate(
+                "overseer_audit",
+                user_prompt,
                 system_prompt=OVERSEER_LLM_SYSTEM_PROMPT,
-                user_payload=user_prompt,
-                model="gemini-2.5-flash",
+                sys_config=cfg,
                 timeout_sec=75.0,
+                max_wait_sec=180.0,
                 max_attempts=2,
             )
-            ai_res = generate_text_sync(spec, max_wait_sec=180.0)
-            ai_text = (ai_res.text or "").strip()
             narr = process_overseer_llm_narrative(
                 dossier,
                 anomalies,
                 ai_text,
                 api_fallback_prefix=GEMINI_RAW_FALLBACK_PREFIX,
             )
+            record_narrative_outcome(
+                source=narr.source,
+                violations=narr.violations,
+                provider=narr_provider,
+            )
+            if narr.source != "llm":
+                record_session_llm_failure()
             msg += format_overseer_llm_html_section(narr)
         except Exception as e:
             try:
@@ -243,16 +269,46 @@ def run_ai_auditor():
                     format_overseer_llm_html_section,
                     LlmNarrativeResult,
                 )
+                from overseer_quality import record_narrative_outcome, record_session_llm_failure
 
                 det = build_deterministic_narrative(dossier, anomalies)
                 msg += format_overseer_llm_html_section(
                     LlmNarrativeResult(det, "deterministic", True, ("exception",))
                 )
+                record_narrative_outcome(source="deterministic", violations=("exception",))
+                record_session_llm_failure()
                 msg += f"<i>LLM 예외: {html.escape(str(e), quote=False)}</i>\n"
             except Exception:
                 msg += f"\n<i>LLM 해석 스킵: {e}</i>\n"
     else:
-        msg += "\n<i>LLM 비활성(GEMINI_API_KEY 없음) — 규칙 감사만 발송.</i>\n"
+        try:
+            from overseer_llm_narrative import (
+                build_deterministic_narrative,
+                format_overseer_llm_html_section,
+                LlmNarrativeResult,
+            )
+            from overseer_quality import record_narrative_outcome
+
+            det = build_deterministic_narrative(dossier, anomalies)
+            msg += format_overseer_llm_html_section(
+                LlmNarrativeResult(det, "deterministic", True, ("degraded_or_no_key",))
+            )
+            record_narrative_outcome(
+                source="deterministic",
+                violations=("degraded_or_no_key",),
+            )
+        except Exception:
+            if audit_mode == "degraded_rules_only":
+                msg += "\n<i>LLM 비활성(degraded) — 규칙 감사만 발송.</i>\n"
+            else:
+                msg += "\n<i>LLM 비활성(API 키 없음) — 규칙 감사만 발송.</i>\n"
+
+    try:
+        from overseer_quality import format_overseer_quality_footer_html
+
+        msg += format_overseer_quality_footer_html(cfg)
+    except Exception:
+        pass
 
     send_telegram_alert(msg)
     print("✅ [AI 최고 감시자] 텔레그램 직보 완료.")

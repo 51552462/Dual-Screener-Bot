@@ -9,6 +9,7 @@ import json
 import subprocess
 import time
 import random
+import threading
 from datetime import datetime, timedelta
 import pytz
 import requests
@@ -91,6 +92,30 @@ _OPS_INVERSE_MINUTE_STATE = {
 
 # 테일 잔액 0 같은 "지속 상태" 거부는 1분 사건이 아니므로 알림 쿨다운(초) 동안 1회만 발송.
 _INVERSE_SKIP_NOTIFY_COOLDOWN_SEC = 6 * 3600
+
+_WATCHDOG_HEARTBEAT_THREAD_STARTED = False
+
+
+def _start_watchdog_heartbeat_thread() -> None:
+    """메인 루프가 DB·위성 작업으로 블로킹돼도 watchdog용 tick 유지."""
+    global _WATCHDOG_HEARTBEAT_THREAD_STARTED
+    if _WATCHDOG_HEARTBEAT_THREAD_STARTED:
+        return
+    _WATCHDOG_HEARTBEAT_THREAD_STARTED = True
+
+    def _loop() -> None:
+        while True:
+            try:
+                ops_logger.record_heartbeat("system_auto_pilot")
+            except Exception as ex:
+                print(f"⚠️ [오토파일럿] heartbeat thread: {ex}")
+            time.sleep(45)
+
+    threading.Thread(
+        target=_loop,
+        name="system_auto_pilot-heartbeat",
+        daemon=True,
+    ).start()
 
 
 def _telegram_inverse_sniper_critical_only(summary: dict, mode_after: bool) -> None:
@@ -2190,6 +2215,17 @@ def _satellite_import_run_snippet(body_lines: str, tag: str) -> None:
 def system_main_loop():
     tz = pytz.timezone('Asia/Seoul')
     print("🕒 [완전 자율 오토파일럿 V12.0] 대기 중... (기준: 장부 최초 거래일 + 14일)")
+    _start_watchdog_heartbeat_thread()
+    try:
+        from factory_data_paths import factory_data_dir
+        from ops_logger import OPS_EVENTS_DB_PATH
+
+        print(
+            f"💓 [watchdog] heartbeat → {OPS_EVENTS_DB_PATH} "
+            f"(DB_STORAGE_PATH data={factory_data_dir()})"
+        )
+    except Exception:
+        pass
     try:
         from factory_artifact_guard import ensure_factory_artifacts
 
