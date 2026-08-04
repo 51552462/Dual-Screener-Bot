@@ -51,6 +51,10 @@ command -v python >/dev/null 2>&1 || PY="python3"
 
 BG="${BITGET_ROOT}/deploy/bitget.sh"
 LOG_DIR="${BITGET_LOG_DIR:-${BITGET_ROOT}/logs}"
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+  LOG_DIR="${BITGET_ROOT}/logs"
+  mkdir -p "$LOG_DIR"
+fi
 DATA="${BITGET_DB_STORAGE_PATH:-/var/lib/quant-bitget/data}"
 CSV_PATH=""
 
@@ -120,7 +124,6 @@ for lf in "${DATA}/.bitget_runtime.lock" "${DATA}/.bitget_data_refresh.lock"; do
 done
 
 # 5) 최근 로그
-mkdir -p "$LOG_DIR"
 echo "--- recent logs (${LOG_DIR}) ---"
 ls -lt "$LOG_DIR"/bitget_*.log 2>/dev/null | head -8 || echo "(no logs yet)"
 
