@@ -404,6 +404,22 @@ echo "[5/7] 구버전(.venv) 잔존 프로세스 안전 종료 + 스키마 마�
 _dante_stop_stale_factory_processes "$INSTALL_ROOT" "$DEPLOY_USER"
 _dante_apply_schema_migrations
 
+echo "[5b/7] factory daemon import smoke (auto_forward_tester facade)"
+if ! (
+  cd "$INSTALL_ROOT"
+  PYTHONPATH="$INSTALL_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+    "$DANTE_PY" -c "
+from inverse_etf_sniper import run_inverse_etf_sniper_cycle  # noqa: F401
+import auto_forward_tester as aft
+assert aft.DB_PATH and callable(aft.init_forward_db)
+print('  import smoke ok')
+"
+); then
+  echo "  ✗ factory import smoke FAILED — dante-factory 재기동 중단 (watchdog 루프 방지)" >&2
+  echo "  → auto_forward_tester.py facade 및 forward/ 패키지 확인" >&2
+  exit 1
+fi
+
 echo "[6/7] 최신 venv 엔진으로 서비스 재기동"
 systemctl daemon-reload
 systemctl restart dante-factory.service dante-dashboard.service dante-async.service

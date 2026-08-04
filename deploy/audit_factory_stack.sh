@@ -104,6 +104,28 @@ if [[ -f "${INSTALL_ROOT}/factory.sh" ]] && grep -q $'\r' "${INSTALL_ROOT}/facto
 fi
 echo ""
 
+# --- 2b. Daemon import smoke ---
+echo "[2b] Factory daemon import smoke"
+if [[ -x "$PY" ]]; then
+  if (
+    cd "$INSTALL_ROOT"
+    PYTHONPATH="$INSTALL_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" -c "
+from inverse_etf_sniper import run_inverse_etf_sniper_cycle  # noqa: F401
+import auto_forward_tester as aft
+assert aft.DB_PATH and callable(aft.init_forward_db)
+print('  import smoke ok')
+" 2>/dev/null
+  ); then
+    pass "auto_forward_tester facade + inverse_etf_sniper import"
+  else
+    fail "factory import smoke failed — dante-factory will crash-loop (restore auto_forward_tester.py)"
+  fi
+else
+  warn "skip import smoke (no python)"
+fi
+echo ""
+
 # --- 3. Lock ---
 echo "[3] Global lock ($LOCK)"
 if [[ -f "$LOCK" ]]; then
