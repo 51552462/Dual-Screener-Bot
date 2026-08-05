@@ -22,6 +22,20 @@ def backup_market_db(*, timeout_sec: float = 90.0) -> bool:
         logger.warning("snapshot skip (no main db): %s", main)
         return False
 
+    try:
+        from bitget.infra.runtime import active_bitget_job_lock
+
+        holder = active_bitget_job_lock()
+        if holder is not None:
+            logger.info(
+                "snapshot deferred — pipeline writer active mode=%s pid=%s",
+                holder.mode,
+                holder.pid,
+            )
+            return False
+    except Exception:
+        pass
+
     os.makedirs(os.path.dirname(snap) or ".", exist_ok=True)
     tmp = f"{snap}.tmp.{os.getpid()}"
     if os.path.isfile(tmp):

@@ -25,7 +25,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 import pytz
 
 from bitget.bitget_scan_schedule import STAGGERED_SCAN_MODES, resolve_lock_timeout_sec
-from bitget.infra.data_paths import job_lock_path, runtime_lock_path
+from bitget.infra.data_paths import data_refresh_lock_path, job_lock_path, runtime_lock_path
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,26 @@ class BitgetRunReport:
 
 def _default_lock_path(mode: str = "") -> str:
     return job_lock_path(mode)
+
+
+def active_bitget_job_lock() -> Optional[LockMetadata]:
+    """
+    Live pipeline writer holding runtime or legacy data_refresh flock.
+    Used by watchdog/snapshot to avoid fighting OHLCV bulk writes.
+    """
+    for path in (runtime_lock_path(), data_refresh_lock_path()):
+        if not os.path.isfile(path):
+            continue
+        meta = _parse_lock_metadata(path)
+        if meta is None:
+            continue
+        if _pid_is_alive(meta.pid):
+            return meta
+    return None
+
+
+def is_bitget_db_writer_active() -> bool:
+    return active_bitget_job_lock() is not None
 
 
 def _lock_max_age_sec(*, holder_mode: Optional[str] = None) -> float:

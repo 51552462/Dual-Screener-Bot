@@ -895,6 +895,21 @@ def main() -> int:
     if misses < miss_threshold:
         return 0
 
+    try:
+        from bitget.infra.runtime import active_bitget_job_lock
+
+        holder = active_bitget_job_lock()
+        if holder is not None:
+            logger.info(
+                "watchdog skip factory restart — db writer active mode=%s pid=%s",
+                holder.mode,
+                holder.pid,
+            )
+            _write_consecutive_misses(state_dir, 0)
+            return 0
+    except Exception:
+        pass
+
     restart_cmd = unit_restart_cmd(UNIT_FACTORY)
     msg = (
         f"🚨 [BITGET WATCHDOG] heartbeat stale {misses} times (threshold {miss_threshold})\n"

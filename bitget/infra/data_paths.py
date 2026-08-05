@@ -190,14 +190,13 @@ def runtime_lock_path() -> str:
 
 
 def data_refresh_lock_path() -> str:
-    """OHLCV 수집 전용 — scan/track/reconcile 과 분리 (WAL DB 동시 접근)."""
+    """Legacy lock file — reset/cleanup only. Writers use runtime_lock_path() SSOT."""
     return os.path.join(bitget_data_dir(), ".bitget_data_refresh.lock")
 
 
 def job_lock_path(mode: str) -> str:
-    m = str(mode or "").strip().lower()
-    if m == "data_refresh":
-        return data_refresh_lock_path()
+    """Single writer flock for all pipeline modes (SQLite WAL = one writer at a time)."""
+    _ = mode  # kept for call-site clarity / future mode-specific timeouts
     return runtime_lock_path()
 
 
