@@ -254,22 +254,24 @@ fi
 
 if [[ "$MODE" == "recover_artifacts_quick" ]]; then
   CSV_SSOT="$(PYTHONPATH="$ROOT" python -c 'from bitget.infra.data_paths import flow_csv_path; print(flow_csv_path())')"
-  echo "[bitget.sh] recover_artifacts_quick step1 — CSV from existing DB only"
-  python -m bitget.data_miner >>"$LOG_FILE" 2>&1 || true
+  echo "[bitget.sh] recover_artifacts_quick step1 — cluster CSV from existing DB (7103+ tables OK, no GMM/AST)"
+  echo "[bitget.sh] log=${LOG_FILE}"
+  python -m bitget.data_miner --cluster-only 2>&1 | tee -a "$LOG_FILE"
   if [[ -f "$CSV_SSOT" ]]; then
     echo "[bitget.sh] recover_artifacts_quick OK — CSV at $CSV_SSOT"
     exit 0
   fi
   CAP="${BITGET_MTF_MAX_SYMBOLS:-200}"
-  echo "[bitget.sh] recover_artifacts_quick step2 — capped data_refresh (max ${CAP} symbols/side, not full 1140)"
+  echo "[bitget.sh] recover_artifacts_quick step2 — capped data_refresh (max ${CAP} symbols/side)"
+  echo "[bitget.sh] progress: tail -f ${LOG_FILE}"
   export BITGET_MTF_MAX_SYMBOLS="$CAP"
   export BITGET_FORCE_SCAN=1
   export BITGET_DATA_REFRESH_TIMEOUT_SEC="${BITGET_DATA_REFRESH_TIMEOUT_SEC:-7200}"
   timeout --signal=TERM --kill-after=120 "${BITGET_DATA_REFRESH_TIMEOUT_SEC}" \
-    python -m bitget.pipelines.runner --mode data_refresh "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1 \
+    python -m bitget.pipelines.runner --mode data_refresh "${EXTRA_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE" \
     || echo "(capped data_refresh degraded — step3 anyway)"
   echo "[bitget.sh] recover_artifacts_quick step3 — rebuild CSV + clusters"
-  python -m bitget.data_miner >>"$LOG_FILE" 2>&1
+  python -m bitget.data_miner --cluster-only 2>&1 | tee -a "$LOG_FILE"
   if [[ -f "$CSV_SSOT" ]]; then
     echo "[bitget.sh] recover_artifacts_quick OK — CSV at $CSV_SSOT"
     exit 0

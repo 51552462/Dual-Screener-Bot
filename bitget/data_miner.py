@@ -606,4 +606,9 @@ def run_bitget_data_miner(timeframes=None):
 
 
 if __name__ == "__main__":
-    run_bitget_data_miner()
+    import sys
+
+    if "--cluster-only" in sys.argv:
+        run_cluster_mining()
+    else:
+        run_bitget_data_miner()
