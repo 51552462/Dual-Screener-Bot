@@ -11,6 +11,7 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 from meta_governor import load_meta_governor_state, meta_state_path
+from performance_budget_governor import resolve_config_float
 from toxic_antipattern_core import any_toxic_rule_matches
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ def resolve_trading_kelly_base(
         )
         return float(kelly)
     except Exception:
-        return float(sys_config.get("DYNAMIC_KELLY_RISK", 0.01) or 0.01)
+        return resolve_config_float(sys_config, "DYNAMIC_KELLY_RISK", default=0.01)
 
 
 def invalidate_meta_state_cache() -> None:
@@ -121,6 +122,73 @@ def apply_meta_weight_bounds_clamp(
         except (TypeError, ValueError):
             pass
     return out1, out4
+
+
+def is_s5_sig_type(sig_type: Any) -> bool:
+    """방어 arm(S5) sig_type — Handoff SSOT: 인버스 ETF · 블랙홀만 (CAT-C 읽기)."""
+    s = str(sig_type or "")
+    su = s.upper()
+    if "[INVERSE_ETF]" in s or "INVERSE_ETF" in su:
+        return True
+    if "BLACKHOLE" in su or "BLACK_HOLE" in su:
+        return True
+    return False
+
+
+def _resolve_weight_s5_bounds(
+    regime: str,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> Tuple[float, float]:
+    from meta_governor import ACTION_BY_REGIME
+
+    rk = str(regime or "UNKNOWN").strip().upper()
+    if rk in ("CHOP", "WHIPSAW"):
+        rk = "SIDEWAYS"
+    action = dict(ACTION_BY_REGIME.get(rk, ACTION_BY_REGIME["UNKNOWN"]))
+    if isinstance(sys_config, dict):
+        overlay = sys_config.get("ACTION_BY_REGIME")
+        if isinstance(overlay, dict) and rk in overlay and isinstance(overlay[rk], dict):
+            action.update(overlay[rk])
+    bounds = action.get("weight_s5_bounds")
+    if not (isinstance(bounds, (list, tuple)) and len(bounds) == 2):
+        bounds = action.get("weight_s4_bounds")
+    if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
+        try:
+            lo, hi = float(bounds[0]), float(bounds[1])
+            if lo <= hi:
+                return lo, hi
+        except (TypeError, ValueError):
+            pass
+    return 0.75, 1.35
+
+
+def resolve_defense_arm_weight(
+    market: str,
+    regime: str,
+    sig_type: str,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> float:
+    """
+    S5 방어 arm Kelly 배율 — PERFORMANCE_BUDGET_DEFENSE_ARM_ACTIVE_{market} 게이트.
+    비활성 시 0.0, 활성 시 clamp(WEIGHT_S5, weight_s5_bounds).
+    """
+    if not is_s5_sig_type(sig_type):
+        return 1.0
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if not cfg.get("ENABLE_WEIGHT_S5_MERGE", True):
+        return 1.0
+    mkt = str(market or "KR").strip().upper()
+    if mkt not in ("KR", "US"):
+        mkt = "KR"
+    arm_key = f"PERFORMANCE_BUDGET_DEFENSE_ARM_ACTIVE_{mkt}"
+    active = cfg.get(arm_key, False)
+    if isinstance(active, str):
+        active = active.strip().lower() in ("1", "true", "yes")
+    if not active:
+        return 0.0
+    w = resolve_config_float(cfg, "WEIGHT_S5", default=1.0)
+    lo, hi = _resolve_weight_s5_bounds(regime, cfg)
+    return min(max(w, lo), hi)
 
 
 def _resolve_performance_budget_mult(
@@ -231,7 +299,12 @@ def apply_meta_kelly_merge(
     # ===========================================================================
 
     out = float(kelly_risk_pct)
-    g = float(meta.get("META_GLOBAL_KELLY_MULT", 1.0) or 1.0)
+
+    g = resolve_config_float(
+        meta if isinstance(meta, dict) else {},
+        "META_GLOBAL_KELLY_MULT",
+        default=1.0,
+    )
     out *= g
 
     # [켈리 클러치] 예측형 앙상블이 변곡점(1위 국면확률<임계)으로 판단하면, 전역 켈리를
@@ -240,7 +313,7 @@ def apply_meta_kelly_merge(
         try:
             clutch = sys_config.get("REGIME_TRANSITION_CLUTCH")
             if isinstance(clutch, dict) and clutch.get("active"):
-                cm = float(clutch.get("mult", 1.0) or 1.0)
+                cm = resolve_config_float(clutch, "mult", default=1.0)
                 if 0.0 < cm < 1.0:
                     out *= cm
         except (TypeError, ValueError):
@@ -408,7 +481,7 @@ def apply_meta_kelly_merge(
 
 def effective_max_position_pct(sys_config: Dict[str, Any], meta: Optional[Dict[str, Any]]) -> float:
     """min(sys MAX_POSITION_PCT, META_MAX_POSITION_PCT) — 메타가 None 이면 sys 만."""
-    base = float(sys_config.get("MAX_POSITION_PCT", 0.25) or 0.25)
+    base = resolve_config_float(sys_config, "MAX_POSITION_PCT", default=0.25)
     if not meta:
         return base
     m = meta.get("META_MAX_POSITION_PCT")

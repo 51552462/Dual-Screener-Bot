@@ -51,7 +51,10 @@ def deathmatch_min_n_for_market(
     return base
 
 
-def classify_strategy_arm(sig_type: Any) -> Optional[str]:
+def classify_strategy_arm(
+    sig_type: Any,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """
     sig_type → 로직군 라벨. INCUBATOR·빈 값 제외.
     우선순위: UD → BEAST → 초신성 코어 → SUPERNOVA 일반 → 블랙홀 → STANDARD → 기타(원문 축약).
@@ -68,6 +71,11 @@ def classify_strategy_arm(sig_type: Any) -> Optional[str]:
         if "SCOUT" in s.upper() or "🔭" in s:
             return None
     su = s.upper()
+    enable_s5 = True
+    if isinstance(sys_config, dict):
+        enable_s5 = bool(sys_config.get("ENABLE_WEIGHT_S5_MERGE", True))
+    if enable_s5 and ("[INVERSE_ETF]" in s or "INVERSE_ETF" in su):
+        return "S5"
     if "UNDERDOG" in su:
         return "UD (언더독)"
     if "SUPERNOVA_BEAST" in su or ("BEAST" in su and "SUPERNOVA" in su):
@@ -75,7 +83,7 @@ def classify_strategy_arm(sig_type: Any) -> Optional[str]:
     if "SUPERNOVA_COSINE" in su or "SUPERNOVA_MLBOX" in su or "SUPERNOVA" in su:
         return "B (초신성)"
     if "BLACKHOLE" in su or "BLACK_HOLE" in su:
-        return "BH (블랙홀)"
+        return "S5" if enable_s5 else "BH (블랙홀)"
     if "STANDARD" in su:
         return "A (오리지널)"
     clean = re.sub(r"\[.*?\]", "", s).strip()

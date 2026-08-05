@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 import numpy as np
 
 MABMode = Literal["thompson", "ucb"]
+DEFENSE_ARM_GROUP_KEY = "S5"
 
 
 def _parse_group_key(sig_type: Any) -> str:
@@ -182,6 +183,9 @@ def _resolve_active_arms(
         if gk not in seen:
             seen.add(gk)
             merged.append(gk)
+
+    if DEFENSE_ARM_GROUP_KEY not in seen:
+        merged.append(DEFENSE_ARM_GROUP_KEY)
 
     return merged
 

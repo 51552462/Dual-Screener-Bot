@@ -2590,6 +2590,21 @@ def try_add_virtual_position(
                 kelly_risk_pct *= w_s1
             if "S4" in sig_type or "눌림" in sig_type:
                 kelly_risk_pct *= w_s4
+            if sys_config.get("ENABLE_WEIGHT_S5_MERGE", True):
+                try:
+                    from meta_governor_consumer import is_s5_sig_type, resolve_defense_arm_weight
+
+                    if is_s5_sig_type(sig_type):
+                        _rk = str(
+                            sys_config.get("CURRENT_REGIME_KEY")
+                            or sys_config.get("META_REGIME_KEY")
+                            or "UNKNOWN"
+                        )
+                        kelly_risk_pct *= resolve_defense_arm_weight(
+                            market, _rk, sig_type, sys_config
+                        )
+                except Exception:
+                    pass
 
             # 🧬 [P4-1 초신성 연속 켈리 스케일러] 이진 컷오프 통과 여부만으로 전원
             # 동일 비중을 태우던 것을, "커트라인 대비 얼마나 압도적으로 닮았는가"

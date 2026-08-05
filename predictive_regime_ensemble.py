@@ -84,6 +84,26 @@ HYSTERESIS_MAX_DAYS = 5
 HYSTERESIS_EMA_LR = 0.5     # 1회 평가당 최대 ±0.5일 이동(EMA-step)
 WHIPSAW_PNL_SCALE = 4.0     # 전환 후 PnL% → 보정방향 tanh 정규화 스케일
 
+# A-4 비대칭 히스테리시스 — 위험확대 transition만 1일 override, 축소는 RL 유지
+CONFIG_KEY_ENABLE_ASYMMETRIC_HYSTERESIS = "ENABLE_ASYMMETRIC_HYSTERESIS"
+ASYMMETRIC_HYSTERESIS_EXPAND_DAYS = 1
+_REGIME_RISK_RANK: Dict[str, int] = {
+    "BULL": 0,
+    "SIDEWAYS": 1,
+    "HIGH_VOL": 2,
+    "BEAR": 3,
+}
+_RISK_EXPANDING_TRANSITIONS: frozenset[Tuple[str, str]] = frozenset(
+    (
+        ("BULL", "SIDEWAYS"),
+        ("BULL", "HIGH_VOL"),
+        ("BULL", "BEAR"),
+        ("SIDEWAYS", "HIGH_VOL"),
+        ("SIDEWAYS", "BEAR"),
+        ("HIGH_VOL", "BEAR"),
+    )
+)
+
 # ── [Mission 2] 켈리 클러치 (앙상블 확신도 기반 관망) ───────────────────────
 #   1위 국면 확률 < 임계치면 변곡점(혼조세)으로 보고 글로벌 켈리를 기하급수 축소.
 CLUTCH_PROB_THRESHOLD = 0.60  # 1위 softmax 확률 임계
@@ -472,6 +492,74 @@ def dynamic_hysteresis_days(state: Dict[str, Any]) -> int:
     return int(round(hf))
 
 
+def _normalize_regime_label(label: str) -> str:
+    return str(label or "").upper().strip()
+
+
+def is_risk_expanding_transition(from_regime: str, to_regime: str) -> bool:
+    """위험확대 transition — A-4 SSOT 6쌍 (+ severity 상승 일반 규칙)."""
+    frm = _normalize_regime_label(from_regime)
+    tgt = _normalize_regime_label(to_regime)
+    if not frm or not tgt or frm == tgt:
+        return False
+    if (frm, tgt) in _RISK_EXPANDING_TRANSITIONS:
+        return True
+    r_from = _REGIME_RISK_RANK.get(frm)
+    r_to = _REGIME_RISK_RANK.get(tgt)
+    if r_from is None or r_to is None:
+        return False
+    return r_to > r_from
+
+
+def asymmetric_hysteresis_enabled(
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """ENABLE_ASYMMETRIC_HYSTERESIS 킬스위치 (default True)."""
+    if isinstance(sys_config, dict) and CONFIG_KEY_ENABLE_ASYMMETRIC_HYSTERESIS in sys_config:
+        v = sys_config.get(CONFIG_KEY_ENABLE_ASYMMETRIC_HYSTERESIS)
+    else:
+        try:
+            from config_manager import get_config_value
+
+            v = get_config_value(CONFIG_KEY_ENABLE_ASYMMETRIC_HYSTERESIS, True)
+        except Exception:
+            return True
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().upper() in ("1", "TRUE", "YES", "ON")
+    return bool(v)
+
+
+def resolve_transition_hysteresis_days(
+    from_regime: str,
+    to_regime: str,
+    rl_days: int,
+    *,
+    enabled: Optional[bool] = None,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> int:
+    """
+    A-4 Adapter — transition 방향별 히스테리시스 일수.
+    위험확대: 1일 고정 · 위험축소/UNKNOWN: RL rl_days 그대로 · 킬스위치 OFF: rl_days.
+    evolve_hysteresis() RL 축은 읽기만; EMA/클램프 미변경.
+    """
+    rl = max(1, int(rl_days))
+    if enabled is None:
+        enabled = asymmetric_hysteresis_enabled(sys_config)
+    if not enabled:
+        return rl
+    frm = _normalize_regime_label(from_regime)
+    tgt = _normalize_regime_label(to_regime)
+    if not frm or not tgt or frm == tgt:
+        return rl
+    if frm == "UNKNOWN" or tgt == "UNKNOWN":
+        return rl
+    if is_risk_expanding_transition(frm, tgt):
+        return int(ASYMMETRIC_HYSTERESIS_EXPAND_DAYS)
+    return rl
+
+
 def _clutch_mult(top_prob: Optional[float]) -> Tuple[float, bool]:
     """
     1위 국면 확률 → (켈리 클러치 배수, 불확실 여부).
@@ -573,14 +661,23 @@ def run_regime_ensemble(
         prev_rec = hyst.get(mk) if isinstance(hyst.get(mk), dict) else {}
         prev_current = str(prev_rec.get("current") or "")
         force = bool(d.crisis or d.crisis_synced)
-        final, rec = _apply_hysteresis(hyst, mk, target_regime[mk], n_days, force_immediate=force)
+        n_days_transition = n_days
+        if not force:
+            n_days_transition = resolve_transition_hysteresis_days(
+                prev_current,
+                target_regime[mk],
+                n_days,
+            )
+        final, rec = _apply_hysteresis(
+            hyst, mk, target_regime[mk], n_days_transition, force_immediate=force
+        )
         d.regime = final
         d.hysteresis = rec
         if prev_current and final != prev_current:
             committed_transitions.append({
                 "date": today, "market": mk,
                 "from": prev_current, "to": final,
-                "forced": bool(force), "hysteresis_days": n_days,
+                "forced": bool(force), "hysteresis_days": n_days_transition,
             })
 
     if committed_transitions:

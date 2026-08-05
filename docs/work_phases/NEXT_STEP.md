@@ -1,41 +1,29 @@
 # NEXT_STEP — 디렉터 다음 한 걸음
 
-> **갱신**: 2026-08-05 · auto_forward_tester facade 복구 · import smoke 게이트
+> **갱신**: 2026-08-06 · **5건 Claude OK ✅** · 배포 승인만 남음
 
 ---
 
 | 필드 | 값 |
 |------|-----|
-| **지금 단계** | factory import 복구 ✅ → **서버 배포** → Claude 검증 |
-| **status** | `DEPLOY_FACTORY_FIX` |
-| **한 줄** | `auto_forward_tester.py` 복구 후 `sudo ./update_factory.sh` 로 서버 반영 |
+| **지금** | **디렉터 Critical 일괄 배포 승인** |
+| **명령** | 승인 후 `update_factory.sh` |
 
 ---
 
-## 당신 체크리스트
+## 일괄 배포 5건
 
-- [ ] 서버에서 `git pull` 후 **`sudo ./update_factory.sh`** (import smoke 통과 시에만 재기동)
-- [ ] `systemctl is-active dante-factory` → **active** · heartbeat 1~2분 이내 갱신 확인
-- [ ] Claude에 `CURSOR_TO_CLAUDE.md` + `05` M-R0·A-3·A-1-R1 **검증** 요청
-- [ ] `.env` `DB_STORAGE_PATH` 한 줄만 `/var/lib/quant-factory/data` 인지 확인
-- [ ] paper 가상매매 MDD·tier 관측 (효과 검증은 `06` 2~4주 후)
+R2 · R3 · R4 · A-4 · **A-5a rev.2**
 
----
+- [ ] **디렉터 승인**
+- [ ] `update_factory.sh` 실행
 
-## Claude → Cursor (Mirror `ARCHITECT_MIRROR` #1~3)
-
-| # | 제안 | Layer |
-|---|------|-------|
-| 1 | M-R0 + A-3 + A-1-R1 **병렬 검증** | ① 디렉터 |
-| 2 | 서버 `.env` DB 경로 정리 | ① 디렉터 |
-| 3 | A-4 전 RL hysteresis **Adapter** Handoff | 🟡 2 |
+**문제 시**: 배치 전체 롤백 말고 flag만 — A-5a `ENABLE_WEIGHT_S5_MERGE=False` · A-4 `ENABLE_ASYMMETRIC_HYSTERESIS=False`
 
 ---
 
-## 디렉터 → Claude (복붙)
+## 배포 후
 
-```
-CURSOR_TO_CLAUDE.md + 05 검증. M-R0 OK/수정 spec. (병렬) A-3·A-1-R1 판정.
-```
+A-5b (CAT-G, 새 세션) — BEAR일 때 S5 켜기
 
-**AI status 상세**: `NEXT_ACTION.md`
+**쉬운 설명** → `09_디렉터_쉬운요약.md`
