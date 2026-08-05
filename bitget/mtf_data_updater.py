@@ -501,6 +501,21 @@ def run_mtf_update():
         if not universe:
             continue
 
+        cap_raw = (os.environ.get("BITGET_MTF_MAX_SYMBOLS") or "").strip()
+        if cap_raw:
+            try:
+                cap_n = max(1, int(cap_raw))
+                if len(universe) > cap_n:
+                    logger.info(
+                        "[%s] BITGET_MTF_MAX_SYMBOLS=%s — universe capped from %s",
+                        market_type,
+                        cap_n,
+                        len(universe),
+                    )
+                    universe = universe[:cap_n]
+            except ValueError:
+                pass
+
         done = 0
         total_tables = 0
         writer_conn = get_connection(DB_PATH)

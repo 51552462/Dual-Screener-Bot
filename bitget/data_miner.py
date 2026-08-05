@@ -530,6 +530,10 @@ def build_supernova_csv():
         conn.close()
         flush_gc(label=GC_AFTER_OHLCV_BATCH)
     if not out:
+        logger.warning(
+            "build_supernova_csv: 0 rows from %s OHLCV tables (need data_refresh or more bars)",
+            len(tables),
+        )
         return 0
     pd.DataFrame(out).to_csv(CSV_PATH, index=False, encoding="utf-8-sig")
     return len(out)

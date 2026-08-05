@@ -80,6 +80,7 @@ Usage: bitget/deploy/bitget.sh <flag>
   --reconcile         OMS reconciliation
   --data-refresh      full MTF OHLCV update
   --recover-artifacts rebuild Supernova CSV + cluster templates (data_miner)
+  --recover-artifacts-quick  try CSV from DB; if missing, capped OHLCV refresh then CSV
   --canary            export crypto canary state JSON (file bridge → stock regime)
   --gap-heal          WS stale -> REST backfill
   --snapshot          CQRS market DB backup (read replica)
@@ -133,6 +134,7 @@ while [[ $# -gt 0 ]]; do
     --reconcile)        MODE="reconcile" ;;
     --data-refresh)     MODE="data_refresh" ;;
     --recover-artifacts) MODE="recover_artifacts" ;;
+    --recover-artifacts-quick) MODE="recover_artifacts_quick" ;;
     --canary)           MODE="canary" ;;
     --gap-heal)         MODE="gap_heal" ;;
     --snapshot)         MODE="snapshot" ;;
@@ -239,7 +241,7 @@ WALL_UTC="$(TZ=UTC date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "[bitget.sh] mode=${MODE} log=${LOG_FILE} TZ=${TZ} wall_utc=${WALL_UTC}"
 
 if [[ "$MODE" == "data_refresh" ]]; then
-  DR_TIMEOUT="${BITGET_DATA_REFRESH_TIMEOUT_SEC:-3600}"
+  DR_TIMEOUT="${BITGET_DATA_REFRESH_TIMEOUT_SEC:-10800}"
   echo "[bitget.sh] data_refresh hard timeout=${DR_TIMEOUT}s"
   exec timeout --signal=TERM --kill-after=120 "${DR_TIMEOUT}" \
     python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1
@@ -248,6 +250,32 @@ fi
 if [[ "$MODE" == "recover_artifacts" ]]; then
   echo "[bitget.sh] recover_artifacts → python -m bitget.data_miner (Supernova CSV + LIVE_CLUSTER_TEMPLATES)"
   exec python -m bitget.data_miner >>"$LOG_FILE" 2>&1
+fi
+
+if [[ "$MODE" == "recover_artifacts_quick" ]]; then
+  CSV_SSOT="$(PYTHONPATH="$ROOT" python -c 'from bitget.infra.data_paths import flow_csv_path; print(flow_csv_path())')"
+  echo "[bitget.sh] recover_artifacts_quick step1 — CSV from existing DB only"
+  python -m bitget.data_miner >>"$LOG_FILE" 2>&1 || true
+  if [[ -f "$CSV_SSOT" ]]; then
+    echo "[bitget.sh] recover_artifacts_quick OK — CSV at $CSV_SSOT"
+    exit 0
+  fi
+  CAP="${BITGET_MTF_MAX_SYMBOLS:-200}"
+  echo "[bitget.sh] recover_artifacts_quick step2 — capped data_refresh (max ${CAP} symbols/side, not full 1140)"
+  export BITGET_MTF_MAX_SYMBOLS="$CAP"
+  export BITGET_FORCE_SCAN=1
+  export BITGET_DATA_REFRESH_TIMEOUT_SEC="${BITGET_DATA_REFRESH_TIMEOUT_SEC:-7200}"
+  timeout --signal=TERM --kill-after=120 "${BITGET_DATA_REFRESH_TIMEOUT_SEC}" \
+    python -m bitget.pipelines.runner --mode data_refresh "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1 \
+    || echo "(capped data_refresh degraded — step3 anyway)"
+  echo "[bitget.sh] recover_artifacts_quick step3 — rebuild CSV + clusters"
+  python -m bitget.data_miner >>"$LOG_FILE" 2>&1
+  if [[ -f "$CSV_SSOT" ]]; then
+    echo "[bitget.sh] recover_artifacts_quick OK — CSV at $CSV_SSOT"
+    exit 0
+  fi
+  echo "[bitget.sh] recover_artifacts_quick FAIL — see $LOG_FILE" >&2
+  exit 1
 fi
 
 exec python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1
