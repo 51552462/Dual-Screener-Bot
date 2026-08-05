@@ -22,7 +22,7 @@ from bitget.infra.bounded_reads import (
     forward_cluster_mining_symbols_sql,
     forward_data_miner_mfe_training_sql,
     forward_data_miner_mfe_winners_sql,
-    sqlite_bitget_ohlcv_tables_sql,
+    sqlite_bitget_ohlcv_1d_tables_sql,
 )
 from bitget.infra.clock import utc_date_days_ago_str, utc_datetime_str
 from bitget.infra.data_paths import flow_csv_path, market_data_db_path
@@ -42,7 +42,7 @@ from bitget.infra.memory_policy import (
     SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS,
 )
 from bitget.infra.shared_db_connector import get_connection
-from bitget.supernova_hunter import extract_dna_from_df
+from bitget.supernova_hunter import dna_extract_min_bars, extract_dna_from_df
 
 DB_PATH = market_data_db_path()
 CSV_PATH = flow_csv_path()
@@ -310,7 +310,7 @@ def _parse_ohlcv_table_name(tbl: str) -> tuple[str, str, str] | None:
 
 
 def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int) -> list[str]:
-    """Forward-trades 우선 · sqlite_master fallback — OHLCV table scan cap."""
+    """Forward-trades 우선 · 1D OHLCV fallback — cluster CSV는 250-bar cap 하 1D만 DNA 가능."""
     cap = max(1, int(max_tables))
     seen: set[str] = set()
     ordered: list[str] = []
@@ -318,6 +318,8 @@ def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int)
     since = utc_date_days_ago_str(SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS)
     sym_sql, sym_params = forward_cluster_mining_symbols_sql(since_date=since)
     for market_type, symbol, timeframe in conn.execute(sym_sql, sym_params).fetchall():
+        if str(timeframe).upper() != "1D":
+            continue
         tbl = _table_name(market_type, symbol, timeframe)
         if tbl in seen:
             continue
@@ -336,7 +338,7 @@ def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int)
     if remaining <= 0:
         return ordered
 
-    fb_sql, fb_params = sqlite_bitget_ohlcv_tables_sql(limit=remaining + len(seen))
+    fb_sql, fb_params = sqlite_bitget_ohlcv_1d_tables_sql(limit=remaining + len(seen))
     for (name,) in conn.execute(fb_sql, fb_params).fetchall():
         if name in seen or "__tmp" in name:
             continue
@@ -480,9 +482,10 @@ def build_supernova_csv():
     conn = get_connection(DB_PATH, read_only=True)
     tables = _resolve_cluster_mining_tables(conn, max_tables=SUPERNOVA_CLUSTER_MAX_TABLES)
     out = []
-    min_bars = int(SUPERNOVA_CLUSTER_MIN_BARS)
     out_cap = int(SUPERNOVA_CLUSTER_OUT_MAX_ROWS)
     gc_every = max(1, int(SUPERNOVA_CLUSTER_GC_EVERY_N))
+    skipped_short = 0
+    skipped_dna = 0
     try:
         for idx, tbl in enumerate(tables):
             if len(out) >= out_cap:
@@ -491,6 +494,10 @@ def build_supernova_csv():
             if parsed is None:
                 continue
             market, symbol, tf = parsed
+            min_bars = max(int(SUPERNOVA_CLUSTER_MIN_BARS), dna_extract_min_bars(tf))
+            if min_bars > OHLCV_SIGNAL_BAR_LIMIT:
+                skipped_short += 1
+                continue
             try:
                 df = pd.read_sql(
                     f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"'
@@ -502,6 +509,7 @@ def build_supernova_csv():
             if not df.empty:
                 df = df.sort_values("Date")
             if len(df) < min_bars:
+                skipped_short += 1
                 del df
                 continue
             df["Date"] = pd.to_datetime(df["Date"])
@@ -509,6 +517,7 @@ def build_supernova_csv():
             dna = extract_dna_from_df(df, tf)
             del df
             if dna is None:
+                skipped_dna += 1
                 if (idx + 1) % gc_every == 0:
                     flush_gc(label=GC_AFTER_OHLCV_BATCH)
                 continue
@@ -531,8 +540,12 @@ def build_supernova_csv():
         flush_gc(label=GC_AFTER_OHLCV_BATCH)
     if not out:
         logger.warning(
-            "build_supernova_csv: 0 rows from %s OHLCV tables (need data_refresh or more bars)",
+            "build_supernova_csv: 0 rows from %s 1D tables "
+            "(short=%s dna_fail=%s — need 1D bars>=%s or data_refresh)",
             len(tables),
+            skipped_short,
+            skipped_dna,
+            int(SUPERNOVA_CLUSTER_MIN_BARS),
         )
         return 0
     pd.DataFrame(out).to_csv(CSV_PATH, index=False, encoding="utf-8-sig")

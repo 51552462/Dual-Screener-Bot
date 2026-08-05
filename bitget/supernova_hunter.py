@@ -136,6 +136,12 @@ def _scaled_lookbacks(tf: str):
     return 150 * s, 200 * s
 
 
+def dna_extract_min_bars(tf: str) -> int:
+    """Minimum OHLCV rows required for extract_dna_from_df (matches tail lookback gate)."""
+    lb150, _lb200 = _scaled_lookbacks(tf)
+    return max(130, lb150 - 20)
+
+
 def evaluate_alpha_formula(df, formula):
     """수식 문자열을 안전한 네임스페이스에서 평가해 시계열을 반환. (AST 샌드박스 검증 추가)"""
     if df is None or getattr(df, 'empty', True):

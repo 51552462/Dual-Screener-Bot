@@ -107,7 +107,7 @@ def test_resolve_cluster_mining_tables_caps_and_prioritizes_forward():
     with mock.patch("bitget.data_miner.utc_date_days_ago_str", return_value="2026-06-01"):
         tables = dm._resolve_cluster_mining_tables(conn, max_tables=2)
 
-    assert tables == ["BITGET_FUT_ETH_USDT_4H", "BITGET_SPOT_BTC_USDT_1D"]
+    assert tables == ["BITGET_SPOT_BTC_USDT_1D"]
     conn.close()
 
 
