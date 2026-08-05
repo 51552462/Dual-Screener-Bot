@@ -22,7 +22,7 @@ from bitget.infra.bounded_reads import (
     forward_cluster_mining_symbols_sql,
     forward_data_miner_mfe_training_sql,
     forward_data_miner_mfe_winners_sql,
-    sqlite_bitget_ohlcv_1d_tables_sql,
+    sqlite_bitget_cluster_1d_tables_sql,
 )
 from bitget.infra.clock import utc_date_days_ago_str, utc_datetime_str
 from bitget.infra.data_paths import flow_csv_path, market_data_db_path
@@ -39,6 +39,7 @@ from bitget.infra.memory_policy import (
     SUPERNOVA_CLUSTER_MAX_TABLES,
     SUPERNOVA_CLUSTER_MIN_BARS,
     SUPERNOVA_CLUSTER_OUT_MAX_ROWS,
+    SUPERNOVA_CLUSTER_SCAN_BUDGET,
     SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS,
 )
 from bitget.infra.shared_db_connector import get_connection
@@ -309,11 +310,25 @@ def _parse_ohlcv_table_name(tbl: str) -> tuple[str, str, str] | None:
     return parts[1], "_".join(parts[2:-1]), parts[-1].upper()
 
 
-def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int) -> list[str]:
-    """Forward-trades 우선 · 1D OHLCV fallback — cluster CSV는 250-bar cap 하 1D만 DNA 가능."""
-    cap = max(1, int(max_tables))
+def _iter_cluster_mining_1d_tables(conn: sqlite3.Connection):
+    """Yield 1D OHLCV table names: benchmark → forward-trades → all BITGET_%_1D."""
     seen: set[str] = set()
-    ordered: list[str] = []
+
+    for tbl in (
+        "BITGET_SPOT_BTC_USDT_1D",
+        "BITGET_FUT_BTC_USDT_1D",
+        "BITGET_SPOT_ETH_USDT_1D",
+        "BITGET_FUT_ETH_USDT_1D",
+    ):
+        if tbl in seen:
+            continue
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+            (tbl,),
+        ).fetchone()
+        if exists:
+            seen.add(tbl)
+            yield tbl
 
     since = utc_date_days_ago_str(SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS)
     sym_sql, sym_params = forward_cluster_mining_symbols_sql(since_date=since)
@@ -330,25 +345,30 @@ def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int)
         if not exists:
             continue
         seen.add(tbl)
-        ordered.append(tbl)
-        if len(ordered) >= cap:
-            return ordered
+        yield tbl
 
-    remaining = cap - len(ordered)
-    if remaining <= 0:
-        return ordered
-
-    fb_sql, fb_params = sqlite_bitget_ohlcv_1d_tables_sql(limit=remaining + len(seen))
+    fb_sql, fb_params = sqlite_bitget_cluster_1d_tables_sql(
+        limit=SUPERNOVA_CLUSTER_SCAN_BUDGET,
+        exclude_btc=False,
+    )
     for (name,) in conn.execute(fb_sql, fb_params).fetchall():
         if name in seen or "__tmp" in name:
             continue
         if _parse_ohlcv_table_name(name) is None:
             continue
         seen.add(name)
-        ordered.append(name)
-        if len(ordered) >= cap:
+        yield name
+
+
+def _resolve_cluster_mining_tables(conn: sqlite3.Connection, *, max_tables: int) -> list[str]:
+    """Bounded materialization of _iter_cluster_mining_1d_tables (tests / legacy)."""
+    cap = max(1, int(max_tables))
+    out: list[str] = []
+    for tbl in _iter_cluster_mining_1d_tables(conn):
+        out.append(tbl)
+        if len(out) >= cap:
             break
-    return ordered
+    return out
 
 
 def _load_recent_mfe_training_samples(timeframe: str, days: int = 30):
@@ -480,22 +500,35 @@ def build_supernova_csv():
     if not os.path.exists(DB_PATH):
         return 0
     conn = get_connection(DB_PATH, read_only=True)
-    tables = _resolve_cluster_mining_tables(conn, max_tables=SUPERNOVA_CLUSTER_MAX_TABLES)
     out = []
     out_cap = int(SUPERNOVA_CLUSTER_OUT_MAX_ROWS)
+    scan_budget = int(SUPERNOVA_CLUSTER_SCAN_BUDGET)
     gc_every = max(1, int(SUPERNOVA_CLUSTER_GC_EVERY_N))
     skipped_short = 0
     skipped_dna = 0
+    scanned = 0
     try:
-        for idx, tbl in enumerate(tables):
+        for tbl in _iter_cluster_mining_1d_tables(conn):
             if len(out) >= out_cap:
+                break
+            scanned += 1
+            if scanned > scan_budget:
                 break
             parsed = _parse_ohlcv_table_name(tbl)
             if parsed is None:
                 continue
             market, symbol, tf = parsed
-            min_bars = max(int(SUPERNOVA_CLUSTER_MIN_BARS), dna_extract_min_bars(tf))
+            min_bars = dna_extract_min_bars(tf)
             if min_bars > OHLCV_SIGNAL_BAR_LIMIT:
+                skipped_short += 1
+                continue
+            try:
+                row_cnt = int(
+                    conn.execute(f'SELECT COUNT(*) FROM "{tbl}"').fetchone()[0]
+                )
+            except Exception:
+                continue
+            if row_cnt < min_bars:
                 skipped_short += 1
                 continue
             try:
@@ -518,7 +551,7 @@ def build_supernova_csv():
             del df
             if dna is None:
                 skipped_dna += 1
-                if (idx + 1) % gc_every == 0:
+                if scanned % gc_every == 0:
                     flush_gc(label=GC_AFTER_OHLCV_BATCH)
                 continue
             out.append(
@@ -533,19 +566,18 @@ def build_supernova_csv():
                     "[D_Day_당일] 평균_시장강도(RS)": dna["rs"],
                 }
             )
-            if (idx + 1) % gc_every == 0:
+            if scanned % gc_every == 0:
                 flush_gc(label=GC_AFTER_OHLCV_BATCH)
     finally:
         conn.close()
         flush_gc(label=GC_AFTER_OHLCV_BATCH)
     if not out:
         logger.warning(
-            "build_supernova_csv: 0 rows from %s 1D tables "
-            "(short=%s dna_fail=%s — need 1D bars>=%s or data_refresh)",
-            len(tables),
+            "build_supernova_csv: 0 rows after scanning %s 1D tables "
+            "(short=%s dna_fail=%s min_bars=130 — need data_refresh 1D)",
+            scanned,
             skipped_short,
             skipped_dna,
-            int(SUPERNOVA_CLUSTER_MIN_BARS),
         )
         return 0
     pd.DataFrame(out).to_csv(CSV_PATH, index=False, encoding="utf-8-sig")

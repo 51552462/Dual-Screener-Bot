@@ -52,6 +52,7 @@ from bitget.infra.memory_policy import (
     DATA_MINER_MFE_TRAINING_LIMIT,
     SUPERNOVA_CLUSTER_FORWARD_SYMBOL_LIMIT,
     SUPERNOVA_CLUSTER_MAX_TABLES,
+    SUPERNOVA_CLUSTER_SCAN_BUDGET,
     FORWARD_ZOMBIE_CLEANUP_BATCH_LIMIT,
     FORWARD_IDENTITY_BLANK_REPAIR_BATCH_LIMIT,
     TIME_MACHINE_MAX_TABLES,
@@ -1305,6 +1306,31 @@ def sqlite_bitget_ohlcv_1d_tables_sql(
         default=TIME_MACHINE_MAX_TABLES,
         floor=1,
         ceiling=TIME_MACHINE_MAX_TABLES,
+    )
+    btc_clause = "AND name NOT LIKE '%BTC_USDT%'" if exclude_btc else ""
+    sql = f"""
+        SELECT name FROM sqlite_master
+        WHERE type='table'
+          AND name LIKE 'BITGET_%_1D'
+          AND name NOT LIKE '%__tmp%'
+          {btc_clause}
+        ORDER BY name
+        LIMIT ?
+    """
+    return sql, (lim,)
+
+
+def sqlite_bitget_cluster_1d_tables_sql(
+    *,
+    limit: int | None = None,
+    exclude_btc: bool = False,
+) -> tuple[str, tuple]:
+    """build_supernova_csv — wide 1D table scan (empty shells skipped via COUNT in caller)."""
+    lim = _clamp_limit(
+        limit,
+        default=SUPERNOVA_CLUSTER_SCAN_BUDGET,
+        floor=1,
+        ceiling=SUPERNOVA_CLUSTER_SCAN_BUDGET,
     )
     btc_clause = "AND name NOT LIKE '%BTC_USDT%'" if exclude_btc else ""
     sql = f"""

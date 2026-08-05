@@ -118,6 +118,6 @@ def test_build_supernova_csv_module_uses_bounded_table_resolution():
 
     src = inspect.getsource(dm.build_supernova_csv)
     assert "sqlite_master WHERE type='table' AND name NOT LIKE" not in src
-    assert "_resolve_cluster_mining_tables" in src
-    assert "SUPERNOVA_CLUSTER_MAX_TABLES" in src
+    assert "_iter_cluster_mining_1d_tables" in src
+    assert "SUPERNOVA_CLUSTER_SCAN_BUDGET" in src
     assert "SUPERNOVA_CLUSTER_OUT_MAX_ROWS" in src

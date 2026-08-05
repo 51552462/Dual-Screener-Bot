@@ -230,8 +230,9 @@ DATA_MINER_MFE_WINNERS_LIMIT: int = 3_000  # GMM DNA mining — per-TF CLOSED MF
 DATA_MINER_MFE_TRAINING_LIMIT: int = 500  # AST alpha evolution — 30d MFE sample cap
 
 # build_supernova_csv / KMeans cluster mining (4GB peak guard)
-SUPERNOVA_CLUSTER_MAX_TABLES: int = 400       # OHLCV tables scanned per run
-SUPERNOVA_CLUSTER_MIN_BARS: int = 240         # DNA extract minimum bar count
+SUPERNOVA_CLUSTER_MAX_TABLES: int = 400       # legacy resolve cap (tests)
+SUPERNOVA_CLUSTER_SCAN_BUDGET: int = 2_500    # max 1D tables probed per CSV build
+SUPERNOVA_CLUSTER_MIN_BARS: int = 240         # DNA extract minimum bar count (1D uses dna_extract_min_bars)
 SUPERNOVA_CLUSTER_OUT_MAX_ROWS: int = 800     # CSV output safety cap
 SUPERNOVA_CLUSTER_FORWARD_SYMBOL_LIMIT: int = 500  # forward_trades symbol resolution
 SUPERNOVA_CLUSTER_SYMBOL_LOOKBACK_DAYS: int = 90     # recent symbol window (UTC)
