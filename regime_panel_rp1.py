@@ -426,7 +426,7 @@ def run_regime_panel_rp1(
     }
 
     out_dir = output_dir or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.dirname(os.path.abspath(__file__)),
         "reports",
         "regime_panel",
     )
