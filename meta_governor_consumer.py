@@ -139,16 +139,7 @@ def _resolve_weight_s5_bounds(
     regime: str,
     sys_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[float, float]:
-    from meta_governor import ACTION_BY_REGIME
-
-    rk = str(regime or "UNKNOWN").strip().upper()
-    if rk in ("CHOP", "WHIPSAW"):
-        rk = "SIDEWAYS"
-    action = dict(ACTION_BY_REGIME.get(rk, ACTION_BY_REGIME["UNKNOWN"]))
-    if isinstance(sys_config, dict):
-        overlay = sys_config.get("ACTION_BY_REGIME")
-        if isinstance(overlay, dict) and rk in overlay and isinstance(overlay[rk], dict):
-            action.update(overlay[rk])
+    action = _resolve_regime_action_entry(regime, sys_config)
     bounds = action.get("weight_s5_bounds")
     if not (isinstance(bounds, (list, tuple)) and len(bounds) == 2):
         bounds = action.get("weight_s4_bounds")
@@ -162,6 +153,30 @@ def _resolve_weight_s5_bounds(
     return 0.75, 1.35
 
 
+def _resolve_regime_action_entry(
+    regime: str,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from meta_governor import ACTION_BY_REGIME
+
+    rk = str(regime or "UNKNOWN").strip().upper()
+    if rk in ("CHOP", "WHIPSAW"):
+        rk = "SIDEWAYS"
+    action = dict(ACTION_BY_REGIME.get(rk, ACTION_BY_REGIME["UNKNOWN"]))
+    if isinstance(sys_config, dict):
+        overlay = sys_config.get("ACTION_BY_REGIME")
+        if isinstance(overlay, dict) and rk in overlay and isinstance(overlay[rk], dict):
+            action.update(overlay[rk])
+    return action
+
+
+def _resolve_regime_allows_s5(
+    regime: str,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> bool:
+    return bool(_resolve_regime_action_entry(regime, sys_config).get("s5_arm_active", False))
+
+
 def resolve_defense_arm_weight(
     market: str,
     regime: str,
@@ -169,7 +184,7 @@ def resolve_defense_arm_weight(
     sys_config: Optional[Dict[str, Any]] = None,
 ) -> float:
     """
-    S5 방어 arm Kelly 배율 — PERFORMANCE_BUDGET_DEFENSE_ARM_ACTIVE_{market} 게이트.
+    S5 방어 arm Kelly 배율 — Option A: regime_allows_s5 OR budget DEFENSE_ARM 게이트.
     비활성 시 0.0, 활성 시 clamp(WEIGHT_S5, weight_s5_bounds).
     """
     if not is_s5_sig_type(sig_type):
@@ -181,10 +196,17 @@ def resolve_defense_arm_weight(
     if mkt not in ("KR", "US"):
         mkt = "KR"
     arm_key = f"PERFORMANCE_BUDGET_DEFENSE_ARM_ACTIVE_{mkt}"
-    active = cfg.get(arm_key, False)
-    if isinstance(active, str):
-        active = active.strip().lower() in ("1", "true", "yes")
-    if not active:
+    budget_active = cfg.get(arm_key, False)
+    if isinstance(budget_active, str):
+        budget_active = budget_active.strip().lower() in ("1", "true", "yes")
+
+    regime_gate_on = cfg.get("ENABLE_S5_REGIME_GATE", True)
+    if isinstance(regime_gate_on, str):
+        regime_gate_on = regime_gate_on.strip().lower() in ("1", "true", "yes")
+    regime_allows_s5 = (
+        _resolve_regime_allows_s5(regime, cfg) if regime_gate_on else False
+    )
+    if not (regime_allows_s5 or budget_active):
         return 0.0
     w = resolve_config_float(cfg, "WEIGHT_S5", default=1.0)
     lo, hi = _resolve_weight_s5_bounds(regime, cfg)

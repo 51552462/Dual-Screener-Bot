@@ -2,41 +2,39 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **일괄 배포** (R2·R3·R4·A-4·A-5a rev.2) |
-| **status** | `WAIT_DIRECTOR` — Critical 일괄 배포 승인 |
-| **다음 담당** | **디렉터** → `update_factory.sh` |
+| **sub-phase** | **RP-1 + C-1** harness ✅ |
+| **status** | `WAIT_LIVE_RUN` |
+| **Claude** | harness OK 2026-08-07 |
 
 ---
 
-## 디렉터 승인 대상 (일괄 배포)
+## 병렬 3건 (충돌 없음 — Claude 승인)
 
-**R2 · R3 · R4 · A-4 · A-5a(rev.2)** — 5건 모두 Claude OK ✅
-
-🔴 Critical 포함 (A-5a, A-4) → `update_factory.sh` **전 디렉터 최종 승인 필요**
-
-| 항목 | Claude OK |
-|------|-----------|
-| A-1-R2 | 2026-08-05 |
-| A-1-R3 | 2026-08-06 |
-| A-1-R4 | 2026-08-06 |
-| A-4 | 2026-08-06 |
-| A-5a rev.2 | 2026-08-06 |
-
-### 문제 시 개별 킬스위치 (교차 조건 없음)
-
-| 항목 | OFF |
-|------|-----|
-| A-5a | `ENABLE_WEIGHT_S5_MERGE=False` |
-| A-4 | `ENABLE_ASYMMETRIC_HYSTERESIS=False` |
+| # | 작업 | 비고 |
+|---|------|------|
+| ① | A-5b 일괄 배포 | `update_factory.sh` |
+| ② | north star 일일 cron | ledger JSON |
+| ③ | RP-1 live run | `reports/regime_panel/rp1_*.json` |
 
 ---
 
-## 다음 Handoff 후보
+## RP-1 live run 순서
 
-| ID | CAT | 내용 |
-|----|-----|------|
-| **A-5b** | G (새 세션) | BEAR 국면 S5 자동 활성화 |
-| A-5c | C | 스캐너 공식 연결 |
-| fade/TOXIC_FADE | CAT-I (별도) | S5와 분리 — 카운터트레이드 성격, A-5c 또는 CAT-I 세션 |
+1. **KR 스모크** — KOSPI top N (파이프 확인)
+2. **KR+US 합산** — 최종 North Star 판정본 (SSOT)
+3. JSON → Claude **결과 재검증** (harness OK ≠ Pass/Fail)
 
-**Phase A**: A-5a 완료(Claude OK) → **배포 대기** → A-5b → A-5c
+```bash
+# 서버 예시 — KR+US 유니버스는 Handoff 후 스크립트 확정
+python -c "from regime_panel_rp1 import run_regime_panel_rp1; ..."
+```
+
+---
+
+## 테스트 (harness)
+
+`pytest tests/test_regime_panel_rp1.py` — **15 passed**
+
+- `test_rp1_no_config_kv_write`
+- `test_regime_periods_dates_ssot_snapshot`
+- Stage2: `test_stage2_branch_*` ×5

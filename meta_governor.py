@@ -52,7 +52,8 @@ ACTION_BY_REGIME: Dict[str, Dict[str, Any]] = {
         "kelly_floor": None,
         "weight_s1_bounds": [0.30, 0.85], # 돌파 매매(S1) 비중 더 강력하게 억제
         "weight_s4_bounds": [1.10, 1.65], # 눌림목 방어(S4) 비중 확대
-        "weight_s5_bounds": [1.10, 1.65],
+        "weight_s5_bounds": [0.9, 1.55],
+        "s5_arm_active": True,
         "notes": "극단적 고변동: 켈리 상한 반토막 락다운, 가짜 돌파 원천 차단",
     },
     # ===========================================================================
@@ -62,6 +63,7 @@ ACTION_BY_REGIME: Dict[str, Dict[str, Any]] = {
         "weight_s1_bounds": [0.35, 0.95],
         "weight_s4_bounds": [1.05, 1.75],
         "weight_s5_bounds": [1.05, 1.75],
+        "s5_arm_active": True,
         "notes": "하락/늪지: 공격 축소·역축/방어 축 확대",
     },
     "BULL": {
@@ -70,6 +72,7 @@ ACTION_BY_REGIME: Dict[str, Dict[str, Any]] = {
         "weight_s1_bounds": [1.0, 1.85],
         "weight_s4_bounds": [0.55, 1.15],
         "weight_s5_bounds": [0.55, 1.15],
+        "s5_arm_active": False,
         "notes": "강세: 모멘텀(S1) 상한 완화, 과도한 S4 가중 억제",
     },
     "SIDEWAYS": {
@@ -78,6 +81,7 @@ ACTION_BY_REGIME: Dict[str, Dict[str, Any]] = {
         "weight_s1_bounds": [0.65, 1.25],
         "weight_s4_bounds": [0.85, 1.45],
         "weight_s5_bounds": [0.85, 1.45],
+        "s5_arm_active": False,
         "notes": "횡보·혼조: 중립 켈리·양 축 밸런스",
     },
     "UNKNOWN": {
@@ -86,6 +90,7 @@ ACTION_BY_REGIME: Dict[str, Dict[str, Any]] = {
         "weight_s1_bounds": [0.55, 1.35],
         "weight_s4_bounds": [0.75, 1.35],
         "weight_s5_bounds": [0.75, 1.35],
+        "s5_arm_active": False,
         "notes": "데이터 불충분: 보수적 기본 행동 맵",
     },
 }

@@ -30,12 +30,13 @@ class TestIsS5SigType:
 
 class TestResolveDefenseArmWeight:
     def test_inactive_defense_arm_returns_zero(self):
+        """BULL + budget off — s5_arm_active=False → 0."""
         cfg = {
             "WEIGHT_S5": 1.0,
             "PERFORMANCE_BUDGET_DEFENSE_ARM_ACTIVE_KR": False,
         }
         sig = "Dante[INVERSE_ETF]"
-        assert resolve_defense_arm_weight("KR", "BEAR", sig, cfg) == pytest.approx(0.0)
+        assert resolve_defense_arm_weight("KR", "BULL", sig, cfg) == pytest.approx(0.0)
 
     def test_active_defense_arm_clamps_weight(self):
         cfg = {

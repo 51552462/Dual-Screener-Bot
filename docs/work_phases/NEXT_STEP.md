@@ -1,29 +1,38 @@
 # NEXT_STEP — 디렉터 다음 한 걸음
 
-> **갱신**: 2026-08-06 · **5건 Claude OK ✅** · 배포 승인만 남음
+> **갱신**: 2026-08-07 · Alpha Proof **압축** · G2 유지 · ASG=조기경보
 
 ---
 
 | 필드 | 값 |
 |------|-----|
-| **지금** | **디렉터 Critical 일괄 배포 승인** |
-| **명령** | 승인 후 `update_factory.sh` |
+| **지금** | ① 일괄 배포 ② north star cron ③ C-1 Handoff (backtest 절차 포함) |
+| **한 줄** | **2주 backtest Go/No-Go** → 4주 ASG(조기경보) → G2는 그대로 |
 
 ---
 
-## 일괄 배포 5건
+## 타임라인 (기다리기만 하지 않음)
 
-R2 · R3 · R4 · A-4 · **A-5a rev.2**
-
-- [ ] **디렉터 승인**
-- [ ] `update_factory.sh` 실행
-
-**문제 시**: 배치 전체 롤백 말고 flag만 — A-5a `ENABLE_WEIGHT_S5_MERGE=False` · A-4 `ENABLE_ASYMMETRIC_HYSTERESIS=False`
+```
+Week 1–2   C-1 backtest timebox → Go / No-Go (무결론=No-Go)
+Week 4     ASG — 정성 6항 (`06` §ASG) · CAGR 판정 금지
+Week 8+    G2 근접 여부 (≥56일·trades>30) — 상품화 게이트
+```
 
 ---
 
-## 배포 후
+## 1. 일괄 배포
 
-A-5b (CAT-G, 새 세션) — BEAR일 때 S5 켜기
+```bash
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo ./update_factory.sh
+```
 
-**쉬운 설명** → `09_디렉터_쉬운요약.md`
+## 2. north star 일일 cron
+
+```bash
+TZ=Asia/Seoul bash ./factory.sh --north-star-digest daily
+```
+
+## 3. Claude Pro
+
+C-1 Handoff — **2주 backtest + 무결론 No-Go** 본문 포함

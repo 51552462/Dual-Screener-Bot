@@ -66,25 +66,96 @@ def load_factory_brain_readonly():
     return load_config()
 
 # 2. 레짐 매트릭스 (결정론적 구간 라벨 — 몬테카를로 없음)
+# RP-1: 15구간 (상승5·횡보5·하락5) — bucket + backup 치환용
 REGIME_PERIODS = {
-    "2008년 서브프라임 금융위기": {
-        "start": "2008-09-01", "end": "2009-03-31", "regime": "EXTREME_CRASH",
+    # --- BULL ×5 ---
+    "BULL_01_유동성초강세": {
+        "start": "2020-10-01", "end": "2021-11-30",
+        "regime": "MASSIVE_BULL", "bucket": "BULL",
+        "backup": {"start": "2019-10-01", "end": "2020-02-29", "regime": "BULL", "bucket": "BULL"},
     },
-    "COVID-19 코로나 폭락장": {
-        "start": "2020-02-01", "end": "2020-05-31", "regime": "EXTREME_CRASH",
+    "BULL_02_US_AI랠리": {
+        "start": "2023-01-01", "end": "2023-07-31",
+        "regime": "BULL", "bucket": "BULL",
+        "backup": {"start": "2023-08-01", "end": "2023-12-31", "regime": "BULL", "bucket": "BULL"},
     },
-    "2022년 글로벌 금리인상 폭락장": {
-        "start": "2022-01-01", "end": "2022-06-30", "regime": "EXTREME_CRASH",
+    "BULL_03_최근상승": {
+        "start": "2024-10-01", "end": "2025-03-31",
+        "regime": "BULL", "bucket": "BULL",
+        "backup": {"start": "2024-06-01", "end": "2024-09-30", "regime": "BULL", "bucket": "BULL"},
     },
-    "2018년 미중 무역분쟁 하락장": {
-        "start": "2018-09-01", "end": "2018-12-31", "regime": "EXTREME_CRASH",
+    "BULL_04_KR코스피랠리": {
+        "start": "2017-01-01", "end": "2018-01-31",
+        "regime": "BULL", "bucket": "BULL",
+        "backup": {"start": "2016-11-01", "end": "2017-06-30", "regime": "BULL", "bucket": "BULL"},
     },
-    "2020~2021 유동성 초강세 (대형 상승)": {
-        "start": "2020-10-01", "end": "2021-11-30", "regime": "MASSIVE_BULL",
+    "BULL_05_글로벌리플레이": {
+        "start": "2016-06-01", "end": "2016-11-30",
+        "regime": "BULL", "bucket": "BULL",
+        "backup": {"start": "2013-01-01", "end": "2013-06-30", "regime": "BULL", "bucket": "BULL"},
     },
-    "2023년 중반 횡보·침체": {
-        "start": "2023-05-01", "end": "2023-08-31", "regime": "CHOPPY_STAGNANT",
+    # --- SIDEWAYS ×5 ---
+    "SIDE_01_2023횡보": {
+        "start": "2023-05-01", "end": "2023-08-31",
+        "regime": "CHOPPY_STAGNANT", "bucket": "SIDEWAYS",
+        "backup": {"start": "2023-09-01", "end": "2023-12-31", "regime": "SIDEWAYS", "bucket": "SIDEWAYS"},
     },
+    "SIDE_02_2015횡보": {
+        "start": "2015-06-01", "end": "2016-06-30",
+        "regime": "SIDEWAYS", "bucket": "SIDEWAYS",
+        "backup": {"start": "2014-06-01", "end": "2015-05-31", "regime": "SIDEWAYS", "bucket": "SIDEWAYS"},
+    },
+    "SIDE_03_2021-22혼조": {
+        "start": "2021-12-01", "end": "2022-12-31",
+        "regime": "SIDEWAYS", "bucket": "SIDEWAYS",
+        "backup": {"start": "2021-06-01", "end": "2021-11-30", "regime": "SIDEWAYS", "bucket": "SIDEWAYS"},
+    },
+    "SIDE_04_2024여름횡보": {
+        "start": "2024-04-01", "end": "2024-08-31",
+        "regime": "SIDEWAYS", "bucket": "SIDEWAYS",
+        "backup": {"start": "2024-01-01", "end": "2024-03-31", "regime": "SIDEWAYS", "bucket": "SIDEWAYS"},
+    },
+    "SIDE_05_2019횡보": {
+        "start": "2019-04-01", "end": "2019-12-31",
+        "regime": "SIDEWAYS", "bucket": "SIDEWAYS",
+        "backup": {"start": "2018-01-01", "end": "2018-06-30", "regime": "SIDEWAYS", "bucket": "SIDEWAYS"},
+    },
+    # --- BEAR ×5 (인과 중복 제거: 은행위기/팬데믹/금리/무역/국가신용) ---
+    "BEAR_01_서브프라임GFC": {
+        "start": "2008-09-01", "end": "2009-03-31",
+        "regime": "EXTREME_CRASH", "bucket": "BEAR",
+        "backup": {"start": "2008-06-01", "end": "2008-08-31", "regime": "BEAR", "bucket": "BEAR"},
+    },
+    "BEAR_02_COVID폭락": {
+        "start": "2020-02-01", "end": "2020-05-31",
+        "regime": "EXTREME_CRASH", "bucket": "BEAR",
+        "backup": {"start": "2020-06-01", "end": "2020-08-31", "regime": "BEAR", "bucket": "BEAR"},
+    },
+    "BEAR_03_글로벌금리인상": {
+        "start": "2022-01-01", "end": "2022-06-30",
+        "regime": "EXTREME_CRASH", "bucket": "BEAR",
+        "backup": {"start": "2022-07-01", "end": "2022-10-31", "regime": "BEAR", "bucket": "BEAR"},
+    },
+    "BEAR_04_미중무역분쟁": {
+        "start": "2018-09-01", "end": "2018-12-31",
+        "regime": "BEAR", "bucket": "BEAR",
+        "backup": {"start": "2018-06-01", "end": "2018-08-31", "regime": "BEAR", "bucket": "BEAR"},
+    },
+    "BEAR_05_미국신용등급강등": {
+        "start": "2011-08-01", "end": "2011-10-31",
+        "regime": "BEAR", "bucket": "BEAR",
+        "backup": {"start": "2011-05-01", "end": "2011-07-31", "regime": "BEAR", "bucket": "BEAR"},
+    },
+}
+
+# 레거시 키 → RP-1 키 (하위 호환)
+_LEGACY_REGIME_KEY_ALIASES = {
+    "2008년 서브프라임 금융위기": "BEAR_01_서브프라임GFC",
+    "COVID-19 코로나 폭락장": "BEAR_02_COVID폭락",
+    "2022년 글로벌 금리인상 폭락장": "BEAR_03_글로벌금리인상",
+    "2018년 미중 무역분쟁 하락장": "BEAR_04_미중무역분쟁",
+    "2020~2021 유동성 초강세 (대형 상승)": "BULL_01_유동성초강세",
+    "2023년 중반 횡보·침체": "SIDE_01_2023횡보",
 }
 
 # 하위 호환: 기존 코드가 참조하는 CRASH_PERIODS (극한 붕괴 레짐만 — 시작·종료)
@@ -411,8 +482,12 @@ def _print_regime_fetch_diagnostics(regime_label: str, attempted: int, packs: li
 def run_time_machine_backtest(target_period_name, stock_list):
     print(f"\n⏳ 타임머신 가동: [{target_period_name}] 차원으로 이동합니다...")
     if target_period_name not in REGIME_PERIODS:
-        print(f"🚨 알 수 없는 레짐 키: {target_period_name}")
-        return
+        alias = _LEGACY_REGIME_KEY_ALIASES.get(target_period_name)
+        if alias:
+            target_period_name = alias
+        else:
+            print(f"🚨 알 수 없는 레짐 키: {target_period_name}")
+            return
     period = REGIME_PERIODS[target_period_name]
     start_dt, end_dt = period["start"], period["end"]
 
