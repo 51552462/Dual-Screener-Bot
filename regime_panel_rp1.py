@@ -195,6 +195,9 @@ def decide_stage2_c1(stage1_report: Dict[str, Any]) -> Dict[str, Any]:
     causes = [r.get("fail_cause") for r in periods if r.get("verdict") == "FAIL"]
     overall = stage1_report.get("overall_verdict", "FAIL")
 
+    if overall == "INCONCLUSIVE":
+        return {"action": "SKIP", "reason": "무결론: 전 구간 n<20 — RP-1 No-Go (원인 A)"}
+
     if "A" in causes:
         return {"action": "SKIP", "reason": "C-1 스킵: 원인 A (신호부족)"}
     if "C" in causes:
@@ -333,7 +336,13 @@ def build_stage1_report(
     ]
     avg_bull_cagr = float(np.mean(eligible_cagrs)) if eligible_cagrs else 0.0
 
-    if mdd_badge["mdd_cap_violation"]:
+    all_skip = bool(period_rows) and all(
+        r.get("verdict") == "SKIP_LOW_N" for r in period_rows
+    )
+
+    if all_skip:
+        overall = "INCONCLUSIVE"
+    elif mdd_badge["mdd_cap_violation"]:
         overall = "NEAR_MISS"
     elif all_bucket_pass and avg_bull_cagr >= 35.0:
         overall = "PASS"
