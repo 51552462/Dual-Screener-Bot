@@ -74,8 +74,11 @@ class TestRp1NoConfigKvWrite:
             raising=False,
         )
         monkeypatch.setattr(
-            "regime_panel_rp1.load_factory_brain_readonly",
-            lambda: {"ENABLE_PERFORMANCE_BUDGET_GOVERNOR": True},
+            "regime_panel_rp1_runner.load_rp1_brain_cached",
+            lambda **kwargs: {
+                "ENABLE_PERFORMANCE_BUDGET_GOVERNOR": True,
+                "LIVE_CLUSTER_TEMPLATES": {"t1": {}},
+            },
         )
 
         def mock_bt(_name, _stocks, start, end):
@@ -110,6 +113,21 @@ class TestVerdictAndCause:
 
     def test_fail_cause_c_mdd(self):
         assert tag_fail_cause(total_trades=30, mdd_pct=12.0, cagr_pct=10.0, bucket="BEAR") == "C"
+
+    def test_all_skip_low_n_is_inconclusive(self):
+        rows = [
+            {
+                "regime_name": f"p{i}",
+                "bucket": "BULL" if i < 5 else ("SIDEWAYS" if i < 10 else "BEAR"),
+                "verdict": "SKIP_LOW_N",
+                "mdd_pct": 5.0,
+                "cagr_pct": 0.0,
+                "total_trades": 0,
+            }
+            for i in range(15)
+        ]
+        s1 = build_stage1_report(rows)
+        assert s1["overall_verdict"] == "INCONCLUSIVE"
 
 
 class TestStage2Branching:

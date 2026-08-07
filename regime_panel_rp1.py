@@ -22,7 +22,6 @@ from time_machine_backtester import (
     LOOKAHEAD_BIAS_WARNING_HTML,
     REGIME_PERIODS,
     _summarize_trade_results,
-    load_factory_brain_readonly,
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
@@ -380,12 +379,21 @@ def run_regime_panel_rp1(
     Stage 1 RP-1 baseline + optional Stage 2 C-1 A/B (auto-branched).
     Writes reports/regime_panel/rp1_{date}.json
     """
-    if run_backtest_fn is None:
-        from regime_panel_rp1_runner import default_run_backtest_for_period
+    from regime_panel_rp1_runner import default_run_backtest_for_period, load_rp1_brain_cached
 
+    if run_backtest_fn is None:
         run_backtest_fn = default_run_backtest_for_period
 
-    mdd_cap = resolve_mdd_cap_pct(load_factory_brain_readonly())
+    brain = load_rp1_brain_cached()
+    ml_n = len(brain.get("LIVE_CLUSTER_TEMPLATES") or {})
+    ud_n = len(brain.get("UNDERDOG_CLUSTER_TEMPLATES") or {})
+    if run_backtest_fn is default_run_backtest_for_period and ml_n + ud_n == 0:
+        raise RuntimeError(
+            "RP-1 aborted: LIVE_CLUSTER_TEMPLATES empty. "
+            "Server uses config_kv (SQLite) — ensure load_system_config path, not JSON-only."
+        )
+
+    mdd_cap = resolve_mdd_cap_pct(brain)
     period_rows: List[Dict[str, Any]] = []
 
     for regime_name, meta in REGIME_PERIODS.items():

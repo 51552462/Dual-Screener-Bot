@@ -1,6 +1,43 @@
 # CURSOR → CLAUDE (검증 OUTBOX)
 
-> **갱신**: 2026-08-07 · **RP-1 레짐패널 15구간** 논의 OUTBOX 추가
+> **갱신**: 2026-08-07 · **RP-1 live run RCA** + config_kv fix
+
+---
+
+## OUTBOX — RP-1 live run RCA (서버 `no_templates`)
+
+### 증상 (디렉터 서버 실측)
+
+| 시도 | 결과 |
+|------|------|
+| 단일 종목 `_backtest_one_ticker` | ML=12, trades 264/271 ✅ |
+| 3종목 `default_run_backtest_for_period` | trades=817 ✅ |
+| 400종목 RP-1 live | sum=0, SKIP 15/15, `gate_summary: no_templates` ❌ |
+
+### 근본 원인 (Cursor RCA)
+
+`time_machine_backtester.load_factory_brain_readonly()` 가 **JSON-only** (`system_config.json`) 로만 읽음.  
+운영 서버 SSOT는 **`config_manager.load_system_config()` → SQLite `config_kv`** (A-5b 배포 후 템플릿이 KV에만 있을 수 있음).
+
+### 패치 (`5e027e6` 이후 추가 커밋 예정)
+
+1. `load_factory_brain_readonly()` → `load_system_config()` 우선, JSON fallback  
+2. `load_rp1_brain_cached()` — 15구간 동안 1회 로드  
+3. 템플릿 0이면 live run **즉시 RuntimeError** (조용한 INCONCLUSIVE 방지)
+
+### Claude 검증 요청
+
+- live run 재실행 후 `sum trades > 0` 확인 시 **결과 재검증** (Pass/Fail/Near-miss)  
+- `INCONCLUSIVE` 판정 로직 스펙 일치 여부  
+- config 읽기 경로가 CAT-K SSOT와 일치하는지
+
+### 서버 재실행 (디렉터)
+
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+python3 -c "from config_manager import load_system_config as l; c=l(); print('ML', len(c.get('LIVE_CLUSTER_TEMPLATES') or {}))"
+nohup python3 run_rp1_live.py > rp1_run.log 2>&1 &
+```
 
 ---
 

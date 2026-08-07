@@ -59,7 +59,15 @@ def load_config(max_retries=5):
 
 
 def load_factory_brain_readonly():
-    """메인 시스템의 뇌를 읽기 전용으로 복제해 옵니다."""
+    """메인 시스템의 뇌를 읽기 전용으로 복제 (SQLite config_kv → JSON fallback)."""
+    try:
+        from config_manager import load_system_config
+
+        cfg = load_system_config(max_retries=10)
+        if isinstance(cfg, dict) and cfg:
+            return cfg
+    except Exception as exc:
+        print(f"⚠️ [time_machine] config_manager 로드 실패, JSON fallback: {exc}")
     if not os.path.exists(CONFIG_PATH):
         print("🚨 관제탑 파일을 찾을 수 없습니다.")
         return {}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -13,6 +13,21 @@ from time_machine_backtester import (
     _process_pool_max_workers,
     load_factory_brain_readonly,
 )
+
+_RP1_BRAIN_CACHE: Optional[Dict[str, Any]] = None
+
+
+def load_rp1_brain_cached(*, force_reload: bool = False) -> Dict[str, Any]:
+    """RP-1 session cache — avoid 15× reload races during live run."""
+    global _RP1_BRAIN_CACHE
+    if _RP1_BRAIN_CACHE is None or force_reload:
+        _RP1_BRAIN_CACHE = load_factory_brain_readonly()
+    return _RP1_BRAIN_CACHE
+
+
+def clear_rp1_brain_cache() -> None:
+    global _RP1_BRAIN_CACHE
+    _RP1_BRAIN_CACHE = None
 
 
 def _env_flag(name: str) -> bool:
@@ -87,16 +102,23 @@ def default_run_backtest_for_period(
     end_dt: str,
 ) -> Dict[str, Any]:
     """Run supernova template backtest for one window; returns {trades: [...]}."""
-    config = load_factory_brain_readonly()
-    ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {})
-    ud_templates = config.get("UNDERDOG_CLUSTER_TEMPLATES", {})
+    config = load_rp1_brain_cached()
+    ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {}) or {}
+    ud_templates = config.get("UNDERDOG_CLUSTER_TEMPLATES", {}) or {}
     all_templates = {**ml_templates, **ud_templates}
     evolved_factors = config.get("EVOLVED_ALPHA_FACTORS")
     if not isinstance(evolved_factors, dict):
         evolved_factors = {}
 
     if not all_templates:
-        return {"trades": [], "gate": "no_templates", "gate_summary": {"no_templates": 1}}
+        return {
+            "trades": [],
+            "gate": "no_templates",
+            "gate_summary": {"no_templates": 1},
+            "template_ml": len(ml_templates),
+            "template_ud": len(ud_templates),
+            "config_empty": not bool(config),
+        }
 
     fetch_start = (pd.to_datetime(start_dt) - timedelta(days=40)).strftime("%Y-%m-%d")
     # RP-1 live run: sequential default — ProcessPool + large universe often yields silent 0 trades.
