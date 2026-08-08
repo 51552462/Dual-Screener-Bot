@@ -1,6 +1,8 @@
 """RP-1 + C-1 regime panel — unit tests (no live fdr)."""
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from regime_panel_rp1 import (
@@ -15,7 +17,31 @@ from regime_panel_rp1 import (
     tag_fail_cause,
     trades_to_daily_returns,
 )
+from regime_panel_rp1_runner import (
+    resolve_rp1_chunk_size,
+    resolve_rp1_max_workers,
+    resolve_rp1_use_parallel,
+)
 from time_machine_backtester import REGIME_PERIODS
+
+
+class TestRp1RunnerTuning:
+    def test_parallel_default_on(self, monkeypatch):
+        monkeypatch.delenv("RP1_SEQUENTIAL", raising=False)
+        monkeypatch.delenv("RP1_PARALLEL", raising=False)
+        assert resolve_rp1_use_parallel() is True
+
+    def test_sequential_flag(self, monkeypatch):
+        monkeypatch.setenv("RP1_SEQUENTIAL", "1")
+        assert resolve_rp1_use_parallel() is False
+
+    def test_max_workers_default_two(self, monkeypatch):
+        monkeypatch.delenv("RP1_MAX_WORKERS", raising=False)
+        monkeypatch.delenv("MAX_WORKERS", raising=False)
+        assert resolve_rp1_max_workers() == 2
+
+    def test_chunk_size_default(self):
+        assert resolve_rp1_chunk_size() == 25
 
 
 class TestRegimePeriodsExpanded:

@@ -478,13 +478,24 @@ def run_regime_panel_rp1(
 
     mdd_cap = resolve_mdd_cap_pct(brain)
     period_rows: List[Dict[str, Any]] = []
+    n_periods = len(REGIME_PERIODS)
 
-    for regime_name, meta in REGIME_PERIODS.items():
-        period_rows.append(
-            _run_one_regime_period(
-                regime_name, meta, stock_list, run_backtest_fn=run_backtest_fn
-            )
+    for idx, (regime_name, meta) in enumerate(REGIME_PERIODS.items(), 1):
+        from regime_panel_rp1_runner import log_rp1
+
+        log_rp1(
+            f"[RP-1] period {idx}/{n_periods} {regime_name} "
+            f"({meta['start']}~{meta['end']}) bucket={meta.get('bucket')}"
         )
+        row = _run_one_regime_period(
+            regime_name, meta, stock_list, run_backtest_fn=run_backtest_fn
+        )
+        log_rp1(
+            f"  -> trades={row['total_trades']} verdict={row['verdict']} "
+            f"CAGR={row['cagr_pct']}% MDD={row['mdd_pct']}% "
+            f"(raw={row.get('mdd_pct_raw')})"
+        )
+        period_rows.append(row)
 
     stage1 = build_stage1_report(period_rows, mdd_cap_pct=mdd_cap)
     stage2_plan = decide_stage2_c1(stage1)
