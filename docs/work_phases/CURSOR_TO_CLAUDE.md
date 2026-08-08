@@ -25,6 +25,12 @@
 2. `load_rp1_brain_cached()` — 15구간 동안 1회 로드  
 3. 템플릿 0이면 live run **즉시 RuntimeError** (조용한 INCONCLUSIVE 방지)
 
+### 패치 v2 (`df0a267` 이후) — KV·JSON 분리
+
+서버: SQLite `config_kv` 비어있지 않지만 **`LIVE_CLUSTER_TEMPLATES`는 JSON/`config_ml.json` 샤드에만 존재** → `load_system_config()` 단독 시 템플릿 0 → RuntimeError.
+
+**수정**: `_backfill_brain_keys_from_legacy()` — KV 로드 후 템플릿·EVOLVED 키만 legacy 병합 뷰에서 read-only backfill.
+
 ### Claude 검증 요청
 
 - live run 재실행 후 `sum trades > 0` 확인 시 **결과 재검증** (Pass/Fail/Near-miss)  

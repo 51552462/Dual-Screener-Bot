@@ -58,20 +58,56 @@ def load_config(max_retries=5):
     return {}
 
 
+_BACKTEST_BRAIN_KEYS = (
+    "LIVE_CLUSTER_TEMPLATES",
+    "UNDERDOG_CLUSTER_TEMPLATES",
+    "EVOLVED_ALPHA_FACTORS",
+)
+
+
+def _backfill_brain_keys_from_legacy(cfg: dict) -> dict:
+    """SQLite KV에 없는 클러스터 템플릿은 JSON/샤드 병합 뷰에서 보충 (read-only)."""
+    out = dict(cfg) if isinstance(cfg, dict) else {}
+    missing = [k for k in _BACKTEST_BRAIN_KEYS if not out.get(k)]
+    if not missing:
+        return out
+    try:
+        from config_manager import _load_legacy_merged_view
+
+        legacy = _load_legacy_merged_view(max_retries=10)
+        if not isinstance(legacy, dict):
+            return out
+        for key in missing:
+            val = legacy.get(key)
+            if val:
+                out[key] = val
+    except Exception as exc:
+        print(f"⚠️ [time_machine] legacy brain backfill 실패: {exc}")
+    return out
+
+
 def load_factory_brain_readonly():
-    """메인 시스템의 뇌를 읽기 전용으로 복제 (SQLite config_kv → JSON fallback)."""
+    """메인 시스템의 뇌를 읽기 전용으로 복제 (SQLite config_kv + JSON/샤드 backfill)."""
+    cfg: dict = {}
     try:
         from config_manager import load_system_config
 
-        cfg = load_system_config(max_retries=10)
-        if isinstance(cfg, dict) and cfg:
-            return cfg
+        blob = load_system_config(max_retries=10)
+        if isinstance(blob, dict):
+            cfg = blob
     except Exception as exc:
         print(f"⚠️ [time_machine] config_manager 로드 실패, JSON fallback: {exc}")
+
+    cfg = _backfill_brain_keys_from_legacy(cfg)
+    ml = cfg.get("LIVE_CLUSTER_TEMPLATES") or {}
+    ud = cfg.get("UNDERDOG_CLUSTER_TEMPLATES") or {}
+    if ml or ud or cfg.get("EVOLVED_ALPHA_FACTORS"):
+        return cfg
+
     if not os.path.exists(CONFIG_PATH):
         print("🚨 관제탑 파일을 찾을 수 없습니다.")
         return {}
-    return load_config()
+    return _backfill_brain_keys_from_legacy(load_config())
 
 # 2. 레짐 매트릭스 (결정론적 구간 라벨 — 몬테카를로 없음)
 # RP-1: 15구간 (상승5·횡보5·하락5) — bucket + backup 치환용

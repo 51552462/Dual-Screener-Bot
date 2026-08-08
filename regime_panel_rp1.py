@@ -384,7 +384,7 @@ def run_regime_panel_rp1(
     if run_backtest_fn is None:
         run_backtest_fn = default_run_backtest_for_period
 
-    brain = load_rp1_brain_cached()
+    brain = load_rp1_brain_cached(force_reload=True)
     ml_n = len(brain.get("LIVE_CLUSTER_TEMPLATES") or {})
     ud_n = len(brain.get("UNDERDOG_CLUSTER_TEMPLATES") or {})
     if run_backtest_fn is default_run_backtest_for_period and ml_n + ud_n == 0:
