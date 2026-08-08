@@ -6,12 +6,14 @@ import pytest
 from regime_panel_rp1 import (
     apply_c1_sector_boost,
     build_stage1_report,
+    compute_period_portfolio_metrics,
     decide_stage2_c1,
     judge_period_verdict,
     mdd_crosscheck_badge,
     replay_tier_overlay_on_returns,
     run_regime_panel_rp1,
     tag_fail_cause,
+    trades_to_daily_returns,
 )
 from time_machine_backtester import REGIME_PERIODS
 
@@ -99,6 +101,37 @@ class TestTierOverlay:
         adj, log = replay_tier_overlay_on_returns(returns, mdd_cap_pct=10.0)
         assert len(adj) == 4
         assert any(entry["band"] == "LOCKDOWN" for entry in log) or any(a == 0.0 for a in adj)
+
+
+class TestPortfolioMetricsV2:
+    def test_daily_equal_weight_caps_cagr_explosion(self):
+        trades = [
+            {"date": "2020-10-01", "final_ret": 1.0, "code": f"{i:04d}"}
+            for i in range(200)
+        ]
+        m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
+        assert m["metrics_method"] == "daily_equal_weight_v2"
+        assert m["cagr_pct"] < 200.0
+        assert m["trades_per_day"] == 200.0
+
+    def test_same_day_trades_averaged_to_one_daily_return(self):
+        _, daily = trades_to_daily_returns(
+            [
+                {"date": "2020-10-01", "final_ret": 2.0, "code": "a"},
+                {"date": "2020-10-01", "final_ret": 4.0, "code": "b"},
+            ]
+        )
+        assert daily == [3.0]
+
+    def test_mdd_raw_and_tier_divergence_possible(self):
+        trades = [
+            {"date": f"2020-10-{d:02d}", "final_ret": -2.0, "code": "x"}
+            for d in range(1, 11)
+        ]
+        m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
+        assert "mdd_pct_raw" in m
+        assert "mdd_pct_tier" in m
+        assert m["trading_days"] == 10
 
 
 class TestVerdictAndCause:
@@ -206,4 +239,9 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2"
+        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2"
+        p0 = report["stage1"]["periods"][0]
+        assert "mdd_pct_raw" in p0
+        assert "trades_per_day" in p0
         assert "output_path" in report

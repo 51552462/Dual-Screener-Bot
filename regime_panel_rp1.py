@@ -25,6 +25,8 @@ from time_machine_backtester import (
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
+RP1_METRICS_METHOD = "daily_equal_weight_v2"
+RP1_MAX_POSITIONS_PER_DAY = 20
 RP1_LOOKAHEAD_NOTICE = (
     "상한선 추정치 — v1 오늘 뇌 템플릿 lookahead. Pass≠실전보장."
 )
@@ -101,6 +103,82 @@ def compute_equity_metrics(
     years = days / 365.25
     cagr = ((nav / 100.0) ** (1.0 / years) - 1.0) * 100.0 if years > 0 else 0.0
     return {"cagr_pct": float(cagr), "mdd_pct": float(mdd), "nav_end": float(nav)}
+
+
+def sort_trades_by_date(trades: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(trades, key=lambda t: (str(t.get("date") or "")[:10], str(t.get("code") or "")))
+
+
+def trades_to_daily_returns(
+    trades: Sequence[Dict[str, Any]],
+    *,
+    max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
+) -> Tuple[List[str], List[float]]:
+    """
+    Equal-weight daily portfolio return (%).
+    Multiple same-day entries share NAV (mean return), capped at max_positions_per_day.
+    """
+    by_date: Dict[str, List[float]] = {}
+    for t in trades:
+        day = str(t.get("date") or "")[:10]
+        if not day:
+            continue
+        by_date.setdefault(day, []).append(float(t.get("final_ret", 0.0)))
+
+    dates = sorted(by_date.keys())
+    daily: List[float] = []
+    for day in dates:
+        rets = sorted(by_date[day])
+        if len(rets) > max_positions_per_day:
+            rets = rets[:max_positions_per_day]
+        daily.append(sum(rets) / len(rets))
+    return dates, daily
+
+
+def compute_period_portfolio_metrics(
+    trades: Sequence[Dict[str, Any]],
+    start_dt: str,
+    end_dt: str,
+    *,
+    mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
+    max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
+) -> Dict[str, Any]:
+    """RCA v2: date-sorted daily equal-weight NAV + raw/tier MDD split."""
+    ordered = sort_trades_by_date(list(trades))
+    dates, daily_raw = trades_to_daily_returns(ordered, max_positions_per_day=max_positions_per_day)
+
+    if not daily_raw:
+        return {
+            "cagr_pct": 0.0,
+            "mdd_pct": 0.0,
+            "mdd_pct_raw": 0.0,
+            "mdd_pct_tier": 0.0,
+            "nav_end": 100.0,
+            "trading_days": 0,
+            "trades_per_day": 0.0,
+            "metrics_method": RP1_METRICS_METHOD,
+            "max_positions_per_day": max_positions_per_day,
+            "tier_events": 0,
+            "tier_log_sample": [],
+        }
+
+    raw_metrics = compute_equity_metrics(daily_raw, start_dt, end_dt)
+    adj_daily, tier_log = replay_tier_overlay_on_returns(daily_raw, mdd_cap_pct=mdd_cap_pct)
+    tier_metrics = compute_equity_metrics(adj_daily, start_dt, end_dt)
+
+    return {
+        "cagr_pct": tier_metrics["cagr_pct"],
+        "mdd_pct": tier_metrics["mdd_pct"],
+        "mdd_pct_raw": raw_metrics["mdd_pct"],
+        "mdd_pct_tier": tier_metrics["mdd_pct"],
+        "nav_end": tier_metrics["nav_end"],
+        "trading_days": len(dates),
+        "trades_per_day": round(len(ordered) / max(len(dates), 1), 2),
+        "metrics_method": RP1_METRICS_METHOD,
+        "max_positions_per_day": max_positions_per_day,
+        "tier_events": len(tier_log),
+        "tier_log_sample": tier_log[:5],
+    }
 
 
 def tag_fail_cause(
@@ -276,9 +354,7 @@ def _run_one_regime_period(
     if c1_boost and trades:
         trades = apply_c1_sector_boost(trades, boost_fn=boost_fn)
 
-    raw_returns = [float(t["final_ret"]) for t in trades]
-    adj_returns, tier_log = replay_tier_overlay_on_returns(raw_returns)
-    metrics = compute_equity_metrics(adj_returns, start_dt, end_dt)
+    metrics = compute_period_portfolio_metrics(trades, start_dt, end_dt)
 
     verdict = judge_period_verdict(
         bucket=bucket,
@@ -309,11 +385,17 @@ def _run_one_regime_period(
         "avg_pnl": stats["avg_pnl"],
         "cagr_pct": round(metrics["cagr_pct"], 4),
         "mdd_pct": round(metrics["mdd_pct"], 4),
+        "mdd_pct_raw": round(metrics["mdd_pct_raw"], 4),
+        "mdd_pct_tier": round(metrics["mdd_pct_tier"], 4),
+        "trades_per_day": metrics["trades_per_day"],
+        "trading_days": metrics["trading_days"],
+        "metrics_method": metrics["metrics_method"],
+        "max_positions_per_day": metrics["max_positions_per_day"],
         "zero_entries": stats["total_trades"] == 0,
         "verdict": verdict,
         "fail_cause": fail_cause,
-        "tier_log_sample": tier_log[:5],
-        "tier_events": len(tier_log),
+        "tier_log_sample": metrics["tier_log_sample"],
+        "tier_events": metrics["tier_events"],
         "c1_boost": c1_boost,
     }
 
@@ -353,7 +435,8 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v1",
+        "schema": "regime_panel_rp1.v2",
+        "metrics_method": RP1_METRICS_METHOD,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,
         "lookahead_html": LOOKAHEAD_BIAS_WARNING_HTML,
