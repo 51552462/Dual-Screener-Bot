@@ -2031,11 +2031,11 @@ def execute_supernova_live_scan(
             current_close = c[-1]
 
             if market == "KR" and current_close < 1000:
-                funnel.drop("LIQUIDITY")
+                funnel.drop("LIQUIDITY", code=code)
                 return None
 
             if market == "US" and current_close < 0.5:
-                funnel.drop("LIQUIDITY")
+                funnel.drop("LIQUIDITY", code=code)
                 return None
 
             _min_vol = 50_000.0
@@ -2049,7 +2049,7 @@ def execute_supernova_live_scan(
                 )
 
             if np.mean(v[-5:]) < _min_vol:
-                funnel.drop("LIQUIDITY")
+                funnel.drop("LIQUIDITY", code=code)
                 return None
 
             tz_market = (
@@ -2504,7 +2504,13 @@ def execute_supernova_live_scan(
                         "trade_source": "FLUID_SCOUT",
                     }
 
-                funnel.drop("DNA_FAIL")
+                funnel.drop(
+                    "DNA_FAIL",
+                    code=code,
+                    final_score=float(best_sim),
+                    eff_cos_cutoff=float(eff_cos_cutoff),
+                    eff_ml_cutoff=float(eff_ml_cutoff),
+                )
                 return None
 
             if is_pass_ml_box or is_pass_cosine:

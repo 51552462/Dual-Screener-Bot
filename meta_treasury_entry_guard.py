@@ -65,6 +65,73 @@ def _safe_mult(raw: object, default: float = 1.0) -> float:
         return default
 
 
+_BLOCKED_REGISTRY_STATES = frozenset({"COOLED", "RETIRED"})
+
+
+def _coerce_registry_rows(
+    registry_rows: Optional[Sequence[Dict[str, Any]]],
+    meta: Optional[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    if isinstance(registry_rows, list):
+        return [r for r in registry_rows if isinstance(r, dict)]
+    if isinstance(meta, Mapping):
+        reg = meta.get("META_STRATEGY_REGISTRY")
+        if isinstance(reg, list):
+            return [r for r in reg if isinstance(r, dict)]
+    return []
+
+
+def _group_key_matches(row_gk: str, query_gk: str) -> bool:
+    if not row_gk or not query_gk:
+        return False
+    if row_gk == query_gk:
+        return True
+    return query_gk in row_gk or row_gk in query_gk
+
+
+def resolve_registry_state_block(
+    market: str,
+    group_key: str,
+    *,
+    registry_rows: Optional[Sequence[Dict[str, Any]]] = None,
+    meta: Optional[Mapping[str, Any]] = None,
+) -> Tuple[bool, str]:
+    """
+    COOLED/RETIRED registry row → 진입 차단.
+    Returns (blocked, reason_code).
+    """
+    gk = str(group_key or "").strip()
+    if not gk:
+        return False, ""
+
+    mk = str(market or "KR").upper()
+    rows = _coerce_registry_rows(registry_rows, meta)
+    if not rows:
+        try:
+            from strategy_registry_store import load_registry_rows
+
+            rows = load_registry_rows()
+        except Exception:
+            rows = []
+
+    matched: Optional[Dict[str, Any]] = None
+    for row in rows:
+        if str(row.get("market") or "").upper() != mk:
+            continue
+        rg = str(row.get("group_key") or row.get("display_name") or "").strip()
+        if not _group_key_matches(rg, gk):
+            continue
+        matched = row
+
+    if matched is None:
+        return False, ""
+
+    st = str(matched.get("state") or "").upper()
+    if st in _BLOCKED_REGISTRY_STATES:
+        return True, "registry_state_block"
+    return False, ""
+
+
 def resolve_group_treasury_mult(
     meta: Optional[Mapping[str, Any]],
     core_group_name: str,
@@ -322,6 +389,24 @@ def evaluate_meta_group_entry_gate(
     mult, source = resolve_group_treasury_mult(
         meta, core_group_name, market=market
     )
+
+    if _cfg_bool(cfg, "ENABLE_REGISTRY_STATE_ENTRY_GATE", True):
+        state_blocked, state_reason = resolve_registry_state_block(
+            market,
+            core_group_name,
+            meta=meta,
+        )
+        if state_blocked:
+            return {
+                "block_entry": True,
+                "kelly_mult": 0.0,
+                "reason": (
+                    f"Registry '{core_group_name}' {state_reason} — 진입 차단"
+                ),
+                "group_mult": mult,
+                "source": state_reason,
+            }
+
     if mult <= 0.0 and _cfg_bool(cfg, "ENABLE_META_TREASURY_GROUP_ZERO_BLOCK", True):
         return {
             "block_entry": True,

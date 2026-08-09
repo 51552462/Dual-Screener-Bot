@@ -67,6 +67,11 @@ def _now_iso() -> str:
     return datetime.now(pytz.timezone("UTC")).isoformat()
 
 
+_REGISTRY_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
+    ("lifecycle_observe_only_started_at", "TEXT"),
+]
+
+
 def ensure_strategy_registry_schema(db_path: Optional[str] = None) -> None:
     path = db_path or _db_path()
     if not path or not os.path.isfile(path):
@@ -75,6 +80,11 @@ def ensure_strategy_registry_schema(db_path: Optional[str] = None) -> None:
         conn = sqlite3.connect(path, timeout=60)
         try:
             conn.executescript(_DDL)
+            from sqlite_schema_guard import apply_column_migrations
+
+            apply_column_migrations(
+                conn, "strategy_registry", _REGISTRY_COLUMN_MIGRATIONS
+            )
             conn.commit()
         finally:
             conn.close()
@@ -118,8 +128,9 @@ def upsert_registry_rows(rows: List[Dict[str, Any]], db_path: Optional[str] = No
     INSERT INTO strategy_registry (
         strategy_id, market, group_key, state, display_name, capital_mult, source,
         rolling_wr, rolling_pf, n_closed, promoted_at, last_promoted_at, last_demoted_at,
-        promote_reason, demote_reason, health_miss_streak, updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        promote_reason, demote_reason, health_miss_streak, updated_at,
+        lifecycle_observe_only_started_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(strategy_id) DO UPDATE SET
         market=excluded.market,
         group_key=excluded.group_key,
@@ -136,7 +147,8 @@ def upsert_registry_rows(rows: List[Dict[str, Any]], db_path: Optional[str] = No
         promote_reason=excluded.promote_reason,
         demote_reason=excluded.demote_reason,
         health_miss_streak=excluded.health_miss_streak,
-        updated_at=excluded.updated_at
+        updated_at=excluded.updated_at,
+        lifecycle_observe_only_started_at=excluded.lifecycle_observe_only_started_at
     """
     try:
         conn = sqlite3.connect(path, timeout=60)
@@ -165,6 +177,7 @@ def upsert_registry_rows(rows: List[Dict[str, Any]], db_path: Optional[str] = No
                         r.get("demote_reason"),
                         int(r.get("health_miss_streak", 0) or 0),
                         r.get("updated_at") or now,
+                        r.get("lifecycle_observe_only_started_at"),
                     ),
                 )
             conn.commit()

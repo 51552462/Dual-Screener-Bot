@@ -2,39 +2,48 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **RP-1 + C-1** harness ✅ |
-| **status** | `WAIT_LIVE_RUN` |
-| **Claude** | harness OK 2026-08-07 |
+| **sub-phase** | **L-OBS-01** 구현 완료 · **F-GATE-01 + F-RETIRE-02** 서버 배포(디렉터) |
+| **status** | `WAIT_DIRECTOR_DEPLOY` · `WAIT_CLAUDE_OK` (L-OBS-01) |
 
 ---
 
-## 병렬 3건 (충돌 없음 — Claude 승인)
+## 디렉터 — 지금 할 일
 
-| # | 작업 | 비고 |
-|---|------|------|
-| ① | A-5b 일괄 배포 | `update_factory.sh` |
-| ② | north star 일일 cron | ledger JSON |
-| ③ | RP-1 live run | `reports/regime_panel/rp1_*.json` |
-
----
-
-## RP-1 live run 순서
-
-1. **KR 스모크** — KOSPI top N (파이프 확인)
-2. **KR+US 합산** — 최종 North Star 판정본 (SSOT)
-3. JSON → Claude **결과 재검증** (harness OK ≠ Pass/Fail)
+### 1) 서버 배포 (순서: F-GATE-01 → 관측 → F-RETIRE-02)
 
 ```bash
-# 서버 예시 — KR+US 유니버스는 Handoff 후 스크립트 확정
-python -c "from regime_panel_rp1 import run_regime_panel_rp1; ..."
+cd ~/dante_bots/Dual-Screener-Bot
+git pull
+sudo ./update_factory.sh   # cron에 --deploy-watch 19:35 KST 포함
+sudo systemctl status dante-factory.service
 ```
+
+**배포 단계별 phase (선택)**
+
+```bash
+DEPLOY_WATCH_PHASE=post_f_gate_01 ./factory.sh --deploy-watch
+# F-RETIRE-02 배포 후:
+DEPLOY_WATCH_PHASE=post_f_retire_02 ./factory.sh --deploy-watch
+```
+
+> **자동 관측**: 매일 19:35 KST cron — WARN/BREAK만 텔레그램.  
+> OK면 무음. 결과 JSON: `deploy_watch_latest.json` (factory data dir).  
+> 텔레그램 `---CURSOR---` 블록을 Cursor에 붙여넣기 → 회신 초안 작성.
+
+### 2) C-FUNNEL T+1
+
+다음 스캔 후 `c_funnel_02`가 PASS로 바뀌는지 deploy_watch가 판정 (수동 SQL 불필요).
 
 ---
 
-## 테스트 (harness)
+## 완료
 
-`pytest tests/test_regime_panel_rp1.py` — **15 passed**
+- [x] F-GATE-01 · F-RETIRE-02 구현 · Claude OK 2026-08-09
+- [x] L-OBS-01 `deploy_watch.py` + cron 19:35 KST
+- [x] C-FUNNEL-02 배포 2026-08-09
 
-- `test_rp1_no_config_kv_write`
-- `test_regime_periods_dates_ssot_snapshot`
-- Stage2: `test_stage2_branch_*` ×5
+## 대기
+
+- [ ] F-GATE-01 / F-RETIRE-02 서버 배포
+- [ ] L-OBS-01 Claude OK (선택)
+- [ ] C-FUNNEL T+1 — deploy_watch `c_funnel_02` PASS 확인

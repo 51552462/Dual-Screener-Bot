@@ -2239,6 +2239,8 @@ def try_add_virtual_position(
     synthetic_survival_buff = False
     _re_evol_shadow = False
     _re_evol_sid = ""
+    _lifecycle_observe_only = False
+    _lifecycle_observe_sid = ""
 
     try:
         sys_config = load_system_config()
@@ -2781,6 +2783,30 @@ def try_add_virtual_position(
                 except Exception as _re_shadow_ex:
                     print(f"⚠️ [Re-Evolution Shadow] 스킵: {_re_shadow_ex}")
 
+                # 🔄 [F-RETIRE-02] COOLED/RETIRED lifecycle observe-only ($0 paper)
+                try:
+                    from lifecycle_observe_only import is_lifecycle_observe_only_group
+                    from strategy_promotion_engine import stable_strategy_id
+
+                    if not _re_evol_shadow:
+                        _meta_lo = load_meta_state_resolved()
+                        if is_lifecycle_observe_only_group(
+                            _meta_lo,
+                            market,
+                            core_group_name,
+                            sys_config=sys_config,
+                        ):
+                            _lifecycle_observe_only = True
+                            _lifecycle_observe_sid = stable_strategy_id(
+                                market, core_group_name
+                            )
+                            print(
+                                f"🔄 [Lifecycle Observe-Only] {market} {core_group_name}: "
+                                f"COOLED/RETIRED — $0 페이퍼만"
+                            )
+                except Exception as _lo_ex:
+                    print(f"⚠️ [Lifecycle Observe-Only] 스킵: {_lo_ex}")
+
                 # 🏛️ [Ch.5] Treasury 그룹 mult=0 하드 차단 (META_GROUP_KELLY_MULT / health)
                 try:
                     from meta_treasury_entry_guard import evaluate_meta_group_entry_gate
@@ -2796,6 +2822,7 @@ def try_add_virtual_position(
                         _gg.get("block_entry")
                         and incubator_match_name is None
                         and not _re_evol_shadow
+                        and not _lifecycle_observe_only
                     ):
                         try:
                             import shadow_tracking
@@ -2825,7 +2852,7 @@ def try_add_virtual_position(
                 )
 
                 # 🔄 [Re-Evolution Warm-Start] 불사조 LIVE 복귀 — 정상 Kelly × Base Confidence(40%)
-                if not _re_evol_shadow:
+                if not _re_evol_shadow and not _lifecycle_observe_only:
                     try:
                         from re_evolution_warm_start import apply_warm_start_kelly_scaler
 
@@ -3180,6 +3207,18 @@ def try_add_virtual_position(
                         )
                     except Exception:
                         shares, invest_amount, sim_kelly_invest = 0, 0, 0
+                elif _lifecycle_observe_only:
+                    try:
+                        from lifecycle_observe_only import (
+                            apply_lifecycle_observe_only_entry_zero_notional,
+                        )
+                        sig_type, shares, invest_amount, sim_kelly_invest = (
+                            apply_lifecycle_observe_only_entry_zero_notional(
+                                sig_type, strategy_id=_lifecycle_observe_sid,
+                            )
+                        )
+                    except Exception:
+                        shares, invest_amount, sim_kelly_invest = 0, 0, 0
             else:
                 shares, invest_amount, sim_kelly_invest = 0, 0, 0
 
@@ -3207,6 +3246,7 @@ def try_add_virtual_position(
         or "INCUBATOR_" in _sig_s
         or "기각/관찰용" in _sig_s
         or "RE_EVOL_SHADOW" in _sig_s
+        or "LIFECYCLE_OBSERVE_ONLY" in _sig_s
     )
     _has_notional = (
         int(shares or 0) > 0

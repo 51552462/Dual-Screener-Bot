@@ -322,6 +322,7 @@ def run_registry_lifecycle(
         "re_evolution_warm_start_promoted": 0,
         "re_evolution_ev_full_ramp": 0,
         "re_evolution_ev_shadow_recall": 0,
+        "lifecycle_observe_redemption_promoted": 0,
         "today_kst": today_kst,
     }
 
@@ -428,6 +429,13 @@ def run_registry_lifecycle(
             row["health_miss_streak"] = consecutive_below_live_days(sid)
 
         st = str(row.get("state") or "").upper()
+
+        try:
+            from lifecycle_observe_only import ensure_lifecycle_observe_only_stamp
+
+            ensure_lifecycle_observe_only_stamp(row, now_iso)
+        except Exception:
+            pass
 
         # --- Re-Evolution Phase 3: 섀도우 부활전 → LIVE ---
         if st == "OBSERVING":
@@ -536,6 +544,23 @@ def run_registry_lifecycle(
             stats["promoted_live_by_market"][mk] = stats["promoted_live_by_market"].get(mk, 0) + 1
 
         elif st == "COOLED":
+            try:
+                from lifecycle_observe_only import try_promote_lifecycle_observe_only_redemption
+
+                _lo_promoted, _lo_rev = try_promote_lifecycle_observe_only_redemption(
+                    row,
+                    meta=meta_working,
+                    sys_config=system_cfg,
+                    forward_db_path=forward_db_path,
+                    now=now,
+                    now_iso=now_iso,
+                )
+                if _lo_promoted:
+                    stats["lifecycle_observe_redemption_promoted"] += 1
+                    continue
+            except Exception as ex:
+                logger.warning("lifecycle observe redemption skip %s: %s", gk, ex)
+
             cooloff = int(mp.get("cooloff_days", 3))
             since_dem = _days_since(row.get("last_demoted_at"), now)
             if since_dem is not None and since_dem >= cooloff:
@@ -550,6 +575,24 @@ def run_registry_lifecycle(
                     row["demote_reason"] = "cooloff_expired"
                     row["updated_at"] = now_iso
                     stats["retired"] += 1
+
+        elif st == "RETIRED":
+            try:
+                from lifecycle_observe_only import try_promote_lifecycle_observe_only_redemption
+
+                _lo_promoted, _lo_rev = try_promote_lifecycle_observe_only_redemption(
+                    row,
+                    meta=meta_working,
+                    sys_config=system_cfg,
+                    forward_db_path=forward_db_path,
+                    now=now,
+                    now_iso=now_iso,
+                )
+                if _lo_promoted:
+                    stats["lifecycle_observe_redemption_promoted"] += 1
+                    continue
+            except Exception as ex:
+                logger.warning("lifecycle observe redemption skip %s: %s", gk, ex)
 
     out = list(by_sid.values())
     upsert_registry_rows(out, forward_db_path)

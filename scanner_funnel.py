@@ -5,16 +5,62 @@ Stage Profile 주입으로 스캐너별 퍼널 단계를 OCP 방식으로 확장
 from __future__ import annotations
 
 import html
+import json
 import logging
 import threading
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timezone
+from typing import Any, DefaultDict, Dict, List, Optional, Sequence, Tuple
 
 import pytz
 
 logger = logging.getLogger(__name__)
+
+NEAR_MISS_CAP_PER_SLOT: int = 50
+
+
+@dataclass
+class _NearMissCandidate:
+    scan_date_utc: str
+    reason: str
+    code: Optional[str]
+    final_score: Optional[float]
+    eff_cos_cutoff: Optional[float]
+    eff_ml_cutoff: Optional[float]
+    fifo_seq: int
+
+
+def read_current_regime_key_for_funnel(market: str) -> Optional[str]:
+    """CAT-G read-only — finalize 시 market당 1회 regime stamp."""
+    try:
+        from config_manager import load_system_config
+        from performance_budget_governor import resolve_market_regime_key
+
+        cfg = load_system_config()
+        rk = resolve_market_regime_key(cfg, market)
+        if rk and str(rk).upper() not in ("", "UNKNOWN"):
+            return str(rk).upper()
+    except Exception as ex:
+        logger.debug("funnel regime read skip market=%s: %s", market, ex)
+    return None
+
+
+def _utc_scan_date() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _near_miss_sort_key(row: _NearMissCandidate) -> Tuple[int, float]:
+    if row.final_score is not None and (
+        row.eff_cos_cutoff is not None or row.eff_ml_cutoff is not None
+    ):
+        dists: List[float] = []
+        if row.eff_cos_cutoff is not None:
+            dists.append(abs(float(row.eff_cos_cutoff) - float(row.final_score)))
+        if row.eff_ml_cutoff is not None:
+            dists.append(abs(float(row.eff_ml_cutoff) - float(row.final_score)))
+        return (0, min(dists))
+    return (1, float(row.fifo_seq))
 
 # --- Stage profiles (drop key → human label) ---
 
@@ -185,12 +231,57 @@ class ScanFunnelTracker:
         self._pipeline: Dict[str, str] = {}
         self._db_fail_samples: List[str] = []
         self._db_fail_reasons: Counter = Counter()
+        self._near_miss_seq = 0
+        self._near_miss: DefaultDict[
+            Tuple[str, str, str], List[_NearMissCandidate]
+        ] = defaultdict(list)
 
-    def drop(self, reason: str, n: int = 1) -> None:
+    def drop(
+        self,
+        reason: str,
+        n: int = 1,
+        *,
+        code: Optional[str] = None,
+        final_score: Optional[float] = None,
+        eff_cos_cutoff: Optional[float] = None,
+        eff_ml_cutoff: Optional[float] = None,
+    ) -> None:
         if not reason or n <= 0:
             return
         with self._lock:
             self._drops[str(reason)] += int(n)
+            if (
+                code is not None
+                or final_score is not None
+                or eff_cos_cutoff is not None
+                or eff_ml_cutoff is not None
+            ):
+                self._near_miss_seq += 1
+                scan_date = _utc_scan_date()
+                slot = (scan_date, self.market, str(reason))
+                self._near_miss[slot].append(
+                    _NearMissCandidate(
+                        scan_date_utc=scan_date,
+                        reason=str(reason),
+                        code=str(code) if code is not None else None,
+                        final_score=(
+                            float(final_score)
+                            if final_score is not None
+                            else None
+                        ),
+                        eff_cos_cutoff=(
+                            float(eff_cos_cutoff)
+                            if eff_cos_cutoff is not None
+                            else None
+                        ),
+                        eff_ml_cutoff=(
+                            float(eff_ml_cutoff)
+                            if eff_ml_cutoff is not None
+                            else None
+                        ),
+                        fifo_seq=self._near_miss_seq,
+                    )
+                )
 
     def add_fetch_failed(self, n: int = 1) -> None:
         with self._lock:
@@ -313,6 +404,32 @@ class ScanFunnelTracker:
                 line += f" <i>(+{len(db_samples) - 1}종 유형)</i>"
         return line
 
+    def _flush_near_miss_rows(
+        self, *, ts_utc: str, regime_key: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        rows_out: List[Dict[str, Any]] = []
+        with self._lock:
+            buffers = dict(self._near_miss)
+            self._near_miss.clear()
+        for (_date, _market, _reason), candidates in buffers.items():
+            ranked = sorted(candidates, key=_near_miss_sort_key)[:NEAR_MISS_CAP_PER_SLOT]
+            for rank, cand in enumerate(ranked, start=1):
+                rows_out.append(
+                    {
+                        "ts": ts_utc,
+                        "market": self.market,
+                        "scanner": self.profile_id,
+                        "code": cand.code,
+                        "reason": cand.reason,
+                        "final_score": cand.final_score,
+                        "eff_cos_cutoff": cand.eff_cos_cutoff,
+                        "eff_ml_cutoff": cand.eff_ml_cutoff,
+                        "regime_key": regime_key,
+                        "rank_in_slot": rank,
+                    }
+                )
+        return rows_out
+
     def finalize(self, *, elapsed_min: Optional[float] = None) -> ScanFunnelReport:
         with self._lock:
             drops = Counter(self._drops)
@@ -360,6 +477,10 @@ class ScanFunnelTracker:
         as_of = datetime.now(tz_kr).strftime("%Y-%m-%d %H:%M")
 
         pass_rate = (100.0 * n_final / universe) if universe > 0 else 0.0
+        drops_json = json.dumps(dict(drop_summary), ensure_ascii=False)
+        ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        regime_key = read_current_regime_key_for_funnel(self.market)
+
         try:
             from proprietary_friction_store import insert_scan_funnel_snapshot
 
@@ -369,9 +490,22 @@ class ScanFunnelTracker:
                 universe_size=universe,
                 survivors=n_final,
                 pass_rate_pct=pass_rate,
+                scanner=self.profile_id,
+                drops_json=drops_json,
             )
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.warning("scan_funnel_snapshot persist failed: %s", ex)
+
+        try:
+            from proprietary_friction_store import insert_scan_funnel_drop_events
+
+            near_miss_rows = self._flush_near_miss_rows(
+                ts_utc=ts_utc, regime_key=regime_key
+            )
+            if near_miss_rows:
+                insert_scan_funnel_drop_events(near_miss_rows)
+        except Exception as ex:
+            logger.warning("scan_funnel_drop_event persist failed: %s", ex)
 
         return ScanFunnelReport(
             scanner_id=self.scanner_id,

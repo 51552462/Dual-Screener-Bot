@@ -60,6 +60,7 @@ Usage: ./factory.sh <flag>
     --monthly       month-end grand report (self-gated: 월 마지막 날에만 발송)
     --north-star-digest [daily|weekly|monthly]
                     듀얼 북극성 진행장부 → 디렉터 텔레그램 (주식+Bitget 비교)
+    --deploy-watch    배포 관측 PASS/WARN/BREAK (FAIL/WARN만 텔레그램)
     --data-refresh  KR/US per-ticker OHLCV bulk refresh (legacy 07:00 bulk, lock-serialized)
 
   Satellite intel (legacy --daemon jobs, now first-class lock-serialized cron):
@@ -96,6 +97,17 @@ while [[ $# -gt 0 ]]; do
       CADENCE="${1:-daily}"
       case "$CADENCE" in daily|weekly|monthly|yearly) ;; *) CADENCE="daily" ;; esac
       python "${ROOT}/scripts/north_star_digest.py" --cadence "$CADENCE"
+      exit $?
+      ;;
+    --deploy-watch)
+      shift
+      PHASE="${1:-}"
+      EXTRA=()
+      if [[ -n "$PHASE" && "$PHASE" != --* ]]; then
+        EXTRA=(--phase "$PHASE")
+        shift
+      fi
+      python "${ROOT}/scripts/deploy_watch.py" "${EXTRA[@]}" "$@"
       exit $?
       ;;
     --data-refresh) MODE="data_refresh" ;;

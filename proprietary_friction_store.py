@@ -8,10 +8,11 @@ Proprietary Friction Simulator — 실매매 전환을 위한 극강의 가상 �
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import math
-from typing import Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,22 @@ CREATE TABLE IF NOT EXISTS regime_friction_event (
     event_type TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_regime_friction_date ON regime_friction_event(date DESC, market);
+
+CREATE TABLE IF NOT EXISTS scan_funnel_drop_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    market TEXT NOT NULL,
+    scanner TEXT NOT NULL,
+    code TEXT,
+    reason TEXT NOT NULL,
+    final_score REAL,
+    eff_cos_cutoff REAL,
+    eff_ml_cutoff REAL,
+    regime_key TEXT,
+    rank_in_slot INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_scan_funnel_drop_ts ON scan_funnel_drop_event(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_funnel_drop_mkt ON scan_funnel_drop_event(market, ts DESC);
 """
 
 def _db_path() -> str:
@@ -65,6 +82,139 @@ def ensure_proprietary_friction_schema(
             conn.close()
     except sqlite3.Error as ex:
         logger.warning("proprietary_friction schema skip: %s", ex)
+
+
+def _migrate_scan_funnel_snapshot_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(scan_funnel_snapshot)")}
+    if "scanner" not in cols:
+        conn.execute("ALTER TABLE scan_funnel_snapshot ADD COLUMN scanner TEXT")
+    if "drops_json" not in cols:
+        conn.execute("ALTER TABLE scan_funnel_snapshot ADD COLUMN drops_json TEXT")
+
+
+def insert_scan_funnel_snapshot(
+    *,
+    ts: str,
+    market: str,
+    universe_size: int,
+    survivors: int,
+    pass_rate_pct: float,
+    scanner: Optional[str] = None,
+    drops_json: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> None:
+    """스캔 퍼널 집계 스냅샷 — PRI·weekly regime 입력."""
+    path = db_path or _db_path()
+    if not path:
+        return
+    try:
+        ensure_proprietary_friction_schema(db_path=path)
+        conn = sqlite3.connect(path, timeout=15)
+        try:
+            _migrate_scan_funnel_snapshot_columns(conn)
+            conn.execute(
+                """
+                INSERT INTO scan_funnel_snapshot
+                    (ts, market, universe_size, survivors, pass_rate_pct, scanner, drops_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(ts)[:19],
+                    str(market or "").upper()[:8],
+                    int(universe_size),
+                    int(survivors),
+                    round(float(pass_rate_pct), 6),
+                    str(scanner)[:64] if scanner else None,
+                    drops_json,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as ex:
+        logger.warning("scan_funnel_snapshot insert failed: %s", ex)
+
+
+def insert_scan_funnel_drop_events(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    db_path: Optional[str] = None,
+) -> None:
+    """Near-miss 탈락 이벤트 배치 insert."""
+    if not rows:
+        return
+    path = db_path or _db_path()
+    if not path:
+        return
+    payload = []
+    for row in rows:
+        payload.append(
+            (
+                str(row.get("ts") or "")[:32],
+                str(row.get("market") or "").upper()[:8],
+                str(row.get("scanner") or "")[:64],
+                (str(row["code"])[:32] if row.get("code") is not None else None),
+                str(row.get("reason") or "")[:64],
+                row.get("final_score"),
+                row.get("eff_cos_cutoff"),
+                row.get("eff_ml_cutoff"),
+                (str(row["regime_key"])[:32] if row.get("regime_key") else None),
+                row.get("rank_in_slot"),
+            )
+        )
+    try:
+        ensure_proprietary_friction_schema(db_path=path)
+        conn = sqlite3.connect(path, timeout=15)
+        try:
+            conn.executemany(
+                """
+                INSERT INTO scan_funnel_drop_event
+                    (ts, market, scanner, code, reason, final_score,
+                     eff_cos_cutoff, eff_ml_cutoff, regime_key, rank_in_slot)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as ex:
+        logger.warning("scan_funnel_drop_event insert failed: %s", ex)
+
+
+def insert_regime_friction_event(
+    *,
+    date: str,
+    market: str,
+    event_type: str,
+    db_path: Optional[str] = None,
+) -> None:
+    """일별 마찰 이벤트 — DM-A 등."""
+    path = db_path or _db_path()
+    if not path:
+        return
+    d = str(date or "")[:10]
+    if len(d) != 10:
+        return
+    et = str(event_type or "").strip().upper()[:64]
+    if not et:
+        return
+    try:
+        ensure_proprietary_friction_schema(db_path=path)
+        conn = sqlite3.connect(path, timeout=15)
+        try:
+            conn.execute(
+                """
+                INSERT INTO regime_friction_event (date, market, event_type)
+                VALUES (?, ?, ?)
+                """,
+                (d, str(market or "").upper()[:8], et),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as ex:
+        logger.warning("regime_friction_event insert failed: %s", ex)
 
 # ===========================================================================
 # 👑 [가혹한 현실] 다이나믹 슬리피지(Slippage) & 마켓 임팩트(Market Impact) 산출 엔진

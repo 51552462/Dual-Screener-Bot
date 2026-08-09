@@ -90,6 +90,7 @@ _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
 # North Star digest — not scan slots; keep in cron SSOT generator (install_factory_cron overwrites template).
 _KR_NORTH_STAR_JOBS: Tuple[Tuple[str, str, str], ...] = (
     ("30 19 * * *", "--north-star-digest daily", "Dual North Star digest — daily (REPORT_BOT)"),
+    ("35 19 * * *", "--deploy-watch", "Deploy watch — WARN/BREAK telegram only (L-OBS-01)"),
     ("0 11 * * 6", "--north-star-digest weekly", "Dual North Star digest — weekly (Sat KST)"),
     ("5 0 1 * *", "--north-star-digest monthly", "Dual North Star digest — monthly (1st 00:05 KST)"),
 )
