@@ -188,7 +188,7 @@ def _minute_ops_snapshot_and_inverse_cycle() -> None:
     # 하락장(BEAR/HIGH_VOL)이거나, 폭락 대기 종목(Top 3)이 1개라도 있으면 스나이퍼 가동
     if "BEAR" in current_regime or "HIGH_VOL" in current_regime or len(active_signals) > 0:
         try:
-            summary = run_inverse_etf_sniper_cycle(active_signals)
+            summary = run_inverse_etf_sniper_cycle()
             if summary.get("entered"):
                 print(f"🎯 [AutoPilot] 인버스 스나이퍼 진입 성공: {summary['entered']}")
         except Exception as e:
