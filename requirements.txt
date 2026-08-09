@@ -8,6 +8,7 @@ pykrx
 beautifulsoup4
 finance-datareader
 yfinance
+pyarrow
 mplfinance
 matplotlib
 google-generativeai

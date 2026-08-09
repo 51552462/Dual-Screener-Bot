@@ -12,6 +12,7 @@ Env quick reference:
   RP1_PROGRESS_EVERY=25   ticker progress log interval
   RP1_MATRIX=0          disable OHLCV 1-fetch-per-ticker cache (legacy slow path)
   RP1_MATRIX_REUSE=1    save/load matrix snapshot (smoke reruns ~minutes not ~1h)
+  RP1_FETCH_TIMEOUT=30  FDR hard timeout per ticker (skip on hang, default 30s)
   RP1_SKIP_STAGE2=1     skip C-1 placeholder stage2 (faster full run)
   RP1_SEQUENTIAL=1        force slow single-process (debug only)
 

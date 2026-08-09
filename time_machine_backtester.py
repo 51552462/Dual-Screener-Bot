@@ -488,8 +488,17 @@ def backtest_ticker_rp1_multi_window(
         if not batch_mode:
             time.sleep(random.uniform(0.05, 0.18))
         t_mark = time.perf_counter()
-        df = fdr.DataReader(code, global_fetch_start, global_end_dt)
+        from rp1_ohlcv_cache import fetch_ohlcv_cached
+
+        df, fetch_gate = fetch_ohlcv_cached(code, global_fetch_start, global_end_dt)
         fetch_latency_s = time.perf_counter() - t_mark
+        if fetch_gate in ("timeout", "fetch_error"):
+            return {
+                "code": code,
+                "by_window": {},
+                "fetch_gate": fetch_gate,
+                "fetch_latency_s": fetch_latency_s,
+            }
     except Exception:
         return {
             "code": code,
@@ -502,7 +511,7 @@ def backtest_ticker_rp1_multi_window(
         return {
             "code": code,
             "by_window": {},
-            "fetch_gate": "skip_empty",
+            "fetch_gate": fetch_gate,
             "fetch_latency_s": fetch_latency_s,
         }
 
