@@ -11,6 +11,7 @@ Env quick reference:
   RP1_CHUNK_SIZE=25       futures per batch
   RP1_PROGRESS_EVERY=25   ticker progress log interval
   RP1_MATRIX=0          disable OHLCV 1-fetch-per-ticker cache (legacy slow path)
+  RP1_MATRIX_REUSE=1    save/load matrix snapshot (smoke reruns ~minutes not ~1h)
   RP1_SEQUENTIAL=1        force slow single-process (debug only)
 
 Example:

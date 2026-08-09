@@ -1,7 +1,9 @@
 """RP-1 runner — wires time_machine_backtester to regime_panel (optional live fdr)."""
 from __future__ import annotations
 
+import hashlib
 import os
+import pickle
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -55,6 +57,59 @@ def resolve_rp1_use_matrix_cache() -> bool:
     if os.environ.get("RP1_MATRIX", "").strip().lower() in ("0", "false", "no"):
         return False
     return True
+
+
+def resolve_rp1_matrix_reuse() -> bool:
+    """Persist matrix trades to disk — second smoke run skips FDR fetch (~minutes)."""
+    return _env_flag("RP1_MATRIX_REUSE") or _env_flag("RP1_MATRIX_SNAPSHOT")
+
+
+def _matrix_snapshot_dir() -> str:
+    base = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "reports",
+        "regime_panel",
+        "matrix_cache",
+    )
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _matrix_snapshot_path(stock_list: List[str], fetch_start: str, fetch_end: str) -> str:
+    digest = hashlib.sha256(
+        (",".join(sorted(stock_list)) + f"|{fetch_start}|{fetch_end}").encode("utf-8")
+    ).hexdigest()[:20]
+    return os.path.join(_matrix_snapshot_dir(), f"matrix_{digest}.pkl")
+
+
+def _load_matrix_snapshot(stock_list: List[str], fetch_start: str, fetch_end: str) -> Optional[Dict[str, Dict[str, Any]]]:
+    path = _matrix_snapshot_path(stock_list, fetch_start, fetch_end)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as fh:
+            data = pickle.load(fh)
+        if isinstance(data, dict) and data:
+            log_rp1(f"[RP-1] matrix snapshot hit: {path}")
+            return data
+    except Exception as exc:
+        log_rp1(f"[RP-1] matrix snapshot load failed: {exc}")
+    return None
+
+
+def _save_matrix_snapshot(
+    stock_list: List[str],
+    fetch_start: str,
+    fetch_end: str,
+    matrix: Dict[str, Dict[str, Any]],
+) -> None:
+    path = _matrix_snapshot_path(stock_list, fetch_start, fetch_end)
+    try:
+        with open(path, "wb") as fh:
+            pickle.dump(matrix, fh, protocol=4)
+        log_rp1(f"[RP-1] matrix snapshot saved: {path}")
+    except Exception as exc:
+        log_rp1(f"[RP-1] matrix snapshot save failed: {exc}")
 
 
 def _env_int(name: str, default: int, *, lo: int = 1, hi: int = 10_000) -> int:
@@ -307,6 +362,21 @@ def prime_rp1_matrix_cache(stock_list: List[str]) -> Dict[str, Any]:
         f"[RP-1] matrix prime: tickers={len(stock_list)} windows={len(ohlcv_windows)} "
         f"fetch={global_fetch_start}~{global_end_dt} parallel={use_pool}"
     )
+    if resolve_rp1_matrix_reuse():
+        loaded = _load_matrix_snapshot(stock_list, global_fetch_start, global_end_dt)
+        if loaded is not None:
+            _MATRIX_BY_WINDOW = loaded
+            total_trades = sum(len(v.get("trades", [])) for v in _MATRIX_BY_WINDOW.values())
+            log_rp1(f"[RP-1] matrix prime skipped (snapshot): total_trades={total_trades}")
+            return {
+                "enabled": True,
+                "windows": len(ohlcv_windows),
+                "tickers": len(stock_list),
+                "total_trades": total_trades,
+                "fetch_range": (global_fetch_start, global_end_dt),
+                "snapshot": "load",
+            }
+
     _MATRIX_BY_WINDOW = _run_matrix_ticker_batch(
         stock_list,
         global_fetch_start,
@@ -318,12 +388,15 @@ def prime_rp1_matrix_cache(stock_list: List[str]) -> Dict[str, Any]:
     )
     total_trades = sum(len(v.get("trades", [])) for v in _MATRIX_BY_WINDOW.values())
     log_rp1(f"[RP-1] matrix prime done: total_trades={total_trades}")
+    if resolve_rp1_matrix_reuse():
+        _save_matrix_snapshot(stock_list, global_fetch_start, global_end_dt, _MATRIX_BY_WINDOW)
     return {
         "enabled": True,
         "windows": len(ohlcv_windows),
         "tickers": len(stock_list),
         "total_trades": total_trades,
         "fetch_range": (global_fetch_start, global_end_dt),
+        "snapshot": "save" if resolve_rp1_matrix_reuse() else None,
     }
 
 

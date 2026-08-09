@@ -25,7 +25,8 @@ from time_machine_backtester import (
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
-RP1_METRICS_METHOD = "daily_equal_weight_v2_trade_tier"
+RP1_METRICS_METHOD = "daily_equal_weight_v2.2_trade_tier"
+RP1_CAGR_MEASUREMENT_FLOOR_PCT = -50.0
 RP1_MAX_POSITIONS_PER_DAY = 20
 RP1_LOOKAHEAD_NOTICE = (
     "상한선 추정치 — v1 오늘 뇌 템플릿 lookahead. Pass≠실전보장."
@@ -128,11 +129,21 @@ def trades_to_daily_returns(
     dates = sorted(by_date.keys())
     daily: List[float] = []
     for day in dates:
-        rets = sorted(by_date[day])
+        # Chronological cap (trade order within day) — never sort-by-return (was picking worst N).
+        rets = by_date[day]
         if len(rets) > max_positions_per_day:
             rets = rets[:max_positions_per_day]
         daily.append(sum(rets) / len(rets))
     return dates, daily
+
+
+def _sample_tier_log(tier_log: Sequence[Dict[str, Any]], *, samples: int = 5) -> List[Dict[str, Any]]:
+    """Spread samples across the trade sequence (avoids identical [:5] across regimes)."""
+    n = len(tier_log)
+    if n <= samples:
+        return list(tier_log)
+    idxs = sorted({int(round(i * (n - 1) / (samples - 1))) for i in range(samples)})
+    return [{**tier_log[i], "trade_idx": i} for i in idxs]
 
 
 def compute_period_portfolio_metrics(
@@ -150,10 +161,12 @@ def compute_period_portfolio_metrics(
     if not daily_raw:
         return {
             "cagr_pct": 0.0,
+            "cagr_pct_raw": 0.0,
             "mdd_pct": 0.0,
             "mdd_pct_raw": 0.0,
             "mdd_pct_tier": 0.0,
             "nav_end": 100.0,
+            "nav_end_raw": 100.0,
             "trading_days": 0,
             "trades_per_day": 0.0,
             "metrics_method": RP1_METRICS_METHOD,
@@ -167,19 +180,24 @@ def compute_period_portfolio_metrics(
     trade_returns = [float(t.get("final_ret", 0.0)) for t in ordered]
     adj_trade, tier_log = replay_tier_overlay_on_returns(trade_returns, mdd_cap_pct=mdd_cap_pct)
     tier_metrics = compute_equity_metrics(adj_trade, start_dt, end_dt)
+    adj_trades = [{**t, "final_ret": ar} for t, ar in zip(ordered, adj_trade)]
+    _, daily_tier = trades_to_daily_returns(adj_trades, max_positions_per_day=max_positions_per_day)
+    tier_daily_metrics = compute_equity_metrics(daily_tier, start_dt, end_dt)
 
     return {
-        "cagr_pct": raw_metrics["cagr_pct"],
-        "mdd_pct": raw_metrics["mdd_pct"],
+        "cagr_pct": tier_daily_metrics["cagr_pct"],
+        "cagr_pct_raw": raw_metrics["cagr_pct"],
+        "mdd_pct": tier_metrics["mdd_pct"],
         "mdd_pct_raw": raw_metrics["mdd_pct"],
         "mdd_pct_tier": tier_metrics["mdd_pct"],
-        "nav_end": raw_metrics["nav_end"],
+        "nav_end": tier_daily_metrics["nav_end"],
+        "nav_end_raw": raw_metrics["nav_end"],
         "trading_days": len(dates),
         "trades_per_day": round(len(ordered) / max(len(dates), 1), 2),
         "metrics_method": RP1_METRICS_METHOD,
         "max_positions_per_day": max_positions_per_day,
         "tier_events": len(tier_log),
-        "tier_log_sample": tier_log[:5],
+        "tier_log_sample": _sample_tier_log(tier_log),
         "tier_replay_unit": "trade",
     }
 
@@ -214,6 +232,8 @@ def judge_period_verdict(
         return "SKIP_LOW_N"
 
     if bucket == "BULL":
+        if cagr_pct < RP1_CAGR_MEASUREMENT_FLOOR_PCT:
+            return "INCONCLUSIVE"
         if cagr_pct >= 40.0 or pf > 1.3:
             return "PASS"
         if 25.0 <= cagr_pct < 40.0 and mdd_pct <= 10.0:
@@ -397,6 +417,7 @@ def _run_one_regime_period(
         "pf": stats["pf"],
         "avg_pnl": stats["avg_pnl"],
         "cagr_pct": round(metrics["cagr_pct"], 4),
+        "cagr_pct_raw": round(metrics.get("cagr_pct_raw", metrics["cagr_pct"]), 4),
         "mdd_pct": round(metrics["mdd_pct"], 4),
         "mdd_pct_raw": round(metrics["mdd_pct_raw"], 4),
         "mdd_pct_tier": round(metrics["mdd_pct_tier"], 4),
@@ -449,6 +470,8 @@ def build_stage1_report(
 
     if all_skip:
         overall = "INCONCLUSIVE"
+    elif any(r.get("verdict") == "INCONCLUSIVE" for r in period_rows):
+        overall = "INCONCLUSIVE"
     elif _tier_mdd_uniform_suspect(period_rows):
         overall = "INCONCLUSIVE"
     elif mdd_badge["mdd_cap_violation"]:
@@ -463,7 +486,7 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v2.1",
+        "schema": "regime_panel_rp1.v2.2",
         "metrics_method": RP1_METRICS_METHOD,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,
@@ -531,8 +554,8 @@ def run_regime_panel_rp1(
         )
         log_rp1(
             f"  -> trades={row['total_trades']} verdict={row['verdict']} "
-            f"CAGR={row['cagr_pct']}% MDD={row['mdd_pct']}% "
-            f"(raw={row.get('mdd_pct_raw')})"
+            f"CAGR={row['cagr_pct']}% (raw={row.get('cagr_pct_raw')}) "
+            f"MDD={row['mdd_pct']}% (raw={row.get('mdd_pct_raw')})"
         )
         period_rows.append(row)
 

@@ -6,6 +6,7 @@ import os
 import pytest
 
 from regime_panel_rp1 import (
+    RP1_CAGR_MEASUREMENT_FLOOR_PCT,
     apply_c1_sector_boost,
     build_stage1_report,
     compute_period_portfolio_metrics,
@@ -16,9 +17,11 @@ from regime_panel_rp1 import (
     run_regime_panel_rp1,
     tag_fail_cause,
     trades_to_daily_returns,
+    _sample_tier_log,
 )
 from regime_panel_rp1_runner import (
     resolve_rp1_chunk_size,
+    resolve_rp1_matrix_reuse,
     resolve_rp1_max_workers,
     resolve_rp1_use_matrix_cache,
     resolve_rp1_use_parallel,
@@ -56,6 +59,13 @@ class TestRp1RunnerTuning:
     def test_matrix_cache_disable_flag(self, monkeypatch):
         monkeypatch.setenv("RP1_MATRIX", "0")
         assert resolve_rp1_use_matrix_cache() is False
+
+    def test_matrix_reuse_flag(self, monkeypatch):
+        monkeypatch.delenv("RP1_MATRIX_REUSE", raising=False)
+        monkeypatch.delenv("RP1_MATRIX_SNAPSHOT", raising=False)
+        assert resolve_rp1_matrix_reuse() is False
+        monkeypatch.setenv("RP1_MATRIX_REUSE", "1")
+        assert resolve_rp1_matrix_reuse() is True
 
 
 class TestRp1OhlcvMatrixHelpers:
@@ -163,7 +173,7 @@ class TestPortfolioMetricsV2:
             for i in range(200)
         ]
         m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
-        assert m["metrics_method"] == "daily_equal_weight_v2_trade_tier"
+        assert m["metrics_method"] == "daily_equal_weight_v2.2_trade_tier"
         assert m["cagr_pct"] < 200.0
         assert m["trades_per_day"] == 200.0
 
@@ -186,6 +196,47 @@ class TestPortfolioMetricsV2:
         assert "mdd_pct_tier" in m
         assert m["trading_days"] == 10
         assert m.get("tier_replay_unit") == "trade"
+
+    def test_daily_cap_uses_chronological_not_worst_returns(self):
+        """Regression: sorted[:20] was picking worst returns → CAGR -99% artifact."""
+        trades = [
+            {"date": "2020-10-01", "final_ret": 10.0, "code": f"a{i:02d}"}
+            for i in range(15)
+        ] + [
+            {"date": "2020-10-01", "final_ret": -50.0, "code": f"b{i:02d}"}
+            for i in range(15)
+        ]
+        _, daily = trades_to_daily_returns(trades, max_positions_per_day=20)
+        assert len(daily) == 1
+        assert daily[0] == pytest.approx(-5.0)
+
+    def test_mdd_pct_field_uses_tier_for_verdict(self):
+        trades = [
+            {"date": f"2020-10-{d:02d}", "final_ret": 2.0, "code": f"x{d}"}
+            for d in range(1, 26)
+        ]
+        m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
+        assert m["mdd_pct"] == m["mdd_pct_tier"]
+        assert m["mdd_pct"] <= 10.0
+        badge = mdd_crosscheck_badge([{"regime_name": "x", "mdd_pct": m["mdd_pct"]}])
+        assert badge["mdd_cap_violation"] is False
+
+    def test_positive_trades_yield_non_catastrophic_cagr(self):
+        trades = [
+            {"date": f"2020-10-{d:02d}", "final_ret": 0.5, "code": f"t{d}"}
+            for d in range(1, 22)
+        ]
+        m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
+        assert m["cagr_pct"] > RP1_CAGR_MEASUREMENT_FLOOR_PCT
+        assert m["cagr_pct_raw"] > RP1_CAGR_MEASUREMENT_FLOOR_PCT
+
+    def test_tier_log_sample_spreads_indices(self):
+        log = [{"band": f"b{i}", "nav_after": float(i)} for i in range(100)]
+        sample = _sample_tier_log(log, samples=5)
+        idxs = [s["trade_idx"] for s in sample]
+        assert len(set(idxs)) == 5
+        assert idxs[0] == 0
+        assert idxs[-1] == 99
 
     def test_tier_mdd_varies_by_trade_sequence(self):
         short = [
@@ -225,6 +276,16 @@ class TestVerdictAndCause:
             bucket="BULL", total_trades=5, cagr_pct=50.0, mdd_pct=5.0, pf=2.0
         )
         assert v == "SKIP_LOW_N"
+
+    def test_bull_cagr_floor_triggers_inconclusive(self):
+        v = judge_period_verdict(
+            bucket="BULL",
+            total_trades=30,
+            cagr_pct=RP1_CAGR_MEASUREMENT_FLOOR_PCT - 1.0,
+            mdd_pct=5.0,
+            pf=2.0,
+        )
+        assert v == "INCONCLUSIVE"
 
     def test_fail_cause_a_zero_trades(self):
         assert tag_fail_cause(total_trades=0, mdd_pct=5.0, cagr_pct=10.0, bucket="BULL") == "A"
@@ -324,8 +385,8 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
-        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.1"
-        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2_trade_tier"
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.2"
+        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.2_trade_tier"
         p0 = report["stage1"]["periods"][0]
         assert "mdd_pct_raw" in p0
         assert "trades_per_day" in p0
