@@ -1,6 +1,203 @@
 # CURSOR → CLAUDE (검증 OUTBOX)
 
-> **갱신**: 2026-08-09 · **F-RETIRE-02** Claude OK ✅(bypass 스코프 확인 완료) · **F-GATE-01** Claude OK ✅ · 두 건 모두 서버 배포(디렉터) 대기 · **C-FUNNEL-02** 배포 완료
+> ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
+> `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
+
+> **갱신**: 2026-08-09 · **CAT-E-BARS-01** Claude OK ✅ · VPS SQL (a)~(d) 대기 · F-GATE/F-RETIRE 배포 대기
+
+---
+
+## OUTBOX — [CAT-E / CAT-D / CAT-F] CAT-E-BARS-01 · bars_held·exit_type·OPEN쿼터 Reality Audit (2026-08-09)
+
+> **유형**: 디렉터 Stage 2 `CURSOR_REALITY_REQUEST` — **코드·로컬 DB 실측 조사** (구현 금지 · sub-phase 아님)  
+> **상세 SSOT**: `05_진행로그.md` §CAT-E-BARS-01  
+> **관련 CAT**: `CAT-D_Forward원장` · `CAT-E_청산엔진` · `CAT-F_자본리스크`(OPEN quota) · `CAT-C_스크리닝`(try_add 거절→funnel)  
+> **범위**: KR/US 주식 루트만 (`bitget/` 제외)
+
+### 디렉터 / Claude 질문 (원문)
+
+1. `forward_trades`에서 `status LIKE 'CLOSED%'` 행 중 `bars_held`, `final_ret`, `exit_reason`, `entry_regime`이 결측 없이 채워져 있는가? KR/US 각각 표본 수는?
+2. `exit_reason` 값의 실제 분포(`HYBRID_TIME` / `ATR_SL` / `STAT_MAE` / `STAT_MFE_FULL` / `RUNNER_TRAIL` / `ZOMBIE_FORCE_CLOSE` / `HYBRID_ATR` / `HYBRID_TECH` 등)를 바로 group-by 가능한가?
+3. RL 타임스탑 연장이 적용됐는지(연장 여부·횟수)를 별도 식별할 수 있는 컬럼이 있는가, 아니면 `bars_held>10`으로 간접 추정해야 하는가?
+4. 시장당 OPEN=20 슬롯이 실제로 얼마나 자주 포화 상태였는지(신규 진입이 쿼터/슬롯 부족으로 막힌 빈도) 알 수 있는 로그(funnel 거절 사유 등)가 있는가? — I-2 「슬롯 회전 병목」 가설 보조 근거
+5. 이런 `bars_held` vs `final_ret` 분석이 이미 존재하는 스크립트/노트북이 있는가? (중복 방지)
+6. 가장 싼 실험 방법 — forward 대기 없이 기존 CLOSED 이력만으로 즉시 가능해 보이는지 확인
+
+---
+
+### Cursor 조사 결론 (요약)
+
+| # | 질문 | 결론 |
+|---|------|------|
+| 1 | CLOSED 결측·표본 | **스키마 4컬럼(+`exit_type`) 존재**. 정상 ledger CLOSE는 함께 기록. **로컬 `forward_trades`=0행** → KR/US n·결측률 **VPS SQL 필수**. 자가치유 `CLOSED_ZOMBIE`/`CLOSED_AUTO`는 `exit_type`/`bars_held` 미갱신 가능 |
+| 2 | exit 분포 group-by | **가능 — 단 컬럼은 `exit_type`**. `exit_reason`=한글 서술문. `ATR_SL`은 exit 코드 아님(설정키) → ATR 청산은 `HYBRID_ATR`/`STAT_ATR` |
+| 3 | RL 연장 식별 | **전용 컬럼·횟수 카운터 없음**. ACE만 `flow_tags` `#에이스진화_보유연장`. RL+2는 런타임만. `bars_held>10`은 TIME_STOP 가변(오토파일럿·breadth·BULL 999)이라 **부정확** |
+| 4 | OPEN≈20 포화 빈도 | try_add `"시장 쿼터 초과"` → `record_db_failure` **텔레그램 샘플(≤5)만**. `drops_json`/`scan_funnel_drop_event`는 스캐너 drop만(쿼터 아님). **영속 빈도 시계열 없음** → I-2 직접 입증 불가 |
+| 5 | 기존 분석 | **bars×ret 버킷/산점도 전용 없음**(`.ipynb` 0). 근접: `system_auto_pilot` 엔진5.5(승자 avg bars→TIME_STOP), `exit_ratchet_rl`(러너). **중복 아님** |
+| 6 | 싼 실험 | **청산 분석: VPS CLOSED SQL만으로 즉시 가능**(forward 대기 X). **슬롯 병목: 계측 부재가 병목** — 장부 재구성 프록시 또는 try_add 거절 영속(별 Handoff) |
+
+---
+
+### 1) 스키마·청산 기록 경로 (코드 실측 · CAT-D/E)
+
+**컬럼** (`forward/shared.py` CREATE + ALTER, `CAT-D` §3 생애·국면과 일치)
+
+- `bars_held`, `final_ret`, `exit_reason`, `flow_tags`, `exit_type`, `entry_regime`
+
+**정상 CLOSE** (`forward/ledger.py` `track_daily_positions`)
+
+- UPDATE에 `exit_reason`, `final_ret`, `bars_held`, `exit_type` **동시 기록**
+- `exit_type` = CAT-E 사다리 코드 (`STAT_MAE` / `STAT_MFE_FULL` / `RUNNER_TRAIL` / `HYBRID_TIME` / `HYBRID_ATR` / `HYBRID_TECH` / `ZOMBIE_FORCE_CLOSE` …) — `CAT-E` §4와 일치
+- `exit_reason` = 사람용 한글 (`하이브리드 타임스탑 (12일)` 등)
+
+**예외 CLOSE** (`forward/shared.py` 리포터 자가치유)
+
+- `CLOSED_ZOMBIE` / `CLOSED_AUTO`: `exit_reason`+`final_ret`만 · **`exit_type`/`bars_held` 비접촉** → 결측·UNKNOWN 오염 가능
+
+---
+
+### 2) 로컬 DB 실측 (2026-08-09)
+
+**경로**: `factory_data_dir()` → `~/dante_bots/Dual-Screener-Bot/market_data.sqlite` (~0.24MB)
+
+| 테이블/항목 | 실측 |
+|-------------|------|
+| `forward_trades` | **0행** (KR/US 모두) |
+| `scan_funnel_snapshot` | 0행 · `scan_funnel_drop_event` 테이블 **로컬 미생성** |
+| `ops_events` | 742행 · 쿼터/`시장 쿼터`/`max_open` 문자열 **0건** |
+
+→ CAT-C-FUNNEL-01과 동일: 로컬은 빈 카피. **표본·분포는 VPS 풀 DB만**.
+
+**VPS 확인 SQL (디렉터)**
+
+```sql
+-- (a) 결측·표본
+SELECT market,
+  COUNT(*) AS n_closed,
+  SUM(bars_held IS NULL) AS null_bars,
+  SUM(final_ret IS NULL) AS null_ret,
+  SUM(exit_reason IS NULL OR TRIM(exit_reason)='') AS null_exit_reason,
+  SUM(exit_type IS NULL OR TRIM(exit_type)='' OR UPPER(exit_type)='UNKNOWN') AS bad_exit_type,
+  SUM(entry_regime IS NULL OR TRIM(entry_regime)='' OR UPPER(entry_regime)='UNKNOWN') AS bad_regime
+FROM forward_trades
+WHERE status LIKE 'CLOSED%'
+GROUP BY market;
+
+-- (b) exit_type 분포 (group-by SSOT)
+SELECT market, exit_type, COUNT(*) AS n
+FROM forward_trades
+WHERE status LIKE 'CLOSED%'
+GROUP BY market, exit_type
+ORDER BY market, n DESC;
+
+-- (c) status별 오염 점검 (자가치유)
+SELECT market, status, COUNT(*) AS n,
+  SUM(exit_type IS NULL OR UPPER(IFNULL(exit_type,'')) IN ('','UNKNOWN')) AS bad_et
+FROM forward_trades
+WHERE status LIKE 'CLOSED%'
+GROUP BY market, status;
+
+-- (d) bars×ret 버킷 (Claude OK 후속 — 신규 스크립트 없이 SQL만)
+-- TIME_STOP 기본 10 근처 구간: 1-3 / 4-6 / 7-10 / 11-14 / 15+
+SELECT market,
+  CASE
+    WHEN bars_held IS NULL THEN 'null'
+    WHEN bars_held <= 3 THEN '1-3'
+    WHEN bars_held <= 6 THEN '4-6'
+    WHEN bars_held <= 10 THEN '7-10'
+    WHEN bars_held <= 14 THEN '11-14'
+    ELSE '15+'
+  END AS bars_bucket,
+  COUNT(*) AS n,
+  ROUND(AVG(final_ret), 3) AS avg_ret,
+  ROUND(SUM(CASE WHEN final_ret > 0 THEN 1.0 ELSE 0 END) * 100.0 / COUNT(*), 1) AS win_pct,
+  ROUND(AVG(bars_held), 2) AS avg_bars
+FROM forward_trades
+WHERE status LIKE 'CLOSED%'
+  AND final_ret IS NOT NULL
+GROUP BY market, bars_bucket
+ORDER BY market, MIN(IFNULL(bars_held, -1));
+```
+
+> **Claude OK 2026-08-09**: 조사 검증 통과 · 수정 spec 없음 · F-QUOTA-LOG-01·RL 컬럼 연기/No-Go — `CLAUDE_TO_CURSOR.md` · `ARCHITECT_MIRROR.md`
+
+---
+
+### 3) RL 타임스탑 연장 (CAT-E §4 RL ext · ACE §7)
+
+| 메커니즘 | 코드 | DB 흔적 |
+|----------|------|---------|
+| RL +2 | `holding_edge_score>1.5` → `opt_time_stop_effective += 2` (`forward/ledger.py`) | **없음** (매봉 재계산) |
+| ACE | `ace_exit_bridge` · `time_stop_mult` / `min_hold_bars_extra` | `flow_tags` `#에이스진화_보유연장` |
+| breadth 조임 | `<0.97` → time_stop×0.5 | 없음 |
+| 오토파일럿 호흡 | 승자 avg bars → `{ns}_TIME_STOP` (BULL시 **999**) | config만 |
+
+**판정**: 연장 여부·횟수 SSOT 컬럼 **부재**. `bars_held>10` 추정 **기각 권장**(base TIME_STOP 비고정).
+
+---
+
+### 4) OPEN 쿼터 포화·거절 로그 (CAT-F · CAT-C 경계)
+
+| 경로 | 동작 | 영속 |
+|------|------|------|
+| `try_add_virtual_position` gate | `COUNT(OPEN) >= resolve_max_open_positions` (regime base×`POSITION_QUOTA_MULT`, DEFAULT≈20) | INSERT 없음 · `False, "시장 쿼터 초과…"` |
+| `supernova_hunter` | `funnel.record_db_failure(msg)` + `FAILED_DB` | **텔레그램 샘플 ≤5종** · SQLite **미기록** |
+| `scan_funnel_snapshot.drops_json` | 스캐너 stage Counter만 | 쿼터 reason **미포함** |
+| `scan_funnel_drop_event` | near-miss(DNA_FAIL·LIQUIDITY…) | 쿼터 **미포함** |
+
+**I-2 「슬롯 회전 병목」**: 현재 데이터로 **거절 빈도 시계열 입증 불가**.  
+약한 프록시만 가능 — entry/exit로 일별 OPEN 장부 재구성 → 「캡 도달 일수」(거절 시도 횟수 ≠).
+
+---
+
+### 5) 기존 bars_held×final_ret 분석 (중복 여부)
+
+| 모듈 | 범위 | 본 분석과 관계 |
+|------|------|----------------|
+| `system_auto_pilot.py` 엔진 5.5 | 승자만 avg(`bars_held`)→TIME_STOP | 버킷/분포 리포트 **아님** |
+| `exit_ratchet_rl.py` | runner `exit_type`×bars | κ 진화 전용 |
+| `report_feature_analyzer.py` | feature 목록에 `bars_held` | 교차표 없음 |
+| `.ipynb` | **0개** | — |
+
+→ **신규 read-only SQL/스크립트 = 중복 아님**. 구현 Handoff 전 VPS (a)(b) 먼저.
+
+---
+
+### 6) 작업 표면 + 가장 싼 실험
+
+**읽기 표면 (조사 완료)**
+
+- `forward/shared.py` — 스키마 · try_add OPEN quota · 자가치유 CLOSE
+- `forward/ledger.py` — 청산 사다리 · RL/ACE · CLOSE UPDATE
+- `performance_budget_governor.py` — `resolve_max_open_positions` / `POSITION_QUOTA_REGIME_MAP`
+- `supernova_hunter.py` — try_add 실패 → `record_db_failure`
+- `scanner_funnel.py` — `_db_fail_*` 비영속 · `drops_json` 스캐너만
+- `system_auto_pilot.py` — 호흡 동기화
+- `docs/claude_project/CAT-D_Forward원장.md` · `CAT-E_청산엔진.md`
+
+**가장 싼 실험**
+
+| 목표 | forward 대기? | 방법 |
+|------|---------------|------|
+| bars×ret · exit_type·entry_regime 교차 | **불필요** | VPS §2 SQL → (선택) `scripts/` read-only 1개 |
+| RL 연장 효과 | 불필요·**식별력 약함** | ACE 태그만 확실 |
+| I-2 슬롯 병목 | 대기 무관 · **계측 부재** | (a) 장부 재구성 프록시 **또는** (b) try_add 거절 reason 카운터 영속 — **별 Handoff** (C-FUNNEL-02와 축 다름: 스캐너 drop ≠ 포지션 쿼터) |
+
+---
+
+### Claude에게 요청 (결정)
+
+1. CAT-E-BARS-01 조사 **OK** 여부 (수정 질문 있으면 지정)
+2. VPS §2 SQL 결과를 디렉터가 붙이면 → bars×ret 분석 Handoff를 **읽기전용 스크립트**로 둘지 / Claude Project 분석만으로 둘지
+3. I-2 슬롯 병목: **계측 Handoff**(가칭 `F-QUOTA-LOG-01` 또는 CAT-C 인접) 우선순위 — F-GATE/F-RETIRE 배포 이후인지
+4. RL 연장 식별 컬럼 additive는 **지금 불필요**(분석만) vs 향후 telemetry — Go/No-Go
+
+### 출력 요청 형식
+
+- [CAT-E-BARS-01] 결론 3줄
+- 필요 시 `CLAUDE_TO_CURSOR.md`에 **읽기전용 분석** 또는 **쿼터 거절 계측** Handoff (구현 착수 전 디렉터 Go)
+- `ARCHITECT_MIRROR.md` 상단 블록 (날짜 2026-08-09)
+- 디렉터: VPS §2 SQL 실행 여부 Yes/No
 
 ---
 

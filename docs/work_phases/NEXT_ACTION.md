@@ -2,48 +2,47 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **L-OBS-01** 구현 완료 · **F-GATE-01 + F-RETIRE-02** 서버 배포(디렉터) |
-| **status** | `WAIT_DIRECTOR_DEPLOY` · `WAIT_CLAUDE_OK` (L-OBS-01) |
+| **sub-phase** | **CAT-E-BARS-01** Claude OK ✅ · **F-GATE-01 + F-RETIRE-02** 서버 배포(디렉터) |
+| **status** | `WAIT_DIRECTOR` (VPS SQL (a)~(d) + 배포) |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-### 1) 서버 배포 (순서: F-GATE-01 → 관측 → F-RETIRE-02)
+### 1) VPS SQL (CAT-E-BARS-01 — 코드 더 안 늘림)
+
+`CURSOR_TO_CLAUDE.md` §CAT-E-BARS-01 「VPS 확인 SQL」 **(a)(b)(c)(d)** 실행 → 결과 회신.
+
+- (a) 결측·표본 n  
+- (b) `exit_type` 분포  
+- (c) status별 `exit_type` 오염  
+- (d) bars×ret 버킷 (1-3 / 4-6 / 7-10 / 11-14 / 15+)
+
+> Claude: 신규 스크립트 **금지**. SQL만.
+
+### 2) 서버 배포 (병렬 가능 · 순서: F-GATE-01 → 관측 → F-RETIRE-02)
 
 ```bash
 cd ~/dante_bots/Dual-Screener-Bot
 git pull
-sudo ./update_factory.sh   # cron에 --deploy-watch 19:35 KST 포함
+sudo ./update_factory.sh
 sudo systemctl status dante-factory.service
 ```
 
-**배포 단계별 phase (선택)**
+### 3) (연기) F-QUOTA-LOG-01
 
-```bash
-DEPLOY_WATCH_PHASE=post_f_gate_01 ./factory.sh --deploy-watch
-# F-RETIRE-02 배포 후:
-DEPLOY_WATCH_PHASE=post_f_retire_02 ./factory.sh --deploy-watch
-```
-
-> **자동 관측**: 매일 19:35 KST cron — WARN/BREAK만 텔레그램.  
-> OK면 무음. 결과 JSON: `deploy_watch_latest.json` (factory data dir).  
-> 텔레그램 `---CURSOR---` 블록을 Cursor에 붙여넣기 → 회신 초안 작성.
-
-### 2) C-FUNNEL T+1
-
-다음 스캔 후 `c_funnel_02`가 PASS로 바뀌는지 deploy_watch가 판정 (수동 SQL 불필요).
+F-GATE-01 / F-RETIRE-02 배포 + L-OBS-01 관측 **이후**. RL 연장 컬럼 = **No-Go**(지금).
 
 ---
 
 ## 완료
 
-- [x] F-GATE-01 · F-RETIRE-02 구현 · Claude OK 2026-08-09
-- [x] L-OBS-01 `deploy_watch.py` + cron 19:35 KST
-- [x] C-FUNNEL-02 배포 2026-08-09
+- [x] CAT-E-BARS-01 Reality Audit · **Claude OK 2026-08-09**
+- [x] F-GATE-01 · F-RETIRE-02 구현 · Claude OK
+- [x] C-FUNNEL-02 배포 · L-OBS-01 코드
 
 ## 대기
 
+- [ ] VPS SQL (a)~(d) 결과
 - [ ] F-GATE-01 / F-RETIRE-02 서버 배포
-- [ ] L-OBS-01 Claude OK (선택)
-- [ ] C-FUNNEL T+1 — deploy_watch `c_funnel_02` PASS 확인
+- [ ] (연기) F-QUOTA-LOG-01

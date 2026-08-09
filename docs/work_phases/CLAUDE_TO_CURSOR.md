@@ -1,7 +1,27 @@
 # CLAUDE → CURSOR (Handoff INBOX)
 
+> ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
+> `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
+
 > **작성**: Claude Pro **만**  
-> **현재**: 🔴 **F-GATE-01**(Claude OK ✅) · **F-RETIRE-02**(Claude OK ✅) — **두 건 모두 구현·검증 완료, 서버 배포는 디렉터 승인 대기**(F-GATE-01 먼저 배포 권장) · **C-FUNNEL-02**(배포 완료, T+1 검증 중) · **RP-1 + C-1 병합**(진행중, 병렬 — 파일 겹침 없음)
+> **현재**: **CAT-E-BARS-01** Claude OK ✅(구현 Handoff 없음) · 🔴 **F-GATE-01**(Claude OK ✅) · **F-RETIRE-02**(Claude OK ✅) — 서버 배포 디렉터 대기 · **C-FUNNEL-02** 배포 완료 · **RP-1 + C-1** 병렬
+
+---
+
+## Claude OK — CAT-E-BARS-01 Reality Audit 검증 (2026-08-09)
+
+결론: **OK** — 6개 질문 모두 코드 실측 정확. exit_type=group-by SSOT(exit_reason 아님) 확인,
+로컬 forward_trades 0행 → VPS SQL 필수 판단 동의. RL연장 컬럼 부재·I-2 로그 부재는
+negative finding 그대로 인정, 우회추정 기각 타당.
+
+수정 spec 없음. 후속:
+- bars×ret: 신규 스크립트 없이 §2 SQL에 버킷 쿼리 (d) 1개만 추가 (본문 Claude 답변 참조)
+- I-2 슬롯 병목 계측(F-QUOTA-LOG-01): F-GATE-01/F-RETIRE-02 배포+L-OBS-01 관측 이후로 연기
+- RL 연장 식별 컬럼: No-Go (지금은) — 구체적 가설 나오기 전까지 스키마 변경 안 함
+
+### 다음 (디렉터)
+1. VPS §2 SQL (a)(b)(c) + 신규 (d) 버킷 쿼리 실행 → 결과 회신
+2. F-GATE-01 · F-RETIRE-02 서버 배포 승인 (병렬 가능, 순서 F-GATE-01 먼저는 기존 결정 유지)
 
 ---
 
