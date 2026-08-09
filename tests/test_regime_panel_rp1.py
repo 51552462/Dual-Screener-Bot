@@ -163,7 +163,7 @@ class TestPortfolioMetricsV2:
             for i in range(200)
         ]
         m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
-        assert m["metrics_method"] == "daily_equal_weight_v2"
+        assert m["metrics_method"] == "daily_equal_weight_v2_trade_tier"
         assert m["cagr_pct"] < 200.0
         assert m["trades_per_day"] == 200.0
 
@@ -185,6 +185,38 @@ class TestPortfolioMetricsV2:
         assert "mdd_pct_raw" in m
         assert "mdd_pct_tier" in m
         assert m["trading_days"] == 10
+        assert m.get("tier_replay_unit") == "trade"
+
+    def test_tier_mdd_varies_by_trade_sequence(self):
+        short = [
+            {"date": "2020-10-01", "final_ret": -1.0, "code": "a"},
+            {"date": "2020-10-02", "final_ret": 5.0, "code": "b"},
+        ]
+        long_loss = [
+            {"date": f"2020-10-{d:02d}", "final_ret": -3.5, "code": f"c{d}"}
+            for d in range(1, 21)
+        ]
+        m_short = compute_period_portfolio_metrics(short, "2020-10-01", "2020-10-31")
+        m_long = compute_period_portfolio_metrics(long_loss, "2020-10-01", "2020-10-31")
+        assert m_short["mdd_pct_tier"] != m_long["mdd_pct_tier"]
+        assert m_short["tier_log_sample"] != m_long["tier_log_sample"]
+
+    def test_uniform_tier_mdd_triggers_inconclusive(self):
+        rows = [
+            {
+                "regime_name": f"p{i}",
+                "bucket": "BULL",
+                "verdict": "FAIL",
+                "mdd_pct": 50.0,
+                "mdd_pct_tier": 9.2015,
+                "tier_events": 100 + i,
+                "cagr_pct": -10.0,
+            }
+            for i in range(5)
+        ]
+        report = build_stage1_report(rows)
+        assert report["tier_mdd_uniform_suspect"] is True
+        assert report["overall_verdict"] == "INCONCLUSIVE"
 
 
 class TestVerdictAndCause:
@@ -292,8 +324,8 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
-        assert report["stage1"]["schema"] == "regime_panel_rp1.v2"
-        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2"
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.1"
+        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2_trade_tier"
         p0 = report["stage1"]["periods"][0]
         assert "mdd_pct_raw" in p0
         assert "trades_per_day" in p0

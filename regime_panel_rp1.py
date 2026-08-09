@@ -25,7 +25,7 @@ from time_machine_backtester import (
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
-RP1_METRICS_METHOD = "daily_equal_weight_v2"
+RP1_METRICS_METHOD = "daily_equal_weight_v2_trade_tier"
 RP1_MAX_POSITIONS_PER_DAY = 20
 RP1_LOOKAHEAD_NOTICE = (
     "상한선 추정치 — v1 오늘 뇌 템플릿 lookahead. Pass≠실전보장."
@@ -143,7 +143,7 @@ def compute_period_portfolio_metrics(
     mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
     max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
 ) -> Dict[str, Any]:
-    """RCA v2: date-sorted daily equal-weight NAV + raw/tier MDD split."""
+    """RCA v2.1: daily equal-weight CAGR/raw MDD; tier replay on trade sequence (live-like)."""
     ordered = sort_trades_by_date(list(trades))
     dates, daily_raw = trades_to_daily_returns(ordered, max_positions_per_day=max_positions_per_day)
 
@@ -160,24 +160,27 @@ def compute_period_portfolio_metrics(
             "max_positions_per_day": max_positions_per_day,
             "tier_events": 0,
             "tier_log_sample": [],
+            "tier_replay_unit": "trade",
         }
 
     raw_metrics = compute_equity_metrics(daily_raw, start_dt, end_dt)
-    adj_daily, tier_log = replay_tier_overlay_on_returns(daily_raw, mdd_cap_pct=mdd_cap_pct)
-    tier_metrics = compute_equity_metrics(adj_daily, start_dt, end_dt)
+    trade_returns = [float(t.get("final_ret", 0.0)) for t in ordered]
+    adj_trade, tier_log = replay_tier_overlay_on_returns(trade_returns, mdd_cap_pct=mdd_cap_pct)
+    tier_metrics = compute_equity_metrics(adj_trade, start_dt, end_dt)
 
     return {
-        "cagr_pct": tier_metrics["cagr_pct"],
-        "mdd_pct": tier_metrics["mdd_pct"],
+        "cagr_pct": raw_metrics["cagr_pct"],
+        "mdd_pct": raw_metrics["mdd_pct"],
         "mdd_pct_raw": raw_metrics["mdd_pct"],
         "mdd_pct_tier": tier_metrics["mdd_pct"],
-        "nav_end": tier_metrics["nav_end"],
+        "nav_end": raw_metrics["nav_end"],
         "trading_days": len(dates),
         "trades_per_day": round(len(ordered) / max(len(dates), 1), 2),
         "metrics_method": RP1_METRICS_METHOD,
         "max_positions_per_day": max_positions_per_day,
         "tier_events": len(tier_log),
         "tier_log_sample": tier_log[:5],
+        "tier_replay_unit": "trade",
     }
 
 
@@ -364,6 +367,7 @@ def _run_one_regime_period(
         pf=stats["pf"],
     )
     fail_cause = None
+    near_miss_cause = None
     if verdict == "FAIL":
         fail_cause = tag_fail_cause(
             total_trades=stats["total_trades"],
@@ -371,6 +375,15 @@ def _run_one_regime_period(
             cagr_pct=metrics["cagr_pct"],
             bucket=bucket,
         )
+    elif verdict == "NEAR_MISS":
+        near_miss_cause = tag_fail_cause(
+            total_trades=stats["total_trades"],
+            mdd_pct=metrics["mdd_pct"],
+            cagr_pct=metrics["cagr_pct"],
+            bucket=bucket,
+        )
+        if near_miss_cause is None and stats["total_trades"] >= RP1_MIN_TRADES_AUTO_VERDICT:
+            near_miss_cause = "B"
 
     return {
         "regime_name": regime_name,
@@ -394,10 +407,23 @@ def _run_one_regime_period(
         "zero_entries": stats["total_trades"] == 0,
         "verdict": verdict,
         "fail_cause": fail_cause,
+        "near_miss_cause": near_miss_cause,
         "tier_log_sample": metrics["tier_log_sample"],
         "tier_events": metrics["tier_events"],
         "c1_boost": c1_boost,
     }
+
+
+def _tier_mdd_uniform_suspect(period_rows: List[Dict[str, Any]], *, min_periods: int = 3) -> bool:
+    """True when tier MDD is identical across periods — measurement artifact guard."""
+    tier_mdds = [
+        round(float(r.get("mdd_pct_tier", 0.0)), 4)
+        for r in period_rows
+        if int(r.get("tier_events") or 0) > 0
+    ]
+    if len(tier_mdds) < min_periods:
+        return False
+    return len(set(tier_mdds)) == 1
 
 
 def build_stage1_report(
@@ -423,6 +449,8 @@ def build_stage1_report(
 
     if all_skip:
         overall = "INCONCLUSIVE"
+    elif _tier_mdd_uniform_suspect(period_rows):
+        overall = "INCONCLUSIVE"
     elif mdd_badge["mdd_cap_violation"]:
         overall = "NEAR_MISS"
     elif all_bucket_pass and avg_bull_cagr >= 35.0:
@@ -435,13 +463,14 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v2",
+        "schema": "regime_panel_rp1.v2.1",
         "metrics_method": RP1_METRICS_METHOD,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,
         "lookahead_html": LOOKAHEAD_BIAS_WARNING_HTML,
         "mdd_cap_pct": mdd_cap_pct,
         "mdd_crosscheck": mdd_badge,
+        "tier_mdd_uniform_suspect": _tier_mdd_uniform_suspect(period_rows),
         "min_trades_auto_verdict": RP1_MIN_TRADES_AUTO_VERDICT,
         "periods": period_rows,
         "bucket_summary": buckets,

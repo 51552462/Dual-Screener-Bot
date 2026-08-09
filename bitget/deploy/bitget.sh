@@ -171,14 +171,16 @@ if [[ -z "$MODE" ]]; then
 fi
 
 # --- daily_audit 중복 실행 가드 (주식 factory.sh pgrep 패턴) ---
+# NOTE: "$(_fn)" 서브셸에서는 $$ ≠ bitget.sh 본체 PID → 호출부에서 self_pid 전달.
 _bitget_live_daily_audit_lines() {
+  local self_pid="${1:-$$}"
   local line pid state
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     pid="${line%% *}"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     # 동시에 두 번 bitget.sh --daily-audit 이 뜨는 경우 자기 자신 제외
-    if [[ "$pid" -eq "$$" ]]; then
+    if [[ "$pid" -eq "$self_pid" ]]; then
       continue
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -200,7 +202,7 @@ _bitget_live_daily_audit_lines() {
 
 case "$MODE" in
   daily_audit)
-    other_daily="$(_bitget_live_daily_audit_lines)"
+    other_daily="$(_bitget_live_daily_audit_lines "$$")"
     if [[ -n "$other_daily" ]]; then
       _lock_path="${BITGET_DB_STORAGE_PATH:-}"
       if [[ -n "$_lock_path" ]]; then
