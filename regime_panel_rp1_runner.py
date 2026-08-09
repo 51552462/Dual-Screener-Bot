@@ -274,8 +274,10 @@ def _run_matrix_ticker_batch(
     }
     n_total = len(stock_list)
     progress_every = _env_int("RP1_PROGRESS_EVERY", 25, lo=1, hi=500)
+    trade_count = 0
 
     def _consume(pack: Any) -> None:
+        nonlocal trade_count
         if not isinstance(pack, dict):
             return
         fetch_gate = str(pack.get("fetch_gate") or "unknown")
@@ -286,12 +288,15 @@ def _run_matrix_ticker_batch(
                 continue
             gate = str(win_pack.get("gate") or fetch_gate)
             bucket["gate_summary"][gate] = bucket["gate_summary"].get(gate, 0) + 1
-            bucket["trades"].extend(win_pack.get("trades", []))
+            new_trades = win_pack.get("trades", [])
+            trade_count += len(new_trades)
+            bucket["trades"].extend(new_trades)
 
     def _maybe_log(done: int) -> None:
         if done % progress_every == 0 or done == n_total:
-            total_trades = sum(len(v["trades"]) for v in merged.values())
-            log_rp1(f"  [matrix] tickers {done}/{n_total} windows={len(merged)} trades={total_trades}")
+            log_rp1(
+                f"  [matrix] tickers {done}/{n_total} windows={len(merged)} trades={trade_count}"
+            )
 
     if use_pool:
         max_workers = resolve_rp1_max_workers()

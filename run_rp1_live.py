@@ -9,7 +9,7 @@ Env quick reference:
   RP1_KR_LIMIT / RP1_US_LIMIT   universe caps (default 200 each)
   RP1_MAX_WORKERS=2       parallel workers (1-8)
   RP1_CHUNK_SIZE=25       futures per batch
-  RP1_PROGRESS_EVERY=25   ticker progress log interval
+  RP1_PROGRESS_EVERY=25   ticker progress log interval (full run: never use 1 — O(n²) trade scan)
   RP1_MATRIX=0          disable OHLCV 1-fetch-per-ticker cache (legacy slow path)
   RP1_MATRIX_REUSE=1    save/load matrix snapshot (smoke reruns ~minutes not ~1h)
   RP1_FETCH_TIMEOUT=30  FDR hard timeout per ticker (skip on hang, default 30s)
