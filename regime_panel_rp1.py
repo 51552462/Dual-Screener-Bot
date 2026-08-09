@@ -462,7 +462,13 @@ def run_regime_panel_rp1(
     Stage 1 RP-1 baseline + optional Stage 2 C-1 A/B (auto-branched).
     Writes reports/regime_panel/rp1_{date}.json
     """
-    from regime_panel_rp1_runner import default_run_backtest_for_period, load_rp1_brain_cached
+    from regime_panel_rp1_runner import (
+        clear_rp1_matrix_cache,
+        default_run_backtest_for_period,
+        load_rp1_brain_cached,
+        prime_rp1_matrix_cache,
+        resolve_rp1_use_matrix_cache,
+    )
 
     if run_backtest_fn is None:
         run_backtest_fn = default_run_backtest_for_period
@@ -479,6 +485,10 @@ def run_regime_panel_rp1(
     mdd_cap = resolve_mdd_cap_pct(brain)
     period_rows: List[Dict[str, Any]] = []
     n_periods = len(REGIME_PERIODS)
+
+    matrix_meta: Optional[Dict[str, Any]] = None
+    if run_backtest_fn is default_run_backtest_for_period and resolve_rp1_use_matrix_cache():
+        matrix_meta = prime_rp1_matrix_cache(list(stock_list))
 
     for idx, (regime_name, meta) in enumerate(REGIME_PERIODS.items(), 1):
         from regime_panel_rp1_runner import log_rp1
@@ -547,6 +557,8 @@ def run_regime_panel_rp1(
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
     report["output_path"] = out_path
+    if matrix_meta is not None:
+        clear_rp1_matrix_cache()
     return report
 
 

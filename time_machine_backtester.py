@@ -10,6 +10,7 @@ import FinanceDataReader as fdr
 from datetime import timedelta
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 warnings.filterwarnings('ignore')
 
 
@@ -342,61 +343,87 @@ def _row_matches_template_bounds(row, bounds, evolved_slot_keys):
             return False
     return True
 
-def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evolved_factors):
-    """단일 종목: 다운로드 → DNA/알파 → 템플릿 매칭 → 15일 MFE/MAE. (ProcessPool 워커에서 호출)"""
-    out = []
+
+def compute_rp1_global_ohlcv_bounds(
+    regime_periods: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str]:
+    """Min fetch_start / max end_dt across primary + backup windows."""
+    periods = regime_periods or REGIME_PERIODS
+    starts: List[str] = []
+    ends: List[str] = []
+    for meta in periods.values():
+        starts.append(str(meta["start"]))
+        ends.append(str(meta["end"]))
+        backup = meta.get("backup")
+        if isinstance(backup, dict):
+            starts.append(str(backup["start"]))
+            ends.append(str(backup["end"]))
+    fetch_start = (pd.to_datetime(min(starts)) - timedelta(days=40)).strftime("%Y-%m-%d")
+    return fetch_start, max(ends)
+
+
+def collect_rp1_ohlcv_windows(
+    regime_periods: Optional[Dict[str, Any]] = None,
+) -> List[Tuple[str, str]]:
+    """Unique (start_dt, end_dt) across primary + backup (deduped)."""
+    periods = regime_periods or REGIME_PERIODS
+    seen: set = set()
+    out: List[Tuple[str, str]] = []
+    for meta in periods.values():
+        for start, end in ((str(meta["start"]), str(meta["end"])),):
+            key = (start, end)
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+        backup = meta.get("backup")
+        if isinstance(backup, dict):
+            key = (str(backup["start"]), str(backup["end"]))
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
+def _window_cache_key(start_dt: str, end_dt: str) -> str:
+    return f"{start_dt}|{end_dt}"
+
+
+def _simulate_trades_on_ohlcv(
+    code: str,
+    df: pd.DataFrame,
+    start_dt: str,
+    end_dt: str,
+    all_templates: Dict[str, Any],
+    evolved_factors: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run template backtest on pre-loaded OHLCV (no network)."""
+    out: List[dict] = []
     evolved_slot_keys = list(evolved_factors.keys()) if isinstance(evolved_factors, dict) else []
-    fetch_latency_s = None
-    t_mark = None
-    df = None
-
-    try:
-        time.sleep(random.uniform(0.05, 0.18))
-        t_mark = time.perf_counter()
-        df = fdr.DataReader(code, fetch_start, end_dt)
-        fetch_latency_s = time.perf_counter() - t_mark
-    except Exception:
-        el = (time.perf_counter() - t_mark) if t_mark is not None else None
-        if df is not None:
-            del df
-        return {"trades": [], "fetch_latency_s": el, "gate": "fetch_error"}
-
-    warmup_df = None
-    test_df = None
     try:
         if df is None or getattr(df, "empty", True):
-            if df is not None:
-                del df
-            return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_empty"}
+            return {"trades": [], "gate": "skip_empty"}
         if len(df) < 30:
-            del df
-            return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_short"}
+            return {"trades": [], "gate": "skip_short"}
 
-        df = df.sort_index()
-        if df.index.has_duplicates:
-            df = df[~df.index.duplicated(keep="last")]
+        work = df.sort_index()
+        if work.index.has_duplicates:
+            work = work[~work.index.duplicated(keep="last")]
 
         start_ts = pd.Timestamp(start_dt)
-        warmup_df = df[df.index < start_ts]
-
-        # 테스트 구간(가격 경로·미래 15일 평가용)
-        test_df = df[df.index >= start_ts]
+        end_ts = pd.Timestamp(end_dt)
+        work = work[work.index <= end_ts]
+        warmup_df = work[work.index < start_ts]
+        test_df = work[work.index >= start_ts]
         if len(test_df) < 16:
-            del test_df
-            del warmup_df
-            del df
-            return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_regime_window"}
+            return {"trades": [], "gate": "skip_regime_window"}
 
         for i in range(len(test_df) - 15):
-            # 💡 [룩어헤드 방지] 평가일 i까지: test_df.iloc[:i+1] 만 허용 + 롤 워밍업용 사전 구간(warmup_df)만 병합
             past_in_regime = test_df.iloc[: i + 1]
             current_history_df = pd.concat([warmup_df, past_in_regime]).sort_index()
             current_history_df = current_history_df[~current_history_df.index.duplicated(keep="last")]
             if isinstance(current_history_df, pd.Series):
                 current_history_df = current_history_df.to_frame().T
             if len(current_history_df) < 30:
-                del past_in_regime
-                del current_history_df
                 continue
 
             hist = calculate_dna_factors(current_history_df.copy(), evolved_factors=evolved_factors)
@@ -413,64 +440,127 @@ def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evo
             if is_passed:
                 entry_price = float(current_row["Close"])
                 future_15d = test_df.iloc[i + 1 : i + 16]
-
-                max_high = future_15d['High'].max()
-                min_low = future_15d['Low'].min()
-
+                max_high = future_15d["High"].max()
+                min_low = future_15d["Low"].min()
                 mfe = (max_high - entry_price) / entry_price * 100
                 mae = (min_low - entry_price) / entry_price * 100
-
                 final_ret = 0.0
                 for _, f_row in future_15d.iterrows():
-                    cur_mfe = (f_row['High'] - entry_price) / entry_price * 100
-                    cur_mae = (f_row['Low'] - entry_price) / entry_price * 100
-
+                    cur_mfe = (f_row["High"] - entry_price) / entry_price * 100
+                    cur_mae = (f_row["Low"] - entry_price) / entry_price * 100
                     if cur_mae <= -3.5:
                         final_ret = -3.5
                         break
-                    elif cur_mfe >= 10.0:
+                    if cur_mfe >= 10.0:
                         final_ret = 10.0
                         break
-
                 if final_ret == 0.0:
-                    final_ret = (future_15d.iloc[-1]['Close'] - entry_price) / entry_price * 100
-
-                out.append({
-                    'date': test_df.index[i].strftime('%Y-%m-%d'),
-                    'code': code,
-                    'template': matched_tpl,
-                    'mfe': mfe,
-                    'mae': mae,
-                    'final_ret': final_ret
-                })
-                del future_15d
-
-            del hist
-            del current_row
-            del past_in_regime
-            del current_history_df
-
-        del df
-        del warmup_df
-        del test_df
-        return {"trades": out, "fetch_latency_s": fetch_latency_s, "gate": "success"}
+                    final_ret = (future_15d.iloc[-1]["Close"] - entry_price) / entry_price * 100
+                out.append(
+                    {
+                        "date": test_df.index[i].strftime("%Y-%m-%d"),
+                        "code": code,
+                        "template": matched_tpl,
+                        "mfe": mfe,
+                        "mae": mae,
+                        "final_ret": final_ret,
+                    }
+                )
+        return {"trades": out, "gate": "success"}
     except Exception:
+        return {"trades": [], "gate": "processing_error"}
+
+
+def backtest_ticker_rp1_multi_window(
+    code: str,
+    global_fetch_start: str,
+    global_end_dt: str,
+    ohlcv_windows: Sequence[Tuple[str, str]],
+    all_templates: Dict[str, Any],
+    evolved_factors: Dict[str, Any],
+    *,
+    batch_mode: bool = True,
+) -> Dict[str, Any]:
+    """One FDR fetch per ticker, simulate all RP-1 windows (primary + backup)."""
+    fetch_latency_s = None
+    t_mark = None
+    try:
+        if not batch_mode:
+            time.sleep(random.uniform(0.05, 0.18))
+        t_mark = time.perf_counter()
+        df = fdr.DataReader(code, global_fetch_start, global_end_dt)
+        fetch_latency_s = time.perf_counter() - t_mark
+    except Exception:
+        return {
+            "code": code,
+            "by_window": {},
+            "fetch_gate": "fetch_error",
+            "fetch_latency_s": (time.perf_counter() - t_mark) if t_mark else None,
+        }
+
+    if df is None or getattr(df, "empty", True):
+        return {
+            "code": code,
+            "by_window": {},
+            "fetch_gate": "skip_empty",
+            "fetch_latency_s": fetch_latency_s,
+        }
+
+    df = df.sort_index()
+    if df.index.has_duplicates:
+        df = df[~df.index.duplicated(keep="last")]
+
+    by_window: Dict[str, Dict[str, Any]] = {}
+    for start_dt, end_dt in ohlcv_windows:
+        wkey = _window_cache_key(start_dt, end_dt)
+        by_window[wkey] = _simulate_trades_on_ohlcv(
+            code, df, start_dt, end_dt, all_templates, evolved_factors
+        )
+    return {
+        "code": code,
+        "by_window": by_window,
+        "fetch_gate": "success",
+        "fetch_latency_s": fetch_latency_s,
+    }
+
+
+def _backtest_one_ticker(code, fetch_start, end_dt, start_dt, all_templates, evolved_factors):
+    """단일 종목: 다운로드 → DNA/알파 → 템플릿 매칭 → 15일 MFE/MAE. (ProcessPool 워커에서 호출)"""
+    fetch_latency_s = None
+    t_mark = None
+    df = None
+
+    try:
+        time.sleep(random.uniform(0.05, 0.18))
+        t_mark = time.perf_counter()
+        df = fdr.DataReader(code, fetch_start, end_dt)
+        fetch_latency_s = time.perf_counter() - t_mark
+    except Exception:
+        el = (time.perf_counter() - t_mark) if t_mark is not None else None
+        if df is not None:
+            del df
+        return {"trades": [], "fetch_latency_s": el, "gate": "fetch_error"}
+
+    try:
+        if df is None or getattr(df, "empty", True):
+            return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_empty"}
+        if len(df) < 30:
+            return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "skip_short"}
+
+        pack = _simulate_trades_on_ohlcv(
+            code, df, start_dt, end_dt, all_templates, evolved_factors
+        )
+        pack["fetch_latency_s"] = fetch_latency_s
+        return pack
+    except Exception:
+        return {"trades": [], "fetch_latency_s": fetch_latency_s, "gate": "processing_error"}
+    finally:
         if df is not None:
             try:
                 del df
             except Exception:
                 pass
-        if warmup_df is not None:
-            try:
-                del warmup_df
-            except Exception:
-                pass
-        if test_df is not None:
-            try:
-                del test_df
-            except Exception:
-                pass
-        return {"trades": out, "fetch_latency_s": fetch_latency_s, "gate": "processing_error"}
+
 
 def _summarize_trade_results(results):
     """청산 시뮬 결과 리스트 → 승률·PF·평균 수익률."""

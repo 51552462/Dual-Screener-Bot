@@ -20,9 +20,14 @@ from regime_panel_rp1 import (
 from regime_panel_rp1_runner import (
     resolve_rp1_chunk_size,
     resolve_rp1_max_workers,
+    resolve_rp1_use_matrix_cache,
     resolve_rp1_use_parallel,
 )
-from time_machine_backtester import REGIME_PERIODS
+from time_machine_backtester import (
+    REGIME_PERIODS,
+    collect_rp1_ohlcv_windows,
+    compute_rp1_global_ohlcv_bounds,
+)
 
 
 class TestRp1RunnerTuning:
@@ -42,6 +47,28 @@ class TestRp1RunnerTuning:
 
     def test_chunk_size_default(self):
         assert resolve_rp1_chunk_size() == 25
+
+    def test_matrix_cache_default_on(self, monkeypatch):
+        monkeypatch.delenv("RP1_MATRIX", raising=False)
+        monkeypatch.delenv("RP1_MATRIX_DISABLE", raising=False)
+        assert resolve_rp1_use_matrix_cache() is True
+
+    def test_matrix_cache_disable_flag(self, monkeypatch):
+        monkeypatch.setenv("RP1_MATRIX", "0")
+        assert resolve_rp1_use_matrix_cache() is False
+
+
+class TestRp1OhlcvMatrixHelpers:
+    def test_global_bounds_cover_gfc_backup(self):
+        fetch_start, global_end = compute_rp1_global_ohlcv_bounds(REGIME_PERIODS)
+        assert fetch_start <= "2008-08-01"
+        assert global_end >= "2025-03-31"
+
+    def test_collect_windows_includes_primary_and_backup(self):
+        windows = collect_rp1_ohlcv_windows(REGIME_PERIODS)
+        assert ("2008-09-01", "2009-03-31") in windows
+        assert ("2020-10-01", "2021-11-30") in windows
+        assert len(windows) >= 15
 
 
 class TestRegimePeriodsExpanded:
