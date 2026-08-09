@@ -79,11 +79,11 @@ def send_telegram_msg(text, *, parse_mode: str = "HTML"):
         
         for chunk in chunks:
             enqueue_telegram(
-                target_bot="MAIN",
-                image_path=None,
-                caption=chunk,
+                "MAIN",
+                None,
+                chunk,
                 enabled=True,
-                send_profile="html" if use_html else "default"
+                send_profile="html" if use_html else "default",
             )
     except Exception as e:
         logger.warning(f"Telegram enqueue failed: {e}")
