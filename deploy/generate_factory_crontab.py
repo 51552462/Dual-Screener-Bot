@@ -87,6 +87,13 @@ _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
     ),
 )
 
+# North Star digest — not scan slots; keep in cron SSOT generator (install_factory_cron overwrites template).
+_KR_NORTH_STAR_JOBS: Tuple[Tuple[str, str, str], ...] = (
+    ("30 19 * * *", "--north-star-digest daily", "Dual North Star digest — daily (REPORT_BOT)"),
+    ("0 11 * * 6", "--north-star-digest weekly", "Dual North Star digest — weekly (Sat KST)"),
+    ("5 0 1 * *", "--north-star-digest monthly", "Dual North Star digest — monthly (1st 00:05 KST)"),
+)
+
 # US: KST polling window — covers ET Mon–Fri 10:00–~15:55 (DST via factory_slot_dispatcher ET clock)
 _US_DISPATCH_KST_HOURS_EVENING = "22,23"
 _US_DISPATCH_KST_HOURS_MORNING = "0-6"
@@ -150,6 +157,13 @@ def render_kr_crontab(install_root: str) -> str:
             cmd = _scan_command(flag, tz=tz)
         lines.append(_cron_line(minute, hour, extra_dow, cmd, install_root))
         lines.append("")
+    lines.append("# --- Dual North Star digest (stock + Bitget goal progress → REPORT_BOT) ---")
+    for schedule, flag, comment in _KR_NORTH_STAR_JOBS:
+        lines.append(f"# {comment}")
+        lines.append(
+            _cron_line_schedule(schedule, _scan_command(flag, tz=tz), install_root)
+        )
+    lines.append("")
     while lines and lines[-1] == "":
         lines.pop()
     return "\n".join(lines) + "\n"
