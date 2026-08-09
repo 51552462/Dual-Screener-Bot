@@ -25,7 +25,7 @@ from time_machine_backtester import (
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
-RP1_METRICS_METHOD = "daily_equal_weight_v2.2_trade_tier"
+RP1_METRICS_METHOD = "daily_equal_weight_v2.3_trade_tier"
 RP1_CAGR_MEASUREMENT_FLOOR_PCT = -50.0
 RP1_MAX_POSITIONS_PER_DAY = 20
 RP1_LOOKAHEAD_NOTICE = (
@@ -41,8 +41,8 @@ def replay_tier_overlay_on_returns(
     base_position_pct: float = 1.0,
 ) -> Tuple[List[float], List[Dict[str, Any]]]:
     """
-  Peak-to-trough exhaustion → DEFAULT_BUDGET_BANDS replay (read-only, no config write).
-  Each trade sized by kelly_throttle_mult * position_quota_mult at entry.
+    Legacy per-trade sequential replay (unit tests only).
+    Live RP-1 metrics use replay_tier_overlay_on_trades (daily EOD compounding).
     """
     nav = 100.0
     peak = 100.0
@@ -73,6 +73,74 @@ def replay_tier_overlay_on_returns(
                 "kelly_throttle_mult": k_mult,
                 "position_quota_mult": q_mult,
                 "nav_after": round(nav, 6),
+            }
+        )
+
+    return adjusted, tier_log
+
+
+def replay_tier_overlay_on_trades(
+    ordered_trades: Sequence[Dict[str, Any]],
+    *,
+    mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
+    max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
+) -> Tuple[List[float], List[Dict[str, Any]]]:
+    """
+    Tier replay aligned with daily equal-weight portfolio NAV.
+    Exhaustion band is fixed at day open; intraday trades share the band; NAV compounds EOD.
+    """
+    nav = 100.0
+    peak = 100.0
+    adjusted: List[float] = []
+    tier_log: List[Dict[str, Any]] = []
+    n = len(ordered_trades)
+    i = 0
+
+    while i < n:
+        day = str(ordered_trades[i].get("date") or "")[:10]
+        if not day:
+            adjusted.append(0.0)
+            i += 1
+            continue
+
+        day_trades: List[Dict[str, Any]] = []
+        while i < n and str(ordered_trades[i].get("date") or "")[:10] == day:
+            day_trades.append(ordered_trades[i])
+            i += 1
+
+        dd_pct = 0.0 if peak <= 0 else max(0.0, (peak - nav) / peak * 100.0)
+        exhaustion = (dd_pct / mdd_cap_pct * 100.0) if mdd_cap_pct > 0 else 0.0
+        band = _band_for_exhaustion(exhaustion)
+        k_mult = float(band["kelly_throttle_mult"])
+        q_mult = float(band["position_quota_mult"])
+        if band.get("block_new_entries"):
+            k_mult = 0.0
+            q_mult = 0.0
+        weight = k_mult * q_mult
+
+        capped = day_trades[:max_positions_per_day]
+        day_applied: List[float] = []
+        for t in capped:
+            applied = float(t.get("final_ret", 0.0)) * weight
+            adjusted.append(applied)
+            day_applied.append(applied)
+        for _ in day_trades[len(capped) :]:
+            adjusted.append(0.0)
+
+        daily_ret = sum(day_applied) / len(day_applied) if day_applied else 0.0
+        nav *= 1.0 + daily_ret / 100.0
+        if nav > peak:
+            peak = nav
+        tier_log.append(
+            {
+                "date": day,
+                "exhaustion_pct": round(exhaustion, 4),
+                "band": band["band"],
+                "kelly_throttle_mult": k_mult,
+                "position_quota_mult": q_mult,
+                "daily_tier_return_pct": round(daily_ret, 6),
+                "nav_after_eod": round(nav, 6),
+                "trades_in_day": len(capped),
             }
         )
 
@@ -138,12 +206,12 @@ def trades_to_daily_returns(
 
 
 def _sample_tier_log(tier_log: Sequence[Dict[str, Any]], *, samples: int = 5) -> List[Dict[str, Any]]:
-    """Spread samples across the trade sequence (avoids identical [:5] across regimes)."""
+    """Spread samples across the daily tier trace."""
     n = len(tier_log)
     if n <= samples:
         return list(tier_log)
     idxs = sorted({int(round(i * (n - 1) / (samples - 1))) for i in range(samples)})
-    return [{**tier_log[i], "trade_idx": i} for i in idxs]
+    return [dict(tier_log[i]) for i in idxs]
 
 
 def compute_period_portfolio_metrics(
@@ -154,7 +222,7 @@ def compute_period_portfolio_metrics(
     mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
     max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
 ) -> Dict[str, Any]:
-    """RCA v2.1: daily equal-weight CAGR/raw MDD; tier replay on trade sequence (live-like)."""
+    """RCA v2.3: daily equal-weight raw + tier; single NAV path for CAGR/MDD/tier_log."""
     ordered = sort_trades_by_date(list(trades))
     dates, daily_raw = trades_to_daily_returns(ordered, max_positions_per_day=max_positions_per_day)
 
@@ -173,13 +241,15 @@ def compute_period_portfolio_metrics(
             "max_positions_per_day": max_positions_per_day,
             "tier_events": 0,
             "tier_log_sample": [],
-            "tier_replay_unit": "trade",
+            "tier_replay_unit": "daily_equal_weight",
         }
 
     raw_metrics = compute_equity_metrics(daily_raw, start_dt, end_dt)
-    trade_returns = [float(t.get("final_ret", 0.0)) for t in ordered]
-    adj_trade, tier_log = replay_tier_overlay_on_returns(trade_returns, mdd_cap_pct=mdd_cap_pct)
-    tier_metrics = compute_equity_metrics(adj_trade, start_dt, end_dt)
+    adj_trade, tier_log = replay_tier_overlay_on_trades(
+        ordered,
+        mdd_cap_pct=mdd_cap_pct,
+        max_positions_per_day=max_positions_per_day,
+    )
     adj_trades = [{**t, "final_ret": ar} for t, ar in zip(ordered, adj_trade)]
     _, daily_tier = trades_to_daily_returns(adj_trades, max_positions_per_day=max_positions_per_day)
     tier_daily_metrics = compute_equity_metrics(daily_tier, start_dt, end_dt)
@@ -187,9 +257,9 @@ def compute_period_portfolio_metrics(
     return {
         "cagr_pct": tier_daily_metrics["cagr_pct"],
         "cagr_pct_raw": raw_metrics["cagr_pct"],
-        "mdd_pct": tier_metrics["mdd_pct"],
+        "mdd_pct": tier_daily_metrics["mdd_pct"],
         "mdd_pct_raw": raw_metrics["mdd_pct"],
-        "mdd_pct_tier": tier_metrics["mdd_pct"],
+        "mdd_pct_tier": tier_daily_metrics["mdd_pct"],
         "nav_end": tier_daily_metrics["nav_end"],
         "nav_end_raw": raw_metrics["nav_end"],
         "trading_days": len(dates),
@@ -198,7 +268,7 @@ def compute_period_portfolio_metrics(
         "max_positions_per_day": max_positions_per_day,
         "tier_events": len(tier_log),
         "tier_log_sample": _sample_tier_log(tier_log),
-        "tier_replay_unit": "trade",
+        "tier_replay_unit": "daily_equal_weight",
     }
 
 
@@ -486,7 +556,7 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v2.2",
+        "schema": "regime_panel_rp1.v2.3",
         "metrics_method": RP1_METRICS_METHOD,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,

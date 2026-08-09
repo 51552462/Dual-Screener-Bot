@@ -173,7 +173,7 @@ class TestPortfolioMetricsV2:
             for i in range(200)
         ]
         m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
-        assert m["metrics_method"] == "daily_equal_weight_v2.2_trade_tier"
+        assert m["metrics_method"] == "daily_equal_weight_v2.3_trade_tier"
         assert m["cagr_pct"] < 200.0
         assert m["trades_per_day"] == 200.0
 
@@ -195,7 +195,7 @@ class TestPortfolioMetricsV2:
         assert "mdd_pct_raw" in m
         assert "mdd_pct_tier" in m
         assert m["trading_days"] == 10
-        assert m.get("tier_replay_unit") == "trade"
+        assert m.get("tier_replay_unit") == "daily_equal_weight"
 
     def test_daily_cap_uses_chronological_not_worst_returns(self):
         """Regression: sorted[:20] was picking worst returns → CAGR -99% artifact."""
@@ -231,12 +231,21 @@ class TestPortfolioMetricsV2:
         assert m["cagr_pct_raw"] > RP1_CAGR_MEASUREMENT_FLOOR_PCT
 
     def test_tier_log_sample_spreads_indices(self):
-        log = [{"band": f"b{i}", "nav_after": float(i)} for i in range(100)]
+        log = [{"date": f"2020-10-{d:02d}", "nav_after_eod": float(d)} for d in range(1, 31)]
         sample = _sample_tier_log(log, samples=5)
-        idxs = [s["trade_idx"] for s in sample]
-        assert len(set(idxs)) == 5
-        assert idxs[0] == 0
-        assert idxs[-1] == 99
+        navs = [s["nav_after_eod"] for s in sample]
+        assert len(set(navs)) == 5
+        assert navs[0] == 1.0
+        assert navs[-1] == 30.0
+
+    def test_tier_log_nav_bounded_with_many_trades(self):
+        trades = [
+            {"date": f"2020-10-{(i % 20) + 1:02d}", "final_ret": 0.5, "code": f"t{i}"}
+            for i in range(500)
+        ]
+        m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
+        for entry in m["tier_log_sample"]:
+            assert entry["nav_after_eod"] < 1_000_000.0
 
     def test_tier_mdd_varies_by_trade_sequence(self):
         short = [
@@ -385,8 +394,8 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
-        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.2"
-        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.2_trade_tier"
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3"
+        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.3_trade_tier"
         p0 = report["stage1"]["periods"][0]
         assert "mdd_pct_raw" in p0
         assert "trades_per_day" in p0
