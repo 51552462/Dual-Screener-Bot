@@ -230,6 +230,15 @@ class TestPortfolioMetricsV2:
         assert m["cagr_pct"] > RP1_CAGR_MEASUREMENT_FLOOR_PCT
         assert m["cagr_pct_raw"] > RP1_CAGR_MEASUREMENT_FLOOR_PCT
 
+    def test_period_return_paired_with_cagr(self):
+        trades = [
+            {"date": f"2020-10-{d:02d}", "final_ret": 1.0, "code": f"t{d}"}
+            for d in range(1, 11)
+        ]
+        m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
+        assert m["period_return_pct"] == pytest.approx((m["nav_end"] / 100.0 - 1.0) * 100.0, rel=1e-4)
+        assert m["period_return_pct_raw"] == pytest.approx((m["nav_end_raw"] / 100.0 - 1.0) * 100.0, rel=1e-4)
+
     def test_tier_log_sample_spreads_indices(self):
         log = [{"date": f"2020-10-{d:02d}", "nav_after_eod": float(d)} for d in range(1, 31)]
         sample = _sample_tier_log(log, samples=5)
@@ -394,7 +403,7 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
-        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3"
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3.1"
         assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.3_trade_tier"
         p0 = report["stage1"]["periods"][0]
         assert "mdd_pct_raw" in p0

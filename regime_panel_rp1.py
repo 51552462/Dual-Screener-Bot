@@ -34,6 +34,12 @@ RP1_LOOKAHEAD_NOTICE = (
 C1_SECTOR_BOOST_PCT = 5.0  # +5% final_ret when spillover aligns (C-1 A/B only)
 
 
+def nav_to_period_return_pct(nav_end: float, *, base: float = 100.0) -> float:
+    """Period total return (%) from ending NAV — pairs with CAGR for short-window reads."""
+    if base <= 0:
+        return 0.0
+    return ((float(nav_end) / base) - 1.0) * 100.0
+
 def replay_tier_overlay_on_returns(
     trade_returns_pct: Sequence[float],
     *,
@@ -235,6 +241,8 @@ def compute_period_portfolio_metrics(
             "mdd_pct_tier": 0.0,
             "nav_end": 100.0,
             "nav_end_raw": 100.0,
+            "period_return_pct": 0.0,
+            "period_return_pct_raw": 0.0,
             "trading_days": 0,
             "trades_per_day": 0.0,
             "metrics_method": RP1_METRICS_METHOD,
@@ -262,6 +270,8 @@ def compute_period_portfolio_metrics(
         "mdd_pct_tier": tier_daily_metrics["mdd_pct"],
         "nav_end": tier_daily_metrics["nav_end"],
         "nav_end_raw": raw_metrics["nav_end"],
+        "period_return_pct": nav_to_period_return_pct(tier_daily_metrics["nav_end"]),
+        "period_return_pct_raw": nav_to_period_return_pct(raw_metrics["nav_end"]),
         "trading_days": len(dates),
         "trades_per_day": round(len(ordered) / max(len(dates), 1), 2),
         "metrics_method": RP1_METRICS_METHOD,
@@ -488,6 +498,8 @@ def _run_one_regime_period(
         "avg_pnl": stats["avg_pnl"],
         "cagr_pct": round(metrics["cagr_pct"], 4),
         "cagr_pct_raw": round(metrics.get("cagr_pct_raw", metrics["cagr_pct"]), 4),
+        "period_return_pct": round(metrics.get("period_return_pct", 0.0), 4),
+        "period_return_pct_raw": round(metrics.get("period_return_pct_raw", 0.0), 4),
         "mdd_pct": round(metrics["mdd_pct"], 4),
         "mdd_pct_raw": round(metrics["mdd_pct_raw"], 4),
         "mdd_pct_tier": round(metrics["mdd_pct_tier"], 4),
@@ -556,7 +568,7 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v2.3",
+        "schema": "regime_panel_rp1.v2.3.1",
         "metrics_method": RP1_METRICS_METHOD,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,
@@ -624,7 +636,8 @@ def run_regime_panel_rp1(
         )
         log_rp1(
             f"  -> trades={row['total_trades']} verdict={row['verdict']} "
-            f"CAGR={row['cagr_pct']}% (raw={row.get('cagr_pct_raw')}) "
+            f"CAGR={row['cagr_pct']}% period_ret={row.get('period_return_pct')}% "
+            f"(raw_cagr={row.get('cagr_pct_raw')}) "
             f"MDD={row['mdd_pct']}% (raw={row.get('mdd_pct_raw')})"
         )
         period_rows.append(row)
