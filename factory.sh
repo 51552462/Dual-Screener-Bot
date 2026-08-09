@@ -108,7 +108,7 @@ while [[ $# -gt 0 ]]; do
         EXTRA=(--phase "$PHASE")
         shift
       fi
-      python "${ROOT}/scripts/deploy_watch.py" "${EXTRA[@]}" "$@"
+      python "${ROOT}/scripts/run_deploy_watch.py" "${EXTRA[@]}" "$@"
       exit $?
       ;;
     --iv-observation)
