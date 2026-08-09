@@ -11,6 +11,7 @@
 |------|------|------|
 | `bitget/docs/claude_project/` | Cursor 카테고리 분해 | 구조·SSOT·경계·상수 (Bitget 전용) |
 | **`bitget/docs/work_phases/` (본 폴더)** | Claude Pro + Cursor | **실행 로드맵·작업 스펙·로컬 현황·진행·검증** |
+| **`docs/independent_verification/`** (루트) | 공통 | **독립 검증 SSOT** — Track A+B · IV-01~25 · V-* |
 | `bitget/docs/13_institutional_grade_audit_and_roadmap.md` | Cursor/Gemini 감사 | P0/P1/P2 상세 |
 | **`00_마스터_로드맵.md`** | Bitget 헌법 | **모든 창 첫 읽기** (주식 `00_마스터_로드맵`과 별개) |
 

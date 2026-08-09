@@ -88,7 +88,8 @@ Claude Pro Project Knowledge에는 **전부 올리되**, 대화 시 **필요한 
        → 🔴 Critical(F/G/N/B) → 디렉터 승인
 ```
 
-**실행 SSOT**: `docs/work_phases/` — `00_마스터_로드맵.md`, `07`, `10`, `NEXT_STEP.md`, `09`, `ARCHITECT_MIRROR.md`
+**실행 SSOT**: `docs/work_phases/` — `00_마스터_로드맵.md`, `07`, `10`, `NEXT_STEP.md`, `09`, `ARCHITECT_MIRROR.md`  
+**독립 검증 SSOT**: `docs/independent_verification/` — 백테스트·승격·목표 달성 **믿을 수 있는지** (자기채점 방지)
 
 ---
 

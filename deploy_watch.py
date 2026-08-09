@@ -271,6 +271,120 @@ def check_f_retire_02(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
+def reality_audit_check_enabled() -> bool:
+    env = os.environ.get("REALITY_AUDIT_CHECK_ENABLED")
+    if env is not None:
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    return True
+
+
+def reality_audit_check(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    V-1 / IV-21 — CLOSED forward_trades row completeness (KR/US by market column).
+
+    CAT-E-BARS-01 SQL (a)(c) productized. BREAK on high null/corruption rates.
+    """
+    _id = "reality_audit"
+    if not reality_audit_check_enabled():
+        return {"id": _id, "status": STATUS_SKIP, "detail": "disabled"}
+
+    conn = _connect_market_db(db_path)
+    if conn is None:
+        return {"id": _id, "status": STATUS_SKIP, "detail": "market_db_missing"}
+    try:
+        if not _table_exists(conn, "forward_trades"):
+            return {"id": _id, "status": STATUS_SKIP, "detail": "forward_trades_missing"}
+
+        rows = conn.execute(
+            """
+            SELECT
+                UPPER(IFNULL(market,'KR')) AS market,
+                COUNT(*) AS n_closed,
+                SUM(bars_held IS NULL) AS null_bars,
+                SUM(final_ret IS NULL) AS null_ret,
+                SUM(exit_reason IS NULL OR TRIM(IFNULL(exit_reason,''))='') AS null_exit_reason,
+                SUM(
+                    exit_type IS NULL OR TRIM(IFNULL(exit_type,''))=''
+                    OR UPPER(IFNULL(exit_type,''))='UNKNOWN'
+                ) AS bad_exit_type,
+                SUM(
+                    entry_regime IS NULL OR TRIM(IFNULL(entry_regime,''))=''
+                    OR UPPER(IFNULL(entry_regime,''))='UNKNOWN'
+                ) AS bad_regime,
+                SUM(CASE WHEN status LIKE 'CLOSED_ZOMBIE%' OR status LIKE 'CLOSED_AUTO%' THEN 1 ELSE 0 END) AS heal_closed
+            FROM forward_trades
+            WHERE status LIKE 'CLOSED%'
+            GROUP BY UPPER(IFNULL(market,'KR'))
+            """
+        ).fetchall()
+    except sqlite3.Error as ex:
+        return {"id": _id, "status": STATUS_SKIP, "detail": f"query_failed:{ex}"}
+    finally:
+        conn.close()
+
+    if not rows:
+        return {
+            "id": _id,
+            "status": STATUS_PASS,
+            "detail": "no_closed_rows",
+            "metrics": {"markets": {}},
+        }
+
+    markets: Dict[str, Any] = {}
+    statuses: List[str] = []
+    for row in rows:
+        mkt = str(row[0] or "KR").upper()
+        if mkt not in ("KR", "US"):
+            mkt = "KR"
+        n = int(row[1] or 0)
+        if n <= 0:
+            continue
+        null_bars = int(row[2] or 0)
+        null_ret = int(row[3] or 0)
+        null_exit_reason = int(row[4] or 0)
+        bad_exit_type = int(row[5] or 0)
+        bad_regime = int(row[6] or 0)
+        heal_closed = int(row[7] or 0)
+
+        null_core_pct = max(null_bars, null_ret) / n
+        bad_et_pct = bad_exit_type / n
+        bad_reg_pct = bad_regime / n
+        heal_pct = heal_closed / n
+
+        st = STATUS_PASS
+        if null_core_pct >= 0.20 or bad_et_pct >= 0.30:
+            st = STATUS_BREAK
+        elif null_core_pct >= 0.05 or bad_et_pct >= 0.10 or bad_reg_pct >= 0.20:
+            st = STATUS_WARN
+        elif heal_pct >= 0.15 and bad_et_pct >= 0.05:
+            st = STATUS_WARN
+
+        markets[mkt] = {
+            "n_closed": n,
+            "null_bars": null_bars,
+            "null_ret": null_ret,
+            "null_exit_reason": null_exit_reason,
+            "bad_exit_type": bad_exit_type,
+            "bad_regime": bad_regime,
+            "heal_closed": heal_closed,
+            "null_core_pct": round(null_core_pct, 4),
+            "bad_exit_type_pct": round(bad_et_pct, 4),
+        }
+        statuses.append(st)
+
+    overall = _worst_status(statuses) if statuses else STATUS_PASS
+    detail_parts = [
+        f"{mk}:n={markets[mk]['n_closed']},bad_et={markets[mk]['bad_exit_type']}"
+        for mk in sorted(markets.keys())
+    ]
+    return {
+        "id": _id,
+        "status": overall,
+        "detail": "; ".join(detail_parts) if detail_parts else "ok",
+        "metrics": {"markets": markets},
+    }
+
+
 def resolve_cursor_action(
     checks: List[Dict[str, Any]],
     *,
@@ -378,6 +492,7 @@ def run_deploy_watch(
         check_f_gate_01(db_path=db_path),
         check_c_funnel_02(db_path=db_path, baseline_ts=baseline),
         check_f_retire_02(db_path=db_path),
+        reality_audit_check(db_path=db_path),
     ]
     overall = _worst_status([str(c.get("status") or STATUS_SKIP) for c in checks])
     cursor_action = resolve_cursor_action(checks, phase=phase_use)

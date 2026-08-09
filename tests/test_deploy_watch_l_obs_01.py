@@ -15,6 +15,7 @@ from deploy_watch import (
     check_c_funnel_02,
     check_f_gate_01,
     check_f_retire_02,
+    reality_audit_check,
     resolve_cursor_action,
     run_deploy_watch,
 )
@@ -32,7 +33,11 @@ def _mk_market_db() -> str:
         );
         CREATE TABLE scan_funnel_snapshot (ts TEXT, market TEXT);
         CREATE TABLE scan_funnel_drop_event (id INTEGER PRIMARY KEY);
-        CREATE TABLE forward_trades (sig_type TEXT);
+        CREATE TABLE forward_trades (
+            sig_type TEXT, market TEXT, status TEXT,
+            bars_held INTEGER, final_ret REAL, exit_reason TEXT,
+            exit_type TEXT, entry_regime TEXT, exit_date TEXT
+        );
         """
     )
     conn.commit()
@@ -101,6 +106,81 @@ class TestCheckFRetire02(unittest.TestCase):
         try:
             r = check_f_retire_02(db_path=path)
             self.assertEqual(r["status"], STATUS_PASS)
+        finally:
+            os.unlink(path)
+
+
+class TestRealityAuditCheck(unittest.TestCase):
+    def test_no_closed_pass(self):
+        path = _mk_market_db()
+        try:
+            r = reality_audit_check(db_path=path)
+            self.assertEqual(r["status"], STATUS_PASS)
+            self.assertEqual(r["detail"], "no_closed_rows")
+        finally:
+            os.unlink(path)
+
+    def test_clean_closed_pass(self):
+        path = _mk_market_db()
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute(
+                """
+                INSERT INTO forward_trades (
+                    sig_type, market, status, bars_held, final_ret,
+                    exit_reason, exit_type, entry_regime, exit_date
+                ) VALUES (
+                    'TEST [LIVE]', 'KR', 'CLOSED', 5, 2.5,
+                    'test', 'HYBRID_TIME', 'BULL', '2026-08-01'
+                )
+                """
+            )
+            conn.commit()
+            conn.close()
+            r = reality_audit_check(db_path=path)
+            self.assertEqual(r["status"], STATUS_PASS)
+        finally:
+            os.unlink(path)
+
+    def test_bad_exit_type_warn(self):
+        path = _mk_market_db()
+        try:
+            conn = sqlite3.connect(path)
+            for i in range(10):
+                conn.execute(
+                    """
+                    INSERT INTO forward_trades (
+                        sig_type, market, status, bars_held, final_ret,
+                        exit_reason, exit_type, entry_regime, exit_date
+                    ) VALUES (?, 'KR', 'CLOSED', 5, 1.0, 'x', ?, 'BULL', '2026-08-01')
+                    """,
+                    (f"G{i}", "UNKNOWN" if i < 2 else "HYBRID_TIME"),
+                )
+            conn.commit()
+            conn.close()
+            r = reality_audit_check(db_path=path)
+            self.assertEqual(r["status"], STATUS_WARN)
+        finally:
+            os.unlink(path)
+
+    def test_null_ret_break(self):
+        path = _mk_market_db()
+        try:
+            conn = sqlite3.connect(path)
+            for i in range(5):
+                conn.execute(
+                    """
+                    INSERT INTO forward_trades (
+                        sig_type, market, status, bars_held, final_ret,
+                        exit_reason, exit_type, entry_regime, exit_date
+                    ) VALUES (?, 'US', 'CLOSED', NULL, NULL, 'x', 'HYBRID_TIME', 'BULL', '2026-08-01')
+                    """,
+                    (f"G{i}",),
+                )
+            conn.commit()
+            conn.close()
+            r = reality_audit_check(db_path=path)
+            self.assertEqual(r["status"], STATUS_BREAK)
         finally:
             os.unlink(path)
 

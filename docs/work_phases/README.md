@@ -1,6 +1,7 @@
 # 작업 Phase 문서 — 통합본 (Claude Pro + Cursor + 로컬)
 
-> **갱신**: 2026-08-04 — bitget 구조 이식 + M-R0 복구
+> ⛓ **멀티 창 시작점** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) ← **가장 먼저**  
+> **갱신**: 2026-08-09
 
 ---
 
@@ -8,8 +9,10 @@
 
 | 문서 | 출처 | 역할 |
 |------|------|------|
+| **`00_SESSION_SYNC.md`** | Cursor+Claude | **멀티 채널 앵커 · 현재 포커스 · 부팅 문구** |
 | `docs/claude_project/` | Cursor 카테고리 분해 | 구조·SSOT·경계·상수 (bitget 제외) |
 | **`docs/work_phases/` (본 폴더)** | Claude Pro + Cursor | **실행 로드맵·작업 스펙·로컬 현황·진행·검증** |
+| **`docs/independent_verification/`** | Claude Pro + Cursor + 디렉터 | **독립 검증 SSOT** — 자기채점 방지·IV 체크리스트·V-* 로드맵 |
 | **`00_마스터_로드맵.md`** | Claude Pro + Cursor | **헌법 (MDD 10%)** |
 
 ### Desktop `클로드 프로/` 와의 관계
@@ -28,6 +31,7 @@
 
 | 파일 | 내용 |
 |------|------|
+| **`00_SESSION_SYNC.md`** | **멀티 창 앵커** — 부팅 문구·충돌 규칙·§3 스냅샷 |
 | `00_전체현황판.md` | Phase 상태·SSOT 용어집·의존성 체크 |
 | `01_묶음A_작업지시서.md` | A-1~A-5 + **로컬 A-1·A-2 구현·A-3 부분** |
 | `02_묶음B_작업지시서.md` | B-1~B-4 + deathmatch 90/120d 현행 |
@@ -36,16 +40,16 @@
 | `05_진행로그.md` | Phase 간 **유일한 연결고리** |
 | `06_검증체크리스트_및_실패기록.md` | 3단계 완료·롤백 원칙 |
 | `07_듀얼AI_협업루프.md` | **Claude↔Cursor 6단계 SSOT** · Claude Pro 시작 멘트 |
-| `08_디렉터_중계_가이드.md` | **디렉터 복붙 템플릿** · 검증 요청·OK 형식 |
+| `08_디렉터_중계_가이드.md` | **디렉터 복붙 템플릿** · **Cursor 새창 시작 멘트** |
 | `10_작업함_프로토콜.md` | **INBOX/OUTBOX** · 연속 작업 SSOT |
-| `NEXT_ACTION.md` | AI status SSOT |
-| **`NEXT_STEP.md`** | 디렉터 다음 한 걸음 |
+| `NEXT_ACTION.md` | **디렉터 지금 할 일** SSOT (`NEXT_STEP`은 레거시) |
 | **`09_디렉터_쉬운요약.md`** | 비개발 한 장 요약 |
 | **`11_협업_효율_점검.md`** | COLLAB_HEALTH |
 | `12_듀얼북극성_진행장부_및_상품화.md` | Track A/B 비교 |
 | `CLAUDE_TO_CURSOR.md` | Claude → Cursor Handoff INBOX |
 | `CURSOR_TO_CLAUDE.md` | Cursor → Claude 검증 OUTBOX |
 | **`ARCHITECT_MIRROR.md`** | Claude 능동 구조 제안·Mirror 로그 (bitget 대칭) |
+| **`../independent_verification/`** | **독립 검증** — IV-01~25 · V-* · L0~L3 헌법 (`00_README`) |
 
 ---
 
@@ -68,6 +72,7 @@
 | **로컬 구현 현황** | ❌ | **각 묶음 + 05** |
 | **config 키 SSOT 전체** | ❌ | **A-1 + 00** |
 | **3단계 검증·롤백** | ❌ | **06** |
+| **독립 검증 (자기채점 방지)** | ❌ | **`../independent_verification/`** |
 | **듀얼 AI 6단계 루프** | ❌ | **07** + **01~04 각 파일** |
 
 ---

@@ -61,6 +61,7 @@ Usage: ./factory.sh <flag>
     --north-star-digest [daily|weekly|monthly]
                     듀얼 북극성 진행장부 → 디렉터 텔레그램 (주식+Bitget 비교)
     --deploy-watch    배포 관측 PASS/WARN/BREAK (FAIL/WARN만 텔레그램)
+    --iv-observation  IV V-1 관측 리포트 (주간·---CURSOR--- 블록 텔레그램)
     --data-refresh  KR/US per-ticker OHLCV bulk refresh (legacy 07:00 bulk, lock-serialized)
 
   Satellite intel (legacy --daemon jobs, now first-class lock-serialized cron):
@@ -108,6 +109,16 @@ while [[ $# -gt 0 ]]; do
         shift
       fi
       python "${ROOT}/scripts/deploy_watch.py" "${EXTRA[@]}" "$@"
+      exit $?
+      ;;
+    --iv-observation)
+      shift
+      FORCE=()
+      if [[ "${1:-}" == "--force-telegram" ]]; then
+        FORCE=(--force-telegram)
+        shift
+      fi
+      python "${ROOT}/scripts/iv_observation_report.py" "${FORCE[@]}" "$@"
       exit $?
       ;;
     --data-refresh) MODE="data_refresh" ;;

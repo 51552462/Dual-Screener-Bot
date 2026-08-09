@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -160,6 +163,248 @@ def passes_live_hard_gate(hv: Dict[str, Any], mp: Dict[str, Any]) -> bool:
     if mid_min <= wr <= mid_max:
         return pf >= mid_pf
     return False
+
+
+def wf_warn_tag_enabled() -> bool:
+    env = os.environ.get("WF_WARN_TAG_ENABLED")
+    if env is not None:
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    return True
+
+
+def wf_warn_telegram_enabled() -> bool:
+    env = os.environ.get("WF_WARN_TELEGRAM_ENABLED")
+    if env is not None:
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    return True
+
+
+def walk_forward_promotion_block_enabled() -> bool:
+    """
+    V-2 scaffold — CANDIDATE→LIVE WF/OOS 차단. **기본 OFF** (4주 관측 후 디렉터 활성화).
+    """
+    env = os.environ.get("WALK_FORWARD_PROMOTION_BLOCK_ENABLED")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    return False
+
+
+def should_block_live_promotion(
+    row: Dict[str, Any],
+    *,
+    forward_db_path: Optional[str] = None,
+    min_total_trades: int = 30,
+) -> bool:
+    """V-2 — wf_warn / WF OOS fail 시 LIVE 승격 스킵 (block ON 일 때만)."""
+    if not walk_forward_promotion_block_enabled():
+        return False
+    meta = row.get("meta")
+    if isinstance(meta, dict) and meta.get("wf_warn"):
+        return True
+    return evaluate_wf_oos_warn_for_group(
+        str(row.get("market") or "KR"),
+        str(row.get("group_key") or row.get("display_name") or ""),
+        forward_db_path=forward_db_path,
+        min_total_trades=min_total_trades,
+    )
+
+
+def annotate_wf_promotion_observation(
+    row: Dict[str, Any],
+    *,
+    forward_db_path: Optional[str] = None,
+    min_total_trades: int = 30,
+) -> None:
+    """관측용 meta — block OFF 일 때도 would_block 기록."""
+    meta = row.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    would = evaluate_wf_oos_warn_for_group(
+        str(row.get("market") or "KR"),
+        str(row.get("group_key") or row.get("display_name") or ""),
+        forward_db_path=forward_db_path,
+        min_total_trades=min_total_trades,
+    )
+    meta["wf_warn"] = bool(meta.get("wf_warn")) or would
+    meta["wf_would_block"] = would
+    meta["wf_block_active"] = bool(
+        walk_forward_promotion_block_enabled() and should_block_live_promotion(
+            row, forward_db_path=forward_db_path, min_total_trades=min_total_trades
+        )
+    )
+    row["meta"] = meta
+
+
+def try_skip_live_promotion_for_wf_block(
+    row: Dict[str, Any],
+    stats: Dict[str, Any],
+    *,
+    forward_db_path: Optional[str] = None,
+    min_total_trades: int = 30,
+) -> bool:
+    """True → caller must not promote to LIVE."""
+    annotate_wf_promotion_observation(
+        row, forward_db_path=forward_db_path, min_total_trades=min_total_trades
+    )
+    if not should_block_live_promotion(
+        row, forward_db_path=forward_db_path, min_total_trades=min_total_trades
+    ):
+        return False
+    meta = row.get("meta")
+    if isinstance(meta, dict):
+        meta["wf_promotion_skipped"] = True
+    stats["wf_promotion_blocked"] = int(stats.get("wf_promotion_blocked") or 0) + 1
+    return True
+
+
+def _sig_to_group_key(sig: str) -> str:
+    """meta_governor._ledger_group_key 와 동일 — import 순환 방지."""
+    raw = str(sig or "")
+    if "[INCUBATOR_" in raw.upper():
+        m = re.search(r"\[INCUBATOR_([^\]]+)\]", raw, flags=re.I)
+        if m:
+            return f"INCUBATOR_{m.group(1).strip()}"
+    s = raw.replace("💀[기각/관찰용] ", "").replace("💀[기각] ", "")
+    s = re.sub(r"^\[.*?\]\s*", "", s)
+    return (s.split(" [")[0].strip() or "UNKNOWN")
+
+
+def fetch_group_closed_returns_decimal(
+    market: str,
+    group_key: str,
+    db_path: Optional[str] = None,
+) -> List[float]:
+    """forward_trades CLOSED — chronological decimal returns for WF OOS."""
+    mkt = str(market or "KR").upper()
+    gk = str(group_key or "").strip()
+    if not gk:
+        return []
+    path = db_path
+    if not path:
+        try:
+            from market_db_paths import market_db_read_path
+
+            path = market_db_read_path()
+        except Exception:
+            return []
+    if not path or not os.path.isfile(path):
+        return []
+    out: List[float] = []
+    try:
+        conn = sqlite3.connect(path, timeout=30)
+        try:
+            cur = conn.execute(
+                """
+                SELECT sig_type, final_ret
+                FROM forward_trades
+                WHERE status LIKE 'CLOSED%'
+                  AND UPPER(IFNULL(market,'KR')) = ?
+                  AND final_ret IS NOT NULL
+                ORDER BY IFNULL(exit_date,''), rowid
+                """,
+                (mkt,),
+            )
+            for sig, ret in cur.fetchall():
+                if _sig_to_group_key(str(sig or "")) != gk:
+                    continue
+                try:
+                    out.append(float(ret) / 100.0)
+                except (TypeError, ValueError):
+                    continue
+        finally:
+            conn.close()
+    except sqlite3.Error as ex:
+        logger.warning("fetch_group_closed_returns_decimal %s|%s: %s", mkt, gk, ex)
+    return out
+
+
+def evaluate_wf_oos_warn_for_group(
+    market: str,
+    group_key: str,
+    *,
+    forward_db_path: Optional[str] = None,
+    min_total_trades: int = 30,
+) -> bool:
+    """V-1 — WF OOS fail → True (WARN tag only, no promotion block)."""
+    from validation.walk_forward import evaluate_oos_pass_from_returns
+
+    rets = fetch_group_closed_returns_decimal(market, group_key, forward_db_path)
+    if len(rets) < int(min_total_trades):
+        return False
+    ev = evaluate_oos_pass_from_returns(
+        rets,
+        min_total_trades=int(min_total_trades),
+    )
+    return bool(not ev.get("pass") and ev.get("reason") == "oos_fail")
+
+
+def apply_registry_meta_wf_warn(
+    row: Dict[str, Any],
+    *,
+    forward_db_path: Optional[str] = None,
+    min_total_trades: int = 30,
+) -> bool:
+    """registry row meta.wf_warn — 승격 판정 비접촉."""
+    meta = row.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    warn = evaluate_wf_oos_warn_for_group(
+        str(row.get("market") or "KR"),
+        str(row.get("group_key") or row.get("display_name") or ""),
+        forward_db_path=forward_db_path,
+        min_total_trades=min_total_trades,
+    )
+    meta["wf_warn"] = bool(warn)
+    row["meta"] = meta
+    return warn
+
+
+def stamp_registry_wf_warn_meta(
+    rows: List[Dict[str, Any]],
+    *,
+    forward_db_path: Optional[str] = None,
+    min_total_trades: int = 30,
+) -> List[str]:
+    """All registry rows — meta.wf_warn tags. Returns warned group keys."""
+    if not wf_warn_tag_enabled():
+        for row in rows:
+            meta = row.get("meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["wf_warn"] = False
+            row["meta"] = meta
+        return []
+    warned: List[str] = []
+    for row in rows:
+        if apply_registry_meta_wf_warn(
+            row,
+            forward_db_path=forward_db_path,
+            min_total_trades=min_total_trades,
+        ):
+            mk = str(row.get("market") or "KR").upper()
+            gk = str(row.get("group_key") or "").strip()
+            warned.append(f"{mk}|{gk}" if gk else mk)
+    return warned
+
+
+def notify_wf_warn_telegram(warned_groups: List[str]) -> bool:
+    """V-1 — WF/OOS fail WARN telegram (no block)."""
+    if not wf_warn_telegram_enabled() or not warned_groups:
+        return False
+    try:
+        from deploy_watch import send_deploy_watch_telegram
+
+        lines = [
+            "🟡 <b>[WF_WARN]</b> V-1 promotion meta wf_warn (no LIVE block)",
+        ]
+        for g in warned_groups[:12]:
+            lines.append(f"· <code>{g}</code>")
+        if len(warned_groups) > 12:
+            lines.append(f"· … +{len(warned_groups) - 12} more")
+        return bool(send_deploy_watch_telegram("\n".join(lines)))
+    except Exception as ex:
+        logger.warning("wf_warn telegram skip: %s", ex)
+        return False
 
 
 _FAST_TRACK_PREFIXES = ("INCUBATOR_", "ACE_", "MUTANT_", "PLAYBOOK_", "HIDDEN_THEME_")
@@ -450,6 +695,12 @@ def run_registry_lifecycle(
                     now=now,
                 )
                 if promoted:
+                    if try_skip_live_promotion_for_wf_block(
+                        row, stats, forward_db_path=forward_db_path
+                    ):
+                        row["state"] = "OBSERVING"
+                        row["capital_mult"] = 0.0
+                        continue
                     stats["re_evolution_redemption_promoted"] += 1
                     if _rev.get("warm_start_applied"):
                         stats["re_evolution_warm_start_promoted"] = (
@@ -484,6 +735,10 @@ def run_registry_lifecycle(
             and st in ("OBSERVING", "CANDIDATE", "COOLED", "")
             and passes_hard_threshold_auto_promotion(hv, mp)
         ):
+            if try_skip_live_promotion_for_wf_block(
+                row, stats, forward_db_path=forward_db_path
+            ):
+                continue
             row["state"] = "LIVE"
             row["capital_mult"] = 1.0
             row["promoted_at"] = row.get("promoted_at") or now_iso
@@ -532,6 +787,10 @@ def run_registry_lifecycle(
                     stats["demoted_7d"] += 1
 
         elif st == "CANDIDATE" and hv and passes_live_hard_gate(hv, mp):
+            if try_skip_live_promotion_for_wf_block(
+                row, stats, forward_db_path=forward_db_path
+            ):
+                continue
             row["state"] = "LIVE"
             row["capital_mult"] = 1.0
             row["promoted_at"] = row.get("promoted_at") or now_iso
@@ -565,6 +824,10 @@ def run_registry_lifecycle(
             since_dem = _days_since(row.get("last_demoted_at"), now)
             if since_dem is not None and since_dem >= cooloff:
                 if hv and passes_live_hard_gate(hv, mp):
+                    if try_skip_live_promotion_for_wf_block(
+                        row, stats, forward_db_path=forward_db_path
+                    ):
+                        continue
                     row["state"] = "CANDIDATE"
                     row["capital_mult"] = 0.0
                     row["promote_reason"] = "recovery_reobserve"
@@ -595,6 +858,19 @@ def run_registry_lifecycle(
                 logger.warning("lifecycle observe redemption skip %s: %s", gk, ex)
 
     out = list(by_sid.values())
+
+    wf_warned = stamp_registry_wf_warn_meta(
+        out,
+        forward_db_path=forward_db_path,
+        min_total_trades=30,
+    )
+    stats["wf_warn_count"] = len(wf_warned)
+    if wf_warned:
+        stats["wf_warn_groups"] = wf_warned
+        stats["wf_warn_telegram_sent"] = notify_wf_warn_telegram(wf_warned)
+    else:
+        stats["wf_warn_telegram_sent"] = False
+
     upsert_registry_rows(out, forward_db_path)
 
     # 집계

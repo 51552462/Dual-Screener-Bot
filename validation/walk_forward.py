@@ -305,3 +305,75 @@ def evaluate_ledger_deflated_sharpe(
     res = deflated_sharpe_from_trials(trial_returns)
     res["strategies"] = sorted(meta, key=lambda x: x["sharpe"], reverse=True)
     return res
+
+
+# ── Walk-forward OOS pass (KR/US shadow · V-1 WARN) ─────────────────────────
+DEFAULT_WF_N_SPLITS = 3
+DEFAULT_WF_MIN_TRAIN_FRAC = 0.5
+DEFAULT_WF_MIN_TOTAL_TRADES = 12
+DEFAULT_WF_MIN_OOS_TRADES = 5
+
+
+def evaluate_oos_pass_from_returns(
+    returns: Sequence[float],
+    *,
+    n_splits: int = DEFAULT_WF_N_SPLITS,
+    min_train_frac: float = DEFAULT_WF_MIN_TRAIN_FRAC,
+    min_total_trades: int = DEFAULT_WF_MIN_TOTAL_TRADES,
+    min_oos_trades: int = DEFAULT_WF_MIN_OOS_TRADES,
+) -> Dict[str, Any]:
+    """
+    Chronological closed-trade returns → last walk-forward fold OOS pass/fail.
+
+    ``returns`` are decimal (e.g. final_ret / 100). Pass when OOS mean > 0.
+    """
+    r = np.asarray(list(returns), dtype=np.float64)
+    r = r[np.isfinite(r)]
+    n = int(r.size)
+    if n < int(min_total_trades):
+        return {
+            "pass": False,
+            "reason": "insufficient_data",
+            "n_closed": n,
+            "oos_n": 0,
+            "oos_mean": 0.0,
+            "oos_sharpe": 0.0,
+        }
+
+    splits = walk_forward_splits(
+        n,
+        n_splits=int(n_splits),
+        min_train_frac=float(min_train_frac),
+    )
+    if not splits:
+        return {
+            "pass": False,
+            "reason": "no_splits",
+            "n_closed": n,
+            "oos_n": 0,
+            "oos_mean": 0.0,
+            "oos_sharpe": 0.0,
+        }
+
+    _train_idx, test_idx = splits[-1]
+    oos = r[test_idx]
+    oos_n = int(oos.size)
+    if oos_n < int(min_oos_trades):
+        return {
+            "pass": False,
+            "reason": "oos_too_few",
+            "n_closed": n,
+            "oos_n": oos_n,
+            "oos_mean": float(np.mean(oos)) if oos_n else 0.0,
+            "oos_sharpe": sharpe_ratio(oos),
+        }
+
+    oos_mean = float(np.mean(oos))
+    return {
+        "pass": oos_mean > 0.0,
+        "reason": "oos_pass" if oos_mean > 0.0 else "oos_fail",
+        "n_closed": n,
+        "oos_n": oos_n,
+        "oos_mean": oos_mean,
+        "oos_sharpe": sharpe_ratio(oos),
+    }
