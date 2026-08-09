@@ -170,19 +170,14 @@ if [[ -z "$MODE" ]]; then
   exit 2
 fi
 
-# --- daily_audit 중복 실행 가드 (주식 factory.sh pgrep 패턴) ---
-# NOTE: "$(_fn)" 서브셸에서는 $$ ≠ bitget.sh 본체 PID → 호출부에서 self_pid 전달.
+# --- daily_audit 중복 실행 가드 ---
+# runner(Python)만 검사 — bitget.sh bash 는 pgrep 대상에서 제외(자기 자신·서브셸 $$ 오탐 방지).
 _bitget_live_daily_audit_lines() {
-  local self_pid="${1:-$$}"
   local line pid state
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     pid="${line%% *}"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    # 동시에 두 번 bitget.sh --daily-audit 이 뜨는 경우 자기 자신 제외
-    if [[ "$pid" -eq "$self_pid" ]]; then
-      continue
-    fi
     if ! kill -0 "$pid" 2>/dev/null; then
       continue
     fi
@@ -192,17 +187,13 @@ _bitget_live_daily_audit_lines() {
     fi
     printf '%s\n' "$line"
   done < <(
-    {
-      pgrep -af 'bitget\.pipelines\.runner --mode daily_audit' 2>/dev/null || true
-      pgrep -af '[/ ]bitget\.sh --daily-audit' 2>/dev/null || true
-      pgrep -af '[/ ]bitget/deploy/bitget\.sh --daily-audit' 2>/dev/null || true
-    } | awk '!seen[$0]++'
+    pgrep -af 'bitget\.pipelines\.runner --mode daily_audit' 2>/dev/null || true
   )
 }
 
 case "$MODE" in
   daily_audit)
-    other_daily="$(_bitget_live_daily_audit_lines "$$")"
+    other_daily="$(_bitget_live_daily_audit_lines)"
     if [[ -n "$other_daily" ]]; then
       _lock_path="${BITGET_DB_STORAGE_PATH:-}"
       if [[ -n "$_lock_path" ]]; then
