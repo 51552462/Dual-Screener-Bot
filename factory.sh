@@ -118,7 +118,7 @@ while [[ $# -gt 0 ]]; do
         FORCE=(--force-telegram)
         shift
       fi
-      python "${ROOT}/scripts/iv_observation_report.py" "${FORCE[@]}" "$@"
+      python "${ROOT}/scripts/run_iv_observation_report.py" "${FORCE[@]}" "$@"
       exit $?
       ;;
     --data-refresh) MODE="data_refresh" ;;
