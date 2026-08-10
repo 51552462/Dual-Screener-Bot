@@ -4,6 +4,7 @@ L-OBS-01 — 배포 관측 자동 판정 (PASS/WARN/BREAK).
 - 결과: factory_data_dir()/deploy_watch_latest.json
 - ops_events: component=deploy_watch, event=deploy_watch.summary
 - 텔레그램: WARN/BREAK 만 (PASS/SKIP only → 무음)
+- Cursor: report.cursor_prompt + ---CURSOR--- JSON (디렉터 붙여넣기 SSOT)
 """
 from __future__ import annotations
 
@@ -40,6 +41,11 @@ _STATUS_RANK = {
 DEFAULT_FUNNEL_BASELINE_TS = "2026-07-02"
 DEFAULT_PHASE = "post_f_gate_01"
 DEFAULT_SERVICE = "dante-factory.service"
+
+BEAR_UNDERDOG_SHADOW_SUFFIX = "_BEAR_UNDERDOG_SHADOW"
+PHASE_POST_BEAR_UNDERDOG_01 = "post_bear_underdog_01"
+SHADOW_PAIN_MAE_WARN_MIN_CLOSED = 5
+SHADOW_PAIN_MAE_WARN_RATIO = 0.50
 
 
 def deploy_watch_latest_path() -> str:
@@ -271,6 +277,238 @@ def check_f_retire_02(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
+def _load_watch_sys_config() -> Dict[str, Any]:
+    try:
+        from config_manager import load_system_config
+
+        cfg = load_system_config()
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def bear_underdog_shadow_tag_enabled_watch(
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> bool:
+    env = os.environ.get("ENABLE_BEAR_UNDERDOG_SHADOW_TAG")
+    if env is not None:
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    return bool(cfg.get("ENABLE_BEAR_UNDERDOG_SHADOW_TAG", True))
+
+
+def query_bear_underdog_metrics(
+    conn: sqlite3.Connection,
+) -> Dict[str, int]:
+    """KR BEAR×incubator underdog shadow 태그·pain cluster 관측 메트릭."""
+    suffix_like = f"%{BEAR_UNDERDOG_SHADOW_SUFFIX}%"
+    row = conn.execute(
+        """
+        SELECT
+            SUM(
+                CASE
+                    WHEN UPPER(IFNULL(market,'KR'))='KR'
+                     AND IFNULL(sig_type,'') LIKE ?
+                    THEN 1 ELSE 0
+                END
+            ) AS shadow_tag_rows,
+            SUM(
+                CASE
+                    WHEN UPPER(IFNULL(market,'KR'))='KR'
+                     AND IFNULL(sig_type,'') LIKE ?
+                     AND status='OPEN'
+                    THEN 1 ELSE 0
+                END
+            ) AS shadow_open,
+            SUM(
+                CASE
+                    WHEN UPPER(IFNULL(market,'KR'))='KR'
+                     AND IFNULL(sig_type,'') LIKE ?
+                     AND status LIKE 'CLOSED%'
+                    THEN 1 ELSE 0
+                END
+            ) AS shadow_closed,
+            SUM(
+                CASE
+                    WHEN UPPER(IFNULL(market,'KR'))='KR'
+                     AND IFNULL(sig_type,'') LIKE ?
+                     AND status LIKE 'CLOSED%'
+                     AND UPPER(IFNULL(exit_type,''))='STAT_MAE'
+                    THEN 1 ELSE 0
+                END
+            ) AS shadow_closed_mae,
+            SUM(
+                CASE
+                    WHEN UPPER(IFNULL(market,'KR'))='KR'
+                     AND IFNULL(sig_type,'') LIKE ?
+                     AND status LIKE 'CLOSED%'
+                     AND UPPER(IFNULL(exit_type,''))='STAT_MAE'
+                     AND IFNULL(bars_held, 999) <= 3
+                    THEN 1 ELSE 0
+                END
+            ) AS shadow_closed_mae_le3d,
+            SUM(
+                CASE
+                    WHEN UPPER(IFNULL(market,'KR'))='KR'
+                     AND UPPER(TRIM(IFNULL(entry_regime,'')))='BEAR'
+                     AND UPPER(IFNULL(sig_type,'')) LIKE '%INCUBATOR%'
+                     AND UPPER(IFNULL(sig_type,'')) LIKE '%UNDERDOG%'
+                     AND IFNULL(sig_type,'') NOT LIKE ?
+                    THEN 1 ELSE 0
+                END
+            ) AS untagged_kr_bear_incubator
+        FROM forward_trades
+        """,
+        (suffix_like, suffix_like, suffix_like, suffix_like, suffix_like, suffix_like),
+    ).fetchone()
+    if not row:
+        return {
+            "shadow_tag_rows": 0,
+            "shadow_open": 0,
+            "shadow_closed": 0,
+            "shadow_closed_mae": 0,
+            "shadow_closed_mae_le3d": 0,
+            "untagged_kr_bear_incubator": 0,
+        }
+    return {
+        "shadow_tag_rows": int(row[0] or 0),
+        "shadow_open": int(row[1] or 0),
+        "shadow_closed": int(row[2] or 0),
+        "shadow_closed_mae": int(row[3] or 0),
+        "shadow_closed_mae_le3d": int(row[4] or 0),
+        "untagged_kr_bear_incubator": int(row[5] or 0),
+    }
+
+
+def summarize_bear_underdog_observation(
+    *,
+    db_path: Optional[str] = None,
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """IV 주간 리포트·Cursor 프롬프트용 BEAR×underdog L2 스냅샷."""
+    cfg = sys_config if isinstance(sys_config, dict) else _load_watch_sys_config()
+    enabled = bear_underdog_shadow_tag_enabled_watch(cfg)
+    out: Dict[str, Any] = {
+        "tag_enabled": enabled,
+        "metrics": {},
+        "shadow_mae_ratio": None,
+        "pain_cluster_reproducing": False,
+    }
+    if not enabled:
+        out["status"] = STATUS_SKIP
+        out["detail"] = "tag_disabled"
+        return out
+
+    conn = _connect_market_db(db_path)
+    if conn is None:
+        out["status"] = STATUS_SKIP
+        out["detail"] = "market_db_missing"
+        return out
+    try:
+        if not _table_exists(conn, "forward_trades"):
+            out["status"] = STATUS_SKIP
+            out["detail"] = "forward_trades_missing"
+            return out
+        metrics = query_bear_underdog_metrics(conn)
+    except sqlite3.Error as ex:
+        out["status"] = STATUS_SKIP
+        out["detail"] = f"query_failed:{ex}"
+        return out
+    finally:
+        conn.close()
+
+    out["metrics"] = metrics
+    closed = int(metrics.get("shadow_closed") or 0)
+    mae = int(metrics.get("shadow_closed_mae") or 0)
+    if closed > 0:
+        ratio = mae / closed
+        out["shadow_mae_ratio"] = round(ratio, 4)
+        out["pain_cluster_reproducing"] = (
+            closed >= SHADOW_PAIN_MAE_WARN_MIN_CLOSED
+            and ratio >= SHADOW_PAIN_MAE_WARN_RATIO
+        )
+    out["status"] = STATUS_PASS
+    out["detail"] = (
+        f"shadow={metrics.get('shadow_tag_rows', 0)} "
+        f"closed_mae={mae}/{closed}"
+    )
+    return out
+
+
+def check_c_bear_underdog_01(
+    *,
+    db_path: Optional[str] = None,
+    phase: str = "",
+    sys_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    CAT-C BEAR-UNDERDOG-01 — shadow suffix depth + 태그 누락·pain cluster 재현 관측.
+
+    phase=post_bear_underdog_01: BEAR incubator underdog인데 suffix 없으면 WARN.
+    """
+    _id = "c_bear_underdog_01"
+    cfg = sys_config if isinstance(sys_config, dict) else _load_watch_sys_config()
+    if not bear_underdog_shadow_tag_enabled_watch(cfg):
+        return {"id": _id, "status": STATUS_SKIP, "detail": "tag_disabled"}
+
+    conn = _connect_market_db(db_path)
+    if conn is None:
+        return {"id": _id, "status": STATUS_SKIP, "detail": "market_db_missing"}
+    try:
+        if not _table_exists(conn, "forward_trades"):
+            return {
+                "id": "c_bear_underdog_01",
+                "status": STATUS_SKIP,
+                "detail": "forward_trades_missing",
+            }
+        metrics = query_bear_underdog_metrics(conn)
+    except sqlite3.Error as ex:
+        return {"id": _id, "status": STATUS_SKIP, "detail": f"query_failed:{ex}"}
+    finally:
+        conn.close()
+
+    phase_norm = str(phase or "").strip()
+    untagged = int(metrics.get("untagged_kr_bear_incubator") or 0)
+    shadow_closed = int(metrics.get("shadow_closed") or 0)
+    shadow_mae = int(metrics.get("shadow_closed_mae") or 0)
+    shadow_mae_le3d = int(metrics.get("shadow_closed_mae_le3d") or 0)
+
+    status = STATUS_PASS
+    reasons: List[str] = []
+    detail = (
+        f"shadow={metrics.get('shadow_tag_rows', 0)} "
+        f"untagged={untagged} mae={shadow_mae}/{shadow_closed}"
+    )
+
+    if phase_norm == PHASE_POST_BEAR_UNDERDOG_01 and untagged > 0:
+        status = STATUS_WARN
+        reasons.append(f"tag_miss:untagged={untagged}")
+
+    if shadow_closed >= SHADOW_PAIN_MAE_WARN_MIN_CLOSED:
+        mae_ratio = shadow_mae / shadow_closed
+        metrics["shadow_mae_ratio"] = round(mae_ratio, 4)
+        if mae_ratio >= SHADOW_PAIN_MAE_WARN_RATIO:
+            status = STATUS_WARN
+            reasons.append(f"pain_cluster:mae_pct={mae_ratio:.2f}")
+
+    if reasons:
+        detail = "; ".join(reasons) + f" ({detail})"
+
+    return {
+        "id": _id,
+        "status": status,
+        "detail": detail,
+        "metrics": metrics,
+        "observation": {
+            "shadow_closed_mae_le3d": shadow_mae_le3d,
+            "pain_cluster_reproducing": (
+                shadow_closed >= SHADOW_PAIN_MAE_WARN_MIN_CLOSED
+                and shadow_mae / shadow_closed >= SHADOW_PAIN_MAE_WARN_RATIO
+            ),
+        },
+    }
+
+
 def reality_audit_check_enabled() -> bool:
     env = os.environ.get("REALITY_AUDIT_CHECK_ENABLED")
     if env is not None:
@@ -391,6 +629,16 @@ def resolve_cursor_action(
     phase: str,
 ) -> str:
     statuses = [str(c.get("status") or "") for c in checks]
+    for chk in checks:
+        if chk.get("id") != "c_bear_underdog_01":
+            continue
+        obs = chk.get("observation") if isinstance(chk.get("observation"), dict) else {}
+        if obs.get("pain_cluster_reproducing"):
+            return "OBSERVE_BEAR_UNDERDOG_L2"
+        detail = str(chk.get("detail") or "")
+        if chk.get("status") == STATUS_WARN and "tag_miss" in detail:
+            return "INVESTIGATE_BEAR_UNDERDOG_TAG"
+
     if STATUS_BREAK in statuses:
         if any(
             c.get("id") == "factory_health" and c.get("status") == STATUS_BREAK
@@ -403,6 +651,53 @@ def resolve_cursor_action(
     if phase.startswith("post_f_gate") and _worst_status(statuses) == STATUS_PASS:
         return "NONE"
     return "NONE"
+
+
+def build_deploy_watch_cursor_prompt(report: Dict[str, Any]) -> str:
+    """디렉터 → Cursor 첫 메시지용 (텔레그램 ---CURSOR--- 또는 JSON cursor_prompt)."""
+    phase = str(report.get("phase") or "")
+    action = str(report.get("cursor_action") or "NONE")
+    overall = str(report.get("overall") or STATUS_PASS)
+    lines = [
+        "Track — DEPLOY_WATCH 리뷰. 구현 Handoff 없이 상태 해석·OUTBOX만.",
+        f"1) phase={phase} overall={overall} cursor_action={action}",
+        "2) SSOT: factory data/deploy_watch_latest.json 또는 아래 JSON",
+        "3) docs/work_phases/00_SESSION_SYNC.md §3 · NEXT_ACTION.md 동기화 확인",
+    ]
+    for chk in report.get("checks") or []:
+        if not isinstance(chk, dict):
+            continue
+        cid = str(chk.get("id") or "")
+        st = str(chk.get("status") or "")
+        if cid == "c_bear_underdog_01":
+            met = chk.get("metrics") if isinstance(chk.get("metrics"), dict) else {}
+            obs = chk.get("observation") if isinstance(chk.get("observation"), dict) else {}
+            lines.append(
+                "4) BEAR_UNDERDOG: "
+                f"shadow_rows={met.get('shadow_tag_rows', 0)} "
+                f"untagged={met.get('untagged_kr_bear_incubator', 0)} "
+                f"shadow_mae={met.get('shadow_closed_mae', 0)}/"
+                f"{met.get('shadow_closed', 0)} "
+                f"pain_repro={obs.get('pain_cluster_reproducing', False)} "
+                f"check={st}"
+            )
+        elif st in (STATUS_WARN, STATUS_BREAK):
+            lines.append(f"· {cid} {st}: {chk.get('detail')}")
+    if action == "OBSERVE_BEAR_UNDERDOG_L2":
+        lines.append(
+            "→ L2 pain cluster 재현 관측 중. hard gate Handoff 보류(n≥30·Claude OK)."
+        )
+    elif action == "INVESTIGATE_BEAR_UNDERDOG_TAG":
+        lines.append(
+            "→ BEAR incubator underdog인데 suffix 없음 — 배포·META_REGIME_KEY·코드 경로 점검."
+        )
+    elif action == "REPORT_TO_CLAUDE":
+        lines.append("→ CURSOR_TO_CLAUDE.md OUTBOX append 후 Claude 검증 요청.")
+    elif action == "BLOCK_F_RETIRE_02_DEPLOY":
+        lines.append("→ factory_health BREAK — F-RETIRE/BEAR 배포 중단·원인 조사.")
+    elif action == "NONE" and overall == STATUS_PASS:
+        lines.append("→ 조치 없음(PASS). Claude/Cursor 대기.")
+    return "\n".join(lines)
 
 
 def format_telegram_message(report: Dict[str, Any]) -> str:
@@ -421,6 +716,10 @@ def format_telegram_message(report: Dict[str, Any]) -> str:
         lines.append(
             f"· <code>{_esc(chk.get('id'))}</code> {st}: {_esc(chk.get('detail'))}"
         )
+    prompt = str(report.get("cursor_prompt") or "").strip()
+    if prompt:
+        lines.append("")
+        lines.append(_esc(prompt))
     lines.append("---CURSOR---")
     lines.append(_esc(json.dumps(report, ensure_ascii=False, default=str)))
     return "\n".join(lines)
@@ -487,23 +786,31 @@ def run_deploy_watch(
         or DEFAULT_FUNNEL_BASELINE_TS
     ).strip()
 
+    cfg = _load_watch_sys_config()
     checks = [
         check_factory_health(service_name=service_name),
         check_f_gate_01(db_path=db_path),
         check_c_funnel_02(db_path=db_path, baseline_ts=baseline),
         check_f_retire_02(db_path=db_path),
+        check_c_bear_underdog_01(
+            db_path=db_path,
+            phase=phase_use,
+            sys_config=cfg,
+        ),
         reality_audit_check(db_path=db_path),
     ]
     overall = _worst_status([str(c.get("status") or STATUS_SKIP) for c in checks])
     cursor_action = resolve_cursor_action(checks, phase=phase_use)
 
     report: Dict[str, Any] = {
+        "schema": "deploy_watch.v2",
         "ts_kst": _kst_now_iso(),
         "phase": phase_use,
         "overall": overall,
         "checks": checks,
         "cursor_action": cursor_action,
     }
+    report["cursor_prompt"] = build_deploy_watch_cursor_prompt(report)
 
     if persist:
         report["latest_path"] = persist_deploy_watch_report(report)

@@ -290,10 +290,18 @@ def build_cursor_prompt(report: Dict[str, Any]) -> str:
     obs = r.get("observation") or {}
     v2 = r.get("v2") or {}
     fp = r.get("false_positive") or {}
+    bear = r.get("bear_underdog") or {}
+    bear_met = bear.get("metrics") if isinstance(bear.get("metrics"), dict) else {}
     fp_s = (
         f"{float(fp['false_positive_rate']) * 100:.1f}%"
         if fp.get("false_positive_rate") is not None
         else "N/A (표본 부족)"
+    )
+    bear_line = (
+        f"shadow={bear_met.get('shadow_tag_rows', 0)} "
+        f"mae={bear_met.get('shadow_closed_mae', 0)}/"
+        f"{bear_met.get('shadow_closed', 0)} "
+        f"pain_repro={bear.get('pain_cluster_reproducing', False)}"
     )
     return (
         "Track A — IV 관측 리포트 리뷰. 구현·V-2 BLOCK 활성화는 readiness=READY 일 때만.\n\n"
@@ -304,9 +312,11 @@ def build_cursor_prompt(report: Dict[str, Any]) -> str:
         f"추정 오탐률: {fp_s}\n"
         f"4) reality_audit: {r.get('reality_audit', {}).get('status')} · "
         f"BG shadow fail rate: {r.get('bitget_shadow', {}).get('oos_fail_rate', 'N/A')}\n"
-        f"5) V-2 BLOCK 스위치: {'ON' if v2.get('block_enabled') else 'OFF (기본)'} · "
+        f"5) BEAR_UNDERDOG L2: {bear_line}\n"
+        f"6) V-2 BLOCK 스위치: {'ON' if v2.get('block_enabled') else 'OFF (기본)'} · "
         f"readiness: {v2.get('readiness')}\n\n"
-        "출력: 디렉터용 3줄 요약 + (READY면) V-2 활성화 체크리스트만. 코드 변경은 WAIT unless READY."
+        "출력: 디렉터용 3줄 요약 + (READY면) V-2 활성화 체크리스트만. "
+        "BEAR hard gate는 pain L2 n≥30 전까지 보류."
     )
 
 
@@ -314,6 +324,8 @@ def format_iv_observation_telegram(report: Dict[str, Any]) -> str:
     v2 = report.get("v2") or {}
     obs = report.get("observation") or {}
     fp = report.get("false_positive") or {}
+    bear = report.get("bear_underdog") or {}
+    bear_met = bear.get("metrics") if isinstance(bear.get("metrics"), dict) else {}
     readiness = str(v2.get("readiness") or "UNKNOWN")
     emoji = "🟢" if readiness == "READY" else ("🔴" if readiness == "NOT_READY" else "🟡")
 
@@ -330,6 +342,8 @@ def format_iv_observation_telegram(report: Dict[str, Any]) -> str:
         f"오탐추정 <b>{fp_txt}</b>",
         f"· reality_audit <code>{report.get('reality_audit', {}).get('status')}</code> · "
         f"V-2 BLOCK <code>{'ON' if v2.get('block_enabled') else 'OFF'}</code>",
+        f"· BEAR_UD shadow <b>{bear_met.get('shadow_tag_rows', 0)}</b> · "
+        f"mae <b>{bear_met.get('shadow_closed_mae', 0)}/{bear_met.get('shadow_closed', 0)}</b>",
         f"· <b>readiness={readiness}</b>",
     ]
     if readiness == "READY":
@@ -365,7 +379,11 @@ def run_iv_observation_report(
     force_telegram=False → readiness 변경·WARN 이상일 때만 텔레그램 (주간 기본).
     force_telegram=True → 항상 발송 (수동 점검).
     """
-    from deploy_watch import reality_audit_check, send_deploy_watch_telegram
+    from deploy_watch import (
+        reality_audit_check,
+        send_deploy_watch_telegram,
+        summarize_bear_underdog_observation,
+    )
     from strategy_promotion_engine import walk_forward_promotion_block_enabled
 
     start = resolve_v1_observation_start()
@@ -374,6 +392,7 @@ def run_iv_observation_report(
     days = _days_between(start, today)
 
     reality = reality_audit_check(db_path=db_path)
+    bear_ud = summarize_bear_underdog_observation(db_path=db_path)
     krus = summarize_krus_wf_groups(db_path=db_path)
     bg = summarize_bitget_wf_shadow()
     fp = estimate_wf_false_positive_rate(krus.get("groups") or [], health)
@@ -400,6 +419,7 @@ def run_iv_observation_report(
             "metrics": reality.get("metrics"),
         },
         "krus_wf": krus,
+        "bear_underdog": bear_ud,
         "bitget_shadow": bg,
         "false_positive": fp,
         "v2": {

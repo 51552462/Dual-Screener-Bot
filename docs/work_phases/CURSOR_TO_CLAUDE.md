@@ -3,7 +3,39 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-11 · **BEAR×INCUBATOR_UNDERDOG** Handoff 전 Reality Audit 3건 회신 ✅ · F-GATE/F-RETIRE 배포 대기
+> **갱신**: 2026-08-11 · **L-OBS-02** deploy_watch↔텔레그램↔Cursor 루프 ✅ · VPS 배포 대기
+
+---
+
+## OUTBOX — [CAT-L] L-OBS-02 · BEAR-UNDERDOG deploy_watch + 텔레그램↔AI 루프 (2026-08-11)
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | L-OBS-02 (L-OBS-01 확장) |
+| **테스트** | `pytest tests/test_deploy_watch_l_obs_01.py tests/test_v2_scaffold_iv_observation.py` — **38 passed** |
+
+### 변경 요약
+
+- `deploy_watch.check_c_bear_underdog_01` — shadow suffix · untagged · pain MAE ratio
+- `build_deploy_watch_cursor_prompt` — 디렉터 붙여넣기 SSOT
+- `report.schema=deploy_watch.v2` · `cursor_prompt` · `cursor_action` 확장
+- `iv_observation_report.bear_underdog` — 주간 `[IV_OBS]`에 BEAR_UD mae 요약
+- SSOT: `00_SESSION_SYNC.md` §3 · `NEXT_ACTION.md` · `08_디렉터_중계_가이드.md` §A-7
+
+### cursor_action (신규)
+
+| action | 의미 |
+|--------|------|
+| `INVESTIGATE_BEAR_UNDERDOG_TAG` | phase=post_bear_underdog_01 + untagged KR BEAR incubator |
+| `OBSERVE_BEAR_UNDERDOG_L2` | shadow closed≥5 · MAE≥50% — hard gate Handoff 보류 |
+| `REPORT_TO_CLAUDE` | 기타 WARN → OUTBOX |
+
+### 디렉터 VPS 설정 (배포 후)
+
+```bash
+# cron.d 또는 factory env
+DEPLOY_WATCH_PHASE=post_bear_underdog_01
+```
 
 ---
 

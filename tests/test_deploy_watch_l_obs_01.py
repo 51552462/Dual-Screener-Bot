@@ -12,9 +12,12 @@ from deploy_watch import (
     STATUS_PASS,
     STATUS_SKIP,
     STATUS_WARN,
+    PHASE_POST_BEAR_UNDERDOG_01,
+    check_c_bear_underdog_01,
     check_c_funnel_02,
     check_f_gate_01,
     check_f_retire_02,
+    build_deploy_watch_cursor_prompt,
     reality_audit_check,
     resolve_cursor_action,
     run_deploy_watch,
@@ -110,6 +113,90 @@ class TestCheckFRetire02(unittest.TestCase):
             os.unlink(path)
 
 
+class TestCheckCBearUnderdog01(unittest.TestCase):
+    def test_zero_shadow_pass(self):
+        path = _mk_market_db()
+        try:
+            r = check_c_bear_underdog_01(db_path=path, phase=PHASE_POST_BEAR_UNDERDOG_01)
+            self.assertEqual(r["status"], STATUS_PASS)
+            self.assertEqual(r["metrics"]["shadow_tag_rows"], 0)
+        finally:
+            os.unlink(path)
+
+    def test_untagged_bear_incubator_warn_in_phase(self):
+        path = _mk_market_db()
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute(
+                """
+                INSERT INTO forward_trades (
+                    sig_type, market, status, bars_held, final_ret,
+                    exit_reason, exit_type, entry_regime, exit_date
+                ) VALUES (
+                    '[INCUBATOR_KR_UNDERDOG_50점]', 'KR', 'OPEN', NULL, NULL,
+                    '', '', 'BEAR', ''
+                )
+                """
+            )
+            conn.commit()
+            conn.close()
+            r = check_c_bear_underdog_01(
+                db_path=path, phase=PHASE_POST_BEAR_UNDERDOG_01
+            )
+            self.assertEqual(r["status"], STATUS_WARN)
+            self.assertIn("tag_miss", r["detail"])
+        finally:
+            os.unlink(path)
+
+    def test_shadow_tagged_not_untagged(self):
+        path = _mk_market_db()
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute(
+                """
+                INSERT INTO forward_trades (
+                    sig_type, market, status, bars_held, final_ret,
+                    exit_reason, exit_type, entry_regime, exit_date
+                ) VALUES (
+                    '[INCUBATOR_KR_UNDERDOG_50점]_BEAR_UNDERDOG_SHADOW',
+                    'KR', 'OPEN', NULL, NULL, '', '', 'BEAR', ''
+                )
+                """
+            )
+            conn.commit()
+            conn.close()
+            r = check_c_bear_underdog_01(
+                db_path=path, phase=PHASE_POST_BEAR_UNDERDOG_01
+            )
+            self.assertEqual(r["status"], STATUS_PASS)
+            self.assertEqual(r["metrics"]["shadow_tag_rows"], 1)
+            self.assertEqual(r["metrics"]["untagged_kr_bear_incubator"], 0)
+        finally:
+            os.unlink(path)
+
+    def test_pain_cluster_warn_on_shadow_cohort(self):
+        path = _mk_market_db()
+        try:
+            conn = sqlite3.connect(path)
+            for i in range(5):
+                conn.execute(
+                    """
+                    INSERT INTO forward_trades (
+                        sig_type, market, status, bars_held, final_ret,
+                        exit_reason, exit_type, entry_regime, exit_date
+                    ) VALUES (?, 'KR', 'CLOSED', 2, -3.0, 'mae', 'STAT_MAE', 'BEAR', '2026-08-01')
+                    """,
+                    (f"[INCUBATOR_KR_UNDERDOG_50점]_BEAR_UNDERDOG_SHADOW_{i}",),
+                )
+            conn.commit()
+            conn.close()
+            r = check_c_bear_underdog_01(db_path=path, phase="post_f_gate_01")
+            self.assertEqual(r["status"], STATUS_WARN)
+            self.assertIn("pain_cluster", r["detail"])
+        finally:
+            os.unlink(path)
+
+
 class TestRealityAuditCheck(unittest.TestCase):
     def test_no_closed_pass(self):
         path = _mk_market_db()
@@ -200,6 +287,56 @@ class TestCursorAction(unittest.TestCase):
         )
         self.assertEqual(action, "BLOCK_F_RETIRE_02_DEPLOY")
 
+    def test_bear_pain_cluster_observes_l2(self):
+        action = resolve_cursor_action(
+            [
+                {
+                    "id": "c_bear_underdog_01",
+                    "status": STATUS_WARN,
+                    "observation": {"pain_cluster_reproducing": True},
+                }
+            ],
+            phase="post_bear_underdog_01",
+        )
+        self.assertEqual(action, "OBSERVE_BEAR_UNDERDOG_L2")
+
+    def test_bear_tag_miss_investigates(self):
+        action = resolve_cursor_action(
+            [
+                {
+                    "id": "c_bear_underdog_01",
+                    "status": STATUS_WARN,
+                    "detail": "tag_miss:untagged=1",
+                    "observation": {"pain_cluster_reproducing": False},
+                }
+            ],
+            phase="post_bear_underdog_01",
+        )
+        self.assertEqual(action, "INVESTIGATE_BEAR_UNDERDOG_TAG")
+
+    def test_cursor_prompt_includes_bear_underdog(self):
+        report = {
+            "phase": "post_bear_underdog_01",
+            "overall": STATUS_WARN,
+            "cursor_action": "OBSERVE_BEAR_UNDERDOG_L2",
+            "checks": [
+                {
+                    "id": "c_bear_underdog_01",
+                    "status": STATUS_WARN,
+                    "metrics": {
+                        "shadow_tag_rows": 3,
+                        "untagged_kr_bear_incubator": 0,
+                        "shadow_closed_mae": 2,
+                        "shadow_closed": 4,
+                    },
+                    "observation": {"pain_cluster_reproducing": True},
+                }
+            ],
+        }
+        prompt = build_deploy_watch_cursor_prompt(report)
+        self.assertIn("BEAR_UNDERDOG", prompt)
+        self.assertIn("OBSERVE", prompt)
+
 
 class TestRunDeployWatch(unittest.TestCase):
     def test_dry_run_no_telegram(self):
@@ -218,6 +355,7 @@ class TestRunDeployWatch(unittest.TestCase):
                     record_ops=False,
                 )
             self.assertIn("overall", report)
+            self.assertIn("cursor_prompt", report)
             self.assertFalse(report.get("telegram_sent"))
         finally:
             os.unlink(path)

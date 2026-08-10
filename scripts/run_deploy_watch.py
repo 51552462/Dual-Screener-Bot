@@ -18,7 +18,7 @@ def main() -> int:
     parser.add_argument(
         "--phase",
         default=os.environ.get("DEPLOY_WATCH_PHASE", "post_f_gate_01"),
-        help="배포 단계 SSOT (예: post_f_gate_01, post_f_retire_02)",
+        help="배포 단계 SSOT (예: post_f_gate_01, post_f_retire_02, post_bear_underdog_01)",
     )
     parser.add_argument(
         "--funnel-baseline",

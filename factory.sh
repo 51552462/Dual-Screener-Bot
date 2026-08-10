@@ -60,7 +60,7 @@ Usage: ./factory.sh <flag>
     --monthly       month-end grand report (self-gated: 월 마지막 날에만 발송)
     --north-star-digest [daily|weekly|monthly]
                     듀얼 북극성 진행장부 → 디렉터 텔레그램 (주식+Bitget 비교)
-    --deploy-watch    배포 관측 PASS/WARN/BREAK (FAIL/WARN만 텔레그램)
+    --deploy-watch    배포 관측 PASS/WARN/BREAK (WARN/BREAK만 텔레그램·---CURSOR---)
     --iv-observation  IV V-1 관측 리포트 (주간·---CURSOR--- 블록 텔레그램)
     --data-refresh  KR/US per-ticker OHLCV bulk refresh (legacy 07:00 bulk, lock-serialized)
 
@@ -78,6 +78,7 @@ Environment:
   FACTORY_LOG_DIR   log directory (default: ./logs)
   FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1  same as flag above
   TZ                default Asia/Seoul (US staggered cron uses America/New_York in cron.d)
+  DEPLOY_WATCH_PHASE  post_f_gate_01 | post_f_retire_02 | post_bear_underdog_01 (BEAR-UNDERDOG 배포 후)
 EOF
 }
 

@@ -2,25 +2,14 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **CAT-E-BARS-01** Claude OK ✅ · **F-GATE-01 + F-RETIRE-02** 서버 배포(디렉터) |
-| **status** | `WAIT_DIRECTOR` (VPS SQL (a)~(d) + 배포) |
+| **sub-phase** | **CAT-C BEAR-UNDERDOG-01** ✅ · **L-OBS-02** deploy_watch 연동 ✅ · **서버 배포** (디렉터) |
+| **status** | `WAIT_DIRECTOR` (VPS git pull + 배포 + DEPLOY_WATCH_PHASE 설정) |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-### 1) VPS SQL (CAT-E-BARS-01 — 코드 더 안 늘림)
-
-`CURSOR_TO_CLAUDE.md` §CAT-E-BARS-01 「VPS 확인 SQL」 **(a)(b)(c)(d)** 실행 → 결과 회신.
-
-- (a) 결측·표본 n  
-- (b) `exit_type` 분포  
-- (c) status별 `exit_type` 오염  
-- (d) bars×ret 버킷 (1-3 / 4-6 / 7-10 / 11-14 / 15+)
-
-> Claude: 신규 스크립트 **금지**. SQL만.
-
-### 2) 서버 배포 (병렬 가능 · 순서: F-GATE-01 → 관측 → F-RETIRE-02)
+### 1) VPS 배포 (한 번 pull · 순서대로 관측)
 
 ```bash
 cd ~/dante_bots/Dual-Screener-Bot
@@ -29,20 +18,48 @@ sudo ./update_factory.sh
 sudo systemctl status dante-factory.service
 ```
 
-### 3) (연기) F-QUOTA-LOG-01
+| 순서 | 대상 | 배포 후 확인 |
+|------|------|----------------|
+| 1 | **F-GATE-01** | COOLED/RETIRED 0건 → `registry_state_block` 로그 없음 = 정상 |
+| 2 | **F-RETIRE-02** | 강등 1건 시 `LIFECYCLE_OBSERVE_ONLY` + $0 |
+| 3 | **BEAR-UNDERDOG-01** | BEAR incubator underdog 진입 시 `sig_type`에 `_BEAR_UNDERDOG_SHADOW` |
 
-F-GATE-01 / F-RETIRE-02 배포 + L-OBS-01 관측 **이후**. RL 연장 컬럼 = **No-Go**(지금).
+### 2) deploy_watch phase 설정 (BEAR-UNDERDOG 배포 후)
+
+cron 또는 `.env`에 추가:
+
+```bash
+DEPLOY_WATCH_PHASE=post_bear_underdog_01
+```
+
+- **효과**: KR BEAR incubator underdog인데 suffix 없으면 **WARN** → 텔레그램 `[DEPLOY_WATCH]` + `---CURSOR---`
+- **파일 SSOT**: `~/dante_bots/.../deploy_watch_latest.json`
+
+### 3) 텔레그램 → Cursor / Claude 루프 (붙여넣기 SSOT)
+
+| 메시지 | 언제 | Cursor 첫 메시지 |
+|--------|------|------------------|
+| `[DEPLOY_WATCH]` | 19:35 KST · WARN/BREAK만 | `---CURSOR---` **아래 JSON 전체** 또는 `cursor_prompt` 줄 |
+| `[IV_OBS]` | 일 20:10 KST 주간 | `---CURSOR---` 아래 `cursor_prompt` (BEAR_UD shadow·mae 포함) |
+
+Claude Pro는 텔레그램을 읽지 않음 → Cursor가 `CURSOR_TO_CLAUDE.md` OUTBOX append.
+
+### 4) (연기) F-QUOTA-LOG-01 · BEAR hard gate
+
+- F-QUOTA: F-GATE/F-RETIRE 배포 + L-OBS 관측 이후
+- BEAR hard block: L2 shadow `closed≥30` + pain cluster 재현 시 **별도 Handoff**
 
 ---
 
 ## 완료
 
-- [x] CAT-E-BARS-01 Reality Audit · **Claude OK 2026-08-09**
+- [x] CAT-E-BARS-01 Reality Audit · Claude OK
 - [x] F-GATE-01 · F-RETIRE-02 구현 · Claude OK
-- [x] C-FUNNEL-02 배포 · L-OBS-01 코드
+- [x] CAT-C BEAR-UNDERDOG-01 구현 · push `4906d89`+
+- [x] L-OBS-02 `c_bear_underdog_01` + `cursor_prompt` + IV 주간 BEAR_UD 요약
 
 ## 대기
 
-- [ ] VPS SQL (a)~(d) 결과
-- [ ] F-GATE-01 / F-RETIRE-02 서버 배포
-- [ ] (연기) F-QUOTA-LOG-01
+- [ ] VPS 배포 (F-GATE → F-RETIRE → BEAR-UNDERDOG)
+- [ ] `DEPLOY_WATCH_PHASE=post_bear_underdog_01` 설정
+- [ ] 첫 `_BEAR_UNDERDOG_SHADOW` 태그 실측 (SQL 또는 deploy_watch metrics)
