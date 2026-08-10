@@ -1,6 +1,7 @@
 """RP-1 runner — wires time_machine_backtester to regime_panel (optional live fdr)."""
 from __future__ import annotations
 
+import glob
 import hashlib
 import os
 import pickle
@@ -64,6 +65,16 @@ def resolve_rp1_matrix_reuse() -> bool:
     return _env_flag("RP1_MATRIX_REUSE") or _env_flag("RP1_MATRIX_SNAPSHOT")
 
 
+def resolve_rp1_metrics_only() -> bool:
+    """Skip matrix prime; load existing snapshot and recompute 15-period metrics only (~10min)."""
+    return _env_flag("RP1_METRICS_ONLY")
+
+
+def resolve_rp1_matrix_snapshot_path() -> str:
+    """Explicit snapshot path for RP1_METRICS_ONLY (optional)."""
+    return os.environ.get("RP1_MATRIX_SNAPSHOT_PATH", "").strip()
+
+
 def _matrix_snapshot_dir() -> str:
     base = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
@@ -82,18 +93,44 @@ def _matrix_snapshot_path(stock_list: List[str], fetch_start: str, fetch_end: st
     return os.path.join(_matrix_snapshot_dir(), f"matrix_{digest}.pkl")
 
 
-def _load_matrix_snapshot(stock_list: List[str], fetch_start: str, fetch_end: str) -> Optional[Dict[str, Dict[str, Any]]]:
-    path = _matrix_snapshot_path(stock_list, fetch_start, fetch_end)
-    if not os.path.isfile(path):
+def _load_matrix_snapshot_file(path: str) -> Optional[Dict[str, Dict[str, Any]]]:
+    if not path or not os.path.isfile(path):
         return None
     try:
         with open(path, "rb") as fh:
             data = pickle.load(fh)
         if isinstance(data, dict) and data:
-            log_rp1(f"[RP-1] matrix snapshot hit: {path}")
+            log_rp1(f"[RP-1] matrix snapshot loaded: {path}")
             return data
     except Exception as exc:
-        log_rp1(f"[RP-1] matrix snapshot load failed: {exc}")
+        log_rp1(f"[RP-1] matrix snapshot load failed ({path}): {exc}")
+    return None
+
+
+def _find_latest_matrix_snapshot() -> Optional[str]:
+    pattern = os.path.join(_matrix_snapshot_dir(), "matrix_*.pkl")
+    candidates = glob.glob(pattern)
+    if not candidates:
+        return None
+    return max(candidates, key=os.path.getmtime)
+
+
+def _load_matrix_snapshot(stock_list: List[str], fetch_start: str, fetch_end: str) -> Optional[Dict[str, Dict[str, Any]]]:
+    path = _matrix_snapshot_path(stock_list, fetch_start, fetch_end)
+    if not os.path.isfile(path):
+        return None
+    return _load_matrix_snapshot_file(path)
+
+
+def _load_matrix_snapshot_forced() -> Optional[Dict[str, Dict[str, Any]]]:
+    """Metrics-only: load explicit path or newest snapshot (no universe hash check)."""
+    explicit = resolve_rp1_matrix_snapshot_path()
+    if explicit:
+        return _load_matrix_snapshot_file(explicit)
+    latest = _find_latest_matrix_snapshot()
+    if latest:
+        log_rp1(f"[RP-1] matrix snapshot auto-pick (metrics-only): {latest}")
+        return _load_matrix_snapshot_file(latest)
     return None
 
 
@@ -367,6 +404,24 @@ def prime_rp1_matrix_cache(stock_list: List[str]) -> Dict[str, Any]:
         f"[RP-1] matrix prime: tickers={len(stock_list)} windows={len(ohlcv_windows)} "
         f"fetch={global_fetch_start}~{global_end_dt} parallel={use_pool}"
     )
+    if resolve_rp1_metrics_only():
+        loaded = _load_matrix_snapshot_forced()
+        if loaded is None:
+            raise RuntimeError(
+                "RP1_METRICS_ONLY=1 but no snapshot found — set RP1_MATRIX_SNAPSHOT_PATH "
+                "or run a full prime with RP1_MATRIX_REUSE=1 first"
+            )
+        _MATRIX_BY_WINDOW = loaded
+        total_trades = sum(len(v.get("trades", [])) for v in _MATRIX_BY_WINDOW.values())
+        log_rp1(f"[RP-1] matrix prime skipped (metrics-only): total_trades={total_trades}")
+        return {
+            "enabled": True,
+            "windows": len(ohlcv_windows),
+            "tickers": len(stock_list),
+            "total_trades": total_trades,
+            "fetch_range": (global_fetch_start, global_end_dt),
+            "snapshot": "metrics_only",
+        }
     if resolve_rp1_matrix_reuse():
         loaded = _load_matrix_snapshot(stock_list, global_fetch_start, global_end_dt)
         if loaded is not None:
