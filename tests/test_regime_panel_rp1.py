@@ -15,6 +15,8 @@ from regime_panel_rp1 import (
     mdd_crosscheck_badge,
     replay_tier_overlay_on_returns,
     resolve_rp1_max_positions_per_day,
+    resolve_rp1_regime_kelly_cap,
+    resolve_rp1_regime_kelly_mult,
     run_regime_panel_rp1,
     tag_fail_cause,
     trades_to_daily_returns,
@@ -174,7 +176,7 @@ class TestPortfolioMetricsV2:
             for i in range(200)
         ]
         m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
-        assert m["metrics_method"] == "daily_equal_weight_v2.3.2_a3_quota"
+        assert m["metrics_method"] == "daily_equal_weight_v2.3.3_a3_quota_regime_kelly"
         assert m["cagr_pct"] < 200.0
         assert m["trades_per_day"] == 200.0
 
@@ -274,6 +276,39 @@ class TestPortfolioMetricsV2:
         _, daily_bull = trades_to_daily_returns(trades, max_positions_per_day=20)
         assert daily_bear[0] == pytest.approx(sum(range(8)) / 8)
         assert daily_bull[0] == pytest.approx(sum(range(12)) / 12)
+
+    def test_regime_kelly_cap_ssot(self):
+        bear_cap, _ = resolve_rp1_regime_kelly_cap("BEAR", None)
+        bull_cap, _ = resolve_rp1_regime_kelly_cap("BULL", None)
+        side_cap, _ = resolve_rp1_regime_kelly_cap("SIDEWAYS", None)
+        assert bear_cap == pytest.approx(0.01)
+        assert bull_cap == pytest.approx(0.028)
+        assert side_cap == pytest.approx(0.018)
+
+    def test_regime_kelly_mult_baseline_is_one_for_sideways(self):
+        mult, cap, baseline, key = resolve_rp1_regime_kelly_mult("SIDEWAYS", None)
+        assert key == "SIDEWAYS"
+        assert cap == pytest.approx(0.018)
+        assert baseline == pytest.approx(0.018)
+        assert mult == pytest.approx(1.0)
+
+    def test_bear_regime_kelly_reduces_tier_cagr(self):
+        trades = [
+            {"date": f"2020-10-{d:02d}", "final_ret": 2.0, "code": f"t{d}"}
+            for d in range(1, 11)
+        ]
+        neutral = compute_period_portfolio_metrics(
+            trades, "2020-10-01", "2020-10-31", regime_kelly_mult=1.0, regime_kelly_cap=0.018
+        )
+        bearish = compute_period_portfolio_metrics(
+            trades,
+            "2020-10-01",
+            "2020-10-31",
+            regime_kelly_mult=0.01 / 0.018,
+            regime_kelly_cap=0.01,
+        )
+        assert bearish["cagr_pct"] < neutral["cagr_pct"]
+        assert bearish["cagr_pct_raw"] == neutral["cagr_pct_raw"]
 
     def test_tier_mdd_varies_by_trade_sequence(self):
         short = [
@@ -422,9 +457,10 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
-        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3.2"
-        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.3.2_a3_quota"
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3.3"
+        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.3.3_a3_quota_regime_kelly"
         assert report["stage1"]["position_quota_regime_map"]["BEAR"] == 8
+        assert report["stage1"]["regime_kelly_cap_map"]["BEAR"] == pytest.approx(0.01)
         p0 = report["stage1"]["periods"][0]
         assert "mdd_pct_raw" in p0
         assert "trades_per_day" in p0

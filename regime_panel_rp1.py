@@ -26,7 +26,8 @@ from time_machine_backtester import (
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
-RP1_METRICS_METHOD = "daily_equal_weight_v2.3.2_a3_quota"
+RP1_METRICS_METHOD = "daily_equal_weight_v2.3.3_a3_quota_regime_kelly"
+RP1_KELLY_CAP_BASELINE_BUCKET = "SIDEWAYS"
 RP1_CAGR_MEASUREMENT_FLOOR_PCT = -50.0
 RP1_MAX_POSITIONS_PER_DAY = 20
 RP1_LOOKAHEAD_NOTICE = (
@@ -49,6 +50,35 @@ def resolve_rp1_max_positions_per_day(
         return int(quota_map[bk]), bk
     default = int(quota_map.get("DEFAULT", RP1_MAX_POSITIONS_PER_DAY))
     return default, "DEFAULT"
+
+
+def resolve_rp1_regime_kelly_cap(
+    bucket: str,
+    sys_config: Optional[Mapping[str, Any]] = None,
+) -> Tuple[float, str]:
+    """CAT-F ACTION_BY_REGIME kelly_cap for RP-1 historical bucket proxy."""
+    del sys_config  # RP-1 uses module SSOT; config_kv override reserved for later
+    from meta_governor import ACTION_BY_REGIME
+
+    bk = str(bucket or "").strip().upper()
+    tpl = ACTION_BY_REGIME.get(bk) or ACTION_BY_REGIME.get("UNKNOWN") or {}
+    cap = float(tpl.get("kelly_cap", 0.015))
+    return cap, bk
+
+
+def resolve_rp1_regime_kelly_mult(
+    bucket: str,
+    sys_config: Optional[Mapping[str, Any]] = None,
+) -> Tuple[float, float, float, str]:
+    """
+    Regime kelly scale vs SIDEWAYS baseline (0.018 SSOT).
+    BEAR 0.010 → ~0.556×, BULL 0.028 → ~1.556× tier exposure.
+    """
+    cap, key = resolve_rp1_regime_kelly_cap(bucket, sys_config)
+    baseline_cap, _ = resolve_rp1_regime_kelly_cap(RP1_KELLY_CAP_BASELINE_BUCKET, sys_config)
+    if baseline_cap <= 0:
+        baseline_cap = 0.018
+    return cap / baseline_cap, cap, baseline_cap, key
 
 
 def nav_to_period_return_pct(nav_end: float, *, base: float = 100.0) -> float:
@@ -107,6 +137,7 @@ def replay_tier_overlay_on_trades(
     *,
     mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
     max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
+    regime_kelly_mult: float = 1.0,
 ) -> Tuple[List[float], List[Dict[str, Any]]]:
     """
     Tier replay aligned with daily equal-weight portfolio NAV.
@@ -139,7 +170,7 @@ def replay_tier_overlay_on_trades(
         if band.get("block_new_entries"):
             k_mult = 0.0
             q_mult = 0.0
-        weight = k_mult * q_mult
+        weight = k_mult * q_mult * float(regime_kelly_mult)
 
         capped = day_trades[:max_positions_per_day]
         day_applied: List[float] = []
@@ -161,6 +192,7 @@ def replay_tier_overlay_on_trades(
                 "band": band["band"],
                 "kelly_throttle_mult": k_mult,
                 "position_quota_mult": q_mult,
+                "regime_kelly_mult": round(float(regime_kelly_mult), 6),
                 "daily_tier_return_pct": round(daily_ret, 6),
                 "nav_after_eod": round(nav, 6),
                 "trades_in_day": len(capped),
@@ -244,6 +276,8 @@ def compute_period_portfolio_metrics(
     *,
     mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
     max_positions_per_day: int = RP1_MAX_POSITIONS_PER_DAY,
+    regime_kelly_mult: float = 1.0,
+    regime_kelly_cap: Optional[float] = None,
 ) -> Dict[str, Any]:
     """RCA v2.3: daily equal-weight raw + tier; single NAV path for CAGR/MDD/tier_log."""
     ordered = sort_trades_by_date(list(trades))
@@ -264,6 +298,8 @@ def compute_period_portfolio_metrics(
             "trades_per_day": 0.0,
             "metrics_method": RP1_METRICS_METHOD,
             "max_positions_per_day": max_positions_per_day,
+            "regime_kelly_mult": regime_kelly_mult,
+            "regime_kelly_cap": regime_kelly_cap,
             "tier_events": 0,
             "tier_log_sample": [],
             "tier_replay_unit": "daily_equal_weight",
@@ -274,6 +310,7 @@ def compute_period_portfolio_metrics(
         ordered,
         mdd_cap_pct=mdd_cap_pct,
         max_positions_per_day=max_positions_per_day,
+        regime_kelly_mult=regime_kelly_mult,
     )
     adj_trades = [{**t, "final_ret": ar} for t, ar in zip(ordered, adj_trade)]
     _, daily_tier = trades_to_daily_returns(adj_trades, max_positions_per_day=max_positions_per_day)
@@ -293,6 +330,8 @@ def compute_period_portfolio_metrics(
         "trades_per_day": round(len(ordered) / max(len(dates), 1), 2),
         "metrics_method": RP1_METRICS_METHOD,
         "max_positions_per_day": max_positions_per_day,
+        "regime_kelly_mult": round(float(regime_kelly_mult), 6),
+        "regime_kelly_cap": regime_kelly_cap,
         "tier_events": len(tier_log),
         "tier_log_sample": _sample_tier_log(tier_log),
         "tier_replay_unit": "daily_equal_weight",
@@ -477,12 +516,17 @@ def _run_one_regime_period(
         trades = apply_c1_sector_boost(trades, boost_fn=boost_fn)
 
     max_pos, quota_key = resolve_rp1_max_positions_per_day(bucket, sys_config)
+    kelly_mult, kelly_cap, kelly_baseline, kelly_key = resolve_rp1_regime_kelly_mult(
+        bucket, sys_config
+    )
     metrics = compute_period_portfolio_metrics(
         trades,
         start_dt,
         end_dt,
         mdd_cap_pct=mdd_cap_pct,
         max_positions_per_day=max_pos,
+        regime_kelly_mult=kelly_mult,
+        regime_kelly_cap=kelly_cap,
     )
 
     verdict = judge_period_verdict(
@@ -534,6 +578,10 @@ def _run_one_regime_period(
         "metrics_method": metrics["metrics_method"],
         "max_positions_per_day": metrics["max_positions_per_day"],
         "position_quota_regime_key": quota_key,
+        "regime_kelly_cap": round(kelly_cap, 6),
+        "regime_kelly_mult": round(kelly_mult, 6),
+        "regime_kelly_baseline_cap": round(kelly_baseline, 6),
+        "regime_kelly_regime_key": kelly_key,
         "zero_entries": stats["total_trades"] == 0,
         "verdict": verdict,
         "fail_cause": fail_cause,
@@ -596,11 +644,19 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v2.3.2",
+        "schema": "regime_panel_rp1.v2.3.3",
         "metrics_method": RP1_METRICS_METHOD,
         "position_quota_regime_map": resolve_position_quota_regime_map(
             sys_config if isinstance(sys_config, dict) else None
         ),
+        "regime_kelly_cap_map": {
+            b: resolve_rp1_regime_kelly_cap(b, sys_config)[0]
+            for b in ("BULL", "SIDEWAYS", "BEAR")
+        },
+        "regime_kelly_baseline_bucket": RP1_KELLY_CAP_BASELINE_BUCKET,
+        "regime_kelly_baseline_cap": resolve_rp1_regime_kelly_cap(
+            RP1_KELLY_CAP_BASELINE_BUCKET, sys_config
+        )[0],
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,
         "lookahead_html": LOOKAHEAD_BIAS_WARNING_HTML,
