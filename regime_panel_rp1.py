@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -17,6 +17,7 @@ from performance_budget_governor import (
     DEFAULT_MDD_CAP_PCT,
     _band_for_exhaustion,
     resolve_mdd_cap_pct,
+    resolve_position_quota_regime_map,
 )
 from time_machine_backtester import (
     LOOKAHEAD_BIAS_WARNING_HTML,
@@ -25,13 +26,29 @@ from time_machine_backtester import (
 )
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
-RP1_METRICS_METHOD = "daily_equal_weight_v2.3_trade_tier"
+RP1_METRICS_METHOD = "daily_equal_weight_v2.3.2_a3_quota"
 RP1_CAGR_MEASUREMENT_FLOOR_PCT = -50.0
 RP1_MAX_POSITIONS_PER_DAY = 20
 RP1_LOOKAHEAD_NOTICE = (
     "상한선 추정치 — v1 오늘 뇌 템플릿 lookahead. Pass≠실전보장."
 )
 C1_SECTOR_BOOST_PCT = 5.0  # +5% final_ret when spillover aligns (C-1 A/B only)
+
+
+def resolve_rp1_max_positions_per_day(
+    bucket: str,
+    sys_config: Optional[Mapping[str, Any]] = None,
+) -> Tuple[int, str]:
+    """
+    A-3 POSITION_QUOTA_REGIME_MAP for RP-1 historical bucket proxy.
+    BULL=20, SIDEWAYS=15, BEAR=8 (HIGH_VOL unused in 15-panel buckets).
+    """
+    quota_map = resolve_position_quota_regime_map(sys_config)
+    bk = str(bucket or "").strip().upper()
+    if bk in quota_map:
+        return int(quota_map[bk]), bk
+    default = int(quota_map.get("DEFAULT", RP1_MAX_POSITIONS_PER_DAY))
+    return default, "DEFAULT"
 
 
 def nav_to_period_return_pct(nav_end: float, *, base: float = 100.0) -> float:
@@ -429,6 +446,8 @@ def _run_one_regime_period(
     run_backtest_fn: Callable[..., Dict[str, Any]],
     c1_boost: bool = False,
     boost_fn: Optional[Callable[[Dict[str, Any]], float]] = None,
+    sys_config: Optional[Mapping[str, Any]] = None,
+    mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
 ) -> Dict[str, Any]:
     start_dt, end_dt = meta["start"], meta["end"]
     bucket = meta.get("bucket", "UNKNOWN")
@@ -457,7 +476,14 @@ def _run_one_regime_period(
     if c1_boost and trades:
         trades = apply_c1_sector_boost(trades, boost_fn=boost_fn)
 
-    metrics = compute_period_portfolio_metrics(trades, start_dt, end_dt)
+    max_pos, quota_key = resolve_rp1_max_positions_per_day(bucket, sys_config)
+    metrics = compute_period_portfolio_metrics(
+        trades,
+        start_dt,
+        end_dt,
+        mdd_cap_pct=mdd_cap_pct,
+        max_positions_per_day=max_pos,
+    )
 
     verdict = judge_period_verdict(
         bucket=bucket,
@@ -507,6 +533,7 @@ def _run_one_regime_period(
         "trading_days": metrics["trading_days"],
         "metrics_method": metrics["metrics_method"],
         "max_positions_per_day": metrics["max_positions_per_day"],
+        "position_quota_regime_key": quota_key,
         "zero_entries": stats["total_trades"] == 0,
         "verdict": verdict,
         "fail_cause": fail_cause,
@@ -533,6 +560,7 @@ def build_stage1_report(
     period_rows: List[Dict[str, Any]],
     *,
     mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
+    sys_config: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     mdd_badge = mdd_crosscheck_badge(period_rows)
     buckets = {
@@ -568,8 +596,11 @@ def build_stage1_report(
         overall = "FAIL"
 
     return {
-        "schema": "regime_panel_rp1.v2.3.1",
+        "schema": "regime_panel_rp1.v2.3.2",
         "metrics_method": RP1_METRICS_METHOD,
+        "position_quota_regime_map": resolve_position_quota_regime_map(
+            sys_config if isinstance(sys_config, dict) else None
+        ),
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lookahead_notice": RP1_LOOKAHEAD_NOTICE,
         "lookahead_html": LOOKAHEAD_BIAS_WARNING_HTML,
@@ -632,7 +663,12 @@ def run_regime_panel_rp1(
             f"({meta['start']}~{meta['end']}) bucket={meta.get('bucket')}"
         )
         row = _run_one_regime_period(
-            regime_name, meta, stock_list, run_backtest_fn=run_backtest_fn
+            regime_name,
+            meta,
+            stock_list,
+            run_backtest_fn=run_backtest_fn,
+            sys_config=brain,
+            mdd_cap_pct=mdd_cap,
         )
         log_rp1(
             f"  -> trades={row['total_trades']} verdict={row['verdict']} "
@@ -642,7 +678,7 @@ def run_regime_panel_rp1(
         )
         period_rows.append(row)
 
-    stage1 = build_stage1_report(period_rows, mdd_cap_pct=mdd_cap)
+    stage1 = build_stage1_report(period_rows, mdd_cap_pct=mdd_cap, sys_config=brain)
     stage2_plan = decide_stage2_c1(stage1)
 
     stage2_result: Optional[Dict[str, Any]] = None
@@ -656,11 +692,26 @@ def run_regime_panel_rp1(
                 continue
             meta = REGIME_PERIODS[rn]
             baseline_rows.append(
-                _run_one_regime_period(rn, meta, stock_list, run_backtest_fn=run_backtest_fn, c1_boost=False)
+                _run_one_regime_period(
+                    rn,
+                    meta,
+                    stock_list,
+                    run_backtest_fn=run_backtest_fn,
+                    c1_boost=False,
+                    sys_config=brain,
+                    mdd_cap_pct=mdd_cap,
+                )
             )
             c1_rows.append(
                 _run_one_regime_period(
-                    rn, meta, stock_list, run_backtest_fn=run_backtest_fn, c1_boost=True, boost_fn=boost_fn
+                    rn,
+                    meta,
+                    stock_list,
+                    run_backtest_fn=run_backtest_fn,
+                    c1_boost=True,
+                    boost_fn=boost_fn,
+                    sys_config=brain,
+                    mdd_cap_pct=mdd_cap,
                 )
             )
         stage2_result = {

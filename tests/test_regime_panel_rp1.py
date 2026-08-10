@@ -14,6 +14,7 @@ from regime_panel_rp1 import (
     judge_period_verdict,
     mdd_crosscheck_badge,
     replay_tier_overlay_on_returns,
+    resolve_rp1_max_positions_per_day,
     run_regime_panel_rp1,
     tag_fail_cause,
     trades_to_daily_returns,
@@ -173,7 +174,7 @@ class TestPortfolioMetricsV2:
             for i in range(200)
         ]
         m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
-        assert m["metrics_method"] == "daily_equal_weight_v2.3_trade_tier"
+        assert m["metrics_method"] == "daily_equal_weight_v2.3.2_a3_quota"
         assert m["cagr_pct"] < 200.0
         assert m["trades_per_day"] == 200.0
 
@@ -255,6 +256,24 @@ class TestPortfolioMetricsV2:
         m = compute_period_portfolio_metrics(trades, "2020-10-01", "2020-10-31")
         for entry in m["tier_log_sample"]:
             assert entry["nav_after_eod"] < 1_000_000.0
+
+    def test_a3_position_quota_by_bucket(self):
+        bear, bear_key = resolve_rp1_max_positions_per_day("BEAR", None)
+        side, side_key = resolve_rp1_max_positions_per_day("SIDEWAYS", None)
+        bull, bull_key = resolve_rp1_max_positions_per_day("BULL", None)
+        assert bear == 8 and bear_key == "BEAR"
+        assert side == 15 and side_key == "SIDEWAYS"
+        assert bull == 20 and bull_key == "BULL"
+
+    def test_bear_quota_caps_daily_returns(self):
+        trades = [
+            {"date": "2020-10-01", "final_ret": float(i), "code": f"t{i:02d}"}
+            for i in range(12)
+        ]
+        _, daily_bear = trades_to_daily_returns(trades, max_positions_per_day=8)
+        _, daily_bull = trades_to_daily_returns(trades, max_positions_per_day=20)
+        assert daily_bear[0] == pytest.approx(sum(range(8)) / 8)
+        assert daily_bull[0] == pytest.approx(sum(range(12)) / 12)
 
     def test_tier_mdd_varies_by_trade_sequence(self):
         short = [
@@ -403,8 +422,9 @@ class TestRunPanelMock:
             run_stage2=False,
         )
         assert len(report["stage1"]["periods"]) == 15
-        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3.1"
-        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.3_trade_tier"
+        assert report["stage1"]["schema"] == "regime_panel_rp1.v2.3.2"
+        assert report["stage1"]["metrics_method"] == "daily_equal_weight_v2.3.2_a3_quota"
+        assert report["stage1"]["position_quota_regime_map"]["BEAR"] == 8
         p0 = report["stage1"]["periods"][0]
         assert "mdd_pct_raw" in p0
         assert "trades_per_day" in p0
