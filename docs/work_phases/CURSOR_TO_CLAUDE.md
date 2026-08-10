@@ -3,7 +3,88 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-09 · **CAT-E-BARS-01** Claude OK ✅ · VPS SQL (a)~(d) 대기 · F-GATE/F-RETIRE 배포 대기
+> **갱신**: 2026-08-11 · **BEAR×INCUBATOR_UNDERDOG** Handoff 전 Reality Audit 3건 회신 ✅ · F-GATE/F-RETIRE 배포 대기
+
+---
+
+## OUTBOX — [CAT-D / CAT-E / CAT-F] BEAR×INCUBATOR_UNDERDOG Shadow Gate · Reality Audit 3건 (2026-08-11)
+
+> **유형**: Claude Handoff 발행 전 **Cursor Reality Audit** (구현 금지)  
+> **전제**: 디렉터 Stage 2 D1~D5 + VPS `scripts/run_cat_e_bars_sql.py` (a)~(d) 실측 완료  
+> **가설 요약**: KR filtered cohort에서 BEAR+MAE pain cluster 54% · 그 중 incubator underdog ~89% · BEAR+MAE `total_score` 평균 ~55 vs BEAR 비-MAE ~101
+
+### 확인 #1 — 필드 실재 (sig_type · score 컬럼)
+
+| 항목 | 실측 |
+|------|------|
+| **`INCUBATOR_UNDERDOG` 리터럴** | **존재 안 함** — enum/flow_tags 키 아님 |
+| **실제 식별자** | `forward_trades.sig_type` (TEXT). VPS dominant 값: **`INCUBATOR_KR_UNDERDOG_50점`** (괄호 포함 시 `[INCUBATOR_KR_UNDERDOG_50점]`) |
+| **권장 predicate** | `entry_regime == 'BEAR'` AND `'INCUBATOR' in sig_type` AND `'UNDERDOG' in sig_type` (대소문자 무시). KR 한정이면 `market == 'KR'` 추가 |
+| **`flow_tags`** | 진입 식별에 **미사용** — 청산·ACE 연장 등 사후 텔레메트리 (`#에이스진화_보유연장` 등) |
+| **score 55 vs 101** | **`forward_trades.total_score`** (진입 시 `try_add_virtual_position`의 `score` → INSERT). **별도 조인·LIVE 템플릿 점수 아님** |
+| **101의 의미** | D5 SQL: filtered KR에서 `entry_regime='BEAR' AND exit_type!='STAT_MAE'` 행의 **AVG(total_score) ≈ 101.4** (대조군 평균) |
+| **55의 의미** | 동일 필터 + `exit_type='STAT_MAE'` → **AVG(total_score) ≈ 55.3** |
+| **코드 경로** | 스캐너 `final_score` → shared `try_add` `total_score` (`forward/shared.py` ~3269). 인큐베이터 매칭 시 `sig_type = f"[INCUBATOR_{incubator_match_name}]"` (~2754). 템플릿 키 예: `KR_UNDERDOG_50점` (`INCUBATOR_TEMPLATES` SSOT) |
+
+**IV-06 보정**: “LIVE 템플릿 101”은 **오해 소지** — 101은 **동일 book 내 BEAR·비-MAE 청산군 평균 진입점수**이며, 표본 **n=10**(KR filtered)이라 점수 갭 자체는 Handoff 본문에서 **약한 힌트**로만 쓸 것(확인 #3).
+
+### 확인 #2 — 데이터 층위 (Rule 16 · L0/L2)
+
+| 항목 | 판정 |
+|------|------|
+| **데이터 소스** | VPS `~/dante_bots/Dual-Screener-Bot/market_data.sqlite` · 테이블 **`forward_trades`** |
+| **층위** | **`L2` 포워드 paper book** (`docs/independent_verification/01_자기채점_위험_헌법.md` §2 L2 SSOT) |
+| **RP-1 / time_machine** | **아님** — L0 백테스트·mutant OOS 미사용 |
+| **subset 주의** | D1~D5 “clean filter” = `status IN ('CLOSED_WIN','CLOSED_LOSS')` + `final_ret`·`exit_type`·`entry_regime` 유효 — **L2 전체 CLOSED( KR 369 )의 부분집합( KR 114 )**. pain cluster 비율은 **이 subset 위 통계** |
+
+→ **54%/89%는 L2 실측으로 게이트 설계 근거 사용 가능**. 다만 subset 선택 편향·UNKNOWN regime 제외(전체 KR CLOSED의 66% UNKNOWN)는 Handoff §리스크에 명시 권장.
+
+### 확인 #3 — 표본 크기 (n · IV-08)
+
+**분모 정의 (KR, clean filter 기준, VPS D3/D5)**
+
+| 통계 | 분자 | 분모 n | 비율 | n≥30? |
+|------|------|--------|------|-------|
+| Pain cluster (BEAR+MAE+≤3d) | 62 | **114** (filtered KR CLOSED) | 54.4% | ✅ |
+| BEAR+MAE 중 incubator underdog | 55* | **62** (BEAR+STAT_MAE) | **88.7%** (“89%”) | ✅ |
+| BEAR+MAE incubator (단독) | 49 | 49 | — | ✅ |
+| BEAR 비-MAE (score 101 대조군) | — | **10** | avg score 101.4 | ❌ **보류** |
+| US BEAR+MAE (참고) | 35 incubator / 37 total | **37** | 42.5% pain / 94.6% sig | ✅ (US는 이번 스코프 외) |
+
+\* VPS: BEAR+MAE KR 62건 중 `sig_type`에 `INCUBATOR`+`UNDERDOG` 55건 (6건은 기타 sig, 1건 분류 확인 필요 시 raw SQL 재조회).
+
+**편향 체크리스트 (`02_편향_체크리스트`)**: **89% (n=62)** · **pain 54% (n=114)** → 숫자 판정 **진행 가능**. **55 vs 101 점수 비교는 n=10** → **통계 판정 보류**, 서술은 “방향성 힌트”만.
+
+### ⚠️ Handoff 전 필수 — 기존 코드와의 중복 (FC-REALITY)
+
+**이미 구현됨** (`forward/shared.py`):
+
+1. `incubator_match_name is not None` → **`invest_amount=0, shares=0, sim_kelly_invest=0`** (~3200) + `sig_type=[INCUBATOR_…]` (~2755)
+2. `try_add` 관찰 허용: `_is_observe`에 **`INCUBATOR_ in sig_type`** (~3246) — $0도 장부 INSERT
+
+→ 디렉터 가설의 “$0 notional 관측만”은 **incubator 전 경로에 이미 적용**. BEAR×UNDERDOG Handoff의 **추가 가치**를 Handoff에서 명시 필요:
+
+| 옵션 | 의미 |
+|------|------|
+| **A** | BEAR+underdog만 **`BEAR_UNDERDOG_SHADOW` sig suffix** — RE_EVOL / LIFECYCLE_OBSERVE_ONLY와 분리 사후분석 (notional 변화 없음) |
+| **B** | BEAR+underdog **진입 skip** (`try_add` False) — pain cluster **장부 오염** 자체 차단 |
+| **C** | 플래그 1개로 predicate off — 롤백 |
+
+Cursor 권장: Claude 스펙 B(장부 미적재) vs A(태그만) 중 **디렉터 의도 확인 후** `apply_shadow_entry_zero_notional` 인접 분기 설계 — notional만 다시 0으로 만드는 구현은 **중복**.
+
+### Handoff 발행 시 Cursor 구현 SSOT (확인 완료 가정)
+
+- **변경 파일**: `forward/shared.py` only (additive) — F-RETIRE-02 / RE_EVOL_SHADOW와 동일 지점 (~3204–3218 인접)
+- **함수**: `is_bear_underdog_shadow_row(row)` · `apply_bear_underdog_shadow_entry_zero_notional(...)` (이름은 Handoff 확정)
+- **관측창**: `compute_dynamic_shadow_verification_window` 재사용 (BEAR ×0.5 dilation 기존)
+- **범위**: **KR only** (디렉터 원문 54% KR)
+- **킬스위치**: config 플래그 1개 (predicate off)
+
+### Claude / 디렉터 액션
+
+1. 위 3건으로 **Handoff 확정 발행** (`CLAUDE_TO_CURSOR.md` §F-BEAR-UNDERDOG-01 등)
+2. Handoff 본문에 **옵션 A vs B** (태그만 vs 진입 skip) 명시
+3. score 101 문구 → **`total_score` cohort avg, n=10 약함** 으로 수정
 
 ---
 

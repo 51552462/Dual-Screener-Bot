@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import pytz
 import sqlite3
 import json
-from typing import Optional
+from typing import Any, Mapping, Optional
 from low_ram_sqlite_pragmas import apply_busy_timeout
 from dotenv import load_dotenv
 
@@ -1650,6 +1650,49 @@ def _log_convergence_signal_if_diverse(
         print(f"⚠️ [P3-2 합의신호 로깅] 스킵(차단 로직 무영향): {_conv_ex}")
 
 
+_BEAR_UNDERDOG_SHADOW_SUFFIX = "_BEAR_UNDERDOG_SHADOW"
+
+
+def bear_underdog_shadow_tag_enabled(sys_config: Optional[Mapping[str, Any]] = None) -> bool:
+    if not isinstance(sys_config, Mapping):
+        return True
+    return bool(sys_config.get("ENABLE_BEAR_UNDERDOG_SHADOW_TAG", True))
+
+
+def is_bear_underdog_shadow_row(row: Mapping[str, Any]) -> bool:
+    """KR · BEAR · INCUBATOR+UNDERDOG sig_type — post-hoc row predicate (CAT-C BEAR-UNDERDOG-01)."""
+    if not isinstance(row, Mapping):
+        return False
+    if str(row.get("market") or "").strip().upper() != "KR":
+        return False
+    if str(row.get("entry_regime") or "").strip().upper() != "BEAR":
+        return False
+    sig = str(row.get("sig_type") or "").upper()
+    return "INCUBATOR" in sig and "UNDERDOG" in sig
+
+
+def apply_bear_underdog_shadow_sig_type_tag(
+    sig_type: str,
+    *,
+    market: str,
+    entry_regime: str,
+    sys_config: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Append _BEAR_UNDERDOG_SHADOW suffix when predicate matches; notional/try_add 비접촉."""
+    if not bear_underdog_shadow_tag_enabled(sys_config):
+        return sig_type
+    row = {
+        "market": market,
+        "entry_regime": entry_regime,
+        "sig_type": sig_type,
+    }
+    if not is_bear_underdog_shadow_row(row):
+        return sig_type
+    if _BEAR_UNDERDOG_SHADOW_SUFFIX in str(sig_type):
+        return sig_type
+    return f"{sig_type}{_BEAR_UNDERDOG_SHADOW_SUFFIX}"
+
+
 def try_add_virtual_position(
     market,
     code,
@@ -2756,6 +2799,20 @@ def try_add_virtual_position(
                 invest_amount = 0
                 shares = 0
                 sim_kelly_invest = 0
+                try:
+                    _bear_ud_regime = str(cur_regime or "").strip().upper()
+                    if _bear_ud_regime in ("", "UNKNOWN"):
+                        from bear_defense_booster_guard import resolve_meta_regime_key
+
+                        _bear_ud_regime = resolve_meta_regime_key(sys_config)
+                    sig_type = apply_bear_underdog_shadow_sig_type_tag(
+                        sig_type,
+                        market=market,
+                        entry_regime=_bear_ud_regime,
+                        sys_config=sys_config,
+                    )
+                except Exception as _bear_ud_tag_ex:
+                    print(f"⚠️ [BEAR_UNDERDOG_SHADOW] 태그 스킵: {_bear_ud_tag_ex}")
 
             if risk_distance > 0:
                 # 👇👇 [V102.8 버그 픽스] 그룹별 실시간 복리 시드 & 예수금(가용 자산) 브레이크 엔진 👇👇
