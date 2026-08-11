@@ -3,7 +3,30 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-11 · **L-OBS-02** deploy_watch↔텔레그램↔Cursor 루프 ✅ · VPS 배포 대기
+> **갱신**: 2026-08-11 · **SRV-01** STRATEGIC REVIEW 대기 · RP-1 v2.3.3 baseline 확정
+
+---
+
+## OUTBOX — [POST-RP-1] SRV-01 STRATEGIC REVIEW 요청 (2026-08-11)
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | SRV-01 (코드 구현 없음 — Claude 우선순위 결정) |
+| **로드맵** | `15_POST_RP1_단계별로드맵.md` |
+| **디렉터 초안** | **`16_SRV01_Claude_붙여넣기초안.md`** ← 복사 붙여넣기 SSOT |
+| **JSON** | `rp1_20260811.json` (v2.3.3) |
+
+### RP-1 완료 요약
+
+- overall **PASS** · MDD_OK · schema **v2.3.3**
+- BULL 3P/2F (**BULL_03**, **BULL_05** FAIL) · SIDE 3P/2NM · BEAR 2P/3NM
+- North Star CAGR **미증명** · Stage2 C-1 **OPTIONAL_SKIP**
+
+### Cursor 추천 Go 후보 (Claude가 1개만 선택)
+
+1. **BULL-RECENCY-01** (추천) · 2. SIDE-ALPHA-01 · 3. BEAR-S5-SIM-01 · 4. C-1-REDUCED
+
+**디렉터**: `16_SRV01_Claude_붙여넣기초안.md` → Claude + JSON 첨부.
 
 ---
 

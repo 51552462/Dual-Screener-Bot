@@ -2,14 +2,42 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **CAT-C BEAR-UNDERDOG-01** ✅ · **L-OBS-02** deploy_watch 연동 ✅ · **서버 배포** (디렉터) |
-| **status** | `WAIT_DIRECTOR` (VPS git pull + 배포 + DEPLOY_WATCH_PHASE 설정) |
+| **sub-phase** | **SRV-01** STRATEGIC REVIEW (POST-RP-1) |
+| **status** | `WAIT_CLAUDE` — 디렉터가 Claude에 초안 붙여넣기 |
+| **로드맵 SSOT** | [`15_POST_RP1_단계별로드맵.md`](15_POST_RP1_단계별로드맵.md) |
 
 ---
 
-## 디렉터 — 지금 할 일
+## 디렉터 — 지금 할 일 (단계 1)
 
-### 1) VPS 배포 (한 번 pull · 순서대로 관측)
+### 1) Claude STRATEGIC REVIEW (최우선)
+
+1. 파일 열기: **`16_SRV01_Claude_붙여넣기초안.md`**
+2. Claude Pro 새 채팅 → 부팅 문구 + 본문 **전체 복사**
+3. 첨부: `rp1_20260811_v233.json` (바탕화면 또는 서버 JSON)
+4. Claude 답변 → `CLAUDE_TO_CURSOR.md` **상단에 Handoff append** (또는 디렉터가 Cursor에 전달)
+
+### 2) Claude Go 수신 후
+
+- `15_POST_RP1_단계별로드맵.md` 단계 1 ✅ · 단계 2 ID 기입
+- Cursor 새 창 → `CLAUDE_TO_CURSOR.md` Handoff 1개만 구현
+
+---
+
+## 단계별 로드맵 (요약)
+
+| 단계 | ID | 상태 |
+|------|-----|------|
+| 0 | RP-1 v2.3.3 | ✅ 완료 |
+| **1** | **SRV-01** | **🟡 지금** |
+| 2 | Alpha-XX (Claude Go 1개) | ⬜ 대기 |
+| 3 | OPS-01 VPS 배포 | ⬜ 병렬 가능 |
+| 4 | ASG-01 (4주) | ⬜ 대기 |
+| 5 | RP-2 lookahead | ⬜ 후순위 |
+
+---
+
+## OPS-01 — VPS 배포 (Alpha와 병렬 가능)
 
 ```bash
 cd ~/dante_bots/Dual-Screener-Bot
@@ -20,46 +48,26 @@ sudo systemctl status dante-factory.service
 
 | 순서 | 대상 | 배포 후 확인 |
 |------|------|----------------|
-| 1 | **F-GATE-01** | COOLED/RETIRED 0건 → `registry_state_block` 로그 없음 = 정상 |
+| 1 | **F-GATE-01** | COOLED/RETIRED 0건 → `registry_state_block` 없음 = 정상 |
 | 2 | **F-RETIRE-02** | 강등 1건 시 `LIFECYCLE_OBSERVE_ONLY` + $0 |
-| 3 | **BEAR-UNDERDOG-01** | BEAR incubator underdog 진입 시 `sig_type`에 `_BEAR_UNDERDOG_SHADOW` |
-
-### 2) deploy_watch phase 설정 (BEAR-UNDERDOG 배포 후)
-
-cron 또는 `.env`에 추가:
+| 3 | **BEAR-UNDERDOG-01** | BEAR incubator underdog → `sig_type` `_BEAR_UNDERDOG_SHADOW` |
 
 ```bash
 DEPLOY_WATCH_PHASE=post_bear_underdog_01
 ```
 
-- **효과**: KR BEAR incubator underdog인데 suffix 없으면 **WARN** → 텔레그램 `[DEPLOY_WATCH]` + `---CURSOR---`
-- **파일 SSOT**: `~/dante_bots/.../deploy_watch_latest.json`
-
-### 3) 텔레그램 → Cursor / Claude 루프 (붙여넣기 SSOT)
-
-| 메시지 | 언제 | Cursor 첫 메시지 |
-|--------|------|------------------|
-| `[DEPLOY_WATCH]` | 19:35 KST · WARN/BREAK만 | `---CURSOR---` **아래 JSON 전체** 또는 `cursor_prompt` 줄 |
-| `[IV_OBS]` | 일 20:10 KST 주간 | `---CURSOR---` 아래 `cursor_prompt` (BEAR_UD shadow·mae 포함) |
-
-Claude Pro는 텔레그램을 읽지 않음 → Cursor가 `CURSOR_TO_CLAUDE.md` OUTBOX append.
-
-### 4) (연기) F-QUOTA-LOG-01 · BEAR hard gate
-
-- F-QUOTA: F-GATE/F-RETIRE 배포 + L-OBS 관측 이후
-- BEAR hard block: L2 shadow `closed≥30` + pain cluster 재현 시 **별도 Handoff**
-
 ---
 
-## 완료
+## 완료 (최근)
 
-- [x] CAT-E-BARS-01 Reality Audit · Claude OK
-- [x] F-GATE-01 · F-RETIRE-02 구현 · Claude OK
-- [x] CAT-C BEAR-UNDERDOG-01 구현 · push `4906d89`+
-- [x] L-OBS-02 `c_bear_underdog_01` + `cursor_prompt` + IV 주간 BEAR_UD 요약
+- [x] RP-1 full 400 · v2.3.3 · `rp1_20260811.json` PASS · Claude baseline 확정
+- [x] RP1-INFRA-a~e (OHLCV cache, metrics-only, A-3 quota, kelly_cap)
+- [x] CAT-C BEAR-UNDERDOG-01 · L-OBS-02 deploy_watch
+- [x] POST-RP-1 로드맵 · SRV-01 Claude 초안 (`15_` · `16_`)
 
 ## 대기
 
-- [ ] VPS 배포 (F-GATE → F-RETIRE → BEAR-UNDERDOG)
-- [ ] `DEPLOY_WATCH_PHASE=post_bear_underdog_01` 설정
-- [ ] 첫 `_BEAR_UNDERDOG_SHADOW` 태그 실측 (SQL 또는 deploy_watch metrics)
+- [ ] **SRV-01** Claude STRATEGIC REVIEW → Go sub-phase 1개
+- [ ] Alpha sub-phase Handoff 구현 (SRV-01 후)
+- [ ] VPS 배포 (OPS-01)
+- [ ] ASG 4주 관측 시작 (배포 후)
