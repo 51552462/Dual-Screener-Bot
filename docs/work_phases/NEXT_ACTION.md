@@ -2,72 +2,74 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **SRV-01** STRATEGIC REVIEW (POST-RP-1) |
-| **status** | `WAIT_CLAUDE` — 디렉터가 Claude에 초안 붙여넣기 |
-| **로드맵 SSOT** | [`15_POST_RP1_단계별로드맵.md`](15_POST_RP1_단계별로드맵.md) |
+| **sub-phase** | **BULL-RECENCY-01** |
+| **status** | 2단계 **코드 완료** · VPS **15구간 re-sim rerun** 대기 |
+| **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §BULL-RECENCY-01 + **1단계 충족 판정** |
+| **앵커** | `SYNC-2026-08-11-J` |
 
 ---
 
-## 디렉터 — 지금 할 일 (단계 1)
+## Cursor — 지금 할 일 (VPS rerun)
 
-### 1) Claude STRATEGIC REVIEW (최우선)
-
-1. 파일 열기: **`16_SRV01_Claude_붙여넣기초안.md`**
-2. Claude Pro 새 채팅 → 부팅 문구 + 본문 **전체 복사**
-3. 첨부: `rp1_20260811_v233.json` (바탕화면 또는 서버 JSON)
-4. Claude 답변 → `CLAUDE_TO_CURSOR.md` **상단에 Handoff append** (또는 디렉터가 Cursor에 전달)
-
-### 2) Claude Go 수신 후
-
-- `15_POST_RP1_단계별로드맵.md` 단계 1 ✅ · 단계 2 ID 기입
-- Cursor 새 창 → `CLAUDE_TO_CURSOR.md` Handoff 1개만 구현
-
----
-
-## 단계별 로드맵 (요약)
-
-| 단계 | ID | 상태 |
-|------|-----|------|
-| 0 | RP-1 v2.3.3 | ✅ 완료 |
-| **1** | **SRV-01** | **🟡 지금** |
-| 2 | Alpha-XX (Claude Go 1개) | ⬜ 대기 |
-| 3 | OPS-01 VPS 배포 | ⬜ 병렬 가능 |
-| 4 | ASG-01 (4주) | ⬜ 대기 |
-| 5 | RP-2 lookahead | ⬜ 후순위 |
-
----
-
-## OPS-01 — VPS 배포 (Alpha와 병렬 가능)
+### VPS (matrix + brain 서버)
 
 ```bash
-cd ~/dante_bots/Dual-Screener-Bot
-git pull
-sudo ./update_factory.sh
-sudo systemctl status dante-factory.service
+export BULL_RECENCY_01_PATCH=1
+export RP1_SKIP_STAGE2=1
+unset RP1_METRICS_ONLY
+python scripts/run_bull_recency_01_rp1.py \
+  --baseline reports/regime_panel/rp1_20260811_v233.json
 ```
 
-| 순서 | 대상 | 배포 후 확인 |
-|------|------|----------------|
-| 1 | **F-GATE-01** | COOLED/RETIRED 0건 → `registry_state_block` 없음 = 정상 |
-| 2 | **F-RETIRE-02** | 강등 1건 시 `LIFECYCLE_OBSERVE_ONLY` + $0 |
-| 3 | **BEAR-UNDERDOG-01** | BEAR incubator underdog → `sig_type` `_BEAR_UNDERDOG_SHADOW` |
+- OHLCV parquet 캐시 있으면 FDR 없이 re-sim (~1h)
+- 산출: `reports/regime_panel/rp1_bull_recency_01_{date}.json` (v2.3.4) + `_dod.json`
+- **금지**: `RP1_METRICS_ONLY` (bounds 변경 시 trade snapshot 재사용 불가)
 
-```bash
-DEPLOY_WATCH_PHASE=post_bear_underdog_01
+### DoD (rerun 후)
+
+| # | 기준 |
+|---|------|
+| 1 | BULL_03/05 ≥ NEAR_MISS (`period_return_pct`) |
+| 2 | 나머지 13구간 verdict 불변 |
+| 3 | tier MDD ≤10% · MDD_OK |
+| 4 | n≥20 전 구간 |
+
+### 완료 (2단계 코드 — 2026-08-11)
+
+| 항목 | 경로 |
+|------|------|
+| bounds patch | `bull_recency_01_bounds.py` |
+| RP-1 wiring | `regime_panel_rp1_runner.py` · `regime_panel_rp1.py` |
+| runner | `scripts/run_bull_recency_01_rp1.py` |
+| tests | `tests/test_bull_recency_01_bounds.py` (8 pass) |
+
+---
+
+## Cursor — 구현 (참고 · 완료)
+
+---
+
+## Cursor 새 채팅 부팅 (복붙)
+
+```text
+역할: Cursor Lead Engineer.
+
+먼저 읽기:
+1) docs/work_phases/00_SESSION_SYNC.md §3
+2) docs/work_phases/NEXT_ACTION.md
+3) docs/work_phases/CLAUDE_TO_CURSOR.md (BULL-RECENCY-01 Handoff + 1단계 충족 판정)
+
+트랙: docs/work_phases/ SSOT only. bitget/ 제외.
+이번 세션: BULL-RECENCY-01 — 2단계 CLUSTER_1 bounds 타이트닝 + 15구간 metrics-only rerun.
+금지: 전역 DNA · Phase A · config_kv 라이브 · BULL_03/05 단독 rerun.
 ```
 
 ---
 
-## 완료 (최근)
+## 완료 (1단계)
 
-- [x] RP-1 full 400 · v2.3.3 · `rp1_20260811.json` PASS · Claude baseline 확정
-- [x] RP1-INFRA-a~e (OHLCV cache, metrics-only, A-3 quota, kelly_cap)
-- [x] CAT-C BEAR-UNDERDOG-01 · L-OBS-02 deploy_watch
-- [x] POST-RP-1 로드맵 · SRV-01 Claude 초안 (`15_` · `16_`)
-
-## 대기
-
-- [ ] **SRV-01** Claude STRATEGIC REVIEW → Go sub-phase 1개
-- [ ] Alpha sub-phase Handoff 구현 (SRV-01 후)
-- [ ] VPS 배포 (OPS-01)
-- [ ] ASG 4주 관측 시작 (배포 후)
+| 항목 | 값 |
+|------|-----|
+| Claude VERDICT | **충족** |
+| S1 범위 | CLUSTER_1 bounds targeted |
+| BULL_05 | 동일 패치 먼저 |

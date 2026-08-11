@@ -5,7 +5,8 @@ RP-1 live run entrypoint (server).
 Defaults: parallel chunked pool (workers=2), metrics v2, progress logs.
 
 Env quick reference:
-  RP1_FAST=1              KR50+US50 smoke (~1h)
+  BULL_RECENCY_01_PATCH=1   CLUSTER_1 폭발형 bounds tighten (BULL-RECENCY-01; forces matrix re-sim)
+  RP1_METRICS_ONLY=1      skip matrix prime (incompatible with BULL_RECENCY_01_PATCH)
   RP1_KR_LIMIT / RP1_US_LIMIT   universe caps (default 200 each)
   RP1_MAX_WORKERS=2       parallel workers (1-8)
   RP1_CHUNK_SIZE=25       futures per batch

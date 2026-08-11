@@ -1,0 +1,88 @@
+"""BULL-RECENCY-01 CLUSTER_1 bounds tightening — unit tests."""
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from bull_recency_01_bounds import (
+    apply_bull_recency_01_brain_patch,
+    is_cluster_1_explosive_template,
+    tighten_axis_range,
+    tighten_template_bounds,
+)
+
+
+class TestCluster1NameMatch:
+    def test_explosive_korean(self):
+        assert is_cluster_1_explosive_template("CLUSTER_1_강응축_폭발형_250811")
+
+    def test_cluster_2_rejected(self):
+        assert not is_cluster_1_explosive_template("CLUSTER_2_강응축_폭발형")
+
+    def test_stealth_rejected(self):
+        assert not is_cluster_1_explosive_template("CLUSTER_1_매집봉_스텔스형")
+
+
+class TestTightenBounds:
+    def test_shrink_narrows_box(self):
+        lo, hi = tighten_axis_range(0.2, 0.8, shrink=0.20)
+        assert lo > 0.2
+        assert hi < 0.8
+        assert abs((lo + hi) / 2 - 0.5) < 1e-9
+
+    def test_floor_lift_raises_min(self):
+        lo_plain, _ = tighten_axis_range(1.0, 5.0, shrink=0.20, floor_lift=0.0)
+        lo_lift, _ = tighten_axis_range(1.0, 5.0, shrink=0.20, floor_lift=0.15)
+        assert lo_lift > lo_plain
+
+    def test_dyn_and_legacy_keys(self):
+        bounds = {
+            "dyn_cpv_min": 0.1,
+            "dyn_cpv_max": 0.9,
+            "tb_min": 2.0,
+            "tb_max": 20.0,
+            "bbe_min": 5.0,
+            "bbe_max": 30.0,
+        }
+        out = tighten_template_bounds(bounds, shrink=0.20)
+        assert out["dyn_cpv_min"] > 0.1
+        assert out["tb_min"] > 2.0
+        assert out["bbe_min"] > 5.0
+
+
+class TestBrainPatch:
+    def test_only_cluster_1_explosive_touched(self):
+        brain = {
+            "LIVE_CLUSTER_TEMPLATES": {
+                "CLUSTER_1_강응축_폭발형_250811": {
+                    "dyn_cpv_min": 0.1,
+                    "dyn_cpv_max": 0.9,
+                    "dyn_tb_min": 2.0,
+                    "dyn_tb_max": 20.0,
+                    "v_energy_min": 5.0,
+                    "v_energy_max": 30.0,
+                },
+                "CLUSTER_2_혼조세_돌연변이형": {
+                    "dyn_cpv_min": 0.0,
+                    "dyn_cpv_max": 1.0,
+                    "dyn_tb_min": 1.0,
+                    "dyn_tb_max": 15.0,
+                    "v_energy_min": 3.0,
+                    "v_energy_max": 25.0,
+                },
+            }
+        }
+        original = copy.deepcopy(brain)
+        patched, audit = apply_bull_recency_01_brain_patch(brain, shrink=0.20)
+        assert brain == original
+        assert audit["templates_patched"] == 1
+        c1 = patched["LIVE_CLUSTER_TEMPLATES"]["CLUSTER_1_강응축_폭발형_250811"]
+        c2 = patched["LIVE_CLUSTER_TEMPLATES"]["CLUSTER_2_혼조세_돌연변이형"]
+        assert c1["dyn_cpv_min"] > 0.1
+        assert c2["dyn_cpv_min"] == 0.0
+
+    def test_no_match_returns_empty_audit(self):
+        brain = {"LIVE_CLUSTER_TEMPLATES": {"CLUSTER_2_x": {"dyn_cpv_min": 0.1, "dyn_cpv_max": 0.5}}}
+        _, audit = apply_bull_recency_01_brain_patch(brain)
+        assert audit["templates_patched"] == 0

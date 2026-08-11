@@ -27,6 +27,7 @@ from time_machine_backtester import (
 
 RP1_MIN_TRADES_AUTO_VERDICT = 20
 RP1_METRICS_METHOD = "daily_equal_weight_v2.3.3_a3_quota_regime_kelly"
+RP1_METRICS_METHOD_BULL_RECENCY = "daily_equal_weight_v2.3.4_bull_recency_01_cluster1"
 RP1_KELLY_CAP_BASELINE_BUCKET = "SIDEWAYS"
 RP1_CAGR_MEASUREMENT_FLOOR_PCT = -50.0
 RP1_MAX_POSITIONS_PER_DAY = 20
@@ -609,6 +610,7 @@ def build_stage1_report(
     *,
     mdd_cap_pct: float = DEFAULT_MDD_CAP_PCT,
     sys_config: Optional[Mapping[str, Any]] = None,
+    patch_audit: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     mdd_badge = mdd_crosscheck_badge(period_rows)
     buckets = {
@@ -643,9 +645,15 @@ def build_stage1_report(
     else:
         overall = "FAIL"
 
-    return {
-        "schema": "regime_panel_rp1.v2.3.3",
-        "metrics_method": RP1_METRICS_METHOD,
+    schema = "regime_panel_rp1.v2.3.3"
+    metrics_method = RP1_METRICS_METHOD
+    if patch_audit:
+        schema = "regime_panel_rp1.v2.3.4"
+        metrics_method = RP1_METRICS_METHOD_BULL_RECENCY
+
+    report = {
+        "schema": schema,
+        "metrics_method": metrics_method,
         "position_quota_regime_map": resolve_position_quota_regime_map(
             sys_config if isinstance(sys_config, dict) else None
         ),
@@ -669,6 +677,9 @@ def build_stage1_report(
         "avg_bull_cagr_pct": round(avg_bull_cagr, 4),
         "overall_verdict": overall,
     }
+    if patch_audit:
+        report["bull_recency_01_patch"] = dict(patch_audit)
+    return report
 
 
 def run_regime_panel_rp1(
@@ -686,8 +697,10 @@ def run_regime_panel_rp1(
     from regime_panel_rp1_runner import (
         clear_rp1_matrix_cache,
         default_run_backtest_for_period,
+        get_rp1_brain_patch_audit,
         load_rp1_brain_cached,
         prime_rp1_matrix_cache,
+        resolve_bull_recency_01_patch,
         resolve_rp1_use_matrix_cache,
     )
 
@@ -734,7 +747,12 @@ def run_regime_panel_rp1(
         )
         period_rows.append(row)
 
-    stage1 = build_stage1_report(period_rows, mdd_cap_pct=mdd_cap, sys_config=brain)
+    stage1 = build_stage1_report(
+        period_rows,
+        mdd_cap_pct=mdd_cap,
+        sys_config=brain,
+        patch_audit=get_rp1_brain_patch_audit(),
+    )
     stage2_plan = decide_stage2_c1(stage1)
 
     stage2_result: Optional[Dict[str, Any]] = None
@@ -795,7 +813,10 @@ def run_regime_panel_rp1(
     )
     os.makedirs(out_dir, exist_ok=True)
     date_tag = datetime.now().strftime("%Y%m%d")
-    out_path = os.path.join(out_dir, f"rp1_{date_tag}.json")
+    if resolve_bull_recency_01_patch():
+        out_path = os.path.join(out_dir, f"rp1_bull_recency_01_{date_tag}.json")
+    else:
+        out_path = os.path.join(out_dir, f"rp1_{date_tag}.json")
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
     report["output_path"] = out_path

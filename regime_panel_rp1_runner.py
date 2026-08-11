@@ -22,20 +22,48 @@ from time_machine_backtester import (
 )
 
 _RP1_BRAIN_CACHE: Optional[Dict[str, Any]] = None
+_RP1_BRAIN_PATCH_AUDIT: Optional[Dict[str, Any]] = None
 _MATRIX_BY_WINDOW: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def resolve_bull_recency_01_patch() -> bool:
+    from bull_recency_01_bounds import resolve_bull_recency_01_patch as _resolve
+
+    return _resolve()
+
+
+def get_rp1_brain_patch_audit() -> Optional[Dict[str, Any]]:
+    return _RP1_BRAIN_PATCH_AUDIT
 
 
 def load_rp1_brain_cached(*, force_reload: bool = False) -> Dict[str, Any]:
     """RP-1 session cache — avoid 15× reload races during live run."""
-    global _RP1_BRAIN_CACHE
+    global _RP1_BRAIN_CACHE, _RP1_BRAIN_PATCH_AUDIT
     if _RP1_BRAIN_CACHE is None or force_reload:
-        _RP1_BRAIN_CACHE = load_factory_brain_readonly()
+        brain = load_factory_brain_readonly()
+        _RP1_BRAIN_PATCH_AUDIT = None
+        if resolve_bull_recency_01_patch():
+            from bull_recency_01_bounds import apply_bull_recency_01_brain_patch
+
+            brain, _RP1_BRAIN_PATCH_AUDIT = apply_bull_recency_01_brain_patch(brain)
+            if not (_RP1_BRAIN_PATCH_AUDIT or {}).get("templates_patched"):
+                log_rp1(
+                    "[RP-1] BULL_RECENCY_01 patch: no CLUSTER_1 폭발형 templates — "
+                    "check LIVE_CLUSTER_TEMPLATES on server brain"
+                )
+            else:
+                log_rp1(
+                    "[RP-1] BULL_RECENCY_01 patch applied: "
+                    f"templates={_RP1_BRAIN_PATCH_AUDIT.get('templates_patched')}"
+                )
+        _RP1_BRAIN_CACHE = brain
     return _RP1_BRAIN_CACHE
 
 
 def clear_rp1_brain_cache() -> None:
-    global _RP1_BRAIN_CACHE
+    global _RP1_BRAIN_CACHE, _RP1_BRAIN_PATCH_AUDIT
     _RP1_BRAIN_CACHE = None
+    _RP1_BRAIN_PATCH_AUDIT = None
 
 
 def clear_rp1_matrix_cache() -> None:
@@ -404,7 +432,12 @@ def prime_rp1_matrix_cache(stock_list: List[str]) -> Dict[str, Any]:
         f"[RP-1] matrix prime: tickers={len(stock_list)} windows={len(ohlcv_windows)} "
         f"fetch={global_fetch_start}~{global_end_dt} parallel={use_pool}"
     )
-    if resolve_rp1_metrics_only():
+    if resolve_bull_recency_01_patch():
+        log_rp1(
+            "[RP-1] BULL_RECENCY_01: bounds patch active — matrix re-sim required "
+            "(trade snapshot reuse skipped)"
+        )
+    if resolve_rp1_metrics_only() and not resolve_bull_recency_01_patch():
         loaded = _load_matrix_snapshot_forced()
         if loaded is None:
             raise RuntimeError(
@@ -422,7 +455,7 @@ def prime_rp1_matrix_cache(stock_list: List[str]) -> Dict[str, Any]:
             "fetch_range": (global_fetch_start, global_end_dt),
             "snapshot": "metrics_only",
         }
-    if resolve_rp1_matrix_reuse():
+    if resolve_rp1_matrix_reuse() and not resolve_bull_recency_01_patch():
         loaded = _load_matrix_snapshot(stock_list, global_fetch_start, global_end_dt)
         if loaded is not None:
             _MATRIX_BY_WINDOW = loaded

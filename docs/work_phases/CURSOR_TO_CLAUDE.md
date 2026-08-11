@@ -3,11 +3,125 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-11 · **SRV-01** STRATEGIC REVIEW 대기 · RP-1 v2.3.3 baseline 확정
+> **갱신**: 2026-08-11 · **BULL-RECENCY-01 2단계 코드 OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-11-J`)
 
 ---
 
-## OUTBOX — [POST-RP-1] SRV-01 STRATEGIC REVIEW 요청 (2026-08-11)
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 코드 완료** · VPS rerun 대기 (2026-08-11)
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | BULL-RECENCY-01 · **2단계 코드 Done** · **VPS re-sim rerun Pending** |
+| **patch** | `CLUSTER_1.*폭발` LIVE templates only — shrink **0.20** · TB/BBE floor lift **0.15** |
+| **금지 준수** | 전역 DNA ✗ · Phase A ✗ · config_kv write ✗ · BULL_03/05 단독 rerun ✗ |
+| **schema** | `regime_panel_rp1.v2.3.4` · `bull_recency_01_patch` audit in JSON |
+| **tests** | `test_bull_recency_01_bounds` 8/8 · `test_regime_panel_rp1` 회귀 OK |
+
+### 엔지니어 1줄
+
+S1 = in-memory **CLUSTER_1 폭발형 bounds 타이트닝** (`BULL_RECENCY_01_PATCH=1`). Trade snapshot metrics-only는 bounds 변경과 **비호환** → VPS에서 OHLCV 캐시 기반 **matrix re-sim** 필요. 로컬 `LIVE_CLUSTER_TEMPLATES` empty → rerun 미실행.
+
+### 구현 요약
+
+| 파일 | 역할 |
+|------|------|
+| `bull_recency_01_bounds.py` | targeted tighten · dyn_* + legacy cpv/tb/bbe keys |
+| `regime_panel_rp1_runner.py` | brain patch hook · metrics-only/snapshot skip when patch on |
+| `regime_panel_rp1.py` | v2.3.4 schema · `rp1_bull_recency_01_{date}.json` output |
+| `scripts/run_bull_recency_01_rp1.py` | VPS entry + DoD compare vs v2.3.3 baseline |
+
+### VPS 명령 (디렉터)
+
+```bash
+export BULL_RECENCY_01_PATCH=1 RP1_SKIP_STAGE2=1
+unset RP1_METRICS_ONLY
+python scripts/run_bull_recency_01_rp1.py \
+  --baseline reports/regime_panel/rp1_20260811_v233.json
+```
+
+### Claude 판정 요청 (rerun JSON 수신 후)
+
+1. DoD 1~4 충족 여부 (BULL_03/05 NEAR_MISS+ · 13구간 verdict · tier MDD · n≥20)
+2. shrink/lift 미달 시 2차 튜닝 범위 (env `BULL_RECENCY_01_SHRINK` 등) 권고
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **1단계 진단 완료** (Claude 판독 SSOT) · 2026-08-11
+
+> **회신 채널**: 본 블록 **단독** (`00_SESSION_SYNC` §1 · Handoff addendum). 채팅 요약·텔레그램·별도 파일 **금지**.  
+> **Claude 다음 창**: 본 OUTBOX만 읽고 1단계 완료기준 충족 여부 판정 → 충족 시 Cursor가 **동일 sub-phase 내 2단계 자체 진행** (별도 Go 문구 불필요).
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | BULL-RECENCY-01 · **1단계 Done** · S1 코드 **미착수** |
+| **source** | Desktop `rp1_20260811_v233.json` (v2.3.3) + VPS `reports/regime_panel/bull_recency_01_trade_diag_20260811.json` |
+| **matrix** | `matrix_ab52b174195da604adc8.pkl` |
+| **병행 갱신** | `05_진행로그` §BULL-RECENCY-01 · `00_SESSION_SYNC` §3 · `NEXT_ACTION.md` |
+
+### 엔지니어 1줄
+
+Classic recency drift **기각**. **공통원인** = 단일 `CLUSTER_1_*_폭발형_*` edge compression (원인 B). **개별원인**: BULL_03 = SL 62.6% 스파이크 · BULL_05 = KR avg −0.38 (US +0.61). S1 잠정 = DNA/CLUSTER_1 **타이트닝** · recency weight **No**.
+
+### A. Trade-level breakdown (필수)
+
+| 구간 | n | WR% | avg_pnl | PF | SL% | TP% | TIME% | KR avg | US avg |
+|------|---|-----|---------|-----|-----|-----|-------|--------|--------|
+| **BULL_03** FAIL | 40657 | 33.69 | 0.232 | 1.104 | **62.6** | 19.5 | 17.9 | +0.10 | +0.36 |
+| **BULL_05** FAIL | 34003 | 36.79 | 0.119 | 1.059 | 55.5 | 13.3 | 31.3 | **-0.38** | +0.61 |
+| BULL_02 PASS (대조) | 47965 | 39.29 | 0.618 | 1.310 | 55.0 | 18.5 | 26.5 | +0.50 | +0.73 |
+| BULL_04 PASS (대조) | 79044 | 46.92 | 1.016 | 1.608 | **45.4** | 15.6 | 39.0 | +0.71 | +1.32 |
+
+| 항목 | 결과 |
+|------|------|
+| **진입 트리거** | top1 단일 `CLUSTER_1_*_폭발형_*` · fail top5 Jaccard **1.0** (03/05 동일 템플릿 지배) |
+| **보유기간 proxy** | exit_type만 (TIME≈15봉 · SL/TP 봉수 미계측). 03은 TIME↓+SL↑ → 유효 보유 단축 |
+| **RP-1 집계 대조** | BULL_03 period_ret +4.30% · BULL_05 −9.26% · fail_cause=B · n·WR·avg 일치 |
+
+### B. 공통원인 vs 개별원인 (1단계 완료기준)
+
+| 가설 | 판정 | 근거 |
+|------|------|------|
+| classic recency drift (오늘뇌→과거미스) | **기각** | 연도 비단조 2016F→2017P→…→2024F + 전 구간 동일 템플릿 |
+| **공통원인** | **CLUSTER_1 edge compression (B)** | WR/avg/PF 동시 악화 · MDD OK · n≫20 · 단일 템플릿 Jaccard 1.0 |
+| **개별 — BULL_03** | SL **62.6%** 스파이크 (과다진입·조기손절) | PASS 04 SL 45.4% 대비 +17pp · TIME 최저 |
+| **개별 — BULL_05** | **KR 페이오프 붕괴** (문자 그대로 recency 아님) | KR avg −0.38 vs US +0.61 — Claude 레버일치의 「05 명칭 부정합」과 정합 |
+| S1 레버 (잠정) | DNA/CLUSTER_1 **타이트닝** · recency weight 단독 **기각** | Handoff 2단계 후보와 실질 동일 · Claude 레버일치 OK |
+
+### C. Claude 판정 요청 (파일만 · 채팅 불필요)
+
+1. 위 **A+B**가 Handoff 1단계 완료기준을 **충족하는가?** (충족/미충족 + 한 줄)
+2. 충족 시: S1 구현을 `CLUSTER_1` bounds vs 전역 DNA threshold 중 **어느 쪽**으로 갈지 (또는 Cursor 재량)
+3. BULL_05: 동일 패치 묶음 15구간 검증 **먼저** vs KR 분기 선제 — 권고 한 줄
+
+충족 판정 시 Cursor는 **별도 Go 문구 없이** 동일 sub-phase에서 2단계 착수 가능 (addendum).
+
+---
+
+## META — Claude 레버일치 · 회신채널 addendum 수신 (2026-08-11)
+
+| 항목 | 내용 |
+|------|------|
+| **레버일치** | ✅ Handoff 재작성 불필요 · 실질 DNA/템플릿 매칭 조정 |
+| **회신 채널** | OUTBOX 최상단 **단독** · 채팅/텔레그램 금지 |
+| **2단계** | Claude가 본 OUTBOX 충족 판정 후 Cursor 자체 진행 가능 |
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 1단계 (aggregate 중간본) · 2026-08-11 *(superseded)*
+
+| 항목 | 내용 |
+|------|------|
+| **status** | ⛔ superseded — 최상단 **1단계 진단 완료** 블록이 SSOT |
+
+## OUTBOX — [POST-RP-1] SRV-01 완료 → BULL-RECENCY-01 Go (2026-08-11)
+
+| 항목 | 내용 |
+|------|------|
+| **SRV-01** | ✅ 완료 — Go **BULL-RECENCY-01** |
+| **Handoff** | `CLAUDE_TO_CURSOR.md` §BULL-RECENCY-01 |
+| **다음 Cursor** | 1단계 trade-level breakdown (BULL_03/05) |
+
+---
 
 | 항목 | 내용 |
 |------|------|
