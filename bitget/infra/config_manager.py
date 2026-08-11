@@ -458,3 +458,66 @@ def bootstrap_from_json_if_empty(*, max_retries: int = 5) -> bool:
     if ok:
         logger.info("JSON → SQLite bootstrap: %s", CONFIG_PATH)
     return ok
+
+
+def repair_paper_nav_halt_if_treasury_zero(*, max_retries: int = 5) -> bool:
+    """
+  Paper 모드에서 treasury 합계 0 + peak>0 → MDD 100% HALT로 신규 진입이 영구 차단되는
+  상태를 자동 복구한다. 실거래(ENABLE_REAL_EXECUTION=true)에서는 no-op.
+  """
+    import os
+
+    cfg = load_system_config(max_retries=max_retries)
+    real_raw = cfg.get("ENABLE_REAL_EXECUTION", os.environ.get("ENABLE_REAL_EXECUTION", False))
+    if isinstance(real_raw, str):
+        real_on = real_raw.strip().lower() in ("true", "1", "yes", "on")
+    else:
+        real_on = bool(real_raw)
+    if real_on:
+        return False
+
+    try:
+        spot = float(cfg.get("TREASURY_SPOT_USDT") or 0.0)
+    except (TypeError, ValueError):
+        spot = 0.0
+    try:
+        fut = float(cfg.get("TREASURY_FUTURES_USDT") or 0.0)
+    except (TypeError, ValueError):
+        fut = 0.0
+    nav = spot + fut
+    if nav > 0:
+        return False
+
+    try:
+        peak = float(cfg.get("PORTFOLIO_NAV_PEAK") or 0.0)
+    except (TypeError, ValueError):
+        peak = 0.0
+    tier = str(cfg.get("PORTFOLIO_MDD_CURRENT_TIER") or "NORMAL").upper()
+    if peak <= 0 and tier not in ("HALT", "BLOCK"):
+        return False
+
+    try:
+        total = float(cfg.get("ACCOUNT_SIZE_USDT") or 100_000.0)
+    except (TypeError, ValueError):
+        total = 100_000.0
+    if total <= 0:
+        total = 100_000.0
+    half = total / 2.0
+
+    def _repair() -> None:
+        set_config_value("TREASURY_SPOT_USDT", half)
+        set_config_value("TREASURY_FUTURES_USDT", half)
+        if peak <= 0:
+            set_config_value("PORTFOLIO_NAV_PEAK", total)
+        set_config_value("PORTFOLIO_MDD_CURRENT_TIER", "NORMAL")
+
+    _retry_on_locked(_repair, max_retries=max_retries)
+    invalidate_runtime_system_config_cache()
+    logger.warning(
+        "paper NAV repair: treasury was 0 with peak=%.2f tier=%s — seeded %.2f/%.2f USDT, tier→NORMAL",
+        peak,
+        tier,
+        half,
+        half,
+    )
+    return True

@@ -308,6 +308,8 @@ def _build_verdict(
     n_gap_all: int,
     lookup_stats: NameLookupStats,
 ) -> str:
+    if pipeline.n_closed_all == 0 and pipeline.n_open == 0:
+        return "LEDGER_EMPTY — paper 관측 전·forward_trades 미기록"
     if pipeline.lag_days >= 2 and pipeline.n_open == 0:
         return "PIPELINE_STALL — 워터마크·OPEN 정체 우선 복구"
     if n_gap_window > 0 and lookup_stats.ledger + lookup_stats.table_symbols > 0:
@@ -381,7 +383,11 @@ def diagnose_forward_trade_identity(
 
     gap_rows_all.sort(key=lambda g: (g.exit_date or g.entry_date, g.id), reverse=True)
     notes: List[str] = []
-    if pipeline.lag_days >= 2:
+    if pipeline.n_closed_all == 0 and pipeline.n_open == 0:
+        notes.append(
+            "forward_trades 비어 있음 — lag·워터마크 경고는 paper 관측 시작 전 정상 상태."
+        )
+    elif pipeline.lag_days >= 2:
         notes.append(
             f"청산 워터마크 {pipeline.db_watermark_exit or '—'} lag {pipeline.lag_days}d — "
             "리포트는 과거 스냅샷일 수 있음."

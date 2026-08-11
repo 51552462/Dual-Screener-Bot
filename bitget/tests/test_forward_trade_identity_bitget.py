@@ -130,3 +130,43 @@ def test_forward_trade_identity_module_no_print():
     src = inspect.getsource(fti)
     assert "print(" not in src
     assert "get_logger" in src
+
+
+def test_diagnose_empty_ledger_verdict(tmp_path, monkeypatch):
+    db = tmp_path / "empty.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        CREATE TABLE bitget_forward_trades (
+            id INTEGER PRIMARY KEY,
+            market_type TEXT,
+            symbol TEXT,
+            status TEXT,
+            entry_date TEXT,
+            exit_date TEXT,
+            final_ret REAL,
+            flow_tags TEXT,
+            sig_type TEXT,
+            timeframe TEXT
+        )
+        """
+    )
+    conn.commit()
+
+    tk = BitgetReportTimekeeper.for_market("spot", rolling_days=30)
+    fake_ctx = BitgetReportContext(
+        tk_spot=tk,
+        tk_futures=BitgetReportTimekeeper.for_market("futures", rolling_days=30),
+        db_read_path=str(db),
+        window_days=30,
+        calendar_today_utc=tk.session_anchor,
+    )
+    monkeypatch.setattr(
+        "bitget.forward.forward_trade_identity.BitgetReportContext.build",
+        lambda **kw: fake_ctx,
+    )
+
+    rep = diagnose_forward_trade_identity(conn, "spot", db_path=str(db), rolling_days=30)
+    assert rep.verdict.startswith("LEDGER_EMPTY")
+    assert any("비어 있음" in n for n in rep.notes)
+    conn.close()

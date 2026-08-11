@@ -21,6 +21,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from bitget.bitget_scan_schedule import (  # noqa: E402
     ALL_SCAN_SLOTS,
+    DAILY_AUDIT_UTC_HOUR,
+    DAILY_AUDIT_UTC_MINUTE,
     FUTURES_SCAN_SLOTS,
     SCHEDULE_MARKET_TZ,
     SCHEDULE_WEEKDAYS,
@@ -91,7 +93,9 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         "# Integrity backup @00:05 UTC — before health/daily-audit; PRAGMA + archive prune",
         "5 0 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --db-backup",
-        "20 0 * * *  "
+        f"# daily-audit @ {DAILY_AUDIT_UTC_HOUR:02d}:{DAILY_AUDIT_UTC_MINUTE:02d} UTC "
+        f"(=11:30 KST) — after ema5_r3 tails; avoids runtime-lock skip",
+        f"{DAILY_AUDIT_UTC_MINUTE} {DAILY_AUDIT_UTC_HOUR} * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --daily-audit",
         "30 0 * * 1  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --weekly-evolution",

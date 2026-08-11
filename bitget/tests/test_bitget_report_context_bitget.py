@@ -36,6 +36,18 @@ def test_lag_for_watermark():
     assert lag == max(0, (anchor - wm).days)
 
 
+def test_lag_for_missing_watermark_is_zero():
+    tk = BitgetReportTimekeeper.for_market("spot", rolling_days=90, db_watermark_exit=None)
+    ctx = BitgetReportContext(
+        tk_spot=tk,
+        tk_futures=tk,
+        db_read_path=":memory:",
+        window_days=90,
+        calendar_today_utc=tk.session_anchor,
+    )
+    assert ctx.lag_for("spot") == 0
+
+
 def test_timekeeper_module_avoids_raw_datetime_now():
     import inspect
 

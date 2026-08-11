@@ -213,6 +213,41 @@ def _assert_collision_free() -> None:
 
 _assert_collision_free()
 
+# Ops cron (UTC, CRON_TZ=UTC) — daily_audit must clear long scan tails.
+# Prior slot 00:20 UTC collided with spot ema5_r3 @ 23:07 (lock held 60–90+ min).
+DAILY_AUDIT_UTC_HOUR = 2
+DAILY_AUDIT_UTC_MINUTE = 30
+# Minimum minutes after the latest cycle-3 ema5 slot before daily_audit may run.
+_DAILY_AUDIT_MIN_GAP_AFTER_EMA5_R3_MIN = 180
+
+
+def _minutes_since_prior_scan(scan_mins: int, audit_mins: int) -> int:
+    """Minutes from scan start (same UTC day) to audit (may roll to next day)."""
+    if audit_mins >= scan_mins:
+        return audit_mins - scan_mins
+    return (24 * 60 - scan_mins) + audit_mins
+
+
+def _assert_daily_audit_clear_of_long_scans() -> None:
+    audit_mins = DAILY_AUDIT_UTC_HOUR * 60 + DAILY_AUDIT_UTC_MINUTE
+    ema5_r3_modes: Tuple[str, ...] = (
+        "scan_spot_ema5_r3",
+        "scan_futures_ema5_r3",
+    )
+    for slot in ALL_SCAN_SLOTS:
+        if slot.mode not in ema5_r3_modes:
+            continue
+        gap = _minutes_since_prior_scan(slot.hour * 60 + slot.minute, audit_mins)
+        if gap < _DAILY_AUDIT_MIN_GAP_AFTER_EMA5_R3_MIN:
+            raise AssertionError(
+                f"daily_audit {DAILY_AUDIT_UTC_HOUR:02d}:{DAILY_AUDIT_UTC_MINUTE:02d} UTC "
+                f"is only {gap}m after {slot.mode} — need ≥{_DAILY_AUDIT_MIN_GAP_AFTER_EMA5_R3_MIN}m "
+                "to avoid runtime-lock skip."
+            )
+
+
+_assert_daily_audit_clear_of_long_scans()
+
 STAGGERED_SCAN_MODES: Tuple[str, ...] = tuple(s.mode for s in ALL_SCAN_SLOTS)
 LEGACY_SCAN_MODES: Tuple[str, ...] = ("scan_spot", "scan_futures", "scan_all")
 ALL_SCAN_MODES: Tuple[str, ...] = LEGACY_SCAN_MODES + STAGGERED_SCAN_MODES

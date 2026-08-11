@@ -49,9 +49,13 @@ def _step_scan_futures() -> None:
 
 
 def _step_config_bootstrap() -> None:
-    from bitget.infra.config_manager import bootstrap_from_json_if_empty
+    from bitget.infra.config_manager import (
+        bootstrap_from_json_if_empty,
+        repair_paper_nav_halt_if_treasury_zero,
+    )
 
     bootstrap_from_json_if_empty()
+    repair_paper_nav_halt_if_treasury_zero()
 
 
 def _step_meta_governor_sync() -> None:

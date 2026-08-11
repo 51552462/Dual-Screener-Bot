@@ -128,7 +128,7 @@ class BitgetReportContext:
         tk = self.timekeeper_for(market_type)
         wm = tk.db_watermark_exit
         if not wm or len(str(wm)) < 10:
-            return 999
+            return 0
         try:
             a = date.fromisoformat(tk.session_anchor[:10])
             w = date.fromisoformat(str(wm)[:10])

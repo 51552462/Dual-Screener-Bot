@@ -8,6 +8,8 @@ from pathlib import Path
 
 from bitget.bitget_scan_schedule import (
     ALL_SCAN_SLOTS,
+    DAILY_AUDIT_UTC_HOUR,
+    DAILY_AUDIT_UTC_MINUTE,
     FUTURES_SCAN_SLOTS,
     SPOT_SCAN_SLOTS,
     scan_mode_market,
@@ -76,6 +78,14 @@ class TestBitgetStaggeredSchedule(unittest.TestCase):
     def test_slots_for_market(self):
         self.assertEqual(len(slots_for_market("SPOT")), 14)
         self.assertEqual(len(slots_for_market("FUTURES")), 13)
+
+    def test_daily_audit_after_ema5_r3_tail(self):
+        audit_mins = DAILY_AUDIT_UTC_HOUR * 60 + DAILY_AUDIT_UTC_MINUTE
+        for mode in ("scan_spot_ema5_r3", "scan_futures_ema5_r3"):
+            slot = next(s for s in ALL_SCAN_SLOTS if s.mode == mode)
+            scan_mins = slot.hour * 60 + slot.minute
+            gap = audit_mins - scan_mins if audit_mins >= scan_mins else (24 * 60 - scan_mins) + audit_mins
+            self.assertGreaterEqual(gap, 180, msg=f"{mode} too close to daily_audit")
 
     def test_cron_template_matches_ssot(self):
         gen = _REPO / "bitget" / "deploy" / "generate_bitget_crontab.py"
