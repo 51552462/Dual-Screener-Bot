@@ -1,0 +1,24 @@
+# Dual-Screener-Bot — Director digest cron (→ /etc/cron.d/dual-screener-director-digest)
+#
+# AUTO-GENERATED from deploy/generate_factory_crontab.py — do not edit by hand.
+# Regenerate: python deploy/generate_factory_crontab.py
+# install: sudo INSTALL_ROOT=... bash deploy/install_director_digest_cron.sh
+# Coin-only servers: update_bitget.sh calls install_director_digest_cron.sh (no full factory-kr).
+#
+# user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
+
+SHELL=/bin/bash
+CRON_TZ=Asia/Seoul
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# --- Dual North Star + deploy watch (REPORT_BOT; factory.sh, no factory lock) ---
+# Dual North Star digest — daily (REPORT_BOT)
+30 19 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest daily
+# Deploy watch — WARN/BREAK telegram (L-OBS; set DEPLOY_WATCH_PHASE=post_bear_underdog_01 after BEAR-UNDERDOG deploy)
+35 19 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --deploy-watch
+# Dual North Star digest — weekly (Sat KST)
+0 11 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest weekly
+# IV V-1 observation — weekly Sun 20:10 KST
+10 20 * * 0  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --iv-observation --force-telegram
+# Dual North Star digest — monthly (1st 00:05 KST)
+5 0 1 * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest monthly

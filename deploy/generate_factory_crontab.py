@@ -214,27 +214,62 @@ def render_us_crontab(install_root: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _deploy_paths(repo_root: Path) -> Tuple[Path, Path]:
+def render_director_digest_crontab(install_root: str) -> str:
+    """코인 전용 서버(Bot-2) — 주식 factory-kr 없이도 디렉터 다이제스트만 설치."""
+    tz = SCHEDULE_MARKET_TZ["KR"]
+    lines: List[str] = [
+        "# Dual-Screener-Bot — Director digest cron (→ /etc/cron.d/dual-screener-director-digest)",
+        "#",
+        "# AUTO-GENERATED from deploy/generate_factory_crontab.py — do not edit by hand.",
+        "# Regenerate: python deploy/generate_factory_crontab.py",
+        "# install: sudo INSTALL_ROOT=... bash deploy/install_director_digest_cron.sh",
+        "# Coin-only servers: update_bitget.sh calls install_director_digest_cron.sh (no full factory-kr).",
+        "#",
+        f"# user/path: {CRON_USER} · {install_root}",
+        "",
+        "SHELL=/bin/bash",
+        f"CRON_TZ={tz}",
+        "PATH=/usr/local/bin:/usr/bin:/bin",
+        "",
+        "# --- Dual North Star + deploy watch (REPORT_BOT; factory.sh, no factory lock) ---",
+    ]
+    for schedule, flag, comment in _KR_NORTH_STAR_JOBS:
+        lines.append(f"# {comment}")
+        lines.append(
+            _cron_line_schedule(schedule, _scan_command(flag, tz=tz), install_root)
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _deploy_paths(repo_root: Path) -> Tuple[Path, Path, Path]:
     deploy = repo_root / "deploy"
-    return deploy / "factory.kr.crontab.example", deploy / "factory.us.crontab.example"
+    return (
+        deploy / "factory.kr.crontab.example",
+        deploy / "factory.us.crontab.example",
+        deploy / "director.digest.crontab.example",
+    )
 
 
 def write_templates(install_root: str, repo_root: Path | None = None) -> None:
     root = repo_root or _REPO_ROOT
-    kr_path, us_path = _deploy_paths(root)
+    kr_path, us_path, digest_path = _deploy_paths(root)
     kr_path.write_text(render_kr_crontab(install_root), encoding="utf-8", newline="\n")
     us_path.write_text(render_us_crontab(install_root), encoding="utf-8", newline="\n")
+    digest_path.write_text(render_director_digest_crontab(install_root), encoding="utf-8", newline="\n")
     print(f"OK wrote {kr_path}")
     print(f"OK wrote {us_path}")
+    print(f"OK wrote {digest_path}")
 
 
 def check_templates(install_root: str, repo_root: Path | None = None) -> int:
     root = repo_root or _REPO_ROOT
-    kr_path, us_path = _deploy_paths(root)
+    kr_path, us_path, digest_path = _deploy_paths(root)
     errors: List[str] = []
     expected = {
         kr_path: render_kr_crontab(install_root),
         us_path: render_us_crontab(install_root),
+        digest_path: render_director_digest_crontab(install_root),
     }
     for path, want in expected.items():
         if not path.is_file():

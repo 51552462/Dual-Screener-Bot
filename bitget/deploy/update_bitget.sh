@@ -186,10 +186,10 @@ _bitget_start_services() {
   systemctl restart dante-bitget-watchdog.timer dante-bitget-snapshot.timer 2>/dev/null || true
 }
 
-echo "[1/5] pre-update backup"
+echo "[1/7] pre-update backup"
 _bitget_pre_update_backup
 
-echo "[2/5] git pull ($DEPLOY_USER)"
+echo "[2/7] git pull ($DEPLOY_USER)"
 if [[ -d "$INSTALL_ROOT/.git" ]]; then
   # Deploy SSOT: GitHub wins — drop accidental server-side edits to tracked files.
   if sudo -u "$DEPLOY_USER" git -C "$INSTALL_ROOT" diff --quiet 2>/dev/null; then
@@ -203,16 +203,18 @@ else
   echo "  (warn) no .git — skip pull"
 fi
 
-echo "[3/5] reinstall bitget systemd units"
+echo "[3/7] reinstall bitget systemd + cron SSOT"
 sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${SCRIPT_DIR}/deploy_bitget_factory.sh"
+sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${SCRIPT_DIR}/install_bitget_cron.sh"
+sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${REPO_ROOT}/deploy/install_director_digest_cron.sh"
 
-echo "[4/6] graceful stop bitget stack"
+echo "[4/7] graceful stop bitget stack"
 _bitget_stop_services
 
-echo "[5/6] clear stale locks + zombie cron scans (DB untouched)"
+echo "[5/7] clear stale locks + zombie cron scans (DB untouched)"
 _bitget_clear_locks_and_stale
 
-echo "[6/6] restart bitget stack"
+echo "[6/7] restart bitget stack"
 _bitget_start_services
 
 echo ""

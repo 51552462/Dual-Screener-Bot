@@ -79,6 +79,24 @@ else
   fi
 fi
 
+CRON_DIGEST="${BITGET_DIRECTOR_CRON_PATH:-/etc/cron.d/dual-screener-director-digest}"
+echo ""
+echo "[1b] Director digest cron ($CRON_DIGEST)"
+if [[ ! -f "$CRON_DIGEST" ]]; then
+  fail "director digest cron missing — run: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_director_digest_cron.sh"
+else
+  if grep -q 'factory.sh --north-star-digest daily' "$CRON_DIGEST"; then
+    pass "north-star-digest daily (19:30 KST)"
+  else
+    fail "north-star-digest daily missing in $CRON_DIGEST"
+  fi
+  if grep -q '^CRON_TZ=Asia/Seoul' "$CRON_DIGEST"; then
+    pass "director CRON_TZ=Asia/Seoul"
+  else
+    fail "director CRON_TZ=Asia/Seoul missing"
+  fi
+fi
+
 if crontab -l -u ubuntu 2>/dev/null | grep -q 'bitget\.sh'; then
   fail "ubuntu user crontab also runs bitget.sh — duplicate schedules likely"
 else
@@ -190,6 +208,13 @@ print(f'  {mark} BITGET bot: token={\"set\" if tok else \"MISSING\"} chat={\"set
 if not ok:
     print('  → dante-bitget-async exits immediately; no Telegram will be sent')
     print('  → copy bitget/.env from old server or set BITGET_BOT_TOKEN + BITGET_BOT_CHAT_ID')
+rtok = t.get_report_token()
+rchat = t.get_report_chat_id()
+rok = bool(rtok and rchat)
+rmark = '✓' if rok else '✗'
+print(f'  {rmark} REPORT bot: token={\"set\" if rtok else \"MISSING\"} chat={\"set\" if rchat else \"MISSING\"}')
+if not rok:
+    print('  → north-star / deploy-watch cron will fail silently without REPORT_BOT_*')
 " 2>/dev/null || warn "telegram_env check failed"
 else
   warn "skip telegram check (no python)"
@@ -273,3 +298,4 @@ echo "  sudo INSTALL_ROOT=$INSTALL_ROOT ./bitget/deploy/update_bitget.sh"
 echo "  bash bitget/deploy/master_sync_bitget.sh"
 echo "  sudo systemctl start dante-bitget-ws dante-bitget-async dante-bitget-factory dante-bitget-queue-worker"
 echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash bitget/deploy/install_bitget_cron.sh"
+echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_director_digest_cron.sh"
