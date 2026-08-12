@@ -269,16 +269,39 @@ def compute_evolved_alpha_bonus_score(sys_config: dict, hist_df: pd.DataFrame) -
     return float(min(0.15, rel_excess * 0.15))
 
 
-def _facts_cos_scalar_01(facts: dict, score_arg) -> float:
+def _paper_cos_score_fallback_allowed(sys_config: dict | None) -> bool:
+    """Paper-only: sn_score 미배선 시 signal score/100 Cos 폴백. Live는 fail-closed."""
+    import os
+
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    explicit = cfg.get("BITGET_COS_SCORE_FALLBACK_ENABLED")
+    if explicit is not None:
+        if isinstance(explicit, str):
+            return explicit.strip().lower() in ("true", "1", "yes", "on")
+        return bool(explicit)
+    raw = cfg.get("ENABLE_REAL_EXECUTION", os.environ.get("ENABLE_REAL_EXECUTION", False))
+    if isinstance(raw, str):
+        real_on = raw.strip().lower() in ("true", "1", "yes", "on")
+    else:
+        real_on = bool(raw)
+    return not real_on
+
+
+def _facts_cos_scalar_01(facts: dict, score_arg, *, sys_config: dict | None = None) -> float:
     """facts / score에서 템플릿 코사인(또는 이에 해당하는 동적 점수)을 0~1 스케일로 통일."""
     facts = facts or {}
     for k in ("sn_score", "entry_cos_score", "cos_score"):
         if facts.get(k) is None:
             continue
         x = float(facts[k])
+        # DNA 미배선 시 sn_score=0 고정 → paper 에서만 signal score 폴백
+        if k == "sn_score" and abs(x) < 1e-12:
+            continue
         return float(np.clip(x / 100.0 if x > 1.0 else x, -1.0, 1.0))
-    s = float(score_arg or 0.0)
-    return float(np.clip(s / 100.0 if s > 1.0 else s, 0.0, 1.0))
+    if _paper_cos_score_fallback_allowed(sys_config):
+        s = float(score_arg or 0.0)
+        return float(np.clip(s / 100.0 if s > 1.0 else s, 0.0, 1.0))
+    return 0.0
 
 
 __all__ = [

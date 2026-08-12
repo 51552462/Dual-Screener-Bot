@@ -357,7 +357,7 @@ def try_add_virtual_position(
     evaluate_df = evaluate_df.dropna(subset=("Open", "High", "Low", "Close", "Volume"), how="any")
     alpha_bonus_score = compute_evolved_alpha_bonus_score(cfg, evaluate_df)
 
-    max_alpha_cos = _facts_cos_scalar_01(facts or {}, score)
+    max_alpha_cos = _facts_cos_scalar_01(facts or {}, score, sys_config=cfg)
     max_alpha_cos_effective = min(1.0, float(max_alpha_cos) + float(alpha_bonus_score))
 
     sig_type_upper = str(sig_type or "").upper()

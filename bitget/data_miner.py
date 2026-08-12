@@ -103,13 +103,36 @@ def _fit_gmm_templates(df: pd.DataFrame, n_components: int = 3):
             bounds[f"{col}_max"] = round(hi, 4)
 
         side_ratio = float((sub["position_side"].astype(str).str.upper() == "SHORT").mean())
-        templates[f"GMM_CLUSTER_{i+1}"] = {
+        mfe_series = pd.to_numeric(sub["mfe"], errors="coerce")
+        best_idx = mfe_series.idxmax() if mfe_series.notna().any() else sub.index[0]
+        best_row = sub.loc[best_idx]
+        proto_market = str(best_row.get("market_type", "spot")).strip().lower()
+        proto_symbol = str(best_row.get("symbol", "")).strip()
+        proto_tf = str(best_row.get("timeframe", "1D")).strip().upper()
+        proto_shape = None
+        if proto_symbol and proto_market in ("spot", "futures"):
+            try:
+                from bitget.evolution.gmm_dna_alpha_sync import load_shape20_from_db
+
+                proto_shape = load_shape20_from_db(
+                    DB_PATH, proto_market, proto_symbol, proto_tf
+                )
+            except Exception:
+                proto_shape = None
+        cluster_payload = {
             **bounds,
             "sample_size": int(len(sub)),
-            "mean_mfe": round(float(pd.to_numeric(sub["mfe"], errors="coerce").mean()), 4),
+            "mean_mfe": round(float(mfe_series.mean()), 4),
             "mean_ret": round(float(pd.to_numeric(sub["final_ret"], errors="coerce").mean()), 4),
             "short_ratio": round(side_ratio, 4),
+            "prototype_market": proto_market,
+            "prototype_symbol": proto_symbol,
+            "prototype_timeframe": proto_tf,
         }
+        if proto_shape:
+            cluster_payload["shape"] = proto_shape
+            cluster_payload["shape_source"] = "prototype_ohlcv"
+        templates[f"GMM_CLUSTER_{i+1}"] = cluster_payload
     return templates
 
 
@@ -136,6 +159,22 @@ def mine_bitget_dna_templates():
     cfg["BITGET_GMM_DNA_TEMPLATES"] = all_templates
     cfg["BITGET_GMM_DNA_UPDATED_AT"] = utc_datetime_str()
     save_config_atomic(cfg)
+    try:
+        from bitget.evolution.gmm_dna_alpha_sync import sync_gmm_to_crypto_dna_alpha
+        from bitget.infra.config_manager import invalidate_runtime_system_config_cache
+
+        sync_res = sync_gmm_to_crypto_dna_alpha(
+            cfg,
+            force=bool(cfg.get("BITGET_GMM_SYNC_FORCE_ON_MINE", False)),
+        )
+        if sync_res.get("updated"):
+            save_config_atomic(cfg)
+            invalidate_runtime_system_config_cache()
+            logger.info("GMM→CRYPTO_DNA_ALPHA sync after mine: %s", sync_res.get("ranks"))
+        elif not sync_res.get("ok"):
+            logger.warning("GMM→CRYPTO_DNA_ALPHA sync skipped: %s", sync_res.get("error"))
+    except Exception as exc:
+        log_exception(logger, "GMM→CRYPTO_DNA_ALPHA sync failed: %s", exc)
     logger.info("Bitget GMM DNA mining complete: %s templates", mined_count)
 
 

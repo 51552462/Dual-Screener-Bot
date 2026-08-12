@@ -6,6 +6,24 @@
 
 ---
 
+## Mirror — 2026-08-12 · [CAT-I] · I-GMM-DNA-01 GMM→CRYPTO_DNA_ALPHA 배선
+
+### 로컬 구조 이해
+- **맞음**: GMM bounds midpoint → `CRYPTO_DNA_ALPHA_RANK1~3` · `mean_mfe` 랭킹 · `source=manual` 보존 · prototype OHLCV shape 우선
+- **조건부 OK**: R1 weekly `force=True` · R2 paper/live 폴백 미분리 → **Cursor R1/R2 반영 완료**
+
+### 추가 제안 (Claude 원문)
+| # | 제안 | 상태 |
+|---|------|------|
+| 1 | data_miner sync `force=False` + opt-in | ✅ R1 반영 |
+| 2 | live 전환 Handoff에 score-fallback fail-closed | 📋 CAT-F 예약 |
+| 3 | `shape_source` 태그로 neutral 비중 관측 | ✅ 반영 |
+
+### 디렉터 한 줄
+> paper OPEN 0 원인은 DNA 키 불일치였음. 배선+조건 반영 후 **배포·sync·48h 로그**만 보면 됨. live 켤 때는 CAT-F Handoff 먼저.
+
+---
+
 ## Mirror — 2026-08-04 · [CAT-J] · D-3a/D-3b Cost & Parity Monitor 구현 검증
 
 ### 로컬 구조 이해 (Cursor 스냅샷 대비)

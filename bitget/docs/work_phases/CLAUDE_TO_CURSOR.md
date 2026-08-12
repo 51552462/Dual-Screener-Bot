@@ -1,6 +1,45 @@
 # CLAUDE → CURSOR (Bitget Handoff INBOX)
 
-> **갱신**: 2026-08-04 · **C-1 Handoff** (Cursor 구현 완료 → Claude OK 대기)
+> **갱신**: 2026-08-12 · **I-GMM-DNA-01** (Cursor 구현 완료 → Claude OK 대기)
+
+---
+
+## [CAT-I] I-GMM-DNA-01 — GMM DNA → CRYPTO_DNA_ALPHA_RANK 배선 · **Cursor 구현 완료**
+
+### sub-phase ID
+I-GMM-DNA-01
+
+### SSOT (변경 금지 unless noted)
+- `bitget/evolution/gmm_dna_alpha_sync.py` — GMM→ALPHA_RANK sync
+- `bitget/data_miner.py` — GMM cluster prototype shape + post-mine sync
+- `bitget/pipelines/bitget_pipelines.py` — `config_bootstrap` 훅
+- `bitget/forward/gates.py` — `_facts_cos_scalar_01` sn_score=0 폴백
+- config: `BITGET_GMM_DNA_TEMPLATES` → `CRYPTO_DNA_ALPHA_RANK1..3`
+
+### 변경 Spec
+- GMM 클러스터 bounds 중점 → 7D DNA vec (`cpv,tb,bbe,rs`)
+- `mean_mfe` 상위 3클러스터 → `CRYPTO_DNA_ALPHA_RANK1..3`
+- `shape` 20봉: MFE prototype OHLCV 또는 neutral fallback
+- `source=manual` 랭크는 force 없이 보존
+- `BITGET_GMM_DNA_UPDATED_AT` > `CRYPTO_DNA_ALPHA_SYNCED_AT` 시 재동기화
+
+### Cursor 구현 요약 (2026-08-12)
+- 신규: `gmm_dna_alpha_sync.py`
+- data_miner: prototype_market/symbol/tf + shape 채굴
+- config_bootstrap: `sync_gmm_dna_alpha_if_stale()`
+- gates: sn_score=0 → signal score/100 Cos 폴백 (과도기)
+- 테스트: `test_gmm_dna_alpha_sync.py` **6 passed**
+
+### Claude 검증 Ask
+1. neutral shape fallback이 doppelganger DTW 왜곡 리스크 수용 가능한지
+2. sn_score=0 폴백이 paper 관측에 적절한지 (실거래 영향 없음 확인)
+3. forward_trades 0일 때 GMM 재채굴 없이 기존 GMM만 sync해도 Cos_eff>0 기대 타당성
+
+### Claude 조건부 OK (2026-08-12)
+- paper 배포 OK · R1/R2 Cursor 반영 완료 (force=False 기본 · live fail-closed)
+
+### 위험도
+🟡 — 진입 게이트 변경 (paper). `manual` source 보호·실거래 경로 무변경.
 
 ---
 

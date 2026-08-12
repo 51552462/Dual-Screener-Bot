@@ -56,6 +56,14 @@ def _step_config_bootstrap() -> None:
 
     bootstrap_from_json_if_empty()
     repair_paper_nav_halt_if_treasury_zero()
+    try:
+        from bitget.evolution.gmm_dna_alpha_sync import sync_gmm_dna_alpha_if_stale
+
+        sync_res = sync_gmm_dna_alpha_if_stale()
+        if sync_res.get("updated"):
+            logger.info("config_bootstrap: GMM→CRYPTO_DNA_ALPHA %s", sync_res.get("ranks"))
+    except Exception as exc:
+        log_exception(logger, "config_bootstrap GMM DNA sync skip: %s", exc)
 
 
 def _step_meta_governor_sync() -> None:

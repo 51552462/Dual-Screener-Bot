@@ -1,39 +1,47 @@
-# NEXT_ACTION — Bitget
-
-| 필드 | 값 |
-|------|-----|
-| **sub-phase** | **D-3 Done** — 묶음D(D-1~D-3) **완료** |
-| **status** | `SHADOW_OBSERVING` + **D-3 Claude OK ✅ (2026-08-04)** |
-
----
-
-## 디렉터 (다음 = 운영 확인)
-
-1. 서버 **ai_overseer** 프로세스 기동 확인
-2. `REPORT_BOT_TOKEN` / `REPORT_BOT_CHAT_ID` env 확인 (D-2 poll)
-3. **D-3a** `cost_report_weekly` ops 누적 관측 (1~2주)
-4. paper `06` · NS-1 **계속**
-
----
-
-## Claude Pro
-
-- **완료**: D-3 Mirror OK 2026-08-04 — 묶음D 설계·구현·검증 사이클 종료
-- **다음 신규 Handoff**: 없음 (P2-5 후 D-3b 실배선 Go/No-Go만 예약)
-
----
-
-## Cursor
-
-- D 트랙 **Done** — 신규 D sub-phase 없음
-- Layer 2 C-track (P0-6/P1-7) — Handoff 수신 시 별도 세션
-
----
-
-## 병렬 트랙
-
-| 트랙 | 상태 |
-|------|------|
-| D (D-1~D-3) | ✅ 전체 완료 · **서버 운영 확인=디렉터** |
-| D-3b 실배선 | 🔴 P2-5 후 Go/No-Go (CAT-N 읽기 경로 재검토) |
-| C-2 / alloc / MDD 5% | 🔴 defer |
+# NEXT_ACTION — Bitget
+
+| 필드 | 값 |
+|------|-----|
+| **sub-phase** | **I-GMM-DNA-01** |
+| **status** | Claude 조건부 OK ✅ · R1/R2 반영 · **git push + 서버 배포** |
+
+---
+
+## 디렉터 (지금)
+
+1. **git commit + push** (Cursor 또는 디렉터 지시)
+2. **서버 배포**
+   ```bash
+   cd ~/dante_bots/Dual-Screener-Bot && git pull
+   sudo INSTALL_ROOT=$PWD bash bitget/deploy/update_bitget.sh
+   .venv/bin/python -m bitget.evolution.gmm_dna_alpha_sync --force
+   ```
+3. **24~48h 확인**
+   - 로그: `Cos_eff=0.000` 고정 사라졌는지 · `sn_score` 분포
+   - DB: `SELECT status, COUNT(*) FROM bitget_forward_trades GROUP BY status;`
+   - config: `CRYPTO_DNA_ALPHA_RANK*` · `shape_source` 필드
+
+4. **2~4주** — `06_검증체크리스트` paper 관측 (fill-rate·MFE 이상 시 롤백: ALPHA_RANK 키 삭제)
+
+---
+
+## 롤백 (긴급)
+
+```bash
+sqlite3 /var/lib/quant-bitget/data/bitget_system_config.sqlite \
+  "DELETE FROM config_kv WHERE key LIKE 'CRYPTO_DNA_ALPHA_RANK%';"
+```
+
+---
+
+## 다음 Handoff (live 전환 전, CAT-F)
+
+- `ENABLE_REAL_EXECUTION=true` 시 sn_score 폴백 fail-closed 재확인 (규칙11)
+- neutral shape 도플갱어 ±10/-30 제외 검토
+
+---
+
+## 병렬 (무관)
+
+- DEPLOY_WATCH `dante-factory` = **주식 트랙** (코인 VPS면 cron 정리)
+- D-3a cost_report 관측
