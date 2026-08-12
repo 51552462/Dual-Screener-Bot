@@ -1,0 +1,63 @@
+---
+description: Bitget 코인 트랙 — bitget/ 작업 시 격리·Handoff·세션 종료 (Track B)
+globs: bitget/**
+alwaysApply: false
+---
+
+# Track B — Bitget 코인 (globs: bitget/**)
+
+**이 규칙이 켜지면 KR/US `docs/work_phases/` Handoff로 구현하지 말 것.**
+
+## SSOT
+
+- 진행·Handoff: `bitget/docs/work_phases/`
+- 구조·CAT: `bitget/docs/claude_project/`
+- P0 헌법: `bitget/docs/13_institutional_grade_audit_and_roadmap.md`
+
+## 수정 범위
+
+- **허용**: `bitget/**` only
+- **읽기 전용 import**: 루트 `practitioner_intelligence`, `reports/*`, `llm_gemini_core`, `telegram_message_queue`
+- **절대 수정 금지**: 루트 `forward/`, `factory_pipelines.py`, `system_auto_pilot.py`, `performance_budget_governor.py`, `deploy/systemd/dante-*`
+
+주식 SSOT를 bitget에 무리 복사 금지 — Adapter 패턴 (`governance/meta_consumer.py` 등).
+
+## 세션 시작
+
+1. `bitget/docs/work_phases/NEXT_ACTION.md`
+2. `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` (= 유일한 spec)
+3. (Mirror용) `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md`
+
+## 협업
+
+- Claude Handoff 없이 구현 **금지**
+- 한 세션 = sub-phase **하나** · targeted diff only
+- Claude OK 전 Done **금지**
+- 동일 에러 3회 → 중단 · 로그 요약 · Claude spec 질의
+
+## 리스크
+
+- `ENABLE_REAL_EXECUTION`, portfolio MDD, MAX_LEVERAGE, KILL_SWITCH 변경 시 **극보수적** diff
+- execution_safety 13-gate 우회 **금지**
+
+## B-2 shadow·관측 (production 변경 금지)
+
+- `WALK_FORWARD_PROMOTION_BLOCK_ENABLED` **임의 활성화 금지**
+- production Kelly·mult 변경 금지 — shadow 격리 테스트만
+- `docs/independent_verification/02_편향_체크리스트` IV-04, IV-25 참고
+- 로그·테이블 read + 보고만
+
+부팅: `08_디렉터_중계_가이드.md` B-2 · `17_Cursor_세션_부팅_가이드.md`
+
+## 세션 종료 (Bitget 추가 항목)
+
+- [ ] `bitget/docs/work_phases/05_진행로그.md`
+- [ ] `bitget/docs/work_phases/00_전체현황판.md`
+- [ ] `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md` (로컬 구조 스냅샷)
+- [ ] `bitget/docs/work_phases/NEXT_ACTION.md`
+- [ ] `bitget/docs/work_phases/NEXT_STEP.md` (09와 다음 한 문장 **일치**)
+- [ ] `bitget/docs/work_phases/09_디렉터_쉬운요약.md` (비유·신호등 — 함수명 나열 금지)
+- [ ] `bitget/docs/work_phases/11_협업_효율_점검.md` (필요 시 한 줄)
+- [ ] 디렉터 3줄 + 기술 1줄
+
+부팅 문구: `docs/work_phases/17_Cursor_세션_부팅_가이드.md` §Track B

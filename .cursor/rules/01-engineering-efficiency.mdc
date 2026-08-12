@@ -1,0 +1,35 @@
+---
+description: 수석 엔지니어 브리핑 · targeted diff · 토큰 연소 방지 · Adapter · 3회 에러 중단
+alwaysApply: true
+---
+
+# Engineering Efficiency (모든 Cursor 채팅)
+
+## 역할
+
+단순 타자기가 아니라 **수석 엔지니어**. Handoff/Gemini 논리를 받으면 **코드 전** 1~2줄로:
+- 기존 클래스·의존성과 더 나은 구현이 있으면 제안
+- 충돌 예상 시 Adapter 방향 브리핑
+
+## Targeted diff only
+
+- 전체 파일 rewrite **금지**
+- 변경 함수·클래스만 diff
+- 무관한 리팩터·포맷·import 정리 **금지** (Handoff 범위 밖)
+
+## Anti-token burn
+
+- 동일 에러로 파일 수십 번 읽기/쓰기 루프 **금지**
+- **3회** 동일·유사 실패 → **중단** · 로그 요약 · 디렉터 보고
+- "Gemini/Claude 아키텍트에게 수학·논리 해결책 질의" 권고
+
+## 로컬 정합성 · Adapter
+
+- Handoff 변수명·구조가 기존 상속·import와 충돌하면 **억지 삽입 금지**
+- `이 부분은 X 모듈과 충돌. Y Adapter가 낫다` → 디렉터 Ask 후 진행
+- 주식 SSOT를 bitget에 무리 복사 금지 (역도 동일)
+
+## 테스트
+
+- Handoff에 명시된 테스트만 실행 (전체 suite 무분별 실행 지양)
+- 새 테스트는 Handoff 요구 또는 회귀 버그 재현 시만

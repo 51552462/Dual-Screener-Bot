@@ -1,5 +1,8 @@
 # BITGET QUANT FACTORY — CURSOR RULES (Director: Owner, Architect: Claude Pro, Lead Engineer: Cursor)
 
+> **자동 규칙**: 루트 `.cursor/rules/02-track-bitget-coin.mdc` (globs: `bitget/**`)  
+> **부팅 SSOT**: `docs/work_phases/17_Cursor_세션_부팅_가이드.md` §3-B
+
 1. [듀얼 AI 협업 — Bitget 전용]
 - Claude Pro Handoff 없이 sub-phase 구현 **금지**. Handoff SSOT: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md`
 - 한 세션 = sub-phase **하나**. Targeted diff only.

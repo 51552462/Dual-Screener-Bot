@@ -1,0 +1,31 @@
+---
+description: 텔레그램 DEPLOY_WATCH·IV_OBS·Ops 세션 — 구현 없이 관측/중계
+alwaysApply: true
+---
+
+# Telegram & Ops Hooks
+
+## 텔레그램 → Cursor (첫 메시지 = ---CURSOR--- 블록 전체)
+
+| 태그 | cron (KST) | 모드 | 금지 |
+|------|------------|------|------|
+| `[DEPLOY_WATCH]` | 19:35 daily | A-7 | Alpha Handoff 무시하고 임의 구현 |
+| `[IV_OBS]` | 일 20:10 | A-6 | V-2 BLOCK unless readiness=READY |
+
+- `report.cursor_action` 해석 → 필요 시 `CURSOR_TO_CLAUDE.md` OUTBOX
+- Claude는 텔레그램 **직접 안 봄** — Cursor가 파일로 중계
+- SSOT: `deploy_watch_latest.json`, `iv_observation_latest.json` (VPS)
+
+### cursor_action (deploy_watch)
+
+- `INVESTIGATE_BEAR_UNDERDOG_TAG` — suffix 누락 조사
+- `OBSERVE_BEAR_UNDERDOG_L2` — pain cluster 관측 (hard gate 금지)
+- `REPORT_TO_CLAUDE` — OUTBOX append
+
+## Ops 전용 세션 (Alpha 코드 수정 금지)
+
+- `NEXT_ACTION.md` §OPS-01: git pull · `update_factory.sh` · F-GATE/F-RETIRE/BEAR-UD
+- `DEPLOY_WATCH_PHASE=post_bear_underdog_01` (배포 후)
+- 코드 변경 필요 시 **멈추고** Handoff 요청만 보고
+
+부팅: `17_Cursor_세션_부팅_가이드.md` §Ops

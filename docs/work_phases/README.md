@@ -9,6 +9,8 @@
 
 | 문서 | 출처 | 역할 |
 |------|------|------|
+| **`17_Cursor_세션_부팅_가이드.md`** | Cursor | **첫 메시지·모드 선택 · `.cursor/rules/` 인덱스** |
+| **`.cursor/rules/`** | Cursor | **자동 적용 규칙** (멀티창·Handoff·트랙·RP-1·IV) |
 | **`00_SESSION_SYNC.md`** | Cursor+Claude | **멀티 채널 앵커 · 현재 포커스 · 부팅 문구** |
 | `docs/claude_project/` | Cursor 카테고리 분해 | 구조·SSOT·경계·상수 (bitget 제외) |
 | **`docs/work_phases/` (본 폴더)** | Claude Pro + Cursor | **실행 로드맵·작업 스펙·로컬 현황·진행·검증** |

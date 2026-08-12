@@ -1,5 +1,13 @@
 # QUANT FACTORY DEVELOPMENT RULES V2 (Director: Owner, Architect: Gemini, Lead Engineer: Cursor)
 
+0. [멀티 채널 SSOT — 새 창·새 채팅 시 최우선]
+- **첫 읽기**: `docs/work_phases/00_SESSION_SYNC.md` §3 → `NEXT_ACTION.md` → `CLAUDE_TO_CURSOR.md`(Handoff) 또는 `CURSOR_TO_CLAUDE.md`(OUTBOX).
+- **Cursor 규칙 파일**: `.cursor/rules/*.mdc` — 인덱스 `.cursor/rules/README.md`. 부팅: `17_Cursor_세션_부팅_가이드.md`.
+- **듀얼 트랙**: KR/US = `docs/work_phases/` · Bitget = `bitget/docs/work_phases/` + `bitget/**` only. 트랙 혼합 금지.
+- `Downloads/*`, 채팅 붙여넣기 spec은 참고만. 충돌 시 **`docs/work_phases/`** (주식) 또는 **`bitget/docs/work_phases/`** (코인).
+- **NEXT_ACTION status** 확인 (`WAIT_CURSOR_IMPL`일 때만 Handoff 구현). 불일치 시 멈추고 보고.
+- 세션 종료: §3 스냅샷 bump + `05_진행로그` + `NEXT_ACTION` + `CURSOR_TO_CLAUDE` + 3줄 요약. 채팅 요약만 믿지 말 것.
+
 1. [듀얼 AI 브레인스토밍 및 교차 검증 (Dual-LLM Synergy)]
 - 너(Cursor)는 단순한 타자기가 아니라 수석 엔지니어다. Gemini 아키텍트가 설계한 논리(Prompt)를 전달받으면, 무지성으로 코드를 짜기 전에 먼저 너의 '엔지니어적 시각'을 공유하라.
 - "Gemini의 퀀트 논리를 로컬 코드베이스에 구현할 때, 기존 클래스 구조나 성능(메모리/속도) 측면에서 더 나은 파이썬 구현 방식이 있다면 먼저 제안해 주세요"라는 디렉터(사용자)의 의도에 맞춰, 코드 설계 최적화 의견을 먼저 1~2줄로 브리핑하라.
@@ -19,5 +27,11 @@
 5. [듀얼 AI 협업 루프 — Claude Handoff → Cursor 구현]
 - Claude Pro(또는 Gemini) Handoff 프롬프트 없이 sub-phase 구현을 시작하지 마라. Handoff는 `docs/work_phases/07_듀얼AI_협업루프.md` 및 `CAT-HANDOFF_템플릿.md` 형식을 따른다.
 - 한 세션 = sub-phase **하나** (예: A-3만). Targeted diff only.
-- 세션 **종료 전 필수**: `docs/work_phases/05_진행로그.md` 해당 sub-phase 섹션 + `docs/work_phases/00_전체현황판.md` (Phase 표·SSOT 용어집) 갱신. 디렉터용 3줄 요약 출력.
+- 세션 **종료 전 필수**: `docs/work_phases/05_진행로그.md` 해당 sub-phase 섹션 + `docs/work_phases/00_전체현황판.md` (Phase 표·SSOT 용어집) + **`docs/work_phases/00_SESSION_SYNC.md` §3 스냅샷** + `NEXT_ACTION.md` 갱신. 디렉터용 3줄 요약 출력.
 - Claude OK 전 해당 sub-phase를 Done 처리하지 마라. 충돌 시 Adapter 제안 후 디렉터 Ask — 무리 적용 금지.
+
+6. [작업함 · 멀티창 · 부팅]
+- 채팅에 Handoff/검증 장문 금지 — `10_작업함_프로토콜.md` (파일 = 실행).
+- 멀티 창: Track A(KR/US) + Track B(Bitget) 또는 Alpha + Ops **병렬 가능**, **트랙 혼합 불가**.
+- 새 채팅 첫 메시지: `17_Cursor_세션_부팅_가이드.md` §3 (모드 선택). 전문: `08_디렉터_중계_가이드.md` §Cursor 새창.
+- 텔레그램 `[DEPLOY_WATCH]` / `[IV_OBS]`: `---CURSOR---` 블록 첫 메시지 (`.cursor/rules/04-telegram-ops-hooks.mdc`).

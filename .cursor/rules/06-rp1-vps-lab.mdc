@@ -1,0 +1,36 @@
+---
+description: RP-1 레짐패널 · metrics-only rerun · VPS 실행 주의 (Lightsail)
+globs:
+  - regime_panel_rp1*.py
+  - run_rp1*.py
+  - scripts/run_bull_recency*.py
+  - scripts/run_*_rp1*.py
+  - tests/test_regime_panel*.py
+  - tests/test_bull_recency*.py
+alwaysApply: false
+---
+
+# RP-1 / Alpha Lab (레짐패널)
+
+## metrics-only rerun (400 재실행 회피)
+
+- `RP1_METRICS_ONLY=1` — matrix prime 스킵 · 최신/명시 `.pkl` 로드
+- `RP1_MATRIX_SNAPSHOT_PATH` — 명시 스냅샷 경로
+- 메트릭·bounds·quota만 바꿀 때 **full 400 금지** (Handoff가 명시할 때만 full)
+
+## VPS (ubuntu@52.78.29.151 · ~/dante_bots/Dual-Screener-Bot)
+
+- CPU steal 높음 → `RP1_MAX_WORKERS=2`~`3`
+- `RP1_PROGRESS_EVERY=1` on full 400 **금지** (I/O 폭주)
+- SSH `pkill -f run_rp1_live` **금지** (SSH 세션 kill) → `pkill -f 'python3 run_rp1_live.py'`
+- `git pull` 전 로컬 `factory.sh` 변경 있으면 stash
+
+## baseline·DoD
+
+- Alpha Proof baseline: v2.3.3 (`rp1_20260811.json`) — Handoff가 다른 baseline 지정 시 그걸 따름
+- overall PASS ≠ North Star CAGR 달성
+- period_return 우선 · CAGR reference-only (`14_레짐패널_15구간_목표검증.md`)
+
+## 세션 종료
+
+RP-1 sub-phase 완료 시 JSON 경로·schema 버전·bucket verdict 요약을 `CURSOR_TO_CLAUDE.md`에 기록.

@@ -1,0 +1,38 @@
+---
+description: Independent Verification (V-*) — L0~L3 헌법 · RP-1/LIVE 승격 연동 금지
+globs:
+  - docs/independent_verification/**
+alwaysApply: false
+---
+
+# Independent Verification Track (V-*)
+
+**이 globs가 켜지면 KR/US Alpha Handoff와 혼동하지 말 것.**
+
+## SSOT
+
+- `docs/independent_verification/NEXT_ACTION.md`
+- `docs/independent_verification/CLAUDE_TO_CURSOR.md` (= 유일한 spec)
+- `docs/independent_verification/01_자기채점_위험_헌법.md` — **L0~L3 위반 금지**
+- `docs/independent_verification/02_편향_체크리스트.md`
+
+## 금지
+
+- RP-1 Pass를 LIVE 승격 근거로 연동
+- `WALK_FORWARD_PROMOTION_BLOCK_ENABLED` 임의 활성화 (readiness=READY 전)
+- BEAR hard gate를 L2 n≥30 전에 production 적용
+- V-2 BLOCK unless `readiness=READY` (IV_OBS 규칙)
+
+## 세션 모드
+
+- **구현**: V-* Handoff 1개 · targeted diff
+- **조사**: read-only · `CURSOR_TO_CLAUDE.md` OUTBOX
+- production Kelly·mult 변경 **금지** (shadow 격리만)
+
+## 세션 종료
+
+- `docs/independent_verification/CURSOR_TO_CLAUDE.md`
+- `docs/independent_verification/NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+- (필요 시) `05` IV 섹션
+
+부팅: `17_Cursor_세션_부팅_가이드.md` §3-E

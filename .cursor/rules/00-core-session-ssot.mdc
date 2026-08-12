@@ -1,0 +1,82 @@
+---
+description: 멀티 창·멀티 채널 SSOT — 세션 시작/종료·충돌 해결·트랙 라우팅 (KR/US 기본)
+alwaysApply: true
+---
+
+# Core Session SSOT (모든 Cursor 채팅)
+
+## 세션 시작 — 반드시 읽기 (순서)
+
+1. `docs/work_phases/00_SESSION_SYNC.md` **§3 스냅샷** (앵커 ID·진행 sub-phase)
+2. `docs/work_phases/NEXT_ACTION.md` (status·지금 할 일)
+3. `docs/work_phases/CLAUDE_TO_CURSOR.md` (Handoff 있으면 = **유일한 구현 spec**)
+4. `docs/work_phases/CURSOR_TO_CLAUDE.md` (미검증 OUTBOX 있으면 우선 처리)
+
+**채팅 요약·이전 대화만 믿지 말 것.** 충돌 시 §3 스냅샷이 최신이면 그걸 따른다.
+
+## 듀얼 트랙 (혼동 금지)
+
+| 트랙 | SSOT | 수정 허용 | Cursor 규칙 |
+|------|------|-----------|-------------|
+| **KR/US 주식** | `docs/work_phases/` | 레포 루트 (`bitget/` 제외) | 본 파일 + `.cursorrules` |
+| **Bitget 코인** | `bitget/docs/work_phases/` | `bitget/**` only | `02-track-bitget-coin.mdc` |
+
+`Downloads/*`, `bitget/docs` 복사본·채팅 붙여넣기 spec은 **참고만**. 충돌 시 위 SSOT 폴더가 이긴다.
+
+## NEXT_ACTION status → 행동
+
+| status | Cursor 행동 |
+|--------|-------------|
+| `WAIT_CURSOR_IMPL` | Handoff대로 **구현** (sub-phase 1개) |
+| `WAIT_CLAUDE_OK` | 구현 금지 — 디렉터·Claude 검증 대기 |
+| `WAIT_CLAUDE_HANDOFF` | 구현 금지 — Handoff 대기 |
+| `WAIT_DIRECTOR` | 멈추고 디렉터 결정 요청 |
+| `SUB_DONE` | 다음 Handoff 대기 |
+
+status가 구현과 맞지 않으면 **멈추고 보고** (무리 구현 금지).
+
+## 멀티 창·멀티 채팅 규칙
+
+- **한 세션 = sub-phase 하나.** 한 메시지에 sub-phase 2개 금지.
+- **창 2개 운용 권장**: Track A(KR/US) + Track B(Bitget) 또는 Alpha + Ops — **트랙 혼합 금지**.
+- 다른 창에서 작업 중이면 §3에 `진행 중 sub-phase`가 다를 수 있음 → **§3 먼저 확인**.
+- 세션 종료 전 §3 스냅샷 bump (`SYNC-날짜-A/B/C…`) + `05_진행로그` + `NEXT_ACTION` 갱신.
+- 다른 창 닫기 전 §3 미갱신 시 디렉터에게 「앵커 갱신 필요」 알림.
+
+## 세션 모드 (디렉터 첫 메시지로 지정)
+
+| 모드 | 구현 | 부팅 SSOT |
+|------|------|-----------|
+| **구현** | Handoff 필수 | `08_디렉터_중계_가이드.md` A-1 / B-1 |
+| **배포·관측만** | 코드 diff 금지 | A-3 |
+| **조사·Audit** | read-only | A-4 |
+| **상태 점검** | 코드 수정 금지 | A-5 / B-3 |
+| **IV V-*** | `docs/independent_verification/` | A-2 |
+| **텔레그램** | `---CURSOR---` JSON 붙여넣기 | A-6 / A-7 |
+
+전문 부팅 문구: `docs/work_phases/17_Cursor_세션_부팅_가이드.md`
+
+## 충돌 해결 (요약)
+
+1. `NEXT_ACTION` vs `05_진행로그` 불일치 → **05 해당 sub 최신 섹션** 우선, NEXT_ACTION 맞춤.
+2. `CLAUDE_TO_CURSOR` vs 채팅 지시 → **파일(Handoff) 우선** (`10_작업함_프로토콜.md`).
+3. SSOT 코드 충돌 → Adapter 제안 후 디렉터 Ask — 무리 적용 금지.
+
+## 금지 (Anti-patterns)
+
+- Handoff 없이 sub-phase 구현 시작
+- "전체 점검하고 다 고쳐줘" / "백테스트 잘 되게 고쳐줘" (범위 무한)
+- Track A 창에서 `bitget/` 수정 (또는 역)
+- Claude OK 전 sub-phase Done 처리
+- 🔴 MDD·KILL_SWITCH·링펜싱·DEFCON 방어계층 무분별 rewrite
+
+## 세션 종료 체크리스트 (KR/US)
+
+- [ ] `05_진행로그.md` 해당 sub 섹션
+- [ ] `00_SESSION_SYNC.md` §3 스냅샷
+- [ ] `NEXT_ACTION.md` (status 갱신)
+- [ ] `CURSOR_TO_CLAUDE.md` OUTBOX (Claude 검증용)
+- [ ] (구현 시) `00_전체현황판.md` Phase·용어집
+- [ ] 디렉터용 **3줄 요약**
+
+상세: `docs/work_phases/07_듀얼AI_협업루프.md`

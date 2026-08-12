@@ -45,17 +45,12 @@
 
 ## Cursor 새 채팅 부팅 (복붙)
 
+**전문·모드별 문구**: [`17_Cursor_세션_부팅_가이드.md`](17_Cursor_세션_부팅_가이드.md) §3  
+**자동 규칙**: `.cursor/rules/` (첫 메시지 없어도 SSOT·금지 적용)
+
 ```text
-역할: Cursor Lead Engineer.
-
-먼저 읽기:
-1) docs/work_phases/00_SESSION_SYNC.md §3
-2) docs/work_phases/NEXT_ACTION.md
-3) docs/work_phases/CLAUDE_TO_CURSOR.md (BULL-RECENCY-01 Handoff + 1단계 충족 판정)
-
-트랙: docs/work_phases/ SSOT only. bitget/ 제외.
-이번 세션: BULL-RECENCY-01 — 2단계 CLUSTER_1 bounds 타이트닝 + 15구간 metrics-only rerun.
-금지: 전역 DNA · Phase A · config_kv 라이브 · BULL_03/05 단독 rerun.
+Track A 구현 — 17 §3-A에 sub-phase ID만 채워서 사용.
+현재: BULL-RECENCY-01 — NEXT_ACTION·§3 스냅샷 확인 후 착수.
 ```
 
 ---

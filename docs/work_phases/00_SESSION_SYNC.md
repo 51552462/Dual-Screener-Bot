@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-11 · **앵커 ID**: `SYNC-2026-08-11-J`
+> **갱신**: 2026-08-12 · **앵커 ID**: `SYNC-2026-08-12-A`
 
 ---
 
@@ -28,6 +28,7 @@
 | `CLAUDE_TO_CURSOR.md` | Handoff **INBOX** (설계·Go) | **Claude Pro 만** | Cursor |
 | `CURSOR_TO_CLAUDE.md` | 검증·조사 **OUTBOX** | **Cursor 만** | Claude Pro |
 | `06_검증체크리스트_*.md` | 배포 후 **효과** 검증 (2~4주) | 디렉터·Cursor | Claude |
+| **`17_Cursor_세션_부팅_가이드.md`** | **Cursor 첫 메시지·모드 선택 SSOT** | Cursor | 디렉터 |
 | `bitget/docs/work_phases/` | **Bitget 트랙 미러** | Bitget 세션만 | BG 작업 시 — KR/US와 **혼동 금지** |
 
 **`NEXT_STEP.md` vs `NEXT_ACTION.md`**: 실행 SSOT는 **`NEXT_ACTION.md`만**. `NEXT_STEP`은 레거시·참고.
@@ -38,11 +39,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-11-J` |
-| **마지막 갱신** | 2026-08-11 (BULL-RECENCY-01 **2단계 코드** · VPS rerun 대기) |
+| **앵커 ID** | `SYNC-2026-08-12-A` |
+| **마지막 갱신** | 2026-08-12 (BULL-RECENCY-01 **2단계 VPS rerun** · overall PASS) |
 | **활성 트랙** | KR/US 주식 — **POST-RP-1 Alpha Proof** |
-| **진행 중 sub-phase** | **BULL-RECENCY-01** — VPS 15구간 re-sim rerun (로컬 brain 비어 있음) |
-| **직전 완료** | CLUSTER_1 bounds patch 모듈 · v2.3.4 schema · `run_bull_recency_01_rp1.py` |
+| **진행 중 sub-phase** | **BULL-RECENCY-01** — DoD 2 baseline 대조 · **Claude 최종 OK** 대기 |
+| **직전 완료** | VPS rerun `rp1_bull_recency_01_20260812.json` v2.3.4 · overall **PASS** |
 | **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY **1단계** · F-GATE/F-RETIRE |
 | **구현 완료·배포 대기** | BEAR-UNDERDOG-01 · L-OBS-02 · F-GATE/F-RETIRE (OPS-01) |
 | **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` §BULL-RECENCY-01 + **Claude 1단계 충족 판정** |
@@ -51,7 +52,7 @@
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[Alpha] BULL-RECENCY-01 — CLUSTER_1 타이트닝 → 15구간 metrics-only → DoD 1~4
+[Alpha] BULL-RECENCY-01 — rerun PASS · DoD 2 baseline diff → Claude OK
 [로드맵] docs/work_phases/15_POST_RP1_단계별로드맵.md
 [Ops 병렬] OPS-01 VPS 배포 · deploy_watch · IV_OBS
 [후순위] ASG 4주 · RP-2 lookahead
@@ -85,14 +86,25 @@
 ```text
 역할: Cursor Lead Engineer.
 
+자동 적용: .cursorrules + .cursor/rules/ (세션 SSOT·Handoff·트랙)
+
 먼저 읽기:
-1) docs/work_phases/00_SESSION_SYNC.md
+1) docs/work_phases/00_SESSION_SYNC.md §3
 2) docs/work_phases/NEXT_ACTION.md
-3) docs/work_phases/CLAUDE_TO_CURSOR.md (해당 sub-phase Handoff)
+3) docs/work_phases/CLAUDE_TO_CURSOR.md (Handoff) 또는 CURSOR_TO_CLAUDE (OUTBOX)
 
-한 세션 = sub-phase 하나. 세션 종료 전: 05_진행로그 + 00_SESSION_SYNC §3 + NEXT_ACTION 갱신.
+부팅 문구 전문: docs/work_phases/17_Cursor_세션_부팅_가이드.md §3
 
-[여기에 sub-phase ID, 예: "L-OBS-01" 또는 "조사만 CAT-E-BARS-01"]
+한 세션 = sub-phase 하나. 세션 종료 전: 05 + §3 + NEXT_ACTION + CURSOR_TO_CLAUDE.
+
+[sub-phase ID · 모드: 구현/조사/Ops/상태점검]
+```
+
+### Bitget Cursor (Track B)
+
+```text
+Track B — bitget/ only. bitget/docs/work_phases/ SSOT.
+17_Cursor_세션_부팅_가이드.md §3-B
 ```
 
 ### 텔레그램 → Cursor / Claude (deploy_watch · IV_OBS)

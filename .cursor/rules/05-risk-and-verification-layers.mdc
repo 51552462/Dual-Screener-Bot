@@ -1,0 +1,42 @@
+---
+description: MDD·KILL_SWITCH·DEFCON 방어 · IV L0~L3 자기채점 금지 · RP-1 과신 금지
+alwaysApply: true
+---
+
+# Risk Defense & Verification Layers
+
+## 🔴 Critical 코드 (극보수적 diff)
+
+수정 전 Handoff에 **디렉터 Critical 승인** 문구 확인:
+
+- `performance_budget_governor.py` — MDD tier · LOCKDOWN · quota
+- `meta_governor*.py` — DEFCON · Kelly throttle
+- `regime_kelly_failsafe.py` · 링펜싱·자본 격리
+- `ENABLE_REAL_EXECUTION` · `KILL_SWITCH` · `MAX_LEVERAGE`
+- `forward/gates.py` · execution_safety 13-gate (Bitget 포함)
+
+**우회·삭제·통합 금지** rationale이 00 SSOT에 있으면 존중.
+
+## IV 판정 3층 (과신 금지)
+
+SSOT: `docs/independent_verification/01_자기채점_위험_헌법.md`
+
+| 층 | 예 | LIVE 승격 근거? |
+|----|-----|----------------|
+| **L0** | RP-1 · time_machine · mutant OOS | ❌ 금지 |
+| **L1** | deploy_watch · staleness · lifecycle | △ 보조만 |
+| **L2** | forward paper 56일+ · G2 | ✅ 주 근거 |
+| **L3** | WF block · DSR (미연동) | ⚠️ 로드맵 |
+
+### 금지 표현
+
+- RP-1 Pass → "CAGR 40~70% 달성" **단정 금지**
+- 백테스트 Sharpe/CAGR만으로 registry LIVE 권고 금지
+- mutant OOS = "완전 OOS" 표현 금지
+- shadow job = "이미 검증됨" 금지 (측정 ≠ 판정)
+- Bitget R3 paper를 Track A와 직접 비교 금지
+
+## Claude OK vs 진짜 Done
+
+- **Claude OK** = Handoff 스펙 일치 (1단계)
+- **Done** = `06_검증체크리스트` 2~4주 효과 검증 (3단계) — 별도
