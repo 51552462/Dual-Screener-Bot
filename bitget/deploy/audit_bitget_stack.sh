@@ -95,6 +95,16 @@ else
   else
     fail "director CRON_TZ=Asia/Seoul missing"
   fi
+  if grep -q 'factory.sh --deploy-watch' "$CRON_DIGEST"; then
+    fail "deploy-watch in director digest — equity-only; reinstall: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_director_digest_cron.sh"
+  else
+    pass "no deploy-watch in director digest (equity-only job)"
+  fi
+  if grep -q 'factory.sh --iv-observation' "$CRON_DIGEST"; then
+    fail "iv-observation in director digest — equity-only; reinstall director digest cron"
+  else
+    pass "no iv-observation in director digest (equity-only job)"
+  fi
 fi
 
 if crontab -l -u ubuntu 2>/dev/null | grep -q 'bitget\.sh'; then

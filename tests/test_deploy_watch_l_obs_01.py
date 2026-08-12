@@ -339,6 +339,17 @@ class TestCursorAction(unittest.TestCase):
 
 
 class TestRunDeployWatch(unittest.TestCase):
+    def test_coin_only_host_skips_entire_run(self):
+        with patch("deploy_watch.is_coin_only_deploy_host", return_value=True):
+            report = run_deploy_watch(
+                send_telegram=True,
+                persist=False,
+                record_ops=False,
+            )
+        self.assertEqual(report.get("overall"), STATUS_SKIP)
+        self.assertEqual(report.get("skipped_reason"), "coin_only_host")
+        self.assertFalse(report.get("telegram_sent"))
+
     def test_dry_run_no_telegram(self):
         path = _mk_market_db()
         try:

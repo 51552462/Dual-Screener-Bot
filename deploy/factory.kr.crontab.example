@@ -54,9 +54,11 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # --- Dual North Star digest (stock + Bitget goal progress → REPORT_BOT) ---
 # Dual North Star digest — daily (REPORT_BOT)
 30 19 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest daily
-# Deploy watch — WARN/BREAK telegram only (L-OBS-01)
+# Deploy watch — WARN/BREAK telegram (L-OBS; set DEPLOY_WATCH_PHASE=post_bear_underdog_01 after BEAR-UNDERDOG deploy)
 35 19 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --deploy-watch
 # Dual North Star digest — weekly (Sat KST)
 0 11 * * 6  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest weekly
+# IV V-1 observation — weekly Sun 20:10 KST
+10 20 * * 0  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --iv-observation --force-telegram
 # Dual North Star digest — monthly (1st 00:05 KST)
 5 0 1 * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=Asia/Seoul bash ./factory.sh --north-star-digest monthly

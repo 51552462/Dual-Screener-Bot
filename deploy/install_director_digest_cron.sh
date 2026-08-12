@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Director digest cron SSOT → /etc/cron.d/dual-screener-director-digest
-#   - North Star daily/weekly/monthly + deploy-watch + IV observation
-#   - 코인 전용 서버(Bot-2): factory-kr 전체 없이 디렉터 리포트만 설치
+#   - North Star daily/weekly/monthly only (REPORT_BOT)
+#   - 코인 전용 서버(Bot-2): factory-kr 없이 north-star만 (deploy-watch/iv-obs = equity factory-kr)
 #   sudo INSTALL_ROOT=/path/to/repo bash deploy/install_director_digest_cron.sh
 # =============================================================================
 set -eu -o pipefail
@@ -66,7 +66,7 @@ chmod +x "${INSTALL_ROOT}/factory.sh" 2>/dev/null || true
 
 echo "✓ installed ${DEST} (CRON_TZ=Asia/Seoul)"
 echo "  INSTALL_ROOT=${INSTALL_ROOT}"
-echo "  daily north-star: 19:30 KST · deploy-watch: 19:35 KST"
+echo "  daily north-star: 19:30 KST (deploy-watch/iv-obs = stock factory-kr only)"
 echo "  Verify: python deploy/generate_factory_crontab.py --check"
 
 if command -v systemctl >/dev/null 2>&1; then

@@ -41,6 +41,7 @@ _STATUS_RANK = {
 DEFAULT_FUNNEL_BASELINE_TS = "2026-07-02"
 DEFAULT_PHASE = "post_f_gate_01"
 DEFAULT_SERVICE = "dante-factory.service"
+BITGET_FACTORY_SERVICE = "dante-bitget-factory.service"
 
 BEAR_UNDERDOG_SHADOW_SUFFIX = "_BEAR_UNDERDOG_SHADOW"
 PHASE_POST_BEAR_UNDERDOG_01 = "post_bear_underdog_01"
@@ -89,16 +90,84 @@ def _connect_market_db(db_path: Optional[str] = None) -> Optional[sqlite3.Connec
         return None
 
 
+def _systemd_unit_load_state(unit: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["systemctl", "show", "-p", "LoadState", "--value", unit],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return (proc.stdout or "").strip().lower()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _systemd_active_or_enabled(unit: str) -> bool:
+    for cmd in (["is-active", unit], ["is-enabled", unit]):
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            state = (proc.stdout or "").strip().lower()
+            if state in ("active", "enabled", "static"):
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return False
+
+
+def is_coin_only_deploy_host() -> bool:
+    """
+    Bot-2 코인 전용 서버 — bitget factory 는 있고 equity dante-factory 는 없음.
+
+    DEPLOY_WATCH_COIN_ONLY=1|0 로 강제 오버라이드 가능.
+    DEPLOY_WATCH_EQUITY_HOST=1 이면 항상 주식 호스트로 간주.
+    """
+    env_coin = os.environ.get("DEPLOY_WATCH_COIN_ONLY")
+    if env_coin is not None:
+        return str(env_coin).strip().lower() in ("1", "true", "yes", "on")
+    if os.environ.get("DEPLOY_WATCH_EQUITY_HOST", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return False
+    if platform.system().lower() != "linux":
+        return False
+    bitget_on = _systemd_active_or_enabled(BITGET_FACTORY_SERVICE)
+    equity_on = _systemd_active_or_enabled(DEFAULT_SERVICE)
+    return bitget_on and not equity_on
+
+
 def check_factory_health(
     *,
     service_name: str = DEFAULT_SERVICE,
 ) -> Dict[str, Any]:
     """systemd active — Linux VPS only."""
+    if is_coin_only_deploy_host():
+        return {
+            "id": "factory_health",
+            "status": STATUS_SKIP,
+            "detail": "coin_only_host",
+        }
     if platform.system().lower() != "linux":
         return {
             "id": "factory_health",
             "status": STATUS_SKIP,
             "detail": "not_linux",
+        }
+    if _systemd_unit_load_state(service_name) == "not-found":
+        return {
+            "id": "factory_health",
+            "status": STATUS_SKIP,
+            "detail": f"{service_name}_not_installed",
         }
     try:
         proc = subprocess.run(
@@ -785,6 +854,31 @@ def run_deploy_watch(
         or os.environ.get("DEPLOY_WATCH_FUNNEL_BASELINE_TS")
         or DEFAULT_FUNNEL_BASELINE_TS
     ).strip()
+
+    if is_coin_only_deploy_host():
+        report: Dict[str, Any] = {
+            "schema": "deploy_watch.v2",
+            "ts_kst": _kst_now_iso(),
+            "phase": phase_use,
+            "overall": STATUS_SKIP,
+            "checks": [
+                {
+                    "id": "factory_health",
+                    "status": STATUS_SKIP,
+                    "detail": "coin_only_host",
+                }
+            ],
+            "cursor_action": "NONE",
+            "skipped_reason": "coin_only_host",
+            "cursor_prompt": (
+                "Track — DEPLOY_WATCH skipped on coin-only host (Bot-2). "
+                "Equity deploy_watch runs on stock server factory-kr cron only."
+            ),
+        }
+        if persist:
+            report["latest_path"] = persist_deploy_watch_report(report)
+        report["telegram_sent"] = False
+        return report
 
     cfg = _load_watch_sys_config()
     checks = [

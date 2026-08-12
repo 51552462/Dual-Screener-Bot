@@ -117,6 +117,21 @@ class TestStaggeredScanSchedule(unittest.TestCase):
             msg=proc.stderr or proc.stdout or "cron template drift",
         )
 
+    def test_director_digest_excludes_equity_ops(self):
+        from pathlib import Path
+
+        from deploy.generate_factory_crontab import render_director_digest_crontab
+
+        text = render_director_digest_crontab("/home/ubuntu/dante_bots/Dual-Screener-Bot")
+        self.assertIn("--north-star-digest daily", text)
+        self.assertNotIn("--deploy-watch", text)
+        self.assertNotIn("--iv-observation", text)
+
+        kr_path = Path(__file__).resolve().parents[1] / "deploy" / "factory.kr.crontab.example"
+        kr_text = kr_path.read_text(encoding="utf-8")
+        self.assertIn("--deploy-watch", kr_text)
+        self.assertIn("--iv-observation", kr_text)
+
 
 if __name__ == "__main__":
     unittest.main()

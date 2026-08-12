@@ -88,12 +88,32 @@ _KR_EXTRA_JOBS: Tuple[Tuple[int, int, str, str, str], ...] = (
 )
 
 # North Star digest — not scan slots; keep in cron SSOT generator (install_factory_cron overwrites template).
-_KR_NORTH_STAR_JOBS: Tuple[Tuple[str, str, str], ...] = (
+_NORTH_STAR_DIGEST_JOBS: Tuple[Tuple[str, str, str], ...] = (
     ("30 19 * * *", "--north-star-digest daily", "Dual North Star digest — daily (REPORT_BOT)"),
-    ("35 19 * * *", "--deploy-watch", "Deploy watch — WARN/BREAK telegram (L-OBS; set DEPLOY_WATCH_PHASE=post_bear_underdog_01 after BEAR-UNDERDOG deploy)"),
     ("0 11 * * 6", "--north-star-digest weekly", "Dual North Star digest — weekly (Sat KST)"),
-    ("10 20 * * 0", "--iv-observation --force-telegram", "IV V-1 observation — weekly Sun 20:10 KST"),
     ("5 0 1 * *", "--north-star-digest monthly", "Dual North Star digest — monthly (1st 00:05 KST)"),
+)
+
+# 주식 서버(factory-kr) 전용 — 코인 전용 director-digest 에는 넣지 않음.
+_STOCK_OPS_JOBS: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "35 19 * * *",
+        "--deploy-watch",
+        "Deploy watch — WARN/BREAK telegram (L-OBS; set DEPLOY_WATCH_PHASE=post_bear_underdog_01 after BEAR-UNDERDOG deploy)",
+    ),
+    (
+        "10 20 * * 0",
+        "--iv-observation --force-telegram",
+        "IV V-1 observation — weekly Sun 20:10 KST",
+    ),
+)
+
+_KR_NORTH_STAR_JOBS: Tuple[Tuple[str, str, str], ...] = (
+    _NORTH_STAR_DIGEST_JOBS[:1]
+    + _STOCK_OPS_JOBS[:1]
+    + _NORTH_STAR_DIGEST_JOBS[1:2]
+    + _STOCK_OPS_JOBS[1:2]
+    + _NORTH_STAR_DIGEST_JOBS[2:]
 )
 
 # US: KST polling window — covers ET Mon–Fri 10:00–~15:55 (DST via factory_slot_dispatcher ET clock)
@@ -231,9 +251,10 @@ def render_director_digest_crontab(install_root: str) -> str:
         f"CRON_TZ={tz}",
         "PATH=/usr/local/bin:/usr/bin:/bin",
         "",
-        "# --- Dual North Star + deploy watch (REPORT_BOT; factory.sh, no factory lock) ---",
+        "# --- Dual North Star digest only (REPORT_BOT; factory.sh, no factory lock) ---",
+        "# deploy-watch / iv-observation = equity factory-kr only (not on coin-only Bot-2).",
     ]
-    for schedule, flag, comment in _KR_NORTH_STAR_JOBS:
+    for schedule, flag, comment in _NORTH_STAR_DIGEST_JOBS:
         lines.append(f"# {comment}")
         lines.append(
             _cron_line_schedule(schedule, _scan_command(flag, tz=tz), install_root)
