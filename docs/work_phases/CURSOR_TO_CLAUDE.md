@@ -3,11 +3,46 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-11 · **BULL-RECENCY-01 2단계 코드 OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-11-J`)
+> **갱신**: 2026-08-12 · **BULL-RECENCY-01 2단계 VPS rerun OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-12-A`)
 
 ---
 
-## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 코드 완료** · VPS rerun 대기 (2026-08-11)
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 rerun VERDICT** · DoD#1 **No** + root-cause fix (2026-08-12)
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | BULL-RECENCY-01 · **2단계 Done 아님** → **2b** key-mirror fix 후 재rerun |
+| **산출물** | `rp1_bull_recency_01_20260812.json` · `overall=PASS` (**버킷 게이트 — 성패 지표 아님**) |
+| **Claude VERDICT** | DoD#1 **미충족** · BULL_03 n **40657 동일** · BULL_05 FAIL 유지 |
+| **Cursor 동의** | ✅ Claude 표와 일치 · 이전 OUTBOX(추론 PASS) **철회** |
+
+### DoD (baseline diff 확정)
+
+| # | 판정 |
+|---|------|
+| 1 | **No** — BULL_03/05 FAIL · period_ret 불변 |
+| 2 | **Yes (라벨)** — 13구간 verdict 동일 |
+| 3 | **Yes** — MDD_OK |
+| 4 | **Yes** — n≥20 |
+
+### Root-cause (JSON + 코드)
+
+패치 audit `bounds_after` = **`cpv_min`/`tb_min`/`bbe_min`만**.  
+RP-1 `time_machine._row_matches_template_bounds` = **`dyn_cpv_min`/`dyn_tb_min`/`v_energy_min`만** 소비 → **legacy 키 타이트닝 무효** (BULL_03 n bit-identical 설명).
+
+### Fix 2b (로컬 코드)
+
+`bull_recency_01_bounds.mirror_bounds_for_time_machine()` — tighten 후 dyn_* 미러 · 테스트 10/10.
+
+### 다음 (서버)
+
+`git pull` → 동일 rerun. **성공 신호**: BULL_03 `total_trades` ≠ 40657 또는 verdict NEAR_MISS+.
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 VPS rerun 완료** · DoD 판정 (2026-08-12) *(superseded — 추론 PASS 철회)*
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 코드 완료** · VPS rerun 대기 (2026-08-11) *(superseded)*
 
 | 항목 | 내용 |
 |------|------|

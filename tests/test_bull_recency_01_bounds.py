@@ -8,6 +8,7 @@ import pytest
 from bull_recency_01_bounds import (
     apply_bull_recency_01_brain_patch,
     is_cluster_1_explosive_template,
+    mirror_bounds_for_time_machine,
     tighten_axis_range,
     tighten_template_bounds,
 )
@@ -86,3 +87,36 @@ class TestBrainPatch:
         brain = {"LIVE_CLUSTER_TEMPLATES": {"CLUSTER_2_x": {"dyn_cpv_min": 0.1, "dyn_cpv_max": 0.5}}}
         _, audit = apply_bull_recency_01_brain_patch(brain)
         assert audit["templates_patched"] == 0
+
+    def test_mirror_legacy_keys_for_time_machine(self):
+        bounds = {
+            "cpv_min": 0.1,
+            "cpv_max": 0.9,
+            "tb_min": 2.0,
+            "tb_max": 20.0,
+            "bbe_min": 5.0,
+            "bbe_max": 30.0,
+        }
+        out = mirror_bounds_for_time_machine(bounds)
+        assert out["dyn_cpv_min"] == 0.1
+        assert out["dyn_cpv_max"] == 0.9
+        assert out["dyn_tb_min"] == 2.0
+        assert out["v_energy_min"] == 5.0
+
+    def test_patch_writes_dyn_keys_for_legacy_templates(self):
+        brain = {
+            "LIVE_CLUSTER_TEMPLATES": {
+                "CLUSTER_1_강응축_폭발형_260628": {
+                    "cpv_min": 0.0,
+                    "cpv_max": 1.0,
+                    "tb_min": 1.0,
+                    "tb_max": 10.0,
+                    "bbe_min": 3.0,
+                    "bbe_max": 25.0,
+                },
+            }
+        }
+        patched, audit = apply_bull_recency_01_brain_patch(brain, shrink=0.20)
+        ba = patched["LIVE_CLUSTER_TEMPLATES"]["CLUSTER_1_강응축_폭발형_260628"]
+        assert "dyn_cpv_min" in ba and "v_energy_min" in ba
+        assert audit["patched"][0]["keys_mirrored_for_time_machine"] is True

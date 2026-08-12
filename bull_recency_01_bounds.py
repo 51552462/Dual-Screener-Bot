@@ -18,6 +18,13 @@ _BOUNDS_AXES: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...], str], ...] = (
 
 _CLUSTER_1_EXPLOSIVE_RE = re.compile(r"CLUSTER_1.*폭발", re.IGNORECASE)
 
+# data_miner (cpv/tb/bbe) vs time_machine RP-1 (dyn_cpv/dyn_tb/v_energy) — both must stay in sync.
+_TM_BOUNDS_MIRROR: Tuple[Tuple[Tuple[str, str], Tuple[str, str]], ...] = (
+    (("cpv_min", "cpv_max"), ("dyn_cpv_min", "dyn_cpv_max")),
+    (("tb_min", "tb_max"), ("dyn_tb_min", "dyn_tb_max")),
+    (("bbe_min", "bbe_max"), ("v_energy_min", "v_energy_max")),
+)
+
 _DEFAULT_SHRINK = 0.20
 _DEFAULT_TB_FLOOR_LIFT = 0.15
 _DEFAULT_BBE_FLOOR_LIFT = 0.15
@@ -43,6 +50,23 @@ def _env_float(name: str, default: float, *, lo: float, hi: float) -> float:
 
 def is_cluster_1_explosive_template(name: str) -> bool:
     return bool(_CLUSTER_1_EXPLOSIVE_RE.search(str(name or "")))
+
+
+def mirror_bounds_for_time_machine(bounds: Mapping[str, Any]) -> Dict[str, Any]:
+    """RP-1 `_row_matches_template_bounds` reads dyn_* / v_energy_* only — mirror legacy keys."""
+    out = dict(bounds)
+    for (legacy_lo, legacy_hi), (dyn_lo, dyn_hi) in _TM_BOUNDS_MIRROR:
+        if legacy_lo in out or legacy_hi in out:
+            if legacy_lo in out:
+                out[dyn_lo] = out[legacy_lo]
+            if legacy_hi in out:
+                out[dyn_hi] = out[legacy_hi]
+        elif dyn_lo in out or dyn_hi in out:
+            if dyn_lo in out:
+                out[legacy_lo] = out[dyn_lo]
+            if dyn_hi in out:
+                out[legacy_hi] = out[dyn_hi]
+    return out
 
 
 def _axis_keys(
@@ -164,14 +188,18 @@ def apply_bull_recency_01_brain_patch(
             tb_floor_lift=tb_lift,
             bbe_floor_lift=bbe_lift,
         )
-        ml[name] = {k: v for k, v in tightened.items() if not str(k).startswith("_")}
+        mirrored = mirror_bounds_for_time_machine(
+            {k: v for k, v in tightened.items() if not str(k).startswith("_")}
+        )
+        ml[name] = mirrored
         patched.append(
             {
                 "template": name,
                 "shrink": shrink_v,
                 "tb_floor_lift": tb_lift,
                 "bbe_floor_lift": bbe_lift,
-                "bounds_after": ml[name],
+                "bounds_after": mirrored,
+                "keys_mirrored_for_time_machine": True,
             }
         )
 

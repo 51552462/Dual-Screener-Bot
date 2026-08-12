@@ -3,36 +3,30 @@
 | 필드 | 값 |
 |------|-----|
 | **sub-phase** | **BULL-RECENCY-01** |
-| **status** | 2단계 **코드 완료** · VPS **15구간 re-sim rerun** 대기 |
+| **status** | DoD#1 **미충족** · **2b** key-mirror fix → 서버 재rerun |
 | **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §BULL-RECENCY-01 + **1단계 충족 판정** |
-| **앵커** | `SYNC-2026-08-11-J` |
+| **앵커** | `SYNC-2026-08-12-A` |
 
 ---
 
-## Cursor — 지금 할 일 (VPS rerun)
+## Cursor — 지금 할 일 (2b)
 
-### VPS (matrix + brain 서버)
+1. fix 커밋·푸시 (`mirror_bounds_for_time_machine`)
+2. 서버 `git pull` + 재rerun
+3. BULL_03 `n` ≠ 40657 또는 NEAR_MISS+ 확인
 
-```bash
-export BULL_RECENCY_01_PATCH=1
-export RP1_SKIP_STAGE2=1
-unset RP1_METRICS_ONLY
-python scripts/run_bull_recency_01_rp1.py \
-  --baseline reports/regime_panel/rp1_20260811_v233.json
-```
+**원인**: 패치 `cpv_min` only ↔ RP-1 `dyn_cpv_min` only — 키 불일치.
 
-- OHLCV parquet 캐시 있으면 FDR 없이 re-sim (~1h)
-- 산출: `reports/regime_panel/rp1_bull_recency_01_{date}.json` (v2.3.4) + `_dod.json`
-- **금지**: `RP1_METRICS_ONLY` (bounds 변경 시 trade snapshot 재사용 불가)
+---
 
-### DoD (rerun 후)
+## 디렉터 — Claude VERDICT 반영 (2026-08-12)
 
-| # | 기준 |
-|---|------|
-| 1 | BULL_03/05 ≥ NEAR_MISS (`period_return_pct`) |
-| 2 | 나머지 13구간 verdict 불변 |
-| 3 | tier MDD ≤10% · MDD_OK |
-| 4 | n≥20 전 구간 |
+### 완료 (2단계 — 2026-08-12)
+
+| 항목 | 값 |
+|------|-----|
+| rerun JSON | `rp1_bull_recency_01_20260812.json` v2.3.4 · overall **PASS** |
+| _dod.json | 미생성 (baseline 부재) |
 
 ### 완료 (2단계 코드 — 2026-08-11)
 
