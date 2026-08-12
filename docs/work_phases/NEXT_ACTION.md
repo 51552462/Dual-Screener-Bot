@@ -3,19 +3,19 @@
 | 필드 | 값 |
 |------|-----|
 | **sub-phase** | **BULL-RECENCY-01** |
-| **status** | DoD#1 **미충족** · **2b** key-mirror fix → 서버 재rerun |
-| **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §BULL-RECENCY-01 + **1단계 충족 판정** |
-| **앵커** | `SYNC-2026-08-12-A` |
+| **status** | DoD#1 **미충족** · **2b rerun 완료** → **템플릿 재식별** 선행 |
+| **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §BULL-RECENCY-01 |
+| **앵커** | `SYNC-2026-08-13-A` |
 
 ---
 
-## Cursor — 지금 할 일 (2b)
+## Cursor — 지금 할 일 (2b 이후)
 
-1. fix 커밋·푸시 (`mirror_bounds_for_time_machine`)
-2. 서버 `git pull` + 재rerun
-3. BULL_03 `n` ≠ 40657 또는 NEAR_MISS+ 확인
+1. **shrink 재rerun 금지** — Claude·Cursor 합의
+2. VPS `scripts/bull_recency_01_template_audit.py --snapshot matrix_*.pkl --apply-patch`
+3. BULL_03/05에서 **폭발형 top1 share** vs **first-match order** 대조 → S1 타깃 재확정
 
-**원인**: 패치 `cpv_min` only ↔ RP-1 `dyn_cpv_min` only — 키 불일치.
+**2b 결과**: key-mirror ✅ · BULL_03 n=40657 baseline 동일 · DoD#1 **No**
 
 ---
 

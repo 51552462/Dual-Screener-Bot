@@ -3,11 +3,56 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-12 · **BULL-RECENCY-01 2단계 VPS rerun OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-12-A`)
+> **갱신**: 2026-08-13 · **BULL-RECENCY-01 2b VERDICT OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-13-A`)
 
 ---
 
-## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 rerun VERDICT** · DoD#1 **No** + root-cause fix (2026-08-12)
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2b rerun VERDICT** · DoD#1 **No** · 템플릿 재식별 선행 (2026-08-13)
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | BULL-RECENCY-01 · **2단계 Done 아님** |
+| **2b 적용** | ✅ `keys_mirrored_for_time_machine: true` · `dyn_cpv_min`/`dyn_tb_min`/`v_energy_min` 6키 확인 |
+| **Claude VERDICT** | DoD#1 **No** · DoD#2~4 **Yes** · BULL_03 n **40657 불변** · BULL_05 **+1** |
+| **Cursor 동의** | ✅ · shrink 재rerun **무의미** 합의 |
+
+### DoD (baseline v2.3.3 diff)
+
+| # | 판정 | 실측 |
+|---|------|------|
+| 1 | **No** | BULL_03/05 FAIL(B) · period_ret 불변 |
+| 2 | **Yes** | 13/13 verdict 동일 · n 거의 동일 (BULL_05 +1) |
+| 3 | **Yes** | MDD_OK |
+| 4 | **Yes** | n≫20 |
+
+### 엔지니어 해석 (모순 정리)
+
+1. **2b key-mirror는 작동** — audit `bounds_after`에 dyn 6키 존재 (예: `260628` `v_energy_min=99.05`).
+2. **n·period_ret baseline 재일치** → 타이트닝이 **매칭 경로에 실효 없음**. `260628`의 `v_energy∈[99,101]`이면 사실상 미매칭인데 n이 그대로라면, **해당 템플릿이 바인딩 제약이 아니거나** first-match가 **다른 템플릿**일 가능성.
+3. **1단계 Jaccard 1.0 ≠ 100% CLUSTER_1 거래** — `bull_recency_01_trade_diag`는 fail 구간 **top5 템플릿 이름 집합** 교집합 비율. top1 라벨 지배 ≠ 유일 바인딩 축.
+4. **RP-1 매칭**: `time_machine._row_matches_template_bounds` = **dict 순서 first-match** · `dyn_*`만 소비 (`cpv_min` 무시).
+
+### 다음 (shrink 금지 · 재식별 우선)
+
+```bash
+python scripts/bull_recency_01_template_audit.py \\
+  --snapshot reports/regime_panel/matrix_cache/matrix_ab52b174195da604adc8.pkl \\
+  --apply-patch
+```
+
+- BULL_03/05 **explosive_cluster1_share_pct** · **iteration order** · **shadow before explosive** 확인
+- 타깃 확정 후 S1 수정 (다른 템플릿 / alpha 슬롯 / first-match 정책) — **15구간 full rerun은 타깃 확정 후만**
+
+### 도구
+
+| 스크립트 | 역할 |
+|----------|------|
+| `scripts/bull_recency_01_template_audit.py` | brain 순서 + dyn box + matrix template share |
+| `scripts/bull_recency_01_trade_diag.py` | 기존 trade-level breakdown |
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2단계 rerun VERDICT** · DoD#1 **No** + root-cause fix (2026-08-12) *(superseded by 2b VERDICT above)*
 
 | 항목 | 내용 |
 |------|------|

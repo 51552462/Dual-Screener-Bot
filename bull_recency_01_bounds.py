@@ -182,6 +182,9 @@ def apply_bull_recency_01_brain_patch(
             continue
         if not is_cluster_1_explosive_template(name):
             continue
+        bounds_before = mirror_bounds_for_time_machine(
+            {k: v for k, v in bounds.items() if not str(k).startswith("_")}
+        )
         tightened = tighten_template_bounds(
             bounds,
             shrink=shrink_v,
@@ -198,6 +201,7 @@ def apply_bull_recency_01_brain_patch(
                 "shrink": shrink_v,
                 "tb_floor_lift": tb_lift,
                 "bbe_floor_lift": bbe_lift,
+                "bounds_before": bounds_before,
                 "bounds_after": mirrored,
                 "keys_mirrored_for_time_machine": True,
             }

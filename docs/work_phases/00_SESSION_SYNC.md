@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-12 · **앵커 ID**: `SYNC-2026-08-12-A`
+> **갱신**: 2026-08-13 · **앵커 ID**: `SYNC-2026-08-13-A`
 
 ---
 
@@ -39,11 +39,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-12-A` |
-| **마지막 갱신** | 2026-08-12 (BULL-RECENCY-01 **2단계 VPS rerun** · overall PASS) |
+| **앵커 ID** | `SYNC-2026-08-13-A` |
+| **마지막 갱신** | 2026-08-13 (BULL-RECENCY-01 **2b rerun** · DoD#1 **No**) |
 | **활성 트랙** | KR/US 주식 — **POST-RP-1 Alpha Proof** |
-| **진행 중 sub-phase** | **BULL-RECENCY-01** — DoD 2 baseline 대조 · **Claude 최종 OK** 대기 |
-| **직전 완료** | VPS rerun `rp1_bull_recency_01_20260812.json` v2.3.4 · overall **PASS** |
+| **진행 중 sub-phase** | **BULL-RECENCY-01** — **템플릿 재식별** (shrink 재rerun 보류) |
+| **직전 완료** | 2b `rp1_bull_recency_01_20260812.json` · key-mirror ✅ · DoD#1 **미충족** |
 | **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY **1단계** · F-GATE/F-RETIRE |
 | **구현 완료·배포 대기** | BEAR-UNDERDOG-01 · L-OBS-02 · F-GATE/F-RETIRE (OPS-01) |
 | **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` §BULL-RECENCY-01 + **Claude 1단계 충족 판정** |
@@ -52,7 +52,7 @@
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[Alpha] BULL-RECENCY-01 — rerun PASS · DoD 2 baseline diff → Claude OK
+[Alpha] BULL-RECENCY-01 — 2b DoD#1 No · template_audit → S1 타깃 재확정
 [로드맵] docs/work_phases/15_POST_RP1_단계별로드맵.md
 [Ops 병렬] OPS-01 VPS 배포 · deploy_watch · IV_OBS
 [후순위] ASG 4주 · RP-2 lookahead
