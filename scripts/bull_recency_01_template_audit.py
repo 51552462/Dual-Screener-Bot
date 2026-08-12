@@ -10,15 +10,17 @@ Run on VPS where factory brain + matrix snapshot exist.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import pickle
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 BULL_WINDOWS = {
     "BULL_03_최근상승": ("2024-10-01", "2025-03-31"),
