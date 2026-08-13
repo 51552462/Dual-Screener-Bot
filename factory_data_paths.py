@@ -17,6 +17,30 @@ import os
 import sqlite3
 
 
+def _bootstrap_install_env() -> None:
+    """INSTALL_ROOT/.env 를 import 시점에 로드.
+
+    factory.sh·systemd 는 .env 를 이미 주입하지만, 수동 ``python3 scripts/...`` 는
+    레거시 ``~/dante_bots/.../market_data.sqlite`` 로 빠져 31일 lag 오진이 난다.
+    ``DB_STORAGE_PATH`` 가 이미 프로세스 env 에 있으면 덮어쓰지 않는다.
+    """
+    if os.environ.get("_FACTORY_ENV_BOOTSTRAPPED"):
+        return
+    try:
+        from dotenv import load_dotenv
+
+        install_root = os.path.dirname(os.path.abspath(__file__))
+        env_path = os.path.join(install_root, ".env")
+        if os.path.isfile(env_path):
+            load_dotenv(env_path, override=False)
+    except Exception:
+        pass
+    os.environ["_FACTORY_ENV_BOOTSTRAPPED"] = "1"
+
+
+_bootstrap_install_env()
+
+
 def _legacy_factory_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "dante_bots", "Dual-Screener-Bot")
 

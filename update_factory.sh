@@ -360,6 +360,74 @@ for db in sorted(paths):
 PY
 }
 
+# INSTALL_ROOT 에 남은 레거시 market_data.sqlite 가 운영 DB(/var/lib/...) 와 이중 SSOT 를 만든다.
+# update_factory.sh 마다 자동 격리 — 수동 mv 없이 챗바퀴 방지.
+_dante_quarantine_legacy_market_db() {
+  local extra_dir legacy_db prod_db stamp quarantine
+  extra_dir=""
+  if [[ -f "$INSTALL_ROOT/.env" ]] && command -v python3 &>/dev/null; then
+    extra_dir="$(INSTALL_ROOT="$INSTALL_ROOT" python3 -c "
+import os
+p = os.path.join(os.environ.get('INSTALL_ROOT', '.'), '.env')
+if not os.path.isfile(p):
+    raise SystemExit
+for line in open(p, encoding='utf-8', errors='ignore'):
+    s = line.strip()
+    if not s or s.startswith('#') or '=' not in s:
+        continue
+    k, _, v = s.partition('=')
+    if k.strip() == 'DB_STORAGE_PATH':
+        v = v.strip().strip('\"').strip(\"'\")
+        print(os.path.abspath(os.path.expanduser(v)))
+        break
+" 2>/dev/null || true)"
+  fi
+  if [[ -z "${extra_dir// }" ]]; then
+    echo "  DB SSOT: no DB_STORAGE_PATH in .env — legacy install_root mode (skip quarantine)"
+    return 0
+  fi
+  local abs_root=""
+  abs_root="$(cd "$INSTALL_ROOT" && pwd)"
+  local abs_extra=""
+  abs_extra="$(cd "$extra_dir" && pwd)"
+  if [[ "$abs_extra" == "$abs_root" ]]; then
+    echo "  DB SSOT: DB_STORAGE_PATH == INSTALL_ROOT (skip quarantine)"
+    return 0
+  fi
+  legacy_db="${INSTALL_ROOT}/market_data.sqlite"
+  prod_db="${abs_extra}/market_data.sqlite"
+  if [[ ! -f "$legacy_db" ]]; then
+    echo "  DB SSOT: no legacy shadow at $legacy_db (ok)"
+    return 0
+  fi
+  if [[ ! -f "$prod_db" ]]; then
+    echo "  WARN: prod db missing at $prod_db — legacy NOT quarantined" >&2
+    return 0
+  fi
+  if [[ "$(readlink -f "$legacy_db" 2>/dev/null || echo "$legacy_db")" == "$(readlink -f "$prod_db" 2>/dev/null || echo "$prod_db")" ]]; then
+    echo "  DB SSOT: legacy path is same inode as prod (ok)"
+    return 0
+  fi
+  stamp="$(date -u +%Y%m%d_%H%M%S_utc)"
+  quarantine="${legacy_db}.LEGACY_QUARANTINED_${stamp}"
+  if mv -- "$legacy_db" "$quarantine" 2>/dev/null; then
+    echo "  DB SSOT: quarantined legacy shadow → $(basename "$quarantine")"
+    chown "$DEPLOY_USER:$DEPLOY_USER" "$quarantine" 2>/dev/null || true
+  else
+    echo "  WARN: failed to quarantine $legacy_db" >&2
+  fi
+}
+
+_dante_post_update_data_health() {
+  echo "  post-update data health (prod DB path + candle freshness)..."
+  if ! sudo -E -u "$DEPLOY_USER" env INSTALL_ROOT="$INSTALL_ROOT" PYTHONPATH="$INSTALL_ROOT" \
+    "$DANTE_PY" "${INSTALL_ROOT}/scripts/post_update_data_health.py"; then
+    echo "  ✗ data health RED — data_refresh·OHLCV feed 점검 (배포는 완료됨)" >&2
+    return 1
+  fi
+  return 0
+}
+
 echo "[1/7] pre-update SQLite 백업 → /var/backups/dante-pre-update/"
 _dante_pre_update_sqlite_backup
 
@@ -420,6 +488,13 @@ print('  import smoke ok')
   exit 1
 fi
 
+echo "[5c/7] DB path SSOT — legacy shadow quarantine + data health smoke"
+_dante_quarantine_legacy_market_db
+_DATA_HEALTH_WARN=0
+if ! _dante_post_update_data_health; then
+  _DATA_HEALTH_WARN=1
+fi
+
 echo "[6/7] 최신 venv 엔진으로 서비스 재기동"
 systemctl daemon-reload
 systemctl restart dante-factory.service dante-dashboard.service dante-async.service
@@ -435,6 +510,14 @@ echo "=== 심장·로그 한눈에 (Ctrl+C 종료) ==="
 echo "sudo journalctl -u dante-factory -u dante-dashboard -u dante-async -u dante-watchdog -f"
 echo ""
 echo "update_factory 완료 — 데이터 100% 보존, 엔진 venv 교체."
+if [[ "${_DATA_HEALTH_WARN:-0}" -eq 1 ]]; then
+  echo ""
+  echo "⚠ 배포 후 데이터 health RED — 운영 DB 캔들 지연. 즉시 확인:"
+  echo "  cd $INSTALL_ROOT && set -a && source .env && set +a && python3 scripts/diag_forward_staleness.py"
+  echo "  TZ=Asia/Seoul bash ./factory.sh --data-refresh"
+fi
+echo ""
+echo "정기 점검: bash deploy/audit_factory_stack.sh"
 
 if [[ -f "${REPO_ROOT}/deploy/ubuntu/post_update_notify.sh" ]]; then
   INSTALL_ROOT="$INSTALL_ROOT" bash "${REPO_ROOT}/deploy/ubuntu/post_update_notify.sh" || echo "  (경고) post_update_notify 실패 — 로그 확인" >&2

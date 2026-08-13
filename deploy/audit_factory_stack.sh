@@ -203,6 +203,31 @@ else
 fi
 echo ""
 
+# --- 6b. DB path SSOT ---
+echo "[6b] DB path SSOT (.env DB_STORAGE_PATH vs legacy shadow)"
+if [[ -f "${INSTALL_ROOT}/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "${INSTALL_ROOT}/.env"; set +a
+fi
+if [[ -x "$PY" ]]; then
+  "$PY" -c "
+import os
+from factory_data_paths import factory_data_dir, install_root
+from market_db_paths import MARKET_DATA_DB_PATH
+legacy = os.path.join(install_root(), 'market_data.sqlite')
+print(f'  data_root={factory_data_dir()}')
+print(f'  prod_db={MARKET_DATA_DB_PATH}')
+if os.path.isfile(legacy) and os.path.normpath(legacy) != os.path.normpath(MARKET_DATA_DB_PATH):
+    print(f'  ✗ legacy shadow EXISTS: {legacy}')
+    print('    → sudo ./update_factory.sh (auto-quarantine) or mv to *.LEGACY_DO_NOT_USE')
+else:
+    print('  ✓ no legacy shadow conflict')
+" 2>/dev/null || warn "DB SSOT check failed"
+else
+  warn "skip DB SSOT (no python)"
+fi
+echo ""
+
 # --- 7. Recent logs ---
 echo "[7] Recent factory logs ($LOG_DIR)"
 for mode in scan_kr scan_us scan_us_supernova scan_us_nulrim scan_us_bowl daily_audit_kr daily_audit_us; do

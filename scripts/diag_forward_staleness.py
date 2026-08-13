@@ -15,6 +15,7 @@ import sqlite3
 
 import pandas as pd
 
+from factory_data_paths import factory_data_dir, install_root
 from market_db_paths import MARKET_DATA_DB_PATH
 from forward_dual_track_queries import query_latest_closed_trade_date
 from fluid_time_anchor import (
@@ -76,7 +77,14 @@ def _diag_open_book(conn, mk: str, anchor: str) -> None:
 
 
 def main() -> None:
+    legacy = os.path.join(install_root(), "market_data.sqlite")
+    print(f"data_root={factory_data_dir()}")
     print(f"MAIN DB: {MARKET_DATA_DB_PATH}  exists={os.path.isfile(MARKET_DATA_DB_PATH)}")
+    if os.path.isfile(legacy) and os.path.normpath(legacy) != os.path.normpath(MARKET_DATA_DB_PATH):
+        print(
+            f"WARN legacy shadow DB still at {legacy} — "
+            "sudo ./update_factory.sh quarantine or mv to *.LEGACY_DO_NOT_USE"
+        )
     if not os.path.isfile(MARKET_DATA_DB_PATH):
         print("  -> 메인 DB가 없습니다. 경로/배포 환경을 확인하세요.")
         return
