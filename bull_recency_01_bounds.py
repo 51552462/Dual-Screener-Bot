@@ -25,9 +25,11 @@ _TM_BOUNDS_MIRROR: Tuple[Tuple[Tuple[str, str], Tuple[str, str]], ...] = (
     (("bbe_min", "bbe_max"), ("v_energy_min", "v_energy_max")),
 )
 
-_DEFAULT_SHRINK = 0.20
+_DEFAULT_SHRINK = 0.45  # iter-2 frozen — BULL_03 NEAR_MISS; do not lower without Handoff
 _DEFAULT_TB_FLOOR_LIFT = 0.15
 _DEFAULT_BBE_FLOOR_LIFT = 0.15
+_KR_BINDING_TEMPLATE_MARK = "260628"
+_DEFAULT_KR_DYN_RS_MIN = 5.0
 
 
 def resolve_bull_recency_01_patch() -> bool:
@@ -50,6 +52,61 @@ def _env_float(name: str, default: float, *, lo: float, hi: float) -> float:
 
 def is_cluster_1_explosive_template(name: str) -> bool:
     return bool(_CLUSTER_1_EXPLOSIVE_RE.search(str(name or "")))
+
+
+def resolve_bull_recency_01_kr_lever() -> bool:
+    if not resolve_bull_recency_01_patch():
+        return False
+    return os.environ.get("BULL_RECENCY_01_KR_LEVER", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def is_kr_ticker(code: str) -> bool:
+    base = str(code or "").strip().upper().split(".")[0]
+    return bool(base) and base.isdigit()
+
+
+def apply_kr_rs_lever_to_brain(
+    brain: Mapping[str, Any],
+    *,
+    template_mark: str = _KR_BINDING_TEMPLATE_MARK,
+    kr_dyn_rs_min: Optional[float] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+  BULL_05 KR-only gate on binding CLUSTER_1 template (260628).
+  US tickers unaffected; CLUSTER_1 shrink bounds untouched.
+  """
+    rs_min_v = kr_dyn_rs_min if kr_dyn_rs_min is not None else _env_float(
+        "BULL_RECENCY_01_KR_RS_MIN", _DEFAULT_KR_DYN_RS_MIN, lo=0.0, hi=50.0
+    )
+    out = copy.deepcopy(dict(brain))
+    ml = out.get("LIVE_CLUSTER_TEMPLATES")
+    if not isinstance(ml, dict):
+        return out, {"enabled": False, "reason": "no_live_templates"}
+
+    touched: List[Dict[str, Any]] = []
+    for name, bounds in ml.items():
+        if template_mark not in str(name):
+            continue
+        if not isinstance(bounds, dict):
+            continue
+        b = dict(bounds)
+        b["_bull_recency_01_kr_dyn_rs_min"] = round(rs_min_v, 4)
+        ml[name] = b
+        touched.append({"template": name, "kr_dyn_rs_min": round(rs_min_v, 4)})
+
+    audit = {
+        "enabled": bool(touched),
+        "lever": "kr_dyn_rs_min",
+        "template_mark": template_mark,
+        "kr_dyn_rs_min": round(rs_min_v, 4),
+        "templates": touched,
+        "note": "KR digit-code tickers only; enforced in time_machine match",
+    }
+    return out, audit
 
 
 def mirror_bounds_for_time_machine(bounds: Mapping[str, Any]) -> Dict[str, Any]:
@@ -216,4 +273,7 @@ def apply_bull_recency_01_brain_patch(
         "templates_skipped_non_dict": skipped,
         "patched": patched,
     }
+    if resolve_bull_recency_01_kr_lever():
+        out, kr_audit = apply_kr_rs_lever_to_brain(out)
+        audit["kr_lever"] = kr_audit
     return out, audit

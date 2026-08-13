@@ -2,20 +2,28 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **BULL-RECENCY-01** |
-| **status** | DoD#1 **미충족** · **2b rerun 완료** → **템플릿 재식별** 선행 |
-| **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §BULL-RECENCY-01 |
-| **앵커** | `SYNC-2026-08-13-A` |
+| **sub-phase** | **BULL-RECENCY-01** (이터레이션 3) |
+| **status** | `WAIT_CURSOR_IMPL` — KR 레버 + DoD fix · **15구간 rerun 대기** |
+| **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §이터레이션 3 |
+| **앵커** | `SYNC-2026-08-13-B` |
 
 ---
 
-## Cursor — 지금 할 일 (2b 이후)
+## Cursor — 지금 할 일 (iter 3)
 
-1. **shrink 재rerun 금지** — Claude·Cursor 합의
-2. VPS `scripts/bull_recency_01_template_audit.py --snapshot matrix_*.pkl --apply-patch`
-3. BULL_03/05에서 **폭발형 top1 share** vs **first-match order** 대조 → S1 타깃 재확정
+1. ✅ DoD `regime_name` 버그픽스 + `--dod-only` (로컬)
+2. ✅ KR `dyn_rs` floor on `260628` (코드) — **VPS rerun 필요**
+3. VPS full 15구간 rerun (`shrink=0.45` 유지, `BULL_RECENCY_01_KR_LEVER=1`)
 
-**2b 결과**: key-mirror ✅ · BULL_03 n=40657 baseline 동일 · DoD#1 **No**
+```bash
+export BULL_RECENCY_01_PATCH=1 BULL_RECENCY_01_SHRINK=0.45 BULL_RECENCY_01_KR_LEVER=1
+export RP1_SKIP_STAGE2=1
+unset RP1_METRICS_ONLY RP1_MATRIX_REUSE RP1_FAST
+python3 scripts/run_bull_recency_01_rp1.py \
+  --baseline reports/regime_panel/rp1_20260811.json
+```
+
+**iter 2 확정**: BULL_03 NEAR_MISS · BULL_05 FAIL · `_dod.json` all_pass=true **무효**(버그)
 
 ---
 

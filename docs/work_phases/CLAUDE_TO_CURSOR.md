@@ -4,7 +4,147 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만**  
-> **현재**: **CAT-E-BARS-01** Claude OK ✅(구현 Handoff 없음) · 🔴 **F-GATE-01**(Claude OK ✅) · **F-RETIRE-02**(Claude OK ✅) — 서버 배포 디렉터 대기 · **C-FUNNEL-02** 배포 완료 · **RP-1 + C-1** 병렬
+> **현재**: **BULL-RECENCY-01 이터레이션 3** 🟡 · shrink 0.45 확정 · **BULL_05 KR 레버** Cursor 착수
+
+---
+
+## [CAT-C / Alpha] BULL-RECENCY-01 이터레이션 3 — BULL_05 KR 레버 + DoD 버그픽스 (2026-08-13)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | BULL-RECENCY-01 (계속, 신규 ID 아님) |
+| **전제** | shrink=0.45 CLUSTER_1 바운드 패치 결과 확정 — BULL_03 NEAR_MISS(B) 달성, BULL_05 FAIL(B) 잔존 |
+| **결론** | shrink 추가 튜닝 기각 — BULL_05 KR-specific 레버로 전환 |
+
+### SSOT (변경/비변경)
+
+- **변경**: BULL_05 KR 시장 한정 `dyn_rs` floor on binding template `260628`
+- **비접촉**: shrink=0.45 bounds_after 동결, BULL_03, Phase A, SIDE/BEAR, S5, C-1
+
+### Spec — in-scope
+
+1. BULL_05 KR 레버 (market-conditional gate)
+2. DoD 체커 `regime_name` 매칭 버그픽스
+
+### DoD (iter 3)
+
+| # | 기준 |
+|---|------|
+| 1 | BULL_05 ≥ NEAR_MISS |
+| 2 | BULL_03 NEAR_MISS+ 유지 |
+| 3 | 나머지 13구간 verdict 불변 |
+| 4–6 | MDD_OK · n≥20 · DoD 스크립트 정상 |
+
+### 금지
+
+- shrink/tb/bbe 추가 조정 · BULL_03 bounds 재수정
+
+---
+
+## Claude 판정 — BULL-RECENCY-01 1단계 충족 (2026-08-11)
+
+**VERDICT: 충족.** A+B(trade-level breakdown + 공통/개별원인)가 1단계 스펙 충족.
+
+**S1 2단계 범위** = **CLUSTER_1 bounds 타이트닝 (targeted)** — **전역 DNA threshold 변경 금지** (13구간 회귀 방지, targeted diff 원칙).
+
+**BULL_05**: KR 분기 선제 **아님** — 동일 패치 묶음 15구간 rerun 먼저.
+
+**Cursor**: 별도 Go 문구 없이 2단계(CLUSTER_1 타이트닝) + 15구간 전체 rerun **자체 진행 가능** (ADDENDUM 조항).
+
+---
+
+## [ADDENDUM] BULL-RECENCY-01 — 회신 채널 확정 (2026-08-11)
+
+| 항목 | 내용 |
+|------|------|
+| **Cursor → Claude** | `CURSOR_TO_CLAUDE.md` **최상단 OUTBOX만** · 채팅/텔레그램/별도 파일 **금지** |
+| **필수 포함** | BULL_03/05 trade-level breakdown + 공통원인 vs 개별원인 결론 |
+| **Claude 판독** | 다음 창에서 OUTBOX 최상단만 · 채팅 요약 불신뢰 |
+| **병행 갱신** | `05_진행로그` · `00_SESSION_SYNC` §3 · `NEXT_ACTION` (파일) |
+| **2단계** | OUTBOX 1단계 완료기준 **충족** 판정 시 Cursor **동일 sub-phase 내 자체 진행** (별도 Go 문구 불필요) |
+
+---
+
+## [CAT-C / Alpha] BULL-RECENCY-01 — BULL FAIL 구간 recency drift 진단·S1 조정 (SRV-01 Go, 2026-08-11)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | BULL-RECENCY-01 |
+| **발행** | Claude Pro Architect |
+| **전제** | RP-1 v2.3.3 baseline 확정 — tier replay 계측 재검증 불필요 |
+| **Handoff** | 디렉터 채팅 수신 2026-08-11 → Cursor SSOT 기록 |
+
+### SSOT (변경/비변경)
+
+- **변경 후보 (2단계)**: `supernova_hunter` DNA 매칭 threshold · `time_machine_backtester` 템플릿 recency weighting — **진단 후 확정**
+- **산출물**: `reports/regime_panel/rp1_bull_recency_01_{date}.json` (schema **v2.3.4** 제안)
+- **비접촉**: Phase A (Kelly cap·MDD tier·거버너) · SIDEWAYS/BEAR bucket · S5/인버스 · C-1 섹터 · **config_kv 라이브 반영**
+
+### Spec — 범위 (in-scope)
+
+**대상 구간 (2건 한정)**
+
+| ID | 구간 | 기간 |
+|----|------|------|
+| BULL_03 | 최근상승 | 2024-10-01 ~ 2025-03-31 |
+| BULL_05 | 글로벌리플레이 | 2016-06-01 ~ 2016-11-30 |
+
+**1단계 (진단, 우선)** — trade-level breakdown
+
+- 승률 · 평균손익 · 보유기간 · 진입 트리거 분포
+- 가설 검증: **recency drift** (오늘 뇌 템플릿 → 과거 미스매치) vs 개별원인 (narrow breadth · 섹터로테이션 등)
+- **공통원인 vs 구간별 별개원인** 결론을 먼저 낼 것
+
+**2단계 (조정)** — 진단 결과 기반 **S1 알파층만**
+
+- `supernova_hunter` DNA 매칭 threshold **또는** time_machine 템플릿 recency weighting
+
+**검증**
+
+- **15구간 전체** metrics-only rerun 필수
+- BULL_03/05 **단독 rerun 금지** (회귀 확인 위해)
+
+### 금지 (out-of-scope)
+
+- Phase A(Kelly cap·MDD tier·거버너) 로직 변경 금지 — **S1 알파층만**
+- SIDEWAYS/BEAR bucket 파라미터 접촉 금지
+- S5/인버스·C-1 섹터 로직 접촉 금지
+- **config_kv 실전/라이브 반영 금지** — RP-1 metrics-only backtest 재실행까지만
+- 코드 구현 세부설계는 Cursor 재량 — **targeted diff only** (광범위 리팩터 금지)
+
+### 완료 기준 (Definition of Done)
+
+| # | 기준 |
+|---|------|
+| 1 | BULL_03, BULL_05 재판정 **최소 NEAR_MISS 이상** — `period_return_pct` 우선, **`cagr_pct` 단독 사용 금지** (규칙3) |
+| 2 | 나머지 **13구간 verdict 불변** (회귀 없음) — 15구간 전체 rerun |
+| 3 | `mdd_pct_tier` 전 구간 ≤10%, `mdd_crosscheck` = **MDD_OK** (tier 기준, raw 아님 — 규칙5) |
+| 4 | 전 구간 `total_trades` ≥20 유지 (규칙4) |
+| 5 | 산출물 JSON + `05_진행로그` §BULL-RECENCY-01 + `CURSOR_TO_CLAUDE` OUTBOX |
+
+### Timebox
+
+**1주** (진단 2~3일 + 조정·rerun 3~4일) — 2주 Alpha Proof 압축 타임라인 내 완결
+
+### 병렬 허용
+
+**OPS-01** VPS 배포 (F-GATE/F-RETIRE/BEAR-UNDERDOG)와 병렬 가능 — 쓰기 파일 충돌 없음  
+(BULL-RECENCY-01: S1 템플릿/reports json vs OPS-01: config_kv/deploy_watch)
+
+### Cursor 지시
+
+1. **새 세션** — 본 Handoff 1개만 · **1단계 진단**(trade-level breakdown)부터 착수
+2. Targeted diff only · 충돌 시 Adapter 제안 후 디렉터 Ask
+3. 완료 후 metrics-only 15구간 rerun → DoD 1~4 대조
+
+### 위험도
+
+🟡 — S1 알파층만 · Phase A 비접촉 · config_kv 라이브 금지
+
+### SRV-01 STRATEGIC VERDICT (기록)
+
+- **Go**: BULL-RECENCY-01
+- **보류**: SIDE-ALPHA-01 · BEAR-S5-SIM-01 · C-1-REDUCED
 
 ---
 

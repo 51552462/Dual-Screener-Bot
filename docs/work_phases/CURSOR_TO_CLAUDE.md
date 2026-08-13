@@ -3,11 +3,51 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-13 · **BULL-RECENCY-01 2b VERDICT OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-13-A`)
+> **갱신**: 2026-08-13 · **BULL-RECENCY-01 iter 3 OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-13-B`)
 
 ---
 
-## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2b rerun VERDICT** · DoD#1 **No** · 템플릿 재식별 선행 (2026-08-13)
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **iter 3 착수** · DoD 버그 확인 + KR 레버 구현 (2026-08-13)
+
+| 항목 | 내용 |
+|------|------|
+| **Handoff** | Claude Go iter 3 — BULL_05 KR 레버 · shrink 0.40 기각 |
+| **DoD 버그** | ✅ `_period_map`이 `name`(null)만 참조 → `regime_name` 폴백 수정 · `--dod-only` 추가 |
+| **무효 _dod** | `20260813_dod.json` all_pass=true **폐기** — bull_targets=[] vacuous pass |
+| **iter 2 실측** | shrink 0.45 full: BULL_03 **NEAR_MISS** · BULL_05 **FAIL(B)** ret −9.04% |
+
+### DoD 버그 원인 (확정)
+
+`compare_dod()` → `_period_map()`이 `r.get("name")`만 사용. RP-1 JSON period row는 **`regime_name`만 채움** → 전 구간 키 `"None"` 충돌 → `bull_targets=[]` → `all([])==True`.
+
+**수정**: `_period_key = regime_name or name` · iter3 DoD 필드 분리 (#1 BULL_05, #2 BULL_03 유지).
+
+### KR 레버 (구현)
+
+| 항목 | 값 |
+|------|-----|
+| **대상** | `CLUSTER_1_강응축_폭발형_260628` only |
+| **메커니즘** | KR digit-code tickers: `dyn_rs >= BULL_RECENCY_01_KR_RS_MIN` (default **5.0**) |
+| **US** | 비접촉 |
+| **shrink** | **0.45 frozen** (default) — bounds_after 재조정 금지 |
+| **파일** | `bull_recency_01_bounds.py` · `time_machine_backtester.py` |
+
+### VPS rerun (iter 3)
+
+```bash
+git pull
+export BULL_RECENCY_01_PATCH=1 BULL_RECENCY_01_SHRINK=0.45 BULL_RECENCY_01_KR_LEVER=1
+unset RP1_METRICS_ONLY RP1_MATRIX_REUSE RP1_FAST
+python3 scripts/run_bull_recency_01_rp1.py --baseline reports/regime_panel/rp1_20260811.json
+```
+
+### 테스트
+
+`test_run_bull_recency_01_dod.py` + `test_bull_recency_01_bounds.py` — **15 passed**
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **2b rerun VERDICT** · DoD#1 **No** · 템플릿 재식별 선행 (2026-08-13) *(superseded)*
 
 | 항목 | 내용 |
 |------|------|

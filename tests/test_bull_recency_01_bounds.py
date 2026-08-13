@@ -120,3 +120,32 @@ class TestBrainPatch:
         ba = patched["LIVE_CLUSTER_TEMPLATES"]["CLUSTER_1_강응축_폭발형_260628"]
         assert "dyn_cpv_min" in ba and "v_energy_min" in ba
         assert audit["patched"][0]["keys_mirrored_for_time_machine"] is True
+
+
+class TestKrRsLever:
+    def test_is_kr_ticker(self):
+        from bull_recency_01_bounds import is_kr_ticker
+
+        assert is_kr_ticker("005930")
+        assert not is_kr_ticker("AAPL")
+
+    def test_kr_lever_tags_binding_template(self):
+        from bull_recency_01_bounds import apply_kr_rs_lever_to_brain
+
+        brain = {
+            "LIVE_CLUSTER_TEMPLATES": {
+                "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": 0.0},
+                "CLUSTER_1_강응축_폭발형_260802": {"dyn_cpv_min": 0.0},
+            }
+        }
+        patched, audit = apply_kr_rs_lever_to_brain(brain, kr_dyn_rs_min=7.5)
+        assert (
+            patched["LIVE_CLUSTER_TEMPLATES"]["CLUSTER_1_강응축_폭발형_260628"][
+                "_bull_recency_01_kr_dyn_rs_min"
+            ]
+            == 7.5
+        )
+        assert "_bull_recency_01_kr_dyn_rs_min" not in patched["LIVE_CLUSTER_TEMPLATES"][
+            "CLUSTER_1_강응축_폭발형_260802"
+        ]
+        assert audit["enabled"] is True

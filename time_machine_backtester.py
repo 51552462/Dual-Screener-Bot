@@ -311,7 +311,7 @@ def calculate_dna_factors(df, evolved_factors=None):
 
     return df
 
-def _row_matches_template_bounds(row, bounds, evolved_slot_keys):
+def _row_matches_template_bounds(row, bounds, evolved_slot_keys, ticker=None):
     """기존 3D 박스 + (템플릿에 정의된 경우) 진화 알파 슬롯별 바운딩."""
     if not isinstance(bounds, dict):
         return False
@@ -321,6 +321,17 @@ def _row_matches_template_bounds(row, bounds, evolved_slot_keys):
         bounds.get('v_energy_min', -99) <= row['v_energy'] <= bounds.get('v_energy_max', 999)
     ):
         return False
+    kr_rs_min = bounds.get("_bull_recency_01_kr_dyn_rs_min")
+    if kr_rs_min is not None and ticker is not None:
+        from bull_recency_01_bounds import is_kr_ticker
+
+        if is_kr_ticker(ticker):
+            try:
+                rs_val = float(row.get("dyn_rs", float("nan")))
+            except (TypeError, ValueError):
+                return False
+            if not np.isfinite(rs_val) or rs_val < float(kr_rs_min):
+                return False
     for sk in evolved_slot_keys:
         akmin, akmax = f'alpha_{sk}_min', f'alpha_{sk}_max'
         if akmin not in bounds or akmax not in bounds:
@@ -432,7 +443,9 @@ def _simulate_trades_on_ohlcv(
             is_passed = False
             matched_tpl = ""
             for t_name, bounds in all_templates.items():
-                if _row_matches_template_bounds(current_row, bounds, evolved_slot_keys):
+                if _row_matches_template_bounds(
+                    current_row, bounds, evolved_slot_keys, ticker=code
+                ):
                     is_passed = True
                     matched_tpl = t_name
                     break
