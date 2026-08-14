@@ -36,6 +36,48 @@ def get_rp1_brain_patch_audit() -> Optional[Dict[str, Any]]:
     return _RP1_BRAIN_PATCH_AUDIT
 
 
+def _overlay_repo_brain_for_br01(brain: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    BR01 SSOT: cluster templates from install_root system_config.json (8/13 path).
+    KV may hold 12 templates with stale/empty bounds — overlay before patch+scope.
+    """
+    if os.environ.get("BULL_RECENCY_01_REPO_BRAIN", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return brain
+    try:
+        import copy
+        import json
+        from factory_data_paths import install_root
+
+        repo_path = os.path.join(install_root(), "system_config.json")
+        if not os.path.isfile(repo_path):
+            return brain
+        with open(repo_path, encoding="utf-8") as fh:
+            repo = json.load(fh)
+        if not isinstance(repo, dict):
+            return brain
+        out = copy.deepcopy(brain)
+        merged: List[str] = []
+        for key in (
+            "LIVE_CLUSTER_TEMPLATES",
+            "UNDERDOG_CLUSTER_TEMPLATES",
+            "EVOLVED_ALPHA_FACTORS",
+        ):
+            val = repo.get(key)
+            if val:
+                out[key] = val
+                merged.append(key)
+        if merged:
+            log_rp1(f"[RP-1] BULL_RECENCY_01: repo brain overlay ({', '.join(merged)})")
+        return out
+    except Exception as exc:
+        log_rp1(f"[RP-1] BULL_RECENCY_01: repo brain overlay skipped ({exc})")
+        return brain
+
+
 def load_rp1_brain_cached(*, force_reload: bool = False) -> Dict[str, Any]:
     """RP-1 session cache — avoid 15× reload races during live run."""
     global _RP1_BRAIN_CACHE, _RP1_BRAIN_PATCH_AUDIT
@@ -45,6 +87,7 @@ def load_rp1_brain_cached(*, force_reload: bool = False) -> Dict[str, Any]:
         if resolve_bull_recency_01_patch():
             from bull_recency_01_bounds import apply_bull_recency_01_brain_patch
 
+            brain = _overlay_repo_brain_for_br01(brain)
             brain, _RP1_BRAIN_PATCH_AUDIT = apply_bull_recency_01_brain_patch(brain)
             if not (_RP1_BRAIN_PATCH_AUDIT or {}).get("templates_patched"):
                 log_rp1(

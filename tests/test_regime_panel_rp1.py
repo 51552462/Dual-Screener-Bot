@@ -88,6 +88,33 @@ class TestBr01TemplateScope:
         assert "CLUSTER_2_강응축_폭발형_260628" not in all_tpl
         assert "ud1" in all_tpl
 
+    def test_repo_brain_overlay_replaces_kv_templates(self, monkeypatch, tmp_path):
+        import json
+        from regime_panel_rp1_runner import _overlay_repo_brain_for_br01
+
+        repo = tmp_path / "system_config.json"
+        repo.write_text(
+            json.dumps(
+                {
+                    "LIVE_CLUSTER_TEMPLATES": {
+                        "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": -0.5}
+                    },
+                    "UNDERDOG_CLUSTER_TEMPLATES": {"ud1": {}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("BULL_RECENCY_01_REPO_BRAIN", "1")
+        monkeypatch.setattr(
+            "factory_data_paths.install_root",
+            lambda: str(tmp_path),
+        )
+        out = _overlay_repo_brain_for_br01(
+            {"LIVE_CLUSTER_TEMPLATES": {"CLUSTER_2_x": {"dyn_cpv_min": 0.0}}}
+        )
+        assert "CLUSTER_1_강응축_폭발형_260628" in (out.get("LIVE_CLUSTER_TEMPLATES") or {})
+        assert "ud1" in (out.get("UNDERDOG_CLUSTER_TEMPLATES") or {})
+
 
 class TestRp1OhlcvMatrixHelpers:
     def test_global_bounds_cover_gfc_backup(self):
