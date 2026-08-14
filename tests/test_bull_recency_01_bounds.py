@@ -52,6 +52,21 @@ class TestTightenBounds:
         assert out["bbe_min"] > 5.0
 
 
+class TestScopeLiveTemplates:
+    def test_filters_cluster_1_explosive_only(self):
+        from bull_recency_01_bounds import scope_live_templates_for_br01
+
+        ml = {
+            "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": 0.1},
+            "CLUSTER_1_혼조세_돌연변이형_260719": {"dyn_cpv_min": 0.0},
+            "CLUSTER_2_강응축_폭발형_260628": {"dyn_cpv_min": 0.0},
+        }
+        scoped, audit = scope_live_templates_for_br01(ml)
+        assert list(scoped) == ["CLUSTER_1_강응축_폭발형_260628"]
+        assert audit["live_in"] == 3
+        assert audit["live_out"] == 1
+
+
 class TestBrainPatch:
     def test_only_cluster_1_explosive_touched(self):
         brain = {

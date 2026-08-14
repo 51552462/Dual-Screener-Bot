@@ -84,6 +84,24 @@ def _backfill_brain_keys_from_legacy(cfg: dict) -> dict:
                 out[key] = val
     except Exception as exc:
         print(f"⚠️ [time_machine] legacy brain backfill 실패: {exc}")
+
+    still_missing = [k for k in _BACKTEST_BRAIN_KEYS if not out.get(k)]
+    if still_missing:
+        try:
+            from factory_data_paths import install_root
+
+            repo_sc = os.path.join(install_root(), "system_config.json")
+            data_sc = CONFIG_PATH
+            if os.path.isfile(repo_sc) and os.path.abspath(repo_sc) != os.path.abspath(data_sc):
+                with open(repo_sc, encoding="utf-8") as fh:
+                    repo_cfg = json.load(fh)
+                if isinstance(repo_cfg, dict):
+                    for key in still_missing:
+                        val = repo_cfg.get(key)
+                        if val:
+                            out[key] = val
+        except Exception as exc:
+            print(f"⚠️ [time_machine] install_root brain backfill 실패: {exc}")
     return out
 
 

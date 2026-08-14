@@ -54,6 +54,31 @@ def is_cluster_1_explosive_template(name: str) -> bool:
     return bool(_CLUSTER_1_EXPLOSIVE_RE.search(str(name or "")))
 
 
+def scope_live_templates_for_br01(
+    ml_templates: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    BULL-RECENCY-01 S1: RP-1 matrix must not match CLUSTER_2/3 or non-폭발형 CLUSTER_1.
+    Those wider templates bypass patched bounds (first-match wins in time_machine).
+    """
+    if not isinstance(ml_templates, dict):
+        return {}, {"scoped": False, "reason": "no_dict", "live_in": 0, "live_out": 0}
+    filtered: Dict[str, Any] = {
+        str(name): dict(bounds)
+        for name, bounds in ml_templates.items()
+        if isinstance(bounds, dict) and is_cluster_1_explosive_template(name)
+    }
+    audit = {
+        "scoped": True,
+        "live_in": len(ml_templates),
+        "live_out": len(filtered),
+        "excluded": sorted(
+            str(name) for name in ml_templates if name not in filtered
+        ),
+    }
+    return filtered, audit
+
+
 def resolve_bull_recency_01_kr_lever() -> bool:
     if not resolve_bull_recency_01_patch():
         return False

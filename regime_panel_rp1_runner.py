@@ -240,6 +240,22 @@ def _brain_templates_and_factors(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {}) or {}
     ud_templates = config.get("UNDERDOG_CLUSTER_TEMPLATES", {}) or {}
+    if resolve_bull_recency_01_patch():
+        from bull_recency_01_bounds import scope_live_templates_for_br01
+
+        ml_templates, scope_audit = scope_live_templates_for_br01(ml_templates)
+        if not ml_templates:
+            raise RuntimeError(
+                "RP-1 aborted: BULL_RECENCY_01 patch active but no CLUSTER_1 폭발형 "
+                "LIVE templates after scope filter"
+            )
+        live_in = int(scope_audit.get("live_in") or 0)
+        live_out = int(scope_audit.get("live_out") or 0)
+        if live_in > live_out:
+            log_rp1(
+                "[RP-1] BULL_RECENCY_01: scoped LIVE to CLUSTER_1 폭발형 only "
+                f"({live_out}/{live_in})"
+            )
     all_templates = {**ml_templates, **ud_templates}
     evolved_factors = config.get("EVOLVED_ALPHA_FACTORS")
     if not isinstance(evolved_factors, dict):
