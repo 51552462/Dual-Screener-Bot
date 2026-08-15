@@ -85,9 +85,18 @@ def load_rp1_brain_cached(*, force_reload: bool = False) -> Dict[str, Any]:
         brain = load_factory_brain_readonly()
         _RP1_BRAIN_PATCH_AUDIT = None
         if resolve_bull_recency_01_patch():
-            from bull_recency_01_bounds import apply_bull_recency_01_brain_patch
+            from bull_recency_01_bounds import (
+                apply_bull_recency_01_brain_patch,
+                apply_br01_ssot_bounds_to_brain,
+            )
 
             brain = _overlay_repo_brain_for_br01(brain)
+            brain, ssot_audit = apply_br01_ssot_bounds_to_brain(brain, force=True)
+            if ssot_audit.get("applied"):
+                log_rp1(
+                    "[RP-1] BULL_RECENCY_01: SSOT bounds overlay "
+                    f"({', '.join(ssot_audit.get('templates') or [])})"
+                )
             brain, _RP1_BRAIN_PATCH_AUDIT = apply_bull_recency_01_brain_patch(brain)
             if not (_RP1_BRAIN_PATCH_AUDIT or {}).get("templates_patched"):
                 log_rp1(
@@ -284,20 +293,14 @@ def _brain_templates_and_factors(
     ml_templates = config.get("LIVE_CLUSTER_TEMPLATES", {}) or {}
     ud_templates = config.get("UNDERDOG_CLUSTER_TEMPLATES", {}) or {}
     if resolve_bull_recency_01_patch():
-        from bull_recency_01_bounds import scope_live_templates_for_br01
+        from bull_recency_01_bounds import reorder_live_templates_for_br01
 
-        ml_templates, scope_audit = scope_live_templates_for_br01(ml_templates)
-        if not ml_templates:
-            raise RuntimeError(
-                "RP-1 aborted: BULL_RECENCY_01 patch active but no CLUSTER_1 폭발형 "
-                "LIVE templates after scope filter"
-            )
-        live_in = int(scope_audit.get("live_in") or 0)
-        live_out = int(scope_audit.get("live_out") or 0)
-        if live_in > live_out:
+        ml_templates, reorder_audit = reorder_live_templates_for_br01(ml_templates)
+        first = reorder_audit.get("first")
+        if first:
             log_rp1(
-                "[RP-1] BULL_RECENCY_01: scoped LIVE to CLUSTER_1 폭발형 only "
-                f"({live_out}/{live_in})"
+                "[RP-1] BULL_RECENCY_01: LIVE reordered for first-match "
+                f"(first={first}, live={reorder_audit.get('live_out')})"
             )
     all_templates = {**ml_templates, **ud_templates}
     evolved_factors = config.get("EVOLVED_ALPHA_FACTORS")

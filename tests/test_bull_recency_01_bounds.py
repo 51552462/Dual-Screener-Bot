@@ -52,19 +52,44 @@ class TestTightenBounds:
         assert out["bbe_min"] > 5.0
 
 
-class TestScopeLiveTemplates:
-    def test_filters_cluster_1_explosive_only(self):
-        from bull_recency_01_bounds import scope_live_templates_for_br01
+class TestReorderLiveTemplates:
+    def test_binding_template_first(self):
+        from bull_recency_01_bounds import reorder_live_templates_for_br01
 
         ml = {
-            "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": 0.1},
-            "CLUSTER_1_혼조세_돌연변이형_260719": {"dyn_cpv_min": 0.0},
             "CLUSTER_2_강응축_폭발형_260628": {"dyn_cpv_min": 0.0},
+            "CLUSTER_1_강응축_폭발형_260802": {"dyn_cpv_min": 0.1},
+            "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": 0.2},
         }
-        scoped, audit = scope_live_templates_for_br01(ml)
-        assert list(scoped) == ["CLUSTER_1_강응축_폭발형_260628"]
-        assert audit["live_in"] == 3
-        assert audit["live_out"] == 1
+        ordered, audit = reorder_live_templates_for_br01(ml)
+        assert list(ordered) == [
+            "CLUSTER_1_강응축_폭발형_260628",
+            "CLUSTER_1_강응축_폭발형_260802",
+            "CLUSTER_2_강응축_폭발형_260628",
+        ]
+        assert audit["first"] == "CLUSTER_1_강응축_폭발형_260628"
+
+
+class TestBr01SsotBounds:
+    def test_ssot_overlay_before_patch(self):
+        from bull_recency_01_bounds import (
+            apply_bull_recency_01_brain_patch,
+            apply_br01_ssot_bounds_to_brain,
+        )
+
+        brain = {
+            "LIVE_CLUSTER_TEMPLATES": {
+                "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": -99.0},
+            }
+        }
+        overlaid, audit = apply_br01_ssot_bounds_to_brain(brain, force=True)
+        assert audit["applied"] is True
+        b = overlaid["LIVE_CLUSTER_TEMPLATES"]["CLUSTER_1_강응축_폭발형_260628"]
+        assert b["dyn_cpv_min"] == -0.51
+        assert b["v_energy_min"] == 98.1
+        _, patch_audit = apply_bull_recency_01_brain_patch(overlaid, shrink=0.45)
+        before = patch_audit["patched"][0]["bounds_before"]
+        assert before["dyn_cpv_min"] == -0.51
 
 
 class TestBrainPatch:

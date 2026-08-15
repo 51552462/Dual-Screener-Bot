@@ -72,20 +72,20 @@ class TestRp1RunnerTuning:
 
 
 class TestBr01TemplateScope:
-    def test_brain_templates_scope_cluster_1_explosive_only(self, monkeypatch):
+    def test_brain_templates_reorder_binding_first(self, monkeypatch):
         from regime_panel_rp1_runner import _brain_templates_and_factors
 
         monkeypatch.setenv("BULL_RECENCY_01_PATCH", "1")
         config = {
             "LIVE_CLUSTER_TEMPLATES": {
-                "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": 0.1},
                 "CLUSTER_2_강응축_폭발형_260628": {"dyn_cpv_min": 0.0},
+                "CLUSTER_1_강응축_폭발형_260628": {"dyn_cpv_min": 0.1},
             },
             "UNDERDOG_CLUSTER_TEMPLATES": {"ud1": {"dyn_cpv_min": 0.0}},
         }
         all_tpl, _ = _brain_templates_and_factors(config)
-        assert "CLUSTER_1_강응축_폭발형_260628" in all_tpl
-        assert "CLUSTER_2_강응축_폭발형_260628" not in all_tpl
+        assert list(all_tpl)[0] == "CLUSTER_1_강응축_폭발형_260628"
+        assert "CLUSTER_2_강응축_폭발형_260628" in all_tpl
         assert "ud1" in all_tpl
 
     def test_repo_brain_overlay_replaces_kv_templates(self, monkeypatch, tmp_path):

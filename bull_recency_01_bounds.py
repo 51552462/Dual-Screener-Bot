@@ -17,6 +17,47 @@ _BOUNDS_AXES: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...], str], ...] = (
 )
 
 _CLUSTER_1_EXPLOSIVE_RE = re.compile(r"CLUSTER_1.*폭발", re.IGNORECASE)
+_BR01_BINDING_TEMPLATE = "CLUSTER_1_강응축_폭발형_260628"
+
+# 8/13 01:26 full RP-1 — validated bounds_before (repo/KV drift guard).
+BR01_SSOT_BOUNDS_BEFORE: Dict[str, Dict[str, Any]] = {
+    "CLUSTER_1_강응축_폭발형_260628": {
+        "cpv_min": -0.51,
+        "cpv_max": 1.0,
+        "tb_min": -40.0,
+        "tb_max": 102.8,
+        "bbe_min": 98.1,
+        "bbe_max": 101.9,
+        "tml_min": -0.1,
+        "tml_max": 0.1,
+        "rs_min": -20.6,
+        "rs_max": 26.4,
+        "dyn_cpv_min": -0.51,
+        "dyn_cpv_max": 1.0,
+        "dyn_tb_min": -40.0,
+        "dyn_tb_max": 102.8,
+        "v_energy_min": 98.1,
+        "v_energy_max": 101.9,
+    },
+    "CLUSTER_1_강응축_폭발형_260802": {
+        "cpv_min": -0.84,
+        "cpv_max": 0.33,
+        "tb_min": -167.4,
+        "tb_max": 658.4,
+        "bbe_min": -193.1,
+        "bbe_max": 466.6,
+        "tml_min": -2.5,
+        "tml_max": 1.8,
+        "rs_min": -17.3,
+        "rs_max": 26.4,
+        "dyn_cpv_min": -0.84,
+        "dyn_cpv_max": 0.33,
+        "dyn_tb_min": -167.4,
+        "dyn_tb_max": 658.4,
+        "v_energy_min": -193.1,
+        "v_energy_max": 466.6,
+    },
+}
 
 # data_miner (cpv/tb/bbe) vs time_machine RP-1 (dyn_cpv/dyn_tb/v_energy) — both must stay in sync.
 _TM_BOUNDS_MIRROR: Tuple[Tuple[Tuple[str, str], Tuple[str, str]], ...] = (
@@ -58,8 +99,8 @@ def scope_live_templates_for_br01(
     ml_templates: Mapping[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    BULL-RECENCY-01 S1: RP-1 matrix must not match CLUSTER_2/3 or non-폭발형 CLUSTER_1.
-    Those wider templates bypass patched bounds (first-match wins in time_machine).
+    Legacy scope helper (tests only). 8/13 SSOT used all LIVE templates with
+    binding template first — see reorder_live_templates_for_br01().
     """
     if not isinstance(ml_templates, dict):
         return {}, {"scoped": False, "reason": "no_dict", "live_in": 0, "live_out": 0}
@@ -77,6 +118,83 @@ def scope_live_templates_for_br01(
         ),
     }
     return filtered, audit
+
+
+def reorder_live_templates_for_br01(
+    ml_templates: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    8/13 SSOT: keep all LIVE templates; put binding 260628 first for first-match.
+    """
+    if not isinstance(ml_templates, dict):
+        return {}, {"reordered": False, "live_in": 0, "first": None}
+
+    def _rank(name: str) -> Tuple[int, str]:
+        if name == _BR01_BINDING_TEMPLATE:
+            return (0, name)
+        if is_cluster_1_explosive_template(name):
+            return (1, name)
+        return (2, name)
+
+    ordered_names = sorted((str(n) for n in ml_templates), key=_rank)
+    out: Dict[str, Any] = {}
+    for name in ordered_names:
+        bounds = ml_templates.get(name)
+        if isinstance(bounds, dict):
+            out[name] = dict(bounds)
+    audit = {
+        "reordered": True,
+        "live_in": len(ml_templates),
+        "live_out": len(out),
+        "first": ordered_names[0] if ordered_names else None,
+    }
+    return out, audit
+
+
+def _bounds_need_ssot_overlay(bounds: Mapping[str, Any]) -> bool:
+    if not isinstance(bounds, dict) or not bounds:
+        return True
+    dyn_lo = bounds.get("dyn_cpv_min", bounds.get("cpv_min"))
+    ve_lo = bounds.get("v_energy_min", bounds.get("bbe_min"))
+    if dyn_lo is None or ve_lo is None:
+        return True
+    try:
+        if float(ve_lo) < -50.0:
+            return True
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+def apply_br01_ssot_bounds_to_brain(
+    brain: Mapping[str, Any],
+    *,
+    force: bool = False,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Overlay 8/13 bounds_before on CLUSTER_1 폭발형 before shrink patch."""
+    out = copy.deepcopy(dict(brain))
+    ml = out.get("LIVE_CLUSTER_TEMPLATES")
+    if not isinstance(ml, dict):
+        return out, {"applied": False, "reason": "no_live_templates"}
+
+    touched: List[str] = []
+    for name, ssot_bounds in BR01_SSOT_BOUNDS_BEFORE.items():
+        if name not in ml:
+            continue
+        current = ml.get(name)
+        if not isinstance(current, dict):
+            continue
+        if not force and not _bounds_need_ssot_overlay(current):
+            continue
+        merged = mirror_bounds_for_time_machine(dict(ssot_bounds))
+        ml[name] = merged
+        touched.append(name)
+
+    return out, {
+        "applied": bool(touched),
+        "templates": touched,
+        "source": "br01_ssot_20260813",
+    }
 
 
 def resolve_bull_recency_01_kr_lever() -> bool:

@@ -40,15 +40,26 @@ def main() -> int:
         if not before.get("dyn_cpv_min") and not before.get("cpv_min"):
             print("FATAL: patched template missing cpv/dyn_cpv bounds — repo brain?")
             return 1
+        ssot_lo = before.get("dyn_cpv_min")
+        try:
+            if ssot_lo is not None and float(ssot_lo) > -0.2:
+                print(f"FATAL: bounds_before dyn_cpv_min={ssot_lo} — expected ~-0.51 SSOT")
+                return 1
+        except (TypeError, ValueError):
+            pass
 
     sim_tpl, _ = _brain_templates_and_factors(brain)
-    if len(sim_tpl) < tp:
-        print(f"FATAL: sim_templates={len(sim_tpl)} < patched={tp}")
+    if len(sim_tpl) < ml_n:
+        print(f"FATAL: sim_templates={len(sim_tpl)} < brain_ml={ml_n} (scope regression?)")
+        return 1
+    first_tpl = next(iter(sim_tpl), "")
+    if "260628" not in str(first_tpl):
+        print(f"FATAL: first sim template={first_tpl!r} — expected 260628 binding first")
         return 1
 
     print(
         f"OK preflight: brain_ml={ml_n} underdog={ud_n} patched={tp} "
-        f"sim_templates={len(sim_tpl)} "
+        f"sim_templates={len(sim_tpl)} first={first_tpl!r} "
         f"DB={os.environ.get('DB_STORAGE_PATH', '(unset)')}"
     )
     return 0
