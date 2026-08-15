@@ -7,7 +7,7 @@ from __future__ import annotations
 import copy
 import os
 import re
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple  # noqa: I001
 
 # Axis pairs: time_machine (dyn_*) and data_miner (cpv/tb/bbe_*) aliases.
 _BOUNDS_AXES: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...], str], ...] = (
@@ -95,12 +95,17 @@ def is_cluster_1_explosive_template(name: str) -> bool:
     return bool(_CLUSTER_1_EXPLOSIVE_RE.search(str(name or "")))
 
 
+# RP1_FAST BULL_03 smoke — 8/13 patched fast had n≈10276; broken scope≈8; fallthrough≈40k/4.
+BR01_SMOKE_MIN_TRADES = 2_000
+BR01_SMOKE_MAX_TRADES = 20_000
+BR01_SMOKE_PERIOD = ("BULL_03_최근상승", "2024-10-01", "2025-03-31")
+
+
 def scope_live_templates_for_br01(
     ml_templates: Mapping[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Legacy scope helper (tests only). 8/13 SSOT used all LIVE templates with
-    binding template first — see reorder_live_templates_for_br01().
+    S1 sim scope: CLUSTER_1 폭발형 only — blocks CLUSTER_2/3 fallthrough after tighten.
     """
     if not isinstance(ml_templates, dict):
         return {}, {"scoped": False, "reason": "no_dict", "live_in": 0, "live_out": 0}
@@ -149,6 +154,54 @@ def reorder_live_templates_for_br01(
         "first": ordered_names[0] if ordered_names else None,
     }
     return out, audit
+
+
+def prepare_live_templates_for_br01_sim(
+    ml_templates: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """8/13 SSOT path: scope to 폭발형 (no fallthrough) + binding template first."""
+    scoped, scope_audit = scope_live_templates_for_br01(ml_templates)
+    if not scoped:
+        return {}, {
+            "ready": False,
+            "reason": "empty_after_scope",
+            "scope": scope_audit,
+        }
+    ordered, reorder_audit = reorder_live_templates_for_br01(scoped)
+    return ordered, {
+        "ready": True,
+        "scope": scope_audit,
+        "reorder": reorder_audit,
+        "sim_live": len(ordered),
+        "first": reorder_audit.get("first"),
+    }
+
+
+def validate_br01_smoke_trades(
+    trades: Sequence[Mapping[str, Any]],
+    *,
+    min_n: int = BR01_SMOKE_MIN_TRADES,
+    max_n: int = BR01_SMOKE_MAX_TRADES,
+) -> Tuple[bool, str]:
+    """Dynamic gate before full RP-1 — catches fallthrough and collapsed scope."""
+    n = len(trades)
+    if n < min_n:
+        return False, f"smoke_n={n} < {min_n} (collapsed scope / bad bounds?)"
+    if n > max_n:
+        return False, f"smoke_n={n} > {max_n} (baseline-scale / no patch effect?)"
+    fallthrough: List[str] = []
+    for row in trades:
+        tpl = str(row.get("template") or "")
+        if not tpl:
+            continue
+        if not is_cluster_1_explosive_template(tpl):
+            fallthrough.append(tpl)
+    if fallthrough:
+        from collections import Counter
+
+        top = Counter(fallthrough).most_common(3)
+        return False, f"fallthrough templates (CLUSTER_2/3?): {top}"
+    return True, f"smoke_n={n} cluster_1_explosive_only"
 
 
 def _bounds_need_ssot_overlay(bounds: Mapping[str, Any]) -> bool:

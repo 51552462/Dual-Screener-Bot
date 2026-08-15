@@ -6,7 +6,8 @@ VPS (brain + OHLCV parquet cache required):
   export BULL_RECENCY_01_SHRINK=0.45
   export RP1_SKIP_STAGE2=1
   unset RP1_METRICS_ONLY
-  python scripts/preflight_bull_recency_rp1.py   # full 전 2분 게이트
+  python scripts/preflight_bull_recency_rp1.py              # static (~5s)
+  python scripts/preflight_bull_recency_rp1.py --smoke      # required before full (~15m)
   python scripts/run_bull_recency_01_rp1.py \\
     --baseline reports/regime_panel/rp1_20260811.json
 
