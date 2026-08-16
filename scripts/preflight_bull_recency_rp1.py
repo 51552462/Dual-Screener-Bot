@@ -131,17 +131,47 @@ def _smoke_gate() -> int:
     meta = prime_rp1_matrix_cache(universe)
     total = int(meta.get("total_trades") or 0)
     print(f"[smoke] matrix total_trades={total}")
-    floor = max(800, len(universe) * 80)
-    if total < floor:
+
+    # BULL_03 window is the SSOT signal — do not gate on all-window matrix_total.
+    # (Real shrink + scope 2 drops other-window fallthrough; 8/13 FAST BULL_03 ≈10k.)
+    pack = default_run_backtest_for_period(regime_name, universe, start_dt, end_dt)
+    trades = pack.get("trades") or []
+    n = len(trades)
+    from collections import Counter
+
+    tpl_top = Counter(str(t.get("template") or "") for t in trades).most_common(3)
+    print(f"[smoke] BULL_03 n={n} top_templates={tpl_top}")
+
+    audit = None
+    try:
+        from regime_panel_rp1_runner import get_rp1_brain_patch_audit
+
+        audit = get_rp1_brain_patch_audit() or {}
+        p0 = (audit.get("patched") or [{}])[0]
+        ba = p0.get("bounds_after") or {}
         print(
-            f"FATAL smoke: matrix_total={total} < {floor} "
-            "(collapsed scope / shrink too tight?)"
+            "[smoke] bounds_after 260628: "
+            f"dyn_cpv=[{ba.get('dyn_cpv_min')},{ba.get('dyn_cpv_max')}] "
+            f"v_energy=[{ba.get('v_energy_min')},{ba.get('v_energy_max')}]"
+        )
+    except Exception:
+        pass
+
+    # FAST(100) real-shrink path: expect thousands, not baseline-scale (~40k) or collapse (~0).
+    if n < 500:
+        print(
+            f"FATAL smoke: BULL_03 n={n} < 500 "
+            f"(matrix_total={total}) — not 8/13 path; DO NOT full-rerun"
+        )
+        return 1
+    if n > 20000:
+        print(
+            f"FATAL smoke: BULL_03 n={n} > 20000 "
+            "(baseline-scale / shrink not biting?)"
         )
         return 1
 
-    pack = default_run_backtest_for_period(regime_name, universe, start_dt, end_dt)
-    trades = pack.get("trades") or []
-    ok, msg = validate_br01_smoke_trades(trades)
+    ok, msg = validate_br01_smoke_trades(trades, min_n=500, max_n=20000)
     if not ok:
         print(f"FATAL smoke: {msg}")
         return 1

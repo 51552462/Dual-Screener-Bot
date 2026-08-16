@@ -95,8 +95,8 @@ def is_cluster_1_explosive_template(name: str) -> bool:
     return bool(_CLUSTER_1_EXPLOSIVE_RE.search(str(name or "")))
 
 
-# RP1_FAST BULL_03 smoke — 8/13 patched fast had n≈10276; broken scope≈8; fallthrough≈40k/4.
-BR01_SMOKE_MIN_TRADES = 2_000
+# RP1_FAST BULL_03: 8/13 patched fast ≈10276; collapse≈0–200; baseline-scale≈40k.
+BR01_SMOKE_MIN_TRADES = 500
 BR01_SMOKE_MAX_TRADES = 20_000
 BR01_SMOKE_PERIOD = ("BULL_03_최근상승", "2024-10-01", "2025-03-31")
 
