@@ -55,6 +55,22 @@ def _static_gate() -> int:
                 return 1
         except (TypeError, ValueError):
             pass
+        after = (patched[0].get("bounds_after") or {})
+        try:
+            lo_before = float(before.get("dyn_cpv_min", before.get("cpv_min", 0)))
+            lo_after = float(after.get("dyn_cpv_min", after.get("cpv_min", 0)))
+            if abs(lo_after - lo_before) < 1e-6:
+                print(
+                    "FATAL: bounds_after == bounds_before — shrink not applied "
+                    "(mirror_bounds regression? git pull 351b404+)"
+                )
+                return 1
+            if lo_after > -0.2:
+                print(f"FATAL: bounds_after dyn_cpv_min={lo_after} — expected ~-0.1703")
+                return 1
+        except (TypeError, ValueError):
+            print("FATAL: bounds_after dyn_cpv_min not numeric")
+            return 1
 
     sim_tpl, _ = _brain_templates_and_factors(brain)
     sim_live = sum(
@@ -99,6 +115,8 @@ def _smoke_gate() -> int:
     if rc != 0:
         return rc
 
+    # 8/13 SSOT run had no KR RS lever — smoke validates patch path only.
+    os.environ["BULL_RECENCY_01_KR_LEVER"] = "0"
     os.environ["RP1_FAST"] = "1"
     clear_rp1_brain_cache()
     clear_rp1_matrix_cache()
@@ -109,6 +127,13 @@ def _smoke_gate() -> int:
     meta = prime_rp1_matrix_cache(universe)
     total = int(meta.get("total_trades") or 0)
     print(f"[smoke] matrix total_trades={total}")
+    floor = max(800, len(universe) * 80)
+    if total < floor:
+        print(
+            f"FATAL smoke: matrix_total={total} < {floor} "
+            "(collapsed scope / shrink too tight?)"
+        )
+        return 1
 
     pack = default_run_backtest_for_period(regime_name, universe, start_dt, end_dt)
     trades = pack.get("trades") or []
