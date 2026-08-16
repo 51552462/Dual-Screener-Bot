@@ -2,28 +2,48 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **BULL-RECENCY-01** (이터레이션 3) |
-| **status** | `WAIT_CURSOR_IMPL` — KR 레버 + DoD fix · **15구간 rerun 대기** |
-| **Handoff** | [`CLAUDE_TO_CURSOR.md`](CLAUDE_TO_CURSOR.md) §이터레이션 3 |
-| **앵커** | `SYNC-2026-08-13-B` |
+| **sub-phase** | **BULL-RECENCY-01** |
+| **status** | `WAIT_CLAUDE_OK` — **8/13 JSON SSOT 고정** · VPS 재현 full **중지** |
+| **Handoff** | 다음 = Claude가 `CLAUDE_TO_CURSOR.md`에 발행 |
+| **앵커** | `SYNC-2026-08-16-A` |
 
 ---
 
-## Cursor — 지금 할 일 (iter 3)
+## 디렉터 — 지금 할 일 (1줄)
 
-1. ✅ DoD `regime_name` 버그픽스 + `--dod-only` (로컬)
-2. ✅ KR `dyn_rs` floor on `260628` (코드) — **VPS rerun 필요**
-3. VPS full 15구간 rerun (`shrink=0.45` 유지, `BULL_RECENCY_01_KR_LEVER=1`)
-
-```bash
-export BULL_RECENCY_01_PATCH=1 BULL_RECENCY_01_SHRINK=0.45 BULL_RECENCY_01_KR_LEVER=1
-export RP1_SKIP_STAGE2=1
-unset RP1_METRICS_ONLY RP1_MATRIX_REUSE RP1_FAST
-python3 scripts/run_bull_recency_01_rp1.py \
-  --baseline reports/regime_panel/rp1_20260811.json
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 OUTBOX 검증.
+8/13 JSON을 BULL-RECENCY DoD SSOT로 확정(재현 full 중지). OK면 다음 Handoff를 CLAUDE_TO_CURSOR.md에.
+채팅 말고 파일에.
 ```
 
-**iter 2 확정**: BULL_03 NEAR_MISS · BULL_05 FAIL · `_dod.json` all_pass=true **무효**(버그)
+---
+
+## SSOT 고정 (2026-08-16 디렉터 결정)
+
+| 항목 | 값 |
+|------|-----|
+| **유효 JSON** | `rp1_bull_recency_01_20260813.json` (+ `--dod-only` 재생성 DoD) |
+| **BULL_03** | **NEAR_MISS** · n=**10,276** · period_ret **15.40%** |
+| **BULL_05** | **FAIL** · period_ret **−9.04%** (iter2 미충족 — 다음 Handoff 주제) |
+| **폐기** | 20260814 · 20260815 · 20260816 full (전부 baseline 또는 붕괴) |
+| **금지** | BULL-RECENCY 재현용 VPS 15구간 full **추가 실행** |
+
+### 왜 재현을 멈추는가
+
+- scope ON + 실 shrink → BULL_03 n≈0  
+- scope OFF + 실 shrink → BULL_03 = **40,657 / 4.30%** = baseline  
+- smoke `n=10276`(FAST)는 8/13이 아니라 **baseline 비율** 오탐이었음  
+
+**iter 2 증거(8/13)는 이미 있음.** 재현 루프는 목표(다음 단계)를 막음 → Claude가 다음 Handoff(예: BULL_05 별도 레버 / Done 부분 인정) 결정.
+
+---
+
+## Cursor — 완료·대기
+
+1. ✅ DoD `regime_name` 버그픽스 + `--dod-only`
+2. ✅ KR 레버 코드 (미검증 — 유효 full 없음)
+3. ⛔ VPS 재현 full — **중지** (디렉터 결정 2026-08-16)
 
 ---
 

@@ -3,11 +3,52 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-13 · **BULL-RECENCY-01 iter 3 OUTBOX** = 본 파일 최상단 (`SYNC-2026-08-13-B`)
+> **갱신**: 2026-08-16 · **BULL-RECENCY SSOT freeze** = 본 파일 최상단 (`SYNC-2026-08-16-A`)
 
 ---
 
-## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **iter 3 착수** · DoD 버그 확인 + KR 레버 구현 (2026-08-13)
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **SSOT freeze** · 재현 full 중지 · 다음 Handoff 요청 (2026-08-16)
+
+| 항목 | 내용 |
+|------|------|
+| **디렉터 결정** | 재현 루프 중단 · **8/13 JSON을 DoD SSOT로 고정** · 목표(다음 단계) 우선 |
+| **status** | `WAIT_CLAUDE_OK` → 다음 Handoff를 `CLAUDE_TO_CURSOR.md`에 |
+| **Cursor 구현** | ⛔ 추가 VPS 15구간 full **금지** (smoke/게이트 개선만 허용, full 재시도 아님) |
+
+### 유효 SSOT (유일한 DoD 증거)
+
+| 파일 | 내용 |
+|------|------|
+| `rp1_bull_recency_01_20260813.json` | shrink **0.45** full · generated `2026-08-13 01:26` |
+| BULL_03 | **NEAR_MISS** · n=**10,276** · period_ret **15.3971%** |
+| BULL_05 | **FAIL** · n=9,142 · period_ret **−9.0378%** |
+| DoD | `--dod-only`로 재생성 · all_pass=false (BULL_05) — **정상** |
+
+### 폐기 (SSOT 아님)
+
+| 런 | 증상 |
+|-----|------|
+| 8/14 | BULL_03 **40,657 / 4.30%** = baseline |
+| 8/15 scope | matrix ~970 · BULL_03 n=8 |
+| 8/15/16 no-scope + 실 shrink | BULL_03 **40,657 / 4.30%** = baseline (fallthrough) |
+| smoke FAST n=10276 | **오탐** — baseline×(100/400)≈10164와 동일 스케일 |
+
+### 엔지니어 결론 (재현 불가 이유)
+
+1. **scope ON** + 실 shrink → 매칭 붕괴 (n≈0)  
+2. **scope OFF** + 실 shrink → CLUSTER 후순위 fallthrough → **baseline bit-identical**  
+3. 8/13 성공 경로는 당시 brain/템플릿 상태와 묶여 있으며, **현재 VPS에서 bit-close 재현 실패**  
+4. mirror_bounds 버그(`351b404`)·smoke 게이트는 교훈용으로 남김 — **재현 full의 근거가 되진 않음**
+
+### Claude에 요청
+
+1. **8/13을 BULL-RECENCY iter2 DoD SSOT로 공식 인정** (BULL_03 NEAR_MISS · BULL_05 FAIL)  
+2. iter3 KR 레버: **유효 full 없음** → (a) 보류 / (b) 새 Handoff(재현 없이 다른 검증) / (c) 부분 Done 후 로드맵 다음  
+3. `CLAUDE_TO_CURSOR.md`에 **다음 sub-phase Handoff 1개만** (채팅 말고 파일)
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BULL-RECENCY-01 **iter 3 착수** · DoD 버그 확인 + KR 레버 구현 (2026-08-13) *(superseded — 재현 중지)*
 
 | 항목 | 내용 |
 |------|------|
