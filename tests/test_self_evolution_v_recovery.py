@@ -74,6 +74,23 @@ def test_detect_ensemble_bull_score_cross():
     assert reason == "ensemble_bull_score_cross"
 
 
+def test_detect_score_cross_blocked_while_still_high_vol():
+    """HIGH_VOL + 고점수만으로 매일 재발동하던 챗바퀴 회귀 방지."""
+    ctx = EnsembleIntrinsicContext(
+        market="US",
+        score=0.52,
+        regime="HIGH_VOL",
+        source="config",
+    )
+    ok, reason = detect_v_recovery_transition(
+        previous_regime="HIGH_VOL",
+        current_regime="HIGH_VOL",
+        ensemble_ctx=ctx,
+    )
+    assert ok is False
+    assert reason == "still_defensive"
+
+
 def test_detect_short_trend_rebound():
     ctx = EnsembleIntrinsicContext(
         market="US",

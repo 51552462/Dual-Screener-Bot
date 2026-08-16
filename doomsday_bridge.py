@@ -162,6 +162,20 @@ def _apply_inverse_mode_and_cycle(cfg: dict[str, Any], *, run_inverse_cycle: boo
 
     _sync_inverse_mode_switch(cfg, vix_last, regime_disp)
     summary: dict[str, Any] = {"inverse_mode": bool(cfg.get("INVERSE_MODE_ACTIVE"))}
+    # INVERSE_MODE OFF 여도 V-Recovery LAST_REGIME 은 동기화 (HIGH_VOL→BULL 고착 방지)
+    try:
+        import sqlite3
+
+        from auto_forward_tester import DB_PATH as _FWD_DB
+        from inverse_etf_sniper import enforce_v_recovery_kill_switch
+
+        _conn = sqlite3.connect(_FWD_DB, timeout=30)
+        try:
+            summary["v_recovery"] = enforce_v_recovery_kill_switch(_conn, cfg)
+        finally:
+            _conn.close()
+    except Exception as ex:
+        summary["v_recovery"] = {"error": str(ex)}
     if run_inverse_cycle and summary["inverse_mode"]:
         try:
             from inverse_etf_sniper import run_inverse_etf_sniper_cycle

@@ -477,11 +477,14 @@ def detect_v_recovery_transition(
     """
     BEAR/HIGH_VOL → BULL(또는 명확한 반등 시그널) 전환 감지.
 
-    트리거 (prev 방어국면 필수):
+    트리거 (prev 방어국면 필수 · edge-trigger):
       1) META_REGIME_KEY → BULL
       2) regime_analog V_RECOVERY unlock
-      3) ensemble score ≥ 0.18 (BULL threshold cross)
-      4) ensemble short_trend ≥ 0.55 + current 비-BEAR/HIGH_VOL
+      3) ensemble score ≥ 0.18 이면서 current 가 비-방어(BEAR/HIGH_VOL 아님)
+      4) ensemble short_trend ≥ 0.55 + current 비-방어
+
+    주의: (3)에서 current 가 여전히 HIGH_VOL/BEAR 이면 score 만으로 매일 재발동하던
+    챗바퀴를 막는다. LAST_REGIME 은 호출측 persist_hedge_regime_snapshot 이 동기화.
     """
     prev = _normalize_regime_key(previous_regime)
     cur = _normalize_regime_key(current_regime)
@@ -500,18 +503,17 @@ def detect_v_recovery_transition(
     except Exception:
         pass
 
+    # score/short_trend 반등은 "방어 국면을 떠난 뒤"에만 — HIGH_VOL+고점수가 매일 재발동 금지
+    if cur in VRECOVERY_DEFENSIVE_REGIMES or cur in ("", "UNKNOWN"):
+        return False, "still_defensive"
+
     ctx = ensemble_ctx if ensemble_ctx is not None else load_ensemble_intrinsic_context(cfg, "US")
     score = float(ctx.score)
     if score >= ENSEMBLE_BULL_SCORE_THRESHOLD:
         return True, "ensemble_bull_score_cross"
 
     short_f = _float_or_none((ctx.factor_states or {}).get("short_trend"))
-    if (
-        short_f is not None
-        and short_f >= ENSEMBLE_REBOUND_SHORT_TREND
-        and cur not in VRECOVERY_DEFENSIVE_REGIMES
-        and cur not in ("", "UNKNOWN")
-    ):
+    if short_f is not None and short_f >= ENSEMBLE_REBOUND_SHORT_TREND:
         return True, "ensemble_short_trend_rebound"
 
     return False, "no_v_recovery_signal"

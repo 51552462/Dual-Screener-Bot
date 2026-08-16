@@ -185,6 +185,31 @@ def _minute_ops_snapshot_and_inverse_cycle() -> None:
     if not isinstance(active_signals, (list, tuple)):
         active_signals = []
 
+    # V-Recovery LAST_REGIME 동기화는 국면과 무관하게 매분 1회.
+    # (BULL 인데 LAST=HIGH_VOL 로 남으면 다음 방어구간에서 score cross 챗바퀴)
+    try:
+        from inverse_etf_sniper import enforce_v_recovery_kill_switch
+        from auto_forward_tester import DB_PATH as _FWD_DB
+        import sqlite3 as _sqlite3
+
+        _conn = _sqlite3.connect(_FWD_DB, timeout=30)
+        try:
+            _vr = enforce_v_recovery_kill_switch(_conn, cfg)
+            if _vr.get("triggered"):
+                summary = {
+                    "kill_closed": int(_vr.get("closed") or 0),
+                    "skipped": (
+                        f"V-Recovery ({_vr.get('reason')}): "
+                        f"청산 {_vr.get('closed', 0)}건"
+                    ),
+                    "entered": None,
+                    "v_recovery": _vr,
+                }
+        finally:
+            _conn.close()
+    except Exception as e:
+        print(f"⚠️ [AutoPilot] V-Recovery LAST 동기화 스킵: {e}")
+
     # 하락장(BEAR/HIGH_VOL)이거나, 폭락 대기 종목(Top 3)이 1개라도 있으면 스나이퍼 가동
     if "BEAR" in current_regime or "HIGH_VOL" in current_regime or len(active_signals) > 0:
         try:
