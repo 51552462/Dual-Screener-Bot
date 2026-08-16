@@ -53,7 +53,7 @@ class TestTightenBounds:
 
 
 class TestPrepareSimTemplates:
-    def test_scope_then_reorder(self):
+    def test_reorder_keeps_all_live_no_scope(self):
         from bull_recency_01_bounds import prepare_live_templates_for_br01_sim
 
         ml = {
@@ -64,24 +64,29 @@ class TestPrepareSimTemplates:
         }
         ordered, audit = prepare_live_templates_for_br01_sim(ml)
         assert audit["ready"] is True
-        assert list(ordered) == [
-            "CLUSTER_1_강응축_폭발형_260628",
-            "CLUSTER_1_강응축_폭발형_260802",
-        ]
-        assert audit["scope"]["live_out"] == 2
-        assert audit["scope"]["live_in"] == 4
+        assert audit["scoped"] is False
+        assert list(ordered)[0] == "CLUSTER_1_강응축_폭발형_260628"
+        assert "CLUSTER_2_강응축_폭발형_260628" in ordered
+        assert "CLUSTER_1_혼조세_돌연변이형_260719" in ordered
+        assert audit["sim_live"] == 4
 
 
 class TestBr01SmokeValidate:
-    def test_rejects_fallthrough(self):
+    def test_accepts_fallthrough_on_813_path(self):
         from bull_recency_01_bounds import validate_br01_smoke_trades
 
         trades = [{"template": "CLUSTER_2_x"}] * 3000
         ok, msg = validate_br01_smoke_trades(trades)
-        assert ok is False
-        assert "fallthrough" in msg
+        assert ok is True
 
-    def test_accepts_cluster_1_only(self):
+    def test_rejects_collapse(self):
+        from bull_recency_01_bounds import validate_br01_smoke_trades
+
+        ok, msg = validate_br01_smoke_trades([{"template": "x"}] * 10)
+        assert ok is False
+        assert "smoke_n" in msg
+
+    def test_accepts_cluster_1_volume(self):
         from bull_recency_01_bounds import validate_br01_smoke_trades
 
         trades = [{"template": "CLUSTER_1_강응축_폭발형_260628"}] * 5000

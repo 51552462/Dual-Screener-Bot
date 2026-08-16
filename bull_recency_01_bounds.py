@@ -159,18 +159,29 @@ def reorder_live_templates_for_br01(
 def prepare_live_templates_for_br01_sim(
     ml_templates: Mapping[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """8/13 SSOT path: scope to 폭발형 (no fallthrough) + binding template first."""
-    scoped, scope_audit = scope_live_templates_for_br01(ml_templates)
-    if not scoped:
+    """
+    8/13 SSOT sim path: keep ALL LIVE templates; put binding 260628 first.
+
+    Do NOT scope to 폭발형-only — that collapses BULL_03 after real shrink
+    (smoke BULL_03 n=0). 8/13 used full LIVE + CLUSTER_1 shrink only.
+    """
+    if not isinstance(ml_templates, dict) or not ml_templates:
+        return {}, {"ready": False, "reason": "empty_live", "sim_live": 0}
+    ordered, reorder_audit = reorder_live_templates_for_br01(ml_templates)
+    if not ordered:
+        return {}, {"ready": False, "reason": "empty_after_reorder"}
+    has_binding = any(
+        is_cluster_1_explosive_template(n) for n in ordered
+    )
+    if not has_binding:
         return {}, {
             "ready": False,
-            "reason": "empty_after_scope",
-            "scope": scope_audit,
+            "reason": "no_cluster_1_explosive",
+            "reorder": reorder_audit,
         }
-    ordered, reorder_audit = reorder_live_templates_for_br01(scoped)
     return ordered, {
         "ready": True,
-        "scope": scope_audit,
+        "scoped": False,
         "reorder": reorder_audit,
         "sim_live": len(ordered),
         "first": reorder_audit.get("first"),
@@ -183,25 +194,14 @@ def validate_br01_smoke_trades(
     min_n: int = BR01_SMOKE_MIN_TRADES,
     max_n: int = BR01_SMOKE_MAX_TRADES,
 ) -> Tuple[bool, str]:
-    """Dynamic gate before full RP-1 — catches fallthrough and collapsed scope."""
+    """Dynamic gate — collapse (n≈0) or absurd scale; fallthrough OK on 8/13 path."""
     n = len(trades)
     if n < min_n:
-        return False, f"smoke_n={n} < {min_n} (collapsed scope / bad bounds?)"
+        return False, f"smoke_n={n} < {min_n} (collapsed / bad bounds?)"
     if n > max_n:
-        return False, f"smoke_n={n} > {max_n} (baseline-scale / no patch effect?)"
-    fallthrough: List[str] = []
-    for row in trades:
-        tpl = str(row.get("template") or "")
-        if not tpl:
-            continue
-        if not is_cluster_1_explosive_template(tpl):
-            fallthrough.append(tpl)
-    if fallthrough:
-        from collections import Counter
+        return False, f"smoke_n={n} > {max_n} (baseline-scale / shrink not biting?)"
+    return True, f"smoke_n={n} (8/13-path; fallthrough allowed)"
 
-        top = Counter(fallthrough).most_common(3)
-        return False, f"fallthrough templates (CLUSTER_2/3?): {top}"
-    return True, f"smoke_n={n} cluster_1_explosive_only"
 
 
 def _bounds_need_ssot_overlay(bounds: Mapping[str, Any]) -> bool:

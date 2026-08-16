@@ -298,16 +298,13 @@ def _brain_templates_and_factors(
         ml_templates, sim_audit = prepare_live_templates_for_br01_sim(ml_templates)
         if not sim_audit.get("ready"):
             raise RuntimeError(
-                "RP-1 aborted: BULL_RECENCY_01 patch active but no CLUSTER_1 폭발형 "
-                "LIVE templates after scope filter"
+                "RP-1 aborted: BULL_RECENCY_01 patch active but LIVE template "
+                f"prepare failed ({sim_audit.get('reason')})"
             )
-        scope = sim_audit.get("scope") or {}
-        live_in = int(scope.get("live_in") or 0)
-        live_out = int(scope.get("live_out") or 0)
         first = sim_audit.get("first")
         log_rp1(
-            "[RP-1] BULL_RECENCY_01: sim scope CLUSTER_1 폭발형 only "
-            f"({live_out}/{live_in}) first={first}"
+            "[RP-1] BULL_RECENCY_01: LIVE reordered (no scope, 8/13 path) "
+            f"first={first} live={sim_audit.get('sim_live')}"
         )
     all_templates = {**ml_templates, **ud_templates}
     evolved_factors = config.get("EVOLVED_ALPHA_FACTORS")

@@ -80,17 +80,15 @@ def _static_gate() -> int:
     sim_live = sum(
         1 for name in sim_tpl if name in (brain.get("LIVE_CLUSTER_TEMPLATES") or {})
     )
-    if sim_live != tp:
+    # 8/13 path: all LIVE kept (no scope). sim_live must equal brain_ml.
+    if sim_live != ml_n:
         print(
-            f"FATAL: sim_live={sim_live} != patched={tp} "
-            f"(fallthrough path? sim_templates={len(sim_tpl)} brain_ml={ml_n})"
+            f"FATAL: sim_live={sim_live} != brain_ml={ml_n} "
+            "(unexpected scope / template drop)"
         )
         return 1
-    if len(sim_tpl) >= ml_n:
-        print(
-            f"FATAL: sim_templates={len(sim_tpl)} >= brain_ml={ml_n} "
-            "(scope not applied — CLUSTER_2/3 fallthrough risk)"
-        )
+    if sim_live < tp:
+        print(f"FATAL: sim_live={sim_live} < patched={tp}")
         return 1
     first_tpl = next(iter(sim_tpl), "")
     if "260628" not in str(first_tpl):
