@@ -65,8 +65,12 @@ def _static_gate() -> int:
                     "(mirror_bounds regression? git pull 351b404+)"
                 )
                 return 1
-            if lo_after > -0.2:
-                print(f"FATAL: bounds_after dyn_cpv_min={lo_after} — expected ~-0.1703")
+            # tightened lo rises from ~-0.51 toward ~-0.17 (not still near -0.51)
+            if lo_after < -0.25:
+                print(
+                    f"FATAL: bounds_after dyn_cpv_min={lo_after} — shrink too weak "
+                    f"(before={lo_before})"
+                )
                 return 1
         except (TypeError, ValueError):
             print("FATAL: bounds_after dyn_cpv_min not numeric")
