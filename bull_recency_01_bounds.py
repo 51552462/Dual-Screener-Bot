@@ -306,19 +306,20 @@ def apply_kr_rs_lever_to_brain(
 
 
 def mirror_bounds_for_time_machine(bounds: Mapping[str, Any]) -> Dict[str, Any]:
-    """RP-1 `_row_matches_template_bounds` reads dyn_* / v_energy_* only — mirror legacy keys."""
+    """RP-1 `_row_matches_template_bounds` reads dyn_* / v_energy_* — keep both aliases in sync."""
     out = dict(bounds)
     for (legacy_lo, legacy_hi), (dyn_lo, dyn_hi) in _TM_BOUNDS_MIRROR:
-        if legacy_lo in out or legacy_hi in out:
-            if legacy_lo in out:
-                out[dyn_lo] = out[legacy_lo]
-            if legacy_hi in out:
-                out[dyn_hi] = out[legacy_hi]
-        elif dyn_lo in out or dyn_hi in out:
+        # dyn_* authoritative when both alias sets exist (post-tighten dyn changes must win).
+        if dyn_lo in out or dyn_hi in out:
             if dyn_lo in out:
                 out[legacy_lo] = out[dyn_lo]
             if dyn_hi in out:
                 out[legacy_hi] = out[dyn_hi]
+        elif legacy_lo in out or legacy_hi in out:
+            if legacy_lo in out:
+                out[dyn_lo] = out[legacy_lo]
+            if legacy_hi in out:
+                out[dyn_hi] = out[legacy_hi]
     return out
 
 

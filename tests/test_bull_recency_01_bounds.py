@@ -108,7 +108,18 @@ class TestBr01SsotBounds:
         assert b["v_energy_min"] == 98.1
         _, patch_audit = apply_bull_recency_01_brain_patch(overlaid, shrink=0.45)
         before = patch_audit["patched"][0]["bounds_before"]
+        after = patch_audit["patched"][0]["bounds_after"]
         assert before["dyn_cpv_min"] == -0.51
+        assert after["dyn_cpv_min"] == -0.1703
+        assert after["dyn_cpv_min"] != before["dyn_cpv_min"]
+
+    def test_mirror_dyn_wins_when_both_aliases_present(self):
+        from bull_recency_01_bounds import mirror_bounds_for_time_machine
+
+        bounds = {"cpv_min": -0.51, "cpv_max": 1.0, "dyn_cpv_min": -0.1703, "dyn_cpv_max": 0.6603}
+        out = mirror_bounds_for_time_machine(bounds)
+        assert out["cpv_min"] == -0.1703
+        assert out["dyn_cpv_min"] == -0.1703
 
 
 class TestBrainPatch:
