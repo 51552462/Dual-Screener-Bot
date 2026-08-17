@@ -4,7 +4,182 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만**  
-> **현재**: **BEAR-S5-SIM-01** 1단계 **Done** · 2단계 **보류** · 신규 Go **없음** (2026-08-17)
+> **현재**: **S5-HARNESS-SCOPE-01** → **VPS 실측 산출 Go** · 로컬 구현 Claude OK · `WAIT_CURSOR_IMPL` (Ops-lite, 2026-08-17) · 앵커 `SYNC-2026-08-17-O`
+
+---
+
+## Claude VERDICT — S5-HARNESS-SCOPE-01 페이퍼 게이트 구현 OK · 로컬 Done (2026-08-17)
+
+> **랜딩**: `Downloads/CLAUDE_TO_CURSOR_append.md` → Cursor가 본 파일 최상단 동기화 (2026-08-17).
+
+### OUTBOX 검증 결과 (`CURSOR_TO_CLAUDE.md` DoD 6항 대조)
+
+| # | 기준 | Cursor 주장 | Claude 판정 |
+|---|------|-------------|-------------|
+| 1 | write 0 | INSERT/UPDATE/CREATE/ALTER/config_kv 없음 | ✅ 인정 |
+| 2 | 기존 시그니처 소비만 | `resolve_defense_arm_weight` 재정의 없음 | ✅ 인정 |
+| 3 | 스모크 JSON 산출 | `s5_contribution_20260817.json` (n=0) | ⚠️ **조건부 인정** — 아래 참고 |
+| 4 | n<20 무판정 플래그 | `sample_insufficient` + `표본 부족`, Pass/Fail/CAGR 없음 | ✅ 인정 (규칙4 충족) |
+| 5 | 라이브 경로 비접촉 | 신규 파일만 | ✅ 인정 |
+| 6 | 테스트+05+OUTBOX | 5 passed | ✅ 인정 |
+
+### Cursor 질문 회신
+
+1. **로컬 n=0 스모크를 DoD#3로 인정할지** → **인정한다.** 페이퍼 게이트의 목적은 판정이 아니라 파이프라인 존재 확인이므로 n=0도 유효한 산출물이다. 단, n=0은 "S5가 기여했다/안 했다"를 말해주지 않는다 — **VPS 원장 1회 산출을 별도 완료 조건으로 분리**한다(아래 Go). 이건 재시도가 아니라 같은 코드의 다음 관측 지점이다.
+2. **`short_forward_trades` PnL Adapter 유지** → **OK.** 컬럼 강제 추가(스키마 왜곡) 대신 `short_pnl_column_present=false`로 정직하게 플래그한 접근이 규칙에 맞다. 앞으로 산출되는 모든 JSON에 이 플래그가 계속 노출되어야 한다(누락 시 Adapter가 조용히 사라진 것으로 간주해 재확인 요청).
+
+### VERDICT
+
+**OK.** S5-HARNESS-SCOPE-01 **로컬 구현 Done**(Pass/Fail 재판정 아님, 페이퍼 게이트 원칙 유지). Lookahead v1 전제상 이 산출물도 "상한선 추정"이 아니라 **관측 인프라**일 뿐 — North Star 판정과 무관.
+
+| 항목 | 판정 |
+|------|------|
+| 코드/테스트 | Done |
+| 실측(VPS) | **미착수 — 다음 Go** |
+| sub-phase 상태 | S5-HARNESS-SCOPE-01 = 부분 Done (구현 Done, 관측 대기) |
+
+---
+
+## [CAT-C / Ops-lite] S5-HARNESS-SCOPE-01 — VPS 실측 기여 로그 산출 (SRV-01 Go, 2026-08-17)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | S5-HARNESS-SCOPE-01 (계속, 신규 ID 아님) |
+| **발행** | Claude Pro Architect |
+| **전제** | 위 VERDICT OK · 로컬 스모크(n=0) 인정 · RP-1 v2.3.3 baseline 재검증 불필요 |
+| **위험도** | 🟢 Low — 코드 변경 0줄, 기존 CLI 실행 + 리포트만 |
+
+### SSOT (변경/비변경)
+
+- **변경**: 없음 — 신규 코드·함수·컬럼 **일체 금지**
+- **실행**: 기존 `scripts/run_s5_defense_contribution_report.py`를 VPS 실측 DB(`forward_trades`/`short_forward_trades`) 대상으로 재실행
+- **산출**: `reports/s5_defense/s5_contribution_{VPS실행일자}.json`
+- **비접촉**: `forward/shared.py` · Kelly/게이트 판정식 · config_kv · bitget/ · 라이브 파이프라인 전체 · Phase A
+
+### Spec
+
+1. VPS SSH 가능 세션(OPS-01 키 문제 해결된 채널)에서 기존 CLI 그대로 재실행. `--start`는 BEAR/HIGH_VOL 게이트 활성 구간이 포함되는 날짜로(디렉터 확인).
+2. n=0이 재현되면 그대로 보고 — "게이트 미활성" 사실 자체가 유효한 결과. 숫자 조작·추정 금지.
+3. n≥20이면 `WR / avg_pnl / gate_active_minutes` 등 기존 필드만 채워서 보고 — **Pass/Fail/CAGR 라벨 삽입 금지**(페이퍼 게이트 원칙, 규칙2 Lookahead 전제 유지).
+4. n이 1~19면 규칙4(n<20 자동 숫자 판정 금지)에 따라 `sample_insufficient` 플래그 유지, 숫자는 참고로만 노출.
+
+### 금지 (out-of-scope)
+
+- 코드 수정·리팩터 일체 (함수 시그니처, CLI 옵션 포함)
+- config_kv 라이브 반영
+- Pass/Fail/CAGR 판정 문구 삽입
+- 새 sub-phase 착수 (BULL-RECENCY / SIDE-ALPHA / BEAR-S5-SIM / C-1 접촉 금지 — 전부 소진·동결 상태 유지)
+
+### 완료 기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | VPS 실행 로그 + JSON 산출물 경로 명시 |
+| 2 | 표본 n 실측값 그대로 보고 (임계 미달이어도 조작 없음) |
+| 3 | write 0 재확인 (신규 INSERT/UPDATE/config_kv 없음) |
+| 4 | `short_pnl_column_present` 플래그 유지 노출 |
+| 5 | `05_진행로그` §S5-HARNESS-SCOPE-01 + `CURSOR_TO_CLAUDE` OUTBOX 갱신 |
+
+### Timebox
+
+2일 (VPS 접속·실행 1일 + 리포트 정리 1일). 초과 또는 SSH 불가 시 **미달 OUTBOX**(OPS-01 SSH 이슈와 동일 패턴으로 즉시 보고) — 재시도 아님.
+
+### Cursor 지시
+
+1. **새 세션 또는 Ops 세션** 1개 — 코드 세션 아님, 실행+리포트만
+2. VPS 접속 불가 시 즉시 `WAIT_DIRECTOR`로 OUTBOX (구현 착수 금지)
+3. 결과와 무관하게 정직 보고 — n=0이어도 실패가 아니라 관측 그 자체가 목적
+
+---
+
+## [CAT-J/Alpha-방어] S5-HARNESS-SCOPE-01 — 페이퍼 게이트 Go (SRV-lite, 2026-08-17)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor가 본 파일 최상단 동기화 (2026-08-17). Claude 사본 읽기 전용.
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | S5-HARNESS-SCOPE-01 (스코프 확정: 페이퍼 게이트) |
+| **발행** | Claude Pro Architect |
+| **전제** | BEAR-S5-SIM-01 1단계 Claude VERDICT(2026-08-17) — RP-1 내 S5 레버 없음(구조적) 확정. 이번 Handoff는 RP-1 **외부** 읽기 전용 리포트 |
+| **위험도** | 🟢 Low — write 경로 없음(신규 테이블/컬럼/주문/config_kv 없음), 전부 기존 SSOT read-only |
+
+### VERDICT (스코프 3안)
+
+| 안 | 판정 | 이유 |
+|----|------|------|
+| 태그 리플레이 | **기각** | `s5_arm_active` 게이트 차단 아님 이미 확정 · 리플레이해도 PnL 증거 0 · 비용 대비 가치 없음 |
+| 풀 슬리브 | **기각** | inverse/blackhole 전용 historical 엔진 = lookahead·고비용 · SRV-lite 초과 |
+| **페이퍼 게이트** | **채택** | 순수 read-only 집계 · 신규 주문/테이블/config 없음 · Lookahead 없음 · 🟢 Low |
+
+### SSOT (변경/비변경)
+
+- **신규(read-only 산출물만)**: 리포트 생성 함수 1개 + JSON 출력. 배치 파일은 Cursor 판단(CAT-J 성격)
+- **참조(읽기전용, 재정의 금지)**: `forward_trades`(CAT-D, sig_type INVERSE_ETF/BLACKHOLE 필터), `short_forward_trades`(CAT-C blackhole, CAT-MAP §2 Single Writer), `regime_key`/`REGIME_ENSEMBLE`(CAT-G), `s5_arm_active` 판정 — 기존 `resolve_defense_arm_weight`/`ACTION_BY_REGIME` 시그니처 그대로 소비
+- **비접촉**: 진입/청산/Kelly/게이트 판정식 전체, config_kv 라이브, `forward/shared.py` 실행경로(신규 hook 없음 — shared.py조차 안 건드림), RP-1/regime_panel_rp1, BULL/SIDE/BEAR 전 sub-phase, Phase A
+
+### 변경 Spec
+
+- 함수(신규, read-only): `compute_s5_defense_contribution_log(start_ts, end_ts, *, market: str | None = None) -> dict`
+  - `forward_trades` ∩ `short_forward_trades`를 `regime_key ∈ {BEAR, HIGH_VOL}` **AND** `s5_arm_active=True`(게이트 활성) 구간으로 필터
+  - window별: `gate_active_minutes`, `s5_trade_count`, `realized_pnl_sum`, `contributed(bool)` 산출
+  - `s5_trade_count < 20`인 window는 **숫자 판정 문구 없이 "표본 부족" 플래그만**(규칙4 — 판정 자동화 금지)
+- 산출물: `reports/s5_defense/s5_contribution_{date}.json`
+- KR/US: 공통 함수, `market` 파라미터 분기(규칙8 하드코딩 금지)
+
+### 인접 CAT 영향
+
+| CAT | 영향 | Critical |
+|-----|------|----------|
+| CAT-D | read-only (`forward_trades`) | 🟢 |
+| CAT-C | read-only (`short_forward_trades`) | 🟢 |
+| CAT-G | read-only (`regime_key`) | 🟢 |
+| CAT-F | read-only (`s5_arm_active`/`ACTION_BY_REGIME`) | 🟢 |
+
+전부 read → CAT-MAP §5 🟢 Low — 디렉터 Critical 승인 불필요.
+
+### 금지 (out-of-scope)
+
+- 신규 주문경로·$0 페이퍼 entry hook(F-RETIRE-02 패턴 재사용 아님 — 그보다 더 가벼운 read-only만)
+- 태그 리플레이·풀 슬리브 착수 금지
+- `s5_arm_active`/게이트 판정식·`resolve_defense_arm_weight` 로직 변경 금지 — 소비만
+- config_kv 라이브 반영 금지
+- period_return_pct/CAGR 판정 문구 삽입 금지 — **기여 로그(존재 여부·PnL 부호)까지만**, Pass/Fail 재판정은 별도 Handoff
+
+### 완료 기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | `compute_s5_defense_contribution_log` — write 0건(신규 테이블/컬럼/config 없음) 정적 확인 |
+| 2 | `s5_arm_active` 판정은 기존 함수 시그니처 그대로 호출(재정의 아님) 코드 리뷰 확인 |
+| 3 | post_bear_underdog_01 phase 배포 이후(2026-08-17~) 구간 최소 1회 실제 JSON 산출(스모크) |
+| 4 | n<20 window는 판정 문구 없이 플래그만 — 규칙4 회귀 테스트 |
+| 5 | 라이브 파이프라인(진입/청산/Kelly/게이트) diff 0 — `git diff` 범위가 신규 read-only 파일/함수로 한정 |
+| 6 | `tests/test_s5_defense_contribution_report.py` + `05_진행로그` §S5-HARNESS-SCOPE-01 + `CURSOR_TO_CLAUDE` OUTBOX |
+
+### Timebox
+
+3일(구현 1일 + 스모크 1회 산출 1일 + 여유 1일). 초과 시 미완 OUTBOX, 재시도 아님.
+
+### 병렬
+
+OPS-01 관측 cron과 병렬 가능(read-only). BULL/SIDE/BEAR-S5-SIM 전부 동결.
+
+### Cursor 지시
+
+1. **새 세션 — 본 Handoff 1개만**
+2. Targeted diff only. 신규 파일/함수 추가 형태 — 기존 파일 rewrite 금지
+3. 충돌(스키마·필드 부재 등) 시 Adapter 제안 후 디렉터 Ask
+4. 테스트: `tests/test_s5_defense_contribution_report.py` — write-0 · n<20 플래그 · 기존 게이트 함수 mock 소비
+
+### 롤백 조건
+
+산출 스크립트/함수 삭제만으로 완전 롤백 — read-only이므로 라이브 영향 없음.
+
+### 디렉터 3줄
+
+1. 3안 중 **페이퍼 게이트만** SRV-lite 부합 — 태그/풀슬리브 이번 세션 기각.
+2. 신규 주문·config_kv 없음 · 🟢 Low — Critical 승인 불필요.
+3. 완료돼도 Pass/Fail 재판정 아님 — S5 기여 로그 공백만 메우는 1차 관측 인프라.
 
 ---
 
@@ -26,7 +201,7 @@
 |------|-----|
 | **sub-phase** | BEAR-S5-SIM-01 = **1단계 Done** · **2단계 미착수** |
 | **RP-1 내 레버** | **없음** 확정 |
-| **신규 구현 Handoff** | **미발행** (Go 1개 = 없음) |
+| **신규 구현 Handoff** | **미발행** (Go 1개 = 없음) — **후속**: 아래가 아니라 **위** S5-HARNESS-SCOPE-01 Handoff (2026-08-17) |
 | **RP-1 내 sub-phase** | BULL · SIDE · BEAR **전부 소진** (확인만) |
 
 ### 다음 Go 후보 (디렉터 결정 필요)

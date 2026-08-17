@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-I`
+> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-O`
 
 ---
 
@@ -39,24 +39,25 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-17-I` |
-| **마지막 갱신** | 2026-08-17 — OPS-01 **차단**: 이 워크스테이션 VPS SSH `publickey` 거부 |
-| **활성 트랙** | KR/US — **Ops 배포** (Alpha 구현 창과 분리) |
-| **진행 중 sub-phase** | **OPS-01** — `WAIT_DIRECTOR` (VPS 셸은 디렉터) |
-| **직전 완료** | BEAR-S5-SIM-01 **1단계 Done** · SIDE/BULL **부분 Done** |
-| **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM **1단계** · F-GATE/F-RETIRE |
-| **구현 완료·배포 대기** | F-GATE-01 · F-RETIRE-02 · BEAR-UNDERDOG-01 · L-OBS-02 (**VPS pull 미실행**) |
-| **다음(배포 후)** | **S5-HARNESS-SCOPE-01** SRV-lite (아직 미착수) |
-| **Handoff SSOT** | Ops = `NEXT_ACTION.md` §OPS-01 · Alpha 코드 Handoff **불필요** |
-| **git main** | `2ecb6d7` (`origin/main` 일치) |
+| **앵커 ID** | `SYNC-2026-08-17-O` |
+| **마지막 갱신** | 2026-08-17 — S5 로컬 Claude OK · **VPS 실측 Go** 랜딩 |
+| **활성 트랙** | KR/US — **Ops-lite** (Alpha 코드 Done · 창 분리) |
+| **진행 중 sub-phase** | **S5-HARNESS-SCOPE-01** — `WAIT_CURSOR_IMPL` (VPS 실측 · 코드 0줄) |
+| **직전 완료** | S5 페이퍼 게이트 **로컬 구현 Claude OK** (부분 Done) |
+| **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM **1단계** · F-GATE/F-RETIRE · **S5 로컬 페이퍼 게이트** |
+| **구현 완료·배포** | F-GATE/F-RETIRE/BEAR-UD/L-OBS — VPS **`0efc750`** · phase `post_bear_underdog_01` |
+| **다음** | Cursor **Ops 새 창** — VPS CLI 1회 · SSH 불가 시 WAIT_DIRECTOR |
+| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` 최상단 · VPS 실측 Go |
+| **git main** | VPS **`0efc750`** |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[지금] OPS-01 — 디렉터 VPS `git pull` + `update_factory.sh` (Cursor SSH 불가)
-[다음] S5-HARNESS-SCOPE-01 SRV-lite (배포 후 · Alpha)
-[종료] BEAR-S5-SIM-01 1단계 Done · SIDE/BULL 부분 Done · RP-1 내 레버 소진
-[후순위] C-1-REDUCED · SIDE 최소보유 · S5 하네스 구현(스코프 확정 후)
+[종료] OPS-01 — 0efc750 · overall PASS · cursor_action=NONE
+[부분Done] S5 로컬 페이퍼 게이트 — Claude OK
+[지금] S5-HARNESS-SCOPE-01 — VPS 실측 CLI · WAIT_CURSOR_IMPL (Ops-lite)
+[기각] 태그 리플레이 · 풀 슬리브
+[후순위] f_gate_01 SKIP(strategy_registry_missing) Ops 메모 · C-1-REDUCED · SIDE 최소보유
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

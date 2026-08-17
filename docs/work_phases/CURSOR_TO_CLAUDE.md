@@ -3,7 +3,156 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-17 · **OPS-01 차단** = 본 파일 최상단 (`SYNC-2026-08-17-I`) · 아래 BEAR-S5-SIM-01은 1단계 Done 유지
+> **갱신**: 2026-08-17 · **Claude VERDICT 랜딩** · 앵커 `SYNC-2026-08-17-O` · 다음=VPS 실측 Ops-lite
+
+---
+
+## OUTBOX — [Relay] S5 Claude OK 랜딩 · VPS 실측 Go · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **소스** | `Downloads/CLAUDE_TO_CURSOR_append.md` → `CLAUDE_TO_CURSOR.md` 최상단 |
+| **VERDICT** | 로컬 페이퍼 게이트 **OK** · 부분 Done (구현 Done / 관측 대기) |
+| **다음** | Ops-lite · VPS CLI 1회 · **코드 diff 금지** |
+| **본 Alpha 창** | VPS SSH **미실행** (Handoff: 새 Ops 세션) |
+| **status** | `WAIT_CURSOR_IMPL` (Ops-lite) · 앵커 `SYNC-2026-08-17-O` |
+
+---
+
+## OUTBOX — [Alpha] S5-HARNESS-SCOPE-01 **구현 완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | S5-HARNESS-SCOPE-01 (페이퍼 게이트) |
+| **status** | `WAIT_CLAUDE_OK` (Claude OK 전 Done 아님) |
+| **위험도** | 🟢 Low · 라이브 파이프라인 diff 없음 |
+| **앵커** | `SYNC-2026-08-17-N` |
+
+### DoD 체크
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | write 0 (신규 테이블/컬럼/config 없음) | ✅ `compute_s5_defense_contribution_log` 소스에 INSERT/UPDATE/CREATE/ALTER/config_kv 없음 |
+| 2 | `s5_arm_active` = 기존 시그니처 소비 | ✅ `resolve_defense_arm_weight(market, regime, sig, cfg)` 호출 · 재정의 없음 (테스트 wraps) |
+| 3 | 2026-08-17~ 스모크 JSON | ✅ `reports/s5_defense/s5_contribution_20260817.json` |
+| 4 | n<20 판정 문구 없이 플래그 | ✅ `sample_insufficient` + notes `표본 부족` · Pass/Fail/CAGR 없음 |
+| 5 | 라이브 경로 비접촉 | ✅ 신규: `reports/s5_defense_contribution.py` · `scripts/run_s5_defense_contribution_report.py` · 테스트 · JSON · work_phases |
+| 6 | 테스트 + 05 + OUTBOX | ✅ `tests/test_s5_defense_contribution_report.py` **5 passed** |
+
+### 스모크 요약 (로컬 DB)
+
+- KR/US 각 window: `s5_trade_count=0` · `contributed=false` · `gate_active_minutes=0.0` (`meta_state_log` 소비)
+- 숫자 판정 없음. **Pass/Fail 재판정 아님.**
+
+### Adapter (스키마 충돌 — 억지 컬럼 추가 안 함)
+
+`short_forward_trades`에 `final_ret` 없음(후보 원장). 실현손익 합은 `forward_trades.final_ret`만. JSON `short_pnl_column_present=false`.
+
+### 파일
+
+- `reports/s5_defense_contribution.py`
+- `scripts/run_s5_defense_contribution_report.py`
+- `tests/test_s5_defense_contribution_report.py`
+- `reports/s5_defense/s5_contribution_20260817.json`
+
+### Claude에 질문
+
+1. 로컬 n=0 스모크를 DoD#3로 인정할지, VPS 원장 1회 산출을 검증 조건에 넣을지.
+2. `short_forward_trades` PnL Adapter 유지 OK인지.
+
+---
+
+## OUTBOX — [OPS/Relay] S5-HARNESS-SCOPE-01 Handoff **파일 랜딩** · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **스코프** | **페이퍼 게이트** (태그·풀슬리브 기각) |
+| **INBOX** | `CLAUDE_TO_CURSOR.md` 최상단 |
+| **status** | `WAIT_CURSOR_IMPL` — **새 Alpha 세션** |
+| **본 Ops 창** | 구현 **안 함** (Handoff 지시: 새 세션 1개만) |
+
+---
+
+## OUTBOX — [OPS] OPS-01 **1차 관측 PASS** · 배포 Done · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **VPS HEAD** | `0efc750` |
+| **phase** | `post_bear_underdog_01` |
+| **overall** | **PASS** · `cursor_action=NONE` |
+| **telegram** | dry-run · `telegram_sent=false` |
+| **SSOT** | `/var/lib/quant-factory/data/deploy_watch_latest.json` |
+
+| check | status | detail |
+|-------|--------|--------|
+| factory_health | PASS | `dante-factory.service=active` |
+| f_gate_01 | **SKIP** | `strategy_registry_missing` (테이블 없음 → COOLED/RETIRED 카운트 불가 · overall PASS 유지) |
+| c_funnel_02 | PASS | max_ts 최근 · baseline 2026-07-02 |
+| f_retire_02 | PASS | `lifecycle_observe_only_rows=0` |
+| c_bear_underdog_01 | PASS | shadow=0 untagged=0 mae=0/0 · pain_repro=false |
+| reality_audit | PASS | KR n≈102 bad_et=1 · US n=134 bad_et=0 |
+
+**조치 없음.** 코드 Handoff 불필요. `f_gate_01` SKIP은 메모만 (registry 테이블 경로/생성은 후순위 Ops 조사 — hard gate 아님).
+
+**다음**: 디렉터 → Claude **S5-HARNESS-SCOPE-01** SRV-lite (`NEXT_ACTION` 붙여넣기).
+
+---
+
+## OUTBOX — [OPS] OPS-01 `update_factory` **완료** · 관측 대기 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **VPS HEAD** | **`0efc750`** (디렉터 확인) |
+| **배포** | untracked 9 `mv` 후 `update_factory.sh` 재실행 **성공** |
+| **남은 일** | ① `DEPLOY_WATCH_PHASE=post_bear_underdog_01` ② 1차 `--deploy-watch` ③ 이상 없으면 OPS-01 체크 → Claude **S5-HARNESS-SCOPE-01** |
+| **코드 Handoff** | 불필요 |
+
+```bash
+# 영속(예: crontab 앞 또는 /etc/environment — 기존 방식 유지)
+export DEPLOY_WATCH_PHASE=post_bear_underdog_01
+
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot
+TZ=Asia/Seoul bash ./factory.sh --deploy-watch post_bear_underdog_01 --dry-run --no-telegram
+# 이상 없으면 (텔레그램 허용 시):
+# TZ=Asia/Seoul bash ./factory.sh --deploy-watch post_bear_underdog_01
+```
+
+F-GATE: COOLED/RETIRED **0건**이면 `registry_state_block` 미발화 = 정상.
+
+---
+
+## OUTBOX — [OPS] OPS-01 `update_factory.sh` **[2/7] abort** · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **VPS HEAD (시도 전)** | `9f5e3a1` → 목표 `0efc750` (`Updating 9f5e3a1..0efc750`) |
+| **[1/7]** | OK — backup `20260817_050751_utc` |
+| **[2/7]** | **실패** — untracked가 merge에 덮임. 엔진 교체·재시작 **안 됨** |
+| **원인** | SIDE-ALPHA 산출물이 VPS에 untracked로 있고, 같은 경로가 `0efc750`에서 **tracked** |
+| **코드 Handoff** | **불필요**. `git clean -fd` **금지** |
+
+디렉터 — VPS에서 9개만 치우고 스크립트 **재실행**:
+
+```bash
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot
+STAMP=/var/backups/dante-ops01-untracked-20260817
+sudo mkdir -p "$STAMP"
+sudo mv -n \
+  reports/regime_panel/rp1_bull_recency_01_20260813.json \
+  reports/regime_panel/rp1_bull_recency_01_20260813_dod.json \
+  reports/regime_panel/rp1_side_alpha_01_20260817.json \
+  reports/regime_panel/rp1_side_alpha_01_20260817_dod.json \
+  reports/regime_panel/side_alpha_01_trade_diag_20260817.json \
+  scripts/run_side_alpha_01_rp1.py \
+  scripts/side_alpha_01_trade_diag.py \
+  side_alpha_01_exit.py \
+  tests/test_side_alpha_01_exit.py \
+  "$STAMP/"
+sudo bash ./update_factory.sh
+git log -1 --oneline   # 기대: 0efc750
+```
+
+그다음: `DEPLOY_WATCH_PHASE=post_bear_underdog_01` + `--deploy-watch` 1차 관측.
 
 ---
 
