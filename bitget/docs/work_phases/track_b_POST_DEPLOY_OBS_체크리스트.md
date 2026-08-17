@@ -101,6 +101,21 @@ sqlite3 "$DATA/bitget_system_config.sqlite" \
 
 ---
 
+## 매일 자동 (텔레그램)
+
+배포 후 cron이 **매일 20:00 KST**에 REPORT_BOT으로 요약+복붙을 보냄.
+
+```bash
+# 수동 1회 테스트
+bash bitget/deploy/bitget.sh --post-deploy-obs-digest
+# 전송 없이 미리보기
+bash bitget/deploy/bitget.sh --post-deploy-obs-digest --dry-run
+```
+
+끄기: `POST_DEPLOY_OBS_DIGEST_ENABLED=false`
+
+---
+
 ## 이 장에서 안 하는 것
 
 - C-2 funding · 포트폴리오 MDD 5% · B-2 live 배분 · `ENABLE_REAL_EXECUTION`

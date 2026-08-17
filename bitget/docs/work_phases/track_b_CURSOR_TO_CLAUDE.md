@@ -1,7 +1,31 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
 > **갱신**: 2026-08-17  
-> **유형**: **I-GMM-DNA-01b Claude OK 수신** · 신규 설계 Handoff 없음 · 서버 관측 대기
+> **유형**: **POST_DEPLOY_OBS 일일 텔레그램 다이제스트** 구현 (디렉터 요청) · Claude 사후 검증 요청
+
+---
+
+## OUTBOX — 2026-08-17 · POST_DEPLOY_OBS daily digest
+
+### 왜
+디렉터: 1~2주 관측 항목을 매일 텔레그램으로 받고, Cursor/Claude 복붙 문구 포함.
+
+### 로컬 스냅샷
+| 항목 | 내용 |
+|------|------|
+| 신규 | `observability/post_deploy_obs_digest_bg.py` |
+| CLI | `bitget.sh --post-deploy-obs-digest` (락 무접촉) |
+| Cron | UTC 11:00 = KST 20:00 daily |
+| 전송 | REPORT_BOT direct HTTP (north-star와 동일) |
+| 비접촉 | gates.py · gmm_dna_alpha_sync.py |
+| 테스트 | `test_post_deploy_obs_digest_bg.py` **3 passed** |
+
+### Ask
+- 디렉터 요청 범위로 사후 OK 가능한지 (정식 Handoff 없이 디렉터 지시 구현)
+- 복붙 블록 길이·REPORT_BOT 분할 발송 수용 여부
+
+### 금지 준수
+C-2 · MDD5% · live · 실전 — 미착수
 
 ---
 

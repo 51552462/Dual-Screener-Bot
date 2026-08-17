@@ -460,3 +460,16 @@
 - **Claude OK**: 2026-08-17 — Handoff 스펙 100% 일치 · 수정 spec 없음 · Mirror #2(2주 unavailable→로그 경로) 수용(05 잔여, 선코딩 금지)
 - **Mirror 잔여 표기**: 2주 연속 sample_count=0 + unavailable → **서버 로그 경로**(BITGET_LOG_DIR / journal unit) 확인 (코드 재배선 아님)
 - **잔여**: [x] Cursor 구현 · [x] Claude Pro OK · [ ] 서버 1~2주 ops 관측 · [ ] L-1/L-2/overseer 병행 확인(별도)
+
+### POST_DEPLOY_OBS 일일 텔레그램 다이제스트 — [2026-08-17] · Cursor 구현
+
+- **SSOT**: `bitget/observability/post_deploy_obs_digest_bg.py`
+- **발송**: REPORT_BOT 직접 HTTP · Cursor/Claude **복붙 블록** 포함
+- **Cron**: `bitget.crontab` `0 11 * * *` UTC (= **20:00 KST**) `--post-deploy-obs-digest`
+- **CLI**: `bitget/deploy/bitget.sh --post-deploy-obs-digest` (락 무접촉)
+- **Config**: `POST_DEPLOY_OBS_DIGEST_ENABLED` (default true)
+- **ops_events**: `post_deploy_obs_digest_daily`
+- **관측 5항**: OPEN/CLOSED · Cos_eff · DNA RANK · (주간 01b는 weekly) · L-1/L-2/overseer probe
+- **테스트**: `test_post_deploy_obs_digest_bg.py` **3 passed**
+- **비접촉**: gates.py · gmm_dna_alpha_sync.py
+- **잔여**: [x] Cursor · [ ] 서버 cron 배포 확인 · [ ] 디렉터 1회 수신 수신 확인 · [ ] Claude 사후 OK(선택)

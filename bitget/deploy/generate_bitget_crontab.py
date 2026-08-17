@@ -105,6 +105,9 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --health",
         "50 23 * * *  "
         + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --monthly-grand",
+        "# POST_DEPLOY_OBS daily digest @11:00 UTC (=20:00 KST) → REPORT_BOT + Cursor/Claude paste",
+        "0 11 * * *  "
+        + f"{CRON_USER}  cd {install_root} && TZ={tz} {bg} --post-deploy-obs-digest",
         "",
         f"# --- SPOT staggered (24h, {len(SPOT_SCAN_SLOTS)} slots, ~53min interval) ---",
     ]

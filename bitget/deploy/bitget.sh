@@ -82,6 +82,7 @@ Usage: bitget/deploy/bitget.sh <flag>
   --recover-artifacts rebuild Supernova CSV + cluster templates (data_miner)
   --recover-artifacts-quick  try CSV from DB; if missing, capped OHLCV refresh then CSV
   --canary            export crypto canary state JSON (file bridge → stock regime)
+  --post-deploy-obs-digest  daily OPEN/Cos/DNA/L ops digest → REPORT_BOT (+ Cursor/Claude paste)
   --gap-heal          WS stale -> REST backfill
   --snapshot          CQRS market DB backup (read replica)
   --db-backup         integrity-verified SQLite backup (PRAGMA + tar.gz prune)
@@ -136,6 +137,7 @@ while [[ $# -gt 0 ]]; do
     --recover-artifacts) MODE="recover_artifacts" ;;
     --recover-artifacts-quick) MODE="recover_artifacts_quick" ;;
     --canary)           MODE="canary" ;;
+    --post-deploy-obs-digest) MODE="post_deploy_obs_digest" ;;
     --gap-heal)         MODE="gap_heal" ;;
     --snapshot)         MODE="snapshot" ;;
     --db-backup)        MODE="db_backup" ;;
@@ -227,6 +229,19 @@ if [[ "$MODE" == "canary" ]]; then
   LOG_FILE="${LOG_DIR}/bitget_canary_${STAMP}.log"
   echo "[bitget.sh] mode=canary log=${LOG_FILE} TZ=${TZ}"
   exec python -m bitget.canary_exporter >>"$LOG_FILE" 2>&1
+fi
+
+# POST_DEPLOY_OBS 일일 관측 다이제스트 — 락 무접촉 · REPORT_BOT 직접 발송
+if [[ "$MODE" == "post_deploy_obs_digest" ]]; then
+  LOG_FILE="${LOG_DIR}/bitget_post_deploy_obs_${STAMP}.log"
+  echo "[bitget.sh] mode=post_deploy_obs_digest log=${LOG_FILE} TZ=${TZ}"
+  DIGEST_ARGS=()
+  for _a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+    case "$_a" in
+      --dry-run) DIGEST_ARGS+=(--dry-run) ;;
+    esac
+  done
+  exec python -m bitget.observability.post_deploy_obs_digest_bg "${DIGEST_ARGS[@]}" >>"$LOG_FILE" 2>&1
 fi
 
 LOG_FILE="${LOG_DIR}/bitget_${MODE}_${STAMP}.log"
