@@ -28,6 +28,7 @@ from time_machine_backtester import (
 RP1_MIN_TRADES_AUTO_VERDICT = 20
 RP1_METRICS_METHOD = "daily_equal_weight_v2.3.3_a3_quota_regime_kelly"
 RP1_METRICS_METHOD_BULL_RECENCY = "daily_equal_weight_v2.3.4_bull_recency_01_cluster1"
+RP1_METRICS_METHOD_SIDE_ALPHA = "daily_equal_weight_v2.3.4_side_alpha_01_sideways_mae_sl"
 RP1_KELLY_CAP_BASELINE_BUCKET = "SIDEWAYS"
 RP1_CAGR_MEASUREMENT_FLOOR_PCT = -50.0
 RP1_MAX_POSITIONS_PER_DAY = 20
@@ -650,6 +651,14 @@ def build_stage1_report(
     if patch_audit:
         schema = "regime_panel_rp1.v2.3.4"
         metrics_method = RP1_METRICS_METHOD_BULL_RECENCY
+    try:
+        from side_alpha_01_exit import resolve_side_alpha_01_exit
+
+        if resolve_side_alpha_01_exit() and not patch_audit:
+            schema = "regime_panel_rp1.v2.3.4"
+            metrics_method = RP1_METRICS_METHOD_SIDE_ALPHA
+    except Exception:
+        pass
 
     report = {
         "schema": schema,
@@ -813,8 +822,16 @@ def run_regime_panel_rp1(
     )
     os.makedirs(out_dir, exist_ok=True)
     date_tag = datetime.now().strftime("%Y%m%d")
+    try:
+        from side_alpha_01_exit import resolve_side_alpha_01_exit as _sa_exit
+    except Exception:
+        def _sa_exit() -> bool:
+            return False
+
     if resolve_bull_recency_01_patch():
         out_path = os.path.join(out_dir, f"rp1_bull_recency_01_{date_tag}.json")
+    elif _sa_exit():
+        out_path = os.path.join(out_dir, f"rp1_side_alpha_01_{date_tag}.json")
     else:
         out_path = os.path.join(out_dir, f"rp1_{date_tag}.json")
     with open(out_path, "w", encoding="utf-8") as fh:

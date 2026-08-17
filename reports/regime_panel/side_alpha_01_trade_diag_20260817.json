@@ -1,0 +1,572 @@
+{
+  "schema": "side_alpha_01_trade_diag.v1",
+  "generated_at_utc": "2026-08-17T00:12:12Z",
+  "snapshot": "reports/regime_panel/matrix_cache/matrix_ab52b174195da604adc8.pkl",
+  "baseline_json": "reports/regime_panel/rp1_bull_recency_01_20260813.json",
+  "windows": [
+    {
+      "regime_name": "SIDE_02_2015횡보",
+      "start": "2015-06-01",
+      "end": "2016-06-30",
+      "total_trades": 77430,
+      "win_rate": 32.9756,
+      "avg_pnl": -0.094934,
+      "pf": 0.957524,
+      "exit_type_mix": {
+        "SL": {
+          "n": 48214,
+          "share_pct": 62.27
+        },
+        "TP": {
+          "n": 11314,
+          "share_pct": 14.61
+        },
+        "TIME": {
+          "n": 17902,
+          "share_pct": 23.12
+        }
+      },
+      "holding_proxy": {
+        "TIME_share_pct": 23.12,
+        "note": "TIME≈15 bars; SL/TP exact bars unknown without re-sim"
+      },
+      "template_top15": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 77430,
+          "share_pct": 100.0
+        }
+      ],
+      "template_edge_top10": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 77430,
+          "win_rate": 32.98,
+          "avg_pnl": -0.0949
+        }
+      ],
+      "monthly": [
+        {
+          "month": "2015-06",
+          "n": 6469,
+          "win_rate": 29.76,
+          "avg_pnl": -0.5068
+        },
+        {
+          "month": "2015-07",
+          "n": 6661,
+          "win_rate": 32.91,
+          "avg_pnl": -0.0922
+        },
+        {
+          "month": "2015-08",
+          "n": 6113,
+          "win_rate": 17.98,
+          "avg_pnl": -1.4349
+        },
+        {
+          "month": "2015-09",
+          "n": 6169,
+          "win_rate": 38.69,
+          "avg_pnl": 0.6222
+        },
+        {
+          "month": "2015-10",
+          "n": 6469,
+          "win_rate": 40.73,
+          "avg_pnl": 0.8112
+        },
+        {
+          "month": "2015-11",
+          "n": 6181,
+          "win_rate": 28.86,
+          "avg_pnl": -0.6368
+        },
+        {
+          "month": "2015-12",
+          "n": 6502,
+          "win_rate": 18.26,
+          "avg_pnl": -1.5964
+        },
+        {
+          "month": "2016-01",
+          "n": 5912,
+          "win_rate": 22.46,
+          "avg_pnl": -0.9064
+        },
+        {
+          "month": "2016-02",
+          "n": 5774,
+          "win_rate": 49.64,
+          "avg_pnl": 2.1125
+        },
+        {
+          "month": "2016-03",
+          "n": 6699,
+          "win_rate": 43.98,
+          "avg_pnl": 0.6555
+        },
+        {
+          "month": "2016-04",
+          "n": 6252,
+          "win_rate": 32.92,
+          "avg_pnl": -0.279
+        },
+        {
+          "month": "2016-05",
+          "n": 6249,
+          "win_rate": 44.81,
+          "avg_pnl": 0.8112
+        },
+        {
+          "month": "2016-06",
+          "n": 1980,
+          "win_rate": 16.46,
+          "avg_pnl": -2.0262
+        }
+      ],
+      "market_split": {
+        "KR_digit_code": {
+          "n": 38541,
+          "win_rate": 29.41,
+          "avg_pnl": -0.1949
+        },
+        "US_other": {
+          "n": 38889,
+          "win_rate": 36.51,
+          "avg_pnl": 0.0042
+        }
+      }
+    },
+    {
+      "regime_name": "SIDE_03_2021-22혼조",
+      "start": "2021-12-01",
+      "end": "2022-12-31",
+      "total_trades": 94458,
+      "win_rate": 29.7286,
+      "avg_pnl": -0.203185,
+      "pf": 0.914527,
+      "exit_type_mix": {
+        "TP": {
+          "n": 16042,
+          "share_pct": 16.98
+        },
+        "SL": {
+          "n": 63074,
+          "share_pct": 66.77
+        },
+        "TIME": {
+          "n": 15342,
+          "share_pct": 16.24
+        }
+      },
+      "holding_proxy": {
+        "TIME_share_pct": 16.24,
+        "note": "TIME≈15 bars; SL/TP exact bars unknown without re-sim"
+      },
+      "template_top15": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 94458,
+          "share_pct": 100.0
+        }
+      ],
+      "template_edge_top10": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 94458,
+          "win_rate": 29.73,
+          "avg_pnl": -0.2032
+        }
+      ],
+      "monthly": [
+        {
+          "month": "2021-12",
+          "n": 8021,
+          "win_rate": 33.52,
+          "avg_pnl": -0.0693
+        },
+        {
+          "month": "2022-01",
+          "n": 7332,
+          "win_rate": 16.49,
+          "avg_pnl": -1.6198
+        },
+        {
+          "month": "2022-02",
+          "n": 6791,
+          "win_rate": 25.14,
+          "avg_pnl": -0.652
+        },
+        {
+          "month": "2022-03",
+          "n": 8143,
+          "win_rate": 43.1,
+          "avg_pnl": 1.1247
+        },
+        {
+          "month": "2022-04",
+          "n": 7604,
+          "win_rate": 18.37,
+          "avg_pnl": -1.5497
+        },
+        {
+          "month": "2022-05",
+          "n": 7788,
+          "win_rate": 26.13,
+          "avg_pnl": -0.5363
+        },
+        {
+          "month": "2022-06",
+          "n": 7604,
+          "win_rate": 19.63,
+          "avg_pnl": -1.2844
+        },
+        {
+          "month": "2022-07",
+          "n": 7604,
+          "win_rate": 51.62,
+          "avg_pnl": 2.3025
+        },
+        {
+          "month": "2022-08",
+          "n": 8346,
+          "win_rate": 21.3,
+          "avg_pnl": -1.0794
+        },
+        {
+          "month": "2022-09",
+          "n": 7604,
+          "win_rate": 16.32,
+          "avg_pnl": -1.6536
+        },
+        {
+          "month": "2022-10",
+          "n": 7421,
+          "win_rate": 42.53,
+          "avg_pnl": 1.541
+        },
+        {
+          "month": "2022-11",
+          "n": 7974,
+          "win_rate": 42.86,
+          "avg_pnl": 1.1527
+        },
+        {
+          "month": "2022-12",
+          "n": 2226,
+          "win_rate": 23.5,
+          "avg_pnl": -1.0405
+        }
+      ],
+      "market_split": {
+        "KR_digit_code": {
+          "n": 46689,
+          "win_rate": 31.47,
+          "avg_pnl": -0.1089
+        },
+        "US_other": {
+          "n": 47769,
+          "win_rate": 28.03,
+          "avg_pnl": -0.2953
+        }
+      }
+    },
+    {
+      "regime_name": "SIDE_01_2023횡보",
+      "start": "2023-05-01",
+      "end": "2023-08-31",
+      "total_trades": 26060,
+      "win_rate": 37.617,
+      "avg_pnl": 0.479751,
+      "pf": 1.235075,
+      "exit_type_mix": {
+        "TIME": {
+          "n": 6590,
+          "share_pct": 25.29
+        },
+        "TP": {
+          "n": 4835,
+          "share_pct": 18.55
+        },
+        "SL": {
+          "n": 14635,
+          "share_pct": 56.16
+        }
+      },
+      "holding_proxy": {
+        "TIME_share_pct": 25.29,
+        "note": "TIME≈15 bars; SL/TP exact bars unknown without re-sim"
+      },
+      "template_top15": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 26060,
+          "share_pct": 100.0
+        }
+      ],
+      "template_edge_top10": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 26060,
+          "win_rate": 37.62,
+          "avg_pnl": 0.4798
+        }
+      ],
+      "monthly": [
+        {
+          "month": "2023-05",
+          "n": 7811,
+          "win_rate": 42.15,
+          "avg_pnl": 1.0267
+        },
+        {
+          "month": "2023-06",
+          "n": 7812,
+          "win_rate": 39.52,
+          "avg_pnl": 0.6
+        },
+        {
+          "month": "2023-07",
+          "n": 7639,
+          "win_rate": 35.87,
+          "avg_pnl": 0.4076
+        },
+        {
+          "month": "2023-08",
+          "n": 2798,
+          "win_rate": 24.45,
+          "avg_pnl": -1.1861
+        }
+      ],
+      "market_split": {
+        "KR_digit_code": {
+          "n": 12784,
+          "win_rate": 32.7,
+          "avg_pnl": 0.0528
+        },
+        "US_other": {
+          "n": 13276,
+          "win_rate": 42.35,
+          "avg_pnl": 0.8909
+        }
+      }
+    },
+    {
+      "regime_name": "SIDE_04_2024여름횡보",
+      "start": "2024-04-01",
+      "end": "2024-08-31",
+      "total_trades": 34271,
+      "win_rate": 37.2414,
+      "avg_pnl": 0.539729,
+      "pf": 1.258855,
+      "exit_type_mix": {
+        "SL": {
+          "n": 19873,
+          "share_pct": 57.99
+        },
+        "TP": {
+          "n": 6822,
+          "share_pct": 19.91
+        },
+        "TIME": {
+          "n": 7576,
+          "share_pct": 22.11
+        }
+      },
+      "holding_proxy": {
+        "TIME_share_pct": 22.11,
+        "note": "TIME≈15 bars; SL/TP exact bars unknown without re-sim"
+      },
+      "template_top15": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 34271,
+          "share_pct": 100.0
+        }
+      ],
+      "template_edge_top10": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 34271,
+          "win_rate": 37.24,
+          "avg_pnl": 0.5397
+        }
+      ],
+      "monthly": [
+        {
+          "month": "2024-04",
+          "n": 8098,
+          "win_rate": 37.8,
+          "avg_pnl": 0.5776
+        },
+        {
+          "month": "2024-05",
+          "n": 7948,
+          "win_rate": 34.95,
+          "avg_pnl": 0.2499
+        },
+        {
+          "month": "2024-06",
+          "n": 7207,
+          "win_rate": 45.36,
+          "avg_pnl": 1.2856
+        },
+        {
+          "month": "2024-07",
+          "n": 8549,
+          "win_rate": 26.82,
+          "avg_pnl": -0.4929
+        },
+        {
+          "month": "2024-08",
+          "n": 2469,
+          "win_rate": 55.16,
+          "avg_pnl": 2.7466
+        }
+      ],
+      "market_split": {
+        "KR_digit_code": {
+          "n": 16907,
+          "win_rate": 34.77,
+          "avg_pnl": 0.474
+        },
+        "US_other": {
+          "n": 17364,
+          "win_rate": 39.65,
+          "avg_pnl": 0.6038
+        }
+      }
+    },
+    {
+      "regime_name": "SIDE_05_2019횡보",
+      "start": "2019-04-01",
+      "end": "2019-12-31",
+      "total_trades": 57442,
+      "win_rate": 38.5519,
+      "avg_pnl": 0.218174,
+      "pf": 1.109444,
+      "exit_type_mix": {
+        "TIME": {
+          "n": 18386,
+          "share_pct": 32.01
+        },
+        "SL": {
+          "n": 31500,
+          "share_pct": 54.84
+        },
+        "TP": {
+          "n": 7556,
+          "share_pct": 13.15
+        }
+      },
+      "holding_proxy": {
+        "TIME_share_pct": 32.01,
+        "note": "TIME≈15 bars; SL/TP exact bars unknown without re-sim"
+      },
+      "template_top15": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 57442,
+          "share_pct": 100.0
+        }
+      ],
+      "template_edge_top10": [
+        {
+          "template": "CLUSTER_1_강응축_폭발형_260628",
+          "n": 57442,
+          "win_rate": 38.55,
+          "avg_pnl": 0.2182
+        }
+      ],
+      "monthly": [
+        {
+          "month": "2019-04",
+          "n": 7032,
+          "win_rate": 33.33,
+          "avg_pnl": -0.3519
+        },
+        {
+          "month": "2019-05",
+          "n": 7055,
+          "win_rate": 32.88,
+          "avg_pnl": -0.3858
+        },
+        {
+          "month": "2019-06",
+          "n": 6432,
+          "win_rate": 48.24,
+          "avg_pnl": 1.0257
+        },
+        {
+          "month": "2019-07",
+          "n": 7431,
+          "win_rate": 20.63,
+          "avg_pnl": -1.381
+        },
+        {
+          "month": "2019-08",
+          "n": 7114,
+          "win_rate": 47.16,
+          "avg_pnl": 1.2898
+        },
+        {
+          "month": "2019-09",
+          "n": 6450,
+          "win_rate": 30.79,
+          "avg_pnl": -0.6454
+        },
+        {
+          "month": "2019-10",
+          "n": 7279,
+          "win_rate": 50.38,
+          "avg_pnl": 1.5968
+        },
+        {
+          "month": "2019-11",
+          "n": 6815,
+          "win_rate": 38.83,
+          "avg_pnl": 0.0137
+        },
+        {
+          "month": "2019-12",
+          "n": 1834,
+          "win_rate": 64.94,
+          "avg_pnl": 2.5433
+        }
+      ],
+      "market_split": {
+        "KR_digit_code": {
+          "n": 28869,
+          "win_rate": 32.87,
+          "avg_pnl": -0.2404
+        },
+        "US_other": {
+          "n": 28573,
+          "win_rate": 44.29,
+          "avg_pnl": 0.6815
+        }
+      }
+    }
+  ],
+  "controls": [
+    "SIDE_01_2023횡보",
+    "SIDE_04_2024여름횡보",
+    "SIDE_05_2019횡보"
+  ],
+  "targets": [
+    "SIDE_02_2015횡보",
+    "SIDE_03_2021-22혼조"
+  ],
+  "template_overlap_near": {
+    "near_top5_jaccard": 1.0,
+    "shared_top5": [
+      "CLUSTER_1_강응축_폭발형_260628"
+    ]
+  },
+  "aggregate_prior": {
+    "near_miss_cause": "B",
+    "source": "rp1_bull_recency_01_20260813.json stage1.periods",
+    "note": "n≫20 · avg_pnl<0 · PF≈1.0 — cause B (edge shortfall), not A/C"
+  }
+}

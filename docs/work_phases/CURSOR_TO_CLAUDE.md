@@ -3,7 +3,281 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-16 · **BULL-RECENCY SSOT freeze** = 본 파일 최상단 (`SYNC-2026-08-16-A`)
+> **갱신**: 2026-08-17 · **OPS-01 차단** = 본 파일 최상단 (`SYNC-2026-08-17-I`) · 아래 BEAR-S5-SIM-01은 1단계 Done 유지
+
+---
+
+## OUTBOX — [OPS] OPS-01 VPS 배포 **미실행** · `WAIT_DIRECTOR` · 2026-08-17
+
+> **회신 채널**: 본 블록. Alpha 검증 아님. **코드 Handoff 불필요.**
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | OPS-01 |
+| **status** | `WAIT_DIRECTOR` — Cursor 이 창에서 VPS 셸 **불가** |
+| **배포 시각** | 없음 (미실행) |
+| **phase** | VPS `DEPLOY_WATCH_PHASE` **미확인** (목표: `post_bear_underdog_01`) |
+| **이상** | 로컬 `ssh ubuntu@52.78.29.151` → **Permission denied (publickey)** |
+| **git (워크스테이션)** | `origin/main` = **`2ecb6d7`** (HEAD 일치) |
+| **이미 main에 있는 배포 대상** | `9cf0018` F-GATE-01/F-RETIRE-02/L-OBS-01 · `4906d89` BEAR-UNDERDOG-01 · `201dd74` L-OBS-02 |
+| **Alpha 코드** | **diff 없음** · S5/BULL/SIDE **미착수** |
+| **금지 준수** | 로컬 dirty 트리 **push 안 함** (SIDE-ALPHA·docs 미커밋 다수) |
+
+### 디렉터 — VPS에서 이어서 (키 있는 셸)
+
+```bash
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot
+git fetch origin && git log -1 --oneline
+git pull
+sudo ./update_factory.sh
+# cron/env:
+#   DEPLOY_WATCH_PHASE=post_bear_underdog_01
+# 1차 관측 (텔레그램 없이):
+TZ=Asia/Seoul bash ./factory.sh --deploy-watch post_bear_underdog_01 --dry-run --no-telegram
+```
+
+F-GATE 1차: COOLED/RETIRED **0건이면** `registry_state_block` 미발화 = 정상. F-RETIRE는 observe_only · 실 notional 계속 블록.
+
+배포 끝나면 `NEXT_ACTION` OPS-01 체크 → Claude에 **S5-HARNESS-SCOPE-01** SRV-lite.
+
+---
+
+## OUTBOX — [CAT-C / Alpha] BEAR-S5-SIM-01 **1단계 진단 완료** (Claude 판독 SSOT) · 2026-08-17
+
+> **회신 채널**: 본 블록 **단독**. 채팅 요약·텔레그램 금지.  
+> **코드 변경·15구간 rerun·2단계 착수**: 진단 Claude 판정 **전 금지** (Handoff 엄수 · SIDE-ALPHA처럼 자동 진행 불가).
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | BEAR-S5-SIM-01 · **1단계 Done** · 2단계 **미착수** |
+| **요청 SSOT** | `reports/regime_panel/rp1_20260811.json` (v2.3.3) — **이 워크스테이션에 파일 없음** (`Desktop\rp1_20260811_v233.json`도 부재) |
+| **수치 프록시 (BEAR)** | `rp1_side_alpha_01_20260817.json` BEAR 5행 — BR01 **OFF** · SIDEWAYS exit만 오버레이 · **BEAR window 비접촉** · BULL_01 n=**97,009** = v2.3.3 aggregate와 bit-match |
+| **오염 참고 (쓰지 말 것)** | `rp1_bull_recency_01_20260813.json` BEAR n은 CLUSTER_1 shrink 0.45 오염 (BULL_01 97,009→25,077 · BEAR_01 16,636→4,585) |
+| **매트릭스** | `matrix_ab52b174195da604adc8.pkl` **로컬 부재** — exit_type/KR·US 분해 미실행 (신규 스크립트 = 코드 변경 = 이번 Handoff 금지) |
+| **병행 갱신** | `05_진행로그` §BEAR-S5-SIM-01 · `00_SESSION_SYNC` §3 · `NEXT_ACTION.md` |
+
+### 엔지니어 1줄
+
+BEAR ×3 NEAR는 **원인 B(수익 부족)** + **S5 미배선**(게이트 차단 아님). MDD OK는 Phase A **LOCKDOWN**이지 인버스/블랙홀 PnL이 아님. RP-1 안 파라미터로는 S5 기여 로그를 만들 수 없음 → 2단계 = **RP-1 외** S5 시뮬 하네스 (별도 Go).
+
+### 0. SSOT 공백 (정직)
+
+| 경로 | 상태 |
+|------|------|
+| `reports/regime_panel/rp1_20260811.json` | 로컬 없음 (문서상 VPS) |
+| `C:\Users\GoodLife\Desktop\rp1_20260811_v233.json` | 8/11 `bull_recency_01_diag_aggregate` source — **현재 없음** |
+| v2.3.3 BULL 행 | aggregate JSON으로 **재확인** (BULL_01 n=97009 등) |
+| v2.3.3 BEAR 행 | 원본 JSON 없음 → **아래 프록시** (판정 ID는 8/13과 불변) |
+
+식별(NEAR 3 / PASS 2)은 두 full JSON이 **동일**. 숫자 판정은 프록시 표 A만 사용.
+
+### A. BEAR ×5 식별 + 집계 (DoD #5 n≥20)
+
+> BEAR 판정 규칙 (`regime_panel_rp1.judge_period_verdict`): MDD≤10 → PF≥0.95 **PASS** / PF<0.95 **NEAR_MISS**. 원인 태그: n≥20 · MDD≤10 · CAGR<0 → **B**.
+
+**표 A — 수치 프록시 (v2.3.3에 가장 가까움 · SIDE-ALPHA JSON · BEAR 비접촉)**
+
+| ID | 기간 | verdict | n | WR% | avg_pnl | PF | period_ret% | mdd_tier% | near_miss |
+|----|------|---------|---|-----|---------|-----|-------------|-----------|-----------|
+| **BEAR_01** 서브프라임GFC | 2008-09-01~2009-03-31 | **NEAR_MISS** | **16,636** | 20.65 | −0.808 | **0.708** | **−9.06** | 9.06 | **B** |
+| BEAR_02 COVID폭락 | 2020-02-01~2020-05-31 | PASS | 22,502 | 27.32 | −0.006 | 0.998 | −9.08 | 9.08 | — |
+| **BEAR_03** 글로벌금리인상 | 2022-01-01~2022-06-30 | **NEAR_MISS** | **39,698** | 25.09 | −0.729 | **0.714** | **−9.05** | 9.05 | **B** |
+| **BEAR_04** 미중무역분쟁 | 2018-09-01~2018-12-31 | **NEAR_MISS** | **21,217** | 24.54 | −0.891 | **0.650** | **+1.74** | 9.01 | **B** |
+| BEAR_05 미국신용등급강등 | 2011-08-01~2011-10-31 | PASS | 6,799 | 28.53 | −0.051 | 0.979 | −5.63 | 8.22 | — |
+
+NEAR 3구간: **BEAR_01 · BEAR_03 · BEAR_04**. 전 구간 n≫20. `zero_entries=false` → **원인 A 기각**. `mdd_crosscheck=MDD_OK` · mdd_tier 8.2~9.1% → **원인 C 기각**. quota=8 · `kelly_cap=0.01` (BEAR).
+
+**표 A′ — 8/13 (BR01 shrink 오염 · n/period_ret 비SSOT)**
+
+| ID | n | PF | period_ret% | verdict |
+|----|---|-----|-------------|---------|
+| BEAR_01 | 4,585 | 0.762 | −9.03 | NEAR(B) |
+| BEAR_02 | 5,917 | 0.976 | −5.17 | PASS |
+| BEAR_03 | 10,155 | 0.687 | −9.06 | NEAR(B) |
+| BEAR_04 | 5,691 | 0.663 | −1.54 | NEAR(B) |
+| BEAR_05 | 1,899 | 0.955 | −6.98 | PASS |
+
+라벨(2P/3NM)만 원본과 합의. **n·period_ret는 8/13을 쓰지 말 것.**
+
+### A2. Trade-level breakdown (DoD #1 — 스키마 한계)
+
+RP-1 period row 키에 `exit_type` / `bars_held` / KR·US split / `template` / inverse 태그 **없음**. 로컬 matrix 없음. 기존 `*_trade_diag.py`는 BULL/SIDE `TARGET_WINDOWS` 하드코딩 — BEAR 창 추가는 **코드 변경**이라 이번 Handoff에서 안 함.
+
+| 항목 | 결과 |
+|------|------|
+| exit_type TP/SL/TIME % | **미계측** (JSON 없음 · matrix 없음) |
+| 평균 보유기간 | **미계측** — 기존 절차도 proxy(SL=−3.5/TP=+10/TIME≈15d)뿐 |
+| KR/US avg | **미계측** |
+| 선행(참고, 본 런 아님) | BULL·SIDE 1단계: top1 `CLUSTER_1_*_폭발형_*` share 100% · Jaccard 1.0 — BEAR도 동일 매칭 풀 개연 **높음**, **이번 숫자 아님** |
+| 보유기간 대체 | 집계만: NEAR WR 20.6–25.1% · avg −0.73~−0.89 vs PASS WR 27.3–28.5% · avg ≈0 — **손익 밀도 붕괴**, exit mix는 미분리 |
+
+DoD #1 숫자 표는 **미완**. 원인 B·S5 미배선 결론은 집계+하네스 증거로 안정 (아래). 완성은 VPS matrix read-only 한 번 — **별도 Claude 허용** 필요.
+
+### B. S5 방어 커버리지 (DoD #2)
+
+| 구간 | S5 발동? | 근거 |
+|------|----------|------|
+| BEAR_01/03/04 NEAR | **미발동 · 미배선** | RP-1 JSON에 inverse/blackhole/S5 필드 0. `regime_panel_rp1.py` / `time_machine_backtester.py`에 S5·inverse·blackhole **PnL 경로 없음** |
+| BEAR_02/05 PASS | **동일 미배선** | PASS여도 avg_pnl **음수** · period_ret **음수**(02 −9.08 · 05 −5.63). PF≥0.95만으로 PASS — **S5 기여 로그 없음** |
+| 게이트 차단? | **아님** | live `ACTION_BY_REGIME` BEAR `s5_arm_active=True` (A-5b OR이면 허용). RP-1은 `resolve_defense_arm_weight` / `inverse_etf_sniper` / fade를 **호출하지 않음**. runner의 `blackhole_hunter`는 US 티커 리스트만 |
+| 실제 방어 | **Phase A tier** | `tier_log_sample`: 초반 후 **LOCKDOWN** · `position_quota_mult=0` · `kelly_throttle_mult=0` → 손실을 mdd_tier≈9%에 **절단**. raw period_ret −52~−77% |
+| 문서 SSOT | `14_레짐패널` §4 | S5 = inverse/blackhole **태그만** · RP-1 v1은 진입 시그널 위주 · A-5a/b는 포트폴리오 레벨 **별도** |
+| 하락 bucket Pass 기준 | **미충족** | 「손실구간 S5 기여 로그」 — PASS 2구간 포함 **전 BEAR 0건** |
+
+SRV 문장과 동일: **손실 억제 ≠ S5 헤지 증거**.
+
+### C. 원인트리 · 공통 vs 개별 (DoD #3)
+
+| 가설 | 판정 | 근거 |
+|------|------|------|
+| A 신호 부족 | **기각** | n=16k–40k · zero_entries=false |
+| C MDD 초과 | **기각** | mdd_tier≤9.08 · MDD_OK · 위반 0 |
+| **공통 B** | **확정** | NEAR PF 0.65–0.71 < 0.95 · avg 동시 악화 · 롱온리 S1을 하락 구간에 그대로 투입 |
+| **공통 S5** | **미기여** | 하네스에 arm 없음 (게이트 차단 아님) |
+| 개별 BEAR_01 | GFC · WR 최저 20.6% · period_ret **티어 핀** −9.06 | EXTREME_CRASH · raw −76.9% |
+| 개별 BEAR_03 | n 최대 · PF 0.714 · 역시 티어 핀 −9.05 | 2022 금리인상 · tpd 348 |
+| 개별 BEAR_04 | PF **최악 0.650** 인데 period_ret **+1.74** | SIDE_03형 시퀀싱(일평/쿼터). 규칙3상 period_ret은 NEAR 탈출 아님(판정=PF). 8/13은 같은 구간 −1.54 — shrink 민감 |
+| PASS 대조 | PF만 0.95 턱걸이 | 수익 전환 아님. BEAR_02도 period_ret −9% |
+
+### D. 2단계 실행가능성 (DoD #4) — **RP-1 외**
+
+| 후보 | RP-1 내? | 권고 |
+|------|----------|------|
+| CAT-E BEAR SL/TIME | 내 | **비권고** — SIDE-ALPHA SL 완화 = SIDE_03 FAIL 회귀 선례. S5 기여 로그를 만들지 못함 |
+| CLUSTER_1 / S1 타이트닝 | 내 | **비권고** — BULL-RECENCY가 전역 shrink로 BEAR n까지 오염. 하락 엣지 축과 불일치 |
+| Phase A kelly/quota | 내 🔴 | **금지** — 이미 LOCKDOWN이 MDD를 붙듦. 방어층 완화=C 위험 |
+| **S5/인버스·블랙홀 시뮬 하네스** | **외** | **유일한 2단계 후보**. RP-1 파라미터 조정으로 안 됨. 별도 Claude Go + 스코프(태그 리플레이 vs 풀 슬리브 vs 페이퍼 게이트) 확정 필요 |
+
+**결론**: RP-1 내 **단일 레버 없음 — 구조적 한계**. 2단계 = **RP-1 외** S5 시뮬. 이번 세션 미착수.
+
+### E. Claude 판정 요청 (파일만)
+
+1. 표 A 프록시(SIDE-ALPHA BEAR 비접촉)를 v2.3.3 BEAR SSOT로 **인정**해도 되는가? (원본 `rp1_20260811.json` 로컬 부재)
+2. DoD #1 trade-level 미계측을 **스키마+코드변경금지로 충족 예외** 처리할 것인가, VPS matrix 1회를 **같은 1단계 잔여**로 볼 것인가?
+3. 「2단계 = RP-1 외 S5 하네스 / RP-1 내 레버 없음」 **Go/보류/다른 축** 한 줄. (자동 2단계 진행 **하지 않음**)
+
+### 디렉터 3줄
+
+1. BEAR NEAR 3곳 = BEAR_01/03/04 · 원인 B · n≫20 · MDD OK(LOCKDOWN).
+2. S5는 게이트 차단이 아니라 **RP-1 미배선** — PASS 구간에도 인버스 기여 로그 0.
+3. `CURSOR_TO_CLAUDE.md` 최상단 검증 → 다음 Handoff는 파일에 (2단계 자동 금지).
+
+---
+
+
+## OUTBOX — [CAT-C / CAT-E] SIDE-ALPHA-01 **2단계 완료** · DoD 미달 · rerun 1회 종료 (2026-08-17)
+
+> **회신 채널**: 본 블록 **단독**. 채팅 요약 금지.  
+> **재시도 금지**: Handoff 「rerun≤1 · 미달 시 즉시 OUTBOX」 엄수 — **2회차 blind 안 함**.
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | SIDE-ALPHA-01 · **2단계 Done(코드+rerun1)** · Claude 판정 대기 |
+| **레버(택1)** | **SL 완화** — SIDEWAYS `MAE_SL` **−3.5 → −4.5** (최소보유 확대는 미사용) |
+| **스코프** | SIDEWAYS 버킷 window 10개(primary+backup) · BULL/BEAR exit 비접촉 · CLUSTER_1/Phase A/config_kv 비접촉 |
+| **구현** | `side_alpha_01_exit.py` + `time_machine_backtester`/`regime_panel_rp1_runner` 배선 · env `SIDE_ALPHA_01_EXIT=1` |
+| **경로** | matrix snapshot 진입 **동결** → OHLCV path replay exit only (진입 재매칭 없음) |
+| **SSOT JSON** | `reports/regime_panel/rp1_side_alpha_01_20260817.json` · `_dod.json` |
+| **baseline 대조** | `rp1_bull_recency_01_20260813.json` |
+| **matrix** | `matrix_ab52b174195da604adc8.pkl` (2026-08-10) |
+| **overlay audit** | sl=−4.5 · **changed=279,310** · unchanged=191,503 · missing_ohlcv=0 · replay_fail=0 · windows=10 |
+
+### 엔지니어 1줄
+
+SIDEWAYS SL 완화(−4.5)는 SIDE_02 period_ret을 개선했으나 **SIDE_03을 NEAR→FAIL(PF 0.896<0.9)로 하락 회귀** — 조기컷 완화만으로 edge B 회복 실패. **2회차 금지**.
+
+### DoD #1–5
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | SIDE_02·03 ≥ NEAR_MISS (하락 회귀 금지) | ❌ **SIDE_03 NEAR_MISS→FAIL** · SIDE_02 NEAR 유지 |
+| 1b | avg_pnl 동반개선 (조건부) | ❌ 둘 다 avg_pnl **악화** (02 −0.025→−0.090 · 03 −0.228→−0.288) |
+| 2 | 나머지 13구간 verdict 불변 | ⚠ DoD 스크립트: BULL_03 NEAR→FAIL — **단, 원인=8/13 BR01 패치 미적용 matrix(n=40657 fallthrough)** · CAT-E 레버와 **무관**(BULL window exit 미변경). SIDE_01/04/05 PASS 유지 |
+| 3 | mdd_tier≤10 · MDD_OK | ✅ |
+| 4 | 전 구간 n≥20 | ✅ |
+| 5 | JSON+05+OUTBOX | ✅ |
+| **all_pass** | | **false** |
+
+### 대상 구간 실측 (patched)
+
+| ID | verdict | n | PF | avg_pnl | period_ret% | mdd_tier% |
+|----|---------|---|-----|---------|-------------|-----------|
+| SIDE_02 | NEAR_MISS(B) | 77,430 | 0.964 | −0.090 | **−5.77** (base −9.05) | 9.20 |
+| SIDE_03 | **FAIL** | 94,458 | **0.896** | −0.288 | +4.26 (base +6.07) | 9.10 |
+
+### Caveat (대조 오염 — Claude 판독 시)
+
+- 본 rerun은 **BR01 bounds patch OFF** + Aug10 matrix. BULL_03 n=40,657/period_ret≈4.3% = 알려진 baseline fallthrough — 8/13(n=10,276/15.4%)와 **진입 SSOT 불일치**.
+- SIDE_02/03 n도 matrix 풀(쿼터 전) — 8/13 JSON n(20k/24k)과 스케일 다름. **exit 레버 방향성(PF↓·avg↓·03 FAIL)은 동일 matrix 내 전후로 유효**.
+
+### Claude 판정 요청
+
+1. 2단계 DoD **미달** 인정 여부 (SIDE_03 회귀 = 종료 조건?)
+2. 다음 레버: **최소보유 확대**(미시도 택1 잔여) vs **sub-phase 동결/후순위** vs 다른 CAT?
+3. BULL_03 DoD#2 오염을 「레버 무관」으로 제외해도 되는지 한 줄
+
+### 디렉터 3줄
+
+1. 택1 = SL −3.5→−4.5 · rerun 1회 완료 · **재시도 안 함**.
+2. SIDE_03 FAIL 회귀 → DoD 미달 · avg_pnl도 동반 악화.
+3. `CURSOR_TO_CLAUDE.md` 최상단 검증 → OK/다음 Handoff는 파일에.
+
+---
+
+## OUTBOX — [CAT-C / Alpha] SIDE-ALPHA-01 **1단계 진단 완료** (Claude 판독 SSOT) · 2026-08-17
+
+> **회신 채널**: 본 블록 **단독**. 채팅 요약·텔레그램 금지.  
+> **코드 조정·15구간 full rerun**: 진단 Claude OK **전 금지** (Handoff 엄수).
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | SIDE-ALPHA-01 · **1단계 Done** · 2단계(조정) **미착수** |
+| **source** | `rp1_bull_recency_01_20260813.json` + VPS `side_alpha_01_trade_diag_20260817.json` |
+| **matrix** | `matrix_ab52b174195da604adc8.pkl` (2026-08-10 · BULL-RECENCY와 동일 스냅샷) |
+| **도구** | `scripts/side_alpha_01_trade_diag.py` (read-only · bull_recency_01_trade_diag 동형) |
+| **병행 갱신** | `05_진행로그` §SIDE-ALPHA-01 · `00_SESSION_SYNC` §3 · `NEXT_ACTION.md` |
+
+### 엔지니어 1줄
+
+**공통원인** = 횡보장에서도 `CLUSTER_1_*_폭발형_260628` first-match 단일 라벨 + **SL% 스파이크**(02=62.3 · 03=66.8 vs PASS≈55–58) → 원인 B edge shortfall. **CLUSTER_1 bounds 재타이트닝은 기각**(BULL-RECENCY에서 n 불변). 2단계 잠정 = **SIDEWAYS 스코프 청산(CAT-E) 또는 S1 알파 임계** 단일 레버.
+
+### A. Trade-level breakdown (필수)
+
+> **n 주의**: matrix = 일일 쿼터 **전** 매칭 풀 · 8/13 JSON = 쿼터 **후**. WR/avg는 근접 → exit mix 진단 유효. JSON n을 DoD 대조 SSOT로 유지.
+
+| 구간 | matrix n | JSON n | WR% | avg_pnl | PF | SL% | TP% | TIME% | KR avg | US avg |
+|------|----------|--------|-----|---------|-----|-----|-----|-------|--------|--------|
+| **SIDE_02** NEAR(B) | 77430 | **20935** | 32.98 (JSON 33.58) | −0.095 (JSON −0.025) | 0.958 | **62.3** | 14.6 | 23.1 | **−0.19** | +0.00 |
+| **SIDE_03** NEAR(B) | 94458 | **24167** | 29.73 (JSON 29.56) | −0.203 (JSON −0.228) | 0.915 | **66.8** | 17.0 | **16.2** | −0.11 | **−0.30** |
+| SIDE_01 PASS | 26060 | 6647 | 37.62 | +0.480 | 1.235 | 56.2 | 18.6 | 25.3 | +0.05 | +0.89 |
+| SIDE_04 PASS | 34271 | 8768 | 37.24 | +0.540 | 1.259 | 58.0 | 19.9 | 22.1 | +0.47 | +0.60 |
+| SIDE_05 PASS | 57442 | 15401 | 38.55 | +0.218 | 1.109 | 54.8 | 13.2 | **32.0** | −0.24 | +0.68 |
+
+| 항목 | 결과 |
+|------|------|
+| **진입 트리거** | SIDE 전 구간(NEAR+PASS) top1 = `CLUSTER_1_강응축_폭발형_260628` **share 100%** · near top5 Jaccard **1.0** — first-match 라벨 지배(BULL-RECENCY와 동일 함정: 라벨≠유일 바인딩 축) |
+| **보유기간 proxy** | exit_type만. NEAR는 PASS 대비 **TIME↓ + SL↑** (03 TIME 최저 16.2%) → 유효 보유 단축 |
+| **RP-1 집계 대조** | SIDE_02 period_ret **−9.05%** · SIDE_03 **+6.07%**(avg 음수인데 period_ret+ = daily EW 시퀀스) · near_miss_cause=**B** · MDD_OK |
+
+### B. 공통원인 vs 개별원인 (1단계 완료기준)
+
+| 가설 | 판정 | 근거 |
+|------|------|------|
+| (i) 청산엔진 손익비 | **지지** | NEAR SL 62–67% vs PASS 55–58 · TP%는 PASS와 유사·오히려 03 TP↑인데도 PF↓ → **손절 빈도**가 엣지 압박 |
+| (ii) 특정 템플릿 과다매칭 | **부분(라벨)** / **레버로 기각** | 100% CLUSTER_1 라벨이나 **PASS도 동일** → 템플릿 이름만으로 NEAR 설명 불가. BULL-RECENCY bounds 타이트닝은 n 불변 선례 → **재시도 금지** |
+| (iii) 횡보 회전율/TIME | **지지(보조)** | 03 TIME 16% · 02 TIME 23% vs PASS 22–32% — SL 조기컷과 결합 |
+| **공통원인** | **SL-heavy edge compression (B)** | n≫20 · MDD OK · avg/PF 동시 악화 · NEAR만 SL 스파이크 |
+| **개별 — SIDE_02** | **KR 드래그** + period_ret 음수 | KR avg −0.19 vs US ~0 · 월별 Aug/Dec-2015 급락 |
+| **개별 — SIDE_03** | **양시장 붕괴** + SL 최고 | KR·US 둘 다 음수(US −0.30 더 심함) · SL **66.8%** · period_ret은 +6%(쿼터/일평 효과) |
+| S1/E 레버 (잠정) | **SIDEWAYS 스코프 CAT-E**(SL/TIME) 또는 **S1 알파 임계** · CLUSTER_1 bounds **No** | 단일 레버·rerun≤1 |
+
+### C. Claude 판정 요청 (파일만)
+
+1. 위 **A+B**가 Handoff 1단계 완료기준을 **충족하는가?** (충족/미충족 + 한 줄)
+2. 충족 시 2단계 단일 레버: **CAT-E SIDEWAYS exit** vs **S1 alpha threshold** — 어느 쪽? (또는 Cursor 재량 범위)
+3. SIDE_03 period_ret(+)/avg(−) 모순을 DoD#1(period_return 우선)에서 어떻게 해석할지 한 줄
+
+충족 판정 시 Cursor는 **별도 Go 없이** 동일 sub-phase 2단계 착수 가능(BULL-RECENCY addendum과 동일 관행). 단 **rerun 최대 1회**.
 
 ---
 

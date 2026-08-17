@@ -32,6 +32,12 @@ def resolve_bull_recency_01_patch() -> bool:
     return _resolve()
 
 
+def resolve_side_alpha_01_exit() -> bool:
+    from side_alpha_01_exit import resolve_side_alpha_01_exit as _resolve
+
+    return _resolve()
+
+
 def get_rp1_brain_patch_audit() -> Optional[Dict[str, Any]]:
     return _RP1_BRAIN_PATCH_AUDIT
 
@@ -503,6 +509,39 @@ def prime_rp1_matrix_cache(stock_list: List[str]) -> Dict[str, Any]:
             "[RP-1] BULL_RECENCY_01: bounds patch active — matrix re-sim required "
             "(trade snapshot reuse skipped)"
         )
+    # SIDE-ALPHA-01: load snapshot → replay SIDEWAYS exits only (entry set frozen).
+    if resolve_side_alpha_01_exit() and not resolve_bull_recency_01_patch():
+        loaded = _load_matrix_snapshot_forced()
+        if loaded is None:
+            loaded = _load_matrix_snapshot(stock_list, global_fetch_start, global_end_dt)
+        if loaded is None:
+            raise RuntimeError(
+                "SIDE_ALPHA_01_EXIT=1 requires matrix snapshot — set "
+                "RP1_MATRIX_SNAPSHOT_PATH or run RP1_MATRIX_REUSE=1 once first"
+            )
+        from side_alpha_01_exit import patch_matrix_sideways_exits
+
+        _MATRIX_BY_WINDOW = loaded
+        audit = patch_matrix_sideways_exits(_MATRIX_BY_WINDOW)
+        total_trades = sum(len(v.get("trades", [])) for v in _MATRIX_BY_WINDOW.values())
+        log_rp1(
+            "[RP-1] SIDE_ALPHA_01 exit overlay: "
+            f"sl={audit.get('mae_sl_after')} changed={audit.get('trades_changed')} "
+            f"unchanged={audit.get('trades_unchanged')} "
+            f"missing_ohlcv={audit.get('trades_missing_ohlcv')} "
+            f"replay_fail={audit.get('trades_replay_fail')} "
+            f"windows={len(audit.get('windows_patched') or [])} "
+            f"total_trades={total_trades}"
+        )
+        return {
+            "enabled": True,
+            "windows": len(ohlcv_windows),
+            "tickers": len(stock_list),
+            "total_trades": total_trades,
+            "fetch_range": (global_fetch_start, global_end_dt),
+            "snapshot": "side_alpha_01_exit_overlay",
+            "side_alpha_01_audit": audit,
+        }
     if resolve_rp1_metrics_only() and not resolve_bull_recency_01_patch():
         loaded = _load_matrix_snapshot_forced()
         if loaded is None:

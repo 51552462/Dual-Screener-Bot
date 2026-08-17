@@ -170,10 +170,24 @@ Dual-Screener-Bot KR/US 퀀트 팩토리 — Claude Pro 총괄 아키텍트
 
 | 이벤트 | 갱신 파일 |
 |--------|-----------|
-| **Cursor 세션 종료마다** | `05`, `00`, `CURSOR_TO_CLAUDE`, `NEXT_ACTION` |
+| **Cursor 세션 종료마다** | `05`, `00`, `CURSOR_TO_CLAUDE`, `NEXT_ACTION`, `09` |
 | **Claude Handoff 작성 후** | `CLAUDE_TO_CURSOR`, `ARCHITECT_MIRROR` |
 | **sub-phase Claude OK** | `05` (OK 날짜 줄) |
 | **전략 결정 후** | `00_마스터_로드맵`, 본 파일 §6 결정 기록 |
+| **조사·감사 세션** (구현 없음) | `CURSOR_TO_CLAUDE` OUTBOX + `05` 해당 § — **2026-08-09 CAT-C-FUNNEL-01** |
+
+### 5-A. 지금 바로 Claude Knowledge에 올릴 파일 (2026-08-09)
+
+| 우선 | 파일 |
+|------|------|
+| 필수 | `docs/work_phases/CURSOR_TO_CLAUDE.md` |
+| 필수 | `docs/work_phases/05_진행로그.md` |
+| 필수 | `docs/work_phases/NEXT_ACTION.md` |
+| 권장 | `docs/work_phases/09_디렉터_쉬운요약.md` |
+| 권장 | `docs/claude_project/CAT-C_스크리닝.md` |
+| 참고 | `Proprietary_Regime_Audit.md` (퍼널 맹점 §1.1) |
+
+**Desktop 미러 (선택)**: `Desktop/클로드 작업/` 폴더에 위 파일 복사 후 Claude에 드래그 — 레포와 동일 내용 유지.
 
 ---
 

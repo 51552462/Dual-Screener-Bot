@@ -17,8 +17,8 @@ RP-1으로 **손댈 구간을 지도에 표시**했고, 이제 **한 번에 하�
 | 단계 | ID | 내용 | 담당 | 상태 | 산출물 / 기록 |
 |------|-----|------|------|------|----------------|
 | **0** | RP-1 | 15구간 full run + tier replay v2.3.3 | Cursor ✅ | **✅ 완료** | `reports/regime_panel/rp1_20260811.json` · `05_진행로그` §RP-1-INFRA |
-| **1** | **SRV-01** | **STRATEGIC REVIEW** — 다음 sub-phase **1개** Go | Claude | **🟡 진행 중** | Claude 답변 → `CLAUDE_TO_CURSOR.md` Handoff |
-| **2** | Alpha-XX | SRV-01에서 고른 1건 구현 (예: BULL-RECENCY-01) | Cursor | ⬜ 대기 | Handoff 후 1세션 1 sub-phase |
+| **1** | **SRV-01** | **STRATEGIC REVIEW** — 다음 sub-phase **1개** Go | Claude ✅ | **✅ 완료** | Go: **BULL-RECENCY-01** · `CLAUDE_TO_CURSOR.md` §BULL-RECENCY-01 |
+| **2** | **BULL-RECENCY-01** | CLUSTER_1 타이트닝 → 15구간 rerun | Cursor | **🟡 Claude OK** | rerun PASS · DoD 2 baseline 대조 |
 | **3** | OPS-01 | VPS 배포 (F-GATE → F-RETIRE → BEAR-UD) | 디렉터 | ⬜ 대기 (병렬 가능) | `06_검증체크리스트` · deploy_watch |
 | **4** | ASG-01 | Forward 4주 조기경보 (n<30 판정 금지) | 디렉터+시계 | ⬜ 대기 | north star digest |
 | **5** | RP-2 | Point-in-time 템플릿 (lookahead 제거) | Claude→Cursor | ⬜ 후순위 | 별도 Handoff |
@@ -73,16 +73,18 @@ RP-1으로 **손댈 구간을 지도에 표시**했고, 이제 **한 번에 하�
 - 로그: 서버 `rp1_run_v233_metrics.log`
 - Claude: v2.3.3 baseline 확정 (2026-08-11)
 
-### 단계 1 — SRV-01 🟡 (지금)
+### 단계 1 — SRV-01 ✅ (2026-08-11)
 
-1. 디렉터 → Claude Pro에 **§4 초안** 붙여넣기 + JSON 첨부
-2. Claude → **sub-phase 1개 Go** + Handoff 초안
-3. Cursor → `CLAUDE_TO_CURSOR.md` append · `NEXT_ACTION` 단계 2로 갱신
+1. 디렉터 → Claude Pro에 **§4 초안** 붙여넣기 + JSON 첨부 ✅
+2. Claude → **sub-phase 1개 Go**: **BULL-RECENCY-01** ✅
+3. Cursor → `CLAUDE_TO_CURSOR.md` append ✅ · `NEXT_ACTION` 단계 2로 갱신 ✅
 
-### 단계 2 — Alpha sub-phase ⬜
+### 단계 2 — BULL-RECENCY-01 🟡
 
-- 예시 후보: `BULL-RECENCY-01` · `SIDE-ALPHA-01` · `BEAR-S5-SIM-01`
-- 완료 후: metrics-only 재실행 (~10분) · `05_진행로그` · OUTBOX
+- **1단계**: ✅ **완료** — classic drift 기각 · 공통 CLUSTER_1 edge compression · 03=SL스파이크 / 05=KR붕괴
+- **2단계 코드+rerun**: ✅ **완료** (2026-08-12) — `rp1_bull_recency_01_20260812.json` · overall **PASS** · v2.3.4
+- **DoD**: 1·3·4 추론 PASS · **2 baseline diff 보류** (`_dod.json` 미생성)
+- OUTBOX: `CURSOR_TO_CLAUDE.md` 최상단 (2026-08-12) · Claude 최종 OK 대기
 
 ### 단계 3 — OPS-01 ⬜ (병렬)
 
@@ -107,7 +109,10 @@ RP-1으로 **손댈 구간을 지도에 표시**했고, 이제 **한 번에 하�
 | 날짜 | 단계 | 내용 |
 |------|------|------|
 | 2026-08-11 | 0→1 | RP-1 v2.3.3 완료 · SRV-01 로드맵·초안 작성 · NEXT_ACTION/SYNC 갱신 |
+| 2026-08-11 | 1→2 | SRV-01 Go **BULL-RECENCY-01** · Handoff `CLAUDE_TO_CURSOR.md` 기록 |
+| 2026-08-11 | 2 | 1단계 ✅ trade-level: CLUSTER_1 단일지배 · 03 SL62.6% · 05 KR-0.38 · Claude 레버 대기 |
+| 2026-08-12 | 2 | VPS rerun overall **PASS** · DoD 2 baseline 대조 · Claude OK 대기 |
 
 ---
 
-*다음 갱신: SRV-01 Claude Go 수신 후 — 단계 2 ID·Handoff 링크 기입*
+*다음 갱신: Claude BULL-RECENCY-01 최종 OK 후 — 단계 3 OPS-01 또는 다음 Go*

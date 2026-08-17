@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-A`
+> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-I`
 
 ---
 
@@ -39,24 +39,24 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-17-A` |
-| **마지막 갱신** | 2026-08-17 — Claude VERDICT · SIDE-ALPHA-01 Go · BULL-RECENCY 부분 Done |
-| **활성 트랙** | KR/US 주식 — **POST-RP-1 Alpha Proof** |
-| **진행 중 sub-phase** | **SIDE-ALPHA-01** — `WAIT_CURSOR_IMPL` (1단계 진단) |
-| **직전 완료** | BULL-RECENCY-01 **부분 Done** (8/13 SSOT · BULL_03 NEAR_MISS · BULL_05 FAIL 동결) |
-| **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY **1단계** · BULL-RECENCY **부분 Done(2026-08-17)** · F-GATE/F-RETIRE |
-| **구현 완료·배포 대기** | BEAR-UNDERDOG-01 · L-OBS-02 · F-GATE/F-RETIRE (OPS-01) |
-| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` §SIDE-ALPHA-01 |
-| **git main** | `690671b+` |
+| **앵커 ID** | `SYNC-2026-08-17-I` |
+| **마지막 갱신** | 2026-08-17 — OPS-01 **차단**: 이 워크스테이션 VPS SSH `publickey` 거부 |
+| **활성 트랙** | KR/US — **Ops 배포** (Alpha 구현 창과 분리) |
+| **진행 중 sub-phase** | **OPS-01** — `WAIT_DIRECTOR` (VPS 셸은 디렉터) |
+| **직전 완료** | BEAR-S5-SIM-01 **1단계 Done** · SIDE/BULL **부분 Done** |
+| **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM **1단계** · F-GATE/F-RETIRE |
+| **구현 완료·배포 대기** | F-GATE-01 · F-RETIRE-02 · BEAR-UNDERDOG-01 · L-OBS-02 (**VPS pull 미실행**) |
+| **다음(배포 후)** | **S5-HARNESS-SCOPE-01** SRV-lite (아직 미착수) |
+| **Handoff SSOT** | Ops = `NEXT_ACTION.md` §OPS-01 · Alpha 코드 Handoff **불필요** |
+| **git main** | `2ecb6d7` (`origin/main` 일치) |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[Alpha] SIDE-ALPHA-01 — SIDE_02/03 진단 → (OK 후) 조정 최대 1회
-[종료] BULL-RECENCY-01 부분 Done · 8/13 SSOT · 재현 full 금지
-[로드맵] docs/work_phases/15_POST_RP1_단계별로드맵.md
-[Ops 병렬] OPS-01 VPS 배포 · deploy_watch · IV_OBS
-[후순위] BEAR-S5-SIM-01 · C-1-REDUCED
+[지금] OPS-01 — 디렉터 VPS `git pull` + `update_factory.sh` (Cursor SSH 불가)
+[다음] S5-HARNESS-SCOPE-01 SRV-lite (배포 후 · Alpha)
+[종료] BEAR-S5-SIM-01 1단계 Done · SIDE/BULL 부분 Done · RP-1 내 레버 소진
+[후순위] C-1-REDUCED · SIDE 최소보유 · S5 하네스 구현(스코프 확정 후)
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

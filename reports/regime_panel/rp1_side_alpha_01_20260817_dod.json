@@ -1,0 +1,49 @@
+{
+  "dod_1_side_02_03_near_miss_plus": false,
+  "dod_1_provisional_avg_pnl": false,
+  "dod_2_other_verdict_unchanged": false,
+  "dod_3_tier_mdd_le_10": true,
+  "dod_4_n_ge_20": true,
+  "dod_5_artifacts_written": true,
+  "side_targets": [
+    {
+      "name": "SIDE_02_2015횡보",
+      "baseline_verdict": "NEAR_MISS",
+      "patched_verdict": "NEAR_MISS",
+      "baseline_period_ret": -9.0469,
+      "patched_period_ret": -5.7679,
+      "baseline_avg_pnl": -0.024940928501970196,
+      "patched_avg_pnl": -0.08989892326170724,
+      "patched_n": 77430,
+      "near_or_better": true,
+      "avg_pnl_improved": false
+    },
+    {
+      "name": "SIDE_03_2021-22혼조",
+      "baseline_verdict": "NEAR_MISS",
+      "patched_verdict": "FAIL",
+      "baseline_period_ret": 6.0714,
+      "patched_period_ret": 4.2582,
+      "baseline_avg_pnl": -0.2275154367686429,
+      "patched_avg_pnl": -0.2879920983322276,
+      "patched_n": 94458,
+      "near_or_better": false,
+      "avg_pnl_improved": false
+    }
+  ],
+  "regressions": [
+    {
+      "name": "BULL_03_최근상승",
+      "baseline_verdict": "NEAR_MISS",
+      "patched_verdict": "FAIL",
+      "issue": "verdict_changed"
+    }
+  ],
+  "mdd_crosscheck": {
+    "mdd_cap_violation": false,
+    "violating_regimes": [],
+    "badge": "MDD_OK"
+  },
+  "all_pass": false,
+  "all_pass_strict_avg_pnl": false
+}

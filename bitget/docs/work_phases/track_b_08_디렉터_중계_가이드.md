@@ -145,3 +145,17 @@ bitget/docs/work_phases/08_디렉터_중계_가이드.md  (본 파일)
 bitget/docs/work_phases/07_듀얼AI_협업루프.md
 bitget/docs/claude_project/CAT-HANDOFF_템플릿.md
 ```
+
+---
+
+## Cursor 새창 시작 멘트
+
+**SSOT**: 루트 `docs/work_phases/08_디렉터_중계_가이드.md` → **「Cursor 새창 시작 멘트」** 섹션.
+
+| Bitget 창에서 쓸 블록 | 용도 |
+|----------------------|------|
+| **B-1** | `CLAUDE_TO_CURSOR` Handoff 구현 |
+| **B-2** | WF shadow · 관측 (production 변경 금지) |
+| **B-3** | 상태 점검만 |
+
+Claude 검증 한 줄: `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md 검증. OK면 bitget CLAUDE_TO_CURSOR에 Handoff.`

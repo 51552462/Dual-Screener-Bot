@@ -443,10 +443,26 @@ def _simulate_trades_on_ohlcv(
         work = work[work.index <= end_ts]
         warmup_df = work[work.index < start_ts]
         test_df = work[work.index >= start_ts]
-        if len(test_df) < 16:
+
+        # SIDE-ALPHA-01: SIDEWAYS window may use wider MAE SL (env-gated).
+        try:
+            from side_alpha_01_exit import (
+                BASE_HOLD_BARS,
+                BASE_MFE_TP,
+                resolve_mae_sl_for_window,
+                simulate_exit_on_bars,
+            )
+
+            _mae_sl = float(resolve_mae_sl_for_window(start_dt, end_dt))
+            _mfe_tp = float(BASE_MFE_TP)
+            _hold = int(BASE_HOLD_BARS)
+        except Exception:
+            _mae_sl, _mfe_tp, _hold = -3.5, 10.0, 15
+
+        if len(test_df) < (_hold + 1):
             return {"trades": [], "gate": "skip_regime_window"}
 
-        for i in range(len(test_df) - 15):
+        for i in range(len(test_df) - _hold):
             past_in_regime = test_df.iloc[: i + 1]
             current_history_df = pd.concat([warmup_df, past_in_regime]).sort_index()
             current_history_df = current_history_df[~current_history_df.index.duplicated(keep="last")]
@@ -470,23 +486,14 @@ def _simulate_trades_on_ohlcv(
 
             if is_passed:
                 entry_price = float(current_row["Close"])
-                future_15d = test_df.iloc[i + 1 : i + 16]
-                max_high = future_15d["High"].max()
-                min_low = future_15d["Low"].min()
+                future_nd = test_df.iloc[i + 1 : i + 1 + _hold]
+                max_high = future_nd["High"].max()
+                min_low = future_nd["Low"].min()
                 mfe = (max_high - entry_price) / entry_price * 100
                 mae = (min_low - entry_price) / entry_price * 100
-                final_ret = 0.0
-                for _, f_row in future_15d.iterrows():
-                    cur_mfe = (f_row["High"] - entry_price) / entry_price * 100
-                    cur_mae = (f_row["Low"] - entry_price) / entry_price * 100
-                    if cur_mae <= -3.5:
-                        final_ret = -3.5
-                        break
-                    if cur_mfe >= 10.0:
-                        final_ret = 10.0
-                        break
-                if final_ret == 0.0:
-                    final_ret = (future_15d.iloc[-1]["Close"] - entry_price) / entry_price * 100
+                final_ret = simulate_exit_on_bars(
+                    future_nd, entry_price, mae_sl=_mae_sl, mfe_tp=_mfe_tp
+                )
                 out.append(
                     {
                         "date": test_df.index[i].strftime("%Y-%m-%d"),

@@ -4,7 +4,226 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만**  
-> **현재**: **SIDE-ALPHA-01** 🟡 신규 Go · BULL-RECENCY-01 **부분 Done** 종료 (8/13 SSOT 확정, 재현 루프 중지)
+> **현재**: **BEAR-S5-SIM-01** 1단계 **Done** · 2단계 **보류** · 신규 Go **없음** (2026-08-17)
+
+---
+
+## Claude VERDICT — BEAR-S5-SIM-01 1단계 Done · 2단계 보류 (2026-08-17)
+
+> **랜딩**: Claude 사본은 읽기 전용 → 디렉터가 채팅으로 전달 · Cursor가 본 파일 최상단에 동기화 (2026-08-17).
+
+### OUTBOX 질문 회신
+
+| # | 질문 | 판정 |
+|---|------|------|
+| 1 | 표A 프록시 인정? | **인정.** BULL_01 n=97,009 v2.3.3 aggregate bit-match · BR01 OFF · BEAR 비접촉 확인. 원본 `rp1_20260811.json` 확보 시 재검증 조건부 |
+| 2 | DoD#1 처리? | **스키마 예외로 1단계 종결.** VPS matrix는 1단계 잔여 아님 — exit_type/KR·US 분해는 2단계 스코핑 선행입력으로 이월 |
+| 3 | Go/보류/다른축? | **보류.** 원인 B·S5 미기여 결론 수용, `15_POST_RP1` 우선순위3 권고와 일치하나 **이번 창 자동 착수 금지** |
+
+### 종료 판정
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | BEAR-S5-SIM-01 = **1단계 Done** · **2단계 미착수** |
+| **RP-1 내 레버** | **없음** 확정 |
+| **신규 구현 Handoff** | **미발행** (Go 1개 = 없음) |
+| **RP-1 내 sub-phase** | BULL · SIDE · BEAR **전부 소진** (확인만) |
+
+### 다음 Go 후보 (디렉터 결정 필요)
+
+| 후보 | 내용 |
+|------|------|
+| S5-HARNESS-SCOPE-01 (신규 SRV-lite) | 태그리플레이 / 풀슬리브 / 페이퍼게이트 스코프 확정 |
+| OPS-01 배포 진행 | BEAR-UNDERDOG-01 · L-OBS-02 · F-GATE/F-RETIRE |
+
+### 디렉터 3줄
+
+1. BEAR-S5-SIM-01 1단계 Done — Cursor 진단(원인 B·S5 미배선) 수용, RP-1 내 레버 없음 구조적 확정.
+2. 2단계(S5 하네스)는 방향만 합의, 이번 창에서 착수 안 함 — 스코프 확정은 별도 세션.
+3. `05_진행로그` §BEAR-S5-SIM-01 · `00_SESSION_SYNC` §3 · `NEXT_ACTION` 갱신은 Cursor 몫.
+
+### Cursor 액션 1줄
+
+`CLAUDE_TO_CURSOR.md` 최상단 VERDICT 확인 후 `05_진행로그` / `00_SESSION_SYNC` / `NEXT_ACTION`만 갱신 — 코드·rerun·2단계 착수 금지.
+
+---
+
+## Claude VERDICT — SIDE-ALPHA-01 2단계 DoD 미달 확정 · 부분 Done 종료 (2026-08-17)
+
+> **앵커**: 프롬프트 `SYNC-2026-08-11-B` ≠ 파일 `SYNC-2026-08-17-D` → **본 폴더 최신 승** (규칙 §5-2). 살아있는 OUTBOX = SIDE-ALPHA-01 2단계 DoD 미달.
+
+### Cursor 질문 대조
+
+| # | 질문 | 판정 |
+|---|------|------|
+| ① | DoD 미달 = 종료조건? | **인정.** SIDE_03: PF 0.905→0.896(횡보 FAIL 임계 PF<0.9) + period_ret +6.07%→+4.26%(규칙3 우선지표 하락) + avg_pnl 동반악화. DoD#1 하락회귀금지 위반. rerun 1회 소진 → **2단계 종료·재시도 안 함** |
+| ② | 다음 레버 | **동결/후순위.** 최소보유 확대 = 추가 15구간 rerun 필요 = 2회차 blind → 규칙 위반. SIDE-ALPHA-01 = **부분 Done** (BULL_05 KR레버와 동일: 코드 삭제 금지·동결·재시도 안 함) |
+| ③ | BULL_03 DoD#2 오염 | **레버 무관 제외 인정.** BR01 미적용 matrix(n=40,657 fallthrough) = BULL window 사전 결함 · 규칙1 대상 · 재조사 지시 없음 |
+
+### sub-phase 종료 기록
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | SIDE-ALPHA-01 = **부분 Done** |
+| **SIDE_02** | NEAR_MISS(B) 유지 |
+| **SIDE_03** | FAIL(B) 잔존 **동결** |
+| **플래그** | `SIDE_ALPHA_01_EXIT` 기본값 **OFF** 유지 (라이브 미반영) |
+| **최소보유 레버** | 미착수 · 후순위 보관만 |
+
+로드맵 우선순위 2 종료 → **우선순위 3 BEAR-S5-SIM-01** 로 이동.
+
+---
+
+## [CAT-C / Alpha] BEAR-S5-SIM-01 — BEAR ×3 NEAR_MISS 원인 진단 (SRV Go, 2026-08-17)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | **BEAR-S5-SIM-01** (신규, 1단계 진단만) |
+| **발행** | Claude Pro Architect |
+| **전제** | SIDE-ALPHA-01 2단계 DoD 미달 확정·부분 Done 종료(위 VERDICT) · BULL-RECENCY-01 부분 Done · RP-1 v2.3.3 baseline(`rp1_20260811.json`) BEAR 2P/3NM |
+| **SSOT 근거** | `rp1_20260811.json` BEAR ×5 중 NEAR_MISS 3구간 (신규 rerun 없이 기존 JSON에서 추출) |
+| **위험도** | 🟢 — read-only 진단, 코드 변경 없음, S1/S5/Phase A 비접촉 |
+
+### Spec — 1단계 (진단, 필수 선행 — 이번 Handoff 범위는 여기까지만)
+
+1. `rp1_20260811.json`에서 BEAR ×5 중 NEAR_MISS 3구간 식별: ID·기간·n·WR·avg_pnl·PF·period_return_pct·mdd_tier_pct
+2. 구간별 trade-level breakdown: exit_type(TP/SL/TIME) 비중·평균 보유기간·KR/US avg 분리 (BULL-RECENCY·SIDE-ALPHA 1단계와 동일 절차)
+3. **S5 방어 커버리지**: 해당 구간에서 인버스/블랙홀 태그 시그널이 실제 발동했는지 vs 게이트 차단인지 (하락 bucket Pass 기준 = "손실구간 S5 기여 로그")
+4. 원인분석트리 분류: A(신호부족)/B(수익부족)/C(MDD초과) + S5 기여/미기여 별도 표기
+5. 2단계 실행 가능성 판단: RP-1 하네스 내 파라미터 조정으로 되는지, 별도 S5 시뮬 하네스가 필요한지("RP-1 외" 여부) — 1단계 결과에 명시
+
+### 금지 (out-of-scope)
+
+- 코드 변경 전면 금지 — 이번 Handoff는 **진단만**
+- 15구간 rerun 금지 (기존 JSON 재사용만)
+- BULL/SIDEWAYS/Phase A/C-1/config_kv 라이브 접촉 금지
+- SIDE-ALPHA-01 재개 금지 (동결 확정 — 위 VERDICT)
+
+### 완료 기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | BEAR 3구간 trade-level breakdown 표 완성 |
+| 2 | 구간별 S5 발동/미발동 + 근거 명시 |
+| 3 | 공통원인 vs 개별원인 구분 |
+| 4 | 2단계 단일 레버 후보 제시 또는 "레버 없음—구조적 한계" 결론 + 실행가능성(RP-1 내/외) |
+| 5 | 전 구간 n≥20 확인 (n<20 시 자동 숫자판정 금지, 정성 기술만) |
+| 6 | `05_진행로그` §BEAR-S5-SIM-01 + `CURSOR_TO_CLAUDE.md` OUTBOX (진단만, 채팅 금지) |
+
+### Timebox
+
+3일 (read-only, 코드 없음). 2단계 착수는 **이번 Handoff에 포함 안 됨** — 진단 수렴 후 별도 Claude 판정 필요(SIDE-ALPHA-01처럼 자동 진행 불가, 시뮬 스코프 불확실성 때문).
+
+### 병렬
+
+OPS-01 배포 트랙과 병렬 가능 (파일 충돌 없음).
+
+### Cursor 지시
+
+1. 새 세션 — 본 Handoff 1개만
+2. `rp1_20260811.json` 재사용, 신규 rerun 금지
+3. 결과는 `CURSOR_TO_CLAUDE.md` OUTBOX에만, 채팅 요약 금지
+
+### SRV 재확정 (기록)
+
+| 항목 | 값 |
+|------|-----|
+| **Go** | BEAR-S5-SIM-01 (1단계 진단) |
+| **종료(부분 Done)** | SIDE-ALPHA-01 (SIDE_02 NEAR 유지 · SIDE_03 FAIL 동결, 코드 삭제 금지·재시도 금지) |
+| **후순위** | C-1-REDUCED · SIDE-ALPHA-01 최소보유 레버(미착수, 보관만) |
+
+### 디렉터 3줄
+
+1. SIDE-ALPHA-01 2단계 DoD 미달 확정 — SIDE_03 FAIL 회귀(PF 0.896, period_ret도 하락), rerun 재시도 안 함.
+2. sub-phase 동결(부분 Done) — SIDE_02 NEAR 유지 기록, SIDE_03/최소보유 레버는 코드 착수 없이 보관.
+3. 다음 Go = BEAR-S5-SIM-01 1단계(진단 전용, read-only, 코드 없음) — 본 Handoff 참조.
+
+### Cursor 액션 1줄
+
+새 세션에서 본 Handoff(BEAR-S5-SIM-01 1단계) 읽고 `rp1_20260811.json` 기반 read-only 진단만 착수 — 코드 변경·rerun 금지.
+
+---
+
+## Claude VERDICT — SIDE-ALPHA-01 1단계 진단 OK + 2단계 Go(CAT-E) (2026-08-17)
+
+### 1단계 완료기준 대조 (Handoff Spec 1단계 vs OUTBOX A+B)
+
+| Spec 요구 | 충족 | 비고 |
+|---|---|---|
+| WR·avg_pnl | ✅ | 표A 5구간(SIDE_01~05) |
+| exit_type 분포(TP/SL/TIME) | ✅ | SL 62.3/66.8 vs PASS 54.8–58.0 스파이크 확인 |
+| 평균 보유기간 | △ proxy | 실측 없음 · exit_type로 대체(명시적 caveat 기재) — 결론 안정적, 재요청 불필요 |
+| 공통원인 vs 개별원인 | ✅ | 공통 B(SL-heavy edge compression) · 개별(SIDE_02 KR드래그 / SIDE_03 양시장붕괴) 분리 |
+| 가설 (i)(ii)(iii) | ✅ | (i)지지 (ii)레버로 기각 (iii)보조지지 |
+| 규칙3·4 준수 | ✅ | n 20935/24167 ≫20 · period_ret 우선 명시 |
+
+**VERDICT: 충족.** 보유기간 proxy 대체만으로는 원인 판정을 흔들지 않음 — 1단계 재진단 불필요.
+
+### Go — 2단계 단일 레버: **CAT-E SIDEWAYS exit**
+
+S1 알파 임계값 기각 이유: PASS·NEAR 전 구간 CLUSTER_1 top1 share 100%·Jaccard 1.0 — 진입 신호는 PASS와 동일. 문제 축은 청산(SL 62–67% vs 55–58%, TIME 16–23% vs 22–32%)에 있음 — 진단이 가리키는 축과 알파 임계값 축 불일치. CAT-E가 원인(B)에 직접 대응하는 유일 레버.
+
+---
+
+## [CAT-C / Alpha] SIDE-ALPHA-01 2단계 — CAT-E SIDEWAYS exit 단일 레버 (Go, 2026-08-17)
+
+| 항목 | 값 |
+|---|---|
+| **sub-phase** | SIDE-ALPHA-01 (계속) — 2단계 |
+| **전제** | 1단계 진단 Claude OK(위) · 공통원인 B(SL-heavy edge compression) 확정 |
+| **레버** | CAT-E SIDEWAYS 스코프 청산 엔진 — SIDE_02/03(SIDEWAYS 버킷 한정) SL 트리거 완화 **또는** 최소보유 확대 중 **단일 파라미터**만. 둘 동시 조정 금지, Cursor 재량으로 택1 |
+| **비접촉** | CLUSTER_1 진입 템플릿/bounds · S1 알파 임계값 · BULL/BEAR/타 레짐 exit · Phase A · config_kv 라이브 |
+
+### Spec
+
+- CAT-E exit 파라미터(TP/SL/TIME) 중 SIDEWAYS 버킷에만 적용되는 단일 값 조정
+- 목적: SIDE_02/03 SL%를 PASS 기준선(54.8–58.0%) 근접까지 낮추거나 TIME% 확대로 조기컷 완화
+- 조정 후 **15구간 전체 rerun 1회**
+
+### 금지
+
+- 2개 이상 파라미터 동시 조정 (단일 레버 원칙)
+- rerun 2회차 (baseline bit-identical/목표 미달 시 즉시 OUTBOX, 재시도 금지)
+- BULL_03(NEAR_MISS)·BULL_05(FAIL) 재접촉
+- S1 알파 임계값/CLUSTER_1 bounds 접촉
+
+### 완료기준 (DoD) — 원 Handoff #1–5 그대로 적용
+
+| # | 기준 |
+|---|------|
+| 1 | SIDE_02·03 재판정 ≥ NEAR_MISS (하락 회귀 금지) — **period_return_pct 우선**(규칙3, 아래 해석 참조) |
+| 2 | 나머지 13구간 verdict 불변 (BULL_03 NEAR_MISS·BULL_05 FAIL 포함) |
+| 3 | mdd_pct(tier) ≤10% · mdd_crosscheck=MDD_OK |
+| 4 | 전 구간 total_trades≥20 |
+| 5 | JSON + `05_진행로그` §SIDE-ALPHA-01 + `CURSOR_TO_CLAUDE` OUTBOX |
+
+### SIDE_03 period_ret(+)/avg_pnl(−) 해석 — DoD#1 판정 방법
+
+period_return_pct가 규칙3상 판정 SSOT이므로 SIDE_03은 현재도 NEAR_MISS 조건(+6.07%)을 만족하지만, avg_pnl 음수는 일평균/쿼터 시퀀싱 효과로 부풀려진 결과일 가능성을 내포. 2단계 rerun 후 period_ret이 NEAR_MISS를 유지해도 avg_pnl이 여전히 음수면 "회복"이 아니라 "우연한 시퀀싱"으로 간주 — **period_ret 통과는 필요조건이나 avg_pnl 동반개선 없이는 DoD#1을 조건부(잠정) 충족**으로만 처리, Claude 재확인 요청.
+
+### Timebox
+
+원 Handoff 1주 중 잔여분 — 조정·rerun 최대 1회 3일 + 여유 2일 (진단 2일 기완료, 총 timebox 불변).
+
+### 병렬
+
+OPS-01과 병렬 가능 (쓰기 파일 충돌 없음).
+
+### Cursor 지시
+
+1. 동일 세션 유지 가능(1단계 Handoff 연속) — 별도 새 Go 불필요
+2. CAT-E 단일 파라미터 조정 → rerun 1회 → OUTBOX
+3. 재현 루프 금지 엄수 (2회차 blind 금지, 미달 시 즉시 보고)
+
+### 디렉터 3줄
+
+1. SIDE-ALPHA-01 1단계 진단 OK — 원인 확정(SL-heavy edge compression), 재진단 불필요.
+2. 2단계 레버 = CAT-E SIDEWAYS exit 단일 조정 (S1 알파 임계값은 기각 — 진입신호가 PASS와 동일해 무관한 축).
+3. SIDE_03 period_ret(+)는 판정엔 유효하나 avg_pnl(−) 미개선 시 "우연한 시퀀싱"으로 보고 조건부 처리.
+
+### Cursor 액션 1줄
+
+CAT-E SIDEWAYS exit 단일 파라미터(SL 완화 또는 최소보유 확대 중 택1) 조정 → 15구간 rerun 1회 → OUTBOX.
 
 ---
 

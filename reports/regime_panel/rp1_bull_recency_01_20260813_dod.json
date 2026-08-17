@@ -1,0 +1,37 @@
+{
+  "dod_1_bull_05_near_miss_plus": false,
+  "dod_2_bull_03_verdict_unchanged": true,
+  "dod_3_other_verdict_unchanged": true,
+  "dod_4_tier_mdd_le_10": true,
+  "dod_5_n_ge_20": true,
+  "dod_6_period_map_keys_valid": true,
+  "dod_1_bull_03_05_near_miss_plus": false,
+  "dod_2_other_verdict_unchanged": true,
+  "dod_3_tier_mdd_le_10": true,
+  "dod_4_n_ge_20": true,
+  "regressions": [],
+  "bull_targets": [
+    {
+      "name": "BULL_03_최근상승",
+      "baseline_verdict": "FAIL",
+      "patched_verdict": "NEAR_MISS",
+      "baseline_period_ret": 4.2976,
+      "patched_period_ret": 15.3971,
+      "patched_n": 10276
+    },
+    {
+      "name": "BULL_05_글로벌리플레이",
+      "baseline_verdict": "FAIL",
+      "patched_verdict": "FAIL",
+      "baseline_period_ret": -9.2592,
+      "patched_period_ret": -9.0378,
+      "patched_n": 9142
+    }
+  ],
+  "mdd_crosscheck": {
+    "mdd_cap_violation": false,
+    "violating_regimes": [],
+    "badge": "MDD_OK"
+  },
+  "all_pass": false
+}
