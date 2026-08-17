@@ -4,11 +4,120 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만**  
-> **현재**: **BULL-RECENCY-01 이터레이션 3** 🟡 · shrink 0.45 확정 · **BULL_05 KR 레버** Cursor 착수
+> **현재**: **SIDE-ALPHA-01** 🟡 신규 Go · BULL-RECENCY-01 **부분 Done** 종료 (8/13 SSOT 확정, 재현 루프 중지)
 
 ---
 
-## [CAT-C / Alpha] BULL-RECENCY-01 이터레이션 3 — BULL_05 KR 레버 + DoD 버그픽스 (2026-08-13)
+## Claude VERDICT — BULL-RECENCY-01 8/13 SSOT 확정 · 부분 Done 종료 (2026-08-17)
+
+### OUTBOX 검증 결과 (`rp1_bull_recency_01_20260813.json` 실측 대조)
+
+| 항목 | OUTBOX 주장 | JSON 실측 | 일치 |
+|------|-------------|-----------|------|
+| generated_at | 2026-08-13 01:26 | 2026-08-13 01:26:26 | ✅ |
+| schema | v2.3.4 | regime_panel_rp1.v2.3.4 | ✅ |
+| BULL_03 | NEAR_MISS · n=10,276 · period_ret 15.3971% | NEAR_MISS(B) · n=10276 · 15.3971% | ✅ |
+| BULL_05 | FAIL · n=9,142 · period_ret −9.0378% | FAIL(B) · n=9142 · −9.0378% | ✅ |
+| mdd_crosscheck | MDD_OK | MDD_OK, violating_regimes=[] | ✅ |
+| n≥20 (규칙4) | — | 전 구간 min n=1,899 (BEAR_05) | ✅ |
+| 15구간 완전성 | — | 15/15 periods 존재 | ✅ |
+
+**VERDICT: OK.** 8/13 JSON을 BULL-RECENCY-01 **iter2 DoD SSOT**로 공식 확정. 재현 full 중지 — 8/14~16 런은 폐기 유지(baseline bit-identical 또는 매칭 붕괴, Cursor 엔지니어 결론 수용).
+
+### 종료 판정 (부분 Done)
+
+| 항목 | 판정 |
+|------|------|
+| BULL_03 | FAIL→NEAR_MISS(B) — 목표 달성, S1 CLUSTER_1 타이트닝 유효. **Done** |
+| BULL_05 | FAIL(B) 잔존. iter3 KR 레버(dyn_rs)는 유효 full 미검증 → **동결 보관**(코드 삭제 금지, 재시도 안 함) |
+| 재현 경로 | scope ON→매칭 붕괴 · scope OFF→baseline fallthrough — 규칙1(계측 버그헌팅 종료) 대상 |
+| **sub-phase** | BULL-RECENCY-01 = **부분 Done** (2/2 진단 완료, 1/2 목표 달성) |
+
+로드맵 우선순위 1 종료 → **우선순위 2 SIDE-ALPHA-01** 로 이동.
+
+---
+
+## [CAT-C / Alpha] SIDE-ALPHA-01 — SIDE_02/03 NEAR_MISS(B) PF 개선 (SRV-01 Go, 2026-08-17)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | **SIDE-ALPHA-01** (신규) |
+| **발행** | Claude Pro Architect |
+| **전제** | RP-1 v2.3.3 baseline 확정 · BULL-RECENCY-01 부분 Done 종료(위 VERDICT) · 8/13 JSON = 대조 baseline |
+| **SSOT 근거** | `rp1_bull_recency_01_20260813.json` SIDE_02/03 실측 |
+| **위험도** | 🟡 — SIDEWAYS bucket 알파/청산층만 · BULL/BEAR/Phase A 비접촉 · config_kv 라이브 금지 |
+
+### 대상 구간 실측 (8/13 JSON, 변경 전 baseline)
+
+| ID | 기간 | n | WR% | PF | avg_pnl | period_ret% | mdd_tier% | verdict |
+|----|------|---|-----|-----|---------|-------------|-----------|---------|
+| SIDE_02_2015횡보 | 2015-06-01~2016-06-30 | 20,935 | 33.58 | 0.989 | −0.0249 | −9.0469 | 9.0469 | NEAR_MISS(B) |
+| SIDE_03_2021-22혼조 | 2021-12-01~2022-12-31 | 24,167 | 29.56 | 0.905 | −0.2275 | 6.0714 | 9.1296 | NEAR_MISS(B) |
+
+두 구간 모두 n≫20 · avg_pnl 음수 · PF가 SIDEWAYS 기준선(≥1.0) 근접 미달 — **원인분석트리 B** (신호는 있으나 수익 부족). A(신호부족)·C(MDD초과) 아님.
+
+### SSOT (변경/비변경)
+
+- **변경 후보 (2단계, 진단 확정 후만)**: 청산 엔진(TP/SL/TIME, CAT-E) 또는 S1 알파 임계값 — **선(先)변경 금지**
+- **비접촉**: BULL 전 구간(BULL_03/05 freeze) · BEAR · S5/인버스 · C-1 · Phase A · config_kv 라이브
+
+### Spec — 1단계 (진단, 필수 선행)
+
+SIDE_02·SIDE_03 trade-level breakdown:
+
+- WR · avg_pnl · `exit_type` 분포(TP/SL/TIME 비중) · 평균 보유기간
+- 공통원인 vs 구간별 개별원인 구분 (BULL-RECENCY와 동일 절차)
+- 가설: (i) 청산엔진 손익비 (ii) 특정 템플릿 과다매칭 (iii) 횡보장 회전율/슬리피지
+
+### Spec — 2단계 (조정, 진단 수렴 후만)
+
+- 단일 레버로 수렴할 때만 targeted diff
+- 15구간 전체 rerun **최대 1회**로 검증
+
+### 금지 (out-of-scope)
+
+- BULL_03/05 bounds 재접촉 금지 (8/13 동결)
+- BEAR·C-1·S5·Phase A 접촉 금지
+- config_kv 라이브 반영 금지
+- **재현 루프 금지**: 2단계 fix→rerun **최대 1회**. baseline bit-identical 또는 목표 미달 → 즉시 OUTBOX → Claude 판단 (2회차 blind 금지)
+
+### 완료 기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | SIDE_02, SIDE_03 재판정 ≥ NEAR_MISS (하락 회귀 금지) — period_return_pct 우선 |
+| 2 | 나머지 13구간 verdict 불변 (BULL_03 NEAR_MISS · BULL_05 FAIL 포함 8/13 유지) |
+| 3 | mdd_pct_tier ≤10% · mdd_crosscheck=MDD_OK |
+| 4 | 전 구간 total_trades≥20 |
+| 5 | JSON + `05_진행로그` §SIDE-ALPHA-01 + `CURSOR_TO_CLAUDE` OUTBOX (진단+조정 통합) |
+
+### Timebox
+
+1주 (진단 2일 + 조정·rerun 최대 1회 3일 + 여유 2일). 초과 시 미달 OUTBOX, 재시도 아님.
+
+### 병렬
+
+OPS-01과 병렬 가능 (쓰기 파일 충돌 없음).
+
+### Cursor 지시
+
+1. **새 세션** — 본 Handoff **1개만**
+2. **1단계 진단**부터 착수 · 2단계는 진단 확정 후
+3. Targeted diff only · 충돌 시 Adapter → 디렉터 Ask
+4. 재현 루프 금지 엄수 (BULL-RECENCY 반복 방지 = 프로세스 목적)
+
+### SRV 재확정 (기록)
+
+| 항목 | 값 |
+|------|-----|
+| **Go** | SIDE-ALPHA-01 |
+| **종료(부분 Done)** | BULL-RECENCY-01 |
+| **후순위** | BEAR-S5-SIM-01 · C-1-REDUCED |
+
+---
+
+## [CAT-C / Alpha] BULL-RECENCY-01 이터레이션 3 — BULL_05 KR 레버 + DoD 버그픽스 (2026-08-13) *(superseded — KR 레버 동결)*
+
 
 | 항목 | 값 |
 |------|-----|
