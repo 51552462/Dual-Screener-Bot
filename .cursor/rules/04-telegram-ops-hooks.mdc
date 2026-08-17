@@ -1,5 +1,5 @@
 ---
-description: 텔레그램 DEPLOY_WATCH·IV_OBS·Ops 세션 — 구현 없이 관측/중계
+description: 텔레그램 DEPLOY_WATCH·IV_OBS·OBS_HOLD·Ops 세션 — 구현 없이 관측/중계
 alwaysApply: true
 ---
 
@@ -11,16 +11,23 @@ alwaysApply: true
 |------|------------|------|------|
 | `[DEPLOY_WATCH]` | 19:35 daily | A-7 | Alpha Handoff 무시하고 임의 구현 |
 | `[IV_OBS]` | 일 20:10 | A-6 | V-2 BLOCK unless readiness=READY |
+| `[OBS_HOLD]` / North Star 일보 | **19:30** daily (`--north-star-digest daily`) | Ops 관측 | mega_trend/목표하향 · Alpha 구현 (n&lt;20) |
 
 - `report.cursor_action` 해석 → 필요 시 `CURSOR_TO_CLAUDE.md` OUTBOX
-- Claude는 텔레그램 **직접 안 봄** — Cursor가 파일로 중계
-- SSOT: `deploy_watch_latest.json`, `iv_observation_latest.json` (VPS)
+- Claude는 텔레그램 **직접 안 봄** — 디렉터가 `---CLAUDE---` 블록을 Claude Pro에 붙여넣기 (또는 Cursor가 파일로 중계)
+- SSOT: `deploy_watch_latest.json`, `iv_observation_latest.json`, **VPS** `dual_north_star_ledger.json`
 
 ### cursor_action (deploy_watch)
 
 - `INVESTIGATE_BEAR_UNDERDOG_TAG` — suffix 누락 조사
 - `OBSERVE_BEAR_UNDERDOG_L2` — pain cluster 관측 (hard gate 금지)
 - `REPORT_TO_CLAUDE` — OUTBOX append
+
+### cursor_action (OBS_HOLD / North Star daily)
+
+- `OBSERVE_HOLD` — daily n&lt;20 · 관측유지 · 조치 없음(정체·cron 장애만 OUTBOX)
+- `RECALL_FORK` — daily n≥20 · 갈림길 재소집 · 코드 구현 금지 · Claude에 `---CLAUDE---` 중계
+- `NONE` — weekly/monthly 등 daily 패널 해당 없음
 
 ## Ops 전용 세션 (Alpha 코드 수정 금지)
 

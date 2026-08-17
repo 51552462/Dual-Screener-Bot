@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-Q`
+> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-Z`
 
 ---
 
@@ -39,26 +39,27 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-17-Q` |
-| **마지막 갱신** | 2026-08-17 — S5 VPS 실측 Done · Claude OK 대기 |
-| **활성 트랙** | KR/US — Ops-lite 종료 · Claude 검증 |
-| **진행 중 sub-phase** | **S5-HARNESS-SCOPE-01** — `WAIT_CLAUDE_OK` (VPS n=0 관측) |
-| **직전 완료** | VPS `update_factory` + S5 CLI · HEAD **`600c9cd`** |
-| **Claude OK 완료** | RP-1 · SRV-01 · BULL/SIDE · BEAR-S5-SIM 1단계 · F-GATE · **S5 로컬** |
-| **구현 완료·배포** | VPS **`600c9cd`** · S5 JSON 산출 |
-| **다음** | Claude OUTBOX 검증 |
-| **Handoff SSOT** | `CURSOR_TO_CLAUDE.md` 최상단 |
-| **git main** | origin·VPS **`600c9cd`** |
+| **앵커 ID** | `SYNC-2026-08-17-Z` |
+| **마지막 갱신** | 2026-08-17 — **NS-OBS-TG-01** 일보 `[OBS_HOLD]`+복붙 구현 · Claude OK 대기 |
+| **활성 트랙** | KR/US — **OBS-HOLD** (갈림길 재소집 대기) |
+| **진행 중 sub-phase** | **NS-OBS-TG-01** — `WAIT_CLAUDE_OK` · FWD-OBS-HOLD-01 관측 유지 |
+| **직전 완료** | FWD-OBS-HOLD-01 **Claude OK** · FWD-LEDGER CLOSE |
+| **Claude OK 완료** | … · **FWD-LEDGER-CRON-01** · **CLOSE** · **FWD-OBS-HOLD-01** |
+| **구현 완료·배포** | NS-OBS-TG-01: ledger+telegram · **VPS pull 잔여** |
+| **다음** | VPS pull → 19:30 실발송 확인 · daily **n≥20** 시 갈림길 재소집 · 그 전 mega_trend/목표하향 **금지** |
+| **Handoff SSOT** | `CURSOR_TO_CLAUDE.md` 최상단 · NS-OBS-TG-01 OUTBOX |
+| **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` (로컬 금지) |
+| **git main** | origin **`f797f01`** (본 세션 미확인) / VPS **`600c9cd`** ✅ |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[종료] OPS-01 — 0efc750 · overall PASS · cursor_action=NONE
-[부분Done] S5 로컬 Claude OK · origin dc90e39
-[지금] S5 VPS 실측 Done (n=0) · WAIT_CLAUDE_OK · HEAD 600c9cd
-[기각] 태그 리플레이 · 풀 슬리브
-[후순위] f_gate_01 SKIP(strategy_registry_missing) Ops 메모 · C-1-REDUCED · SIDE 최소보유
-[참고] SSH 키: Downloads Lightsail pem → ~/.ssh (개인키 채팅 금지)
+[CLOSED] FWD-LEDGER-CRON-01 · CLOSE · FWD-OBS-HOLD-01 — Claude OK
+[지금] NS-OBS-TG-01 — 일보 OBS_HOLD 패널 · WAIT_CLAUDE_OK · VPS pull
+[관측] OBS-HOLD 재소집=daily n≥20 (~09-05 예상)
+[소진·동결] BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM · C-1 섹터
+[금지] mega_trend · 목표하향 — 재소집 전 착수 금지
+[SSOT] North Star = VPS 원장 only
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

@@ -3,7 +3,407 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-17 · **S5 VPS 실측 완료** · 앵커 `SYNC-2026-08-17-Q` · VPS HEAD `600c9cd`
+> **갱신**: 2026-08-17 · **NS-OBS-TG-01 Done** · 앵커 `SYNC-2026-08-17-Z`
+
+---
+
+## OUTBOX — [Ops-lite] NS-OBS-TG-01 **완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | NS-OBS-TG-01 |
+| **status** | `WAIT_CLAUDE_OK` · 운영 `OBS-HOLD` 유지 |
+| **앵커** | `SYNC-2026-08-17-Z` |
+| **선행** | FWD-OBS-HOLD-01 **Claude OK** |
+| **범위** | 기존 North Star **일간** digest에 `[OBS_HOLD]` 패널 + `---CURSOR---`/`---CLAUDE---` |
+| **비접촉** | Critical · config_kv · 신규 cron · mega_trend/목표하향 |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | `OBS_HOLD_RECALL_N=20` · persist 후 `daily_n`/`cursor_action` | ✅ `dual_north_star_ledger.py` |
+| 2 | daily HTML에 OBS 패널 + Cursor/Claude 복붙 | ✅ `dual_north_star_telegram.py` |
+| 3 | weekly 패널 생략 · action NONE | ✅ 테스트 |
+| 4 | n=8→OBSERVE_HOLD · n=20→RECALL_FORK | ✅ `tests/test_obs_hold_telegram.py` |
+| 5 | hooks·12·NEXT_ACTION·§3 동기화 | ✅ |
+| 6 | 단위테스트 | ✅ **12 passed** (obs+ledger) |
+
+### 동작 요약
+
+- cron **19:30** 기존 유지 (`factory.sh --north-star-digest daily`)
+- n&lt;20: 관측유지 문구 · Alpha 구현 금지
+- n≥20: 재소집 · Claude에 `---CLAUDE---` 붙여넣기 유도
+
+### 디렉터 3줄
+
+1. 일보에 OBS_HOLD+복붙 붙임 — 새 cron 없음.
+2. VPS `git pull` 후 19:30 확인.
+3. Claude: 본 OUTBOX 검증.
+
+---
+
+## OUTBOX — [Ops-lite] FWD-OBS-HOLD-01 **완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | FWD-OBS-HOLD-01 |
+| **status** | `WAIT_CLAUDE_OK` · 운영상태 `OBS-HOLD` |
+| **앵커** | `SYNC-2026-08-17-Y` |
+| **선행** | CLOSE **Claude OK** |
+| **코드 diff** | **0** |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | NEXT_ACTION OBS-HOLD + n≥20 트리거 | ✅ |
+| 2 | SYNC §3 bump + sub-phase | ✅ `SYNC-2026-08-17-Y` · FWD-OBS-HOLD-01 |
+| 3 | 05 CLOSE Claude OK + OBS-HOLD 섹션 | ✅ |
+| 4 | 코드 diff 0 | ✅ |
+
+### 재소집 트리거 (문서 고정 · 판단 없음)
+
+- **조건**: VPS daily history **n≥20**
+- **예상**: ~2026-09-05 (8/16 n=8 기준 · **VPS 재확인 후 확정**)
+- **그 전**: mega_trend / 목표하향 **착수 금지**
+
+### 디렉터 3줄
+
+1. OBS-HOLD 문서 고정 Done — 갈림길 판단 보류.
+2. 재소집 = daily n≥20.
+3. Claude: 본 OUTBOX 검증.
+
+---
+
+## OUTBOX — [Ops-lite] FWD-LEDGER-CRON-01-CLOSE **완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | FWD-LEDGER-CRON-01-CLOSE |
+| **status** | `WAIT_CLAUDE_OK` |
+| **앵커** | `SYNC-2026-08-17-X` |
+| **선행** | FWD-LEDGER-CRON-01 **Claude OK** → CLOSED |
+| **코드 diff** | **0** (소스/factory_data_dir/config_kv/bitget/cron **비접촉**) |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | `12_듀얼북극성` §3 SSOT 각주 | ✅ VPS 경로 표 + 로컬 artifact 각주 |
+| 2 | 로컬 원장 rename | ✅ 아래 ls |
+| 3 | SYNC §3 bump + FWD-LEDGER CLOSED | ✅ `SYNC-2026-08-17-X` |
+| 4 | NEXT_ACTION 갈림길+20일 관측 문구 | ✅ |
+| 5 | 코드 diff 0 | ✅ |
+
+### 로컬 격리 ls
+
+```
+C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\
+  dual_north_star_ledger.LOCAL_DEV_DO_NOT_USE.json  7555  2026-08-12
+  (dual_north_star_ledger.json — 없음)
+```
+
+### SSOT 고정 문구
+
+- **판정/갈림길 근거**: VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` **만**
+- **로컬** `*.LOCAL_DEV_DO_NOT_USE.json`: 참고 금지
+
+### 다음 (디렉터·Claude)
+
+갈림길 재소집(mega_trend / 목표하향 / 관측유지) — VPS 실측 composite **4.09** · n=**8/28** 기반. **최소 20일 추가 관측 전 확정 판정 금지.**
+
+### 디렉터 3줄
+
+1. CLOSE Done — VPS=SSOT · 로컬 원장 격리 rename 완료.
+2. FWD-LEDGER-CRON-01 CLOSED · 코드 0.
+3. Claude: 본 OUTBOX 검증 → 갈림길(20일 관측 전 확정 금지).
+
+---
+
+## OUTBOX — [Ops-lite] FWD-LEDGER-CRON-01 **조사 완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | FWD-LEDGER-CRON-01 |
+| **status** | `WAIT_CLAUDE_OK` |
+| **앵커** | `SYNC-2026-08-17-W` |
+| **SSH** | `ubuntu@52.78.29.151` OK · pem `~/.ssh/LightsailDefaultKey-ap-northeast-2.pem` |
+| **VPS HEAD** | **`600c9cd`** |
+| **코드 diff** | **0** (조회만 · cron 재시작 0 · config_kv/bitget 비접촉) |
+
+### 엔지니어 1줄
+
+SRV-02의 "원장 5일 정체·fwd=0"은 **로컬 PC 원장** 기준이었다. **VPS SSOT**(`/var/lib/quant-factory/data/dual_north_star_ledger.json`)는 cron·write 모두 정상 — (a)(b)(c) 정체 분류는 **전제 기각**.
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | cron/timer 상태 표 | ✅ 아래 §1 |
+| 2 | 실행 로그 유무·에러 | ✅ 아래 §2 |
+| 3 | 원인 3분류 확정 | ✅ **(a)(b)(c) 해당 없음 — 전제 기각** |
+| 4 | 코드 diff 0 | ✅ |
+
+### 1. cron/timer 상태
+
+| 항목 | 값 |
+|------|-----|
+| **등록** | `/etc/cron.d/dual-screener-factory-kr` — `30 19 * * *` `factory.sh --north-star-digest daily` |
+| **별도 director-digest** | `/etc/cron.d/dual-screener-director-digest` **MISSING** (install 스크립트: factory-kr 이미 있으면 skip — 정상) |
+| **user crontab** | 없음 |
+| **systemd timer** | north-star 매칭 없음 (cron.d만) |
+| **마지막 실행** | syslog: **2026-08-16 19:30:01 KST** (조사 시각 8/17 17:48 KST → 당일 19:30 아직 미도래) |
+| **exit code** | cron mail/전용 로그 없음. **간접 성공**: ledger mtime **2026-08-16 19:30:08 KST** = cron 직후 write |
+
+### 2. 실행 로그
+
+| 항목 | 값 |
+|------|-----|
+| **syslog CRON CMD** | daily 관측: 8/9,10,11,12,13,14,15,16 (연속) + weekly 8/15 11:00 |
+| **전용 digest 로그 파일** | 없음 (`logs/*north*` 부재 — cron 줄에 redirect 없음) |
+| **에러 스택** | 발견 없음 (mail 없음 · write 성공으로 실패 가설 기각) |
+| **8/11 이후 시도** | **매일 실행됨** (정체 ≠ 미실행) |
+
+### 3. 원인 분류 (VPS SSOT)
+
+| 분류 | 판정 | 근거 |
+|------|------|------|
+| **(a) cron 미등록/미실행** | ❌ | factory-kr 등록 · 8/9~16 CMD 전원 |
+| **(b) 실행되나 매매신호 0** | ❌ | Track A `forward_trades_count=**324**` · KR n_closed=162 · US=126 · DB `forward_trades` n=324 |
+| **(c) 신호 있으나 ledger write 실패** | ❌ | daily history 8장 연속 append · `updated_at=2026-08-16T10:30:07Z` |
+
+**확정: 전제 기각 (로컬≠VPS).** SRV-02가 본 로컬 파일:
+
+| | 로컬 PC | VPS |
+|--|---------|-----|
+| path | `C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\dual_north_star_ledger.json` | `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
+| updated_at | 2026-08-11T15:57:50Z | **2026-08-16T10:30:07Z** |
+| daily n | 1 | **8** |
+| fwd count | **0** | **324** |
+| composite | 40.0 (로컬) | **4.09** |
+
+### VPS Track A 스냅샷 (latest 2026-08-16)
+
+| 필드 | 값 |
+|------|-----|
+| gate | G0 |
+| composite_score | 4.09 (return_pace 0.0 · mdd_safety 10.21) |
+| avg_return_pct | −6.2544 · max_mdd_pct 8.9785 |
+| KR | nav≈2.74e8 · ret −8.62% · MDD 8.98% · DEFENSE |
+| US | nav≈2.88e5 · ret −3.88% · MDD 3.88% · NORMAL |
+
+참고(분류 밖): daily 8일간 fwd=324·composite=4.09 **수치 고정** — "신규 체결 증가 없음" 가능하나 **cron/원장 write 실패 아님**. 행별 최신 entry 시각 SQL은 본 세션 Auto-review 차단으로 미실행(불필요 — DoD 충족).
+
+### Claude에 질문 1개
+
+갈림길 재소집 시 **VPS 원장(G0·composite 4.09·fwd 324)** 을 North Star SSOT로 고정할지, 로컬 원장은 무시(개발 PC artifact)로 명시할지 — VERDICT에 한 줄.
+
+### 디렉터 3줄
+
+1. VPS north-star cron **정상** — 재시작·재등록 **불필요**.
+2. "fwd=0·5일 정체"는 **로컬 원장 오인** — VPS는 daily 8장·fwd 324.
+3. 코드 diff 0 · Claude OK 대기 · mega_trend/목표하향은 재갈림길 후.
+
+---
+
+## OUTBOX — [Relay] SRV-02 VERDICT OK · FWD-LEDGER-CRON-01 Handoff 랜딩 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **소스** | `Downloads/CLAUDE_TO_CURSOR_append.md` → `CLAUDE_TO_CURSOR.md` 최상단 |
+| **SRV-02** | **Claude OK** · 진단 종결 · 갈림길 = **포워드 원장 cron 정체** |
+| **보류** | mega_trend · 목표 하향 (본 Go 결과 후) |
+| **다음** | **FWD-LEDGER-CRON-01** · `WAIT_CURSOR_IMPL` · **Ops-lite 새 창** (코드 0 · 잡 재시작 금지) |
+| **본 창** | FWD-LEDGER 조사 **안 함** (Handoff: 새 세션 1개만) |
+| **앵커** | `SYNC-2026-08-17-V` |
+
+---
+
+## OUTBOX — [CAT-P / Alpha] SRV-02 **조사 완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | SRV-02 · 진단 전용 |
+| **status** | `WAIT_CLAUDE_OK` |
+| **앵커** | `SYNC-2026-08-17-U` |
+| **코드 diff** | **0** (읽기만) |
+| **config_kv / bitget/** | **비접촉** |
+| **재계산** | BULL/SIDE/BEAR/C-1 **없음** |
+
+### 엔지니어 1줄
+
+CAT-P **kill-chain은 이미 루트에 부분배선**되어 있다. SRV 다음이 mega_trend라면 신규 모듈이 아니라 **별도 Handoff로 역할(RP-1 근처놓침 vs 기존 섹터 킬)**을 먼저 잘라야 한다. 원장 시계는 G0에서 멈춰 있어, 알파 착수와 **포워드 일일 digest 정체**는 별 축이다.
+
+### 1. 포워드 원장 (Track A)
+
+**소스**: 이 PC `factory_data_dir()` = `C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\dual_north_star_ledger.json` (스키마 `dual_north_star_ledger.v1`). 레포 내 JSON 없음. **VPS 원장은 본 세션 SSH 미실행.**
+
+| 필드 | Track A |
+|------|---------|
+| `updated_at` / `latest.ts_utc` | 2026-08-11T15:57:50Z |
+| `latest.date_kst` | **2026-08-12** (조사일 2026-08-17 기준 달력 **+5일 정체**) |
+| daily history | **1**장 (스냅샷 `meta.daily_snapshot_count` 필드는 0으로 기록됨 — 게이트는 history 길이 사용) |
+| `forward_trades_count` | **0** |
+| KR/US `n_closed` | 0 / 0 |
+| KR NAV / MDD / ret | 300,000,000 · 0% · 0% · band NORMAL |
+| US NAV / MDD / ret | 300,000 · 0% · 0% · band NORMAL |
+| `aggregate.composite_score` | **40.0** (pace 0 + MDD safety 100 → 0.6/0.4 가중합) |
+| `avg_return_pct` / `max_mdd_pct` | 0.0 / 0.0 |
+| period_returns A | day/week/month/year = null · total 0.0 |
+| `commercialization.A` | **G0** 측정·구조 · `block_reasons=[]` |
+| `a06_first_pass` | false |
+
+**G0/G1 근접** (`dual_north_star_ledger.py`: G1 = daily n≥**28** AND 종합 avg≥**40**; n<7이면 무조건 G0)
+
+| 게이트 | 조건 | 현재 | 갭 |
+|--------|------|------|-----|
+| **G0** | 기본 | **현재** | — |
+| **G1** | 28일 + avg≥40 | n=**1**/28 · 종합 **40.0**(하한 충족) | **일수 −27** · 시계 정체 |
+| **G2** | 56일 + avg≥60 + forward>30 | n=1 · avg 40 · trades **0** | 일수·점수·체결 전부 미달 |
+
+R1 배너 조건(`show_r1_caveat`): true — 연 목표 대비 참고용 아님. **Pass/CAGR 단정 없음.**
+
+### 2. CAT-P mega_trend 인벤토리 (조회만)
+
+**관련 파일 없음이 아님.** 루트에 kill-chain + re-evolution 모듈 존재. `bitget/` 미열람·미수정.
+
+| 파일 | 최종 커밋 | stage |
+|------|-----------|--------|
+| `mega_trend_ignition.py` 외 kill 7모듈 + `reports/mega_trend_kill_report_section.py` | **`039cec9` 2026-07-10** | **부분코드·배선됨** — `smart_money_tracker` ignition, `portfolio_risk_overlay` unlock, `factory_pipelines` kill RL evolve, tests 13, `scripts/validate_mega_trend_kill_live.py`. 기본 `ENABLE_MEGA_TREND_UNLOCK=1` |
+| `docs/claude_project/CAT-P_MegaTrend_ReEvolution.md` | `fa7e614` 2026-08-01 | 설계 SSOT (역할 문서) |
+| `re_evolution_*.py` (7) | 2026-07-09~12 (`6a16582` / `4504989`) | **부분코드** (루트 존재). RP-1 근처놓침 탈출 Handoff와 **미연결** |
+| RP-1 대체·mega_trend 알파 신규 Handoff | — | **미착수** (본 창 착수 금지 준수) |
+
+기존 CAT-P는 **섹터 점화→클라이맥스→킬**이지, C-1 실패를 대체하는 **진입 알파 레버가 아님**.
+
+### 3. 근처놓침 동결표 (05 대조 · 재계산 없음)
+
+**라벨 동결 (05)**: BULL_05 FAIL · SIDE_02 NEAR_MISS(B) · SIDE_03 FAIL(B) *after EXIT 실험* · BEAR_01/03/04 NEAR_MISS(B) · C-1 **SECTOR_LEVER_INVALID** (Claude가 JSON MIXED 기각).
+
+**수치 SSOT (재확인만)**
+
+| ID | 라벨 (05 동결) | 수치 소스 | period_ret% | n | MDD_tier% | 비고 |
+|----|----------------|-----------|-------------|---|-----------|------|
+| BULL_05 | **FAIL(B)** · KR 레버 동결 | 8/13 `rp1_bull_recency_01` | **−9.0378** | 9,142 | 9.04 | 05 요약 −9.04% 일치(반올림) |
+| BULL_03 (참고·Done) | NEAR_MISS | 동일 8/13 | **+15.3971** | 10,276 | 9.32 | 05 “15.4% / n=10276” 일치 |
+| SIDE_02 | **NEAR_MISS(B)** | 8/13 (플래그 OFF 유효) | **−9.0469** | 20,935 | 9.05 | EXIT ON 실험 −5.77은 **미반영·재시도 금지** |
+| SIDE_03 | **FAIL(B)** 동결 (EXIT 실험) / 플래그 OFF 시 8/13은 NEAR_MISS | 8/13 | **+6.0714** | 24,167 | 9.13 | C-1 A는 클린 matrix **+1.2892** n=94,458 — **다른 유니버스**, 재계산 아님 |
+| BEAR_01 | NEAR_MISS(B) | 8/13 오염 n | **−9.0273** | 4,585 | 9.03 | C-1 클린 A **−9.0642** n=16,636 match **0%** |
+| BEAR_03 | NEAR_MISS(B) | 8/13 오염 n | **−9.0574** | 10,155 | 9.06 | 클린 A **−9.0450** n=39,698 Δ=0 |
+| BEAR_04 | NEAR_MISS(B) | 8/13 오염 n | **−1.5444** | 5,691 | 9.01 | 클린 A **+1.7449** n=21,217 Δ=0 |
+| C-1 섹터 | **INVALID** · 2단계 No-Go | `c1_reduced_diag_20260817.json` + Claude OK | SIDE Δ +0.0494 / +0.0703pp · BEAR Δ 0 | — | B mdd 9.01~9.16 | JSON `overall_verdict=MIXED` **기각 유지** |
+
+### 4. DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | 포워드 원장 표 | ✅ 위 §1 |
+| 2 | CAT-P 인벤토리 또는 없음 | ✅ 파일 있음 · stage 표 |
+| 3 | 동결표 대조 | ✅ 위 §3 · 05와 라벨 불일치 없음 (SIDE_03 이중 SSOT는 05에 이미 명시) |
+| 4 | OUTBOX 코드 0 | ✅ |
+
+### Cursor 질문 (Claude)
+
+1. 원장 G0+체결 0+digest 5일 정체를 **다음 Go의 주축**(관측/cron)으로 볼지, RP-1 구조 갈림길(목표 하향 vs mega_trend Handoff)과 **병렬 후순위**로 둘지.
+2. mega_trend를 쓰더라도 **기존 kill-chain 확장**인지 **RP-1 진입 알파 신규**인지 역할 절단 — 착수는 별도 Handoff만.
+
+---
+
+## OUTBOX — [Relay] C-1 VERDICT OK · SRV-02 Handoff 랜딩 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **소스** | 디렉터 채팅 VERDICT + SRV-02 Handoff → `CLAUDE_TO_CURSOR.md` 최상단 |
+| **C-1** | **Claude OK** · **SECTOR_LEVER_INVALID** · 2단계 **No-Go** · MIXED 기각 |
+| **다음** | **SRV-02** 조사 · `WAIT_CURSOR_IMPL` · **Alpha 새 창** (코드 0) |
+| **본 창** | SRV-02 조사 **안 함** (Handoff: 새 세션 1개만) |
+| **앵커** | `SYNC-2026-08-17-T` |
+
+---
+
+## OUTBOX — [CAT-C / Alpha] C-1-REDUCED **1단계 진단 완료** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | C-1-REDUCED · **1단계 Done** · **2단계 미착수** |
+| **status** | `WAIT_CLAUDE_OK` |
+| **앵커** | `SYNC-2026-08-17-S` |
+| **산출** | `reports/regime_panel/c1_reduced_diag_20260817.json` (로컬=VPS 사본) |
+| **테스트** | `tests/test_c1_reduced_spillover_sandbox.py` **7 passed** |
+| **config_kv / D·E·F** | **비접촉** · `stage2_auto_start=false` |
+
+### 엔지니어 1줄
+
+RP-1 트레이드에 `sector` 없고 FDR Industry 컬럼도 소실(`kr_map_n=0`) → **sandbox seed/name/FT 조인 + 기존 Stage2 `apply_c1_sector_boost`**가 try_add 내부 개입보다 안전. 진입점수 보너스 API(`sandbox_spillover_entry_bonus`)는 인터페이스만 준비, 라이브 미배선.
+
+### 0. BEAR 오염 재확인 (선행 DoD)
+
+| ID | n_813 (BR01) | n_clean | drop | contaminated |
+|----|--------------|---------|------|--------------|
+| BEAR_01 | 4,585 | 16,636 | 72.4% | **true** |
+| BEAR_03 | 10,155 | 39,698 | 74.4% | **true** |
+| BEAR_04 | 5,691 | 21,217 | 73.2% | **true** |
+
+→ A/B는 **BR01 OFF** matrix `ab52b174…` + SIDE exit OFF · 클린 재산출 1회.
+
+### 1. Frozen knob
+
+`markov_order=1, lag_days=1` (단일 고정 · 그리드 없음) · `C1_SECTOR_BOOST_PCT=+5%` final_ret (기존 RP-1 Stage2) · entry score bonus 상수 5.0 (sandbox only).
+
+### 2. A vs B (`period_return_pct` 1순위 · CAGR 단독 금지)
+
+| ID | A ret% | B ret% | Δ | mdd_B% | n | match_rate | 판정 |
+|----|--------|--------|---|--------|---|------------|------|
+| SIDE_02 | −8.5181 | −8.4687 | **+0.0494** | 9.11 | 77,430 | 6.5% | SECTOR_LEVER_VALID (미시) |
+| SIDE_03 | +1.2892 | +1.3595 | **+0.0703** | 9.16 | 94,458 | 5.6% | SECTOR_LEVER_VALID (미시) |
+| BEAR_01 | −9.0642 | −9.0642 | 0 | 9.06 | 16,636 | **0%** | SECTOR_LEVER_INVALID |
+| BEAR_03 | −9.0450 | −9.0450 | 0 | 9.05 | 39,698 | 5.6% | SECTOR_LEVER_INVALID |
+| BEAR_04 | +1.7449 | +1.7449 | 0 | 9.01 | 21,217 | 5.9% | SECTOR_LEVER_INVALID |
+
+- 전 구간 n≫20 · mdd_tier ≤10% 유지 (B MDD 기각 없음)
+- SIDE/BEAR **verdict 라벨 불변** (모두 NEAR_MISS)
+- avg_pnl/PF는 boost 전 stats라 A=B (portfolio `period_ret`만 B 반영) — SIDE 미시 Δ만 관측
+- BEAR_03/04: match>0인데 period_ret **완전 불변** → Phase A LOCKDOWN 경로가 섹터 +5%에 둔감
+
+### 3. overall / §7 매핑 (Cursor 잠정)
+
+| overall | **MIXED** |
+|---------|-----------|
+| SIDE | 레버 **미시 유효** (NEAR_MISS 탈출 실패 · Δ≪1pp) |
+| BEAR | 레버 **무효** (GFC는 섹터맵 공백 match=0 포함) |
+| 목표 관점 | Near-miss 회복용 섹터 레버로는 **설득력 약함** → mega_trend/목표하향 후보와 경합 (Claude 확정) |
+
+### 4. DoD 체크
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | 5구간 A vs B period_ret 표 | ✅ |
+| 2 | mdd ≤10% | ✅ |
+| 3 | n≥20 | ✅ |
+| 4 | §7 구간별 1줄 | ✅ (표·overall) |
+| 5 | JSON + 05 + OUTBOX | ✅ |
+
+### Cursor 질문 (1개)
+
+SIDE Δ=+0.05~0.07pp를 「A/B 개선=섹터 레버 유효」로 인정할지, 아니면 **물질성 미달 → 실질 무효(MIXED→INVALID)** 로 내릴지?
+
+### 금지 준수
+
+- 2단계 실장·config_kv·BULL/PASS 재실행·S5/SIDE exit/BULL bounds **미접촉**
+- 코드는 VPS scp 상태 · **origin 미푸시**(커밋 요청 없음)
+
+---
+
+## OUTBOX — [Relay] S5 Claude OK · C-1-REDUCED Go 랜딩 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **소스** | `Downloads/CLAUDE_TO_CURSOR_append (1).md` → `CLAUDE_TO_CURSOR.md` 최상단 |
+| **S5** | **Claude OK: 2026-08-17** · 종료 · 재개=n>0 시 동일 CLI |
+| **다음** | **C-1-REDUCED** 1단계 진단 · `WAIT_CURSOR_IMPL` · **Alpha 새 창** |
+| **본 창** | C-1 구현 **안 함** (Handoff: 새 세션 1개만) |
+| **앵커** | `SYNC-2026-08-17-R` |
 
 ---
 

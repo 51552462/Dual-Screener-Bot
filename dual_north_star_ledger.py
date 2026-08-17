@@ -52,6 +52,8 @@ G2_MIN_DAILY_SNAPSHOTS = 56
 G3_MIN_DAILY_SNAPSHOTS = 84
 G2_MIN_FORWARD_TRADES = 30
 MDD_CAP_CONTINUOUS_DAYS = 28
+# OBS-HOLD 갈림길 재소집 (FWD-OBS-HOLD-01 SSOT) — Pass/Fail 아님, n만 트리거
+OBS_HOLD_RECALL_N = 20
 
 R1_BANNER_TEXT = "초기 관측 중 · 페이스 미확정 · 연 목표 대비 참고용 아님"
 R3_BANNER_TEXT = "⚠️ Bitget paper 미검증(C-2 funding PnL 전) · 참고용 · 실전 아님"
@@ -585,9 +587,47 @@ def append_snapshot_to_ledger(snap: Dict[str, Any]) -> Dict[str, Any]:
     return ledger
 
 
+def resolve_obs_hold_action(*, cadence: str, daily_n: int) -> str:
+    """OBS-HOLD cursor_action. weekly/monthly 등 daily가 아니면 NONE."""
+    if str(cadence or "").lower() != "daily":
+        return "NONE"
+    if int(daily_n or 0) >= OBS_HOLD_RECALL_N:
+        return "RECALL_FORK"
+    return "OBSERVE_HOLD"
+
+
+def enrich_obs_hold_meta(snap: Dict[str, Any], *, daily_n: Optional[int] = None) -> Dict[str, Any]:
+    """snap['meta']에 OBS-HOLD 재소집 필드·cursor_action 주입."""
+    meta = snap.setdefault("meta", {})
+    cadence = str(snap.get("cadence") or "daily")
+    if daily_n is None:
+        daily_n = int(meta.get("daily_snapshot_count") or 0)
+    daily_n = int(daily_n or 0)
+    remaining = max(0, OBS_HOLD_RECALL_N - daily_n)
+    active = cadence.lower() == "daily" and daily_n < OBS_HOLD_RECALL_N
+    action = resolve_obs_hold_action(cadence=cadence, daily_n=daily_n)
+    meta.update(
+        {
+            "daily_snapshot_count": daily_n,
+            "daily_n": daily_n,
+            "obs_hold_recall_n": OBS_HOLD_RECALL_N,
+            "obs_hold_remaining": remaining,
+            "obs_hold_active": active,
+            "cursor_action": action,
+        }
+    )
+    return snap
+
+
 def run_north_star_digest(*, cadence: str = "daily", persist: bool = True) -> Dict[str, Any]:
     snap = build_snapshot(cadence=cadence)
     if persist:
         append_snapshot_to_ledger(snap)
-        snap["ledger"] = load_ledger().get("commercialization")
+        ledger = load_ledger()
+        snap["ledger"] = ledger.get("commercialization")
+        hist = ledger.get("history") or {}
+        daily = hist.get("daily") if isinstance(hist.get("daily"), list) else []
+        enrich_obs_hold_meta(snap, daily_n=len(daily))
+    else:
+        enrich_obs_hold_meta(snap)
     return snap

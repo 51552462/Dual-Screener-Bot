@@ -111,10 +111,12 @@ RP-1·LIVE 승격 연동 금지.
 ### 3-F. 텔레그램
 
 ```text
-[DEPLOY_WATCH] 또는 [IV_OBS] 수신 세션.
+[DEPLOY_WATCH] 또는 [IV_OBS] 또는 [OBS_HOLD](북극성 일보) 수신 세션.
 
 ---CURSOR--- 아래 블록 전체가 첫 메시지.
 cursor_action / cursor_prompt 따름. 구현은 action이 요구할 때만.
+[OBS_HOLD] OBSERVE_HOLD=관측만 · RECALL_FORK=OUTBOX+Claude 중계(코드 금지).
+---CLAUDE--- 블록은 Claude Pro 창에 디렉터가 붙여넣기.
 ```
 
 ### 3-G. 상태 점검 (뭘 할지 모를 때)

@@ -3,13 +3,19 @@
 
 REPORT_BOT_* (또는 TELEGRAM_*) 로 단일 HTML 메시지 발송.
 주식·Bitget 큐와 분리 — director digest 전용.
+일간: [OBS_HOLD] 관측 패널 + ---CURSOR--- / ---CLAUDE--- 복붙 블록.
 """
 from __future__ import annotations
 
 import html
 from typing import Any, Dict, Optional
 
-from dual_north_star_ledger import R1_BANNER_TEXT, R3_BANNER_TEXT, run_north_star_digest
+from dual_north_star_ledger import (
+    OBS_HOLD_RECALL_N,
+    R1_BANNER_TEXT,
+    R3_BANNER_TEXT,
+    run_north_star_digest,
+)
 
 
 def _esc(v: Any) -> str:
@@ -32,6 +38,127 @@ def _bar(score: float, width: int = 10) -> str:
     score = max(0.0, min(100.0, float(score)))
     filled = int(round(score / 100.0 * width))
     return "█" * filled + "░" * (width - filled)
+
+
+def build_obs_hold_cursor_prompt(snap: Dict[str, Any]) -> str:
+    """디렉터 → Cursor 첫 메시지용 (텔레그램 ---CURSOR--- 복붙)."""
+    meta = snap.get("meta") or {}
+    ledger = snap.get("ledger") or {}
+    gate_a = (ledger.get("A") or {}) if isinstance(ledger, dict) else {}
+    ta = (snap.get("tracks") or {}).get("A") or {}
+    agg = ta.get("aggregate") or {}
+    n = int(meta.get("daily_n") or meta.get("daily_snapshot_count") or 0)
+    recall = int(meta.get("obs_hold_recall_n") or OBS_HOLD_RECALL_N)
+    remaining = int(meta.get("obs_hold_remaining") or max(0, recall - n))
+    action = str(meta.get("cursor_action") or "NONE")
+    composite = float(agg.get("composite_score", 0) or 0)
+    gate = str(gate_a.get("gate") or "G0")
+    lines = [
+        "[OBS_HOLD] Track A — North Star 관측 리뷰. Alpha Handoff 구현 금지.",
+        "1) docs/work_phases/00_SESSION_SYNC.md §3 · NEXT_ACTION.md",
+        "2) SSOT: VPS /var/lib/quant-factory/data/dual_north_star_ledger.json (로컬 원장 금지)",
+        f"3) cursor_action={action} · daily_n={n}/{recall} · remaining={remaining}",
+        f"4) gate_A={gate} · composite={composite:.2f} (참고만 · Pass/Fail·CAGR 단정 금지)",
+    ]
+    if action == "OBSERVE_HOLD":
+        lines.append(
+            "→ OBS-HOLD 유지. mega_trend/목표하향 착수 금지. "
+            "조치 없음이면 3줄 요약만. 원장 n 정체·cron 장애면 OUTBOX."
+        )
+    elif action == "RECALL_FORK":
+        lines.append(
+            "→ 재소집 가능(n≥20). 코드 구현 금지. "
+            "CURSOR_TO_CLAUDE.md OUTBOX에 실측 n·gate·composite append 후 "
+            "디렉터에게 ---CLAUDE--- 붙여넣기 요청."
+        )
+    else:
+        lines.append("→ daily 관측 패널 해당 없음(cadence≠daily). 대기.")
+    return "\n".join(lines)
+
+
+def build_obs_hold_claude_prompt(snap: Dict[str, Any]) -> str:
+    """디렉터 → Claude Pro 창 복붙용 (구현 코드 작성 금지)."""
+    meta = snap.get("meta") or {}
+    ledger = snap.get("ledger") or {}
+    gate_a = (ledger.get("A") or {}) if isinstance(ledger, dict) else {}
+    ta = (snap.get("tracks") or {}).get("A") or {}
+    agg = ta.get("aggregate") or {}
+    n = int(meta.get("daily_n") or meta.get("daily_snapshot_count") or 0)
+    recall = int(meta.get("obs_hold_recall_n") or OBS_HOLD_RECALL_N)
+    remaining = int(meta.get("obs_hold_remaining") or max(0, recall - n))
+    action = str(meta.get("cursor_action") or "NONE")
+    composite = float(agg.get("composite_score", 0) or 0)
+    gate = str(gate_a.get("gate") or "G0")
+    lines = [
+        "역할: Claude Pro Architect. 구현 코드 작성 금지.",
+        "",
+        "먼저 읽기:",
+        "1) docs/work_phases/00_SESSION_SYNC.md §3",
+        "2) docs/work_phases/NEXT_ACTION.md",
+        "3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단",
+        "",
+        f"[OBS_HOLD] VPS 실측 · cursor_action={action}",
+        f"· daily_n={n}/{recall} · remaining={remaining}",
+        f"· gate_A={gate} · composite={composite:.2f} (참고 · 확정 판정 금지 unless n≥{recall})",
+        "",
+    ]
+    if action == "RECALL_FORK":
+        lines.extend(
+            [
+                "요청: 갈림길 3택 재판단 (mega_trend / 목표하향 / 관측연장).",
+                "근거는 VPS 원장 수치만. OK면 CLAUDE_TO_CURSOR.md에 다음 Handoff 또는 OBS 연장.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "요청: OBS-HOLD 유지 확인. 신규 Handoff 없음이 정상.",
+                f"n<{recall}이면 페이스·Pass/Fail·CAGR 확정 금지. 관측연장만.",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def format_obs_hold_section_html(snap: Dict[str, Any]) -> str:
+    """일간 digest용 [OBS_HOLD] 패널 + 복붙 블록. cadence≠daily면 빈 문자열."""
+    if str(snap.get("cadence") or "").lower() != "daily":
+        return ""
+    meta = snap.get("meta") or {}
+    ledger = snap.get("ledger") or {}
+    gate_a = (ledger.get("A") or {}) if isinstance(ledger, dict) else {}
+    ta = (snap.get("tracks") or {}).get("A") or {}
+    agg = ta.get("aggregate") or {}
+    n = int(meta.get("daily_n") or meta.get("daily_snapshot_count") or 0)
+    recall = int(meta.get("obs_hold_recall_n") or OBS_HOLD_RECALL_N)
+    remaining = int(meta.get("obs_hold_remaining") or max(0, recall - n))
+    action = str(meta.get("cursor_action") or "NONE")
+    composite = float(agg.get("composite_score", 0) or 0)
+    gate = str(gate_a.get("gate") or "G0")
+    gate_label = str(gate_a.get("gate_label") or "")
+    emoji = "🟢" if action == "RECALL_FORK" else "🟡"
+
+    if action == "RECALL_FORK":
+        status_line = "재소집 가능 — ---CLAUDE--- 를 Claude Pro에 붙여넣기"
+    else:
+        status_line = "관측유지 · mega_trend/목표하향 착수 금지 · 조치 없음"
+
+    cursor_prompt = build_obs_hold_cursor_prompt(snap)
+    claude_prompt = build_obs_hold_claude_prompt(snap)
+    parts = [
+        f"{emoji} <b>[OBS_HOLD]</b> North Star 관측",
+        f"· daily <b>{n}</b>/{recall} · remaining <b>{remaining}</b>",
+        f"· gate_A <code>{_esc(gate)}</code> {_esc(gate_label)} · "
+        f"composite <b>{composite:.2f}</b> <i>(참고)</i>",
+        f"· cursor_action=<code>{_esc(action)}</code>",
+        f"· {_esc(status_line)}",
+        "",
+        "<b>---CURSOR---</b> <i>(아래 전부 Cursor 새 채팅 첫 메시지)</i>",
+        f"<pre>{_esc(cursor_prompt)}</pre>",
+        "",
+        "<b>---CLAUDE---</b> <i>(아래 전부 Claude Pro 창 첫 메시지)</i>",
+        f"<pre>{_esc(claude_prompt)}</pre>",
+    ]
+    return "\n".join(parts)
 
 
 def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
@@ -153,6 +280,11 @@ def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
             "<i>격리 유지 · 게이트=종합점수60/40 · 리더=목표달성률%(B1+).</i>",
         ]
     )
+
+    obs_html = format_obs_hold_section_html(snap)
+    if obs_html:
+        parts.extend(["", "━━━━━━━━━━━━━━━━", obs_html])
+
     return "\n".join(parts)
 
 
@@ -182,7 +314,15 @@ def send_north_star_digest(
 ) -> Dict[str, Any]:
     snap = run_north_star_digest(cadence=cadence, persist=persist)
     html_msg = format_north_star_digest_html(snap)
-    result: Dict[str, Any] = {"snap": snap, "html": html_msg, "sent": False}
+    is_daily = str(snap.get("cadence") or "").lower() == "daily"
+    result: Dict[str, Any] = {
+        "snap": snap,
+        "html": html_msg,
+        "sent": False,
+        "cursor_action": (snap.get("meta") or {}).get("cursor_action"),
+        "cursor_prompt": build_obs_hold_cursor_prompt(snap) if is_daily else "",
+        "claude_prompt": build_obs_hold_claude_prompt(snap) if is_daily else "",
+    }
 
     if dry_run:
         result["dry_run"] = True

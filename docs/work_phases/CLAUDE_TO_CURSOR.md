@@ -4,11 +4,437 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만**  
-> **현재**: **S5-HARNESS-SCOPE-01** → **VPS 실측 산출 Go** · 로컬 구현 Claude OK · `WAIT_CURSOR_IMPL` (Ops-lite, 2026-08-17) · 앵커 `SYNC-2026-08-17-O`
+> **현재**: **FWD-OBS-HOLD-01 Claude OK** · OBS-HOLD 확정 · 앵커 `SYNC-2026-08-17-Y` · **신규 Handoff 없음**
+
+---
+
+## Claude VERDICT — FWD-OBS-HOLD-01 DoD 4/4 Claude OK · OBS-HOLD 확정 (2026-08-17)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor가 본 파일 최상단 동기화 (2026-08-17).  
+> **앵커**: 요청문 `SYNC-2026-08-11-B` 무시 → §3 최신 **`SYNC-2026-08-17-Y`** 기준 (규칙 §5).
+
+### OUTBOX 검증 (`CURSOR_TO_CLAUDE.md` 최상단 FWD-OBS-HOLD-01 DoD 4항)
+
+| # | DoD | 파일 실측 | 판정 |
+|---|-----|-----------|------|
+| 1 | NEXT_ACTION OBS-HOLD + n≥20 트리거 | status OBS-HOLD · 트리거표 n≥20 · ~2026-09-05 · mega_trend/목표하향 금지 | ✅ |
+| 2 | SYNC §3 bump + sub-phase | 앵커 `SYNC-2026-08-17-Y` · 진행 중 = FWD-OBS-HOLD-01 | ✅ |
+| 3 | 05 CLOSE Claude OK + OBS-HOLD 섹션 | L265 Claude OK · DoD 5/5(CLOSE) + L268–276 OBS-HOLD | ✅ |
+| 4 | 코드 diff 0 | 문서 외 비접촉 · config_kv/cron/VPS 원장 미접촉 | ✅ |
+
+규칙 위반 없음: 규칙4(n=8&lt;20 → 페이스 확정 안 함) · 규칙2(Lookahead v1 — Hold = Pass≠증명 실행) 준수.
+
+**VERDICT: OK.** FWD-OBS-HOLD-01 완결.
+
+### 판단 — 이번 창의 Go = 신규 Handoff 없음
+
+OBS-HOLD 목적 = 재소집 조건 충족 전 신규 착수 차단. BULL/SIDE/BEAR/C-1 소진 · mega_trend·목표하향은 트리거(n≥20, ~2026-09-05) 전 금지 · OPS 관측 중. 다른 sub-phase 개시 = 규칙1·4 위반.
+
+**선택한 Go = 관측유지 지속 · 문서 동기화만.**
+
+### [Sync-only] FWD-OBS-HOLD-01-VERDICT-SYNC
+
+| 항목 | 값 |
+|------|-----|
+| **범위** | 본 VERDICT를 `CLAUDE_TO_CURSOR.md` 최상단 append만 |
+| **금지** | NEXT_ACTION/SYNC/05 재수정 · mega_trend/목표하향 · 코드·config_kv·cron·VPS · 신규 sub-phase |
+| **DoD** | 본 VERDICT 반영 1건 |
+| **다음 실질 Go** | VPS daily **n≥20** (~2026-09-05) 도달 시 갈림길 재소집 — 그때 3택(mega_trend / 목표하향 / 관측연장)을 VPS 실측으로 재판단 |
+
+---
+
+## Claude VERDICT — FWD-LEDGER-CRON-01-CLOSE DoD 5/5 Claude OK · 갈림길=관측유지 (2026-08-17)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor가 본 파일 최상단 동기화 (2026-08-17).  
+> **앵커**: 요청문 `-08-11-B` 무시 → §3 최신 **`SYNC-2026-08-17-X`** 기준.
+
+### OUTBOX 검증 (CLOSE DoD 5항)
+
+| # | DoD | 판정 |
+|---|-----|------|
+| 1 | 12 §3 SSOT 각주 | ✅ |
+| 2 | 로컬 rename | ✅ `*.LOCAL_DEV_DO_NOT_USE.json` |
+| 3 | SYNC bump + CLOSED | ✅ `SYNC-2026-08-17-X` |
+| 4 | NEXT_ACTION 20일 문구 | ✅ |
+| 5 | 코드 diff 0 | ✅ |
+
+**VERDICT: OK.** CLOSE 완결.
+
+### 판단 — 갈림길 3택은 지금 열 수 없음
+
+VPS daily n=8 · G1(≈28일·종합≥40) 대비 표본 부족. mega_trend·목표하향·단일 composite 4.09 기반 확정은 규칙4 위배. **열 수 있는 건 관측유지뿐** — "결정"이 아니라 **재소집 조건 고정**.
+
+**Go: FWD-OBS-HOLD-01** (아래).
+
+---
+
+## [Ops-lite] FWD-OBS-HOLD-01 — 갈림길 관측유지 · 재소집 트리거 고정
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | FWD-OBS-HOLD-01 (신규) |
+| **발행** | Claude Pro Architect |
+| **전제** | FWD-LEDGER-CRON-01-CLOSE Claude OK · VPS 원장 SSOT 고정 |
+| **위험도** | 🟢 Ops-lite — 문서만, 코드 0 |
+
+### SSOT (변경 금지 unless noted)
+
+- `NEXT_ACTION.md` · `00_SESSION_SYNC.md` §3 · `05_진행로그.md`
+- VPS 원장 — 읽기만, 내용 변경 없음
+
+### 변경 Spec
+
+- `NEXT_ACTION.md`: 상태 **관측유지(OBS-HOLD)**. 트리거 = **daily n≥20** 도달 시 자동 재소집(예상 ~2026-09-05, VPS 실측 재확인 후 확정). 그 전 mega_trend/목표하향 착수 **금지**.
+- `00_SESSION_SYNC.md` §3: 앵커 bump **`SYNC-2026-08-17-Y`** · 진행 중 = FWD-OBS-HOLD-01
+- `05_진행로그.md`: CLOSE에 `Claude OK: 2026-08-17` + OBS-HOLD-01 섹션 신규
+
+### 금지
+
+- mega_trend 설계/구현 · 목표(CAGR/MDD) 수치 변경 · VPS 원장 재계산/수정 · cron 재접촉 · 코드 변경 전면
+
+### 완료기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | NEXT_ACTION OBS-HOLD + n≥20 트리거 |
+| 2 | SYNC §3 bump + sub-phase 갱신 |
+| 3 | 05 CLOSE Claude OK 라인 + OBS-HOLD-01 섹션 |
+| 4 | 코드 diff 0 |
+
+### Timebox
+
+15분.
+
+### Cursor 지시
+
+1. 문서 3개만 · 코드/config_kv/cron 비접촉
+2. 완료 후 `CURSOR_TO_CLAUDE` OUTBOX · `status: WAIT_CLAUDE_OK`
+
+---
+
+## Claude VERDICT — FWD-LEDGER-CRON-01 DoD 4/4 Claude OK · SSOT=VPS 고정 (2026-08-17)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor가 본 파일 최상단 동기화 (2026-08-17).  
+> **앵커**: 부팅 문구 `-08-11-B` 무시 → §3 최신 **`SYNC-2026-08-17-W`** 기준.
+
+### OUTBOX 검증 (DoD 4항)
+
+| # | DoD | 판정 |
+|---|-----|------|
+| 1 | cron/timer 상태 표 | ✅ factory-kr 19:30 daily · 8/9~8/16 연속 |
+| 2 | 실행 로그·에러 | ✅ syslog CMD · mail/에러 없음 · mtime=cron |
+| 3 | 원인 3분류 | ✅ (a)(b)(c) 해당 없음 — 로컬 정체 전제 기각 |
+| 4 | 코드 diff 0 | ✅ |
+
+**VERDICT: OK.** Cursor 질문 회신: **VPS 원장 = North Star SSOT 고정.** 로컬 원장은 dev artifact · 판정 근거 금지.
+
+참고(규정2·4): VPS composite 4.09 · n=8/28 — G1 미달·표본 협소 → 최소 20일 추가 관측 전 페이스 확정 판정 금지. 로컬 "40.0"은 허수.
+
+### 다음 Go
+
+**FWD-LEDGER-CRON-01-CLOSE** (아래).
+
+---
+
+## [Ops-lite] FWD-LEDGER-CRON-01-CLOSE — VPS 원장 SSOT 고정 · 로컬 원장 격리
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | FWD-LEDGER-CRON-01-CLOSE (신규) |
+| **발행** | Claude Pro Architect |
+| **전제** | FWD-LEDGER-CRON-01 Claude OK |
+| **위험도** | 🟢 Ops-lite — 문서·파일명만, 코드 0 |
+
+### SSOT (변경 금지 unless noted)
+
+- 문서: `00_SESSION_SYNC.md` §3 · `NEXT_ACTION.md` · `05_진행로그.md` · `00_전체현황판.md` · `12_듀얼북극성_진행장부_및_상품화.md` §3
+- VPS 원장: `/var/lib/quant-factory/data/dual_north_star_ledger.json` — SSOT 고정 (내용 변경 없음)
+- 로컬 원장: `C:\Users\GoodLife\dante_bots\Dual-Screener-Bot\dual_north_star_ledger.json` — 격리 대상
+
+### 변경 Spec
+
+- `12_듀얼북극성` §3에 각주: "SSOT=VPS 경로. 로컬 PC 원장은 dev artifact, 갈림길/판정 근거 사용 금지."
+- 로컬 원장 **파일명 rename만**: `dual_north_star_ledger.LOCAL_DEV_DO_NOT_USE.json` (`factory_data_dir()` 등 소스 로직 변경 금지)
+- KR/US: 공통 (Track A 전체)
+
+### Config 변경
+
+없음 — config_kv 비접촉
+
+### 금지
+
+- cron/timer 재시작 · config_kv/bitget · 소스 코드 변경 · Handoff 재조사
+
+### 완료기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | `12_듀얼북극성` §3 SSOT 각주 추가 |
+| 2 | 로컬 원장 rename/격리 완료 (ls 결과 첨부) |
+| 3 | SYNC §3 앵커 bump(`SYNC-2026-08-17-X`) + FWD-LEDGER-CRON-01 → CLOSED |
+| 4 | NEXT_ACTION: 갈림길 재소집 + VPS 실측 기반 · 최소 20일 관측 전 확정 판정 금지 |
+| 5 | 코드 diff 0 재확인 |
+
+### Timebox
+
+30분.
+
+### Cursor 지시
+
+1. 코드 diff 0 유지 · 문서 4개+§12 + rename만
+2. 완료 후 `CURSOR_TO_CLAUDE` OUTBOX 1건 · `status: WAIT_CLAUDE_OK`
+
+---
+
+## Claude VERDICT — SRV-02 조사 Done Claude OK · 다음 트랙 확정: 포워드 원장 진단 (2026-08-17)
+
+> **랜딩**: `Downloads/CLAUDE_TO_CURSOR_append.md` → Cursor가 본 파일 최상단 동기화 (2026-08-17).  
+> **앵커**: `SYNC-2026-08-17-V` (요청문 `-08-11-B` 아님 — §3 당시 `U` 기준 판정 · bump V).
+
+### OUTBOX 검증 (`CURSOR_TO_CLAUDE.md` 최상단 SRV-02 DoD 4항)
+
+| DoD | 결과 |
+|-----|------|
+| 포워드 원장 표(일수/종합점수/G0·G1 근접) | ✅ n=1/28 · 종합 40.0(하한 충족) · G1 −27일 갭 |
+| CAT-P mega_trend 인벤토리 | ✅ kill-chain 7모듈 부분배선(`ENABLE_MEGA_TREND_UNLOCK=1`) · re_evolution 7개 RP-1과 미연결 |
+| 근처놓침 동결표 대조 | ✅ `05_진행로그` 라벨과 불일치 없음 (SIDE_03 이중 SSOT는 기존 명시 그대로) |
+| OUTBOX 코드 diff 0 | ✅ config_kv/bitget 비접촉 · BULL/SIDE/BEAR/C-1 재계산 없음 |
+
+규칙 위반 없음 확인: period_return_pct 우선(규칙3) · n<20 자동판정 없음(규칙4, 전 구간 n≫20) · MDD tier 기준 사용(규칙5).
+
+**VERDICT: OK.** SRV-02 진단 종결.
+
+### 판단 — 갈림길 3택 중 1
+
+포워드 원장 `updated_at`이 2026-08-11T15:57:50Z 이후 정지 — 조사일(2026-08-17) 기준 **5일+ 무갱신**, `forward_trades_count=0`, daily history 1/28. 이 상태에서는 **목표 하향**도 **mega_trend 신규 투입**도 판단 근거가 없다: Lookahead v1 전제(규칙2, Pass ≠ North Star CAGR 증명)의 증명 경로 자체가 지금 막혀 있어서다. 두 옵션 다 "포워드 관측이 실제로 도는지" 확인 이후에만 의미 있다.
+
+**Go: 포워드 원장 cron 정체 진단 (관측 축).** mega_trend·목표하향은 본 Go 결과가 나올 때까지 **보류** — 병렬 착수 금지(규칙6).
+
+---
+
+## [Ops-lite] FWD-LEDGER-CRON-01 — 포워드 원장 cron 정체 진단 (SRV-02 후속 Go, 2026-08-17)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | FWD-LEDGER-CRON-01 (신규) |
+| **발행** | Claude Pro Architect |
+| **전제** | SRV-02 Claude OK · 근처놓침 레버(BULL/SIDE/BEAR/C-1) 전원 소진·동결 유지 · RP-1 v2.3.3 baseline 불변 |
+| **위험도** | 🟢 Ops-lite — 진단 전용, 코드/config_kv 변경 0 |
+
+### 스코프
+
+1. VPS cron/systemd timer 목록 — `dual_north_star_ledger` 일일 갱신 잡 등록 여부·마지막 실행 timestamp·exit code
+2. 최근 실행 로그(존재 시) — 2026-08-11 이후 실행 시도 자체가 있었는지, 있었다면 실패 원인(에러 스택 요약)
+3. `forward_trades_count=0` 원인 분리 — 페이퍼/라이브 매매 엔진이 신호를 내고 있는지(로그·DB **조회만**, 재실행 아님) vs 신호는 있으나 ledger 기록 단계 실패인지
+4. 원인 3분류 중 확정: (a) cron 미등록/미실행 (b) cron 실행되나 매매신호 0건 (c) 신호 있으나 ledger write 실패
+
+### 금지
+
+- cron 재시작·재등록·코드 수정·config_kv 변경 — 원인 확정 전까지 **조회만**
+- BULL/SIDE/BEAR/C-1 근처놓침 레버 재접촉 (규칙1, 동결 유지)
+- mega_trend 설계/구현 착수 금지 — 별도 Handoff 전까지 보류
+- CAGR/MDD 목표 수치 변경 논의는 본 Go 범위 아님 — 디렉터 결정 대기 사안
+
+### 완료기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | cron/timer 상태 표 (등록여부·마지막 실행·exit code) |
+| 2 | 실행 로그 유무 및 에러 원인(있으면 요약) |
+| 3 | 원인 3분류 중 확정 1개 + 근거 |
+| 4 | OUTBOX 코드 diff 0 명시 |
+
+### Timebox
+
+1일 (Ops-lite 진단). 초과 시 미달 상태 그대로 OUTBOX — 막힌 지점만 명시하고 원인 강행 확정 금지.
+
+### Cursor 지시
+
+1. 새 세션 1개, 조사 모드 — VPS SSH 조회만, 코드 작성·잡 재시작 금지
+2. 결과는 `CURSOR_TO_CLAUDE.md` 최상단 OUTBOX, `status: WAIT_CLAUDE_OK`
+
+---
+
+## Claude VERDICT — C-1-REDUCED 1단계 진단 OK · SECTOR_LEVER_INVALID · 2단계 No-Go (2026-08-17)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor가 본 파일 최상단 동기화 (2026-08-17).  
+> **앵커**: `SYNC-2026-08-17-S` (요청문 `-08-11-B` 아님 — §3 최신 우선).
+
+### OUTBOX 검증 (`CURSOR_TO_CLAUDE.md` C-1-REDUCED DoD 5항)
+
+| DoD | 결과 |
+|-----|------|
+| 5구간 A/B period_ret 표 | ✅ |
+| mdd_B%(tier) ≤10% | ✅ 9.01~9.16 |
+| n≥20 | ✅ 16,636~94,458 |
+| §7 매핑 | ✅ |
+| JSON+05+OUTBOX | ✅ |
+
+**형식 DoD 통과.** Cursor overall **MIXED는 기각** → **SECTOR_LEVER_INVALID** 확정.
+
+| 근거 | 내용 |
+|------|------|
+| SIDE Δ | +0.0494 / +0.0703pp = 잡음 (06 §C-1 No-Go: baseline 대비 명확한 개선 없음) |
+| match_rate | 5.6~6.5% — 레버 희박 발화 |
+| BEAR | match 0% 또는 match>0인데 period_ret 불변 → 레버 무효 |
+| verdict 라벨 | 전부 NEAR_MISS 유지 — 탈출 실패 |
+
+**VERDICT: OK (진단 종결).** C-1-REDUCED **2단계 실장 No-Go**. 근처놓침 탈출 4연속 소진 (BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM · C-1) — 규칙1상 이 라인 재접촉 금지.
+
+### Cursor 질문 회신
+
+물질성 미달 → **MIXED→INVALID**. 인정.
+
+### 다음 Go
+
+**SRV-02** (진단 전용, 코드 0) — 아래 Handoff.
+
+---
+
+## [MASTER] SRV-02 — RP-1-v1 근처놓침 레버 소진 확정 + 다음 트랙 결정 인풋 (진단 전용, 2026-08-17)
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | SRV-02 (신규) |
+| **발행** | Claude Pro Architect |
+| **전제** | C-1-REDUCED = SECTOR_LEVER_INVALID (물질성 미달) 확정 · BULL/SIDE/BEAR/C-1 근처놓침 레버 전원 소진 |
+| **위험도** | 🟢 진단 전용 — 코드/config_kv 변경 0 |
+
+### SSOT (비접촉)
+
+- BULL_03/05, SIDE_02/03, BEAR_01/03/04, C-1 판정 라벨 — 전부 동결, 재계산 금지
+- config_kv, forward 경로, Phase A, S5 — 비접촉
+
+### Spec — 조사 3항목 (읽기 전용)
+
+1. **포워드 원장 스냅샷**: `dual_north_star_ledger.json` 트랙A 최신 — 경과일수·종합점수·G0/G1 근접도
+2. **CAT-P mega_trend 인벤토리**: 관련 파일 존재 여부·최종 커밋일·구현 stage(설계만/부분코드/미착수). 신규 코드 작성 금지, 기존 파일 조회만
+3. **근처놓침 최종 동결표**: `05_진행로그` 대조 — BULL_05·SIDE_02·SIDE_03·BEAR_01·03·04·C-1섹터 값 재확인만
+
+### 금지
+
+- 신규 코드·테스트·config_kv 작성 금지 (순수 조사)
+- BULL/SIDE/BEAR/C-1 재접촉·재계산 금지 (전원 동결)
+- mega_trend 설계/구현 **착수 금지** — 본 창은 조사만, 실 Go는 SRV-02 결과 받은 뒤 별도 Handoff
+
+### DoD
+
+| # | 기준 |
+|---|------|
+| 1 | 포워드 원장 표 (일수/종합점수/G0·G1 근접) |
+| 2 | CAT-P 파일 인벤토리 또는 "관련 파일 없음" 명시 |
+| 3 | 근처놓침 동결표 대조 확인 |
+| 4 | OUTBOX (코드 diff 0) |
+
+### Timebox
+
+1일 (조사 전용). 초과 시 미달 그대로 OUTBOX.
+
+### Cursor 지시
+
+1. **새 세션** 1개만, 조사 모드 — 코드 작성 금지
+2. 결과는 `CURSOR_TO_CLAUDE.md` 최상단 OUTBOX
+
+---
+
+## Claude VERDICT — S5-HARNESS-SCOPE-01 VPS 실측 Claude OK · Ops-lite 종료 (2026-08-17)
+
+> **랜딩**: `Downloads/CLAUDE_TO_CURSOR_append (1).md` → Cursor가 본 파일 최상단 동기화 (2026-08-17).
+
+### OUTBOX 검증 (`CURSOR_TO_CLAUDE.md` 최상단 "VPS 실측 Done" 대조)
+
+| 체크 | Handoff 요구 (Ops-lite: 기존 CLI만 실행·코드 0줄) | OUTBOX 실측 | 판정 |
+|---|---|---|---|
+| 코드 diff | 0줄 | "코드 추가 diff: 0 (관측만)" | ✅ |
+| write | 0 (관측만) | DoD#3 write 0 | ✅ |
+| n 판정 | n=0 그대로 보고, Pass/Fail 금지(n<20 자동판정 금지) | KR/US n=0 · `numeric_judgment_omitted=true` · notes "표본 부족" | ✅ |
+| short_pnl 컬럼 | Adapter 문구 유지 | `short_pnl_column_present=false` 명시 | ✅ |
+| 05/OUTBOX 갱신 | 필수 | §S5-HARNESS-SCOPE-01 마지막 항목 갱신됨 | ✅ |
+
+**VERDICT: OK.** S5-HARNESS-SCOPE-01 = 관측 인프라 구축 + VPS 실측 1회로 **종료**(부분 Done 아닌 완결 — 남은 건 향후 트리거뿐). 2026-08-17 window BEAR/HIGH_VOL∩S5 게이트 활성 0·체결 0은 "결과"가 아니라 "관측 가능함"의 확인. 재개 조건은 **VPS 원장 n>0 발생 시 동일 CLI 재실행**뿐 — 신규 코드·신규 Handoff 아님. `05_진행로그` §S5-HARNESS-SCOPE-01에 `Claude OK: 2026-08-17` 한 줄 추가.
+
+### 앵커 불일치 참고
+
+수신 프롬프트가 참조한 앵커 `SYNC-2026-08-11-B`는 `00_SESSION_SYNC.md` §3 현재값 `SYNC-2026-08-17-Q`보다 6일 오래됨. 규칙(§5): §3 최신 스냅샷 우선 — 본 판정은 §3 `SYNC-2026-08-17-Q` 기준으로 진행함. 다음 창 부팅 문구는 최신 앵커로 갱신 권장.
+
+### 로드맵 위치 재확인
+
+RP-1 내부 레버 3종 전부 소진: BULL-RECENCY-01(부분 Done) · SIDE-ALPHA-01(부분 Done, DoD 미달) · BEAR-S5-SIM-01(1단계 Done, 2단계 보류). SRV-01 후보 4개 중 3개 종결 → 남은 1개 **C-1-REDUCED**로 이동.
+
+---
+
+## [CAT-C] C-1-REDUCED — 섹터/스필오버 A/B 진단 (NEAR_MISS 5구간 한정) · 2026-08-17
+
+| 항목 | 값 |
+|------|-----|
+| **sub-phase** | **C-1-REDUCED** (신규 Go) |
+| **발행** | Claude Pro Architect |
+| **전제** | RP-1 v2.3.3 baseline 확정 · BULL/SIDE/BEAR-S5 내부 레버 소진(위 VERDICT) · Lookahead v1 — Pass ≠ North Star CAGR 증명 |
+| **SSOT 근거** | `14_레짐패널_15구간_목표검증.md` §6~7 원인분석트리("Near-miss + C-1 A/B 개선 → C-1 Handoff Go") |
+| **CAT/위험도** | CAT-C 🟡 Medium(Claude↔Cursor 교차검증) — `CAT-MAP` §3: D try_add 내부·F Kelly 접촉 금지, 허용 인터페이스 `try_add_virtual_position(...)`/`sig_type`만 |
+
+### 대상 구간 (NEAR_MISS 5개 한정 — 그 외 전 구간 비대상)
+
+| ID | 현재 판정 | baseline 소스 | 주의 |
+|----|-----------|----------------|------|
+| SIDE_02 | NEAR_MISS(B) | `rp1_bull_recency_01_20260813.json` (8/13 SSOT) | SIDE_ALPHA_01_EXIT 레버 무효 확정·플래그 OFF — 8/13 수치가 현재 유효 baseline |
+| SIDE_03 | NEAR_MISS(B) | 상동 | exit 레버 적용 시 FAIL 회귀했던 수치(`rp1_side_alpha_01_20260817.json`)는 **사용 금지** — 플래그 OFF 상태 수치만 |
+| BEAR_01 | NEAR_MISS(B) | 8/13 JSON 우선, 없으면 VPS 재조회 | S5 미배선, 구조적 원인 |
+| BEAR_03 | NEAR_MISS(B) | 상동 | 8/13 BEAR n은 BR01 shrink 오염 가능 — **1단계 착수 전 BEAR 3구간만 8/13 JSON 재확인**, 오염 확인되면 클린 재산출 1회 후 diag 진행 |
+| BEAR_04 | NEAR_MISS(B) | 상동 | 상동 |
+
+BULL_03(Done)·BULL_05(FAIL, KR레버 동결)·PASS 8구간은 **비대상 — 재실행 금지**.
+
+### Spec — 1단계 (진단 전용, 필수 선행 · 유일 스코프)
+
+- 5구간 한정 **A(현행, 섹터 미적용) vs B(섹터/스필오버 가산 적용)** 페어 백테스트
+- B 변형: supernova 진입점수에 섹터 스필오버 가산항만 추가하는 **신규 sandbox 함수** — CAT-C 허용 인터페이스(`try_add_virtual_position(...)`, `sig_type`) 경유만, 스캐너 본체·D/E/F 로직 수정 금지
+- Markov 차수·spillover lag: Cursor 재량으로 **값 1개만** 확정해 고정 — 그리드서치/다중 스윕 금지(과적합·lookahead 재발 방지)
+- 측정 지표: `period_return_pct`(1순위, 규칙3) · `mdd_pct`(tier 기준, 규칙5) · PF · n
+
+### 금지 (out-of-scope)
+
+- BULL·PASS 8구간 재실행 금지(5구간 한정)
+- CAT-D try_add 내부, CAT-F Kelly, CAT-E 청산엔진, Phase A 거버너(Kelly cap·MDD tier) 접촉 금지
+- `config_kv` 라이브 반영 금지 — 섹터 가중치는 sandbox 상수로만
+- S5/인버스 · BULL_03/05 bounds · SIDE exit 레버(`SIDE_ALPHA_01_EXIT`) 재접촉 금지(각각 동결 유지)
+- **2단계(실제 반영) 자동 착수 금지** — 본 Handoff는 1단계까지만. 2단계는 진단 수렴 후 별도 Handoff
+- 재현 루프 1회 초과 금지: baseline 재확인(BEAR) 포함 최대 1회 재산출, 이후 결과 그대로 OUTBOX
+
+### 완료 기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | 5구간 A vs B `period_return_pct` 비교표 (연환산 CAGR 단독 판정 금지) |
+| 2 | 5구간 모두 `mdd_pct` tier 기준 ≤10% 유지(raw 아님) — 위반 구간은 해당 B 즉시 기각 |
+| 3 | 5구간 전부 total_trades≥20 (미만 구간은 숫자판정 없이 관찰만 기록) |
+| 4 | 판정: `14_레짐패널` §7 매핑 기준 — "A/B 개선"→섹터 레버 유효 / "무효"→구조 아님(mega_trend 또는 목표 하향 Handoff 후보), 구간별 근거 1줄 |
+| 5 | JSON(`reports/regime_panel/c1_reduced_diag_{date}.json`) + `05_진행로그` §C-1-REDUCED + `CURSOR_TO_CLAUDE.md` OUTBOX |
+
+### Timebox
+
+**1주** (BEAR baseline 재확인 포함 진단 전용, 조정 없음). 초과 또는 무결론 시 규칙1 준용(계측 버그헌팅 금지) — 미달 그대로 OUTBOX, 재시도 아님.
+
+### Cursor 지시
+
+1. **새 세션** — 본 Handoff 1개만(SIDE-ALPHA-01/BEAR-S5-SIM-01 재개 아님)
+2. 1단계 진단만 착수 — 2단계(실장) 자동 착수 금지
+3. Targeted diff only · CAT-MAP §3 인터페이스 준수 · 충돌 시 Adapter → 디렉터 Ask
+4. BEAR 3구간은 8/13 JSON 오염 여부 먼저 확인 후 진행(§주의 컬럼)
+
+### SRV 재확정 (기록)
+
+| 항목 | 값 |
+|------|-----|
+| **Go** | C-1-REDUCED (1단계 진단) |
+| **종료** | S5-HARNESS-SCOPE-01(Ops 관측 완결) |
+| **소진** | BULL-RECENCY-01 · SIDE-ALPHA-01 · BEAR-S5-SIM-01 |
+| **후순위** | 없음(SRV-01 후보 4개 전부 처리) — 다음 SRV는 C-1-REDUCED 결과 이후 재소집 |
 
 ---
 
 ## Claude VERDICT — S5-HARNESS-SCOPE-01 페이퍼 게이트 구현 OK · 로컬 Done (2026-08-17)
+
 
 > **랜딩**: `Downloads/CLAUDE_TO_CURSOR_append.md` → Cursor가 본 파일 최상단 동기화 (2026-08-17).
 
