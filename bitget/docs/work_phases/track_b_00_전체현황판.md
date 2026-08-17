@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **(없음)** — D 트랙 완료 · **디렉터 서버 운영 확인** | C-2 🔴 defer |
-| 마지막 갱신 | 2026-08-04 | D-3 OK · **18카테고리↔CAT 표** 추가 |
+| **다음 Handoff** | **(없음)** — 디렉터 서버 관측 선행 | C-2 🔴 defer · live/실전 금지 |
+| 마지막 갱신 | 2026-08-17 | I-GMM-DNA-01b **Claude OK** · 서버 1~2주 |
 
 ---
 
@@ -40,7 +40,7 @@
 | 상품화 G3 | G0 | `06` + C-2 + MDD 4주 (NS-1 R4) | 🔴 3 |
 | paper 신호 신뢰 | C-1 **Claude OK** · C-1b 집계 구현 | `06` skip률 관측 (`skip_rate_pct` v1 null) | 🟡 2 |
 | paper PnL 현실 | funding 미차감 | **C-2 defer** (close PnL 오염) | 🔴 3 |
-| 서버 디스크/백업 | L-1/L-2 코드만 | **서버 설치 대기** | ① 디렉터 |
+| 서버 디스크/백업 | L-1/L-2 코드 OK | **서버 설치 미확인** (I-GMM 배포 ≠ L 설치) | ① 디렉터 |
 | 4GB RAM | MemoryMax 가이드만 | drop-in **미설치 가능** | ① 디렉터 |
 | cutover | `pipeline_ssot_env=0` FAIL | env 점검 | ① 디렉터 |
 | 실전 | OFF | exit·parity·P2-5 | 🔴 금지 |
@@ -49,8 +49,8 @@
 
 | Layer | 내용 | paper 중 |
 |-------|------|----------|
-| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | 디렉터 즉시 |
-| **2** | **C-1** → **D-1~D-3** · P0-6 / P1-7 설계 | D 트랙 ✅ · **서버 운영 확인=디렉터** (overseer·REPORT_BOT·D-3a 관측) |
+| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · L 설치❓ |
+| **2** | **C-1** → **D-1~D-3** · P0-6 / P1-7 설계 | D 트랙 ✅ · **POST_DEPLOY_OBS** · overseer❓ |
 | **3** | MDD 5% · B-2 live · B-3 block · B-4b · **C-2/C-3** · 실전 | `06` / Go-No-Go **후** |
 
 ---
@@ -69,11 +69,11 @@
 | 3 | 리스크·자금 할당 | **F** + **묶음A** | ✅ MDD·tail·lev·gross·config (5% 튜닝=`06` 후) | 2~3 |
 | 4 | 매매 실행·청산 | **D** + **E** | ✅ paper 원장·청산 · 실주문 OFF | 2 |
 | 5 | 메타·자가 진화 | **H** + **묶음B** | ✅ deathmatch/WF **shadow만** | 2~3 |
-| 6 | 인프라·관제·알림 | **L** + **A** + **M** | 🟡 코드 OK · **서버·overseer 기동=디렉터** | 1 |
+| 6 | 인프라·관제·알림 | **L** + **A** + **M** | 🟡 코드 OK · **overseer 기동 미확인** | 1 |
 | 7 | 검증·섀도우 | Phase 7 + **B-3** | ✅ parity 도구 · WF shadow · D-3b scaffold | 2 |
 | 8 | 매크로·섹터 로테이션 | **G** | ✅ 국면·Meta (주식 비중 큼) | 2 |
 | 9 | 리포팅·성과 시각화 | **J** + **D-3a** | ✅ 주간 리포트 · cost 관측 | 2 |
-| 10 | 서버·DevOps | **L** | 🟡 systemd·cron SSOT · **서버 적용 대기** | 1 |
+| 10 | 서버·DevOps | **L** | 🟡 systemd·cron SSOT · **L 설치 미확인** · I-GMM 배포✅ | 1 |
 | 11 | OMS·슬리피지 | **N** | 🟡 코드 있음 · **실전 꺼짐** (P2-5) | 3 |
 | 12 | 포트폴리오·상관·다각화 | **F** 일부 | 🟡 Kelly·gross만 · 상관·캐시드래그 전담 없음 | 3 |
 | 13 | 대체데이터·NLP | **M** + sentiment | 🟡 조각 · 독립 “대체데이터 공장” 아님 | 3 |
@@ -100,8 +100,8 @@
 | **A** (포트폴리오 리스크) | 3, 15(일부) | 5% 프로필은 `06` 후 |
 | **B** (진화) | 5, 7(일부) | live alloc off |
 | **C** (데이터·실행품질) | 1, 2, 18(일부) | C-2 funding defer |
-| **D** (AI·거버넌스) | 6, 9, 18(관측) | **Done** · 서버 기동만 잔여 |
-| **L** (인프라) | 6, 10 | 서버 설치 대기 |
+| **D** (AI·거버넌스) | 6, 9, 18(관측) | **Done** · overseer 기동 미확인 |
+| **L** (인프라) | 6, 10 | 서버 설치 **미확인** |
 
 ---
 
@@ -111,9 +111,9 @@
 |-------|------|------|-------------|-----------|-------------------|
 | 0–8 | 구현 Phase | **완료** | pipelines·OMS·validation | Phase 0–8 docs | architecture PASS |
 | 9 | A: 포트폴리오 리스크 | **진행중** | MDD·tail·lev·gross·config | A Claude OK ✅ · Critical **2026-08-02** | paper 배포·`06` 대기 |
-| 9′ | **A paper + L/B 병렬** | **진행중** | L-1·L-2 Claude OK · B-1~B-4 OK | L-1/L-2 **서버 설치 대기** · **4-track 관측** | A `06` + B-2 + B-3 + B-4 log **병렬** |
+| 9′ | **A paper + L/B 병렬** | **진행중** | L-1·L-2 Claude OK · B-1~B-4 OK | L-1/L-2 **서버 설치 미확인** · **I-GMM 배포✅** · **4-track 관측** | A `06` + OPEN/Cos 관측 |
 | 10 | B: 진화/deathmatch | **1단계 완료** | B-1~B-4 impl+OK ✅ · prod off | B-1~B-4 Claude OK ✅ | alloc·WF block off · **4-track 관측** · MAB 소비처 없음 |
-| 11 | C: 데이터/실행품질 | **C-1b ✅** | bad tick → funding → corr | C-1 ✅ · C-1b ✅ · C-2 defer | paper `06` 병렬 |
+| 11 | C: 데이터/실행품질 | **C-1b ✅ · I-GMM ✅ · 01b OK** | bad tick · DNA sync · 01b 관측 | C-1 ✅ · C-1b ✅ · I-GMM-01 ✅ · **01b Claude OK** · C-2 defer | paper `06` + 01b 1~2주 |
 | 12 | D: AI/거버넌스 | **D-3 전체 ✅** | JSON·gate·poll·cost·parity scaffold | D-1~D-3 Claude OK ✅ · **D-3b 실배선=P2-5 후** | 서버 운영 확인=디렉터 |
 
 **상세 스펙**: `01_묶음A` ~ `04_묶음D` · **기록**: `05_진행로그.md` · **검증**: `06_검증체크리스트_및_실패기록.md`
@@ -227,6 +227,10 @@
 | `COST_REPORT_ENABLED` | D-3a kill-switch (default true) | D-3a | config_kv / `memory_policy` |
 | `COST_REPORT_WINDOW_DAYS` | D-3a lookback days (default 7) | D-3a | config_kv / `memory_policy` |
 | `cost_report_weekly` | D-3a ops_events summary event | D-3a | `ops_events` |
+| `gmm_dna_alpha_report_weekly` | I-GMM-01b Cos/OPEN/DNA 주간 관측 event | I-GMM-DNA-01b | `ops_events` |
+| `GMM_DNA_ALPHA_REPORT_ENABLED` | 01b 리포트 kill-switch (default true) | I-GMM-DNA-01b | config_kv / env |
+| `GMM_DNA_ALPHA_REPORT_WINDOW_DAYS` | 01b Cos 로그 창 (default 7) | I-GMM-DNA-01b | config_kv / env |
+| `GMM_DNA_ALPHA_REPORT_LOG_SOURCE` | journal\|file 우선 (default journal) | I-GMM-DNA-01b | config_kv / env |
 | `cost_basis` | D-3a USD 단가 없을 때 `no_usd_unit_rate` | D-3a | ops payload |
 | `gemini_call_count_source` | D-3a call proxy: `ops_events` 없으면 `llm_call_cache` 행수 (**실 API 호출 수 아님**) | D-3a | ops payload |
 | `fee_basis` | D-3a fee SSOT 없을 때 `no_fee_rate_ssot` | D-3a | ops payload |

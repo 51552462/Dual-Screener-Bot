@@ -205,7 +205,7 @@
 - **테스트**: `test_log_rotation_l1.py` **7 passed**
 - **Claude OK**: 2026-08-02 — 스펙 일치, 거래 경로 미접촉 확인. 후속: journald vacuum이 ops_events heartbeat 조회에 영향 없는지 1줄 확인 요청(비차단).
 - **모니터링 (확인 1줄)**: watchdog heartbeat SSOT = SQLite `ops_events` `heartbeat.tick` (`watchdog.py` / `ops_logger.py`) — journal vacuum은 **journald 디스크만** 정리하며 heartbeat 판정·stale(분 단위)과 무관; `journalctl -f`는 실시간 tail만 영향(30d/400M 밖 과거 로그 삭제).
-- **잔여**: [x] Claude Pro OK · [ ] 디렉터 서버 `install_bitget_logrotate.sh` 설치·`--test` · [ ] `06` 30일 disk 안정
+- **잔여**: [x] Claude Pro OK · [ ] 서버 `install_bitget_logrotate.sh` **(2026-08-17 미확인)** · [ ] `06` 30일 disk 안정
 
 ### L-2 Integrity Backup Cron (P0-5) — [2026-08-02] · Cursor 구현 ✅ / Claude OK ✅ (2026-08-02)
 
@@ -216,9 +216,9 @@
 - **Config**: `BITGET_BACKUP_ENABLED` (default true) · `BITGET_BACKUP_DIR` · `BITGET_BACKUP_RETENTION_DAYS=7`
 - **restore drill**: `bitget_restore_drill.sh` — 격리 임시 경로 복원 + row-count parity (`06` 판정 = drill pass)
 - **테스트**: `test_backup_l2.py` **8 passed**
-- **Claude OK**: 2026-08-02 — L-2 backup scope·integrity·restore drill 확인. P0-5 server install 대기.
+- **Claude OK**: 2026-08-02 — L-2 backup scope·integrity·restore drill 확인. P0-5 서버 설치는 **2026-08-17 기준 미확인**.
 - **후속 (비차단)**: L-1 로그 영역(`BITGET_LOG_DIR`·journald)과 `BITGET_BACKUP_DIR` 디스크 예산 — **분리 권장**(백업은 별도 파티션 또는 `data/backups/db`; 로그·journal·백업 합산 80GB SSD 내 retention 상한으로 경쟁 최소화).
-- **잔여**: [x] Cursor 구현 · [x] Claude Pro OK · [ ] 서버 `install_bitget_backup.sh` + restore drill · [ ] `06` restore drill pass 기록
+- **잔여**: [x] Cursor 구현 · [x] Claude Pro OK · [ ] 서버 `install_bitget_backup.sh` + restore drill **(2026-08-17 미확인)** · [ ] `06` restore drill pass 기록
 
 ---
 
@@ -397,7 +397,7 @@
 - **Config**: `AI_PROPOSAL_APPROVAL_POLL_ENABLED`(true) · gate off 시 poll도 skip
 - **격리**: `proposal_approval_bg.py` 로직 **불변** · 미인증 chat reply 없음
 - **테스트**: `test_proposal_approval_poll_d2.py` **4 passed** · gate 본체 `test_proposal_approval_d2.py` **9 passed** (회귀 없음)
-- **Claude OK**: 2026-08-04 — Mirror #2 제안 스펙(배선만) 100% 일치, gate 본체 회귀 없음. 서버 ai_overseer + REPORT_BOT env 기동은 디렉터 별도 확인 사항.
+- **Claude OK**: 2026-08-04 — Mirror #2 제안 스펙(배선만) 100% 일치, gate 본체 회귀 없음. 서버 ai_overseer + REPORT_BOT env 기동은 **2026-08-17 기준 미확인**.
 
 ### D-3 — [2026-08-04] · D-3a 구현 ✅ · D-3b scaffold-only ✅ / Claude OK ✅ (2026-08-04)
 
@@ -429,4 +429,34 @@
 - **Mirror**: `shape_source` 태그 (neutral_fallback / prototype_ohlcv 관측)
 - **live 전환 플래그**: CAT-F Handoff 예약 — sn_score 폴백 명시 스위치 재검토 (규칙11)
 - **롤백**: config_kv `CRYPTO_DNA_ALPHA_RANK1~3` 삭제 시 즉시 복귀
-- **잔여**: [x] Cursor · [x] Claude OK · [ ] git push · [ ] 서버 sync · [ ] OPEN/Cos_eff 관측 (`06`)
+- **배포 (디렉터 확인 2026-08-17)**: I-GMM-DNA-01 **서버 배포 완료**. 로컬 문서의 “git push · 서버 sync 대기”는 **폐기**.
+- **잔여**: [x] Cursor · [x] Claude OK · [x] 서버 배포 · [ ] **OPEN/CLOSED COUNT · Cos_eff=0.000 고정 여부 · RANK/shape_source** (`06` paper 관측, 서버만)
+
+### Ops 관측 세션 — [2026-08-17] · 코드 변경 없음 · 문서만 현실 맞춤
+
+- **status**: `POST_DEPLOY_OBS`
+- **체크리스트 SSOT**: `track_b_POST_DEPLOY_OBS_체크리스트.md`
+- **로컬에서 확인 불가**: 서버 SQLite·journal의 OPEN/Cos/RANK (이 PC에 prod DB 없음)
+- **L / overseer 잔여 (했는지·안 했는지 — 디렉터 서버 확인 전 = 미확인)**
+
+| ID | 무엇을 | 코드·Claude | 서버에 설치/기동했는가 |
+|----|--------|-------------|------------------------|
+| **L-1** | logrotate + journal vacuum | ✅ 구현·OK | **❓ 미확인** — `install_bitget_logrotate.sh` 실행 기록 없음 |
+| **L-2** | DB integrity backup + restore drill | ✅ 구현·OK | **❓ 미확인** — `install_bitget_backup.sh` · drill 기록 없음 |
+| **D-2 ops** | `ai_overseer` 프로세스 + `REPORT_BOT_*` | ✅ poll 코드·OK | **❓ 미확인** — 기동/env 확인 기록 없음 |
+
+> I-GMM 배포 완료 ≠ L-1/L-2/overseer 설치 완료. 세 항목은 **별도 서버 확인**.
+
+### I-GMM-DNA-01b — [2026-08-17] GMM DNA 주간 관측 리포트 ✅ / Claude OK 대기
+
+- **성격**: 읽기 전용 observability · **gates.py / gmm_dna_alpha_sync.py 미접촉**
+- **SSOT**: `bitget/observability/gmm_dna_alpha_report_bg.py`
+- **Hook**: `weekly_evolution` — `cost_report` 직후 `gmm_dna_alpha_report` (non-critical)
+- **필드**: cos_eff_sample_count / zero_ratio / mean_nonzero · open·closed_count_by_market(B-1 normalize) · dna_rank_keys_present · shape_source_distribution · log_source_used
+- **로그**: journalctl 우선 → 파일 → 실패 시 null + `unavailable` (추정 금지)
+- **Config**: `GMM_DNA_ALPHA_REPORT_ENABLED`(true) · `WINDOW_DAYS`(7) · `LOG_SOURCE`(journal)
+- **ops_events**: `gmm_dna_alpha_report_weekly` · component `observability.dna`
+- **테스트**: `test_gmm_dna_alpha_report_i01b.py` **6 passed**
+- **Claude OK**: 2026-08-17 — Handoff 스펙 100% 일치 · 수정 spec 없음 · Mirror #2(2주 unavailable→로그 경로) 수용(05 잔여, 선코딩 금지)
+- **Mirror 잔여 표기**: 2주 연속 sample_count=0 + unavailable → **서버 로그 경로**(BITGET_LOG_DIR / journal unit) 확인 (코드 재배선 아님)
+- **잔여**: [x] Cursor 구현 · [x] Claude Pro OK · [ ] 서버 1~2주 ops 관측 · [ ] L-1/L-2/overseer 병행 확인(별도)

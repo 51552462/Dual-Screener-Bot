@@ -341,6 +341,13 @@ def _step_cost_report() -> None:
     run_cost_report_job()
 
 
+def _step_gmm_dna_alpha_report() -> None:
+    """I-GMM-DNA-01b — weekly Cos_eff / OPEN / DNA rank observability (read-only)."""
+    from bitget.observability.gmm_dna_alpha_report_bg import run_gmm_dna_alpha_report_job
+
+    run_gmm_dna_alpha_report_job()
+
+
 def _step_weekly_flow_master() -> None:
     """주식 factory weekly_master → weekly_flow_master 패리티."""
     from bitget.auto_pilot import send_weekly_flow_master_report
@@ -866,6 +873,7 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
             StepSpec("bad_tick_skip_summary", _step_bad_tick_skip_summary, critical=False),
             StepSpec("llm_proposal_summary", _step_llm_proposal_summary, critical=False),
             StepSpec("cost_report", _step_cost_report, critical=False),
+            StepSpec("gmm_dna_alpha_report", _step_gmm_dna_alpha_report, critical=False),
             StepSpec("weekly_coin_pri", _step_weekly_coin_pri, critical=False),
             StepSpec("weekly_coin_regime_archive", _step_weekly_coin_regime_archive, critical=False),
             StepSpec("regime_deep_archive", _step_regime_deep_archive_bg, critical=False),

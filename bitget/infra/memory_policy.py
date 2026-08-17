@@ -108,6 +108,10 @@ AI_PROPOSAL_APPROVAL_POLL_ENABLED: bool = True
 # D-3a weekly cost observability (read-only)
 COST_REPORT_ENABLED: bool = True
 COST_REPORT_WINDOW_DAYS: int = 7
+# I-GMM-DNA-01b weekly DNA/Cos observability (read-only)
+GMM_DNA_ALPHA_REPORT_ENABLED: bool = True
+GMM_DNA_ALPHA_REPORT_WINDOW_DAYS: int = 7
+GMM_DNA_ALPHA_REPORT_LOG_SOURCE: str = "journal"
 # D-3b paper vs real parity (scaffold — default dormant, no pipeline hook)
 PARITY_MONITOR_ENABLED: bool = False
 # Live WS/OMS smoke (read-only observational — never starts sockets / places orders)

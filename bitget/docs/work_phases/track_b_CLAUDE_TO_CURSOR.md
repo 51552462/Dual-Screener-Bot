@@ -1,133 +1,80 @@
 # CLAUDE → CURSOR (Bitget Handoff INBOX)
 
-> **갱신**: 2026-08-12 · **I-GMM-DNA-01** (Cursor 구현 완료 → Claude OK 대기)
+> **갱신**: 2026-08-17 · **I-GMM-DNA-01b Claude OK** · 신규 Handoff 없음 (서버 관측)
 
 ---
 
-## [CAT-I] I-GMM-DNA-01 — GMM DNA → CRYPTO_DNA_ALPHA_RANK 배선 · **Cursor 구현 완료**
+## [CAT-I] I-GMM-DNA-01b — GMM DNA 관측 미니잡 · **Claude OK 2026-08-17**
+
+### sub-phase ID
+I-GMM-DNA-01b
+
+### Claude OK
+- 2026-08-17 — Handoff 스펙 100% 일치 · 수정 spec 없음
+- 다음: 디렉터 서버 1~2주 관측 (설계 Handoff 없음)
+
+### 위험도
+🟢 — 읽기 전용 + ops_events 신규 1건. gates.py/sync 비접촉.
+
+---
+
+## [CAT-I] I-GMM-DNA-01b — (구현 Handoff 원문 보존)
+
+### sub-phase ID
+I-GMM-DNA-01b
+
+### SSOT (변경 금지 unless noted)
+- 신규: `bitget/observability/gmm_dna_alpha_report_bg.py`
+- 읽기만: `bitget_forward_trades`(CAT-D), `config_kv CRYPTO_DNA_ALPHA_RANK*`(CAT-K), 서버 로그
+- **비접촉**: `forward/gates.py`, `evolution/gmm_dna_alpha_sync.py`
+
+### 변경 Spec
+- `compute_weekly_gmm_dna_alpha_report_bg(window_days:int=7) -> dict`
+- `run_gmm_dna_alpha_report_job()`
+- 필드: cos_eff_sample_count / zero_ratio / mean_nonzero(nullable) / open·closed_count_by_market / dna_rank_keys_present / shape_source_distribution / log_source_used
+- 로그 파싱: `Cos_eff=([\d.]+)` 정규식, journalctl 우선 → 실패 시 파일 로그 → 둘 다 실패 시 null+unavailable
+- 저장: ops_events `gmm_dna_alpha_report_weekly` (component `observability.dna`)
+
+### Config 변경
+| KEY | old | new | default |
+|-----|-----|-----|---------|
+| GMM_DNA_ALPHA_REPORT_ENABLED | 없음 | 신규 | true |
+| GMM_DNA_ALPHA_REPORT_WINDOW_DAYS | 없음 | 신규 | 7 |
+| GMM_DNA_ALPHA_REPORT_LOG_SOURCE | 없음 | 신규 | journal |
+
+### 인접 CAT 영향
+- CAT-D: 읽기만 · CAT-K: 읽기만 · CAT-I(gates/sync): 미접촉
+- weekly_evolution: D-3a cost_report_weekly 직후 non-critical 스텝 추가
+
+### 롤백 조건
+- `GMM_DNA_ALPHA_REPORT_ENABLED=false` → 즉시 미실행, 거래 로직 영향 없음
+
+### Cursor 지시
+- Targeted diff only. 전체 파일 rewrite 금지.
+- 루트 주식 경로 수정 금지 — bitget/ 하위만.
+- **`forward/gates.py`, `evolution/gmm_dna_alpha_sync.py` 수정 금지** (이번 Handoff 조건)
+- 충돌 시 Adapter 제안 후 디렉터 Ask.
+- 테스트: `pytest bitget/tests/test_gmm_dna_alpha_report_i01b.py`
+
+### 세션 종료 의무
+- `05_진행로그.md` I-GMM-DNA-01b 섹션
+- `00_전체현황판.md` Phase·SSOT
+- `CURSOR_TO_CLAUDE.md` 갱신 (구현 요약 + 로컬 스냅샷)
+- `NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+
+### 위험도
+🟢 — 읽기 전용 + ops_events 신규 1건. gates.py/sync 비접촉. C-2·MDD5%·live·실전 범위 밖.
+
+---
+
+## [CAT-I] I-GMM-DNA-01 — GMM DNA → CRYPTO_DNA_ALPHA_RANK 배선 · **배포 완료**
 
 ### sub-phase ID
 I-GMM-DNA-01
 
-### SSOT (변경 금지 unless noted)
-- `bitget/evolution/gmm_dna_alpha_sync.py` — GMM→ALPHA_RANK sync
-- `bitget/data_miner.py` — GMM cluster prototype shape + post-mine sync
-- `bitget/pipelines/bitget_pipelines.py` — `config_bootstrap` 훅
-- `bitget/forward/gates.py` — `_facts_cos_scalar_01` sn_score=0 폴백
-- config: `BITGET_GMM_DNA_TEMPLATES` → `CRYPTO_DNA_ALPHA_RANK1..3`
-
-### 변경 Spec
-- GMM 클러스터 bounds 중점 → 7D DNA vec (`cpv,tb,bbe,rs`)
-- `mean_mfe` 상위 3클러스터 → `CRYPTO_DNA_ALPHA_RANK1..3`
-- `shape` 20봉: MFE prototype OHLCV 또는 neutral fallback
-- `source=manual` 랭크는 force 없이 보존
-- `BITGET_GMM_DNA_UPDATED_AT` > `CRYPTO_DNA_ALPHA_SYNCED_AT` 시 재동기화
-
 ### Cursor 구현 요약 (2026-08-12)
-- 신규: `gmm_dna_alpha_sync.py`
-- data_miner: prototype_market/symbol/tf + shape 채굴
-- config_bootstrap: `sync_gmm_dna_alpha_if_stale()`
-- gates: sn_score=0 → signal score/100 Cos 폴백 (과도기)
-- 테스트: `test_gmm_dna_alpha_sync.py` **6 passed**
-
-### Claude 검증 Ask
-1. neutral shape fallback이 doppelganger DTW 왜곡 리스크 수용 가능한지
-2. sn_score=0 폴백이 paper 관측에 적절한지 (실거래 영향 없음 확인)
-3. forward_trades 0일 때 GMM 재채굴 없이 기존 GMM만 sync해도 Cos_eff>0 기대 타당성
-
-### Claude 조건부 OK (2026-08-12)
-- paper 배포 OK · R1/R2 Cursor 반영 완료 (force=False 기본 · live fail-closed)
+- 신규: `gmm_dna_alpha_sync.py` · data_miner · config_bootstrap · gates 폴백
+- Claude 조건부 OK · R1/R2 반영 · **서버 배포 완료 (디렉터 2026-08-17)**
 
 ### 위험도
 🟡 — 진입 게이트 변경 (paper). `manual` source 보호·실거래 경로 무변경.
-
----
-
-## [CAT-C] C-1 — Bad Tick / Flash Crash Filter · **Cursor 구현 완료**
-
-### sub-phase ID
-C-1
-
-### SSOT (변경 금지 unless noted)
-- `bitget/signal_engines.py` — `evaluate_bad_tick` · `bad_tick_should_skip_candidate`
-- `bitget/supernova_hunter.py` · `bitget/master_scanner.py` — 호출부
-- `blackhole_hunter` / `underdog_miner` — N/A (closed-trade analytics, 주석만)
-- config: `BAD_TICK_FILTER_ENABLED` · `BAD_TICK_LOOKBACK_BARS` · `BAD_TICK_ATR_MULT` · `BAD_TICK_GAP_PCT` · `BAD_TICK_ACTION`
-
-### Cursor 구현 요약 (2026-08-04)
-- ATR deviation **AND** gap_pct 동시 초과 시 skip
-- `ops_events` `bad_tick_filtered` 기록
-- P0-6: `master_scanner` 기존 `bse` import 유지 — 별도 수정 불필요
-- 테스트: `bitget/tests/test_bad_tick_filter_c1.py` **5 passed**
-
-### 디렉터 Ask (P0-6)
-**옵션 A 채택** — master_scanner는 이미 `import bitget.signal_engines as bse` 로 해결됨.
-
-### C-2
-명시적 **defer** (close PnL attribution).
-
----
-
-## [CAT-L] L-1 — Log Rotation (P0-1) · **구현 완료 (Cursor)**
-
-### sub-phase ID
-L-1
-
-### SSOT
-- `bitget/deploy/install_bitget_logrotate.sh`
-- `deploy/logrotate/bitget-dante.conf.in`
-- `deploy/scripts/bitget_journal_vacuum.sh`
-- `dante-bitget-journal-vacuum.{service,timer}`
-
-### 디렉터 승인
-병렬 🟢 (A paper 관측 중 착수)
-
----
-
-## 상태
-
-| 트랙 | sub | status |
-|------|-----|--------|
-| A paper | A-1~A-5 | 배포·`06` 대기 |
-| 병렬 L | **L-1** | **Claude OK ✅** · 디렉터 서버 검증 |
-| B-1 | Claude OK ✅ | |
-| B-2 | Claude OK ✅ · **4w shadow 관측** | |
-| B-3 | Claude OK ✅ · **4w shadow 관측** (weekly batch) | |
-| B-4 | **Claude OK ✅** · MAB log 관측 (소비처 없음) | |
-| L-2 | **Claude OK ✅** · 서버 install·drill 대기 | |
-| 다음 | A `06` 1차(2주) 후 | B-4b · C-1 · Kelly Go/No-Go Handoff |
-
----
-
-## [CAT-L] L-2 — Integrity Backup Cron · **구현 완료 (Cursor)**
-
-### sub-phase ID
-L-2 (P0-5)
-
-### SSOT
-- `bitget/deploy/backup_bitget_db.sh` · `install_bitget_backup.sh`
-- `bitget/infra/integrity_backup_l2.py`
-- `dante-bitget-backup.timer` · `bitget_restore_drill.sh`
-
-### Cursor 산출
-- `BITGET_BACKUP_ENABLED` / `BITGET_BACKUP_RETENTION_DAYS` / `BITGET_BACKUP_DIR`
-- `test_backup_l2.py` 8 passed · restore drill · stock DB exclude
-
----
-
-## [CAT-H, CAT-F] B-2 — Deathmatch Allocation Shadow · **구현 완료 (Cursor)**
-
-### sub-phase ID
-B-2 (shadow 4w log-only)
-
-### SSOT
-- `bitget/evolution/deathmatch_allocation_shadow.py`
-- `forward/ledger.py` — `observe_kelly_chain_shadow` (return unchanged)
-- `forward/deathmatch_report_section.py` — post-BR shadow persist
-
-### Cursor 산출
-- `DEATHMATCH_ALLOCATION_SHADOW_ENABLED` (default true)
-- `test_deathmatch_shadow_b2.py` 4 passed (격리: shadow on/off 동일 `sim_kelly_invest`)
-- `apply_deathmatch_allocation` **미변경**
-
----

@@ -1,31 +1,23 @@
 # NEXT_STEP — 다음 한 걸음
 
-> **갱신**: 2026-08-04 · C-1 Claude OK · Mirror 첫 블록 반영
+> **갱신**: 2026-08-17 · I-GMM-DNA-01b **Claude OK** · 서버 관측만
 
 ---
 
 | 필드 | 값 |
 |------|-----|
-| **지금 단계** | C-1 ✅ → **ops 관측 미니잡** Handoff 요청 |
-| **status** | `SHADOW_OBSERVING` + `WAIT_CLAUDE_HANDOFF` (C-1 ops) |
-| **한 줄** | price_sanity 통합 아님 — 다음은 skip률 보이게 만든 뒤 D-1 |
+| **지금 단계** | 01b ✅ → **서버 L / overseer / 01b 관측** (디렉터) |
+| **status** | **DONE** (Claude OK 2026-08-17) |
+| **한 줄** | 새 코드 없음. 서버에서 숫자가 쌓이는지만 1~2주 보면 됨. |
 
 ---
 
 ## 당신 체크리스트
 
-- [ ] Claude에게 **C-1 ops 미니잡** Handoff 요청 (`ARCHITECT_MIRROR` #1)
-- [ ] 4-track · NS-1 관측 계속
-- [ ] (비차단) C-1 ↔ price_sanity threshold 1회 대조 (코드 변경 없음)
-- [ ] L-1/L-2 서버 (Layer 1)
-
----
-
-## Claude가 확정한 것 (C-1 Mirror)
-
-- **C-1 OK** — blackhole/underdog N/A 수용
-- **price_sanity와 분리 유지** — 통합 안 함
-- **다음 순서**: ops 미니잡 → D-1 → P1-7 뒤로
+- [ ] POST_DEPLOY_OBS 체크리스트 (OPEN · Cos · RANK)
+- [ ] 01b `gmm_dna_alpha_report_weekly` 1~2주 쌓임
+- [ ] L-1 / L-2 / ai_overseer+REPORT_BOT 기동 확인
+- [ ] C-2 · MDD 5% · live · 실전 **금지**
 
 ---
 
@@ -33,7 +25,6 @@
 
 | 순서 | ID | 등급 |
 |------|-----|------|
-| **1 (지금)** | **C-1 ops 관측 미니** | 🟡 read-only |
-| 2 | D-1 JSON proposal | 🟢 |
-| 3 | P1-7 watchdog | 낮음 |
-| 금지 | C-2 · MDD 5% · alloc live | 🔴 |
+| **1 (지금)** | **서버 관측** (디렉터) — 신규 Handoff 없음 | ① |
+| 조건부 | 2주 unavailable → 로그 경로만 조사 | 🟡 코드 아님 |
+| 금지 | C-2 · MDD 5% · alloc live · 실전 ON | 🔴 |

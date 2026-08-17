@@ -6,6 +6,54 @@
 
 ---
 
+## Mirror — 2026-08-17 · [CAT-I] · I-GMM-DNA-01b 구현 검증
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 맞게 반영된 점: SSOT 신규 파일·Hook 위치(cost_report 직후)·gates/sync 비접촉·필드 6종·로그 3단 폴백(journal→file→null+unavailable)·금지 항목(C-2/MDD5%/live) 미착수 — Handoff 스펙 100% 일치, 편차 없음
+- 빠졌거나 불일치: 없음
+
+### 추가 제안 (1~3개, Handoff 범위 밖 가능)
+| # | 제안 | Layer | 우선순위 |
+|---|------|-------|----------|
+| 1 | 신규 설계 Handoff 없음 — 다음은 디렉터 서버 확인(L-1/L-2/overseer/OPEN·Cos·RANK 실측)이 선행 | ① 디렉터 | 최고 |
+| 2 | 2주 연속 cos_eff_sample_count=0+unavailable 시에만 서버 로그 경로 조사 (조건부, 코드 아님) | 🟡 2 | 중간 (조건부) |
+| 3 | shape_source=neutral_fallback 지속 관측 시 CAT-F live 폴백 Handoff 근거자료로 사용 예약 | 🟡 2 | 중간 |
+
+### Cursor와 다른 의견 (있으면)
+- 없음.
+
+### 다음 Handoff 후보 재정렬
+1. **(설계 아님) 디렉터 서버 확인** — POST_DEPLOY_OBS·L-1/L-2/overseer·01b 1~2주 관측치
+2. C-2 / MDD 5% / B-2 live — **defer, 이번 트랙 대상 아님**
+
+### 디렉터 한 줄
+> 01b OK. 이제 새로 설계할 것 없음 — 서버에서 숫자가 쌓이는지만 1~2주 보면 됨. C-2·MDD5%·live는 그대로 손 안 댐.
+
+---
+
+## Mirror — 2026-08-17 · [CAT-I] · I-GMM-DNA-01b Handoff 발행
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 이번 세션은 구현 검증이 아닌 설계 Handoff 발행 — Cursor 로컬 스냅샷 없음(구현 대기)
+- OUTBOX(POST_DEPLOY_OBS)는 05/00/NEXT_ACTION/NEXT_STEP과 100% 일치 확인
+
+### 추가 제안
+| # | 제안 | Layer | 우선순위 |
+|---|------|-------|----------|
+| 1 | L-1/L-2/ai_overseer 서버 확인은 이 Handoff와 독립 · 병행 | ① 디렉터 | 높음 |
+| 2 | 2주 연속 cos_eff_sample_count=0 + unavailable → 서버 로그 경로 확인 | 🟡 2 | 중간 |
+| 3 | shape_source=neutral_fallback 지속 시 CAT-F live 폴백 Handoff 근거 데이터 | 🟡 2 | 중간 |
+
+### 다음 Handoff 후보 재정렬
+1. **I-GMM-DNA-01b** (본 Handoff) — 구현
+2. (설계 아님) L-1/L-2/overseer 서버 확인 병행
+3. C-2 / MDD 5% / B-2 live — defer
+
+### 디렉터 한 줄
+> OUTBOX 확인 끝. 다음 하나는 gates 안 건드리고 로그·장부만 읽는 주간 리포트. C-2·MDD5%·live는 손 안 댐.
+
+---
+
 ## Mirror — 2026-08-12 · [CAT-I] · I-GMM-DNA-01 GMM→CRYPTO_DNA_ALPHA 배선
 
 ### 로컬 구조 이해
