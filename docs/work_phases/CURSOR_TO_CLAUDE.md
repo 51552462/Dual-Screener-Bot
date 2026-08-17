@@ -3,7 +3,36 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-17 · **Claude VERDICT 랜딩** · 앵커 `SYNC-2026-08-17-O` · 다음=VPS 실측 Ops-lite
+> **갱신**: 2026-08-17 · **S5 push OK · VPS SSH 미달** · 앵커 `SYNC-2026-08-17-P` · HEAD `dc90e39`
+
+---
+
+## OUTBOX — [Ops-lite] S5 VPS 실측 **WAIT_DIRECTOR** · push는 완료 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **git** | 로컬→origin push **OK** · `0efc750` → **`dc90e39`** |
+| **커밋** | `feat(s5-harness): add read-only S5 defense contribution paper gate` |
+| **SSH** | `ubuntu@52.78.29.151` → **Permission denied (publickey)** (이 워크스테이션) |
+| **status** | `WAIT_DIRECTOR` — Cursor가 VPS 실행 불가 · Handoff 패턴대로 미달 보고 |
+| **코드 diff** | 이번 단계 추가 수정 **0** (이미 push된 산출물만) |
+
+### 디렉터 — VPS에서 복붙 (SSH 가능 터미널)
+
+```bash
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot
+sudo ./update_factory.sh
+# 또는 untracked 충돌 시 OPS-01과 동일 정리 후 update_factory
+
+git rev-parse --short HEAD   # 기대: dc90e39
+
+python3 scripts/run_s5_defense_contribution_report.py --start 2026-08-17 --as-of 20260817
+```
+
+산출 경로: `reports/s5_defense/s5_contribution_20260817.json`  
+확인: `short_pnl_column_present` 필드 존재 · Pass/Fail 문구 없음 · n은 그대로 보고.
+
+JSON(또는 `jq '.windows[] | {market,s5_trade_count,realized_pnl_sum,sample_insufficient,short_pnl_column_present,gate_active_minutes}'` 결과)을 채팅/파일로 주시면 Cursor가 OUTBOX 마감.
 
 ---
 

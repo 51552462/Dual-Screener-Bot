@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-O`
+> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-P`
 
 ---
 
@@ -39,23 +39,23 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-17-O` |
-| **마지막 갱신** | 2026-08-17 — S5 로컬 Claude OK · **VPS 실측 Go** 랜딩 |
-| **활성 트랙** | KR/US — **Ops-lite** (Alpha 코드 Done · 창 분리) |
-| **진행 중 sub-phase** | **S5-HARNESS-SCOPE-01** — `WAIT_CURSOR_IMPL` (VPS 실측 · 코드 0줄) |
-| **직전 완료** | S5 페이퍼 게이트 **로컬 구현 Claude OK** (부분 Done) |
-| **Claude OK 완료** | RP-1 · SRV-01 · BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM **1단계** · F-GATE/F-RETIRE · **S5 로컬 페이퍼 게이트** |
-| **구현 완료·배포** | F-GATE/F-RETIRE/BEAR-UD/L-OBS — VPS **`0efc750`** · phase `post_bear_underdog_01` |
-| **다음** | Cursor **Ops 새 창** — VPS CLI 1회 · SSH 불가 시 WAIT_DIRECTOR |
-| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` 최상단 · VPS 실측 Go |
-| **git main** | VPS **`0efc750`** |
+| **앵커 ID** | `SYNC-2026-08-17-P` |
+| **마지막 갱신** | 2026-08-17 — S5 **`dc90e39` push OK** · VPS SSH **미달** → WAIT_DIRECTOR |
+| **활성 트랙** | KR/US — **Ops-lite / 디렉터 VPS** |
+| **진행 중 sub-phase** | **S5-HARNESS-SCOPE-01** — `WAIT_DIRECTOR` (VPS 실측 CLI) |
+| **직전 완료** | 로컬 Claude OK · git push `dc90e39` |
+| **Claude OK 완료** | RP-1 · … · **S5 로컬 페이퍼 게이트** |
+| **구현 완료·배포** | origin **`dc90e39`** · VPS update **미실행**(SSH 불가) |
+| **다음** | 디렉터 VPS: `update_factory` + S5 CLI → JSON 회신 |
+| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` · VPS 실측 Go |
+| **git main** | origin **`dc90e39`** |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
 [종료] OPS-01 — 0efc750 · overall PASS · cursor_action=NONE
-[부분Done] S5 로컬 페이퍼 게이트 — Claude OK
-[지금] S5-HARNESS-SCOPE-01 — VPS 실측 CLI · WAIT_CURSOR_IMPL (Ops-lite)
+[부분Done] S5 로컬 페이퍼 게이트 — Claude OK · origin dc90e39
+[지금] S5 VPS 실측 — WAIT_DIRECTOR (이 PC SSH publickey 거부)
 [기각] 태그 리플레이 · 풀 슬리브
 [후순위] f_gate_01 SKIP(strategy_registry_missing) Ops 메모 · C-1-REDUCED · SIDE 최소보유
 ```
