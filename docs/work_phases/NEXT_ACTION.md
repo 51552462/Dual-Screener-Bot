@@ -3,32 +3,32 @@
 | 필드 | 값 |
 |------|-----|
 | **sub-phase** | **S5-HARNESS-SCOPE-01** (VPS 실측) |
-| **status** | `WAIT_DIRECTOR` — SSH publickey 거부 · VPS는 디렉터 실행 |
-| **git** | origin **`dc90e39`** (push 완료) |
-| **앵커** | `SYNC-2026-08-17-P` |
+| **status** | `WAIT_CLAUDE_OK` |
+| **git / VPS** | origin·VPS **`600c9cd`** |
+| **앵커** | `SYNC-2026-08-17-Q` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. **VPS SSH**(이 Cursor PC 키 아님)로 접속.
-2. `update_factory` → HEAD=`dc90e39` 확인.
-3. 아래 CLI 1회 실행 후 JSON 요약 회신.
+1. Claude에 `docs/work_phases/CURSOR_TO_CLAUDE.md` 최상단 OUTBOX 검증 요청.
+2. VPS 실측 요약: KR/US n=0 · `short_pnl_column_present=false` · 게이트 활성분 0 (Pass/Fail 아님).
+3. OPS cron·phase `post_bear_underdog_01` 유지.
 
-```bash
-cd /home/ubuntu/dante_bots/Dual-Screener-Bot
-sudo ./update_factory.sh
-git rev-parse --short HEAD
-python3 scripts/run_s5_defense_contribution_report.py --start 2026-08-17 --as-of 20260817
 ```
-
-산출: `reports/s5_defense/s5_contribution_20260817.json`
+docs/work_phases/CURSOR_TO_CLAUDE.md 검증. OK면 CLAUDE_TO_CURSOR.md에 다음 Handoff. 채팅 말고 파일에.
+```
 
 ---
 
-## §OPS-01 — Done
+## S5 실측 스냅샷
 
-- `0efc750` 관측 PASS 유지 · 이제 목표 HEAD **`dc90e39`**
+| market | n | gate_min | short_pnl |
+|--------|---|----------|-----------|
+| KR | 0 | 0 | false |
+| US | 0 | 0 | false |
+
+경로: VPS `reports/s5_defense/s5_contribution_20260817.json`
 
 ---
 

@@ -1,0 +1,53 @@
+{
+  "sub_phase": "S5-HARNESS-SCOPE-01",
+  "kind": "s5_defense_contribution_log",
+  "read_only": true,
+  "start_ts": "2026-08-17T00:00:00+00:00",
+  "end_ts": "2026-08-17T23:59:59+00:00",
+  "markets": [
+    "KR",
+    "US"
+  ],
+  "gate_regimes": [
+    "BEAR",
+    "HIGH_VOL"
+  ],
+  "sample_min_n": 20,
+  "windows": [
+    {
+      "market": "KR",
+      "start_ts": "2026-08-17T00:00:00+00:00",
+      "end_ts": "2026-08-17T23:59:59+00:00",
+      "gate_active_minutes": 0.0,
+      "gate_minutes_source": "meta_state_log",
+      "s5_trade_count": 0,
+      "realized_pnl_sum": 0,
+      "pnl_unit": "final_ret_pct",
+      "short_pnl_column_present": false,
+      "contributed": false,
+      "sample_insufficient": true,
+      "notes": [
+        "표본 부족",
+        "short_forward_trades PnL 컬럼 없음 - 실현손익은 forward_trades.final_ret만"
+      ]
+    },
+    {
+      "market": "US",
+      "start_ts": "2026-08-17T00:00:00+00:00",
+      "end_ts": "2026-08-17T23:59:59+00:00",
+      "gate_active_minutes": 0.0,
+      "gate_minutes_source": "meta_state_log",
+      "s5_trade_count": 0,
+      "realized_pnl_sum": 0,
+      "pnl_unit": "final_ret_pct",
+      "short_pnl_column_present": false,
+      "contributed": false,
+      "sample_insufficient": true,
+      "notes": [
+        "표본 부족",
+        "short_forward_trades PnL 컬럼 없음 - 실현손익은 forward_trades.final_ret만"
+      ]
+    }
+  ],
+  "numeric_judgment_omitted": true
+}

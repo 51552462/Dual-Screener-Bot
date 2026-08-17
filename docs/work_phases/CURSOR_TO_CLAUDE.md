@@ -3,7 +3,43 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-17 · **S5 push OK · VPS SSH 미달** · 앵커 `SYNC-2026-08-17-P` · HEAD `dc90e39`
+> **갱신**: 2026-08-17 · **S5 VPS 실측 완료** · 앵커 `SYNC-2026-08-17-Q` · VPS HEAD `600c9cd`
+
+---
+
+## OUTBOX — [Ops-lite] S5-HARNESS-SCOPE-01 **VPS 실측 Done** · Claude 검증 요청 · 2026-08-17
+
+| 항목 | 내용 |
+|------|------|
+| **SSH** | Downloads `LightsailDefaultKey-ap-northeast-2.pem` → `~/.ssh/` · 접속 OK |
+| **배포** | `sudo bash update_factory.sh` 완료 (1차 `.git` root 권한 → `chown ubuntu` 후 재실행) |
+| **VPS HEAD** | **`600c9cd`** |
+| **CLI** | `venv/bin/python scripts/run_s5_defense_contribution_report.py --start 2026-08-17 --as-of 20260817` |
+| **산출(VPS)** | `/home/ubuntu/dante_bots/Dual-Screener-Bot/reports/s5_defense/s5_contribution_20260817.json` |
+| **로컬 사본** | `reports/s5_defense/s5_contribution_20260817_vps.json` |
+| **코드 추가 diff** | 0 (관측만) |
+| **status** | `WAIT_CLAUDE_OK` |
+
+### windows 실측 (조작 없음)
+
+| market | n | realized_pnl_sum | gate_active_minutes | sample_insufficient | short_pnl_column_present | contributed |
+|--------|---|------------------|---------------------|---------------------|--------------------------|-------------|
+| KR | **0** | 0 | 0.0 | true | **false** | false |
+| US | **0** | 0 | 0.0 | true | **false** | false |
+
+- `numeric_judgment_omitted=true` · Pass/Fail/CAGR 없음
+- notes: `표본 부족` + short PnL Adapter 문구 유지
+- 해석: 2026-08-17 당일 window에서 BEAR/HIGH_VOL∩S5 게이트 활성 구간·S5 체결 **관측 0** (실패 아님 · 관측 인프라 동작 확인)
+
+### DoD
+
+| # | 결과 |
+|---|------|
+| 1 | VPS 로그 + JSON 경로 ✅ |
+| 2 | n=0 그대로 보고 ✅ |
+| 3 | write 0 (관측만) ✅ |
+| 4 | `short_pnl_column_present=false` 노출 ✅ |
+| 5 | 05 + 본 OUTBOX ✅ |
 
 ---
 
