@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-18 · **앵커 ID**: `SYNC-2026-08-18-D`
+> **갱신**: 2026-08-18 · **앵커 ID**: `SYNC-2026-08-18-F`
 
 ---
 
@@ -39,26 +39,26 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-18-D` |
-| **마지막 갱신** | 2026-08-18 — **NS-DIR-DASH-01** 쉬운판 텔레그램 대시보드 · Claude OK 대기 |
+| **앵커 ID** | `SYNC-2026-08-18-F` |
+| **마지막 갱신** | 2026-08-18 — OPS-OPEN-STALL-01 Handoff · NS-DIR-DASH **Claude OK** |
 | **활성 트랙** | KR/US — **OBS-HOLD** |
-| **진행 중 sub-phase** | **NS-DIR-DASH-01** — `WAIT_CLAUDE_OK` (Ops-lite · 코드 텔레그램 포맷만) |
-| **직전 완료** | ROADMAP-SYNC-01 **Claude OK** |
-| **Claude OK 완료** | … · **NS-OBS-TG-01** · **ROADMAP-SYNC-01** |
-| **구현 완료·배포** | NS-DIR-DASH: `dual_north_star_telegram` · **VPS pull 잔여** |
-| **다음** | Claude OK · VPS pull · 19:30 `[쉬운판]` 확인 · n≥20 전 Alpha 금지 |
-| **Handoff SSOT** | `CURSOR_TO_CLAUDE.md` 최상단 · NS-DIR-DASH-01 |
+| **진행 중 sub-phase** | **OPS-OPEN-STALL-01** — read-only 진단 스크립트 · `WAIT_CURSOR_IMPL` |
+| **직전 완료** | NS-DIR-DASH-01 **Claude OK** · 인프라 캔들 RED 일시 복구 |
+| **Claude OK 완료** | … · ROADMAP-SYNC-01 · **NS-DIR-DASH-01** |
+| **구현 완료·배포** | 진단 스크립트 로컬 추가 → **VPS pull 후 실행** |
+| **다음** | VPS에서 진단 실행 · Step 0+ OUTBOX · (a)(b)(c) 분류 · Claude 검증 |
+| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` 최상단 · OPS-OPEN-STALL-01 |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` (로컬 금지) |
 | **git main** | origin **`7814693`** (+ 본 세션 미푸시) / VPS pull 잔여 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[CLOSED] ROADMAP-SYNC · NS-OBS · FWD-OBS-HOLD — Claude OK
-[지금] NS-DIR-DASH-01 — 쉬운판 일보 · WAIT_CLAUDE_OK
+[CLOSED] ROADMAP-SYNC · NS-OBS · NS-DIR-DASH — Claude OK
+[지금] OPS-OPEN-STALL-01 — drop_event 진단 (코드≈스크립트만 · 정책 0)
+[후순위] L-DATA-ALARM-01 (CAT-L) — 인프라 RED 알람 · 미착수
 [관측] OBS-HOLD · n≥20 재소집
-[Ops] VPS pull · 19:30 [쉬운판]+[OBS_HOLD]
-[금지] mega_trend · 목표하향 · 소진레버
+[금지] cutoff 완화 · config_kv · mega_trend · 소진레버
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

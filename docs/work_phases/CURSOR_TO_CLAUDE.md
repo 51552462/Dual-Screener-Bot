@@ -3,7 +3,120 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-18 · **NS-DIR-DASH-01 Done** · 앵커 `SYNC-2026-08-18-D`
+> **갱신**: 2026-08-18 · **OPS-OPEN-STALL-01** 진단 스크립트 · 앵커 `SYNC-2026-08-18-F`
+
+---
+
+## OUTBOX — [CAT-C] OPS-OPEN-STALL-01 **스크립트 Done · VPS 실행 대기** · 2026-08-18
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | OPS-OPEN-STALL-01 |
+| **status** | 로컬 스크립트 추가 · **VPS 실행·분류 (a)(b)(c) 잔여** · `WAIT_CLAUDE_OK` (실행 로그 후) |
+| **앵커** | `SYNC-2026-08-18-F` |
+| **코드** | `scripts/ops_open_stall_01_diagnosis.py` only |
+| **비접촉** | schema · config_kv · cutoff · Critical |
+| **NS-DIR-DASH** | **Claude OK 2026-08-18** · VPS pull·19:30 잔여 |
+
+### DoD (Handoff)
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | Step 0~3 SELECT 스크립트 | ✅ 로컬 추가 |
+| 2 | schema ALTER 0 | ✅ |
+| 3 | Step 0+ 실행 로그 OUTBOX | ⏳ **VPS만** (로컬 DB에 `scan_funnel_drop_event` 테이블 없음 → exit 2 예상) |
+| 4 | (a)(b)(c) 분류 | ⏳ VPS 후 |
+
+### VPS 실행
+
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+set -a && source .env && set +a
+python3 scripts/ops_open_stall_01_diagnosis.py
+```
+
+로그 전체를 본 OUTBOX 아래에 append → Claude 검증.
+
+### 디렉터 3줄
+
+1. Handoff 반영 · 진단 스크립트만 추가 (정책 0).
+2. **VPS에서 Step 0부터 실행** — 0행이면 결선 먼저.
+3. NS-DIR-DASH Claude OK · pull·19:30만 잔여.
+
+---
+
+## OUTBOX — [Audit] OPS-OPEN-STALL-01 · survivors≈0 → OPEN 0 · **Handoff 요청** · 2026-08-18
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **OPS-OPEN-STALL-01** (가칭 · Claude가 ID 확정) |
+| **status** | `WAIT_CLAUDE_HANDOFF` · 운영 `OBS-HOLD` 유지 · **코드 구현 금지(Cursor)** |
+| **앵커** | `SYNC-2026-08-18-E` |
+| **프로젝트** | KR/US Dual-Screener Claude Pro (**Bitget 아님**) |
+| **@멘션** | `@CAT-C` `@CAT-MAP` `@CAT-HANDOFF` · (원장 문맥) `@CAT-D` · (알람 분리 시) `@CAT-L` |
+| **선행 병렬** | NS-DIR-DASH-01 여전히 `WAIT_CLAUDE_OK` — **본 OUTBOX가 포커스**. 쉬운판 OK는 이어서/별도 |
+
+### 한 줄 결론
+
+- **인프라 RED(캔들)** = `factory.sh --data-refresh` 로 **해소** (일시 복구).
+- **본체** = 스캔 `survivors≈0` → LIVE `OPEN=0` → 청산·리포 진입/청산 기록 없음.
+- `update_factory` / refresh **반복만으로는 영구 해결 안 됨** → **영구 Handoff 1개** 요청.
+
+### VPS 실측 (2026-08-18 · `/var/lib/quant-factory/data/market_data.sqlite`)
+
+| 단계 | 결과 |
+|------|------|
+| 배포 직후 health | KR **RED** (캔들 08-14 · lag 2) · US YELLOW → `post_update_data_health` FAIL |
+| `--data-refresh` | OK · KR 2368 / US 6335 · exit=0 |
+| 벤치마크 | `KR_KOSPI_IDX=2026-08-18` · `US_SPY=2026-08-17` |
+| 종목 샘플 | `KR_005930` 최신 **08-18** · Close/Volume 정상 → **종목 OHLCV 정체 아님** |
+| health 재검사 | KR/US **YELLOW** · `OK data path + candle freshness` |
+| exit 워터마크 | KR **08-05** (lag 9) · US **07-31** (lag 11) — 청산 공백만 |
+| `forward_trades` | KR: CLOSED_LOSS 171 · CLOSED_WIN 11 · **OPEN 0** / US: CLOSED_LOSS 111 · CLOSED_WIN 23 · **OPEN_SHADOW 8** · **LIVE OPEN 0** |
+| `scan_funnel_snapshot` | 최근 KR/US 슬롯 **survivors=0** · 예외: `2026-08-17 14:15` KR survivors=**5** (pass≈0.20%) |
+
+### 배제 (이전 VPS·코드 대조 · 8/16~)
+
+| 가설 | 판정 |
+|------|------|
+| LOCKDOWN / GLOBAL_CIRCUIT | **아님** (당시 band=DEFENSE·block=False) |
+| 종목 DB 동결 → LIQUIDITY | **기각** (005930 신선) |
+| 인버스가 롱 전면차단 | **아님** (스나이퍼 내부 메시지 · LIVE OPEN 0) |
+| 리포트 버그로 기록 누락 | **아님** — 원장에 OPEN/CLOSED 신규가 없음 |
+| 스캔 텔레그램 = 진입 | **오해** — 알림과 `try_add`/survivors는 별 층 |
+
+### Claude에게 요청
+
+1. **OBS-HOLD / Alpha 금지**와 본 건 충돌 여부 (관측만 vs 퍼널 영구 패치 Go).
+2. **영구 sub-phase 1개** Handoff → `CLAUDE_TO_CURSOR.md` (`CAT-HANDOFF` 형식). 범위 예:
+   - 퍼널 탈락 사유 SSOT 확정 (LIQUIDITY vs DNA/컷오프 vs try_add 거부)
+   - 재발 방지 (관측 알람 / 임계 완화 / 진단 스크립트 — **택1·최소 diff**)
+   - Critical(F/G/MDD)·config_kv 라이브 금지 여부 명시
+3. **인프라 RED 재발 알람**(`data_refresh` 실패·캔들 lag)은 **별 트랙(CAT-L)** 로 둘지, 같은 Handoff에 넣을지 **분리 권고**.
+4. NS-DIR-DASH-01: 본 건과 무관 — OK만 남았으면 한 줄로 닫아도 됨.
+
+### 디렉터 → Claude 복붙 (최소)
+
+```text
+역할: Claude Pro Architect. 구현 코드 작성 금지.
+
+먼저 읽기:
+1) docs/work_phases/00_SESSION_SYNC.md §3 (앵커 SYNC-2026-08-18-E)
+2) docs/work_phases/NEXT_ACTION.md
+3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 OUTBOX (OPS-OPEN-STALL-01)
+
+@CAT-C @CAT-MAP @CAT-HANDOFF_템플릿
+(필요 시 @CAT-D · 알람 분리면 @CAT-L)
+
+요청: 최상단 OUTBOX 실측 기준으로 survivors≈0→OPEN 0 영구 Handoff 1개.
+채팅 말고 CLAUDE_TO_CURSOR.md에 써 줘.
+```
+
+### 디렉터 3줄
+
+1. 시세 RED는 refresh로 끊김 · **본체는 퍼널 survivors≈0**.
+2. Claude: 본 OUTBOX → **Handoff 1개** (영구).
+3. Cursor는 Handoff 오기 전 **구현 금지**.
 
 ---
 

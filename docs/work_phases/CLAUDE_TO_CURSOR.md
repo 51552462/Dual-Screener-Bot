@@ -3,8 +3,72 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만**  
-> **현재**: **ROADMAP-SYNC-01 Claude OK** · OBS-HOLD · 신규 Handoff 없음 · 앵커 `SYNC-2026-08-18-C`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-18)  
+> **현재**: **OPS-OPEN-STALL-01** `WAIT_CURSOR_IMPL` · NS-DIR-DASH-01 **Claude OK** · 앵커 `SYNC-2026-08-18-F`
+
+---
+
+## Claude VERDICT — NS-DIR-DASH-01 DoD 5/5 Claude OK (2026-08-18)
+
+**VERDICT: OK.** DoD 5/5 · 테스트 14 passed · Critical·config_kv·신규 cron·mega_trend·CAGR 확정 로직 비접촉.  
+추가 코드 확인 불필요. **디렉터 잔여**: VPS pull · 19:30 `[쉬운판]` 육안.
+
+---
+
+## [CAT-C] OPS-OPEN-STALL-01 — survivors≈0 원인 진단 (read-only)
+
+### SSOT (변경 금지 unless noted)
+
+- 파일: `scan_funnel_drop_event`, `scan_funnel_snapshot` (둘 다 C-FUNNEL-02, 2026-08-09 배포 완료 — 스키마 재사용, 신규 컬럼/ALTER 금지)
+- config: 없음 (읽기전용)
+
+### 변경 Spec
+
+- 함수/정책: 신규 read-only 스크립트 `scripts/ops_open_stall_01_diagnosis.py` (이름은 Cursor 자율)
+- **Step 0 (선행 확인)**: `scan_funnel_drop_event`가 실제로 적재됐는지 먼저 확인
+
+```sql
+  SELECT market, COUNT(*), MIN(ts), MAX(ts),
+         COUNT(DISTINCT substr(ts,1,10)) AS days
+  FROM scan_funnel_drop_event GROUP BY market;
+```
+
+  0행이면 C-FUNNEL-02 결선 재점검(별도 보고, 본 Handoff 범위 밖) — 진행 전 반드시 이 결과부터 첨부.
+
+- **Step 1**: 최근 stall 윈도우(survivors≈0 시작 시점 ~ 오늘)를 `market, reason` GROUP BY COUNT(*) — LIQUIDITY vs DNA_FAIL vs 기타 사유 비중
+- **Step 2**: 사유별 near-miss 상위 5건(`|score-cutoff|` 최소) + 해당 시점 `eff_cos_cutoff`/`eff_ml_cutoff` 스냅샷 값 — cutoff가 DEFENSE band에서 비정상적으로 타이트한지 판별
+- **Step 3**: 예외 슬롯(2026-08-17 14:15 KR survivors=5)의 drop_event 분포를 같은 쿼리로 대조 — "가끔 통과"와 "상시 차단"의 차이 확인
+- KR/US: 공통 (market 컬럼 분리 출력)
+
+### Config 변경 (있으면)
+
+없음 — cutoff/threshold/config_kv 비접촉.
+
+### 인접 CAT 영향
+
+- CAT-D: 없음 (원장 비접촉)
+- CAT-F/G (Critical): 없음 — Kelly·notional·국면 판정 로직 비접촉, config_kv 라이브 변경 **금지**
+- CAT-L: 없음 (인프라 RED 알람은 별도 트랙, 본 Handoff 범위 밖)
+
+### 롤백 조건
+
+- 해당 없음 (신규 코드 없음, 스크립트 삭제로 완전 롤백)
+
+### Cursor 지시
+
+- Targeted diff only. `scan_funnel_drop_event`/`scan_funnel_snapshot` 스키마 변경 금지.
+- 결과를 `CURSOR_TO_CLAUDE.md`에 표로 append하고 3가지 중 하나로 분류해 보고:
+  - **(a)** LIQUIDITY 압도적 → 유동성 데이터 정체 재의심(CAT-B)
+  - **(b)** DNA_FAIL/cutoff 근접 다수 → DEFENSE band cutoff 과타이트 (정책은 Claude가 후속 결정, 지금은 진단만)
+  - **(c)** 절대 카운트 자체가 비정상적으로 적음 → 유니버스 상류(CAT-B) 재조사
+- 테스트 불필요(순수 SELECT) — 실행 로그 원문 첨부.
+
+### 위험도
+
+🟢 Low — read-only, 정책/config/Critical 비접촉. OBS-HOLD 유지 상태에서 실행 가능.
+
+**ID**: OPS-OPEN-STALL-01 · CAT-C  
+**인프라 RED 알람**: 분리 — 가칭 `L-DATA-ALARM-01` (CAT-L) 후순위.
 
 ---
 
