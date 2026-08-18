@@ -2,34 +2,39 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **OPS-OPEN-STALL-01** (survivors≈0 진단 · read-only) |
-| **status** | 스크립트 Done · **VPS 실행 후** `WAIT_CLAUDE_OK` · `OBS-HOLD` · Alpha **금지** |
-| **직전** | Claude Handoff 랜딩 · NS-DIR-DASH-01 **Claude OK** |
-| **앵커** | `SYNC-2026-08-18-F` |
+| **sub-phase** | **OPS-LIQUIDITY-STALL-01** (CAT-B · LIQUIDITY 4분류) |
+| **status** | 스크립트 Done · **VPS 실행 후** `WAIT_CLAUDE_OK` · OBS-HOLD · Alpha/cutoff **금지** |
+| **직전** | OPS-OPEN-STALL-01 **Claude OK** · CLASS (a) |
+| **앵커** | `SYNC-2026-08-19-A` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. **Cursor** — `scripts/ops_open_stall_01_diagnosis.py` VPS에서 실행 · Step 0부터 OUTBOX 보고.
-2. **Ops (잔여)** — NS-DIR-DASH: VPS `git pull` · 19:30 `[쉬운판]` 육안.
-3. **관측유지** — mega_trend · 목표하향 · 소진 레버 · cutoff 완화 **금지**.
-
-### 재소집 트리거 (고정)
-
-| 항목 | 값 |
-|------|-----|
-| **트리거** | VPS daily **n≥20** → 갈림길 재소집 |
-| **텔레그램** | 19:30 · `[쉬운판]` + `[OBS_HOLD]` + 복붙 |
-| **금지** | n&lt;20 페이스·CAGR 확정 · 로컬 원장 근거 |
+1. **VPS** — pull 후 `python3 scripts/ops_liquidity_stall_01_diagnosis.py` 실행 · 로그를 Cursor/OUTBOX에.
+2. **금지** — LIQUIDITY 임계 완화 · config_kv · cutoff (결과가 (c)/(d)여도 즉시 완화 금지).
+3. **잔여** — NS-DIR-DASH 19:30 육안 · `L-DATA-ALARM-01`은 백로그만.
 
 ### VPS 실행 (복붙)
 
 ```bash
 cd ~/dante_bots/Dual-Screener-Bot
+git pull
 set -a && source .env && set +a
-# 패치 pull 후:
-python3 scripts/ops_open_stall_01_diagnosis.py
+python3 scripts/ops_liquidity_stall_01_diagnosis.py
+```
+
+### Claude 창 부팅 (실행 로그 후)
+
+```text
+역할: Claude Pro Architect. 구현 코드 작성 금지.
+
+먼저 읽기:
+1) docs/work_phases/00_SESSION_SYNC.md §3 (SYNC-2026-08-19-A)
+2) docs/work_phases/NEXT_ACTION.md
+3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 (OPS-LIQUIDITY-STALL-01)
+
+검증: (a)(b)(c)(d) 표 · VERDICT · 임계 변경 없음 확인.
 ```
 
 ---

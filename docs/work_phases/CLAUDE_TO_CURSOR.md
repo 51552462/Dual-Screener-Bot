@@ -3,8 +3,67 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-18)  
-> **현재**: **OPS-OPEN-STALL-01** `WAIT_CURSOR_IMPL` · NS-DIR-DASH-01 **Claude OK** · 앵커 `SYNC-2026-08-18-F`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-19)  
+> **현재**: **OPS-LIQUIDITY-STALL-01** `WAIT_CURSOR_IMPL` · OPS-OPEN-STALL-01 **Claude OK** · 앵커 `SYNC-2026-08-19-A`
+
+---
+
+## Claude VERDICT — OPS-OPEN-STALL-01 진단 OUTBOX Claude OK (2026-08-19)
+
+**VERDICT: OK.** Step 0~2 삼각확인 (LIQUIDITY 100% · DNA_FAIL 0 · scored near-miss 0).  
+CLASS **(a)** 채택 · cutoff 가설 이 stall 윈도우에서 **종결**.  
+Step 3 계측 공백 = 참고만 · `L-DATA-ALARM-01` 백로그 한 줄 (신규 sub 개설 X).
+
+---
+
+## [CAT-B] OPS-LIQUIDITY-STALL-01 — LIQUIDITY 100% 집중의 원인 분류 (read-only)
+
+### SSOT (변경 금지 unless noted)
+
+- 파일(읽기만): `scanner_funnel.py`(LIQUIDITY 판정 위치), `market_data_fetcher.py` / `data_updater.py`(OHLCV 소스), `scan_funnel_drop_event`(C-FUNNEL-02 테이블)
+- config: 리퀴디티 임계 관련 key 전부 — **읽기만, 값 변경 금지**
+
+### 변경 Spec
+
+- 함수/정책: 신규 진단 스크립트 1개 (`scripts/ops_liquidity_stall_01_diagnosis.py`, 이름은 Cursor 재량) — **정책 코드 미수정, 순수 조사**
+- 절차:
+  1. stall 윈도우(KR/US 각각 `since ≈ 2026-08-17 15:10`, OUTBOX 기준 그대로) `scan_funnel_drop_event` reason=LIQUIDITY 행에서 슬롯당 상위 N=20 종목코드 표본 추출 (cap 없으면 전체 중 앞 N)
+  2. 표본 종목 각각 `market_data_fetcher.fetch_market_data`로 해당일 Close/Volume(또는 5일 평균 거래대금) 실측 join
+  3. 코드 기준 임계(KR Close&lt;1000 · US Close&lt;0.5 · 5일 평균 거래대금 floor, ~US $300k 환산)와 대조해 4분류:
+     - **(a)** 실가격 컷 정상 발화
+     - **(b)** 실거래대금 컷 정상 발화
+     - **(c)** Volume 필드 결측/0/이상치 — 데이터 파이프라인 의심
+     - **(d)** 임계 계산식 자체 오류 의심 (코드가 threshold를 잘못 적용)
+  4. (c)+(d) 비중이 표본의 **30% 이상**이면 데이터/코드 결함 가설로 보고, 미만이면 "게이트 정상 작동 + 해당 구간 저유동성 종목 집중"으로 결론
+- KR/US: 공통 절차, 마켓별 threshold 상수는 CAT-C 기존 값 그대로 분기 (수정 없음)
+
+### Config 변경 (있으면)
+
+없음 — 이번 sub-phase는 조사 전용, config_kv 쓰기 0건
+
+### 인접 CAT 영향
+
+- CAT-C: 읽기만 (funnel LIQUIDITY 판정 로직 참조, 코드 미수정)
+- CAT-B(OHLCV): 읽기만 (fetch_market_data 재사용, schema 미접촉 → Critical 승인 불요)
+- CAT-D: 없음 (try_add 미접촉)
+
+### 롤백 조건
+
+- 해당 없음 — read-only 진단, 운영 동작 변경 없음. 스크립트 파일 자체 revert만으로 충분
+
+### Cursor 지시
+
+- Targeted diff only — 신규 진단 스크립트 파일 1개 추가. 기존 `scanner_funnel.py`/`market_data_fetcher.py` **미수정**
+- cutoff/config_kv/threshold 값 변경 **절대 금지** (이번 결과가 (c)/(d)로 나와도 즉시 완화 금지 — 별도 Handoff 필요)
+- Step 3 계측 공백(drop_event vs snapshot survivors 불일치)은 이 sub-phase 범위 밖 — 발견 시 결과표에 한 줄만 병기, `L-DATA-ALARM-01`로 분리
+- 결과는 `CURSOR_TO_CLAUDE.md` OUTBOX에 (a)/(b)/(c)/(d) 표로 append → Claude 재검증
+- 테스트: 신규 정책 로직 없음 — 실행 로그 + 표본 대조표로 충분 (unit test 불요)
+
+### 위험도
+
+- 🟡 Medium (CAT-B read-only, schema 비접촉 → Critical 아님, Claude↔Cursor 교차검증만)
+
+**백로그 메모**: OPS-OPEN-STALL Step3 계측 공백 → `L-DATA-ALARM-01` (신규 sub 개설 X).
 
 ---
 

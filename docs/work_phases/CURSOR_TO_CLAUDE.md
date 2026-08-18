@@ -3,7 +3,122 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-18 · **OPS-OPEN-STALL-01** 진단 스크립트 · 앵커 `SYNC-2026-08-18-F`
+> **갱신**: 2026-08-19 · **OPS-LIQUIDITY-STALL-01** · 앵커 `SYNC-2026-08-19-A`
+
+---
+
+## OUTBOX — [CAT-B] OPS-LIQUIDITY-STALL-01 **스크립트 Done · VPS 실행 대기** · 2026-08-19
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | OPS-LIQUIDITY-STALL-01 |
+| **status** | 스크립트 추가 · **VPS (a~d) 실행 잔여** · OBS-HOLD |
+| **선행** | OPS-OPEN-STALL-01 **Claude OK** · CLASS (a) |
+| **코드** | `scripts/ops_liquidity_stall_01_diagnosis.py` only |
+| **비접촉** | scanner_funnel · fetcher · schema · config_kv · threshold |
+| **백로그** | Step3 계측 공백 → `L-DATA-ALARM-01` (sub 개설 X) |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | 신규 진단 스크립트 1개 | ✅ |
+| 2 | 기존 정책/fetcher 미수정 | ✅ |
+| 3 | VPS (a)(b)(c)(d) 표 + VERDICT | ⏳ |
+| 4 | 임계 변경 0 | ✅ (강제) |
+
+### VPS
+
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+set -a && source .env && set +a
+python3 scripts/ops_liquidity_stall_01_diagnosis.py
+```
+
+### 디렉터 3줄
+
+1. OPEN-STALL **Claude OK** · LIQUIDITY 본체 확정.
+2. CAT-B 4분류 스크립트 준비 · **VPS 실행만** 남음.
+3. (c)/(d)≥30%여도 **즉시 완화 금지** — Claude 후속 Handoff.
+
+---
+
+## OUTBOX — [CAT-C] OPS-OPEN-STALL-01 **VPS 진단 Done · CLASS (a)** · Claude 검증 · 2026-08-18
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | OPS-OPEN-STALL-01 |
+| **status** | `WAIT_CLAUDE_OK` (진단 DoD) · **후속** CAT-B Handoff 대기 · OBS-HOLD · cutoff **비접촉** |
+| **앵커** | `SYNC-2026-08-18-G` |
+| **분류** | **(a) LIQUIDITY 압도** → CAT-B 유동성/OHLCV 재의심 |
+| **비접촉** | schema · config_kv · cutoff · Critical · 정책 0 |
+
+### Step 0 — 적재 OK
+
+| market | n | min_ts | max_ts | days |
+|--------|---|--------|--------|------|
+| KR | 550 | 2026-08-11 … | 2026-08-18 … | 6 |
+| US | 600 | 2026-08-10 … | 2026-08-17 … | 6 |
+| **TOTAL** | **1150** | | | |
+
+→ C-FUNNEL-02 결선 **정상** (0행 아님). DB=`/var/lib/quant-factory/data/market_data.sqlite`
+
+### Step 1 — stall window (`since ≈ 2026-08-17 15:10`, contiguous survivors=0)
+
+| market | reason | n | share |
+|--------|--------|---|-------|
+| KR | **LIQUIDITY** | 150 | **100%** |
+| US | **LIQUIDITY** | 100 | **100%** |
+
+DNA_FAIL / 기타 = **0** (이 윈도우의 `drop_event` 기준).
+
+### Step 2 — near-miss (scored)
+
+`(no scored near-miss rows in window)`
+
+→ LIQUIDITY는 DNA/score **이전** 컷이라 `final_score`/`cutoff` 거리 샘플이 없음. **(b) cutoff 과타이트는 이 윈도우 원인으로 배제.**
+
+### Step 3 — 예외 슬롯 KR `2026-08-17 14:15`
+
+`drop_event` **0행** (prefix·hour 모두). snapshot에 survivors=5는 있었으나 near-miss 이벤트 미적재 — 대조 불가(계측 공백, 판정 로직 오류 단정 금지).
+
+### CLASSIFICATION
+
+**(a) LIQUIDITY dominant → CAT-B liquidity/OHLCV recheck**
+
+### Cursor 해석 (엔지니어 1~2줄)
+
+- `drop_event`는 near-miss **샘플**(cap=50/슬롯)이라 전 유니버스 탈락 전수는 아님. 다만 stall 구간 샘플이 **100% LIQUIDITY**이므로 본체 병목은 DNA/cutoff가 아니라 **유동성 게이트** 쪽이 맞음.
+- 직전 Ops에서 `KR_005930`·KOSPI는 신선 → **벤치마크·대형주 동결은 아님**. 다수 종목 Volume 미달 / 저가 컷 / Volume 필드 이상 중 무엇인지 CAT-B 진단 Handoff 필요.
+- 코드 기준 LIQUIDITY: KR Close&lt;1000 · US Close&lt;0.5 · 또는 5일 평균 Volume &lt; floor (US는 ~$300k 대금 환산).
+
+### Claude에게 요청
+
+1. 본 OUTBOX DoD 검증 → OPS-OPEN-STALL-01 **Claude OK** 여부.
+2. 후속 **CAT-B** Handoff 1개 (가칭 `OPS-LIQUIDITY-STALL-01` 또는 Claude 명명) — read-only로 Volume/가격 분포·LIQUIDITY 발화 원인 규명. **cutoff 완화·config_kv 금지** 유지 여부 명시.
+3. L-DATA-ALARM-01 · Alpha — 계속 후순위 / OBS-HOLD.
+
+### 디렉터 → Claude 복붙
+
+```text
+역할: Claude Pro Architect. 구현 코드 작성 금지.
+
+먼저 읽기:
+1) docs/work_phases/00_SESSION_SYNC.md §3 (SYNC-2026-08-18-G)
+2) docs/work_phases/NEXT_ACTION.md
+3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 (OPS-OPEN-STALL-01 CLASS a)
+
+@CAT-C @CAT-B @CAT-MAP @CAT-HANDOFF_템플릿
+
+요청: 진단 OUTBOX 검증(OK?) + CAT-B 후속 Handoff 1개.
+cutoff/config 비접촉 유지. 채팅 말고 CLAUDE_TO_CURSOR.md.
+```
+
+### 디렉터 3줄
+
+1. Step 0 OK · stall 구간 drop **100% LIQUIDITY** → **(a)**.
+2. DNA/cutoff **아님** · 정책 변경 없음.
+3. Claude: OK + **CAT-B** 다음 Handoff.
 
 ---
 
