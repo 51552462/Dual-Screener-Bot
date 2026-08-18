@@ -235,6 +235,125 @@ def _count_forward_trades(track_id: str) -> int:
         return 0
 
 
+def _forward_book_counts_a() -> Dict[str, Any]:
+    """Track A forward_trades OPEN/CLOSED counts (read-only). OPEN=0 alone is not a fault."""
+    import sqlite3
+
+    empty: Dict[str, Any] = {
+        "open_total": 0,
+        "closed_total": 0,
+        "open_by_market": {},
+        "closed_by_market": {},
+        "ok": False,
+        "error": None,
+    }
+    try:
+        from factory_data_paths import market_data_db_path
+
+        db = market_data_db_path()
+        if not os.path.isfile(db):
+            empty["error"] = "db_missing"
+            return empty
+        conn = sqlite3.connect(db, timeout=5.0)
+        try:
+            rows = conn.execute(
+                "SELECT UPPER(TRIM(COALESCE(market,''))), "
+                "UPPER(TRIM(COALESCE(status,''))), COUNT(*) "
+                "FROM forward_trades "
+                "GROUP BY 1, 2"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        empty["error"] = str(exc)[:120]
+        return empty
+
+    open_by: Dict[str, int] = {}
+    closed_by: Dict[str, int] = {}
+    open_n = 0
+    closed_n = 0
+    for mkt, status, cnt in rows or []:
+        n = int(cnt or 0)
+        m = str(mkt or "") or "?"
+        st = str(status or "")
+        if st in ("OPEN", "ACTIVE"):
+            open_n += n
+            open_by[m] = open_by.get(m, 0) + n
+        elif st == "CLOSED":
+            closed_n += n
+            closed_by[m] = closed_by.get(m, 0) + n
+    return {
+        "open_total": open_n,
+        "closed_total": closed_n,
+        "open_by_market": open_by,
+        "closed_by_market": closed_by,
+        "ok": closed_n > 0,
+        "error": None,
+    }
+
+
+_DEPLOY_WATCH_STALE_HOURS = 36.0
+
+
+def read_deploy_watch_health() -> Dict[str, Any]:
+    """Best-effort read of deploy_watch_latest.json. Never invent PASS."""
+    out: Dict[str, Any] = {
+        "available": False,
+        "overall": None,
+        "phase": None,
+        "age_hours": None,
+        "stale": False,
+        "path": None,
+        "error": None,
+    }
+    try:
+        from deploy_watch import deploy_watch_latest_path
+
+        path = deploy_watch_latest_path()
+    except Exception:
+        path = os.path.join(factory_data_dir(), "deploy_watch_latest.json")
+    out["path"] = path
+    if not os.path.isfile(path):
+        out["error"] = "missing"
+        return out
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        if not isinstance(report, dict):
+            out["error"] = "bad_json"
+            return out
+        mtime = os.path.getmtime(path)
+        age_h = max(0.0, (datetime.now(timezone.utc).timestamp() - mtime) / 3600.0)
+        overall = str(report.get("overall") or "").upper() or None
+        out.update(
+            {
+                "available": True,
+                "overall": overall,
+                "phase": report.get("phase"),
+                "age_hours": round(age_h, 2),
+                "stale": age_h > _DEPLOY_WATCH_STALE_HOURS,
+                "cursor_action": report.get("cursor_action"),
+            }
+        )
+        return out
+    except Exception as exc:
+        out["error"] = str(exc)[:120]
+        return out
+
+
+def collect_track_a_health(snap: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach Track A diagnostic probes onto snap (mutates and returns health dict)."""
+    ta = (snap.get("tracks") or {}).get("A") or {}
+    book = ta.get("forward_book") if isinstance(ta.get("forward_book"), dict) else _forward_book_counts_a()
+    watch = read_deploy_watch_health()
+    health = {
+        "forward_book": book,
+        "deploy_watch": watch,
+    }
+    snap["track_a_health"] = health
+    return health
+
+
 def _mdd_continuous_under_cap(
     daily_history: List[Dict[str, Any]],
     track_id: str,
@@ -277,7 +396,14 @@ def _read_stock_track() -> Dict[str, Any]:
                 "n_closed": int(st.get("n_closed", 0) or 0),
             }
     except Exception as exc:
-        return {**meta, "error": str(exc)[:120], "markets": {}, "available": False}
+        return {
+            **meta,
+            "error": str(exc)[:120],
+            "markets": {},
+            "available": False,
+            "forward_trades_count": _count_forward_trades("A"),
+            "forward_book": _forward_book_counts_a(),
+        }
 
     try:
         from performance_budget_governor import evaluate_performance_budget
@@ -297,11 +423,13 @@ def _read_stock_track() -> Dict[str, Any]:
     return_pace = _pace_score(avg_return, meta["cagr_target_lo"])
     mdd_safety = _mdd_safety_score(max_mdd, meta["mdd_cap_pct"])
     composite = _composite_score(return_pace, mdd_safety, measure_only=False)
+    book = _forward_book_counts_a()
 
     return {
         **meta,
         "available": bool(markets),
         "forward_trades_count": _count_forward_trades("A"),
+        "forward_book": book,
         "a06_first_pass": _a06_first_pass(),
         "markets": markets,
         "aggregate": {
@@ -630,4 +758,5 @@ def run_north_star_digest(*, cadence: str = "daily", persist: bool = True) -> Di
         enrich_obs_hold_meta(snap, daily_n=len(daily))
     else:
         enrich_obs_hold_meta(snap)
+    collect_track_a_health(snap)
     return snap

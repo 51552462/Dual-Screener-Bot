@@ -3,7 +3,99 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-19 · **OPS-LIQUIDITY-STALL-01** · 앵커 `SYNC-2026-08-19-A`
+> **갱신**: 2026-08-19 · NS-DIAG-DASH-01 **Claude OK CLOSED** · 앵커 `SYNC-2026-08-19-E`
+
+---
+
+## CLOSE — NS-DIAG-DASH-01 **Claude OK** · 2026-08-19
+
+[CAT-J] 검증 OK · bitget 0 · OPEN=0≠자동🔴 · 신규 Alpha Handoff 없음 · OBS-HOLD 유지.  
+디렉터: VPS `update_factory.sh` → 19:30 쉬운판 육안.
+
+---
+
+## OUTBOX — NS-DIAG-DASH-01 · Track A 진단형 쉬운판 · 2026-08-19
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | NS-DIAG-DASH-01 (Ops-lite) |
+| **status** | **Claude OK · CLOSED** (was `WAIT_CLAUDE_OK`) |
+| **범위** | Track A `[쉬운판]` → Bitget식 4칸(🟢/🔴/🟡/⬜) **건강 진단** · `bitget/**` **0** |
+| **코드** | `dual_north_star_ledger.py` (`_forward_book_counts_a` · `read_deploy_watch_health` · `collect_track_a_health`) · `dual_north_star_telegram.py` (`build_goal_dashboard`/`format_goal_dashboard_html`) |
+| **규칙** | OPEN=0 ≠ 자동🔴 · CLOSED=0/MDD초과/NAV오류/ledger n=0/watch BREAK=구멍 · gate·obs=🟡 |
+| **테스트** | `tests/test_obs_hold_telegram.py` + ledger **19 passed** |
+| **문서** | `12_듀얼북극성` §5 NS-DIAG-DASH |
+| **금지 유지** | Alpha · mega_trend · 목표하향 · LIQUIDITY 완화 · C-2/실전 |
+
+**Ask:** (해소) Claude OK · VPS 배포만 남음.
+
+---
+
+## CLOSE — OPS-LIQUIDITY-STALL-01 **Claude OK** · 2026-08-19
+
+GATE WORKING 승인 · 임계 완화 Handoff **열지 않음** · OBS-HOLD 유지.  
+소스: `Downloads/CLAUDE_OK_OPS-LIQUIDITY-STALL-01.md` → `CLAUDE_TO_CURSOR.md` 랜딩.
+
+---
+
+## OUTBOX — [CAT-B] OPS-LIQUIDITY-STALL-01 **VPS Done · GATE WORKING** · Claude 검증 · 2026-08-19
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | OPS-LIQUIDITY-STALL-01 |
+| **status** | `WAIT_CLAUDE_OK` · OBS-HOLD · **threshold/cutoff 변경 0** |
+| **앵커** | `SYNC-2026-08-19-B` |
+| **VERDICT** | **GATE WORKING + low-liquidity concentration** (c+d=**5%** &lt; 30%) |
+| **DB** | `/var/lib/quant-factory/data/market_data.sqlite` · STALL_SINCE=`2026-08-17 15:10` · N=20/시장 |
+
+### (a)(b)(c)(d) 집계 (KR+US · n=40)
+
+| class | 의미 | n | share |
+|-------|------|---|-------|
+| **(a)** | 실가격 컷 정상 | 3 | 7.5% |
+| **(b)** | 실거래량/대금 컷 정상 | **35** | **87.5%** |
+| **(c)** | Volume/필드 이상 | 1 | 2.5% |
+| **(d)** | 게이트 통과인데 LIQUIDITY 로그 | 1 | 2.5% |
+
+| market | a | b | c | d | defect (c+d) |
+|--------|---|---|---|---|--------------|
+| KR | 0 | 19 | 1 (`006380`) | 0 | 5% |
+| US | 3 | 16 | 0 | 1 (`BZUN`) | 5% |
+
+### 해석
+
+1. **본체 = (b)** — 저유동성(5일 평균 Volume &lt; floor)로 게이트가 **정상 발화**. 데이터 파이프라인 붕괴 가설 **기각**(30% 미달).
+2. **(c)/(d)** 각 1건 — 잡음 수준. 즉시 완화·코드 수정 **금지**(Handoff).
+3. OPEN 0 / 청산 0 = **유니버스가 유동성 컷에 걸림**이지 cutoff/DNA/인프라 RED 본체 아님 (선행 CLASS a와 정합).
+4. Step3 계측 공백 — `L-DATA-ALARM-01` 백로그만 (본 건 비범위).
+
+### Claude에게 요청
+
+1. 본 OUTBOX DoD 검증 → OPS-LIQUIDITY-STALL-01 **Claude OK**?
+2. 후속: **관측유지**(임계 완화 Handoff 없음) vs 별도 “유동성 유니버스/필터 정책” 논의 — OBS-HOLD·Alpha 금지와 충돌 여부.
+3. (d) BZUN 1건 / (c) 006380 1건 — 추적 sub 개설 **불필요** 권고(비중 5%).
+
+### 디렉터 → Claude 복붙
+
+```text
+역할: Claude Pro Architect. 구현 코드 작성 금지.
+
+먼저 읽기:
+1) docs/work_phases/00_SESSION_SYNC.md §3 (SYNC-2026-08-19-B)
+2) docs/work_phases/NEXT_ACTION.md
+3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 (OPS-LIQUIDITY-STALL-01 VERDICT)
+
+@CAT-B @CAT-C @CAT-MAP
+
+요청: VPS (a~d) 표·GATE WORKING VERDICT 검증. OK면 닫기.
+임계 완화 Handoff 열지 여부만 한 줄. 채팅 말고 파일에.
+```
+
+### 디렉터 3줄
+
+1. **87.5% = 거래량 컷 정상** · 게이트 고장 아님.
+2. 결함 가설(c+d) **5%** → 완화/패치 **안 함**.
+3. Claude OK 후 OBS-HOLD 유지 · OPEN은 유동성 환경 이슈.
 
 ---
 

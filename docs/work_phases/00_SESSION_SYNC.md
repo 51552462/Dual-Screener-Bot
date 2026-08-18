@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-19 · **앵커 ID**: `SYNC-2026-08-19-A`
+> **갱신**: 2026-08-19 · **앵커 ID**: `SYNC-2026-08-19-E`
 
 ---
 
@@ -29,6 +29,7 @@
 | `CURSOR_TO_CLAUDE.md` | 검증·조사 **OUTBOX** | **Cursor 만** | Claude Pro |
 | `06_검증체크리스트_*.md` | 배포 후 **효과** 검증 (2~4주) | 디렉터·Cursor | Claude |
 | **`17_Cursor_세션_부팅_가이드.md`** | **Cursor 첫 메시지·모드 선택 SSOT** | Cursor | 디렉터 |
+| **`18_디렉터_VPS_원클릭.md`** | **배포 원클릭 · update_factory 범위** | Cursor (문구 늘어날 때) | **디렉터 (헷갈릴 때)** |
 | `bitget/docs/work_phases/` | **Bitget 트랙 미러** | Bitget 세션만 | BG 작업 시 — KR/US와 **혼동 금지** |
 
 **`NEXT_STEP.md` vs `NEXT_ACTION.md`**: 실행 SSOT는 **`NEXT_ACTION.md`만**. `NEXT_STEP`은 레거시·참고.
@@ -39,26 +40,28 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-19-A` |
-| **마지막 갱신** | 2026-08-19 — OPS-OPEN-STALL **Claude OK** · **OPS-LIQUIDITY-STALL-01** 스크립트 |
+| **앵커 ID** | `SYNC-2026-08-19-E` |
+| **마지막 갱신** | 2026-08-19 — NS-DIAG-DASH-01 **Claude OK · CLOSED** · VPS 배포만 남음 |
 | **활성 트랙** | KR/US — **OBS-HOLD** |
-| **진행 중 sub-phase** | **OPS-LIQUIDITY-STALL-01** — VPS 실행·(a~d) 분류 대기 |
-| **직전 완료** | OPS-OPEN-STALL-01 **Claude OK** (CLASS a · cutoff 종결) |
-| **Claude OK 완료** | … · NS-DIR-DASH-01 · **OPS-OPEN-STALL-01** |
-| **구현 완료·배포** | `ops_liquidity_stall_01_diagnosis.py` · **VPS pull+실행 잔여** |
-| **다음** | VPS 진단 로그 → OUTBOX → Claude OK · 임계 완화 금지 |
-| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` 최상단 · OPS-LIQUIDITY-STALL-01 |
+| **진행 중 sub-phase** | — (신규 Handoff 없음) |
+| **직전 완료** | **NS-DIAG-DASH-01** Claude OK (CAT-J) |
+| **Claude OK 완료** | … · OPS-LIQUIDITY-STALL-01 · **NS-DIAG-DASH-01** |
+| **구현 완료·배포** | NS-DIAG-DASH 로컬 OK · **디렉터 `update_factory.sh` 대기** |
+| **다음** | VPS 배포 → 19:30 쉬운판 육안 · OBS-HOLD · n≥20 재소집 |
+| **VPS 배포 SSOT** | **`18_디렉터_VPS_원클릭.md`** — 평소 `sudo bash ./update_factory.sh` 한 줄 |
+| **Handoff SSOT** | 없음 (CLOSED) · Alpha 금지 |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` (로컬 금지) |
-| **git main** | origin **`a5a83ed`** (+ 본 세션 미푸시) |
+| **git main** | origin **`ea30498`** (+ NS-DIAG-DASH 미푸시 가능) |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
+[CLOSED] NS-DIAG-DASH-01 — Claude OK · CAT-J · VPS update_factory 대기
 [CLOSED] OPS-OPEN-STALL-01 — Claude OK · CLASS (a)
-[지금] OPS-LIQUIDITY-STALL-01 — LIQUIDITY 4분류 read-only
-[백로그] L-DATA-ALARM-01 — Step3 계측 공백 (sub 개설 X)
-[관측] OBS-HOLD · n≥20
-[금지] cutoff/threshold 완화 · config_kv · mega_trend · 소진레버
+[CLOSED] OPS-LIQUIDITY-STALL-01 — Claude OK · GATE WORKING · 완화 Handoff 없음
+[백로그] L-DATA-ALARM-01 (sub 미개설)
+[관측] OBS-HOLD · n≥20 재소집
+[금지] threshold/cutoff 완화 · config_kv · mega_trend · 소진레버 · Alpha
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

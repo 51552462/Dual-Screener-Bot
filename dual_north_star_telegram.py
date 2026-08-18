@@ -121,17 +121,29 @@ def build_obs_hold_claude_prompt(snap: Dict[str, Any]) -> str:
 
 def build_goal_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
     """
-    디렉터용 쉬운 목표 체크·상태 보드 (구조화).
-    판정/CAGR 확정 아님 — 관측·진행·누락·오류만.
+    Track A 초등학생용 건강 진단 보드 (Bitget POST_DEPLOY_OBS UX 정렬).
+    Buckets: working | problem | missing | later.
+    CAGR/Pass-Fail 확정 아님. OPEN=0 alone ≠ 구멍.
     """
+    from dual_north_star_ledger import collect_track_a_health, read_deploy_watch_health
+
     meta = snap.get("meta") or {}
     ledger = snap.get("ledger") or {}
     gate_a = (ledger.get("A") or {}) if isinstance(ledger, dict) else {}
     tracks = snap.get("tracks") or {}
     ta = tracks.get("A") or {}
-    tb = tracks.get("B") or {}
     agg = ta.get("aggregate") or {}
     pr_a = (snap.get("period_returns") or {}).get("A") or {}
+
+    health = snap.get("track_a_health")
+    if not isinstance(health, dict):
+        health = collect_track_a_health(snap)
+    book = health.get("forward_book") if isinstance(health.get("forward_book"), dict) else {}
+    if not book and isinstance(ta.get("forward_book"), dict):
+        book = ta.get("forward_book") or {}
+    watch = health.get("deploy_watch") if isinstance(health.get("deploy_watch"), dict) else {}
+    if not watch:
+        watch = read_deploy_watch_health()
 
     n = int(meta.get("daily_n") or meta.get("daily_snapshot_count") or 0)
     recall = int(meta.get("obs_hold_recall_n") or OBS_HOLD_RECALL_N)
@@ -143,63 +155,239 @@ def build_goal_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
     mdd = float(agg.get("max_mdd_pct", 0) or 0)
     mdd_cap = float(ta.get("mdd_cap_pct", 10) or 10)
     total_pct = pr_a.get("total_pct")
-    fwd_a = int(ta.get("forward_trades_count", 0) or 0)
 
-    working: list[str] = []
-    missing: list[str] = []
-    errors: list[str] = []
+    working: list[dict[str, str]] = []
+    problem: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
+    later: list[dict[str, str]] = []
 
-    working.append("오늘 성적표(북극성 일보)가 도착함 = 보고 파이프 동작 중")
-    if not ta.get("error") and ta.get("available", True) is not False:
-        working.append("주식(Track A) 숫자 읽기 OK")
+    # tg — digest pipe (this message)
+    working.append(
+        {
+            "id": "tg",
+            "title": "오늘 성적표 도착",
+            "plain": "북극성 일보가 왔어요 = 보고 파이프 OK",
+        }
+    )
+
+    # nav
+    if ta.get("error") or ta.get("available") is False:
+        problem.append(
+            {
+                "id": "nav",
+                "title": "자산 숫자 읽기",
+                "plain": f"KR/US 숫자를 못 읽어요 · {ta.get('error') or 'available=false'}",
+            }
+        )
+    else:
+        working.append(
+            {
+                "id": "nav",
+                "title": "자산 숫자 읽기",
+                "plain": "KR·US 자산(NAV) 숫자 읽기 OK",
+            }
+        )
+
+    # book — CLOSED>0 = ok; OPEN=0 alone not red
+    open_n = int(book.get("open_total", 0) or 0)
+    closed_n = int(book.get("closed_total", 0) or 0)
+    if book.get("error") and closed_n <= 0 and open_n <= 0:
+        problem.append(
+            {
+                "id": "book",
+                "title": "주식 연습 장부",
+                "plain": f"장부를 못 읽어요 · {book.get('error')}",
+            }
+        )
+    elif closed_n > 0:
+        working.append(
+            {
+                "id": "book",
+                "title": "주식 연습 장부",
+                "plain": f"닫힌 자리 {closed_n} · 열린 자리 {open_n}"
+                + (" (열린 0은 정상일 수 있어요)" if open_n == 0 else ""),
+            }
+        )
+    else:
+        problem.append(
+            {
+                "id": "book",
+                "title": "주식 연습 장부",
+                "plain": "닫힌 자리(CLOSED)가 0이에요 → 연습 기록이 없어요",
+            }
+        )
+
+    # mdd
     if mdd <= mdd_cap:
-        working.append(f"낙폭(MDD) {mdd:.1f}% ≤ 한도 {mdd_cap:.0f}% (참고·확정 아님)")
+        working.append(
+            {
+                "id": "mdd",
+                "title": "낙폭 한도",
+                "plain": f"낙폭 {mdd:.1f}% ≤ 한도 {mdd_cap:.0f}% (참고·확정 아님)",
+            }
+        )
     else:
-        errors.append(f"낙폭 {mdd:.1f}%가 한도 {mdd_cap:.0f}%를 넘김 — 긴급 점검")
-    if action in ("OBSERVE_HOLD", "RECALL_FORK"):
-        working.append("관측 규칙(OBS-HOLD) 적용 중 · 잘못된 새 공사 막는 중")
-    working.append("카테고리(A~Q)·목표 숫자(40~70%/MDD10%) 설계칸은 이미 있음")
-    working.append("근처 실패 레버(BULL/SIDE/BEAR/C-1) 재시도 금지 = 규칙 준수 중")
+        problem.append(
+            {
+                "id": "mdd",
+                "title": "낙폭 한도",
+                "plain": f"낙폭 {mdd:.1f}%가 한도 {mdd_cap:.0f}%를 넘었어요 — 긴급 점검",
+            }
+        )
 
-    if n < recall:
-        missing.append(f"갈림길 회의까지 하루 기록 {n}/{recall} · 남은 약 {remaining}일")
-    else:
-        working.append(f"하루 기록 {n}개 ≥ {recall} · 갈림길 회의 가능")
-    if gate in ("G0", ""):
-        missing.append(f"상품화 게이트 아직 {gate or 'G0'}({gate_label or '측정'}) · G2까지 멀음")
-    elif gate == "G1":
-        missing.append("G1(페이스)까지 옴 · 아직 G2(목표 근접) 아님")
-    missing.append("연 40~70% ‘달성’ 주장은 아직 하면 안 됨 (RP-1≠달성 · G2 전)")
-    missing.append("진화·킬(Phase B) · mega_trend · 목표하향 = 재소집 전 안 함(의도적 공백)")
-    missing.append("효과검증표(06 3단계)는 오래 비어 있음 · 원장·일보로 대신 관측 중")
-    if fwd_a <= 30:
-        missing.append(f"포워드 거래 수 {fwd_a} (G2 참고 조건 중 하나·확정 아님)")
-
-    for tid, t in (("A", ta), ("B", tb)):
-        if t.get("error"):
-            errors.append(f"Track {tid} 읽기 오류: {t.get('error')}")
-        if t.get("available") is False:
-            errors.append(f"Track {tid} 데이터 없음(available=false)")
-    for reason in gate_a.get("block_reasons") or []:
-        errors.append(f"게이트 제한: {reason}")
+    # ledger daily
     if n <= 0:
-        errors.append("하루 기록이 0 · cron/원장 갱신 의")
-    if not errors:
-        errors.append("지금 빨간 오류 없음 (이 일보 기준)")
+        problem.append(
+            {
+                "id": "ledger",
+                "title": "북극성 하루기록",
+                "plain": "하루 기록이 0개예요 · cron/원장 갱신 의",
+            }
+        )
+    else:
+        working.append(
+            {
+                "id": "ledger",
+                "title": "북극성 하루기록",
+                "plain": f"하루기록 {n}장 쌓이는 중",
+            }
+        )
 
-    checklist = [
-        {"done": True, "text": "카테고리 A~Q · 목표 헌법(40~70% / MDD10%) 준비"},
-        {"done": True, "text": "MDD 방어·관측 일보·복붙 블록 준비"},
-        {"done": n >= recall, "text": f"하루 성적 모으기 {n}/{recall} (갈림길 열쇠)"},
-        {"done": action == "RECALL_FORK", "text": "갈림길 회의 (mega_trend / 목표하향 / 관측연장)"},
-        {"done": gate not in ("G0", ""), "text": f"게이트 전진 (지금 {gate})"},
-        {"done": False, "text": "G2급 수익 페이스 증명 (56일+ · 단정 금지 중)"},
-        {"done": False, "text": "상품화·실전(G4 + 디렉터 승인)"},
-    ]
+    # deploy watch
+    overall = str(watch.get("overall") or "").upper()
+    if not watch.get("available"):
+        missing.append(
+            {
+                "id": "watch",
+                "title": "배포 감시판",
+                "plain": f"아직 파일 없음/못 읽음 ({watch.get('error') or 'unknown'})",
+            }
+        )
+    elif overall == "BREAK":
+        problem.append(
+            {
+                "id": "watch",
+                "title": "배포 감시판",
+                "plain": f"overall=BREAK · phase={watch.get('phase') or '?'}",
+            }
+        )
+    elif overall == "WARN" or watch.get("stale"):
+        missing.append(
+            {
+                "id": "watch",
+                "title": "배포 감시판",
+                "plain": (
+                    f"overall={overall or '?'} · "
+                    + (
+                        f"오래됨 {watch.get('age_hours')}h"
+                        if watch.get("stale")
+                        else "주의(WARN)"
+                    )
+                ),
+            }
+        )
+    elif overall == "PASS":
+        working.append(
+            {
+                "id": "watch",
+                "title": "배포 감시판",
+                "plain": f"overall=PASS · phase={watch.get('phase') or '?'}",
+            }
+        )
+    else:
+        missing.append(
+            {
+                "id": "watch",
+                "title": "배포 감시판",
+                "plain": f"overall={overall or 'SKIP'} · 참고만",
+            }
+        )
 
-    progress_pct = min(100.0, round(100.0 * n / max(recall, 1), 1))
+    # obs n/20
+    if n >= recall:
+        working.append(
+            {
+                "id": "obs",
+                "title": "갈림길 열쇠",
+                "plain": f"하루기록 {n}≥{recall} · 갈림길 회의 가능",
+            }
+        )
+    else:
+        missing.append(
+            {
+                "id": "obs",
+                "title": "갈림길 열쇠",
+                "plain": f"하루기록 {n}/{recall} · 남은 약 {remaining}일 (모으는 중)",
+            }
+        )
+
+    # gate — never red
+    if gate in ("G0", "", "G1"):
+        missing.append(
+            {
+                "id": "gate",
+                "title": "상품화 게이트",
+                "plain": f"아직 {gate or 'G0'}({gate_label or '측정'}) · G2까지 멀어요",
+            }
+        )
+    else:
+        working.append(
+            {
+                "id": "gate",
+                "title": "상품화 게이트",
+                "plain": f"지금 {gate}({gate_label or ''})",
+            }
+        )
+
+    later.extend(
+        [
+            {
+                "id": "mega",
+                "title": "mega_trend / 목표하향",
+                "plain": "나중 · 갈림길 재소집(n≥20) 전 금지",
+            },
+            {
+                "id": "phase_b",
+                "title": "진화·킬(Phase B)",
+                "plain": "나중 · 관측 끝난 뒤",
+            },
+            {
+                "id": "live",
+                "title": "실전 매매 ON",
+                "plain": "나중 · G4 + 디렉터 승인 전 금지",
+            },
+            {
+                "id": "cagr",
+                "title": "연 40~70% 달성 단정",
+                "plain": "나중 · G2 전 · RP-1≠달성",
+            },
+        ]
+    )
+
+    now_ids = {"tg", "nav", "book", "mdd", "ledger", "watch", "obs", "gate"}
+    done_n = sum(1 for x in working if x["id"] in now_ids)
+    need_n = (
+        done_n
+        + sum(1 for x in problem if x["id"] in now_ids)
+        + sum(1 for x in missing if x["id"] in now_ids)
+    )
+    pct = int(round(100.0 * done_n / need_n)) if need_n else 0
+    bar_w = 10
+    filled = max(0, min(bar_w, int(round(pct / 100.0 * bar_w))))
+    bar = "█" * filled + "░" * (bar_w - filled)
+
+    if problem:
+        headline = "오늘 고칠 구멍이 있어요"
+        light = "🔴" if len(problem) >= 2 else "🟡"
+    elif missing:
+        headline = "잘 가고 있어요 · 아직 기다리는 칸이 있어요"
+        light = "🟡"
+    else:
+        headline = "오늘 할 일 칸은 대체로 괜찮아요"
+        light = "🟢"
+
     if action == "OBSERVE_HOLD":
-        phase_plain = "관측 기간입니다. 새 실험 금지. 성적만 모읍니다."
+        phase_plain = "관측 기간입니다. 새 실험 금지. 구멍만 보고, 성적만 모읍니다."
     elif action == "RECALL_FORK":
         phase_plain = "성적 20개 찼습니다. 회의해도 됩니다(아직 공사 시작 아님)."
     else:
@@ -209,7 +397,9 @@ def build_goal_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
         "n": n,
         "recall": recall,
         "remaining": remaining,
-        "progress_pct": progress_pct,
+        "progress_pct": float(pct),
+        "progress_bar": bar,
+        "progress_label": f"지금 할 일 {done_n}/{need_n}",
         "action": action,
         "gate": gate,
         "composite": composite,
@@ -217,53 +407,79 @@ def build_goal_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
         "mdd_cap": mdd_cap,
         "total_pct": total_pct,
         "phase_plain": phase_plain,
+        "headline": headline,
+        "light": light,
+        "goal_plain": "목표: 주식(KR+US) 연습·관측이 건강한지 확인 (실전·새 실험 X)",
         "working": working,
+        "problem": problem,
         "missing": missing,
-        "errors": errors,
-        "checklist": checklist,
+        "later": later,
+        "how_to_read": [
+            "🟢 잘 되고 있어요",
+            "🔴 구멍·오류 — 손보거나 Cursor/Claude에 물어보세요",
+            "🟡 아직 모으는 중 / 조심",
+            "⬜ 나중 — 지금은 건드리면 안 돼요",
+        ],
+        # backward-compat aliases for older tests/callers
+        "errors": [f"{p['title']}: {p['plain']}" for p in problem]
+        or ["지금 빨간 오류 없음 (이 일보 기준)"],
+        "checklist": [
+            {"done": True, "text": "카테고리 A~Q · 목표 헌법(40~70% / MDD10%) 준비"},
+            {"done": True, "text": "MDD 방어·관측 일보·복붙 블록 준비"},
+            {"done": n >= recall, "text": f"하루 성적 모으기 {n}/{recall} (갈림길 열쇠)"},
+            {"done": action == "RECALL_FORK", "text": "갈림길 회의 (mega_trend / 목표하향 / 관측연장)"},
+            {"done": gate not in ("G0", "", "G1"), "text": f"게이트 전진 (지금 {gate})"},
+            {"done": False, "text": "G2급 수익 페이스 증명 (56일+ · 단정 금지 중)"},
+            {"done": False, "text": "상품화·실전(G4 + 디렉터 승인)"},
+        ],
     }
 
 
 def format_goal_dashboard_html(snap: Dict[str, Any]) -> str:
-    """초등학생용 목표 체크·대시보드 HTML. daily만."""
+    """초등학생용 Track A 건강 진단 대시보드 HTML. daily만."""
     if str(snap.get("cadence") or "").lower() != "daily":
         return ""
     d = build_goal_dashboard(snap)
-    bar = _bar(float(d["progress_pct"]), width=10)
+    bar = d.get("progress_bar") or _bar(float(d["progress_pct"]), width=10)
     total = d.get("total_pct")
     total_txt = _fmt_pct(total, signed=True) if total is not None else "—"
 
-    def _bullets(items: list[str], limit: int = 6) -> str:
-        return "\n".join(f"· {_esc(x)}" for x in items[:limit])
-
-    cl_lines = []
-    for row in d["checklist"]:
-        mark = "✅" if row.get("done") else "⬜"
-        cl_lines.append(f"{mark} {_esc(row.get('text'))}")
+    def _sec(title: str, items: list, emoji: str, limit: int = 8) -> list[str]:
+        lines = [f"<b>{emoji} {_esc(title)}</b>"]
+        if not items:
+            lines.append("· (없음)")
+            return lines
+        for it in items[:limit]:
+            if isinstance(it, dict):
+                lines.append(f"· <b>{_esc(it.get('title'))}</b> — {_esc(it.get('plain'))}")
+            else:
+                lines.append(f"· {_esc(it)}")
+        return lines
 
     parts = [
-        "<b>[쉬운판] 목표까지 체크리스트 · 대시보드</b>",
-        f"<i>{_esc(d['phase_plain'])}</i>",
+        f"<b>{_esc(d.get('light') or '')} [쉬운판] Track A · 건강 체크</b>",
+        f"<b>{_esc(d.get('headline') or '')}</b>",
+        f"<i>{_esc(d.get('phase_plain') or '')}</i>",
         "",
-        f"🎯 목표: 연 <b>40~70%</b> · 낙폭 한도 <b>≤{d['mdd_cap']:.0f}%</b>",
-        f"📅 갈림길 열쇠: 하루기록 <b>{d['n']}</b>/{d['recall']} "
-        f"· 남음 <b>{d['remaining']}</b>일 · {bar} {d['progress_pct']:.0f}%",
+        f"🎯 {_esc(d.get('goal_plain') or '')}",
+        f"📅 {_esc(d.get('progress_label') or '')} · {bar} {float(d.get('progress_pct') or 0):.0f}%",
+        f"🔑 갈림길 열쇠: 하루기록 <b>{d['n']}</b>/{d['recall']} · 남음 <b>{d['remaining']}</b>일",
         f"📊 참고점수 {d['composite']:.1f} · 게이트 <code>{_esc(d['gate'])}</code> · "
         f"누적 {total_txt} · MDD {d['mdd']:.1f}%",
-        "<i>※ 참고만 · 지금은 ‘성공/실패’ 확정 안 함</i>",
+        "<i>※ 참고만 · 성공/실패·연수익률 확정 안 함 · OPEN=0≠자동고장</i>",
         "",
-        "<b>✅ 잘 되고 있는 것</b>",
-        _bullets(d["working"]),
-        "",
-        "<b>⏳ 아직 부족한 것 (누락·대기)</b>",
-        _bullets(d["missing"]),
-        "",
-        "<b>⚠️ 오류·이상</b>",
-        _bullets(d["errors"], limit=8),
-        "",
-        "<b>📋 목표까지 남은 체크</b>",
-        "\n".join(cl_lines),
     ]
+    parts.extend(_sec("잘 되고 있어요", list(d.get("working") or []), "🟢"))
+    parts.append("")
+    parts.extend(_sec("구멍·오류 (손볼 것)", list(d.get("problem") or []), "🔴"))
+    parts.append("")
+    parts.extend(_sec("아직 기다리는 중", list(d.get("missing") or []), "🟡"))
+    parts.append("")
+    parts.extend(_sec("나중이에요 (지금 금지)", list(d.get("later") or []), "⬜", limit=6))
+    parts.append("")
+    parts.append("<b>읽는 법</b>")
+    for tip in d.get("how_to_read") or []:
+        parts.append(f"· {_esc(tip)}")
     return "\n".join(parts)
 
 

@@ -2,40 +2,31 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **OPS-LIQUIDITY-STALL-01** (CAT-B · LIQUIDITY 4분류) |
-| **status** | 스크립트 Done · **VPS 실행 후** `WAIT_CLAUDE_OK` · OBS-HOLD · Alpha/cutoff **금지** |
-| **직전** | OPS-OPEN-STALL-01 **Claude OK** · CLASS (a) |
-| **앵커** | `SYNC-2026-08-19-A` |
+| **sub-phase** | — (NS-DIAG-DASH-01 **Claude OK · CLOSED**) |
+| **status** | `SUB_DONE` · 운영 **OBS-HOLD** · Alpha **금지** · 신규 Handoff **없음** |
+| **직전** | NS-DIAG-DASH-01 **Claude OK** · CAT-J · Critical 아님 |
+| **앵커** | `SYNC-2026-08-19-E` |
 
 ---
 
-## 디렉터 — 지금 할 일
+## 디렉터 — 지금 할 일 (1줄)
 
-1. **VPS** — pull 후 `python3 scripts/ops_liquidity_stall_01_diagnosis.py` 실행 · 로그를 Cursor/OUTBOX에.
-2. **금지** — LIQUIDITY 임계 완화 · config_kv · cutoff (결과가 (c)/(d)여도 즉시 완화 금지).
-3. **잔여** — NS-DIR-DASH 19:30 육안 · `L-DATA-ALARM-01`은 백로그만.
-
-### VPS 실행 (복붙)
+VPS에 쉬운판 반영:
 
 ```bash
-cd ~/dante_bots/Dual-Screener-Bot
-git pull
-set -a && source .env && set +a
-python3 scripts/ops_liquidity_stall_01_diagnosis.py
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo bash ./update_factory.sh
 ```
 
-### Claude 창 부팅 (실행 로그 후)
+→ 다음 **19:30** `[쉬운판]`이 🟢/🔴/🟡/⬜ 4칸인지 육안.  
+그다음: **관측유지** (n≥20 재소집 전 Alpha/mega_trend/목표하향/임계 완화 **금지**).
 
-```text
-역할: Claude Pro Architect. 구현 코드 작성 금지.
+### 재소집 트리거 (고정)
 
-먼저 읽기:
-1) docs/work_phases/00_SESSION_SYNC.md §3 (SYNC-2026-08-19-A)
-2) docs/work_phases/NEXT_ACTION.md
-3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 (OPS-LIQUIDITY-STALL-01)
-
-검증: (a)(b)(c)(d) 표 · VERDICT · 임계 변경 없음 확인.
-```
+| 항목 | 값 |
+|------|-----|
+| **트리거** | VPS daily **n≥20** → 갈림길 재소집 |
+| **텔레그램** | 19:30 · `[쉬운판]` + `[OBS_HOLD]` + 복붙 |
+| **금지** | n&lt;20 페이스·CAGR 확정 · 로컬 원장 근거 · LIQUIDITY 임계 완화 · OPEN=0=고장 단정 |
 
 ---
 
