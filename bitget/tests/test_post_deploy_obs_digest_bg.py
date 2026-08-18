@@ -73,7 +73,13 @@ class TestPostDeployObsDigest:
         assert snap["checks"]["forward_book"]["open_total"] == 1
         assert snap["checks"]["cos_eff"]["sample_count"] == 2
         assert snap["checks"]["dna_rank"]["ok"] is True
+        assert "dashboard" in snap
+        assert snap["dashboard"]["progress_pct"] >= 0
         assert "---CURSOR---" in bg.format_cursor_paste(snap)
+        html = bg.format_digest_html(snap)
+        assert "코인 연습 · 오늘 한눈에" in html
+        assert "잘 되고 있어요" in html
+        assert "나중이에요" in html
         assert "Claude Pro" in bg.format_claude_paste(snap)
         assert "C-2" in bg.format_cursor_paste(snap)
 
@@ -113,3 +119,5 @@ class TestPostDeployObsDigest:
         assert row is not None
         payload = json.loads(row[1])
         assert payload["digest_id"] == "BITGET_POST_DEPLOY_OBS_DAILY"
+        assert "dashboard" in payload
+        assert "problem" in payload["dashboard"] or "working" in payload["dashboard"]

@@ -103,6 +103,263 @@ def _traffic(ok: bool, warn: bool = False) -> str:
     return "🔴"
 
 
+def _ops_status_ok(probes: Dict[str, Any], key: str) -> bool:
+    return str((probes.get(key) or {}).get("status") or "") == "ok"
+
+
+def _count_recent_ops_event(event: str, *, days: int = 14) -> Optional[int]:
+    """Return count of ops_events rows, or None if DB unavailable."""
+    try:
+        from bitget.infra.data_paths import ops_events_db_path
+        from bitget.infra.clock import utc_hours_ago_iso
+
+        path = ops_events_db_path()
+        if not path or not os.path.isfile(path):
+            return None
+        since = utc_hours_ago_iso(float(days) * 24.0)
+        import sqlite3
+
+        conn = sqlite3.connect(path, timeout=10)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM ops_events WHERE event=? AND ts_utc >= ?",
+                (event, since),
+            ).fetchone()
+            return int(row[0] if row else 0)
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Elementary-school checklist toward Track B B0 goals (paper).
+    Buckets: working | problem | missing | later (do-not-touch-now).
+    """
+    checks = snap.get("checks") or {}
+    book = checks.get("forward_book") or {}
+    cos = checks.get("cos_eff") or {}
+    dna = checks.get("dna_rank") or {}
+    ops = snap.get("server_ops") or {}
+
+    working: List[Dict[str, str]] = []
+    problem: List[Dict[str, str]] = []
+    missing: List[Dict[str, str]] = []
+    later: List[Dict[str, str]] = []
+
+    # --- runtime / today ---
+    if book.get("ok"):
+        working.append(
+            {
+                "id": "book",
+                "title": "가상 연습 장부",
+                "plain": f"닫힌 자리 {book.get('closed_total', 0)} · 열린 자리 {book.get('open_total', 0)}",
+            }
+        )
+    else:
+        problem.append(
+            {
+                "id": "book",
+                "title": "가상 연습 장부",
+                "plain": "아직 거래 기록이 없어요 (OPEN/CLOSED=0)",
+            }
+        )
+
+    if dna.get("ok"):
+        working.append(
+            {
+                "id": "dna",
+                "title": "DNA 이름표(RANK)",
+                "plain": "설정에 RANK 키가 있어요",
+            }
+        )
+    else:
+        problem.append(
+            {
+                "id": "dna",
+                "title": "DNA 이름표(RANK)",
+                "plain": "RANK1~3이 비어 있어요 → 점수 연결이 안 될 수 있어요",
+            }
+        )
+
+    if cos.get("ok"):
+        working.append(
+            {
+                "id": "cos",
+                "title": "Cos 점수 기록",
+                "plain": f"표본 {cos.get('sample_count')}개 · 0만 반복은 아님",
+            }
+        )
+    elif cos.get("warn"):
+        missing.append(
+            {
+                "id": "cos",
+                "title": "Cos 점수 기록",
+                "plain": "오늘은 표본이 아직 없어요 (로그에서 Cos를 못 찾음)",
+            }
+        )
+    else:
+        problem.append(
+            {
+                "id": "cos",
+                "title": "Cos 점수 기록",
+                "plain": "Cos가 0에만 고정된 것 같아요",
+            }
+        )
+
+    if _ops_status_ok(ops, "l1_logrotate"):
+        working.append({"id": "l1", "title": "로그 자동 정리(L-1)", "plain": "켜져 있어요"})
+    elif ops.get("l1_logrotate"):
+        problem.append(
+            {
+                "id": "l1",
+                "title": "로그 자동 정리(L-1)",
+                "plain": str((ops.get("l1_logrotate") or {}).get("detail") or "꺼짐"),
+            }
+        )
+
+    if _ops_status_ok(ops, "l2_backup_timer"):
+        working.append({"id": "l2", "title": "DB 자동 백업(L-2)", "plain": "타이머 켜짐"})
+    elif ops.get("l2_backup_timer"):
+        problem.append(
+            {
+                "id": "l2",
+                "title": "DB 자동 백업(L-2)",
+                "plain": f"꺼져 있음 · {(ops.get('l2_backup_timer') or {}).get('detail')}",
+            }
+        )
+
+    if _ops_status_ok(ops, "ai_overseer"):
+        working.append({"id": "overseer", "title": "AI 감사관", "plain": "프로세스 켜짐"})
+    elif ops.get("ai_overseer"):
+        problem.append(
+            {
+                "id": "overseer",
+                "title": "AI 감사관",
+                "plain": f"안 켜짐 · {(ops.get('ai_overseer') or {}).get('detail')}",
+            }
+        )
+
+    if _ops_status_ok(ops, "report_bot_token") and _ops_status_ok(ops, "report_bot_chat"):
+        working.append({"id": "tg", "title": "텔레그램 리포트봇", "plain": "토큰·채팅방 OK"})
+    else:
+        problem.append({"id": "tg", "title": "텔레그램 리포트봇", "plain": "토큰/채팅방 설정 확인 필요"})
+
+    # weekly 01b rows (optional)
+    n01b = _count_recent_ops_event("gmm_dna_alpha_report_weekly", days=14)
+    if n01b is None:
+        missing.append(
+            {
+                "id": "r01b",
+                "title": "주간 DNA 숫자 리포트(01b)",
+                "plain": "아직 확인 못 함 (ops DB)",
+            }
+        )
+    elif n01b > 0:
+        working.append(
+            {
+                "id": "r01b",
+                "title": "주간 DNA 숫자 리포트(01b)",
+                "plain": f"최근 2주에 {n01b}번 쌓임",
+            }
+        )
+    else:
+        missing.append(
+            {
+                "id": "r01b",
+                "title": "주간 DNA 숫자 리포트(01b)",
+                "plain": "아직 0번 — 주간 배치 후 쌓여야 해요",
+            }
+        )
+
+    # code-done / goal path (static + deferred)
+    working.append(
+        {
+            "id": "paper",
+            "title": "연습 모드(paper)",
+            "plain": "실전 주문은 꺼져 있어요 (이게 맞아요)",
+        }
+    )
+    working.append(
+        {
+            "id": "code_tracks",
+            "title": "코드 트랙 A·B·C·D·I-GMM",
+            "plain": "만들어 둔 코드는 Claude OK까지 끝났어요",
+        }
+    )
+
+    later.extend(
+        [
+            {
+                "id": "mdd5",
+                "title": "MDD 5%로 더 조이기",
+                "plain": "나중 · 연습 관측(06) 끝난 뒤",
+            },
+            {
+                "id": "c2",
+                "title": "펀딩비 반영(C-2)",
+                "plain": "나중 · 지금은 금지",
+            },
+            {
+                "id": "b2live",
+                "title": "deathmatch 실배분",
+                "plain": "나중 · 지금은 shadow만",
+            },
+            {
+                "id": "live",
+                "title": "실전 매매 ON",
+                "plain": "나중 · P2-5 전 금지",
+            },
+            {
+                "id": "cagr",
+                "title": "연 12~25% 목표",
+                "plain": "지금은 B0(숫자 모으기) · 수익 목표 아님",
+            },
+        ]
+    )
+
+    # progress = now-lane items that are working vs (working+problem+missing) excluding later & static code labels
+    now_ids_ok = {"book", "dna", "cos", "l1", "l2", "overseer", "tg", "r01b"}
+    done_n = sum(1 for x in working if x["id"] in now_ids_ok)
+    need_n = done_n + sum(1 for x in problem if x["id"] in now_ids_ok) + sum(
+        1 for x in missing if x["id"] in now_ids_ok
+    )
+    pct = int(round(100.0 * done_n / need_n)) if need_n else 0
+    bar_w = 10
+    filled = max(0, min(bar_w, int(round(pct / 100.0 * bar_w))))
+    bar = "█" * filled + "░" * (bar_w - filled)
+
+    if problem:
+        headline = "오늘 고칠 구멍이 있어요"
+        light = "🔴" if len(problem) >= 2 else "🟡"
+    elif missing:
+        headline = "잘 가고 있어요 · 아직 기다리는 칸이 있어요"
+        light = "🟡"
+    else:
+        headline = "오늘 할 일 칸은 대체로 괜찮아요"
+        light = "🟢"
+
+    return {
+        "headline": headline,
+        "light": light,
+        "goal_plain": "목표: 연습매매가 건강하게 돌아가는지 1~2주 확인 (실전·큰돈 배분 X)",
+        "progress_pct": pct,
+        "progress_bar": bar,
+        "progress_label": f"지금 할 일 {done_n}/{need_n}",
+        "working": working,
+        "problem": problem,
+        "missing": missing,
+        "later": later,
+        "how_to_read": [
+            "🟢 잘 되고 있어요",
+            "🔴 구멍·오류 — 손보거나 Cursor/Claude에 물어보세요",
+            "🟡 아직 모으는 중 / 조심",
+            "⬜ 나중 — 지금은 건드리면 안 돼요",
+        ],
+    }
+
+
 def compute_post_deploy_obs_digest(
     *,
     window_days: int = 2,
@@ -201,14 +458,25 @@ def compute_post_deploy_obs_digest(
         if book_ok and cos_ok and rank_ok
         else ("🟡" if book_ok or rank_ok else "🔴")
     )
+    payload["dashboard"] = build_kid_dashboard(payload)
+    # dashboard light wins for human glance when ops reds exist
+    if payload["dashboard"].get("light") == "🔴":
+        payload["overall_light"] = "🔴"
+    elif payload["dashboard"].get("light") == "🟡" and payload["overall_light"] == "🟢":
+        payload["overall_light"] = "🟡"
     return payload
 
 
 def format_cursor_paste(snap: Dict[str, Any]) -> str:
+    dash = snap.get("dashboard") or {}
     slim = {
         "digest_id": snap.get("digest_id"),
         "date_kst": snap.get("date_kst"),
         "overall_light": snap.get("overall_light"),
+        "dashboard_headline": dash.get("headline"),
+        "progress": dash.get("progress_label"),
+        "problem": dash.get("problem"),
+        "missing": dash.get("missing"),
         "checks": snap.get("checks"),
         "server_ops": snap.get("server_ops"),
         "forbidden": snap.get("forbidden"),
@@ -217,9 +485,9 @@ def format_cursor_paste(snap: Dict[str, Any]) -> str:
     body = json.dumps(slim, ensure_ascii=False, indent=2)
     return (
         "---CURSOR---\n"
-        "Track B (Bitget) · POST_DEPLOY_OBS 일일 관측. 코드/알파/실전 수정 금지.\n"
+        "Track B (Bitget) · 일일 목표 체크리스트/대시보드 관측. 코드/알파/실전 수정 금지.\n"
         "모드: 배포·관측만. SSOT: track_b_NEXT_ACTION.md · track_b_POST_DEPLOY_OBS_체크리스트.md\n"
-        "아래 JSON만 읽고 3줄 요약 + 이상 시 CURSOR_TO_CLAUDE OUTBOX 한 줄. Handoff 없으면 구현 금지.\n"
+        "아래 JSON만 읽고 3줄 쉬운 요약 + 이상 시 CURSOR_TO_CLAUDE OUTBOX 한 줄. Handoff 없으면 구현 금지.\n"
         "금지: C-2 · MDD5% · B-2 live · ENABLE_REAL_EXECUTION\n"
         f"{body}\n"
         "---END---"
@@ -227,10 +495,18 @@ def format_cursor_paste(snap: Dict[str, Any]) -> str:
 
 
 def format_claude_paste(snap: Dict[str, Any]) -> str:
+    dash = snap.get("dashboard") or {}
     slim = {
         "digest_id": snap.get("digest_id"),
         "date_kst": snap.get("date_kst"),
         "overall_light": snap.get("overall_light"),
+        "dashboard": {
+            "headline": dash.get("headline"),
+            "progress_pct": dash.get("progress_pct"),
+            "problem": dash.get("problem"),
+            "missing": dash.get("missing"),
+            "working_ids": [x.get("id") for x in (dash.get("working") or [])],
+        },
         "checks": snap.get("checks"),
         "server_ops": snap.get("server_ops"),
         "gmm_report_slice": snap.get("gmm_report_slice"),
@@ -238,75 +514,78 @@ def format_claude_paste(snap: Dict[str, Any]) -> str:
     }
     body = json.dumps(slim, ensure_ascii=False, indent=2)
     return (
-        "Bitget Track B · POST_DEPLOY_OBS 일일 스냅샷 (Claude Pro · 묶음 C / CAT-I).\n"
+        "Bitget Track B · 일일 목표 체크리스트 스냅샷 (Claude Pro · CAT-I/L).\n"
         "역할: 관측 판정만. 신규 코딩 Handoff는 이상이 명확하고 디렉터가 요청할 때만.\n"
-        "읽기: track_b_CURSOR_TO_CLAUDE · track_b_NEXT_ACTION · 05 I-GMM/01b.\n"
+        "읽기: track_b_CURSOR_TO_CLAUDE · track_b_NEXT_ACTION · 05.\n"
         "금지: C-2 funding · MDD 5% · B-2 live · ENABLE_REAL_EXECUTION.\n"
-        "Ask: (1) 관측 정상/이상 (2) Handoff 필요 여부 — 필요 시 CAT-HANDOFF 1개만 파일용.\n"
+        "Ask: (1) 정상/이상 (2) Handoff 필요 여부 — 필요 시 CAT-HANDOFF 1개만 파일용.\n"
         f"{body}"
     )
 
 
 def format_digest_html(snap: Dict[str, Any]) -> str:
+    """Kid-friendly dashboard first (Telegram message 1)."""
+    dash = snap.get("dashboard") or build_kid_dashboard(snap)
+    lines: List[str] = [
+        f"<b>코인 연습 · 오늘 한눈에</b> · {_esc(snap.get('date_kst'))} · {_esc(dash.get('light'))}",
+        f"<i>{_esc(dash.get('goal_plain'))}</i>",
+        "",
+        f"<b>{_esc(dash.get('headline'))}</b>",
+        f"진행 {_esc(dash.get('progress_bar'))} {_esc(dash.get('progress_pct'))}% · {_esc(dash.get('progress_label'))}",
+        "",
+    ]
+
+    def _sec(title: str, items: List[Dict[str, str]], mark: str) -> None:
+        lines.append(f"<b>{mark} {title}</b>")
+        if not items:
+            lines.append("· (없음)")
+        else:
+            for it in items:
+                lines.append(f"· {_esc(it.get('title'))}: {_esc(it.get('plain'))}")
+        lines.append("")
+
+    _sec("잘 되고 있어요", list(dash.get("working") or []), "🟢")
+    _sec("구멍·오류 (손볼 것)", list(dash.get("problem") or []), "🔴")
+    _sec("아직 기다리는 중", list(dash.get("missing") or []), "🟡")
+    _sec("나중이에요 (지금 금지)", list(dash.get("later") or []), "⬜")
+
+    lines.append("<b>읽는 법</b>")
+    for tip in dash.get("how_to_read") or []:
+        lines.append(f"· {_esc(tip)}")
+    lines.append("")
+    lines.append("<i>평소엔 이 메시지만 보세요. 🔴가 많거나 모를 때만 아래 복붙.</i>")
+    return "\n".join(lines)
+
+
+def format_numbers_html(snap: Dict[str, Any]) -> str:
+    """Short technical numbers (Telegram message 2)."""
     checks = snap.get("checks") or {}
     book = checks.get("forward_book") or {}
     cos = checks.get("cos_eff") or {}
     dna = checks.get("dna_rank") or {}
-    ops = snap.get("server_ops") or {}
-
-    def _ops_line(key: str, label: str) -> str:
-        row = ops.get(key) or {}
-        st = str(row.get("status") or "unknown")
-        light = {"ok": "🟢", "fail": "🔴"}.get(st, "🟡")
-        return f"{light} {label}: {_esc(st)} · {_esc(row.get('detail'))}"
-
-    lines = [
-        f"<b>Bitget 관측 일일</b> · {_esc(snap.get('date_kst'))} KST · {_esc(snap.get('overall_light'))}",
-        "<i>I-GMM 배포 후 1~2주 · paper only · 실전/funding/MDD5% 금지</i>",
-        "",
-        f"{_esc(book.get('light'))} <b>장부 OPEN/CLOSED</b>",
-        f"OPEN={_esc(book.get('open_total'))} · CLOSED={_esc(book.get('closed_total'))}",
-        f"by market OPEN {_esc(book.get('open_by_market'))}",
-        "",
-        f"{_esc(cos.get('light'))} <b>Cos_eff</b>",
-        (
-            f"n={_esc(cos.get('sample_count'))} · zero_ratio={_esc(cos.get('zero_ratio'))} · "
-            f"mean_nz={_esc(cos.get('mean_nonzero'))} · src={_esc(cos.get('log_source_used'))}"
-        ),
-        "",
-        f"{_esc(dna.get('light'))} <b>DNA RANK / shape</b>",
-        f"keys={_esc(dna.get('keys_present'))}",
-        f"shape={_esc(dna.get('shape_source_distribution'))}",
-        "",
-        "<b>서버 ops (자동 probe)</b>",
-        _ops_line("l1_logrotate", "L-1 logrotate"),
-        _ops_line("l2_backup_timer", "L-2 backup.timer"),
-        _ops_line("ai_overseer", "ai_overseer"),
-        _ops_line("report_bot_token", "REPORT_BOT_TOKEN"),
-        _ops_line("report_bot_chat", "REPORT_BOT_CHAT_ID"),
-        "",
-        "<b>관측 포인트 (뭐를 보면 되나)</b>",
-        "1) 가상 장부에 자리(OPEN)가 생기는가",
-        "2) Cos_eff=0.000 만 반복되지 않는가",
-        "3) CRYPTO_DNA_ALPHA_RANK 키가 있는가",
-        "4) 주간 01b 리포트가 쌓이는가 (weekly)",
-        "5) L-1/L-2/overseer 켜져 있는가",
-        "",
-        "<b>이상 시</b>: 아래 복붙 → Cursor 또는 Claude. 정상 시 보관만.",
-    ]
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            f"<b>숫자 메모</b> · {_esc(snap.get('overall_light'))}",
+            f"장부 OPEN={_esc(book.get('open_total'))} CLOSED={_esc(book.get('closed_total'))} {_esc(book.get('closed_by_market'))}",
+            (
+                f"Cos n={_esc(cos.get('sample_count'))} zero={_esc(cos.get('zero_ratio'))} "
+                f"src={_esc(cos.get('log_source_used'))}"
+            ),
+            f"DNA keys={_esc(dna.get('keys_present'))} shape={_esc(dna.get('shape_source_distribution'))}",
+        ]
+    )
 
 
 def format_paste_followup_html(snap: Dict[str, Any]) -> str:
     cursor = _esc(format_cursor_paste(snap))
     claude = _esc(format_claude_paste(snap))
-    # Telegram HTML: use <pre> for paste blocks (escape already applied)
     return (
         "<b>📋 Cursor 복붙</b>\n"
         f"<pre>{cursor}</pre>\n"
         "<b>📋 Claude Pro 복붙</b>\n"
         f"<pre>{claude}</pre>"
     )
+
 
 
 def persist_digest(snap: Dict[str, Any]) -> bool:
@@ -342,14 +621,13 @@ def _send_report_html(message: str) -> bool:
 
 def send_digest_messages(snap: Dict[str, Any]) -> Dict[str, Any]:
     summary = format_digest_html(snap)
+    numbers = format_numbers_html(snap)
     paste = format_paste_followup_html(snap)
-    # Prefer sending summary first; paste may be long → chunk
-    chunks: List[str] = [summary]
+    chunks: List[str] = [summary, numbers]
     max_len = 3500
     if len(paste) <= max_len:
         chunks.append(paste)
     else:
-        # send Cursor / Claude separately as plain-ish short intros + truncated pre
         chunks.append(
             "<b>📋 Cursor 복붙</b>\n<pre>"
             + _esc(format_cursor_paste(snap))[:3200]

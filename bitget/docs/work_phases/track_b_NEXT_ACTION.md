@@ -11,9 +11,9 @@
 ## 디렉터 (지금)
 
 1. **서버 배포** (01b + digest): `git pull` → `update_bitget.sh` (cron에 `--post-deploy-obs-digest` 포함 확인)
-2. **매일 20:00 KST** REPORT_BOT으로 관측 요약 + Cursor/Claude 복붙 수신
-3. 수동 1회: `bash bitget/deploy/bitget.sh --post-deploy-obs-digest` (또는 `--dry-run`)
-4. 이상 메시지면 텔레그램의 **Cursor/Claude 복붙**만 붙여넣기
+2. **매일 20:00 KST** 「코인 연습 · 오늘 한눈에」대시보드 (잘됨/구멍/기다림/나중)
+3. 수동 1회: `bash bitget/deploy/bitget.sh --post-deploy-obs-digest`
+4. **🔴 많거나 모를 때만** 복붙 · 평소는 텔레그램만
 
 **관측 5항**: OPEN/CLOSED · Cos_eff · DNA RANK · 01b 주간행 · L-1/L-2/overseer
 

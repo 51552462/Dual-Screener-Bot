@@ -1,7 +1,26 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-08-17  
-> **유형**: **POST_DEPLOY_OBS 일일 텔레그램 다이제스트** 구현 (디렉터 요청) · Claude 사후 검증 요청
+> **갱신**: 2026-08-18  
+> **유형**: 일일 digest → **초등학생용 목표 체크리스트 대시보드** 확장
+
+---
+
+## OUTBOX — 2026-08-18 · kid dashboard on daily digest
+
+- `build_kid_dashboard` + `format_digest_html` 재작성: 진행률 바 · 🟢/🔴/🟡/⬜ 4칸
+- 메시지 3분할: 대시보드 → 숫자 메모 → 복붙
+- 테스트 3 passed · gates/sync 미접촉
+- Ask: 사후 OK · 디렉터 UX 수용 여부
+
+---
+
+## OUTBOX — 2026-08-17 · 일일 관측 실측 (🟡)
+
+**스냅샷:** CLOSED=10(SPOT5+FUT5) 🟢 · Cos sample n=0(journal) 🟡 · DNA RANK1~3 전부 false 🔴 · L-1 ok · L-2 backup.timer inactive 🔴 · ai_overseer exit=1 🔴 · REPORT_BOT ok
+
+**해석(디렉터용):** 장부는 돌아가나 DNA 키가 비어 Cos 표본이 없음. 백업 타이머·감사관 미기동.
+
+**Ask:** Handoff 없이 서버 ops만 할지(RANK sync --force / backup.timer enable / overseer 기동) vs CAT-I 미니 Handoff 필요 여부. C-2/MDD5%/live 금지 유지.
 
 ---
 
