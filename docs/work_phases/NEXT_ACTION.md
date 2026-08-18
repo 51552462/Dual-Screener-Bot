@@ -2,27 +2,26 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **NS-OBS-TG-01** (Ops-lite · 일보 OBS_HOLD 복붙) |
-| **status** | `WAIT_CLAUDE_OK` · 운영상태 `OBS-HOLD` 유지 |
-| **직전** | FWD-OBS-HOLD-01 **Claude OK** |
-| **앵커** | `SYNC-2026-08-17-Z` |
+| **sub-phase** | **NS-DIR-DASH-01** (쉬운판 텔레그램 대시보드) |
+| **status** | `WAIT_CLAUDE_OK` · 운영 `OBS-HOLD` 유지 · Alpha **금지** |
+| **직전** | ROADMAP-SYNC-01 **Claude OK** |
+| **앵커** | `SYNC-2026-08-18-D` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. **Claude Pro** — `CURSOR_TO_CLAUDE.md` 최상단 NS-OBS-TG-01 OUTBOX 검증.
-2. **VPS** — `git pull` (기존 cron 19:30 유지 · 신규 cron 없음). 다음날 북극성 일보에 `[OBS_HOLD]`·`---CURSOR---`·`---CLAUDE---` 확인.
-3. **관측유지** — mega_trend · 목표하향 **착수 금지** (재소집 전).
+1. **Claude Pro** — `CURSOR_TO_CLAUDE.md` 최상단 NS-DIR-DASH-01 OUTBOX 검증.
+2. **Ops** — VPS `git pull` 후 19:30 일보 **맨 위** `[쉬운판]` 확인.
+3. **관측유지** — mega_trend · 목표하향 · 소진 레버 **착수 금지**.
 
 ### 재소집 트리거 (고정)
 
 | 항목 | 값 |
 |------|-----|
-| **트리거** | VPS `dual_north_star_ledger.json` **daily n≥20** 도달 시 갈림길 자동 재소집 |
-| **예상** | ~**2026-09-05** (8/16 기준 n=8 → +12일; **VPS 실측 재확인 후 확정**) |
-| **텔레그램** | 매일 19:30 일보 → n&lt;20=`OBSERVE_HOLD` · n≥20=`RECALL_FORK` + 복붙 블록 |
-| **금지** | n&lt;20에서 페이스·Pass/Fail·CAGR 확정 판정 · 로컬 원장 근거 |
+| **트리거** | VPS daily **n≥20** → 갈림길 재소집 |
+| **텔레그램** | 19:30 · `[쉬운판]` + `[OBS_HOLD]` + 복붙 |
+| **금지** | n&lt;20 페이스·CAGR 확정 · 로컬 원장 근거 |
 
 ### Claude 창 부팅 (복붙)
 
@@ -30,11 +29,11 @@
 역할: Claude Pro Architect. 구현 코드 작성 금지.
 
 먼저 읽기:
-1) docs/work_phases/00_SESSION_SYNC.md §3 (앵커 SYNC-2026-08-17-Z)
+1) docs/work_phases/00_SESSION_SYNC.md §3 (앵커 SYNC-2026-08-18-D)
 2) docs/work_phases/NEXT_ACTION.md
-3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 (NS-OBS-TG-01)
+3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 (NS-DIR-DASH-01)
 
-검증: 일보 OBS_HOLD 패널·복붙 DoD. OK면 VPS pull만 남김.
+검증: 쉬운판 대시보드 DoD. Alpha/목표숫자 변경 없음 확인.
 ```
 
 ---
@@ -44,8 +43,7 @@
 | 항목 | 값 |
 |------|-----|
 | **SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **로컬** | `dual_north_star_ledger.LOCAL_DEV_DO_NOT_USE.json` — **사용 금지** |
-| **실측(8/16)** | composite 4.09 · G0 · daily **8**/28 · fwd 324 — **판정 보류** |
+| **로컬** | `*.LOCAL_DEV_DO_NOT_USE.json` — **사용 금지** |
 
 ---
 

@@ -5,8 +5,10 @@ import unittest
 
 import dual_north_star_ledger as ledger
 from dual_north_star_telegram import (
+    build_goal_dashboard,
     build_obs_hold_claude_prompt,
     build_obs_hold_cursor_prompt,
+    format_goal_dashboard_html,
     format_north_star_digest_html,
     format_obs_hold_section_html,
 )
@@ -99,6 +101,27 @@ class TestObsHoldTelegram(unittest.TestCase):
         self.assertIn("[OBS_HOLD]", full)
         self.assertIn("---CURSOR---", full)
         self.assertIn("---CLAUDE---", full)
+        self.assertIn("[쉬운판]", full)
+        self.assertIn("잘 되고 있는 것", full)
+        self.assertIn("아직 부족한 것", full)
+
+    def test_goal_dashboard_n8(self) -> None:
+        snap = _snap(daily_n=8, composite=4.09)
+        d = build_goal_dashboard(snap)
+        self.assertEqual(d["n"], 8)
+        self.assertEqual(d["remaining"], 12)
+        self.assertFalse(d["checklist"][2]["done"])  # n/20
+        html = format_goal_dashboard_html(snap)
+        self.assertIn("8", html)
+        self.assertIn("/20", html)
+        self.assertIn("오류", html)
+        self.assertIn("관측 기간", html)
+
+    def test_goal_dashboard_error_surface(self) -> None:
+        snap = _snap(daily_n=8)
+        snap["tracks"]["A"]["error"] = "boom"
+        d = build_goal_dashboard(snap)
+        self.assertTrue(any("boom" in e for e in d["errors"]))
 
 
 if __name__ == "__main__":

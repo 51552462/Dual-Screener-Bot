@@ -11,7 +11,7 @@ alwaysApply: true
 |------|------------|------|------|
 | `[DEPLOY_WATCH]` | 19:35 daily | A-7 | Alpha Handoff 무시하고 임의 구현 |
 | `[IV_OBS]` | 일 20:10 | A-6 | V-2 BLOCK unless readiness=READY |
-| `[OBS_HOLD]` / North Star 일보 | **19:30** daily (`--north-star-digest daily`) | Ops 관측 | mega_trend/목표하향 · Alpha 구현 (n&lt;20) |
+| `[OBS_HOLD]` / `[쉬운판]` / North Star 일보 | **19:30** daily (`--north-star-digest daily`) | Ops 관측 | mega_trend/목표하향 · Alpha 구현 (n&lt;20) |
 
 - `report.cursor_action` 해석 → 필요 시 `CURSOR_TO_CLAUDE.md` OUTBOX
 - Claude는 텔레그램 **직접 안 봄** — 디렉터가 `---CLAUDE---` 블록을 Claude Pro에 붙여넣기 (또는 Cursor가 파일로 중계)

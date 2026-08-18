@@ -3,7 +3,192 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-17 · **NS-OBS-TG-01 Done** · 앵커 `SYNC-2026-08-17-Z`
+> **갱신**: 2026-08-18 · **NS-DIR-DASH-01 Done** · 앵커 `SYNC-2026-08-18-D`
+
+---
+
+## OUTBOX — [Ops-lite] NS-DIR-DASH-01 **완료** · Claude 검증 요청 · 2026-08-18
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | NS-DIR-DASH-01 |
+| **status** | `WAIT_CLAUDE_OK` · 운영 `OBS-HOLD` 유지 |
+| **앵커** | `SYNC-2026-08-18-D` |
+| **범위** | 기존 19:30 North Star 일보 **맨 앞**에 `[쉬운판]` 대시보드 |
+| **코드** | `dual_north_star_telegram.py` (`build_goal_dashboard` / `format_goal_dashboard_html`) |
+| **비접촉** | Critical · config_kv · 신규 cron · mega_trend/목표하향 · CAGR 확정 로직 |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | daily HTML 상단에 `[쉬운판]` · ✅/⏳/⚠️/📋 | ✅ |
+| 2 | n/20 진행 · 관측문구 · 확정 판정 문구 없음 | ✅ |
+| 3 | weekly 패널 생략 | ✅ (daily only) |
+| 4 | 테스트 | ✅ **14 passed** |
+| 5 | 12·hooks 문서 반영 | ✅ |
+
+### 디렉터 3줄
+
+1. 매일 일보 **맨 위**에 쉬운 체크·대시보드.
+2. VPS pull 후 19:30 확인.
+3. Claude: 본 OUTBOX 검증.
+
+---
+
+## CLOSE — ROADMAP-SYNC-01 **Claude OK** · 2026-08-18
+
+DoD 4/4 VERDICT OK · OBS-HOLD 유지 · 신규 Handoff 없음.  
+다음 실질 Go = VPS daily n≥20.
+
+---
+
+## OUTBOX — [Ops-lite] ROADMAP-SYNC-01 **완료** · Claude 검증 요청 · 2026-08-18
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | ROADMAP-SYNC-01 |
+| **status** | `WAIT_CLAUDE_OK` · 운영 `OBS-HOLD` 유지 |
+| **앵커** | `SYNC-2026-08-18-B` |
+| **선행** | ROADMAP-AUDIT-01 VERDICT · NS-OBS-TG-01 **Claude OK** |
+| **코드 diff** | **0** |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | `15_POST_RP1` 단계2 → 🔴 동결(규칙1) + 각주 | ✅ 단계표·§단계2·갱신로그 |
+| 2 | `00_전체현황판` Phase3 → 동결 + C-1 No-Go 각주 | ✅ |
+| 3 | 다중 시계 4행 + 「RP-1 Pass ≠ 40~70%」 | ✅ 마스터 §0.2 + 현황판 목표수치 아래 |
+| 4 | 코드·config·cron 비접촉 | ✅ |
+
+### 비고
+
+- NS-OBS-TG-01: Claude OK 반영(현황판). VPS pull·19:30 육안은 디렉터 Ops 잔여.
+- Defer/3택 카드/Alpha Go: Handoff대로 **미착수**.
+
+### 디렉터 3줄
+
+1. 문서 3건 라벨 정정 Done — 코드 0.
+2. Claude: 본 OUTBOX DoD 확인.
+3. 실질 Go는 여전히 n≥20.
+
+---
+
+## OUTBOX — [Audit] ROADMAP-AUDIT-01 · KR/US 카테고리·로드맵·목표 달성 경로 점검 · Claude 상의 요청 · 2026-08-18
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | ROADMAP-AUDIT-01 (조사·문서 · **코드 0**) |
+| **요청** | 디렉터: 「카테고리·마스터로드맵·목표(40~70%/MDD10%) 작업순서가 빠짐없는지 · 보완점 · Claude와 재상의」 |
+| **앵커** | `SYNC-2026-08-18-A` |
+| **운영 전제** | **OBS-HOLD 유지** · mega_trend/목표하향/소진레버 **착수 금지** · Alpha Handoff **지금 열지 말 것** |
+| **병행** | NS-OBS-TG-01 `WAIT_CLAUDE_OK` (일보 복붙) — 본 Audit과 별개 검증 |
+
+### 0. 한 줄 결론 (Cursor 엔지니어)
+
+**목표 숫자는 일관. CAT A~Q는 빠짐없음. 문제는 “다음 코딩 순서” 문서가 현실(OBS-HOLD·레버 소진)과 어긋난 것.** CAGR 달성은 A~D 한 방 패치가 아니라 **L2(forward+G2) 표본 + n≥20 갈림길**이 본체. 지금은 **문서 SSOT 동기화**가 우선, 신규 Alpha Go는 재소집 후.
+
+---
+
+### A. 목표 SSOT — 일관성
+
+| 출처 | 내용 | 판정 |
+|------|------|------|
+| `00_마스터_로드맵` | MDD **−10%** · CAGR **40~70%** · MDD 우선 | ✅ |
+| `00_전체현황판` | 동일 · 가상매매 **3개월+** 후 실매매 | ✅ 숫자 / ⚠ 시계 |
+| `12_듀얼북극성` | G2≥56일·avg≥60·fwd>30 · G4=디렉터 수동 | ✅ |
+| `15_POST_RP1` | MDD 구조적 가능 · **CAGR 미증명** · 15구간 일관 Pass 아님 | ✅ 정직 |
+| IV L0~L3 | L2=주 근거 · L3 미연동 | ✅ |
+
+**보완 제안 (문서 1단락)**: 시계를 한 문장으로 고정.
+
+| 시계 | 의미 | CAGR “달성” 주장? |
+|------|------|-------------------|
+| daily **n≥20** | 갈림길 재소집만 | ❌ |
+| ASG 4주 | L1 조기경보 | ❌ |
+| **G2** (~56d+) | L2 수익 페이스 | △ 주 근거 |
+| G4+디렉터 | 상품화/실전 | ✅ LIVE만 |
+
+→ RP-1 Pass ≠ 40~70% 달성 (현행 규칙과 일치, 마스터에 명시 권고).
+
+---
+
+### B. 카테고리 (CAT) — 빠짐?
+
+`docs/claude_project/`: **A~Q 전부 존재** (+ MAP · HANDOFF · CONSTANTS · KR-US 비대칭).  
+Bitget과 동일 알파벳 · 비대칭 문서만 트랙별 상이 — **누락 카테고리 없음**.
+
+데이터 흐름(MAP): `B→G→C→D→E→F→J` · H→K→C · I→C,F — 목표 경로상 **구조 구멍 없음**.  
+빈칸은 카테고리가 아니라 **실행 상태·효과검증(06 3단계 미기록)**.
+
+---
+
+### C. 작업순서 — 낡은/모순 (Must-fix sync 후보)
+
+| 문서 | 문제 | 현실(SYNC/NEXT) |
+|------|------|-----------------|
+| `00_전체현황판` Phase 3 C | **「다음」·Handoff 대기** | C-1 **No-Go 동결** · OBS-HOLD |
+| `15_POST_RP1` | BULL-RECENCY **Claude OK 대기** · “다음 Go” | 레버 **전원 소진·동결** |
+| `01_묶음A` 로컬표 | A-4/A-5 **미착수** | A-4 Adapter OK · A-5b OK · Phase1 freeze |
+| `03_묶음C` | C-1 **미착수** | C-1-REDUCED **INVALID·동결** |
+| `02_묶음B` | B 미착수·A-5 미완 전제 | A-5b OK인데 B는 **의도적 보류** (문구만 구식) |
+| `09_쉬운요약` | 08-09 스냅샷 | OBS-HOLD/NS-OBS와 **불일치** |
+| `06` 효과표 | A-1~A-3 **3단계 미완료** | Claude OK≠Done — 정상이지만 **공백 장기화** |
+
+**지금 진짜 작업 줄기** (실행 SSOT):
+
+```
+OBS-HOLD → VPS daily n≥20 → RECALL_FORK
+  3택: mega_trend(CAT-P) / 목표하향 / 관측연장
+소진: BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM · C-1
+금지(~n≥20): 위 3택 외 Alpha 신규 Go
+Ops: NS-OBS-TG-01 VPS pull · 19:30 일보
+```
+
+---
+
+### D. 40~70% 달성을 위해 — “빠진” 것 (카테고리 추가가 아님)
+
+| 갭 | 근거 | 지금 할 일? |
+|----|------|-------------|
+| **L2 표본 부족** | composite~4 · G0 · n=8/28 (8/16) | 관측만 (OBS-HOLD) |
+| **근처 수익 레버 소진** | NEXT_ACTION 동결 목록 | 재접촉 금지 |
+| **Phase B(진화·킬) 보류** | 수익/선별 엔진인데 12주 미착수 | n≥20 후 갈림길과 함께 재평가 |
+| **CAT-P mega_trend** | 소진 후 유일 명시 경로 | **재소집 전 금지** |
+| **06 효과검증 공백** | A 구현은 됐는데 3단계 미기록 | n 쌓이며 North Star로 대체 관측 가능 |
+| **L3/DSR (D-3)** | LIVE 하드게이트 미연동 | G2 전 후순위 유지 OK |
+| **실적 스냅샷 공백** | 현황판 “미기록” | 일보/원장이 사실상 대체 — 현황판 링크만 |
+
+→ **새 CAT 문자 추가 불필요.** 필요한 건 **실행 로드맵을 OBS-HOLD+갈림길 중심으로 재정렬**.
+
+---
+
+### E. Claude에게 요청하는 판단 (상의 안건)
+
+1. **Must-fix (문서만 · 코드 0)**  
+   - `15_POST_RP1` · `00_전체현황판` Phase표 · (선택) `01`/`03` 상단에 “SSOT=SYNC/현황판” 배너  
+   - 목표 **다중 시계** 1단락을 `00_마스터` 또는 현황판에  
+   - OK면 Cursor에 **문서-only Handoff** 1개 (예: ROADMAP-SYNC-01)
+
+2. **재소집(n≥20)용 옵션 카드 초안만** (구현 Handoff 금지)  
+   - mega_trend vs 목표하향 vs 관측연장 — 각각 Go 조건·금지·CAT 경계 3줄
+
+3. **열지 말 것**  
+   - BULL/SIDE/BEAR/C-1 재Go · Phase B/D 착수 · CAGR/MDD 숫자 변경 · Critical F/G rewrite
+
+4. **NS-OBS-TG-01**  
+   - 별도 DoD 검증 OK 가능 (본 Audit과 독립)
+
+### Cursor 제안 (엔지니어 1줄)
+
+문서 sync Handoff가 나오면 **targeted markdown only**가 맞음. 코드·config·cron 손대지 말 것.
+
+### 디렉터 3줄
+
+1. 카테고리·목표 숫자는 OK · **작업순서 문서가 낡음**.  
+2. 수익률은 지금 코딩이 아니라 **관측→n≥20 갈림길**.  
+3. Claude: 본 OUTBOX로 문서 sync Go/Defer 판단.
 
 ---
 

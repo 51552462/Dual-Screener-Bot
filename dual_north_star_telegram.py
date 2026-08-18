@@ -3,7 +3,7 @@
 
 REPORT_BOT_* (또는 TELEGRAM_*) 로 단일 HTML 메시지 발송.
 주식·Bitget 큐와 분리 — director digest 전용.
-일간: [OBS_HOLD] 관측 패널 + ---CURSOR--- / ---CLAUDE--- 복붙 블록.
+일간: [쉬운판] 대시보드 + [OBS_HOLD] + ---CURSOR--- / ---CLAUDE---.
 """
 from __future__ import annotations
 
@@ -117,6 +117,154 @@ def build_obs_hold_claude_prompt(snap: Dict[str, Any]) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def build_goal_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    디렉터용 쉬운 목표 체크·상태 보드 (구조화).
+    판정/CAGR 확정 아님 — 관측·진행·누락·오류만.
+    """
+    meta = snap.get("meta") or {}
+    ledger = snap.get("ledger") or {}
+    gate_a = (ledger.get("A") or {}) if isinstance(ledger, dict) else {}
+    tracks = snap.get("tracks") or {}
+    ta = tracks.get("A") or {}
+    tb = tracks.get("B") or {}
+    agg = ta.get("aggregate") or {}
+    pr_a = (snap.get("period_returns") or {}).get("A") or {}
+
+    n = int(meta.get("daily_n") or meta.get("daily_snapshot_count") or 0)
+    recall = int(meta.get("obs_hold_recall_n") or OBS_HOLD_RECALL_N)
+    remaining = int(meta.get("obs_hold_remaining") or max(0, recall - n))
+    action = str(meta.get("cursor_action") or "NONE")
+    gate = str(gate_a.get("gate") or "G0")
+    gate_label = str(gate_a.get("gate_label") or "")
+    composite = float(agg.get("composite_score", 0) or 0)
+    mdd = float(agg.get("max_mdd_pct", 0) or 0)
+    mdd_cap = float(ta.get("mdd_cap_pct", 10) or 10)
+    total_pct = pr_a.get("total_pct")
+    fwd_a = int(ta.get("forward_trades_count", 0) or 0)
+
+    working: list[str] = []
+    missing: list[str] = []
+    errors: list[str] = []
+
+    working.append("오늘 성적표(북극성 일보)가 도착함 = 보고 파이프 동작 중")
+    if not ta.get("error") and ta.get("available", True) is not False:
+        working.append("주식(Track A) 숫자 읽기 OK")
+    if mdd <= mdd_cap:
+        working.append(f"낙폭(MDD) {mdd:.1f}% ≤ 한도 {mdd_cap:.0f}% (참고·확정 아님)")
+    else:
+        errors.append(f"낙폭 {mdd:.1f}%가 한도 {mdd_cap:.0f}%를 넘김 — 긴급 점검")
+    if action in ("OBSERVE_HOLD", "RECALL_FORK"):
+        working.append("관측 규칙(OBS-HOLD) 적용 중 · 잘못된 새 공사 막는 중")
+    working.append("카테고리(A~Q)·목표 숫자(40~70%/MDD10%) 설계칸은 이미 있음")
+    working.append("근처 실패 레버(BULL/SIDE/BEAR/C-1) 재시도 금지 = 규칙 준수 중")
+
+    if n < recall:
+        missing.append(f"갈림길 회의까지 하루 기록 {n}/{recall} · 남은 약 {remaining}일")
+    else:
+        working.append(f"하루 기록 {n}개 ≥ {recall} · 갈림길 회의 가능")
+    if gate in ("G0", ""):
+        missing.append(f"상품화 게이트 아직 {gate or 'G0'}({gate_label or '측정'}) · G2까지 멀음")
+    elif gate == "G1":
+        missing.append("G1(페이스)까지 옴 · 아직 G2(목표 근접) 아님")
+    missing.append("연 40~70% ‘달성’ 주장은 아직 하면 안 됨 (RP-1≠달성 · G2 전)")
+    missing.append("진화·킬(Phase B) · mega_trend · 목표하향 = 재소집 전 안 함(의도적 공백)")
+    missing.append("효과검증표(06 3단계)는 오래 비어 있음 · 원장·일보로 대신 관측 중")
+    if fwd_a <= 30:
+        missing.append(f"포워드 거래 수 {fwd_a} (G2 참고 조건 중 하나·확정 아님)")
+
+    for tid, t in (("A", ta), ("B", tb)):
+        if t.get("error"):
+            errors.append(f"Track {tid} 읽기 오류: {t.get('error')}")
+        if t.get("available") is False:
+            errors.append(f"Track {tid} 데이터 없음(available=false)")
+    for reason in gate_a.get("block_reasons") or []:
+        errors.append(f"게이트 제한: {reason}")
+    if n <= 0:
+        errors.append("하루 기록이 0 · cron/원장 갱신 의")
+    if not errors:
+        errors.append("지금 빨간 오류 없음 (이 일보 기준)")
+
+    checklist = [
+        {"done": True, "text": "카테고리 A~Q · 목표 헌법(40~70% / MDD10%) 준비"},
+        {"done": True, "text": "MDD 방어·관측 일보·복붙 블록 준비"},
+        {"done": n >= recall, "text": f"하루 성적 모으기 {n}/{recall} (갈림길 열쇠)"},
+        {"done": action == "RECALL_FORK", "text": "갈림길 회의 (mega_trend / 목표하향 / 관측연장)"},
+        {"done": gate not in ("G0", ""), "text": f"게이트 전진 (지금 {gate})"},
+        {"done": False, "text": "G2급 수익 페이스 증명 (56일+ · 단정 금지 중)"},
+        {"done": False, "text": "상품화·실전(G4 + 디렉터 승인)"},
+    ]
+
+    progress_pct = min(100.0, round(100.0 * n / max(recall, 1), 1))
+    if action == "OBSERVE_HOLD":
+        phase_plain = "관측 기간입니다. 새 실험 금지. 성적만 모읍니다."
+    elif action == "RECALL_FORK":
+        phase_plain = "성적 20개 찼습니다. 회의해도 됩니다(아직 공사 시작 아님)."
+    else:
+        phase_plain = "주간/월간 요약입니다."
+
+    return {
+        "n": n,
+        "recall": recall,
+        "remaining": remaining,
+        "progress_pct": progress_pct,
+        "action": action,
+        "gate": gate,
+        "composite": composite,
+        "mdd": mdd,
+        "mdd_cap": mdd_cap,
+        "total_pct": total_pct,
+        "phase_plain": phase_plain,
+        "working": working,
+        "missing": missing,
+        "errors": errors,
+        "checklist": checklist,
+    }
+
+
+def format_goal_dashboard_html(snap: Dict[str, Any]) -> str:
+    """초등학생용 목표 체크·대시보드 HTML. daily만."""
+    if str(snap.get("cadence") or "").lower() != "daily":
+        return ""
+    d = build_goal_dashboard(snap)
+    bar = _bar(float(d["progress_pct"]), width=10)
+    total = d.get("total_pct")
+    total_txt = _fmt_pct(total, signed=True) if total is not None else "—"
+
+    def _bullets(items: list[str], limit: int = 6) -> str:
+        return "\n".join(f"· {_esc(x)}" for x in items[:limit])
+
+    cl_lines = []
+    for row in d["checklist"]:
+        mark = "✅" if row.get("done") else "⬜"
+        cl_lines.append(f"{mark} {_esc(row.get('text'))}")
+
+    parts = [
+        "<b>[쉬운판] 목표까지 체크리스트 · 대시보드</b>",
+        f"<i>{_esc(d['phase_plain'])}</i>",
+        "",
+        f"🎯 목표: 연 <b>40~70%</b> · 낙폭 한도 <b>≤{d['mdd_cap']:.0f}%</b>",
+        f"📅 갈림길 열쇠: 하루기록 <b>{d['n']}</b>/{d['recall']} "
+        f"· 남음 <b>{d['remaining']}</b>일 · {bar} {d['progress_pct']:.0f}%",
+        f"📊 참고점수 {d['composite']:.1f} · 게이트 <code>{_esc(d['gate'])}</code> · "
+        f"누적 {total_txt} · MDD {d['mdd']:.1f}%",
+        "<i>※ 참고만 · 지금은 ‘성공/실패’ 확정 안 함</i>",
+        "",
+        "<b>✅ 잘 되고 있는 것</b>",
+        _bullets(d["working"]),
+        "",
+        "<b>⏳ 아직 부족한 것 (누락·대기)</b>",
+        _bullets(d["missing"]),
+        "",
+        "<b>⚠️ 오류·이상</b>",
+        _bullets(d["errors"], limit=8),
+        "",
+        "<b>📋 목표까지 남은 체크</b>",
+        "\n".join(cl_lines),
+    ]
+    return "\n".join(parts)
 
 
 def format_obs_hold_section_html(snap: Dict[str, Any]) -> str:
@@ -249,13 +397,22 @@ def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
     parts = [
         f"<b>{title}</b> ({date_kst})",
         "",
-        "━━ Track A · 주식 ━━",
-        _track_block(ta, "A"),
-        "",
-        "━━ Track B · Bitget ━━",
-        _track_block(tb, "B"),
-        "",
     ]
+
+    dash_html = format_goal_dashboard_html(snap)
+    if dash_html:
+        parts.extend([dash_html, "", "━━━━━━━━━━━━━━━━", ""])
+
+    parts.extend(
+        [
+            "━━ Track A · 주식 ━━",
+            _track_block(ta, "A"),
+            "",
+            "━━ Track B · Bitget ━━",
+            _track_block(tb, "B"),
+            "",
+        ]
+    )
 
     leader_mode = str(cmp_.get("leader_mode") or "")
     if leader_mode == "side_by_side":

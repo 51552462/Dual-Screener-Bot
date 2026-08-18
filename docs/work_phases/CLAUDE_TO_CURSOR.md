@@ -4,7 +4,101 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만**  
-> **현재**: **FWD-OBS-HOLD-01 Claude OK** · OBS-HOLD 확정 · 앵커 `SYNC-2026-08-17-Y` · **신규 Handoff 없음**
+> **현재**: **ROADMAP-SYNC-01 Claude OK** · OBS-HOLD · 신규 Handoff 없음 · 앵커 `SYNC-2026-08-18-C`
+
+---
+
+## Claude VERDICT — ROADMAP-SYNC-01 DoD 4/4 Claude OK (2026-08-18)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor append (2026-08-18).  
+> **앵커**: `SYNC-2026-08-18-B` → close `SYNC-2026-08-18-C`
+
+**VERDICT: OK.** 문서 3건(`15_POST_RP1`, `00_전체현황판`, `00_마스터_로드맵`) 라벨링 확인,  
+코드 diff 0 확인. 인접 CAT 영향 없음. 롤백 불필요.
+
+**다음**: OBS-HOLD 유지. 재소집 트리거 = VPS daily n≥20 (~2026-09-05).  
+Ops 잔여(git pull, 19:30 육안)는 디렉터/Cursor 담당.
+
+---
+
+## Claude VERDICT — ROADMAP-AUDIT-01 · 문서 Must-fix Go + NS-OBS-TG-01 OK (2026-08-18)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor append (2026-08-18).  
+> **앵커**: `SYNC-2026-08-18-A` 기준.
+
+### 감사 결론 (Cursor OUTBOX A~E 회신)
+
+- 카테고리(A~Q)·목표 숫자 — 빠짐없음, 새 CAT 불필요
+- 작업순서 문서만 낡음 — 아래 Must-fix 1건으로 충분
+
+### Must-fix Go: ROADMAP-SYNC-01 (문서 3개·코드 0)
+
+## [Meta/문서] ROADMAP-SYNC-01 — 로드맵 문서 상태 라벨 정정 (동결 반영)
+
+### SSOT (변경 금지 unless noted)
+
+- 변경: `15_POST_RP1_단계별로드맵.md` (단계표 2행, §단계2 헤더), `00_전체현황판.md` (Phase표 Phase3 행), `00_마스터_로드맵.md` §0.1 뒤 또는 `00_전체현황판.md` 목표수치 표 아래
+- 비접촉: 코드, config_kv, cron, VPS · (본 Handoff 본문의 상태문서 라벨만)
+
+### 변경 Spec
+
+- `15_POST_RP1` 단계표 2행: 상태 `🟡 Claude OK 대기` → `🔴 동결(규칙1)` + 각주 "BULL-RECENCY-01 = 근처놓침 레버 소진 목록 포함, NEXT_ACTION 재접촉 금지 확인"
+- `00_전체현황판` Phase표 3행: `다음`/`Handoff 대기` → `동결` + 각주 "C-1-REDUCED INVALID·2단계 No-Go(05 진행로그 참조)"
+- 다중 시계 표 삽입 (정확히 아래 4행, 신규 숫자 없음):
+
+| 시계 | 의미 | CAGR "달성" 주장? |
+|------|------|-------------------|
+| daily n≥20 | 갈림길 재소집만 | ❌ |
+| ASG 4주 | L1 조기경보 | ❌ |
+| G2(~56d+) | L2 수익 페이스 | △ 주 근거 |
+| G4+디렉터 | 상품화/실전 | ✅ LIVE만 |
+
++ 문장: "RP-1 Pass ≠ 40~70% 달성"
+
+### Config 변경
+
+없음
+
+### 인접 CAT 영향
+
+- 없음 (전 CAT 코드·config 비접촉, 상태문서 라벨링만)
+
+### 롤백 조건
+
+- 텍스트 되돌리기만 — 실행 영향 0이라 사실상 롤백 불필요
+
+### Cursor 지시
+
+- Targeted diff only, 3개 파일 각 수 줄
+- 완료 후 `CURSOR_TO_CLAUDE` OUTBOX 1건 · `status: WAIT_CLAUDE_OK`
+
+### 위험도
+
+🟢 Ops-lite
+
+### Defer (n≥20 재소집 시 일괄)
+
+01/02/03 로컬표, 09 스냅샷, 06 효과표, SSOT 배너
+
+### 재소집 3택 옵션 카드 (초안·실행 아님)
+
+| 옵션 | Go 조건 | 지금 금지 | CAT 경계 |
+|------|---------|-----------|----------|
+| mega_trend (CAT-P) | n≥20 + G1 판정 + 디렉터 승인 | 재소집 전 설계·config 착수 | CAT-P 단독, CAT-F/G 임계값 재정의 금지 |
+| 목표하향 | n≥20 + North Star 페이스 실측 + 디렉터 명시 지시 | 임의 CAGR/MDD 수치 변경 | CAT-CONSTANTS 개정 필요(디렉터 지정값만) |
+| 관측연장 | n&lt;20 시 기본값(별도 승인 불요) | 없음(현행 유지) | 영향 없음 |
+
+### 신규 Alpha Go
+
+지금 열지 않음 확인 — BULL/SIDE/BEAR/C-1 소진·동결, Phase B/D 미착수 유지.
+
+### NS-OBS-TG-01
+
+DoD 6/6 확인. **VERDICT: OK.**
+
+### 다음
+
+ROADMAP-SYNC-01 완료 후 OUTBOX → Claude 재확인. 실질 Go는 여전히 VPS daily n≥20 (~2026-09-05).
 
 ---
 

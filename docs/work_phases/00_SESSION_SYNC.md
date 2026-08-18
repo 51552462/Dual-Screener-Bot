@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-17 · **앵커 ID**: `SYNC-2026-08-17-Z`
+> **갱신**: 2026-08-18 · **앵커 ID**: `SYNC-2026-08-18-D`
 
 ---
 
@@ -39,27 +39,26 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-17-Z` |
-| **마지막 갱신** | 2026-08-17 — **NS-OBS-TG-01** 일보 `[OBS_HOLD]`+복붙 구현 · Claude OK 대기 |
-| **활성 트랙** | KR/US — **OBS-HOLD** (갈림길 재소집 대기) |
-| **진행 중 sub-phase** | **NS-OBS-TG-01** — `WAIT_CLAUDE_OK` · FWD-OBS-HOLD-01 관측 유지 |
-| **직전 완료** | FWD-OBS-HOLD-01 **Claude OK** · FWD-LEDGER CLOSE |
-| **Claude OK 완료** | … · **FWD-LEDGER-CRON-01** · **CLOSE** · **FWD-OBS-HOLD-01** |
-| **구현 완료·배포** | NS-OBS-TG-01: ledger+telegram · **VPS pull 잔여** |
-| **다음** | VPS pull → 19:30 실발송 확인 · daily **n≥20** 시 갈림길 재소집 · 그 전 mega_trend/목표하향 **금지** |
-| **Handoff SSOT** | `CURSOR_TO_CLAUDE.md` 최상단 · NS-OBS-TG-01 OUTBOX |
+| **앵커 ID** | `SYNC-2026-08-18-D` |
+| **마지막 갱신** | 2026-08-18 — **NS-DIR-DASH-01** 쉬운판 텔레그램 대시보드 · Claude OK 대기 |
+| **활성 트랙** | KR/US — **OBS-HOLD** |
+| **진행 중 sub-phase** | **NS-DIR-DASH-01** — `WAIT_CLAUDE_OK` (Ops-lite · 코드 텔레그램 포맷만) |
+| **직전 완료** | ROADMAP-SYNC-01 **Claude OK** |
+| **Claude OK 완료** | … · **NS-OBS-TG-01** · **ROADMAP-SYNC-01** |
+| **구현 완료·배포** | NS-DIR-DASH: `dual_north_star_telegram` · **VPS pull 잔여** |
+| **다음** | Claude OK · VPS pull · 19:30 `[쉬운판]` 확인 · n≥20 전 Alpha 금지 |
+| **Handoff SSOT** | `CURSOR_TO_CLAUDE.md` 최상단 · NS-DIR-DASH-01 |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` (로컬 금지) |
-| **git main** | origin **`f797f01`** (본 세션 미확인) / VPS **`600c9cd`** ✅ |
+| **git main** | origin **`7814693`** (+ 본 세션 미푸시) / VPS pull 잔여 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[CLOSED] FWD-LEDGER-CRON-01 · CLOSE · FWD-OBS-HOLD-01 — Claude OK
-[지금] NS-OBS-TG-01 — 일보 OBS_HOLD 패널 · WAIT_CLAUDE_OK · VPS pull
-[관측] OBS-HOLD 재소집=daily n≥20 (~09-05 예상)
-[소진·동결] BULL-RECENCY · SIDE-ALPHA · BEAR-S5-SIM · C-1 섹터
-[금지] mega_trend · 목표하향 — 재소집 전 착수 금지
-[SSOT] North Star = VPS 원장 only
+[CLOSED] ROADMAP-SYNC · NS-OBS · FWD-OBS-HOLD — Claude OK
+[지금] NS-DIR-DASH-01 — 쉬운판 일보 · WAIT_CLAUDE_OK
+[관측] OBS-HOLD · n≥20 재소집
+[Ops] VPS pull · 19:30 [쉬운판]+[OBS_HOLD]
+[금지] mega_trend · 목표하향 · 소진레버
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
