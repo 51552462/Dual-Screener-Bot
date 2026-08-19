@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **(없음)** — 일일 관측 텔레그램 · 서버 1~2주 | C-2 🔴 defer · live/실전 금지 |
-| 마지막 갱신 | 2026-08-17 | POST_DEPLOY_OBS digest · `OBS_RUNNING` |
+| **다음 Handoff** | **(없음)** — 서버 DNA-UX digest 육안 · 관측 유지 | C-2 🔴 defer · live/실전 금지 |
+| 마지막 갱신 | 2026-08-20 | DNA-UX-01 **Claude OK** |
 
 ---
 
@@ -232,6 +232,7 @@
 | `GMM_DNA_ALPHA_REPORT_WINDOW_DAYS` | 01b Cos 로그 창 (default 7) | I-GMM-DNA-01b | config_kv / env |
 | `GMM_DNA_ALPHA_REPORT_LOG_SOURCE` | journal\|file 우선 (default journal) | I-GMM-DNA-01b | config_kv / env |
 | `POST_DEPLOY_OBS_DIGEST_ENABLED` | 일일 관측 텔레그램 kill-switch (default true) | POST_DEPLOY_OBS | config_kv / env |
+| `POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED` | DNA why-진단 (default true · false=이진 RANK 문구) | POST_DEPLOY_OBS-DNA-UX-01 | config_kv / env |
 | `post_deploy_obs_digest_daily` | 일일 관측 digest ops_events | POST_DEPLOY_OBS | `ops_events` |
 | `cost_basis` | D-3a USD 단가 없을 때 `no_usd_unit_rate` | D-3a | ops payload |
 | `gemini_call_count_source` | D-3a call proxy: `ops_events` 없으면 `llm_call_cache` 행수 (**실 API 호출 수 아님**) | D-3a | ops payload |

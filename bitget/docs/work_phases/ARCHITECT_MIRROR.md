@@ -6,6 +6,30 @@
 
 ---
 
+## Mirror — 2026-08-20 · [CAT-J] · POST_DEPLOY_OBS-DNA-UX-01 조건부 OK
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 맞게 반영된 점: 6-state 순서 · Spec2/3/5 · kill-switch · gates/sync/MFE 기본값 비접촉 · 10 passed · 실측→DATA_WAIT_LOW_MFE 정합
+- OUTBOX 요약에 `DB_PATH`로 축약 표기했으나 **코드 enum 정식명 = `DB_PATH_OR_ENV`** (스펙 1:1)
+- 숫자 메모 키: `n_closed_by_tf` · `n_mfe8_by_tf` · `gmm_cluster_n` · `last_error` (요청 4필드 + `_by_tf` 접미사)
+
+### 추가 제안 (1~3개, Handoff 범위 밖 · 지금 착수 금지)
+| # | 제안 | Layer | 우선순위 |
+|---|------|-------|----------|
+| 1 | DATA_WAIT 연속 일수 카운터(며칠째 재료대기인지) → 관측 vs 구조 문제 판단 | 🟡 2 | 중 (별도 Handoff) |
+| 2 | 01b 주간 report ↔ 일일 digest 공통 계산 헬퍼 통합 (정합성) | 🟡 2 | 낮음 (비차단) |
+| 3 | 서버 pull 후 텔레그램 DNA「재료 덜 모였어요」👁️ 1회 | ① 디렉터 | 최고 |
+
+### Cursor와 다른 의견 (있으면)
+- 없음. 조건부 OK = 요약 표기 확인만 Mirror에 닫음.
+
+### 다음 Handoff 후보 재정렬
+1. **(설계 아님)** 디렉터 배포·텔레그램 육안 확인
+2. DATA_WAIT streak 카운터 (별도 Ask 후)
+3. C-2 / MDD5% / live — 금지 유지
+
+---
+
 ## Mirror — 2026-08-17 · [CAT-I] · I-GMM-DNA-01b 구현 검증
 
 ### 로컬 구조 이해 (Cursor 스냅샷 대비)

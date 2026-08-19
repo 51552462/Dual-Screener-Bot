@@ -19,6 +19,20 @@
 
 ---
 
+## POST_DEPLOY_OBS-DNA-UX-01 — DNA digest why-진단 [2026-08-20]
+
+| 항목 | 내용 |
+|------|------|
+| **Handoff** | Downloads → `track_b_CLAUDE_TO_CURSOR.md` / `CLAUDE_TO_CURSOR.md` |
+| **구현** | `diagnose_dna_state` · TF/MFE probe · kid plain Spec2 · 숫자 메모 Spec3 · paste Spec5 · kill-switch `POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED` |
+| **파일** | `post_deploy_obs_digest_bg.py` · `gmm_dna_alpha_report_bg.py`(read helpers) · `memory_policy.py` · `test_post_deploy_obs_digest_bg.py` |
+| **테스트** | **10 passed** |
+| **비변경** | `gates.py` · `gmm_dna_alpha_sync.py` · MFE 문턱 기본값 |
+| **status** | **Claude OK 2026-08-20** (조건부 OK · Mirror 닫힘) |
+| **Claude OK** | **2026-08-20** — 스펙 일치 · enum=`DB_PATH_OR_ENV` 정식명 확인 · 서버 텔레그램 1회 육안만 잔여 |
+
+---
+
 ## 사전 완료 (Phase 0–8 · 코드 구현)
 
 > work_phases 이전에 완료된 Bitget 구현 — **참조용**. sub-phase ID 없음.

@@ -21,6 +21,18 @@ _EVENT = "post_deploy_obs_digest_daily"
 _COMPONENT = "observability.post_deploy_obs"
 _KST = ZoneInfo("Asia/Seoul")
 
+# data_miner._fit_gmm_templates: if len(xdf) < 12 → return {}
+_GMM_FIT_MIN_ROWS = 12
+
+_DNA_STATE_PLAIN = {
+    "RANK_OK": "DNA 다 컸어요 – 오늘은 그냥 넘어가도 돼요",
+    "DATA_WAIT_LOW_MFE": "DNA 재료가 아직 덜 모였어요 – 계속 기다리면 돼요",
+    "GMM_EMPTY": "재료는 쌓였는데 DNA를 안 만들었어요 – 디렉터가 서버에서 한 번 돌려주세요",
+    "SYNC_FAIL": "DNA는 만들었는데 연결이 안 붙어요 – Cursor·Claude에게 보여주세요",
+    "DB_PATH_OR_ENV": "저장소를 못 찾았어요 – 디렉터가 서버 상태를 봐주세요",
+    "UNKNOWN": "무슨 상황인지 애매해요 – 숫자 메모를 Cursor·Claude에게 보여주세요",
+}
+
 
 def digest_enabled() -> bool:
     env = os.environ.get("POST_DEPLOY_OBS_DIGEST_ENABLED")
@@ -39,6 +51,145 @@ def digest_enabled() -> bool:
     from bitget.infra.memory_policy import POST_DEPLOY_OBS_DIGEST_ENABLED
 
     return bool(POST_DEPLOY_OBS_DIGEST_ENABLED)
+
+
+def dna_diagnosis_enabled() -> bool:
+    env = os.environ.get("POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    try:
+        from bitget.infra import config_manager as cm
+
+        raw = cm.get_config_value("POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED", None)
+        if raw is not None:
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+    try:
+        from bitget.infra.memory_policy import POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED
+
+        return bool(POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED)
+    except Exception:
+        return True
+
+
+def diagnose_dna_state(
+    config: dict,
+    n_closed_by_tf: Dict[str, int],
+    n_mfe8_by_tf: Dict[str, int],
+    gmm_min_rows: int,
+    *,
+    db_ok: bool = True,
+    rank_all_present: Optional[bool] = None,
+    checked_at: Optional[str] = None,
+    last_error: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Ordered DNA why-diagnosis (Handoff POST_DEPLOY_OBS-DNA-UX-01 Spec 1).
+    First matching rule wins — do not reorder without Claude re-verify.
+    """
+    at = checked_at or datetime.now(_KST).strftime("%Y-%m-%d %H:%M KST")
+    gmm = config.get("BITGET_GMM_DNA_TEMPLATES") if isinstance(config, dict) else None
+    from bitget.observability.gmm_dna_alpha_report_bg import count_gmm_template_clusters
+
+    cluster_n = count_gmm_template_clusters(gmm)
+    templates_present = cluster_n > 0
+
+    if rank_all_present is None:
+        rank_all_present = all(
+            isinstance((config or {}).get(f"CRYPTO_DNA_ALPHA_RANK{i}"), dict)
+            and (config or {}).get(f"CRYPTO_DNA_ALPHA_RANK{i}")
+            for i in (1, 2, 3)
+        )
+
+    closed = {str(k).upper(): int(v or 0) for k, v in (n_closed_by_tf or {}).items()}
+    mfe8 = {str(k).upper(): int(v or 0) for k, v in (n_mfe8_by_tf or {}).items()}
+    min_rows = int(gmm_min_rows)
+
+    state: Optional[str] = None
+    action: Optional[str] = None
+    if not db_ok:
+        state, action = "DB_PATH_OR_ENV", "DIRECTOR_SSH_CHECK"
+    elif rank_all_present:
+        state, action = "RANK_OK", "NONE"
+    elif not mfe8 or all(int(v) < min_rows for v in mfe8.values()):
+        state, action = "DATA_WAIT_LOW_MFE", "OBSERVE_HOLD"
+    elif not templates_present:
+        state, action = "GMM_EMPTY", "DIRECTOR_SSH_CHECK"
+    elif templates_present and not rank_all_present:
+        state, action = "SYNC_FAIL", "REPORT_TO_CLAUDE"
+    else:
+        state, action = "UNKNOWN", "REPORT_TO_CLAUDE"
+
+    return {
+        "state": state,
+        "cursor_action": action,
+        "plain": _DNA_STATE_PLAIN.get(state or "", _DNA_STATE_PLAIN["UNKNOWN"]),
+        "checked_at": at,
+        "n_closed_by_tf": closed,
+        "n_mfe8_by_tf": mfe8,
+        "templates_present": templates_present,
+        "gmm_cluster_n": cluster_n if templates_present else (0 if isinstance(gmm, dict) else None),
+        "last_error": last_error,
+        "gmm_min_rows": min_rows,
+    }
+
+
+def collect_dna_diagnosis(
+    *,
+    forward_db_path: Optional[str] = None,
+    rank_keys_present: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
+    """Load config + TF/MFE probes then diagnose (read-only)."""
+    at = datetime.now(_KST).strftime("%Y-%m-%d %H:%M KST")
+    cfg: Dict[str, Any] = {}
+    db_ok = True
+    last_err: Optional[str] = None
+    try:
+        from bitget.config_hub import load_config
+
+        loaded = load_config()
+        if not isinstance(loaded, dict):
+            db_ok = False
+            last_err = "load_config_not_dict"
+        else:
+            cfg = loaded
+    except Exception as ex:
+        db_ok = False
+        last_err = f"load_config:{ex}"[:200]
+
+    from bitget.observability.gmm_dna_alpha_report_bg import (
+        GMM_FIT_MIN_ROWS_OBSERVED,
+        collect_closed_mfe_counts_by_tf,
+        resolve_bitget_min_mfe_for_mining,
+    )
+
+    mfe_min = resolve_bitget_min_mfe_for_mining(cfg if db_ok else None)
+    n_closed, n_mfe, cnt_err = collect_closed_mfe_counts_by_tf(
+        forward_db_path=forward_db_path,
+        mfe_min=mfe_min,
+    )
+    if cnt_err:
+        db_ok = False
+        last_err = cnt_err
+
+    if rank_keys_present is not None:
+        rank_all = all(bool(rank_keys_present.get(f"RANK{i}")) for i in (1, 2, 3))
+    else:
+        rank_all = None
+
+    return diagnose_dna_state(
+        cfg,
+        n_closed or {},
+        n_mfe or {},
+        GMM_FIT_MIN_ROWS_OBSERVED,
+        db_ok=db_ok,
+        rank_all_present=rank_all,
+        checked_at=at,
+        last_error=last_err,
+    )
 
 
 def _esc(v: Any) -> str:
@@ -166,7 +317,18 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    if dna.get("ok"):
+    if dna_diagnosis_enabled() and isinstance(dna.get("diagnosis"), dict):
+        diag = dna.get("diagnosis") or {}
+        st = str(diag.get("state") or "")
+        plain = str(diag.get("plain") or _DNA_STATE_PLAIN["UNKNOWN"])
+        item = {"id": "dna", "title": "DNA 이름표(RANK)", "plain": plain}
+        if st == "RANK_OK":
+            working.append(item)
+        elif st == "DATA_WAIT_LOW_MFE":
+            missing.append(item)
+        else:
+            problem.append(item)
+    elif dna.get("ok"):
         working.append(
             {
                 "id": "dna",
@@ -396,6 +558,18 @@ def compute_post_deploy_obs_digest(
     cos_warn = cos_n is None or int(cos_n or 0) == 0 or log_src == "unavailable"
     book_ok = open_n > 0 or closed_n > 0
 
+    dna_diag: Optional[Dict[str, Any]] = None
+    if dna_diagnosis_enabled():
+        dna_diag = collect_dna_diagnosis(
+            forward_db_path=forward_db_path,
+            rank_keys_present=rank,
+        )
+        # RANK_OK requires all three; digest ok light follows diagnosis when present
+        if dna_diag.get("state") == "RANK_OK":
+            rank_ok = True
+        elif dna_diag.get("state") == "DATA_WAIT_LOW_MFE":
+            rank_ok = False
+
     checks = {
         "forward_book": {
             "ok": book_ok,
@@ -417,10 +591,23 @@ def compute_post_deploy_obs_digest(
             "expect": "Cos_eff not stuck at 0.000 only",
         },
         "dna_rank": {
-            "ok": rank_ok,
+            "ok": bool(
+                (dna_diag or {}).get("state") == "RANK_OK"
+                if dna_diag
+                else rank_ok
+            ),
             "keys_present": rank,
             "shape_source_distribution": report.get("shape_source_distribution") or {},
-            "light": _traffic(rank_ok),
+            "diagnosis": dna_diag,
+            "light": (
+                "🟢"
+                if dna_diag and dna_diag.get("state") == "RANK_OK"
+                else (
+                    "🟡"
+                    if dna_diag and dna_diag.get("state") == "DATA_WAIT_LOW_MFE"
+                    else _traffic(rank_ok)
+                )
+            ),
             "expect": "CRYPTO_DNA_ALPHA_RANK1~3 present",
         },
     }
@@ -469,6 +656,7 @@ def compute_post_deploy_obs_digest(
 
 def format_cursor_paste(snap: Dict[str, Any]) -> str:
     dash = snap.get("dashboard") or {}
+    dna = ((snap.get("checks") or {}).get("dna_rank") or {})
     slim = {
         "digest_id": snap.get("digest_id"),
         "date_kst": snap.get("date_kst"),
@@ -477,6 +665,7 @@ def format_cursor_paste(snap: Dict[str, Any]) -> str:
         "progress": dash.get("progress_label"),
         "problem": dash.get("problem"),
         "missing": dash.get("missing"),
+        "dna_diagnosis": dna.get("diagnosis"),
         "checks": snap.get("checks"),
         "server_ops": snap.get("server_ops"),
         "forbidden": snap.get("forbidden"),
@@ -563,24 +752,70 @@ def format_numbers_html(snap: Dict[str, Any]) -> str:
     book = checks.get("forward_book") or {}
     cos = checks.get("cos_eff") or {}
     dna = checks.get("dna_rank") or {}
-    return "\n".join(
-        [
-            f"<b>숫자 메모</b> · {_esc(snap.get('overall_light'))}",
-            f"장부 OPEN={_esc(book.get('open_total'))} CLOSED={_esc(book.get('closed_total'))} {_esc(book.get('closed_by_market'))}",
-            (
-                f"Cos n={_esc(cos.get('sample_count'))} zero={_esc(cos.get('zero_ratio'))} "
-                f"src={_esc(cos.get('log_source_used'))}"
-            ),
-            f"DNA keys={_esc(dna.get('keys_present'))} shape={_esc(dna.get('shape_source_distribution'))}",
-        ]
-    )
+    diag = dna.get("diagnosis") if isinstance(dna.get("diagnosis"), dict) else None
+    lines = [
+        f"<b>숫자 메모</b> · {_esc(snap.get('overall_light'))}",
+        f"장부 OPEN={_esc(book.get('open_total'))} CLOSED={_esc(book.get('closed_total'))} {_esc(book.get('closed_by_market'))}",
+        (
+            f"Cos n={_esc(cos.get('sample_count'))} zero={_esc(cos.get('zero_ratio'))} "
+            f"src={_esc(cos.get('log_source_used'))}"
+        ),
+        f"DNA keys={_esc(dna.get('keys_present'))} shape={_esc(dna.get('shape_source_distribution'))}",
+    ]
+    if diag:
+        lines.extend(
+            [
+                (
+                    f"DNA진단 state={_esc(diag.get('state'))} "
+                    f"action={_esc(diag.get('cursor_action'))} "
+                    f"at={_esc(diag.get('checked_at'))}"
+                ),
+                f"n_closed_by_tf={_esc(diag.get('n_closed_by_tf'))}",
+                f"n_mfe8_by_tf={_esc(diag.get('n_mfe8_by_tf'))} min_rows={_esc(diag.get('gmm_min_rows'))}",
+                (
+                    f"templates_present={_esc(diag.get('templates_present'))} "
+                    f"gmm_cluster_n={_esc(diag.get('gmm_cluster_n'))} "
+                    f"last_error={_esc(diag.get('last_error'))}"
+                ),
+            ]
+        )
+    return "\n".join(lines)
 
 
 def format_paste_followup_html(snap: Dict[str, Any]) -> str:
+    dna = ((snap.get("checks") or {}).get("dna_rank") or {})
+    diag = dna.get("diagnosis") if isinstance(dna.get("diagnosis"), dict) else {}
+    action = str((diag or {}).get("cursor_action") or "")
+    hint = ""
+    if action == "DIRECTOR_SSH_CHECK":
+        hint = (
+            "<i>DNA: track_b_POST_DEPLOY_OBS_체크리스트.md §1 — "
+            "BITGET_DB_STORAGE_PATH 확인 후 mine_bitget_dna_templates → sync --force</i>\n"
+        )
+    elif action == "REPORT_TO_CLAUDE":
+        hint = (
+            "<i>DNA: state="
+            + _esc((diag or {}).get("state"))
+            + " · 숫자 메모 첨부해 track_b_CURSOR_TO_CLAUDE Ask 작성</i>\n"
+        )
+    # Spec 5: only expose paste blocks when action needs director/AI
+    if action not in ("DIRECTOR_SSH_CHECK", "REPORT_TO_CLAUDE"):
+        # still allow paste when other problem lanes exist (ops reds)
+        dash = snap.get("dashboard") or {}
+        if not (dash.get("problem") or []):
+            if hint:
+                return hint.strip()
+            return (
+                "<i>평소엔 대시보드·숫자 메모만. DNA action="
+                + _esc(action or "NONE")
+                + " → 복붙 생략</i>"
+            )
+
     cursor = _esc(format_cursor_paste(snap))
     claude = _esc(format_claude_paste(snap))
     return (
-        "<b>📋 Cursor 복붙</b>\n"
+        (hint if hint else "")
+        + "<b>📋 Cursor 복붙</b>\n"
         f"<pre>{cursor}</pre>\n"
         "<b>📋 Claude Pro 복붙</b>\n"
         f"<pre>{claude}</pre>"

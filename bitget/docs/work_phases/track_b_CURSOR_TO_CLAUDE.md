@@ -1,7 +1,145 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-08-18  
-> **유형**: 일일 digest → **초등학생용 목표 체크리스트 대시보드** 확장
+> **갱신**: 2026-08-20  
+> **유형**: POST_DEPLOY_OBS-DNA-UX-01 **Claude OK 반영** · 서버 육안만 잔여
+
+---
+
+## OUTBOX — 2026-08-20 · Claude 조건부 OK 닫힘
+
+**Claude:** [CAT-J] 조건부 OK · Mirror → `ARCHITECT_MIRROR.md` 상단 기록.  
+**Cursor 확인:** enum 정식명 **`DB_PATH_OR_ENV`** (OUTBOX 요약의 `DB_PATH`는 축약 표기만).  
+필드: `n_closed_by_tf` · `n_mfe8_by_tf` · `gmm_cluster_n` · `last_error`.  
+**잔여:** 디렉터 서버 배포 후 텔레그램 「재료 덜 모였어요」👁️.  
+**후속 메모(미착수):** DATA_WAIT streak · 01b/digest 계산 통합.
+
+---
+
+## OUTBOX — 2026-08-20 · POST_DEPLOY_OBS-DNA-UX-01 구현 검증
+
+**요청:** Handoff 스펙 일치 여부 OK/수정 spec. OK면 Claude OK 한 줄 + 09/NEXT_STEP 반영 안내.
+
+### 구현 요약
+- `diagnose_dna_state` 순서 고정: DB_PATH → RANK_OK → DATA_WAIT_LOW_MFE → GMM_EMPTY → SYNC_FAIL → UNKNOWN
+- Spec2 초등 문구 · Spec3 숫자 메모 · Spec5 paste(DIRECTOR_SSH_CHECK / REPORT_TO_CLAUDE)
+- DATA_WAIT → 대시보드 **🟡 missing** (🔴 problem 아님)
+- kill-switch `POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED` (default true)
+- `gmm_min_rows=12` — `data_miner._fit_gmm_templates` 주석 출처 · `GMM_FIT_MIN_ROWS_OBSERVED`
+- 테스트 **10 passed** (`test_post_deploy_obs_digest_bg.py`)
+
+### 로컬 구조 스냅샷
+- `bitget/observability/post_deploy_obs_digest_bg.py` — diagnose/collect/wire/dashboard/numbers/paste
+- `bitget/observability/gmm_dna_alpha_report_bg.py` — `collect_closed_mfe_counts_by_tf` · `count_gmm_template_clusters`
+- `bitget/infra/memory_policy.py` — `POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED`
+- 비접촉: `forward/gates.py` · `evolution/gmm_dna_alpha_sync.py`
+
+### Ask Claude
+채팅 말고 파일에 OK 또는 수정 spec. C-2/MDD5%/live 금지 유지.
+
+---
+
+## OUTBOX — 2026-08-20 · Ask: DNA 일일진단 미니 Handoff
+
+### 디렉터 → Claude 붙이기용 (이 블록 전체)
+
+```
+Track B · 미니 Handoff 요청 (구현은 Cursor, 설계만 Claude)
+
+목적:
+일일 텔레그램「코인 연습 · 오늘 한눈에」DNA 칸이 지금은
+RANK1~3 유무만 보고 같은 🔴 문구만 반복한다.
+업로드 고장이 아니라 진단력 부족이다.
+디렉터가 텔레그램만 보고 (관측유지 / 서버ops / Cursor·Claude 작업) 분기할 수 있게
+why 한 줄이 나오게 해 달라.
+
+배경 실측 (2026-08-19 VPS, BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data):
+- CLOSED=10 (1H=2, 2H=1, 4H=7)
+- n_mfe8=0, n_mfe5=0 전 TF · max_mfe≈3.55
+- mine_bitget_dna_templates → 0 templates
+- gmm_dna_alpha_sync --force → no_rankable_clusters
+- overseer systemd active(running) · L-2 timer active (별건)
+- 코드 조건: TF당 mfe≥BITGET_MIN_MFE_FOR_MINING(기본8) · feature dropna 후 ≥12행이어야 GMM
+
+요청물 (Handoff에 넣을 것):
+1) DNA 진단 상태 enum (예: RANK_OK / DATA_WAIT_LOW_MFE / GMM_EMPTY /
+   SYNC_FAIL / DB_PATH_OR_ENV / UNKNOWN) — 판정 조건 표
+2) 각 상태별 초등 문구 plain (텔레그램 kid dashboard 1줄) +
+   숫자 메모에 넣을 필드 목록 (예: n_closed, n_mfe8 by TF, gmm_cluster_n, last_error)
+3) cursor_action 권고: OBSERVE_HOLD | DIRECTOR_SSH_CHECK | REPORT_TO_CLAUDE | NONE
+   (문턱 완화·실전·MDD5%·ENABLE_REAL_EXECUTION 권고 금지)
+4) 구현 범위 한정:
+   - 수정 허용: bitget/observability/post_deploy_obs_digest_bg.py
+     (+ 필요 시 gmm_dna_alpha_report_bg.py 읽기전용 헬퍼, tests)
+   - 금지: gates.py · gmm_dna_alpha_sync.py 본체 로직 · execution_safety ·
+     BITGET_MIN_MFE 기본값 변경 · C-2/live
+5) 테스트: 상태별 fixture 3~5개면 충분
+6) sub-phase ID 제안 (예: I-GMM-DNA-DIGEST-01 또는 POST_DEPLOY_OBS-DNA-UX-01)
+
+산출: bitget/docs/work_phases/CLAUDE_TO_CURSOR.md (또는 Track B Handoff 관례 파일)에
+CAT-HANDOFF 형식 미니 Handoff 1건. 채팅 장문 말고 파일.
+
+디렉터 승인: DNA「제대로 된 진단」UX — OK. 정책(문턱완화)은 이번 범위 밖.
+```
+
+### Cursor 메모 (Claude 답 오기 전)
+
+- status 기대: Claude가 Handoff 쓰면 → `WAIT_CURSOR_IMPL`
+- 구현 전 코드 손대지 말 것
+- 관련 실측 OUTBOX: 아래「DNA 실측 확정」·「digest JSON」
+
+---
+
+## OUTBOX — 2026-08-19 · 일일 digest JSON (date_kst=08-19)
+
+**스냅샷:** CLOSED=10 🟢 · DNA RANK1~3 false 🔴 · Cos n=0 🟡 · 01b=0 🟡 · L-1/L-2/REPORT_BOT ok · **ai_overseer exit=1 🔴** (당일 오전 OUTBOX「overseer OK」와 불일치 → digest 재수집·프로세스 생존 재확인 권고).  
+**Ask:** 구현 Handoff 없음 · DNA는 기존 Ask(A 관측유지 vs B 완화) 유지 · overseer는 서버 `systemctl status`만. C-2/MDD5%/live 금지.
+
+---
+
+## OUTBOX — 2026-08-19 · DNA 실측 확정 (재료 부족 · 관측 유지)
+
+**DB:** `BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data` · `bitget_market_data.sqlite` ~3.3GB OK.  
+**CLOSED=10:** 1H=2 · 2H=1 · 4H=7. **n_mfe8=0 · n_mfe5=0 전 TF.** max_mfe≈3.55 (문턱 8·5 미달).  
+**mine→0 templates · sync→`no_rankable_clusters`.** `--force`/재채굴 무의미.  
+**잔여 🔴 DNA만** (overseer ✅ · L-2 timer ✅).  
+**Ask:** 관측 유지(권장) vs mfe_min/min-rows 완화 Handoff — 디렉터 결정. C-2/MDD5%/live 금지.
+
+---
+
+## OUTBOX — 2026-08-19 · DNA mine 실측: 0 templates / no_rankable_clusters
+
+**사실:** `BITGET_GMM_DNA_TEMPLATES` 로드 시 None → `mine_bitget_dna_templates()` 실행 → **0 templates** · sync `--force` → `no_rankable_clusters` (더 이상 `no_gmm_templates` 아님 = 구조는 생겼으나 cluster 비어 있음).  
+**코드 조건:** TF당 MFE≥`BITGET_MIN_MFE_FOR_MINING`(기본 8) CLOSED가 feature dropna 후 **≥12행**이어야 GMM fit. CLOSED≈10이면 TF별로 부족이 정상.  
+**Ask:** (A) 관측 유지·데이터 쌓일 때까지 DNA 🔴 허용 (B) mfe_min/최소행 완화는 **Handoff+디렉터 승인** 후에만. C-2/MDD5%/live 금지. `--force` 반복 무의미.
+
+---
+
+## OUTBOX — 2026-08-19 · overseer 영구 기동 OK
+
+**변화:** `dante-bitget-overseer.service` → `active (running)` + `enabled`.  
+원인: VPS는 `.venv` 없음 · **`venv/bin/python`** 이 SSOT. ExecStart를 그 경로로 수정 후 203/EXEC 해소.  
+**잔여 🔴:** DNA RANK1~3 false (`no_gmm_templates` — `recover-artifacts-quick`=KMeans만, GMM 미채움).  
+**주의:** L-2 timer active이지만 backup 스크립트 `python: command not found` 가능.
+
+**Ask:** DNA는 `mine_bitget_dna_templates` 후 `gmm_dna_alpha_sync --force` — 디렉터 ops vs 미니 Handoff. C-2/MDD5%/live 금지.
+
+---
+
+## OUTBOX — 2026-08-19 · 일일 관측 (🔴 잔여 2) [superseded by overseer OK]
+
+**변화:** L-2 backup.timer `inactive`→`active` (progress 3/8→4/8).  
+**잔여 🔴:** DNA RANK · overseer 203/EXEC (이후 `venv/` 경로로 해소됨).  
+**주의:** backup `--test` 시 `python: command not found`.
+
+**Ask:** (1) GMM 템플릿 선행 후 sync (2) overseer `venv/` (3) backup_*.sh PATH — C-2/MDD5%/live 금지.
+
+---
+
+## OUTBOX — 2026-08-18 · 일일 관측 실측 (🔴)
+
+**스냅샷:** CLOSED=10 🟢 · RANK1~3 전부 false 🔴 · Cos n=0 🟡 · L-1 ok · L-2 backup.timer inactive 🔴 · ai_overseer exit=1 🔴 · 01b weekly=0 🟡 · progress 3/8
+
+**Ask:** 서버 ops 3종(RANK sync --force / backup.timer enable / overseer 기동)을 디렉터 수동으로 할지, CAT-I/L 미니 Handoff가 필요한지. C-2/MDD5%/live 금지 유지.
 
 ---
 

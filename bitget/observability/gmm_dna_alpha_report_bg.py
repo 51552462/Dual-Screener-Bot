@@ -269,6 +269,97 @@ def _dna_rank_and_shape() -> Tuple[Dict[str, bool], Dict[str, int]]:
     return present, dict(shape_dist)
 
 
+# mining floor used by data_miner._fit_gmm_templates (len(xdf) < 12 → {})
+GMM_FIT_MIN_ROWS_OBSERVED = 12
+_DNA_DIAG_TFS = ("1D", "4H", "2H", "1H")
+
+
+def resolve_bitget_min_mfe_for_mining(cfg: Optional[Dict[str, Any]] = None) -> float:
+    if isinstance(cfg, dict) and cfg.get("BITGET_MIN_MFE_FOR_MINING") is not None:
+        try:
+            return float(cfg.get("BITGET_MIN_MFE_FOR_MINING"))
+        except (TypeError, ValueError):
+            pass
+    return 8.0
+
+
+def count_gmm_template_clusters(gmm: Any) -> int:
+    """Count rankable-ish cluster dicts under BITGET_GMM_DNA_TEMPLATES (read-only)."""
+    if not isinstance(gmm, dict) or not gmm:
+        return 0
+    n = 0
+    for v in gmm.values():
+        if not isinstance(v, dict):
+            continue
+        inner = v.get("templates")
+        if isinstance(inner, dict):
+            n += sum(1 for c in inner.values() if isinstance(c, dict) and c)
+            continue
+        # legacy flat cluster map under TF blob
+        n += sum(
+            1
+            for k, c in v.items()
+            if isinstance(c, dict)
+            and c
+            and str(k).upper().startswith(("GMM_CLUSTER", "CLUSTER"))
+        )
+    return int(n)
+
+
+def collect_closed_mfe_counts_by_tf(
+    *,
+    forward_db_path: Optional[str] = None,
+    mfe_min: float = 8.0,
+) -> Tuple[Optional[Dict[str, int]], Optional[Dict[str, int]], Optional[str]]:
+    """
+    CLOSED counts + mining-eligible (mfe≥min + feature non-null) by TF.
+    Feature gate mirrors data_miner._fit_gmm_templates dropna subset
+    (dyn_cpv, dyn_tb, v_energy, dyn_rs|v_rs).
+    Returns (n_closed_by_tf, n_mfe8_by_tf, error) — error set on DB failure.
+    """
+    from bitget.infra.data_paths import market_data_db_path
+    from bitget.infra.shared_db_connector import get_connection
+
+    path = forward_db_path or market_data_db_path()
+    if not path or not os.path.isfile(path):
+        return None, None, f"db_missing:{path}"
+    n_closed = {tf: 0 for tf in _DNA_DIAG_TFS}
+    n_mfe = {tf: 0 for tf in _DNA_DIAG_TFS}
+    try:
+        conn = get_connection(path, read_only=True)
+        try:
+            sql = f"""
+                SELECT UPPER(timeframe) AS tf,
+                       COUNT(*) AS n_closed,
+                       SUM(
+                         CASE
+                           WHEN COALESCE(mfe, 0) >= ?
+                            AND dyn_cpv IS NOT NULL
+                            AND dyn_tb IS NOT NULL
+                            AND v_energy IS NOT NULL
+                            AND (dyn_rs IS NOT NULL OR v_rs IS NOT NULL)
+                           THEN 1 ELSE 0
+                         END
+                       ) AS n_mfe
+                FROM {_FORWARD_TABLE}
+                WHERE status LIKE 'CLOSED%'
+                GROUP BY UPPER(timeframe)
+            """
+            rows = conn.execute(sql, (float(mfe_min),)).fetchall()
+            for tf, c, m in rows:
+                key = str(tf or "").strip().upper()
+                if not key:
+                    continue
+                n_closed[key] = int(c or 0)
+                n_mfe[key] = int(m or 0)
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.warning("dna diag TF counts failed: %s", ex)
+        return None, None, str(ex)[:200]
+    return n_closed, n_mfe, None
+
+
 def compute_weekly_gmm_dna_alpha_report_bg(
     window_days: int = 7,
     *,
