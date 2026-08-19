@@ -3,7 +3,131 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-19 · NS-DIAG-DASH-01 **Claude OK CLOSED** · 앵커 `SYNC-2026-08-19-E`
+> **갱신**: 2026-08-19 · OPS-LIQ-FORK-01 **(A′) Phase1** · 앵커 `SYNC-2026-08-19-G`
+
+---
+
+## OUTBOX — [CAT-C] OPS-LIQ-FORK-01 Phase1 **스크립트 Done · VPS 대기** · 2026-08-19
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | OPS-LIQ-FORK-01 Phase 1 |
+| **Claude** | **(A′) 채택** · Phase2는 조건부·디렉터 숫자 |
+| **코드** | `scripts/ops_liq_fork_01_quality_band_phase1.py` |
+| **비접촉** | threshold · config_kv · funnel 판정 |
+| **status** | VPS 실행 → percentile 분포표 → Claude OK |
+
+### VPS
+
+```bash
+cd /home/ubuntu/dante_bots/Dual-Screener-Bot && git pull
+set -a && source .env && set +a
+python3 scripts/ops_liq_fork_01_quality_band_phase1.py
+```
+
+### 분기 (Claude·디렉터 합의안)
+
+| Phase1 힌트 | 다음 |
+|-------------|------|
+| MID_HIGH_CONCENTRATION | Phase 2 논의 (숫자 디렉터) |
+| LOW_TAIL_CONCENTRATION | **(B) 관측연장** |
+
+### 디렉터 3줄
+
+1. (A′) 채택 · **지금은 계측만**.  
+2. VPS 로그 붙여 주시면 분포표 OUTBOX.  
+3. 잡주 개방 완화는 **계속 금지**.
+
+---
+
+## OUTBOX — [Ask] OPS-LIQ-FORK-01 · OPEN=0 vs 북극성·목표 · **갈림길 Handoff 요청** · 2026-08-19
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **OPS-LIQ-FORK-01** (가칭 · Claude 확정) |
+| **status** | `WAIT_CLAUDE_HANDOFF` · Cursor **구현 금지** (정책 미정) |
+| **앵커** | `SYNC-2026-08-19-F` |
+| **프로젝트** | KR/US Dual-Screener Claude Pro (**Bitget 아님**) |
+
+### 한 줄 (Claude에 넘길 핵심)
+
+> **OPEN=0이 매매표본·수익률 증명을 막는다. LIQUIDITY는 정상(OK). 디렉터 유니버스=대형주·정상 유동 종목(작전주·잡주·동전주 제외). 갈림길: (A′)품질밴드 재조정 Handoff vs (B)관측연장 vs (C)추가실측 — 헐겁게 열어 잡주 넣는 완화는 금지.**
+
+### 디렉터 유니버스 헌법 (2026-08-19 추가 · SSOT)
+
+| 선호 | 내용 |
+|------|------|
+| ✅ 허용·목표 | 삼성·SK하이닉스급 **대형주** + **어느 정도 정상적인 유동성** 종목으로 데이터·수익률 관측 |
+| ❌ 금지 방향 | **작전주 · 잡주 · 동전주**를 넣으려고 임계를 헐겁게 푸는 것 |
+| 함의 | 현재 LIQUIDITY(저가·거래량 컷)의 **취지(쓰레기 배제)는 유지**. 문제는 “정상 종목까지 과도 차단 → OPEN=0 → 목표 표본 공백” |
+
+### Cursor 엔지니어 브리핑 (최선 아이디어 · 1~2줄)
+
+- **(A) 전면 완화**는 디렉터 의도와 충돌 → **기각 권고**.
+- **최선 = (A′) 품질 밴드**: 가격 바닥(동전주 차단)은 **유지/강화 가능**, 거래량 floor만 **정상 중·대형 유동**이 survivors에 남도록 **계측 후 제한 조정** + 샘플에 작전·저가 비중 가드. Critical/Kelly/MDD 비접촉.
+- (B)는 목표 페이스를 **의도적으로 미룸** — 디렉터가 수용할 때만.
+- (C)는 A′ 전에 “survivors>0인데 try_add만 거절”인지 1회 분리 — 싸게 리스크 줄임.
+
+### 왜 지금 Ask인가
+
+| 층 | 상태 | 북극성·목표에 미치는 영향 |
+|----|------|---------------------------|
+| daily **n** (일보 스냅샷) | 크론 돌면 쌓일 수 있음 | n≥20 시계는 갈 수 있음 |
+| **forward 매매** | OPEN≈0 | CAGR·페이스 **증명 불가** |
+| LIQUIDITY | GATE WORKING · OK | 취지 OK · **과도 차단 가능** |
+| 디렉터 품질 헌법 | 신규 | 잡주 개방형 완화 **금지** |
+
+### 선행 확정 (뒤집지 말 것)
+
+1. OPS-OPEN-STALL-01 OK — LIQUIDITY 100% · cutoff 배제  
+2. OPS-LIQUIDITY-STALL-01 OK — (b) 87.5% · GATE WORKING  
+3. NS-DIAG-DASH-01 OK — OPEN=0 ≠ 자동🔴  
+4. 「시스템 비상 켈리 0.2%」= 리포트 문구 · 전면차단 아님  
+
+### Claude에게 요청 (택1 + Handoff)
+
+1. **갈림길 VERDICT** (하나만):
+   - **(A′)** **품질 밴드** 유동성 재조정 Handoff — 동전주·작전주 유입 가드 명시 · 정상 유동 종목만 survivors↑ · CAT-B/C · Critical 비접촉 · 롤백·관측 KPI(OPEN/주·잡주 비율)  
+   - **(B)** 관측연장 — 임계 유지 · 목표 페이스 지연 **수용** 문구  
+   - **(C)** A′ 전 read-only 1회 — survivors>0 vs try_add 거절 분리  
+   - ~~(A) 전면 완화~~ — **디렉터 헌법상 비권고**
+2. 결과 → **`CLAUDE_TO_CURSOR.md`** CAT-HANDOFF  
+3. mega_trend·목표하향·CAGR 숫자 변경 = **밖**
+
+### 디렉터 → Claude 복붙 (전문)
+
+```text
+역할: Claude Pro Architect. 구현 코드 작성 금지.
+
+먼저 읽기:
+1) docs/work_phases/00_SESSION_SYNC.md §3 (앵커 SYNC-2026-08-19-F)
+2) docs/work_phases/NEXT_ACTION.md
+3) docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 OUTBOX (OPS-LIQ-FORK-01)
+
+@CAT-B @CAT-C @CAT-MAP @CAT-HANDOFF_템플릿
+@CAT-D
+(임계 키 시) @CAT-CONSTANTS
+
+한 줄: OPEN=0이 매매표본·수익률 증명을 막는다. LIQUIDITY는 정상(OK). 유니버스=대형·정상유동(작전·잡·동전주 제외). 갈림길 (A′)품질밴드 재조정 vs (B)관측연장 vs (C)추가실측 — 잡주 개방형 완화 금지.
+
+요청: VERDICT 택1 + CLAUDE_TO_CURSOR.md Handoff. 채팅 말고 파일.
+Bitget 프로젝트 쓰지 말 것.
+```
+
+### Knowledge / 업로드
+
+| | |
+|--|--|
+| **프로젝트** | KR/US Dual-Screener (**Bitget ❌**) |
+| **CAT 있음** | 업로드 X · `@`만 |
+| **없으면** | `CAT-MAP` · `CAT-B` · `CAT-C` · `CAT-HANDOFF` · `CAT-D` · (선택) `CAT-CONSTANTS` |
+| **올리지 말 것** | DB · bitget · 전체 zip · 스크린샷 대량 |
+
+### 디렉터 3줄
+
+1. 잡주·동전주 넣자고 푸는 게 **아님** — **정상 종목으로 표본·목표**.  
+2. Claude: **(A′)/(B)/(C)** + 파일 Handoff.  
+3. Cursor: Handoff 전 임계 **손대지 않음**.
 
 ---
 

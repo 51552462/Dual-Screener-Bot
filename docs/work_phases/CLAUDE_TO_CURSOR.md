@@ -4,7 +4,63 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-19)  
-> **현재**: NS-DIAG-DASH-01 **Claude OK · CLOSED** · OBS-HOLD · 신규 Alpha Handoff **없음** · 앵커 `SYNC-2026-08-19-E`
+> **현재**: **OPS-LIQ-FORK-01 Phase 1** `WAIT_CURSOR_IMPL` · 앵커 `SYNC-2026-08-19-G`
+
+---
+
+## Claude VERDICT — OPS-LIQ-FORK-01 · **(A′) 품질 밴드** 채택 · 2단계 (2026-08-19)
+
+**VERDICT: (A′) 채택.** 전면 완화(A) 기각 · 잡주 개방 금지.  
+Phase 1 = 계측만 → 중간~상위대 집중 시 Phase 2(디렉터 숫자 승인 후) · 하위 극단 집중 시 **(B) 관측연장** 자동 귀결.
+
+### 관찰 (Claude)
+
+KR=주수 floor / US=대금 환산 — 비대칭 재검토 후보 (Phase 2 디렉터 결정).
+
+---
+
+## [CAT-C] OPS-LIQ-FORK-01 — 품질 밴드 Phase 1 (계측 전용)
+
+### SSOT (변경 금지)
+
+- 파일(읽기만): `scanner_funnel.py`, `market_data_fetcher.fetch_market_data`
+- config: LIQUIDITY 임계 전체 — 읽기만, 값 변경 금지
+
+### 변경 Spec
+
+- 신규 read-only 스크립트 1개 (`scripts/ops_liq_fork_01_quality_band_phase1.py`, 이름 Cursor 재량)
+- 입력: OPS-LIQUIDITY-STALL-01과 동일 stall 윈도우·N=20/시장 LIQUIDITY 표본 재사용 (신규 샘플링 정책 없음)
+- 각 row에 `avg_vol_5d`, `avg_dollar_vol_5d`, `market_percentile_dollar_vol`(동일 시장·당일 DB 유니버스 대비 백분위) 추가만
+- 산출: 시장별 percentile 분포표(하위/중위/상위 구간별 건수) — **임의 컷라인 적용 금지**, 분포만 보고
+- 기존 (a)/(b)/(c)/(d) 라벨은 동일 거울 공식으로 병기(재사용)
+
+### Config 변경
+
+없음
+
+### 인접 CAT 영향
+
+- CAT-B: 읽기만, schema 비접촉 → Critical 불요
+- Phase 2: 디렉터 승인 전 **착수 금지** (본 Handoff 범위 밖)
+
+### 롤백 조건
+
+해당 없음 — read-only
+
+### Cursor 지시
+
+- Targeted diff only, 신규 스크립트 1개만
+- LIQUIDITY 판정 로직·threshold·config_kv **절대 미수정**
+- 결과 → `CURSOR_TO_CLAUDE.md` percentile 분포표 + **분기 힌트**  
+  (중위+상위 다수 → Phase2 후보 / 하위 극단 다수 → (B) 관측연장)
+- unit test 불요 — VPS 실행 로그
+
+### 위험도
+
+🟢 Low
+
+**디렉터 분기 기준(Claude 제안, 이견 없으면 채택):**  
+Phase 1 후 탈락 표본이 유동성 **중간~상위대**에 다수 → Phase 2 논의. **하위 극단** 집중 → (B) 관측연장.
 
 ---
 

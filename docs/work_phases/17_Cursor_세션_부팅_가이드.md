@@ -26,6 +26,9 @@
 **첫 메시지 없이도** SSOT 읽기·금지 규칙은 동작한다.  
 **첫 메시지**는 「이번에 구현 vs 조사 vs 배포만」을 박는 용도.
 
+**디렉터 VPS 배포 헷갈림** → 항상 [`18_디렉터_VPS_원클릭.md`](18_디렉터_VPS_원클릭.md)  
+(평소 = `sudo bash ./update_factory.sh` 한 줄 · 임시 진단만 `NEXT_ACTION`).
+
 ---
 
 ## 2. 새 채팅 선택 흐름
@@ -83,7 +86,10 @@ sub-phase: [ID]
 ```text
 Track A — OPS만. Alpha/Handoff 구현 금지.
 
-docs/work_phases/NEXT_ACTION.md §OPS-01 수행.
+VPS 배포 SSOT: docs/work_phases/18_디렉터_VPS_원클릭.md
+평소: cd .../Dual-Screener-Bot && sudo bash ./update_factory.sh
+임시 진단 문구는 NEXT_ACTION.md 만.
+
 코드 diff 필요 시 멈추고 Handoff 요청만 보고.
 결과: CURSOR_TO_CLAUDE.md 짧게.
 ```

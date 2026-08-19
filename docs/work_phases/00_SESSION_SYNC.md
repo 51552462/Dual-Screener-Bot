@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-19 · **앵커 ID**: `SYNC-2026-08-19-E`
+> **갱신**: 2026-08-19 · **앵커 ID**: `SYNC-2026-08-19-G`
 
 ---
 
@@ -40,28 +40,24 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-19-E` |
-| **마지막 갱신** | 2026-08-19 — NS-DIAG-DASH-01 **Claude OK · CLOSED** · VPS 배포만 남음 |
-| **활성 트랙** | KR/US — **OBS-HOLD** |
-| **진행 중 sub-phase** | — (신규 Handoff 없음) |
-| **직전 완료** | **NS-DIAG-DASH-01** Claude OK (CAT-J) |
-| **Claude OK 완료** | … · OPS-LIQUIDITY-STALL-01 · **NS-DIAG-DASH-01** |
-| **구현 완료·배포** | NS-DIAG-DASH 로컬 OK · **디렉터 `update_factory.sh` 대기** |
-| **다음** | VPS 배포 → 19:30 쉬운판 육안 · OBS-HOLD · n≥20 재소집 |
-| **VPS 배포 SSOT** | **`18_디렉터_VPS_원클릭.md`** — 평소 `sudo bash ./update_factory.sh` 한 줄 |
-| **Handoff SSOT** | 없음 (CLOSED) · Alpha 금지 |
-| **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` (로컬 금지) |
-| **git main** | origin **`ea30498`** (+ NS-DIAG-DASH 미푸시 가능) |
+| **앵커 ID** | `SYNC-2026-08-19-G` |
+| **마지막 갱신** | 2026-08-19 — OPS-LIQ-FORK-01 **(A′) Phase1** 스크립트 · VPS 실행 대기 |
+| **활성 트랙** | KR/US — 품질유니버스 헌법 · 잡주개방 금지 |
+| **진행 중 sub-phase** | **OPS-LIQ-FORK-01 Phase1** — read-only 계측 |
+| **직전 완료** | Claude (A′) 채택 · 전면완화 기각 |
+| **다음** | VPS Phase1 → 분포표 → Claude OK → Phase2 **또는** (B) |
+| **VPS 배포 SSOT** | **`18_디렉터_VPS_원클릭.md`** |
+| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` · Phase1 |
+| **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
+| **git main** | + Phase1 스크립트 미푸시 가능 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[CLOSED] NS-DIAG-DASH-01 — Claude OK · CAT-J · VPS update_factory 대기
-[CLOSED] OPS-OPEN-STALL-01 — Claude OK · CLASS (a)
-[CLOSED] OPS-LIQUIDITY-STALL-01 — Claude OK · GATE WORKING · 완화 Handoff 없음
-[백로그] L-DATA-ALARM-01 (sub 미개설)
-[관측] OBS-HOLD · n≥20 재소집
-[금지] threshold/cutoff 완화 · config_kv · mega_trend · 소진레버 · Alpha
+[지금] OPS-LIQ-FORK-01 Phase1 — percentile 계측 (임계 0)
+[조건부] Phase2 — 중간~상위 집중 + 디렉터 숫자 승인 시에만
+[대안] (B) 관측연장 — 하위 극단 집중 시
+[금지] 잡주·동전주 개방형 완화 · Critical · 임의 컷라인
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
