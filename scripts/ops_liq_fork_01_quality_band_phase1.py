@@ -23,12 +23,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from market_data_fetcher import fetch_market_data
 from market_db_paths import MARKET_DATA_DB_PATH
+from reports.liq_band_panel import (
+    PCT_HIGH,
+    PCT_LOW,
+    bucket_percentile,
+    percentile_of_universe,
+    universe_dollar_vols,
+)
 
 STALL_SINCE = "2026-08-17 15:10"
 SAMPLE_N = 20
-# Display buckets only (not gate cutoffs) — Handoff: no invented policy thresholds
-PCT_LOW = 33.333
-PCT_HIGH = 66.667
 
 _SKIP_SUFFIX = {
     "KOSPI_IDX",
@@ -151,68 +155,6 @@ def _table_code(market: str, table: str) -> Optional[str]:
     return suffix
 
 
-def _universe_dollar_vols(
-    conn: sqlite3.Connection, market: str, asof: str
-) -> list[float]:
-    """Proxy for scan universe: all KR_/US_ OHLCV tables in prod DB."""
-    like = f"{market}_%"
-    tables = [
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
-            (like,),
-        ).fetchall()
-    ]
-    vals: list[float] = []
-    for i, tname in enumerate(tables):
-        if _table_code(market, tname) is None:
-            continue
-        try:
-            rows = conn.execute(
-                f'SELECT Close, Volume FROM "{tname}" '
-                f"WHERE Date <= ? ORDER BY Date DESC LIMIT 5",
-                (asof,),
-            ).fetchall()
-        except Exception:
-            continue
-        if not rows:
-            continue
-        dollars: list[float] = []
-        for cl, vol in rows:
-            try:
-                c = float(cl)
-                v = float(vol)
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(c) or not np.isfinite(v) or v < 0:
-                continue
-            dollars.append(c * v)
-        if not dollars:
-            continue
-        vals.append(float(np.mean(dollars)))
-        if (i + 1) % 800 == 0:
-            print(f"  ... universe scan {market} {i+1}/{len(tables)} (n_ok={len(vals)})")
-    return vals
-
-
-def _percentile(value: float, universe: list[float]) -> Optional[float]:
-    if not universe or not np.isfinite(value):
-        return None
-    arr = np.asarray(universe, dtype=float)
-    # percent of universe strictly below value (empirical CDF)
-    return float(100.0 * np.mean(arr < value))
-
-
-def _bucket(pct: Optional[float]) -> str:
-    if pct is None:
-        return "unknown"
-    if pct < PCT_LOW:
-        return "low"
-    if pct < PCT_HIGH:
-        return "mid"
-    return "high"
-
-
 def diagnose_market(conn: sqlite3.Connection, market: str) -> Counter:
     print(f"\n=== {market} Phase1 quality-band (LIQUIDITY sample) ===")
     samples = _sample_codes(conn, market)
@@ -224,7 +166,7 @@ def diagnose_market(conn: sqlite3.Connection, market: str) -> Counter:
     days = [ts[:10] for _, ts in samples]
     asof = max(set(days), key=days.count)
     print(f"  universe dollar-vol asof<={asof} ...")
-    universe = _universe_dollar_vols(conn, market, asof)
+    universe = universe_dollar_vols(conn, market, asof)
     print(f"  universe_n={len(universe)}")
 
     buckets: Counter = Counter()
@@ -236,11 +178,11 @@ def diagnose_market(conn: sqlite3.Connection, market: str) -> Counter:
         label = _classify_abd(market, m["close"], m["avg_vol_5d"])
         abd[label] += 1
         pct = (
-            _percentile(float(m["avg_dollar_vol_5d"]), universe)
+            percentile_of_universe(float(m["avg_dollar_vol_5d"]), universe)
             if m["avg_dollar_vol_5d"] is not None
             else None
         )
-        b = _bucket(pct)
+        b = bucket_percentile(pct)
         buckets[b] += 1
         pct_s = f"{pct:.1f}" if pct is not None else "-"
         print(

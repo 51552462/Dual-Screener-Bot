@@ -3,40 +3,131 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-19 · OPS-LIQ-FORK-01 **(A′) Phase1** · 앵커 `SYNC-2026-08-19-G`
+> **갱신**: 2026-08-20 · **OPS-LIQ-TG-01** Claude OK · CLOSED · 앵커 `SYNC-2026-08-20-C`
 
 ---
 
-## OUTBOX — [CAT-C] OPS-LIQ-FORK-01 Phase1 **스크립트 Done · VPS 대기** · 2026-08-19
+## OUTBOX — [CAT-J] OPS-LIQ-TG-01 · `[LIQ_BAND]` 패널 구현 · 2026-08-20
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **OPS-LIQ-TG-01** |
+| **status** | **`CLOSED`** (Claude OK 2026-08-20) |
+| **위험도** | 🟢 Low |
+| **앵커** | `SYNC-2026-08-20-B` |
+
+### DoD 체크
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | `[LIQ_BAND]`가 daily digest `[OBS_HOLD]` 아래 | ✅ `format_north_star_digest_html` additive |
+| 2 | `scan_funnel_drop_event` read-only · LIQUIDITY 판정/threshold diff 0 | ✅ |
+| 3 | n&lt;20 → `NONE`, 숫자판정 문구 없음 | ✅ 테스트 (a) |
+| 4 | 5일 연속·과반 0.50 · 표본부족 스킵(리셋아님) | ✅ 테스트 (c)(d) |
+| 5 | `LIQ_BAND_ENABLED=False` → 패널 미출력 | ✅ 테스트 (e) |
+| 6 | 원장·config_kv 비접촉 · 이력 side-file | ✅ `liq_band_history.json` |
+| 7 | 테스트 + 05 + OUTBOX | ✅ |
+
+### 파일
+
+| 파일 | 역할 |
+|------|------|
+| `reports/liq_band_panel.py` | 4함수 + Phase1 버킷 헬퍼 추출 |
+| `dual_north_star_telegram.py` | OBS_HOLD 아래 additive 배선만 |
+| `scripts/ops_liq_fork_01_quality_band_phase1.py` | 버킷 헬퍼 import 재사용 |
+| `tests/test_liq_band_panel_ops_liq_tg_01.py` | (a)~(f) |
+
+### cursor_action
+
+`NONE` · `OBSERVE_LIQ_BAND` · `PHASE2_CANDIDATE` — Phase2 자동 착수 **없음** (텔레그램 호출만)
+
+### 테스트
+
+`pytest tests/test_liq_band_panel_ops_liq_tg_01.py tests/test_obs_hold_telegram.py` → **20 passed**
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 OPS-LIQ-TG-01 OUTBOX 검증. OK면 CLAUDE_TO_CURSOR.md에. 채팅 말고 파일에.
+```
+
+---
+
+[Ask] OPS-LIQ-TG-01 · **텔레그램 Phase2/품질밴드 전용 알람** · 2026-08-20
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **OPS-LIQ-TG-01** (가칭 · Claude 확정) |
+| **요청자** | 디렉터 직접 — Cursor/Claude는 PC 켤 때만 움직임 → **일일 퀀트 크론이 텔레그램으로 깨워야 함** |
+| **status** | `WAIT_CLAUDE_HANDOFF` |
+| **위험도** | 🟢 Low (관측·리포트만 · 임계/게이트 **금지**) |
+
+### 디렉터 의도 (쉬운 말)
+
+- Cursor·Claude는 **자동으로 안 알려줌** (채팅 열어야 함)
+- 이미 도는 **North Star 19:30** 같은 시스템이 매일 재서  
+  **「지금은 지켜보기」 vs 「Phase2 논의하려고 컴퓨터 켜라」** 를 텔레그램으로 보내 달라
+
+### Cursor 엔지니어 제안 (Handoff용 · 구현 전)
+
+| 항목 | 제안 |
+|------|------|
+| 위치 | 기존 `factory.sh --north-star-digest daily` **19:30**에 패널 추가 (새 cron 금지) |
+| 태그 | `[LIQ_BAND]` 또는 `[품질밴드]` (Claude 확정) |
+| 계측 | Phase1과 동일 계열 read-only (LIQUIDITY 표본 → dollar-vol 백분위 분포) |
+| 출력 | 쉬운 한국어 1~3줄 + `---CURSOR---` 복붙 (기존 OBS_HOLD 패턴 재사용) |
+| cursor_action | `OBSERVE_LIQ_BAND` / `PHASE2_CANDIDATE` / `NONE` (이름 Claude) |
+| **금지** | LIQUIDITY 임계 변경 · 잡주 완화 · Critical · 임의 정책 컷라인 창조 |
+| 분기 숫자 | **Phase2 후보 판정 임계는 디렉터/Claude 지정** — Cursor 임의 금지 (Rule 5) |
+| 성능 | 유니버스 전수 스캔이 무거우면 **캐시·샘플·주기(매일/격일)** Claude와 합의 |
+
+### 기존과 차이
+
+| 장치 | 역할 | Phase2 품질밴드? |
+|------|------|------------------|
+| `[OBS_HOLD]` · n≥20 → `RECALL_FORK` | 북극성 **목표/갈림길** | ❌ 유동성 Phase2 아님 |
+| **신규 `[LIQ_BAND]`** | OPEN≈0·LIQUIDITY 품질밴드 | ✅ 이번에 요청 |
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 Ask OPS-LIQ-TG-01 읽고 Handoff를 CLAUDE_TO_CURSOR.md에. 채팅 말고 파일. 임계 변경 금지·텔레그램 일보 패널만.
+```
+
+---
+
+## OUTBOX — [CAT-C] OPS-LIQ-FORK-01 Phase1 **VPS 실측 Done · (B) 관측연장** · 2026-08-19
 
 | 항목 | 내용 |
 |------|------|
 | **sub-phase** | OPS-LIQ-FORK-01 Phase 1 |
-| **Claude** | **(A′) 채택** · Phase2는 조건부·디렉터 숫자 |
 | **코드** | `scripts/ops_liq_fork_01_quality_band_phase1.py` |
-| **비접촉** | threshold · config_kv · funnel 판정 |
-| **status** | VPS 실행 → percentile 분포표 → Claude OK |
+| **비접촉** | threshold · config_kv · funnel 판정 ✅ |
+| **HINT** | **`LOW_TAIL_CONCENTRATION` → (B) observe-extend** |
+| **status** | Claude OK 대기 · **Phase2 착수 금지** |
 
-### VPS
+### Percentile 분포표 (VPS · STALL_SINCE=2026-08-17 15:10 · N=20/시장)
 
-```bash
-cd /home/ubuntu/dante_bots/Dual-Screener-Bot && git pull
-set -a && source .env && set +a
-python3 scripts/ops_liq_fork_01_quality_band_phase1.py
-```
+| 시장 | universe | low(≤33) | mid | high(≥67) | mid+high | low share |
+|------|----------|----------|-----|-----------|----------|-----------|
+| **KR** | 2411 | 3 | 15 | 2 | **85.0%** | 15.0% |
+| **US** | 6515 | **20** | 0 | 0 | **0.0%** | **100.0%** |
+| **합산** | — | **23** | 15 | 2 | — | 합산 HINT = **LOW_TAIL** |
 
-### 분기 (Claude·디렉터 합의안)
+합산 `PHASE1 BRANCH HINT`: `LOW_TAIL_CONCENTRATION -> (B) observe-extend`  
+`OBS-HOLD: no config/cutoff/threshold changes applied.`
 
-| Phase1 힌트 | 다음 |
-|-------------|------|
-| MID_HIGH_CONCENTRATION | Phase 2 논의 (숫자 디렉터) |
-| LOW_TAIL_CONCENTRATION | **(B) 관측연장** |
+### 해석 (Cursor · 판정 아님)
+
+- KR만 보면 mid+high 우세이나, **US 표본 100% low** → 합산 HINT는 (B)
+- 게이트 “고장” 가설은 이전 Stall OK와 정합 · **잡주 개방형 완화 금지 유지**
+- Phase2는 **텔레그램 전용 장치(위 Ask) + 추후 증거/디렉터 소집** 전까지 보류
 
 ### 디렉터 3줄
 
-1. (A′) 채택 · **지금은 계측만**.  
-2. VPS 로그 붙여 주시면 분포표 OUTBOX.  
-3. 잡주 개방 완화는 **계속 금지**.
+1. Phase1 = **(B) 관측연장** (임계 안 건드림).  
+2. Phase2 알람은 **아직 텔레그램에 없음** → 위 Ask로 Claude Handoff 요청.  
+3. 잡주 개방 완화 계속 금지.
 
 ---
 

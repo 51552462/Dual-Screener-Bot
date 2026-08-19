@@ -658,6 +658,16 @@ def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
     if obs_html:
         parts.extend(["", "━━━━━━━━━━━━━━━━", obs_html])
 
+    # OPS-LIQ-TG-01: [LIQ_BAND] below [OBS_HOLD] — additive only (OBS_HOLD body untouched)
+    try:
+        from reports.liq_band_panel import format_liq_band_section_from_snap
+
+        liq_html = format_liq_band_section_from_snap(snap)
+    except Exception:
+        liq_html = ""
+    if liq_html:
+        parts.extend(["", liq_html])
+
     return "\n".join(parts)
 
 
@@ -686,8 +696,25 @@ def send_north_star_digest(
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     snap = run_north_star_digest(cadence=cadence, persist=persist)
-    html_msg = format_north_star_digest_html(snap)
     is_daily = str(snap.get("cadence") or "").lower() == "daily"
+    # OPS-LIQ-TG-01 — precompute [LIQ_BAND] onto snap (ledger untouched)
+    if is_daily:
+        try:
+            from reports.liq_band_panel import (
+                LIQ_BAND_ENABLED,
+                build_liq_band_payload_for_digest,
+            )
+
+            if LIQ_BAND_ENABLED:
+                scan_date = str(snap.get("date_kst") or "")[:10]
+                if scan_date:
+                    snap["liq_band"] = build_liq_band_payload_for_digest(
+                        scan_date=scan_date,
+                        persist_history=not dry_run,
+                    )
+        except Exception:
+            snap["liq_band"] = None
+    html_msg = format_north_star_digest_html(snap)
     result: Dict[str, Any] = {
         "snap": snap,
         "html": html_msg,

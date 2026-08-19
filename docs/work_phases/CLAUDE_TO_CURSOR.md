@@ -3,10 +3,217 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-19)  
-> **현재**: **OPS-LIQ-FORK-01 Phase 1** `WAIT_CURSOR_IMPL` · 앵커 `SYNC-2026-08-19-G`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-20)  
+> **현재**: **OPS-LIQ-TG-01** `CLOSED` · 앵커 `SYNC-2026-08-20-C`
 
 ---
+
+## Claude OK — OPS-LIQ-TG-01 (2026-08-20)
+
+**VERDICT: OK · CLOSED.** DoD 7항 전부 스펙 일치(테스트 20 passed 확인) ·
+LIQUIDITY 판정/threshold diff 0 · 원장(dual_north_star_ledger.json) 비접촉 ·
+Critical CAT(F/G/I/N/B) 무접촉 · Rule 7 해당 없음.
+
+**신규 Alpha/Handoff 없음.** Phase1 VERDICT(B) 관측연장 유지, Phase2 자동 착수 없음 재확인.
+
+### 잔여 (디렉터)
+- VPS `update_factory` → 19:30 daily digest `[LIQ_BAND]` 패널 육안 확인
+- `PHASE2_CANDIDATE` 발생 시 → 새 Claude 세션에서 OPS-LIQ-FORK-01 갈림길(A′/B/C) 재소집 (본 OK가 그 재소집을 승인하는 것은 아님)
+
+**status**: `CLOSED` · 앵커 `SYNC-2026-08-20-C`
+
+---
+
+## [CAT-J] OPS-LIQ-TG-01 — 텔레그램 `[LIQ_BAND]` 일일 패널 (Ops-lite Go, 2026-08-20)
+
+> **랜딩**: 디렉터 채팅 중계 · Cursor가 본 파일 최상단 동기화.
+> **앵커**: 요청 시점 `SYNC-2026-08-20-A` → 본 Handoff 반영 후 **`SYNC-2026-08-20-B`**로 bump.
+> **전제**: `CURSOR_TO_CLAUDE.md` 최상단 `[Ask] OPS-LIQ-TG-01` 채택. Phase1(OPS-LIQ-FORK-01) VERDICT=**(B) 관측연장**은 그대로 유지 — 본 Handoff는 그 관측을 텔레그램으로 대신 지켜봐 주는 **관측 장치**일 뿐, Phase2(A′ 품질밴드 재조정) 자체를 여는 것이 **아님**.
+
+### Claude 확정 (Ask에서 위임된 3항목)
+
+| 항목 | 확정값 |
+|------|--------|
+| sub-phase ID | `OPS-LIQ-TG-01` (가칭 해제, 정식 확정) |
+| 텔레그램 태그 | `[LIQ_BAND]` |
+| `cursor_action` 값 3종 | `NONE` / `OBSERVE_LIQ_BAND` / `PHASE2_CANDIDATE` (Cursor 제안 그대로 채택, 추가 값 불필요) |
+
+---
+
+### SSOT (변경/비변경)
+
+- **변경(신규, additive만)**: `dual_north_star_telegram.py`(또는 CAT-J `reports/*` 관례상 적절한 위치 — Cursor 재량) — `[OBS_HOLD]` 패널 **바로 아래**에 `[LIQ_BAND]` 패널 렌더 함수 1개 추가. 기존 `[OBS_HOLD]`/9-섹션 daily report 코드는 **한 줄도 변경 금지**
+- **참조(읽기전용)**: `scan_funnel_drop_event`(C-FUNNEL-02, CAT-C, 이미 배포·적재 중 — `reason='LIQUIDITY'` 필터만), `market_data_fetcher.py`(dollar-vol 조회), `scripts/ops_liq_fork_01_quality_band_phase1.py`(percentile 버킷 계산 로직 — **그대로 함수로 추출해 재사용**, 버킷 경계값 low≤33/mid 34–66/high≥67 재정의 금지)
+- **신규 저장소(additive, CAT-J 소유)**: `[LIQ_BAND]` 5일 연속 판정을 위한 경량 이력 저장 (JSON side-file 또는 신규 테이블, Cursor 재량) — **북극성 원장(`dual_north_star_ledger.json`, VPS SSOT, §12) 비접촉**. 별도 저장소로 분리하는 이유 = Rule 6(SSOT 충돌 시 Adapter, 원장 직접 수정 금지)
+- **절대 비접촉**: `scanner_funnel.py`의 LIQUIDITY 판정식·threshold, `config_kv`의 유동성 컷 관련 키 전부(읽기조차 이번 스코프 아님), Kelly/MDD/국면 판정 로직 전부
+
+---
+
+### Spec
+
+**1. 표본 소스 (신규 스캔 없음 — 성능 부담 0)**
+
+이미 매일 적재되는 `scan_funnel_drop_event`(슬롯당 cap=50, C-FUNNEL-02 기배포)에서 `reason='LIQUIDITY'` 행만 당일자 KR/US 각각 조회. 유니버스 전수 재스캔 **불필요** — Ask의 "무거우면 캐시·샘플·주기 합의" 항목은 이 재사용으로 해소됨. 주기는 **기본 매일**(19:30 기존 cron 그대로) 유지, 조회 비용이 실측상 부담되면 `LIQ_BAND_SAMPLE_FREQ` config로 격일 전환 가능하게만 열어둠(Cursor 재량 스위치, 기본값 daily).
+
+**2. Percentile 버킷 (Phase1 그대로 재사용, 신규 창조 아님)**
+
+```
+low   : percentile ≤ 33
+mid   : 34–66
+high  : ≥ 67
+```
+
+**3. 함수 시그니처 (설계 레벨 — Cursor 구현)**
+
+```
+compute_liq_band_snapshot(market: str, scan_date: str, *, min_n: int = LIQ_BAND_MIN_N) -> dict
+# returns: {market, scan_date, n, low_n, mid_n, high_n, midhigh_share, insufficient: bool, sample_source="scan_funnel_drop_event"}
+
+resolve_liq_band_cursor_action(kr: dict, us: dict, history: list[dict]) -> tuple[str, dict]
+# returns: (cursor_action, detail) — 아래 §4 판정표 그대로
+
+format_liq_band_panel_html(kr: dict, us: dict, cursor_action: str) -> str
+# [OBS_HOLD] 톤 재사용 — 쉬운 한국어 1~3줄 + ---CURSOR--- (+PHASE2_CANDIDATE 시 ---CLAUDE--- 추가)
+
+append_liq_band_history(snapshot: dict) -> None
+# additive만, 최소 최근 10일 rolling 보관(5일 연속판정 + 여유)
+```
+
+**4. 판정표 (OPS 관측 임계 — 아래 §5에서 근거 설명, CAT-CONSTANTS 아님·리포트 전용)**
+
+| 조건 | `cursor_action` |
+|------|------------------|
+| KR 또는 US 당일 `n < LIQ_BAND_MIN_N(20)` | 해당 시장 = `NONE`(표본부족, 숫자판정 문구 없음 — 규칙4) |
+| 두 시장 모두 유효표본, 어느 시장도 아래 조건 미충족 | `OBSERVE_LIQ_BAND` (기본값 — 그냥 지켜보기) |
+| **어느 한 시장**의 `midhigh_share ≥ LIQ_BAND_PHASE2_SHARE_THRESHOLD(0.50)`가 **유효표본일 기준 LIQ_BAND_PHASE2_CONSECUTIVE_DAYS(5)일 연속** | `PHASE2_CANDIDATE` (해당 시장 명시, 표본부족일은 스트릭에서 건너뜀·리셋 아님) |
+
+시장별 독립 판정(Rule 8, KR-US 비대칭표 원칙) — 한쪽만 충족해도 전체 `cursor_action`은 `PHASE2_CANDIDATE`로 승격하되, 패널 문구에는 **어느 시장인지 명시**.
+
+**5. 신규 임계 3종 근거 (Claude 지정 — Rule 5 위임분, Cursor 임의 변경 금지)**
+
+| config key | 값 | 근거 |
+|---|---|---|
+| `LIQ_BAND_ENABLED` | `True` | 킬스위치 |
+| `LIQ_BAND_MIN_N` | `20` | 프로젝트 전역 관례(n≥20, 규칙4)와 동일 기준 재사용 — 새 값 아님 |
+| `LIQ_BAND_PHASE2_SHARE_THRESHOLD` | `0.50` | Phase1 실측(KR 85% mid+high vs US 100% low)의 중간에서 "과반"을 후보 기준선으로 채택 — 단발성 이상치와 지속 편향을 가름 |
+| `LIQ_BAND_PHASE2_CONSECUTIVE_DAYS` | `5` | 영업일 1주 단위 — 하루짜리 노이즈로 디렉터를 호출하지 않기 위한 최소 확인창 |
+
+이 3개는 **LIQUIDITY 게이트 자체의 컷 threshold가 아니다** — 순수 리포팅/알람 분류 임계. Ask의 "금지: 임의 정책 컷라인 창조"는 Cursor의 자체 창조를 막는 조항이며, 본 임계는 Ask 본문이 명시적으로 위임한 대로 Claude가 지정한 것.
+
+**6. 출력 (쉬운 한국어, `[OBS_HOLD]` 패턴 재사용)**
+
+```
+NONE 예시:
+🟡 [LIQ_BAND] 오늘은 유동성 컷 표본이 부족해 판단을 쉽니다. (KR n=.. · US n=..)
+
+OBSERVE_LIQ_BAND 예시:
+🟢 [LIQ_BAND] 유동성 컷 표본 정상 범위 — 지켜보기만 하면 됩니다. (KR 정상비중 xx% · US 정상비중 xx%)
+
+PHASE2_CANDIDATE 예시:
+🟠 [LIQ_BAND] KR에서 정상 유동 종목이 5일 연속 과반 잘려나가고 있습니다 — Phase2 논의하러 컴퓨터를 켜주세요.
+
+---CURSOR---
+[CAT-J] LIQ_BAND 관측 공유 — 코드/threshold 변경 없음, 계속 관측만.
+
+---CLAUDE---   (PHASE2_CANDIDATE일 때만 노출)
+OPS-LIQ-TG-01 LIQ_BAND {market} 5일 연속 과반 — OPS-LIQ-FORK-01 갈림길(A′/B/C) 재소집 요청.
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 LIQ_BAND 이력 읽고 판단.
+```
+
+---
+
+### KR/US 분기
+
+공통 함수, `market` 파라미터로 분기 — 시장별 하드코딩 금지(Rule 8). 판정 스트릭도 시장별 독립 카운트(CAT-KR-US 비대칭표 원칙과 동일).
+
+---
+
+### 인접 CAT 영향
+
+| CAT | 영향 | Critical |
+|---|---|---|
+| CAT-C | read-only (`scan_funnel_drop_event` reason=LIQUIDITY 조회만, 판정식/threshold 비접촉) | 🟢 |
+| CAT-B | read-only (`market_data_fetcher` dollar-vol, 기존 Phase1 스크립트 로직 함수화 재사용) | 🟢 |
+| CAT-F/G/I/N | 비접촉 (Kelly·국면·toxic·fastsafety 무관) | — |
+| 북극성 원장(§12, VPS SSOT) | 비접촉 — 별도 신규 저장소, 원장 쓰기 0건 | 🟢 |
+
+CAT-F/G/I/N/B 변경 없음 → Rule 7(영향 CAT·롤백·Critical 명시) 해당 없음, 참고로 표기만.
+
+---
+
+### 금지 (out-of-scope)
+
+- LIQUIDITY 게이트 threshold/cutoff 값 변경 — 절대 금지 (읽기조차 이번 스코프 아님)
+- 잡주/저가주 완화 방향 논의·구현 — 금지 (디렉터 유니버스 헌법 §CURSOR_TO_CLAUDE 유지)
+- `scanner_funnel.py` 판정 로직 수정 — 금지
+- `PHASE2_CANDIDATE` 발생 시 자동 config 변경·자동 Phase2 착수 — 금지. 텔레그램 문구로 디렉터를 호출하는 것까지만, 실제 A′/B/C 갈림길 재판단은 별도 Claude 세션에서
+- 신규 cron/systemd timer — 금지(기존 19:30 daily에 얹기만)
+
+---
+
+### 완료 기준 (DoD)
+
+| # | 기준 |
+|---|------|
+| 1 | `[LIQ_BAND]` 패널이 daily 19:30 digest `[OBS_HOLD]` 아래 추가 — 기존 `[OBS_HOLD]`/9-섹션 리포트 출력 회귀 없음 |
+| 2 | `scan_funnel_drop_event` read-only 재사용, LIQUIDITY 판정/threshold 코드 diff 0 |
+| 3 | `n<20`/시장 → `NONE`, 숫자판정 문구 없이 "표본부족" 플래그만 (규칙4) |
+| 4 | §4 판정표 그대로 구현 — 5일 연속·과반(0.50) 정확히 반영, 표본부족일 스킵(리셋 아님) 처리 |
+| 5 | `LIQ_BAND_ENABLED=False` → 패널 자체 미출력, 나머지 digest 완전 동일 (회귀 테스트) |
+| 6 | 신규 이력 저장소 additive만 — `dual_north_star_ledger.json`(VPS SSOT) diff 0, `config_kv` 라이브 threshold 변경 0건 |
+| 7 | `tests/test_liq_band_panel_ops_liq_tg_01.py` + `05_진행로그` §OPS-LIQ-TG-01 + `CURSOR_TO_CLAUDE.md` OUTBOX |
+
+테스트 케이스 최소:
+(a) n<20 → NONE, 판정문구 없음
+(b) midhigh_share 계산 정확성 스모크
+(c) 5일 연속 ≥0.50 → PHASE2_CANDIDATE (KR/US 각각)
+(d) 표본부족일 1일 끼어도 스트릭 리셋 안 됨(스킵)
+(e) `LIQ_BAND_ENABLED=False` 회귀
+(f) 기존 `[OBS_HOLD]`/9-섹션 출력 미변경 회귀
+
+---
+
+### Timebox
+
+3일 (구현 1일 + 스모크 1회 산출 1일 + 여유 1일). 초과 시 미달 상태 그대로 OUTBOX — 재시도 아님.
+
+---
+
+### Cursor 지시
+
+1. Targeted diff only — 신규 함수 4개 추가, 기존 `[OBS_HOLD]`/daily report 코드 미수정
+2. LIQUIDITY 판정 로직·config_kv 유동성 키 **절대 미접촉** — 조회조차 이번 스코프 밖
+3. percentile 버킷 로직은 `ops_liq_fork_01_quality_band_phase1.py`에서 함수로 추출해 재사용 — 새 로직 창조 금지
+4. 이력 저장소는 CAT-J 소유 사이드 파일/테이블로 분리 — 북극성 원장 파일 직접 쓰기 금지
+5. 완료 후 `CURSOR_TO_CLAUDE.md` OUTBOX에 표로 append, `status: WAIT_CLAUDE_OK` — 채팅 요약 금지
+6. `05_진행로그`·`00_SESSION_SYNC.md`(§3 앵커 `SYNC-2026-08-20-B` bump) 통상 동기화도 함께
+
+---
+
+### 롤백 조건
+
+`LIQ_BAND_ENABLED=False` → 패널 즉시 미출력, 기존 digest 완전 복귀. read-only + additive 저장소이므로 라이브 파이프라인 영향 0 — 함수 파일 삭제만으로도 완전 롤백 가능.
+
+---
+
+### 위험도
+
+🟢 Low — read-only 소스, additive 저장소, LIQUIDITY threshold/config_kv 비접촉, Critical CAT(F/G/I/N/B) 무접촉.
+
+---
+
+### 디렉터 3줄
+
+1. `[LIQ_BAND]` 패널은 **관측 알람일 뿐** — Phase2(A′ 품질밴드 재조정) 자체를 지금 여는 게 아님. Phase1 VERDICT(B) 관측연장 유지.
+2. 임계 3개(표본 n≥20 / 과반 0.50 / 연속 5일)는 이번 Ask에서 위임받은 대로 Claude가 지정 — LIQUIDITY 게이트 컷 threshold와는 무관한 리포트 전용 값.
+3. `PHASE2_CANDIDATE` 뜨면 텔레그램이 컴퓨터 켜라고만 알려줌 — 그 다음 Claude Pro 새 창에서 OPS-LIQ-FORK-01 갈림길(A′/B/C)을 실제로 재판단.
+
+### Cursor 액션 1줄
+
+새 세션에서 본 Handoff 1개만 — `[LIQ_BAND]` 패널 4함수 구현 → 스모크 1회 → `CURSOR_TO_CLAUDE.md` OUTBOX.
+
+---
+
 
 ## Claude VERDICT — OPS-LIQ-FORK-01 · **(A′) 품질 밴드** 채택 · 2단계 (2026-08-19)
 

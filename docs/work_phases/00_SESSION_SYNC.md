@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-19 · **앵커 ID**: `SYNC-2026-08-19-G`
+> **갱신**: 2026-08-20 · **앵커 ID**: `SYNC-2026-08-20-C`
 
 ---
 
@@ -40,24 +40,24 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-19-G` |
-| **마지막 갱신** | 2026-08-19 — OPS-LIQ-FORK-01 **(A′) Phase1** 스크립트 · VPS 실행 대기 |
-| **활성 트랙** | KR/US — 품질유니버스 헌법 · 잡주개방 금지 |
-| **진행 중 sub-phase** | **OPS-LIQ-FORK-01 Phase1** — read-only 계측 |
-| **직전 완료** | Claude (A′) 채택 · 전면완화 기각 |
-| **다음** | VPS Phase1 → 분포표 → Claude OK → Phase2 **또는** (B) |
+| **앵커 ID** | `SYNC-2026-08-20-C` |
+| **마지막 갱신** | 2026-08-20 — **OPS-LIQ-TG-01** Claude OK · **CLOSED** |
+| **활성 트랙** | KR/US — 품질유니버스 · 잡주개방 금지 |
+| **진행 중 sub-phase** | 없음 (`SUB_DONE`) — 배포·관측만 |
+| **직전 완료** | **OPS-LIQ-TG-01** `[LIQ_BAND]` · Claude OK 2026-08-20 |
+| **다음** | VPS `update_factory` → 19:30 `[LIQ_BAND]` 육안 |
 | **VPS 배포 SSOT** | **`18_디렉터_VPS_원클릭.md`** |
-| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` · Phase1 |
+| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` 최상단 Claude OK · 신규 Handoff 없음 |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | + Phase1 스크립트 미푸시 가능 |
+| **git main** | Claude OK 후 배포 대기 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[지금] OPS-LIQ-FORK-01 Phase1 — percentile 계측 (임계 0)
-[조건부] Phase2 — 중간~상위 집중 + 디렉터 숫자 승인 시에만
-[대안] (B) 관측연장 — 하위 극단 집중 시
-[금지] 잡주·동전주 개방형 완화 · Critical · 임의 컷라인
+[CLOSED→B] OPS-LIQ-FORK-01 Phase1 — LOW_TAIL · 임계 0
+[CLOSED] OPS-LIQ-TG-01 — [LIQ_BAND] Claude OK · 관측 장치만
+[다음] VPS 배포 · 19:30 육안 · PHASE2_CANDIDATE 시 별도 Claude 재소집
+[금지] 잡주완화 · Critical · 자동 Phase2 · LIQUIDITY threshold 변경
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
