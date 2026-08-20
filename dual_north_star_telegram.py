@@ -1,9 +1,9 @@
 """
-듀얼 북극성 진행장부 → 디렉터 텔레그램 다이제스트.
+주식(KR/US) 북극성 진행장부 → 디렉터 텔레그램 다이제스트.
 
 REPORT_BOT_* (또는 TELEGRAM_*) 로 단일 HTML 메시지 발송.
-주식·Bitget 큐와 분리 — director digest 전용.
-일간: [쉬운판] 대시보드 + [OBS_HOLD] + ---CURSOR--- / ---CLAUDE---.
+Bitget는 별도 운용·별도 일보(POST_DEPLOY_OBS) — 본 digest에 Track B 미포함.
+일간: [쉬운판] + Track A(KR/US 상세) + [OBS_HOLD] + [LIQ_BAND].
 """
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from typing import Any, Dict, Optional
 from dual_north_star_ledger import (
     OBS_HOLD_RECALL_N,
     R1_BANNER_TEXT,
-    R3_BANNER_TEXT,
     run_north_star_digest,
 )
 
@@ -525,90 +524,118 @@ def format_obs_hold_section_html(snap: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
-    cadence = str(snap.get("cadence") or "daily").upper()
-    date_kst = _esc(snap.get("date_kst"))
+def format_track_a_equity_section_html(snap: Dict[str, Any]) -> str:
+    """KR/US 전용 본문 — Bitget(Track B) 비포함."""
     tracks = snap.get("tracks") or {}
     ta = tracks.get("A") or {}
-    tb = tracks.get("B") or {}
-    cmp_ = snap.get("comparison") or {}
     comm = snap.get("ledger") or {}
     meta = snap.get("meta") or {}
+    pr = (snap.get("period_returns") or {}).get("A") or {}
+    agg = ta.get("aggregate") or {}
+    book = ta.get("forward_book") or {}
+    if not isinstance(book, dict):
+        health = snap.get("track_a_health") or {}
+        book = health.get("forward_book") or {} if isinstance(health, dict) else {}
 
     show_r1 = bool(meta.get("show_r1_caveat"))
     r1_banner = _esc(meta.get("r1_banner") or R1_BANNER_TEXT)
-    show_r3 = bool(meta.get("show_r3_bitget_banner", True))
-    r3_banner = _esc(meta.get("r3_banner") or R3_BANNER_TEXT)
 
-    def _gate_line(tid: str) -> str:
-        gate = (comm.get(tid) or {}) if isinstance(comm, dict) else {}
-        if not gate:
-            return ""
-        lines = [f"상품화 게이트: <b>{_esc(gate.get('gate', 'G0'))}</b> {_esc(gate.get('gate_label', ''))}"]
-        if gate.get("g3_blocked") or gate.get("not_candidate_reason"):
-            lines.append(f"후보 아님 — 사유: {_esc(gate.get('not_candidate_reason', ''))}")
-        elif gate.get("block_reasons"):
-            reasons = gate.get("block_reasons") or []
-            if reasons:
-                lines.append(f"제한: {_esc(' · '.join(str(r) for r in reasons))}")
-        return "\n".join(lines)
+    mdd_cap = ta.get("mdd_cap_pct", "?")
+    cagr_lo = ta.get("cagr_target_lo", "?")
+    cagr_hi = ta.get("cagr_target_hi", "?")
+    composite = float(agg.get("composite_score", 0) or 0)
+    goal_pct = float(agg.get("return_pace_score", 0) or 0)
+    mdd = float(agg.get("max_mdd_pct", 0) or 0)
+    total = pr.get("total_pct")
 
-    def _track_block(t: Dict[str, Any], tid: str) -> str:
-        agg = t.get("aggregate") or {}
-        pr = (snap.get("period_returns") or {}).get(tid) or {}
-        mdd_cap = t.get("mdd_cap_pct", "?")
-        cagr_lo = t.get("cagr_target_lo", "?")
-        cagr_hi = t.get("cagr_target_hi", "?")
-        composite = float(agg.get("composite_score", 0) or 0)
-        goal_pct = float(agg.get("return_pace_score", 0) or 0)
-        mdd = float(agg.get("max_mdd_pct", 0) or 0)
-        total = pr.get("total_pct")
-        measure = agg.get("measure_only", False)
+    gate_a = (comm.get("A") or {}) if isinstance(comm, dict) else {}
+    gate = str(gate_a.get("gate") or "G0")
+    gate_label = str(gate_a.get("gate_label") or "")
 
-        lines: list[str] = []
-        if tid == "B" and show_r3:
-            lines.append(f"<i>{r3_banner}</i>")
-        if show_r1:
-            lines.append(f"<i>ℹ️ {r1_banner}</i>")
-        lines.extend(
-            [
-                f"<b>{_esc(t.get('label', tid))}</b> · {_esc(t.get('phase_label', ''))}",
-                f"목표 MDD ≤{mdd_cap}% · 연복리 {cagr_lo}~{cagr_hi}%",
-                f"현재 MDD {mdd:.2f}% · 누적 {_fmt_pct(total, signed=True)}",
-                f"목표달성률 {goal_pct:.0f}% · 게이트용 종합 {_bar(composite)} {composite:.0f}점",
-                f"일 {_fmt_pct(pr.get('day_pct'))} · 주 {_fmt_pct(pr.get('week_pct'))} · "
-                f"월 {_fmt_pct(pr.get('month_pct'))} · 연 {_fmt_pct(pr.get('year_pct'))}",
-            ]
-        )
-        if measure:
-            lines.append("B0 측정 — 수익 페이스는 게이트 산정에만 부분 반영")
-        gate_txt = _gate_line(tid)
-        if gate_txt:
-            lines.append(gate_txt)
-        if tid == "A" and t.get("markets"):
-            mk = t["markets"]
-            kr = mk.get("KR") or {}
-            us = mk.get("US") or {}
-            lines.append(
-                f"KR {_fmt_pct(kr.get('return_pct'))} MDD {float(kr.get('mdd_pct', 0) or 0):.1f}% · "
-                f"US {_fmt_pct(us.get('return_pct'))} MDD {float(us.get('mdd_pct', 0) or 0):.1f}%"
+    parts: list[str] = [
+        "━━ Track A · 주식 KR+US ━━",
+    ]
+    if show_r1:
+        parts.append(f"<i>ℹ️ {r1_banner}</i>")
+    parts.extend(
+        [
+            f"<b>{_esc(ta.get('label', '주식 KR+US'))}</b> · {_esc(ta.get('phase_label', ''))}",
+            f"목표 MDD ≤{mdd_cap}% · 연복리 {cagr_lo}~{cagr_hi}%",
+            f"현재 MDD {mdd:.2f}% · 누적 {_fmt_pct(total, signed=True)}",
+            f"목표달성률 {goal_pct:.0f}% · 게이트용 종합 {_bar(composite)} {composite:.0f}점",
+            f"일 {_fmt_pct(pr.get('day_pct'))} · 주 {_fmt_pct(pr.get('week_pct'))} · "
+            f"월 {_fmt_pct(pr.get('month_pct'))} · 연 {_fmt_pct(pr.get('year_pct'))}",
+            f"상품화 게이트: <b>{_esc(gate)}</b> {_esc(gate_label)}",
+        ]
+    )
+    if gate_a.get("g3_blocked") or gate_a.get("not_candidate_reason"):
+        parts.append(f"후보 아님 — 사유: {_esc(gate_a.get('not_candidate_reason', ''))}")
+    elif gate_a.get("block_reasons"):
+        reasons = gate_a.get("block_reasons") or []
+        if reasons:
+            parts.append(f"제한: {_esc(' · '.join(str(r) for r in reasons))}")
+
+    open_total = int(book.get("open_total", 0) or 0)
+    closed_total = int(book.get("closed_total", 0) or 0)
+    open_by = book.get("open_by_market") or {}
+    closed_by = book.get("closed_by_market") or {}
+    if not isinstance(open_by, dict):
+        open_by = {}
+    if not isinstance(closed_by, dict):
+        closed_by = {}
+    ft = int(ta.get("forward_trades_count", 0) or 0)
+    parts.append(
+        f"가상매매 장부 · OPEN <b>{open_total}</b>"
+        f"(KR {int(open_by.get('KR', 0) or 0)} / US {int(open_by.get('US', 0) or 0)}) · "
+        f"CLOSED <b>{closed_total}</b>"
+        f"(KR {int(closed_by.get('KR', 0) or 0)} / US {int(closed_by.get('US', 0) or 0)}) · "
+        f"trades {ft}"
+    )
+
+    markets = ta.get("markets") or {}
+    if isinstance(markets, dict) and markets:
+        parts.append("")
+        parts.append("<b>시장별</b>")
+        for mk in ("KR", "US"):
+            m = markets.get(mk) or {}
+            if not isinstance(m, dict) or not m:
+                parts.append(f"· <b>{mk}</b> — 데이터 없음")
+                continue
+            nav = float(m.get("nav", 0) or 0)
+            band = str(m.get("budget_band") or "—")
+            exh = m.get("exhaustion_pct")
+            exh_s = f"{float(exh):.0f}%" if exh is not None else "—"
+            n_closed = int(m.get("n_closed", 0) or 0)
+            parts.append(
+                f"· <b>{mk}</b> 수익 {_fmt_pct(m.get('return_pct'))} · "
+                f"MDD {float(m.get('mdd_pct', 0) or 0):.1f}% · "
+                f"NAV {nav:,.0f} · band {_esc(band)} · "
+                f"소진 {exh_s} · 청산누적 {n_closed}"
             )
-        if tid == "B" and t.get("portfolio"):
-            p = t["portfolio"]
-            ft = int(t.get("forward_trades_count", 0) or 0)
-            lines.append(
-                f"NAV {float(p.get('nav', 0) or 0):,.0f} USDT · tier {_esc(p.get('mdd_tier', 'NORMAL'))} · trades {ft}"
-            )
-        if t.get("error"):
-            lines.append(f"⚠️ {_esc(t['error'])}")
-        return "\n".join(lines)
+
+    if ta.get("error"):
+        parts.append(f"⚠️ {_esc(ta['error'])}")
+
+    parts.extend(
+        [
+            "",
+            "<i>본 리포트 = 주식 KR/US만. Bitget는 별도 일보(POST_DEPLOY_OBS).</i>",
+            "<i>게이트=종합점수60/40 · 관측기엔 연목표 단정 금지.</i>",
+        ]
+    )
+    return "\n".join(parts)
+
+
+def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
+    cadence = str(snap.get("cadence") or "daily").upper()
+    date_kst = _esc(snap.get("date_kst"))
 
     title = {
-        "DAILY": "📊 듀얼 북극성 · 일간",
-        "WEEKLY": "📊 듀얼 북극성 · 주간",
-        "MONTHLY": "📊 듀얼 북극성 · 월간",
-        "YEARLY": "📊 듀얼 북극성 · 연간",
-    }.get(cadence, "📊 듀얼 북극성")
+        "DAILY": "📊 주식 북극성 · 일간",
+        "WEEKLY": "📊 주식 북극성 · 주간",
+        "MONTHLY": "📊 주식 북극성 · 월간",
+        "YEARLY": "📊 주식 북극성 · 연간",
+    }.get(cadence, "📊 주식 북극성")
 
     parts = [
         f"<b>{title}</b> ({date_kst})",
@@ -619,40 +646,7 @@ def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
     if dash_html:
         parts.extend([dash_html, "", "━━━━━━━━━━━━━━━━", ""])
 
-    parts.extend(
-        [
-            "━━ Track A · 주식 ━━",
-            _track_block(ta, "A"),
-            "",
-            "━━ Track B · Bitget ━━",
-            _track_block(tb, "B"),
-            "",
-        ]
-    )
-
-    leader_mode = str(cmp_.get("leader_mode") or "")
-    if leader_mode == "side_by_side":
-        parts.extend(
-            [
-                "<b>비교 모드</b>: B0 측정 — 리더 미표시 (나란히)",
-                _esc(cmp_.get("leader_reason", "")),
-            ]
-        )
-    else:
-        leader = _esc(cmp_.get("leader_track", "—"))
-        parts.extend(
-            [
-                f"🏁 <b>리더</b> (목표달성률%): {leader}",
-                _esc(cmp_.get("leader_reason", "")),
-            ]
-        )
-
-    parts.extend(
-        [
-            "",
-            "<i>격리 유지 · 게이트=종합점수60/40 · 리더=목표달성률%(B1+).</i>",
-        ]
-    )
+    parts.append(format_track_a_equity_section_html(snap))
 
     obs_html = format_obs_hold_section_html(snap)
     if obs_html:

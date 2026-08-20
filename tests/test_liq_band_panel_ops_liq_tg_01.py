@@ -241,7 +241,8 @@ class TestLiqBandPanelOpsLiqTg01(unittest.TestCase):
         self.assertIn("[OBS_HOLD]", full)
         self.assertIn("[쉬운판]", full)
         self.assertIn("Track A", full)
-        self.assertIn("Track B", full)
+        self.assertNotIn("━━ Track B", full)
+        self.assertNotIn("Track B · Bitget", full)
         self.assertEqual(obs, format_obs_hold_section_html(snap))
         self.assertNotIn("[LIQ_BAND]", full)
         # with liq payload present → panel appears AFTER obs content

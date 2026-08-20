@@ -48,6 +48,8 @@ def _snap(*, cadence: str = "daily", daily_n: int = 8, composite: float = 4.09, 
     available = kw.pop("available", True)
     error = kw.pop("error", None)
     health = kw.pop("health", None)
+    health_payload = health if health is not None else _health()
+    book = health_payload["forward_book"]
     snap = {
         "cadence": cadence,
         "date_kst": "2026-08-17",
@@ -59,7 +61,27 @@ def _snap(*, cadence: str = "daily", daily_n: int = 8, composite: float = 4.09, 
                 "cagr_target_lo": 40,
                 "cagr_target_hi": 70,
                 "available": available,
-                "forward_book": (health or _health())["forward_book"],
+                "forward_book": book,
+                "forward_trades_count": int(book.get("closed_total", 0) or 0)
+                + int(book.get("open_total", 0) or 0),
+                "markets": {
+                    "KR": {
+                        "nav": 1_000_000,
+                        "mdd_pct": mdd,
+                        "return_pct": -1.0,
+                        "budget_band": "NORMAL",
+                        "exhaustion_pct": 10.0,
+                        "n_closed": 5,
+                    },
+                    "US": {
+                        "nav": 50_000,
+                        "mdd_pct": 1.0,
+                        "return_pct": 0.5,
+                        "budget_band": "NORMAL",
+                        "exhaustion_pct": 5.0,
+                        "n_closed": 5,
+                    },
+                },
                 "aggregate": {
                     "max_mdd_pct": mdd,
                     "avg_return_pct": 1.0,
@@ -87,8 +109,8 @@ def _snap(*, cadence: str = "daily", daily_n: int = 8, composite: float = 4.09, 
         "comparison": {"leader_mode": "side_by_side", "leader_reason": "B0"},
         "ledger": {"A": {"gate": "G0", "gate_label": "측정·구조"}, "B": {"gate": "G0"}},
         "meta": {},
-        "period_returns": {"A": {}, "B": {}},
-        "track_a_health": health if health is not None else _health(),
+        "period_returns": {"A": {"total_pct": -2.0}, "B": {}},
+        "track_a_health": health_payload,
     }
     if error is not None:
         snap["tracks"]["A"]["error"] = error
@@ -148,6 +170,13 @@ class TestObsHoldTelegram(unittest.TestCase):
         self.assertIn("잘 되고 있어요", full)
         self.assertIn("구멍", full)
         self.assertIn("나중", full)
+        self.assertIn("주식 북극성", full)
+        self.assertIn("시장별", full)
+        self.assertIn("가상매매 장부", full)
+        self.assertNotIn("Track B", full)
+        self.assertNotIn("━━ Track B", full)
+        self.assertNotIn("비교 모드", full)
+        self.assertIn("POST_DEPLOY_OBS", full)  # 분리 안내만
 
     def test_goal_dashboard_n8(self) -> None:
         snap = _snap(daily_n=8, composite=4.09)
