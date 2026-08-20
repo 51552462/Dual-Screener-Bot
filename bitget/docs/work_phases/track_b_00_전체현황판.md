@@ -252,7 +252,8 @@
 | `BITGET_BACKUP_DIR` | backup archive root (별도 파티션 권장) | L-2 | env |
 | `run_restore_drill` | L-2 isolated restore + row parity | L-2 | `integrity_backup_l2.py` |
 | `dual_north_star_ledger.py` | 듀얼 북극성 진행장부 (Track A/B read-only) | NS-1 | 루트 |
-| `dual_north_star_telegram.py` | 디렉터 통합 다이제스트 HTML → REPORT_BOT | NS-1 | 루트 |
+| `dual_north_star_telegram.py` | Track A 주식 북극성 HTML → REPORT_BOT | NS-1 / NS-DIAG | 루트 |
+| `north_star_panel_bg.py` | Bitget Track B 북극성 쉬운판 → POST_DEPLOY_OBS 첫 메시지 | NS-BG-DASH-01 | `bitget/observability/` |
 | `dual_north_star_ledger.json` | 일/주/월/연 스냅샷·게이트 이력 | NS-1 | `factory_data_dir()` |
 | `BITGET_NORTH_STAR_PHASE` | B0/B1/B2/B3 — 목표 밴드·리더 모드 | NS-1 | config_kv |
 | `A06_CHECKLIST_FIRST_PASS` | G3 Track A 전제 (`06` 1차) | NS-1 | config_kv (read) |

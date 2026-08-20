@@ -1,7 +1,37 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-08-20  
-> **유형**: POST_DEPLOY_OBS-DNA-UX-01 **Claude OK 반영** · 서버 육안만 잔여
+> **갱신**: 2026-08-21  
+> **유형**: NS-BG-DASH-01 · **Claude OK** · SUB_DONE · 서버 육안만 잔여
+
+---
+
+## OUTBOX — 2026-08-21 · NS-BG-DASH-01 Bitget 북극성 패널
+
+**요청:** 주식 `[쉬운판]` 참조 → Bitget 구조에 맞게 북극성·목표수익률 보이게. 이미 된 건 유지, 빠진 것만 추가.
+
+### 갭
+- 원장 `dual_north_star_ledger` Track B(MDD5% · B0~B3 · 게이트) **이미 수집**
+- 주식 19:30 일보는 Track A only (의도적 분리 · Track B 미표시)
+- Bitget POST_DEPLOY_OBS는 DNA/연습 관측만 · **북극성 목표·누적·게이트 칸 없음**
+
+### 구현 (bitget/** only · 읽기 전용)
+- `bitget/observability/north_star_panel_bg.py` — Track B `[쉬운판]` + 상세(목표 MDD/연복리/게이트/기간수익/NAV)
+- `post_deploy_obs_digest_bg.py` — 텔레그램 **첫 메시지**로 북극성 발송 · 원장 **쓰기 안 함**(19:30 cron 전용)
+- 테스트 `test_north_star_panel_bg.py`
+- 문서: `12_듀얼북극성…` · `09_디렉터_쉬운요약`
+
+### Ask
+- Claude: 스펙 일치·격리 OK면 한 줄 OK. 다음 Handoff 불필요면 SUB_DONE 유지.
+- 금지 유지: C-2 · MDD5% tier · live · ENABLE_REAL_EXECUTION
+
+## Claude OK — NS-BG-DASH-01 (2026-08-21)
+
+- 판정: **OK** — 로컬 스냅샷 vs SSOT(00_마스터_로드맵 §0.4 · 12_문서 · CAT-J) 1:1 일치 · 수정 spec 없음
+- MDD5%/연12~25%(B0=측정) 값 원본 일치 · 임의 상수 없음
+- 원장 read-only 확인 · forward_trades/gates.py/gmm_dna_alpha_sync.py 비접촉
+- SPOT/FUT NAV 분리 표시 확인 (CAT-J §4)
+- C-2 · MDD5% tier · live · ENABLE_REAL_EXECUTION 미접촉
+- 다음: Handoff 불필요 → **SUB_DONE**. 잔여는 디렉터 서버 pull 후 20:00 텔레그램 첫 메시지 육안 1회만.
 
 ---
 

@@ -651,6 +651,33 @@ def compute_post_deploy_obs_digest(
         payload["overall_light"] = "🔴"
     elif payload["dashboard"].get("light") == "🟡" and payload["overall_light"] == "🟢":
         payload["overall_light"] = "🟡"
+
+    # Track B 북극성 (읽기 전용 · 원장 쓰기는 19:30 factory cron)
+    try:
+        from bitget.observability.north_star_panel_bg import (
+            build_bitget_goal_dashboard,
+            collect_bitget_north_star_snap,
+        )
+
+        ns = collect_bitget_north_star_snap(cadence="daily")
+        payload["north_star"] = {
+            "available": bool(ns.get("available", True)),
+            "error": ns.get("error"),
+            "date_kst": ns.get("date_kst"),
+            "dashboard": build_bitget_goal_dashboard(ns),
+            "track_b": (ns.get("tracks") or {}).get("B"),
+            "period_returns_b": (ns.get("period_returns") or {}).get("B"),
+            "gate_b": ((ns.get("ledger") or {}).get("B") if isinstance(ns.get("ledger"), dict) else None),
+            "meta": ns.get("meta"),
+            "_snap": ns,  # format HTML용 (persist payload에서 축약 가능)
+        }
+    except Exception as ex:
+        payload["north_star"] = {
+            "available": False,
+            "error": f"north_star_panel:{ex}"[:160],
+            "dashboard": None,
+            "_snap": {"available": False, "error": str(ex)[:160]},
+        }
     return payload
 
 
@@ -826,12 +853,20 @@ def format_paste_followup_html(snap: Dict[str, Any]) -> str:
 def persist_digest(snap: Dict[str, Any]) -> bool:
     from bitget.infra.ops_logger import insert_ops_event
 
+    # ops_events 용량 — north_star._snap 전체 대신 요약만
+    payload = dict(snap)
+    ns = payload.get("north_star")
+    if isinstance(ns, dict) and "_snap" in ns:
+        slim = dict(ns)
+        slim.pop("_snap", None)
+        payload["north_star"] = slim
+
     return bool(
         insert_ops_event(
             component=_COMPONENT,
             severity="INFO",
             event=_EVENT,
-            payload=dict(snap),
+            payload=payload,
         )
     )
 
@@ -855,10 +890,15 @@ def _send_report_html(message: str) -> bool:
 
 
 def send_digest_messages(snap: Dict[str, Any]) -> Dict[str, Any]:
+    from bitget.observability.north_star_panel_bg import format_bitget_north_star_html
+
+    ns_block = snap.get("north_star") or {}
+    ns_html = format_bitget_north_star_html(ns_block.get("_snap") or ns_block)
     summary = format_digest_html(snap)
     numbers = format_numbers_html(snap)
     paste = format_paste_followup_html(snap)
-    chunks: List[str] = [summary, numbers]
+    # 1) Bitget 북극성 쉬운판+목표  2) 코인 연습 관측  3) 숫자  4) 복붙
+    chunks: List[str] = [ns_html, summary, numbers]
     max_len = 3500
     if len(paste) <= max_len:
         chunks.append(paste)
@@ -943,6 +983,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         "dry_run": out.get("dry_run"),
     }, ensure_ascii=False, indent=2))
     if args.dry_run:
+        try:
+            from bitget.observability.north_star_panel_bg import format_bitget_north_star_html
+
+            ns = (out.get("snap") or {}).get("north_star") or {}
+            print("---BITGET_NORTH_STAR---")
+            print(format_bitget_north_star_html(ns.get("_snap") or ns))
+        except Exception as ex:
+            print("---BITGET_NORTH_STAR---")
+            print(f"(skip) {ex}")
         print("---CURSOR_PASTE---")
         print((out.get("snap") or {}).get("cursor_paste"))
         print("---CLAUDE_PASTE---")

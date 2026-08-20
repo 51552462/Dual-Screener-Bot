@@ -6,6 +6,24 @@
 
 ---
 
+## Mirror — 2026-08-21 · [CAT-J] · NS-BG-DASH-01 OK
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 맞게 반영된 점: MDD5%/연12~25%(B0=측정) SSOT 값 일치 · 원장 read-only · SPOT/FUT 분리 · gates/sync/forward_trades 비접촉 · 경로 격리(`bitget/observability/`)
+- 빠졌거나 불일치: 없음
+
+### 추가 제안 (지금 착수 금지)
+| # | 제안 | Layer | 우선순위 |
+|---|------|-------|----------|
+| 1 | 디렉터 20:00 텔레그램 육안 1회 확인 | ① 디렉터 | 최고 |
+| 2 | DATA_WAIT streak 카운터 (별도 Ask 후) | 🟡 2 | 중 |
+
+### 다음 Handoff 후보 재정렬
+1. (설계 아님) 디렉터 서버 육안 확인
+2. C-2 / MDD5% / live — 금지 유지, 이번 트랙 대상 아님
+
+---
+
 ## Mirror — 2026-08-20 · [CAT-J] · POST_DEPLOY_OBS-DNA-UX-01 조건부 OK
 
 ### 로컬 구조 이해 (Cursor 스냅샷 대비)

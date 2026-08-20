@@ -19,6 +19,20 @@
 
 ---
 
+## NS-BG-DASH-01 — Bitget 북극성 쉬운판 [2026-08-21]
+
+| 항목 | 내용 |
+|------|------|
+| **계기** | 디렉터: 주식 북극성 스크린샷 참조 → Bitget에 목표·수익 보이게 |
+| **구현** | `north_star_panel_bg.py` · POST_DEPLOY_OBS 첫 메시지 연동 · persist=읽기전용 |
+| **표시** | MDD≤5% · 연 12~25%(B0=측정) · 게이트 · 일/주/월/연 · spot/futures NAV |
+| **비변경** | `gates.py` · Kelly · MDD tier · `dual_north_star_telegram.py`(Track A) |
+| **잔여** | 디렉터 VPS pull 후 20:00 텔레그램 첫 메시지 육안 1회 |
+| **status** | **SUB_DONE · Claude OK 2026-08-21** |
+| **Claude OK** | **2026-08-21** — [CAT-J] OK · 수정 spec 없음 · Handoff 불필요 · 원장 read-only · gates/sync 비접촉 |
+
+---
+
 ## POST_DEPLOY_OBS-DNA-UX-01 — DNA digest why-진단 [2026-08-20]
 
 | 항목 | 내용 |
