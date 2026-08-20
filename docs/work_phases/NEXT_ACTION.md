@@ -21,6 +21,7 @@ cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo bash ./update_factory.sh
 
 - Phase1 VERDICT**(B) 관측연장** 유지 · Phase2 자동 착수 없음
 - `PHASE2_CANDIDATE` 뜨면 → **새 Claude 세션**에서 OPS-LIQ-FORK-01 갈림길(A′/B/C) 재소집 (이번 OK ≠ Phase2 승인)
+- **update_factory**: health RED면 **자동 data-refresh 1회** 후 재검사 (수동 2줄 불필요). 로컬 커밋·푸시 후 VPS 반영
 - 신규 Alpha Handoff: **없음**
 
 ### 금지

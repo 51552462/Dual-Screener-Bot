@@ -34,12 +34,13 @@ sudo bash ./update_factory.sh
 2. systemd 유닛·venv 엔진 재배포
 3. factory cron 재설치 (`/etc/cron.d/...`)
 4. 스키마 마이그레이션 · import smoke
-5. 레거시 DB 격리 · **data health 스모크** (RED면 경고만 · 배포는 완료)
+5. 레거시 DB 격리 · **data health 스모크** (RED면 **자동 data-refresh 1회** 후 재검사 · 그래도 RED면 경고만 · 배포는 완료)
 6. `dante-factory` / dashboard / async · 타이머 재시작
 
-### 배포 후 health RED가 뜨면 (추가 1회만)
+### 배포 후 health RED가 뜨면
 
-경고에 나온 대로:
+평소에는 **추가 입력 불필요** — `update_factory`가 RED일 때 `factory.sh --data-refresh`를 **1회만** 자동 실행합니다.  
+경고가 **끝까지** 남으면(자동 치유 실패) 그때만:
 
 ```bash
 cd /home/ubuntu/dante_bots/Dual-Screener-Bot
@@ -48,7 +49,9 @@ python3 scripts/diag_forward_staleness.py
 TZ=Asia/Seoul bash ./factory.sh --data-refresh
 ```
 
-정상이면 다음날부터는 **08:00 data_refresh 크론**이 담당 — 매일 수동 refresh 금지(챗바퀴).
+- 정상이면 다음날부터 **08:00 data_refresh 크론**이 담당
+- 자동 치유 끄기: `UPDATE_FACTORY_SKIP_DATA_HEAL=1 sudo bash ./update_factory.sh`
+- **매 배포 상시 refresh는 하지 않음** (무거움) — RED일 때만
 
 ---
 
@@ -57,7 +60,7 @@ TZ=Asia/Seoul bash ./factory.sh --data-refresh
 | 상황 | 추가 문구 | 어디서 보나 |
 |------|-----------|-------------|
 | **평소 코드 배포** | §2 `update_factory`만 | 본 파일 |
-| **배포 health RED** | `diag` + `--data-refresh` | §2 아래 |
+| **배포 health RED** | 보통 자동 heal · 실패 시 `diag` + `--data-refresh` | §2 아래 |
 | **이번 세션 전용 진단** (예: stall 스크립트) | `NEXT_ACTION.md`에만 임시 복붙 | **NEXT_ACTION** |
 | **Bitget 코인** | Track B SSOT · 본 파일 **쓰지 말 것** | `bitget/docs/work_phases/` |
 
@@ -71,7 +74,7 @@ Cursor/Claude가 새 진단 스크립트를 넣으면 **그 실행문은 `NEXT_A
 ```text
 [ ] PC: git push 완료 (Cursor가 커밋 해시 알려줌)
 [ ] VPS: sudo bash ./update_factory.sh
-[ ] (선택) health RED면 §2 복구 2줄
+[ ] (선택) health RED **끝까지** 남으면 §2 수동 복구 — 평소는 update_factory 자동 heal
 [ ] systemctl is-active dante-factory 등 OK
 [ ] 「진입 0」이면 update_factory 실패가 아님 → NEXT_ACTION / 관측(OBS-HOLD)
 ```

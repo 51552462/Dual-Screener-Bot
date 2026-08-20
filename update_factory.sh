@@ -13,6 +13,7 @@
 # 환경 변수:
 #   INSTALL_ROOT — git·코드 루트 (기본: 이 스크립트가 있는 디렉터리)
 #   DEPLOY_USER  — git pull 수행 유저 (기본: ubuntu)
+#   UPDATE_FACTORY_SKIP_DATA_HEAL=1 — health RED 시 자동 data-refresh 생략
 # =============================================================================
 set -eu -o pipefail
 
@@ -428,6 +429,36 @@ _dante_post_update_data_health() {
   return 0
 }
 
+# RED일 때만 1회 data-refresh → 재검사. 매 배포 무조건 refresh 금지(무거움·챗바퀴).
+# 끄기: UPDATE_FACTORY_SKIP_DATA_HEAL=1
+_dante_auto_heal_data_health_if_red() {
+  if [[ "${UPDATE_FACTORY_SKIP_DATA_HEAL:-0}" == "1" ]]; then
+    echo "  SKIP auto data-heal (UPDATE_FACTORY_SKIP_DATA_HEAL=1)"
+    return 1
+  fi
+  echo "  auto-heal: health RED → factory.sh --data-refresh 1회 후 재검사..."
+  echo "  (수 분 소요 가능 · 평소 08:00 cron과 동일 경로, 배포마다 상시 refresh 아님)"
+  if ! sudo -E -u "$DEPLOY_USER" bash -lc "
+    set -eu -o pipefail
+    cd \"$INSTALL_ROOT\"
+    if [[ -f .env ]]; then set -a; source .env; set +a; fi
+    export INSTALL_ROOT=\"$INSTALL_ROOT\"
+    export PYTHONPATH=\"$INSTALL_ROOT\${PYTHONPATH:+:\$PYTHONPATH}\"
+    export TZ=Asia/Seoul
+    exec bash ./factory.sh --data-refresh
+  "; then
+    echo "  ✗ auto data-refresh 실패 — 수동 점검 필요" >&2
+    return 1
+  fi
+  echo "  auto-heal refresh 완료 → health 재검사..."
+  if _dante_post_update_data_health; then
+    echo "  ✓ auto-heal 성공 — health 복구 (YELLOW/GREEN)"
+    return 0
+  fi
+  echo "  ✗ auto-heal 후에도 health RED" >&2
+  return 1
+}
+
 echo "[1/7] pre-update SQLite 백업 → /var/backups/dante-pre-update/"
 _dante_pre_update_sqlite_backup
 
@@ -492,7 +523,11 @@ echo "[5c/7] DB path SSOT — legacy shadow quarantine + data health smoke"
 _dante_quarantine_legacy_market_db
 _DATA_HEALTH_WARN=0
 if ! _dante_post_update_data_health; then
-  _DATA_HEALTH_WARN=1
+  if _dante_auto_heal_data_health_if_red; then
+    _DATA_HEALTH_WARN=0
+  else
+    _DATA_HEALTH_WARN=1
+  fi
 fi
 
 echo "[6/7] 최신 venv 엔진으로 서비스 재기동"
@@ -512,9 +547,10 @@ echo ""
 echo "update_factory 완료 — 데이터 100% 보존, 엔진 venv 교체."
 if [[ "${_DATA_HEALTH_WARN:-0}" -eq 1 ]]; then
   echo ""
-  echo "⚠ 배포 후 데이터 health RED — 운영 DB 캔들 지연. 즉시 확인:"
+  echo "⚠ 배포 후 데이터 health RED — auto-heal(data-refresh) 후에도 지연. 수동 확인:"
   echo "  cd $INSTALL_ROOT && set -a && source .env && set +a && python3 scripts/diag_forward_staleness.py"
   echo "  TZ=Asia/Seoul bash ./factory.sh --data-refresh"
+  echo "  (끄기: UPDATE_FACTORY_SKIP_DATA_HEAL=1 sudo bash ./update_factory.sh)"
 fi
 echo ""
 echo "정기 점검: bash deploy/audit_factory_stack.sh"
