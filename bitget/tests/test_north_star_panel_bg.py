@@ -1,4 +1,4 @@
-"""Bitget Track B north star panel (read-only)."""
+"""Bitget Track B north star panel (read-only) — coin-native, no KR/US UX."""
 from __future__ import annotations
 
 from bitget.observability import north_star_panel_bg as ns
@@ -9,7 +9,7 @@ def _fake_ns(**overrides):
     base = {
         "available": True,
         "cadence": "daily",
-        "date_kst": "2026-08-20",
+        "date_kst": "2026-08-21",
         "tracks": {
             "B": {
                 "label": "Bitget 코인",
@@ -49,13 +49,12 @@ def _fake_ns(**overrides):
         "ledger": {"B": {"gate": "G0", "gate_label": "측정·구조"}},
         "meta": {
             "daily_n": 5,
-            "daily_snapshot_count": 5,
-            "obs_hold_recall_n": 20,
-            "obs_hold_remaining": 15,
+            "g1_target_n": 28,
+            "g1_remaining": 23,
             "show_r3_bitget_banner": True,
             "r3_banner": "⚠️ Bitget paper 미검증",
             "show_r1_caveat": True,
-            "r1_banner": "초기 관측 중",
+            "r1_banner": "B0 관측 중",
         },
     }
     base.update(overrides)
@@ -70,22 +69,33 @@ class TestBitgetNorthStarPanel:
         assert d["mdd_cap"] == 5.0
         assert d["gate"] == "G0"
         assert d["n"] == 5
+        assert d["g1_target"] == 28
         html = ns.format_bitget_north_star_html(snap)
-        assert "Bitget 북극성" in html
-        assert "[쉬운판] Track B" in html
+        assert "코인 북극성" in html
+        assert "Bitget 코인" in html
         assert "목표 MDD ≤5%" in html
         assert "연복리 12~25%" in html
         assert "B0" in html
-        assert "잘 되고 있어요" in html
-        assert "나중이에요" in html
-        assert "Track B · Bitget" in html
+        assert "spot" in html.lower()
+        assert "futures" in html.lower()
+        # must NOT look like stock north star
+        assert "갈림길" not in html
+        assert "OBS_HOLD" not in html
+        assert "Track A" not in html
+        assert "mega_trend" not in html
+        assert "📊 주식 북극성" not in html
+        assert "📊 코인 북극성" in html
+        # 연 40~70은 주식 목표 — 비교 부인 문구로만 허용
+        if "40~70" in html:
+            assert "아님" in html
 
     def test_ledger_unavailable(self):
         d = ns.build_bitget_goal_dashboard({"available": False, "error": "boom"})
         assert d["light"] == "🔴"
-        assert "못 읽" in d["headline"]
-        html = ns.format_bitget_north_star_html({"available": False, "error": "boom", "date_kst": "2026-08-20"})
-        assert "Bitget 북극성" in html
+        html = ns.format_bitget_north_star_html(
+            {"available": False, "error": "boom", "date_kst": "2026-08-21"}
+        )
+        assert "코인 북극성" in html
         assert "boom" in html
 
     def test_mdd_over_cap_is_problem(self):
@@ -94,11 +104,56 @@ class TestBitgetNorthStarPanel:
         d = ns.build_bitget_goal_dashboard(snap)
         assert any(x["id"] == "mdd" for x in d["problem"])
 
+    def test_collect_strips_track_a(self, monkeypatch):
+        def _fake_build(**_k):
+            return {
+                "cadence": "daily",
+                "date_kst": "2026-08-21",
+                "tracks": {
+                    "A": {"label": "주식"},
+                    "B": {
+                        "label": "Bitget 코인",
+                        "phase": "B0",
+                        "available": True,
+                        "c2_funding_complete": False,
+                        "forward_trades_count": 1,
+                        "mdd_cap_pct": 5,
+                        "cagr_target_lo": 12,
+                        "cagr_target_hi": 25,
+                        "aggregate": {"max_mdd_pct": 1, "composite_score": 40, "measure_only": True},
+                        "portfolio": {"nav": 1, "spot_nav": 1, "futures_nav": 0, "mdd_tier": "NORMAL"},
+                    },
+                },
+                "period_returns": {"A": {"total_pct": 9}, "B": {"total_pct": -1}},
+                "comparison": {"leader_track": "A"},
+            }
+
+        monkeypatch.setattr(
+            "dual_north_star_ledger.build_snapshot",
+            _fake_build,
+        )
+        monkeypatch.setattr(
+            "dual_north_star_ledger.load_ledger",
+            lambda: {
+                "commercialization": {"A": {"gate": "G1"}, "B": {"gate": "G0", "gate_label": "측정·구조"}},
+                "history": {"daily": [{}] * 3},
+            },
+        )
+        out = ns.collect_bitget_north_star_snap()
+        assert "A" not in (out.get("tracks") or {})
+        assert "B" in (out.get("tracks") or {})
+        assert out.get("comparison") is None
+        html = ns.format_bitget_north_star_html(out)
+        assert "Track A" not in html
+        assert "갈림길" not in html
+        assert "OBS_HOLD" not in html
+        assert html.startswith("<b>📊 코인 북극성") or "📊 코인 북극성" in html
+        assert "📊 주식 북극성" not in html
+
 
 class TestPostDeployObsNorthStarWire:
     def test_compute_includes_north_star(self, tmp_path, monkeypatch):
         fwd = str(tmp_path / "m.sqlite")
-        # minimal fwd table via existing helper pattern
         import sqlite3
 
         conn = sqlite3.connect(fwd)
@@ -146,6 +201,7 @@ class TestPostDeployObsNorthStarWire:
             include_server_probes=False,
         )
         assert "north_star" in snap
-        assert snap["north_star"]["available"] is True
-        assert snap["north_star"]["dashboard"]["gate"] == "G0"
-        assert "목표 MDD" in ns.format_bitget_north_star_html(snap["north_star"]["_snap"])
+        html = ns.format_bitget_north_star_html(snap["north_star"]["_snap"])
+        assert "코인 북극성" in html
+        assert "📊 주식 북극성" not in html
+        assert "갈림길" not in html

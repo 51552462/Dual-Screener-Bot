@@ -24,6 +24,21 @@
 - Claude: 스펙 일치·격리 OK면 한 줄 OK. 다음 Handoff 불필요면 SUB_DONE 유지.
 - 금지 유지: C-2 · MDD5% tier · live · ENABLE_REAL_EXECUTION
 
+## OUTBOX — 2026-08-21 · NS-BG-DASH-01b 코인 전용 재분리
+
+**계기:** 디렉터가 주식 북극성(19:30) 붙여넣으며「코인에 KR/US 북극성 올 필요 없음 · 구조만 참조」지적.
+
+### 수정
+- `north_star_panel_bg.py`: Track A 스냅샷·OBS_HOLD(n/20)·갈림길·mega_trend 제거
+- 제목 `📊 코인 북극성 · Bitget` · 마일스톤=G1 28일 · spot/futures NAV · MDD5%/B0
+- 스냅샷에서 tracks/period_returns의 **A 키 strip**
+- 테스트: `📊 주식 북극성` / 갈림길 / OBS_HOLD / Track A 부재 assert
+
+### Ask
+- Claude: 01b OK면 한 줄. 주식 채널 비접촉 확인.
+
+---
+
 ## Claude OK — NS-BG-DASH-01 (2026-08-21)
 
 - 판정: **OK** — 로컬 스냅샷 vs SSOT(00_마스터_로드맵 §0.4 · 12_문서 · CAT-J) 1:1 일치 · 수정 spec 없음
