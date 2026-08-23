@@ -57,8 +57,8 @@ def main() -> int:
         )
         return 2
 
-    # First real pass: cap symbols so machine finishes; full = BITGET_UNIVERSE_BT_MAX_SYMBOLS=0
-    raw_max = (os.environ.get("BITGET_UNIVERSE_BT_MAX_SYMBOLS") or "5").strip()
+    # Cap: prefer majors + 1D depth; 0/all = no cap. Default 30 for VPS first-pass.
+    raw_max = (os.environ.get("BITGET_UNIVERSE_BT_MAX_SYMBOLS") or "30").strip()
     max_sym: Optional[int]
     if raw_max in ("0", "all", "ALL", "-1"):
         max_sym = None

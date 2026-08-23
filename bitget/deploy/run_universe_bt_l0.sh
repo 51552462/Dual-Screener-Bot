@@ -5,7 +5,7 @@
 #   export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
 #   bash bitget/deploy/run_universe_bt_l0.sh
 # Optional:
-#   BITGET_UNIVERSE_BT_MAX_SYMBOLS=20  # default 10; omit or 0 = all OHLCV∩universe
+#   BITGET_UNIVERSE_BT_MAX_SYMBOLS=30  # default 30; 0 = all OHLCV∩universe (depth-eligible)
 #   BITGET_UNIVERSE_BT_OHLCV_ONLY=1    # skip live exchange filter (use OHLCV tables only)
 set -euo pipefail
 
@@ -29,17 +29,22 @@ if [[ -z "${BITGET_DB_STORAGE_PATH:-}" ]]; then
   fi
 fi
 
+# Default 30 after alpha-slice bug (meme listings <240 bars → FUT rows=0)
+if [[ -z "${BITGET_UNIVERSE_BT_MAX_SYMBOLS:-}" ]]; then
+  export BITGET_UNIVERSE_BT_MAX_SYMBOLS=30
+fi
+
 echo "[universe-bt] ROOT=$ROOT"
 echo "[universe-bt] PY=$PY"
 echo "[universe-bt] BITGET_DB_STORAGE_PATH=${BITGET_DB_STORAGE_PATH:-unset}"
-echo "[universe-bt] MAX_SYMBOLS=${BITGET_UNIVERSE_BT_MAX_SYMBOLS:-10}"
+echo "[universe-bt] MAX_SYMBOLS=${BITGET_UNIVERSE_BT_MAX_SYMBOLS}"
 
 "$PY" - <<'PY'
 import os, sys
 os.environ.setdefault("BITGET_UNIVERSE_BT_OHLCV_ONLY", "1")
 # default cap for first VPS pass; 0 or empty = no cap
 if "BITGET_UNIVERSE_BT_MAX_SYMBOLS" not in os.environ:
-    os.environ["BITGET_UNIVERSE_BT_MAX_SYMBOLS"] = "10"
+    os.environ["BITGET_UNIVERSE_BT_MAX_SYMBOLS"] = "30"
 sys.path.insert(0, os.environ.get("BITGET_INSTALL_ROOT") or os.getcwd())
 from bitget.analysis.universe_bt.run_live_u2_u3 import main
 raise SystemExit(main())

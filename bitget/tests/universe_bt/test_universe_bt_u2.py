@@ -170,3 +170,46 @@ def test_u2_resume_idempotent_and_paper_invariant(tmp_path, monkeypatch):
     assert n2 == n1  # resume skip — no duplicate rows
     assert out2["rows_written"] == 0
     assert out1["reused_time_machine"]["TIME_MACHINE_MAX_TABLES"] == 300
+
+
+def test_select_run_symbols_skips_thin_prefers_btc(tmp_path):
+    """Alpha-first meme coins must not starve a capped run when BTC has depth."""
+    from bitget.analysis.universe_bt.universe import select_run_symbols
+
+    market = str(tmp_path / "m.sqlite")
+    # Thin listing first alphabetically; BTC has depth
+    _make_ohlcv_db(market, market="futures", symbol="0G_USDT", n=50)
+    conn = sqlite3.connect(market)
+    try:
+        # overwrite BTC with deep history (helper already wrote BTC from last call — rebuild)
+        pass
+    finally:
+        conn.close()
+    _make_ohlcv_db(market, market="futures", symbol="BTC_USDT", n=300)
+    # also a thin alt
+    conn = sqlite3.connect(market)
+    try:
+        dates = pd.date_range("2024-01-01", periods=30, freq="D")
+        df = pd.DataFrame(
+            {
+                "Date": dates.strftime("%Y-%m-%d"),
+                "Open": 1.0,
+                "High": 1.1,
+                "Low": 0.9,
+                "Close": 1.0,
+                "Volume": 1.0,
+            }
+        )
+        df.to_sql("BITGET_FUT_0G_USDT_1D", conn, if_exists="replace", index=False)
+        conn.commit()
+    finally:
+        conn.close()
+
+    picked = select_run_symbols(
+        "futures",
+        ["0G_USDT", "BTC_USDT", "ZZZ_USDT"],
+        max_symbols=1,
+        min_bars=240,
+        db_path=market,
+    )
+    assert picked == ["BTC_USDT"]

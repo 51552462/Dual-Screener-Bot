@@ -10,6 +10,26 @@ from bitget.infra.shared_db_connector import get_connection
 
 logger = get_logger("bitget.analysis.universe_bt.universe")
 
+# When MAX_SYMBOLS caps a run, prefer liquid majors first (alpha-order starves L0
+# with new meme listings that fail U1 min-bars=240).
+_PREFERRED_RUN_SYMBOLS = (
+    "BTC_USDT",
+    "ETH_USDT",
+    "SOL_USDT",
+    "XRP_USDT",
+    "BNB_USDT",
+    "DOGE_USDT",
+    "ADA_USDT",
+    "AVAX_USDT",
+    "LINK_USDT",
+    "DOT_USDT",
+    "LTC_USDT",
+    "BCH_USDT",
+    "NEAR_USDT",
+    "ATOM_USDT",
+    "UNI_USDT",
+)
+
 
 def _table_prefix(market_type: str) -> str:
     mt = str(market_type or "").strip().lower()
@@ -17,6 +37,77 @@ def _table_prefix(market_type: str) -> str:
         return "BITGET_FUT_"
     return "BITGET_SPOT_"
 
+
+def _1d_bar_count(conn, market_type: str, symbol: str) -> int:
+    tbl = f"{_table_prefix(market_type)}{symbol}_1D"
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+            (tbl,),
+        ).fetchone()
+        if not row:
+            return 0
+        return int(conn.execute(f'SELECT COUNT(*) FROM "{tbl}"').fetchone()[0])
+    except Exception:
+        return 0
+
+
+def select_run_symbols(
+    market_type: str,
+    symbols: List[str],
+    *,
+    max_symbols: Optional[int] = None,
+    min_bars: int = 240,
+    db_path: Optional[str] = None,
+) -> List[str]:
+    """Cap run symbols by 1D depth — skip thin listings that yield 0 windows.
+
+    Alphabetical ``symbols[:N]`` picks brand-new tickers first; futures L0 then
+    writes 0 rows even when FUT_1D coverage is healthy. Prefer majors, then any
+    symbol with ``COUNT(1D) >= min_bars`` (default = U1 ``_U1_MIN_BARS``).
+    """
+    syms = list(symbols)
+    if max_symbols is None:
+        return syms
+    cap = max(0, int(max_symbols))
+    if cap == 0:
+        return []
+
+    path = db_path or market_db_read_path()
+    if not os.path.isfile(path):
+        path = db_path or market_data_db_path()
+    if not os.path.isfile(path):
+        return syms[:cap]
+
+    preferred = [s for s in _PREFERRED_RUN_SYMBOLS if s in syms]
+    rest = [s for s in syms if s not in set(preferred)]
+    ordered = preferred + rest
+
+    out: List[str] = []
+    skipped_thin = 0
+    conn = get_connection(path, read_only=True)
+    try:
+        for s in ordered:
+            n = _1d_bar_count(conn, market_type, s)
+            if n < int(min_bars):
+                skipped_thin += 1
+                continue
+            out.append(s)
+            if len(out) >= cap:
+                break
+    finally:
+        conn.close()
+
+    logger.info(
+        "select_run_symbols market=%s cap=%s eligible=%s skipped_thin(<%s)=%s sample=%s",
+        market_type,
+        cap,
+        len(out),
+        min_bars,
+        skipped_thin,
+        out[:8],
+    )
+    return out
 
 def list_ohlcv_symbols(market_type: str, *, db_path: Optional[str] = None) -> List[str]:
     """Symbols that have at least one OHLCV table for market_type."""

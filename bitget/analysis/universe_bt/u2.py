@@ -25,7 +25,10 @@ from bitget.analysis.universe_bt.replay import (
     replay_symbol_window,
 )
 from bitget.analysis.universe_bt.store import write_bt_results
-from bitget.analysis.universe_bt.universe import resolve_universe_snapshot
+from bitget.analysis.universe_bt.universe import (
+    resolve_universe_snapshot,
+    select_run_symbols,
+)
 from bitget.infra.data_paths import market_data_db_path
 from bitget.infra.logging_setup import get_logger
 from bitget.infra.memory_policy import (
@@ -137,7 +140,14 @@ def run_universe_bt_u2(
 
     symbols = resolve_universe_snapshot(mt, db_path=market_db)
     if max_symbols is not None:
-        symbols = symbols[: max(0, int(max_symbols))]
+        # Prefer majors + 1D depth ≥ U1 min bars (alpha-slice caused FUT rows=0)
+        symbols = select_run_symbols(
+            mt,
+            symbols,
+            max_symbols=max_symbols,
+            min_bars=_U1_MIN_BARS,
+            db_path=market_db,
+        )
 
     shards = build_universe_shards(symbols, shard_size)
     ckpt = load_checkpoint(run_id, mt, db_path=results_db) if resume else None

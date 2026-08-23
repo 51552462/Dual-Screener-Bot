@@ -11,7 +11,10 @@ import pandas as pd
 from bitget.analysis.universe_bt.gate_adapter import dry_try_add_virtual_position
 from bitget.analysis.universe_bt.regime import resolve_historical_regime
 from bitget.analysis.universe_bt.store import write_bt_results
-from bitget.analysis.universe_bt.universe import resolve_universe_snapshot
+from bitget.analysis.universe_bt.universe import (
+    resolve_universe_snapshot,
+    select_run_symbols,
+)
 from bitget.infra.data_paths import market_data_db_path, market_db_read_path
 from bitget.infra.logging_setup import get_logger
 from bitget.infra.memory_policy import OHLCV_SIGNAL_BAR_LIMIT
@@ -253,7 +256,13 @@ def run_universe_bt_u1(
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     symbols = resolve_universe_snapshot(mt, db_path=market_db)
     if max_symbols is not None:
-        symbols = symbols[: max(0, int(max_symbols))]
+        symbols = select_run_symbols(
+            mt,
+            symbols,
+            max_symbols=max_symbols,
+            min_bars=_U1_MIN_BARS,
+            db_path=market_db,
+        )
 
     # Default window: all bars available (per-symbol cap inside replay)
     start_ts, end_ts = 0, 2_147_483_647
