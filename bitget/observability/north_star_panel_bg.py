@@ -411,6 +411,25 @@ def format_bitget_north_star_html(ns: Optional[Dict[str, Any]] = None) -> str:
     parts.append("")
     parts.extend(_sec("나중이에요 (지금 금지)", list(d.get("later") or []), "⬜", limit=6))
     parts.append("")
+
+    # LS-GOAL-UX-01 — L/S progress only (shared Track B goals unchanged)
+    try:
+        from bitget.observability.ls_split_summary_bg import (
+            collect_ls_split_summary,
+            format_ls_split_html_block,
+            ls_split_enabled,
+        )
+
+        if ls_split_enabled():
+            ls = ns.get("ls_split") if isinstance(ns.get("ls_split"), dict) else None
+            if not ls:
+                ls = collect_ls_split_summary()
+            block = format_ls_split_html_block(ls)
+            if block:
+                parts.extend([block, ""])
+    except Exception:
+        pass
+
     parts.append("<b>읽는 법</b>")
     for tip in d.get("how_to_read") or []:
         parts.append(f"· {_esc(tip)}")

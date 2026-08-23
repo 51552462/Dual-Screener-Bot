@@ -116,6 +116,8 @@ GMM_DNA_ALPHA_REPORT_LOG_SOURCE: str = "journal"
 POST_DEPLOY_OBS_DIGEST_ENABLED: bool = True
 # DNA why-diagnosis in digest (false → legacy RANK binary wording)
 POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED: bool = True
+# LS-GOAL-UX-01 — LONG/SHORT progress display split (goals stay Track B shared)
+POST_DEPLOY_OBS_LS_SPLIT_ENABLED: bool = True
 # D-3b paper vs real parity (scaffold — default dormant, no pipeline hook)
 PARITY_MONITOR_ENABLED: bool = False
 # Live WS/OMS smoke (read-only observational — never starts sockets / places orders)

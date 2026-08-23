@@ -1,7 +1,80 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
 > **갱신**: 2026-08-23  
-> **유형**: Ops 버그픽스 · 코인 서버에 주식 북극성 cron 혼입 (NS-BG-CRON-ISO-01)
+> **유형**: LS-GOAL-UX-01 · **Claude OK 수신 · DONE**
+
+---
+
+## Claude OK — LS-GOAL-UX-01 (2026-08-23)
+
+**판정: OK.** position_side 어댑터 · kill-switch 폴백 · Kelly/gates/live 비접촉 · SPOT 숏 각주 정합.  
+**다음:** 디렉터 서버 pull · digest/북극성 육안. LONG blocked / LS-NORTH-STAR-01은 후속·🔴 defer.
+
+---
+
+## OUTBOX — 2026-08-23 · LS-GOAL-UX-01 구현 (기록)
+
+**LS-GOAL-UX-01: OK** → Claude OK 2026-08-23 · **DONE**
+
+### 로컬 스냅샷
+| 파일 | 역할 |
+|------|------|
+| `observability/ls_split_summary_bg.py` | **신규** `collect_ls_split_summary` · plain/HTML |
+| `north_star_panel_bg.py` | L/S 2열 블록 (쉬운판 4칸 아래) |
+| `post_deploy_obs_digest_bg.py` | kid 진행줄 아래 `ls_plain` 1줄 |
+| `infra/memory_policy.py` | `POST_DEPLOY_OBS_LS_SPLIT_ENABLED=True` |
+| `tests/test_ls_split_summary_bg.py` | **신규** |
+
+### 스펙 확인
+- LONG에 `blocked_today` **없음** · SHORT `blocked_today` = short_funnel `blocked_short_total` import
+- 목표 MDD/연복리/B0 **미분리** · kill-switch false → 기존 출력(롱 줄 없음)
+- SPOT 숏 불가 각주 포함
+- 컬럼은 `position_side` (Handoff `side` → 로컬 스키마 맞춤)
+
+### 비접촉
+`forward/gates.py` · `gmm_dna_alpha_sync.py` · `dual_north_star_ledger.py` · Kelly · live · short_funnel 버킷 재계산 **없음**
+
+### 테스트
+`test_ls_split_summary_bg.py` + `test_north_star_panel_bg` + `test_post_deploy_obs_digest_bg` → **passed**
+
+### Ask
+Claude OK / 수정 spec 한 줄. OK면 05 Claude OK 기록.
+
+---
+
+## OUTBOX — 2026-08-23 · Ask · 롱/숏 분리 목표·쉬운판 (LS-GOAL-UX)
+
+**계기:** 디렉터 — 코인은 롱·숏 둘 다 있음 → **목표를 롱/숏으로 나눠** 읽기 쉽고 퀄리티 좋게. 전체 구조에서 L/S 흐름 확인 필요.
+
+### Cursor 로컬 맵 (구현 전 브리핑)
+
+```
+스캔 → side(LONG|SHORT) → try_add → OPEN → track → CLOSED
+         ↑
+spot+SHORT = hard reject (선물만 숏)
+dante SHORT = futures-only (SHORT-DANTE-FUT-01)
+Cos/funding/BULL = SHORT soft 감점 (임계값 동결)
+```
+
+| 이미 있음 | 없음 |
+|-----------|------|
+| digest **숏 퍼널** (OPEN L/S · 차단 버킷) | 북극성 **롱 목표 vs 숏 목표** 분리 |
+| overseer 당일 closed long/short count | 사이드별 MDD/누적/게이트 칸 |
+| Track B 북극성 = **통합 장부** | 초등 쉬운판에 「롱 건강 / 숏 건강」 2열 |
+
+**서버 실측(당일):** OPEN=0 · CLOSED 10(W2/L8) — 사이드별 분해는 미조회(Ask 시 SELECT 제안).
+
+### 엔지니어 제안 (Cursor)
+표시만 CAT-J: digest/북극성에 **롱 칸 · 숏 칸**(OPEN/CLOSED/당일차단/누적손익 요약).  
+MDD5%/연12~25%를 사이드별로 **하드캡 분리**하는 건 Critical·원장 설계 → Claude 판단. 기본안 = **목표 숫자는 Track B 공유 · 진행 칸만 L/S 분리**.
+
+### Ask Claude
+1. sub-phase ID 확정? (예: `LS-GOAL-UX-01` 표시만 / `LS-NORTH-STAR-01` 목표 분리)  
+2. 스펙: 쉬운판 2열 필드 목록 · 기존 short_funnel과 중복 제거 규칙  
+3. Critical 비접촉(Kelly·gate·live) 유지 OK?  
+4. SHORT SECTOR 최종 OK와 순서 — 먼저 LS-GOAL-UX?
+
+**디렉터:** 채팅 말고 이 OUTBOX → Claude. Cursor는 Handoff 전 구현 금지.
 
 ---
 

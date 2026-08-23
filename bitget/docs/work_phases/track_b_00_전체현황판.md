@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **(없음)** — 서버 DNA-UX digest 육안 · 관측 유지 | C-2 🔴 defer · live/실전 금지 |
-| 마지막 갱신 | 2026-08-20 | DNA-UX-01 **Claude OK** |
+| **다음 Handoff** | **SHORT 최상경로** Claude OK 대기 · SHORT-DNA-01 defer | C-2 🔴 defer · live/실전 금지 |
+| 마지막 갱신 | 2026-08-21 | SHORT funnel/dante/sector **구현** · WAIT_CLAUDE_OK |
 
 ---
 
@@ -233,6 +233,7 @@
 | `GMM_DNA_ALPHA_REPORT_LOG_SOURCE` | journal\|file 우선 (default journal) | I-GMM-DNA-01b | config_kv / env |
 | `POST_DEPLOY_OBS_DIGEST_ENABLED` | 일일 관측 텔레그램 kill-switch (default true) | POST_DEPLOY_OBS | config_kv / env |
 | `POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED` | DNA why-진단 (default true · false=이진 RANK 문구) | POST_DEPLOY_OBS-DNA-UX-01 | config_kv / env |
+| `POST_DEPLOY_OBS_LS_SPLIT_ENABLED` | 롱/숏 진행 표시 분리 (default true · 목표 숫자는 Track B 공유) | LS-GOAL-UX-01 | config_kv / env |
 | `post_deploy_obs_digest_daily` | 일일 관측 digest ops_events | POST_DEPLOY_OBS | `ops_events` |
 | `cost_basis` | D-3a USD 단가 없을 때 `no_usd_unit_rate` | D-3a | ops payload |
 | `gemini_call_count_source` | D-3a call proxy: `ops_events` 없으면 `llm_call_cache` 행수 (**실 API 호출 수 아님**) | D-3a | ops payload |
@@ -254,6 +255,7 @@
 | `dual_north_star_ledger.py` | 듀얼 북극성 진행장부 (Track A/B read-only) | NS-1 | 루트 |
 | `dual_north_star_telegram.py` | Track A 주식 북극성 HTML → REPORT_BOT | NS-1 / NS-DIAG | 루트 |
 | `north_star_panel_bg.py` | Bitget Track B 북극성 쉬운판 → POST_DEPLOY_OBS 첫 메시지 | NS-BG-DASH-01 | `bitget/observability/` |
+| `ls_split_summary_bg.py` | 롱/숏 OPEN·CLOSED 진행 요약 (표시만) | LS-GOAL-UX-01 | `bitget/observability/` |
 | `dual_north_star_ledger.json` | 일/주/월/연 스냅샷·게이트 이력 | NS-1 | `factory_data_dir()` |
 | `BITGET_NORTH_STAR_PHASE` | B0/B1/B2/B3 — 목표 밴드·리더 모드 | NS-1 | config_kv |
 | `A06_CHECKLIST_FIRST_PASS` | G3 Track A 전제 (`06` 1차) | NS-1 | config_kv (read) |

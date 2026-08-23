@@ -536,7 +536,7 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
         headline = "오늘 할 일 칸은 대체로 괜찮아요"
         light = "🟢"
 
-    return {
+    out: Dict[str, Any] = {
         "headline": headline,
         "light": light,
         "goal_plain": "목표: 연습매매가 건강하게 돌아가는지 1~2주 확인 (실전·큰돈 배분 X)",
@@ -553,7 +553,30 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
             "🟡 아직 모으는 중 / 조심",
             "⬜ 나중 — 지금은 건드리면 안 돼요",
         ],
+        "ls_plain": "",
     }
+
+    # LS-GOAL-UX-01 — summary line under progress (4-bucket structure untouched)
+    try:
+        from bitget.observability.ls_split_summary_bg import (
+            collect_ls_split_summary,
+            format_ls_split_plain_line,
+            ls_split_enabled,
+        )
+
+        if ls_split_enabled():
+            ls = snap.get("ls_split")
+            if not isinstance(ls, dict):
+                sf = (snap.get("checks") or {}).get("short_funnel")
+                ls = collect_ls_split_summary(
+                    forward_db_path=None,
+                    short_funnel=sf if isinstance(sf, dict) else None,
+                )
+            out["ls_plain"] = format_ls_split_plain_line(ls)
+            out["ls_split"] = ls
+    except Exception:
+        pass
+    return out
 
 
 def compute_post_deploy_obs_digest(
@@ -666,6 +689,25 @@ def compute_post_deploy_obs_digest(
             "last_error": str(_sf_exc)[:200],
             "predicted_sector": "UNKNOWN",
         }
+    # LS-GOAL-UX-01 — side progress (reuse short_funnel blocked total)
+    try:
+        from bitget.observability.ls_split_summary_bg import (
+            collect_ls_split_summary,
+            ls_split_enabled,
+        )
+
+        if ls_split_enabled():
+            payload_ls = collect_ls_split_summary(
+                forward_db_path=forward_db_path,
+                short_funnel=checks.get("short_funnel")
+                if isinstance(checks.get("short_funnel"), dict)
+                else None,
+            )
+        else:
+            payload_ls = None
+    except Exception as _ls_exc:
+        payload_ls = {"last_error": str(_ls_exc)[:160], "LONG": {}, "SHORT": {}}
+
     probes = _server_ops_probes() if include_server_probes else {}
     now_kst = datetime.now(_KST)
     payload = {
@@ -695,6 +737,8 @@ def compute_post_deploy_obs_digest(
             "outbox": "bitget/docs/work_phases/track_b_CURSOR_TO_CLAUDE.md",
         },
     }
+    if payload_ls is not None:
+        payload["ls_split"] = payload_ls
     payload["overall_light"] = (
         "🟢"
         if book_ok and cos_ok and rank_ok
@@ -715,6 +759,8 @@ def compute_post_deploy_obs_digest(
         )
 
         ns = collect_bitget_north_star_snap(cadence="daily")
+        if payload_ls is not None:
+            ns["ls_split"] = payload_ls
         payload["north_star"] = {
             "available": bool(ns.get("available", True)),
             "error": ns.get("error"),
@@ -805,6 +851,13 @@ def format_digest_html(snap: Dict[str, Any]) -> str:
         f"진행 {_esc(dash.get('progress_bar'))} {_esc(dash.get('progress_pct'))}% · {_esc(dash.get('progress_label'))}",
         "",
     ]
+    ls_plain = str(dash.get("ls_plain") or "").strip()
+    if ls_plain:
+        lines.append(f"📐 {_esc(ls_plain)}")
+        lines.append(
+            "<i>차단 상세 → 숏 퍼널 · 현물(SPOT)은 숏 불가(선물만)가 정상</i>"
+        )
+        lines.append("")
 
     def _sec(title: str, items: List[Dict[str, str]], mark: str) -> None:
         lines.append(f"<b>{mark} {title}</b>")

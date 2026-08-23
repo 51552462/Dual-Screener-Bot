@@ -19,6 +19,19 @@
 
 ---
 
+## LS-GOAL-UX-01 — 롱/숏 표시 분리 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **계기** | Claude Handoff · 표시만 · 목표 숫자 Track B 공유 |
+| **구현** | `ls_split_summary_bg.py` · north_star L/S 블록 · digest kid 1줄 · kill-switch |
+| **테스트** | `test_ls_split_summary_bg.py` + north_star/post_deploy 회귀 **OK** |
+| **비변경** | `gates.py` · Kelly · MDD · `dual_north_star_ledger` 목표 · short_funnel 버킷 재계산 |
+| **status** | **DONE** (표시만 · Claude OK) |
+| **Claude OK** | **2026-08-23** — position_side 어댑터 · kill-switch 폴백 · Kelly/gates/live 비접촉 |
+
+---
+
 ## NS-BG-CRON-ISO-01 — 코인 서버 주식 북극성 cron 제거 [2026-08-23]
 
 | 항목 | 내용 |
