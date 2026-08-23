@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **SHORT 최상경로** Claude OK 대기 · SHORT-DNA-01 defer | C-2 🔴 defer · live/실전 금지 |
-| 마지막 갱신 | 2026-08-21 | SHORT funnel/dante/sector **구현** · WAIT_CLAUDE_OK |
+| **다음 Handoff** | UNIVERSE-BT L0 **일단락** · 지표4=디렉터 선택 · R1a OBSERVE | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-08-23 | U3 Claude OK · 09/NEXT_STEP 갱신 |
 
 ---
 
@@ -157,6 +157,13 @@
 
 | 이름 | 뜻 | 만든 Phase | 파일 |
 |------|-----|-----------|------|
+| `14_UNIVERSE-BT_구조생존검증.md` | L0 구조생존 R&D SSOT · U0~U3 · Track B 병렬 독립 | UNIVERSE-BT-U0 | `docs/work_phases/` |
+| `UNIVERSE-BT-U0` | 스냅샷·지표5·L0 Kill 문서화 (코드 비접촉) | UNIVERSE-BT-U0 | work_phases |
+| `UNIVERSE-BT-U1` | read-only 리플레이 하니스 · C3(지표4 보류) | UNIVERSE-BT-U1 | `analysis/universe_bt/` |
+| `UNIVERSE-BT-U2` | 샤드·배치·체크포인트 오케스트레이터 | UNIVERSE-BT-U2 | `analysis/universe_bt/u2.py` |
+| `UNIVERSE-BT-U3` | L0 정량 리포트(지표4 제외·CAT-J 비편입) | UNIVERSE-BT-U3 | `analysis/universe_bt/u3_report.py` |
+| `13_B1_신뢰사다리.md` | B1 성공계약·렁 R0~R6·Kill·승인문구 SSOT | B1-LADDER-R0 | `docs/work_phases/` |
+| `B1-LADDER-R0` | 신뢰사다리 문서화 sub-phase (코드 비접촉) | B1-LADDER-R0 | work_phases |
 | `ENABLE_REAL_EXECUTION` | 실주문 마스터 스위치 (default false) | N | config_kv |
 | `REAL_EXECUTION_DRY_RUN` | true면 API no-op | N | config_kv |
 | `MAX_LEVERAGE` | 선물 레버리지 상한 (default **5**) | A-3 | config_kv, `execution_safety` |

@@ -19,6 +19,138 @@
 
 ---
 
+## UNIVERSE-BT-U3 — L0 정량 리포트 (지표4 제외) [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | U2 **Claude OK** |
+| **산출** | `u3_report.py` · `reports/u3_*.md` (CAT-J 밖) |
+| **지표** | hit / gate_pass / virtual_entry / side_asymmetry · **지표4=N/A 고정** |
+| **제외 사유** | regime=UNKNOWN·exit_trigger=NULL → 분자·분모 신뢰 불가(룰5) |
+| **테스트** | universe_bt **11 passed** |
+| **09/NEXT_STEP** | 룰13 — **갱신 완료** (U3 OK 후) |
+| **status** | **Claude OK 2026-08-23** · L0 라운드 일단락 |
+
+---
+
+## UNIVERSE-BT-U2 — 배치·샤드·체크포인트 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | U1(C3) **Claude OK** |
+| **재사용** | `TIME_MACHINE_MAX_TABLES=300` · `TIME_MACHINE_MAX_BARS_PER_TABLE=5000` (`memory_policy`) |
+| **산출** | `u2.py` · `checkpoint.py` · U1 로직 **미복제** |
+| **테스트** | universe_bt **7 passed** · resume idempotent · paper=3 불변 |
+| **C3 승계** | UNKNOWN · exit_trigger NULL · 지표4 미재개 |
+| **UNKNOWN 근거** | 라이브 국면 역투영보다 UNKNOWN이 오정보↓ (U0 §2 null 정합) |
+| **status** | **Claude OK** |
+| **Claude OK** | **2026-08-23** — TIME_MACHINE 재사용 · U1 비접촉 · C3 승계 · paper=3 · 다음=U3 |
+
+---
+
+## UNIVERSE-BT-U1 — C3 하니스 구현 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **정책** | 디렉터 **C3** — 지표4/`exit_trigger` 보류 · regime=`UNKNOWN` |
+| **산출** | `bitget/analysis/universe_bt/*` · 격리 sqlite · scratch dry try_add |
+| **테스트** | `pytest bitget/tests/universe_bt/` **4 passed** · paper COUNT 불변 |
+| **비접촉** | CAT-C/G/D/N/F 원본 · config_kv · paper `bitget_forward_trades` |
+| **Claude OK** | **2026-08-23** — C3 UNKNOWN 보수 승인 · Adapter/paper 격리 OK · 다음=U2 |
+
+---
+
+## UNIVERSE-BT-U1 — 국면이력 조사 (c) · 착수 전 Ask [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | U0 재검증 **OK** · U1 Handoff prepend |
+| **(a)** | 불가 — `regime_audit` 라이브 · `REGIME_VECTOR_HISTORY_BG`는 벡터만(라벨 없음) |
+| **(b)** | 불가 — `meta_sync` 비결정적 · `detect_coin_regime`은 HIGH_VOL 미생성 |
+| **(c)** | **채택** → 디렉터 **C3** 로 해소 |
+| **status** | **해소** (C3 → U1 구현) |
+| **paper DB** | 미접촉 (Ask 당시) |
+
+---
+
+## UNIVERSE-BT-U0 — §2 정정 (CRASH→BEAR/HIGH_VOL) [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **사유** | Claude 수정 spec — `CRASH`는 `CURRENT_REGIME_KEY`에 없음 · 룰5 |
+| **정정** | `crash_window_forced_exit_rate` = **BEAR ∪ HIGH_VOL** · `gate_passed_candidates` 통일 |
+| **파일** | `14_` §2 타겟 · `CLAUDE_TO_CURSOR` prepend+§2 bullet |
+| **코드** | 없음 · **U1 계속 금지** |
+| **status** | **WAIT_CLAUDE_OK** (재검증) |
+
+---
+
+## UNIVERSE-BT-U0 — 구조생존검증 정의문서 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **Handoff** | [CAT-Q] · Downloads prepend → `CLAUDE_TO_CURSOR.md` 최상단 |
+| **산출** | `14_UNIVERSE-BT_구조생존검증.md` 신규 · `00` 말미 포인터 1줄 |
+| **범위** | `load_dynamic_universe` ∩ OHLCV · "상장 전부" 제외 · 지표 5종 · L0 Kill · U0→U3 |
+| **Track B** | B1-LADDER와 **병렬 독립** · R1a OBSERVE **유지·비게이팅** |
+| **코드** | **없음** · U1 **미착수** |
+| **status** | **WAIT_CLAUDE_OK** |
+
+---
+
+## Ask · UNIVERSE-BT — 전유니버스 구조생존 백테스트 설계 요청 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **계기** | 디렉터 — Bitget SPOT/FUT 상장 코인에 현 퀀트 구조 전수 백테스트 → 구조 생존 단서 |
+| **status** | **WAIT_CLAUDE_HANDOFF** (설계 Ask만 · 코드 없음) |
+| **병행** | B1-LADDER-R1a **OBSERVE 유지** (차단하지 않음) |
+| **엔지니어 요지** | `time_machine`≠구조재현 · 풀스택 리플레이+배치/캡 · 산출=**IV L0** (LIVE/B1 승격 금지) |
+| **OUTBOX** | `CURSOR_TO_CLAUDE.md` 상단 UNIVERSE-BT Ask |
+| **다음** | Claude: 로드맵 자리 · 생존 정의 · U0~U3 · 첫 Handoff |
+
+---
+
+## B1-LADDER-R1a — R1a 판정 절차 문서 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | B1-LADDER-R0 **Claude OK 2026-08-23** |
+| **Handoff** | [CAT-F] · 문서만 · `13` §3 아래 R1a 3갈래 판정표 추가 |
+| **판정표** | PASS / 관측 유지 / FAIL(a\|b) — 4주=Kill 표 재사용 · short_funnel 병행 |
+| **코드** | **없음** |
+| **이번 판정** | 신선 SQL 미수신 · 직전 실측 OPEN=0 CLOSED=10 · R0일(08-23)부터 **&lt;4주** · 구조거절 증거 미확정 → **관측 유지** |
+| **status** | **OBSERVE** (매주 재실측) |
+| **참고** | LONG blocked_today 없음 — R1b 시 참고(수정 요구 아님) |
+
+---
+
+## B1-LADDER-R0 — B1 성공계약·신뢰사다리 문서 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **Handoff** | [CAT-F] · Claude · 문서 전용 · Critical 코드 비접촉 |
+| **산출** | `13_B1_신뢰사다리.md` (성공계약·렁 R0~R6·Kill·신뢰밴드·승인문구 템플릿) |
+| **§0.4** | 말미 1줄 포인터만 (`→ 상세 렁·Kill 기준: 13_…`) · **표 비변경** |
+| **config/코드** | **없음** |
+| **R1a (관측)** | 이 PC에서 VPS DB 미접속. **직전 SSOT 실측(2026-08-23 OUTBOX):** OPEN=0 · CLOSED=10 (W2/L8). 냉시동 vs 구조막힘 **미최종** — 디렉터 서버 재확인 필요 |
+| **status** | 구현 완료 · **Claude OK 2026-08-23** |
+| **다음** | R1a 관측 · (FAIL 시) R1b CAT-C |
+
+---
+
+## Ask — B1-CONFIDENCE-LADDER [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **계기** | 디렉터: 기준성공 35~45% 불가 → **80~90%**를 팩트 완성으로 만들 것 |
+| **Cursor 판단** | P(오늘)≠P(사다리 통과). 성공=**B1만**(12~18%·MDD5%). R0~R6 렁 + Kill |
+| **산출** | `track_b_CURSOR_TO_CLAUDE` 상단 Ask · 캔버스 갱신 · 구현 **없음** |
+| **status** | **WAIT_CLAUDE_HANDOFF** |
+| **다음** | Claude: 계약·렁·Kill·첫 Handoff → `CLAUDE_TO_CURSOR` |
+
+---
+
 ## LS-GOAL-UX-01 — 롱/숏 표시 분리 [2026-08-23]
 
 | 항목 | 내용 |

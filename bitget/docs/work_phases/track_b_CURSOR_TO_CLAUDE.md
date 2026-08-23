@@ -1,7 +1,186 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
 > **갱신**: 2026-08-23  
-> **유형**: LS-GOAL-UX-01 · **Claude OK 수신 · DONE**
+> **유형**: **UNIVERSE-BT-U0** 구현 완료 · **WAIT_CLAUDE_OK** (전문은 `CURSOR_TO_CLAUDE.md` 미러)
+
+> SSOT OUTBOX 상단: `CURSOR_TO_CLAUDE.md` — 본 파일은 누적 이력용. 최신 Ask/검증은 **CURSOR_TO_CLAUDE.md** 우선.
+
+---
+
+## OUTBOX — 2026-08-23 · UNIVERSE-BT-U0 완료 (문서)
+
+**UNIVERSE-BT-U0: 구현 완료** → Claude **OK | 수정 spec** 요청.
+
+| 파일 | 역할 |
+|------|------|
+| `14_UNIVERSE-BT_구조생존검증.md` | 신규 §1~§5 |
+| `00` 말미 | 포인터 1줄 |
+| 코드 | **없음** · U1 미착수 |
+
+상세: `CURSOR_TO_CLAUDE.md` 상단.
+
+---
+
+## OUTBOX — 2026-08-23 · Ask · UNIVERSE-BT (전코인 구조생존 백테스트)
+
+**계기(디렉터):** Bitget에 현물·선물로 상장된 코인에 **현재 퀀트 구조를 그대로** 얹어 전수 백테스트 → "구조가 살아남는지" 단서 확보.  
+미래(L2 paper·forward)가 주 검증이지만, 히스토리 생존은 **중요한 단서**. Claude와 협업 설계 요청.
+
+### Cursor 엔지니어 브리핑 (2줄)
+1. 지금 `time_machine_backtester.py`는 **크래시 구간 MAE/MFE 스트레스**일 뿐 — DNA·gate·scanner 경로 **재현 아님**. "싹 다"를 그 루프에 얹으면 구조 검증이 아니라 가짜 생존률이 나옴.  
+2. 전상장 심볼 × 풀스택 리플레이는 4GB·`TIME_MACHINE_MAX_*`·OHLCV 커버리지 한계에 막힘 → **유니버스 스냅샷 → 배치/체크포인트 리플레이 하니스(라이브·config 비접촉)** 가 맞고, 결과는 **IV L0 단서만** (LIVE/B1 승격 금지).
+
+→ **흡수**: U0 Handoff로 로드맵·지표 확정. 이후 이력은 아래 유지.
+
+### 로컬 팩트 (읽기만)
+
+| 자산 | 역할 | 한계 |
+|------|------|------|
+| `mtf_data_updater.load_dynamic_universe` | 현물/선물 거래량 유니버스 | "상장 전부" ≠ volume floor 통과분 · zombie BL |
+| OHLCV `BITGET_SPOT_*` / `BITGET_FUT_*` | 히스토리 바 | 상장 전·갭·신규상장 survivorship |
+| `master_scanner` + `signal_engines` + gates + ledger | **실제 퀀트 구조** | 백테스트 전용 리플레이 엔트리 **약함** |
+| `time_machine_backtester.py` | 크래시 SL/TP 스트레스 | 구조≠재현 · 테이블 cap |
+| `validation/walk_forward_*` | CLOSED trade OOS shadow | **이미 들어온 트레이드**만 · 전유니버스 스캔 아님 |
+| 현황판 #14 R&D 샌드박스 | 🟡 | "라이브 분리 연구실 약함" |
+
+### IV / 헌법 (위반 금지)
+- 본 작업 산출 = **L0** (`docs/independent_verification` · time_machine/mutant급) → **LIVE·B1「달성」·CAGR 단정 금지**
+- R1a paper OPEN 관측·R6 L2와 **혼동 금지**
+- `ENABLE_REAL_EXECUTION` · Kelly · MDD tier · execution_safety · deathmatch **live** · WF promotion block **비접촉**
+- 주식 루트 `forward/` · `performance_budget_governor` **수정 금지** · Adapter만
+
+### Ask — Claude가 확정할 것
+
+1. **로드맵 자리**: B1-LADDER(R1a 관측)와 **병렬 R&D sub-phase**인가, R2 이후인가, 별도 `UNIVERSE-BT-0x` 트랙인가? (R1a Kill/관측 **차단하지 말 것**)
+2. **성공 정의(구조생존)**: 예) 심볼당 hit→gate pass→가상진입 비율 · 크래시 구간 청산률 · 국면별 LONG/SHORT 비대칭 — **연복리%를 성공 계약으로 쓰지 말 것** (B1 계약과 분리)
+3. **범위**: "상장 전부" vs `load_dynamic_universe`+OHLCV 보유분 · SPOT/FUT 분리 리포트 여부
+4. **sub-phase 분해 초안 요청** (Cursor 제안 — Claude가 ID·순서·Critical 확정):
+   - **U0** 문서: 유니버스 스냅샷 정의 · survivorship 고지 · L0 라벨 · Kill(과신 표현)
+   - **U1** 코드: read-only 리플레이 하니스 (scanner/engines 경로 재사용, paper DB·config_kv 쓰기 금지, 결과 JSON/SQLite 격리)
+   - **U2** 배치: spot→fut 또는 샤드 · 체크포인트 · 메모리 cap 존중
+   - **U3** 리포트: 구조생존 표 + Claude 해석 슬롯 (CAGR 승격 문구 템플릿 **금지**)
+5. **첫 Handoff**: U0 문서만? U1까지? — `CLAUDE_TO_CURSOR.md`에 CAT·위험도·롤백·테스트 명시
+
+### 디렉터 한 줄 (Claude에 붙여넣기)
+```
+bitget/docs/work_phases/CURSOR_TO_CLAUDE.md 상단 「UNIVERSE-BT Ask」설계. R1a OBSERVE는 유지. OK면 CLAUDE_TO_CURSOR에 U0(또는 첫 sub) Handoff만 파일로. 채팅 말고 파일.
+```
+
+### Cursor 상태
+- **코드 미착수** · R1a **관측 유지** 병행
+- NEXT_ACTION: R1a=OBSERVE · 본 Ask=`WAIT_CLAUDE_HANDOFF`(설계만)
+
+---
+
+## OUTBOX — 2026-08-23 · B1-LADDER-R1a 완료 (문서) + R0 Claude OK 반영
+
+### Claude OK 수신
+**B1-LADDER-R0: OK** (2026-08-23) — 05·CLAUDE_TO_CURSOR 상단 기록 완료.
+
+### R1a 구현
+| 파일 | 역할 |
+|------|------|
+| `13_B1_신뢰사다리.md` | §3 아래 **R1a 판정 절차** 소절 추가 (PASS/관측유지/FAIL a\|b) |
+| `CLAUDE_TO_CURSOR.md` | PREPEND(OK+R1a Handoff) 최상단 부착 |
+| `09` · `track_b_NEXT_STEP` | Downloads 갱신안 그대로 반영 |
+| `05` · `NEXT_ACTION` · `00` | R1a OBSERVE · R0 Claude OK |
+
+### 코드
+**없음** (config/gates/Kelly/live 비접촉)
+
+### 이번 판정 (신선 SQL 미수신)
+| OPEN | CLOSED | R0 경과 | short_funnel | **판정** |
+|------|--------|---------|--------------|----------|
+| 0 (직전 SSOT) | 10 | &lt;4주 (앵커 2026-08-23) | 미조회 | **관측 유지** |
+
+디렉터 신선 SQL 오면 동일 표에 숫자만 대입해 재판정.
+
+### Ask
+R1a 문서: **OK | 수정 spec** (관측 유지 중에는 주간 숫자만 OUTBOX). FAIL 확정 시에만 R1b Handoff.
+
+---
+
+## OUTBOX — 2026-08-23 · B1-LADDER-R0 완료 (문서)
+
+**B1-LADDER-R0: 구현 완료** → Claude 스펙 일치 검증 요청
+
+### 로컬 스냅샷
+| 파일 | 역할 |
+|------|------|
+| `docs/work_phases/13_B1_신뢰사다리.md` | **신규** §1 성공계약 · §2 렁 R0~R6(+R1a/b·R3~5 승인문구) · §3 Kill · §4 신뢰밴드 · §5 CAT · §6 R1a SQL |
+| `00_마스터_로드맵.md` §0.4 말미 | **1줄만** `→ 상세 렁·Kill 기준: 13_B1_신뢰사다리.md` · **표 비변경** |
+| `CLAUDE_TO_CURSOR.md` | Handoff 전문 보관 |
+| `05` / `00` 용어집 / `09` / `NEXT_*` | 세션 종료 의무 갱신 |
+
+### 스펙 확인
+- 성공 = B1만 (12~18% AND MDD≤5% · 6~12개월) · B2/B3/live/G4 비계약
+- 순서 `R0→R1→R2→(A06)→R3∥R4→R5→R6` · Kill 표 · 신뢰밴드 35~45→…→80~90
+- **코드·config_kv·execution_safety·gates·Kelly·deathmatch live 비접촉**
+
+### R1a 서버 실측
+| 출처 | OPEN | CLOSED | 비고 |
+|------|------|--------|------|
+| **이 세션** | (미조회) | (미조회) | Cursor 환경에서 VPS `BITGET_DB_STORAGE_PATH` **미접속** |
+| **직전 SSOT** 2026-08-23 OUTBOX/VPS | **0** | **10** (W2/L8) | 배선 생존 · 신규 진입 정체 후보 · **냉시동 vs 구조막힘 미최종** |
+
+→ 디렉터: §6 SQL로 **신선 실측** 후 숫자 회신. R1b는 R1a FAIL(구조막힘) 확정 전 착수 금지.
+
+### Ask
+**B1-LADDER-R0: OK | 수정 spec: …**  
+OK면 05에 Claude OK 기록 · 다음 Handoff는 R1a 관측 마감 또는 R1b(조건부).
+
+---
+
+## OUTBOX — 2026-08-23 · Ask · B1 80~90% 신뢰 사다리 (설계 요청)
+
+**계기:** 디렉터 — 시나리오 기준성공 35~45%로는 안 됨. **80~90% 성공률**을 만들 것.  
+검증만으로는 부족 → **현실·팩트 완성** + Claude/Cursor 최상의 시나리오·작업 순서.
+
+### Cursor 엔지니어 브리핑 (1줄)
+숫자를 희망으로 올리지 말고, **성공 정의를 B1으로 고정**한 뒤 불확실성 렁(R0~R6)을 닫아 **조건부 P(B1|사다리)** 를 80~90%로 설계. B2/B3는 계약 밖.
+
+### 혼동 금지 (팩트)
+| 종류 | 의미 | 지금 |
+|------|------|------|
+| P(성공\|오늘) | MDD 미조임·funding 미반영·OPEN≈0·n≈10 | **35~45%** (솔직) |
+| P(B1\|사다리 통과) | 팩트 렁 닫힌 뒤 | **설계 타깃 80~90%** |
+
+→ 디렉터가 원하는 80~90% = **후자**. 전자를 거짓으로 올리는 것은 SSOT/IV 위반.
+
+### 성공 계약 초안 (Claude 확정 요청)
+- **성공** = Track B **B1만**: 연복리 **12~18%** AND MDD **≤5%** (B1 시작 후 6~12개월 시계)
+- **비계약**: B2 18~25% · B3 25~35% · 실전 LIVE · 상품화 G4 — 스트레치/별도
+- **Kill**: 렁 실패 시 목표 하향·롤백·중단 → 남은 경로만 고신뢰 유지 (이게 80~90%를 정직하게 만드는 장치)
+
+### 신뢰 사다리 초안 (Claude가 ID·순서·Critical 승인문구 확정)
+
+| 렁 | 팩트 완성 | 닫는 구멍 | Critical? | 비고 |
+|----|-----------|-----------|-----------|------|
+| **R0** | 성공=B1 계약 · Kill 기준 문서화 | 목표 과다 | 문서 | `00` §0.4 보완 or 별도 SSOT |
+| **R1** | OPEN 처리량 · 퍼널(롱/숏) 진단·복구 | 표본 정체 | 관측→mini Handoff | VPS: OPEN=0 · CLOSED≈10 |
+| **R2** | `06` 효과표 2~4주 채움 | 구현≠효과 | 관측 | A/B shadow 유지/롤백 |
+| **R3** | MDD 3/4/5% + Kelly↓ + lev≤3 | 5% 미강제 | 🔴 | A-6 / Risk Profile B |
+| **R4** | C-2 funding PnL | paper 낙관 | 🔴 | close PnL 오염 해소 |
+| **R5** | deathmatch alloc **live** | 패자 자본 | 🔴 Go/No-Go | shadow 4w 후 |
+| **R6** | L2: trades≥30 · ≥56일 · rolling MDD≤5% · 페이스 | 통계 과신 | 게이트 | G2 정합 · IV L2 |
+
+**신뢰 밴드(설계):** 오늘 35~45 → R0~R2 후 50~65 → R3~R5 후 70~85 → R6 통과 **80~90**.
+
+### 최상의 시나리오 A+ (작업 축)
+1. **0~4주**: R1+R2 (처리량·06) — Critical 손대지 않음  
+2. **Go/No-Go**: R3→R4→R5 순차 Handoff (디렉터 Critical 승인 필수)  
+3. **6~12개월**: R6 B1 시계 관측 → 통과 시 “조건부 80~90% 달성 경로 입증”
+
+### Ask Claude (설계만 · 이번 라운드 코드 구현 X)
+1. 위 **성공 계약** OK? B1만 80~90% 대상으로 고정해도 되나?  
+2. 렁 ID·이름·순서 확정 (`B1-CONFIDENCE-LADDER` 가칭) · R1을 어떤 mini Handoff로 쪼갤지 (OPEN 정체 원인: DNA/Cos/게이트/국면)  
+3. R3~R5 Critical 각각의 **디렉터 승인 문구** + 의존성 (C-2를 MDD 전/후?)  
+4. Kill 기준 표 (렁별 FAIL → 행동) SSOT 위치 (`00` vs `06` vs 신규 `13_B1_신뢰사다리.md`)  
+5. 첫 Handoff는 무엇인가? (제안: **R0 문서** 또는 **R1 처리량 진단 전용** — Critical 비접촉)
+
+**금지 유지 (이번 Ask에서 구현 지시 금지):** Kelly 상향 · live · LS-NORTH-STAR 하드캡 분리 · 성급한 R3~R5.
+
+**디렉터:** 이 OUTBOX → Claude. Claude 응답 = `CLAUDE_TO_CURSOR` 설계/Handoff 또는 Mirror. Cursor는 Handoff 전 구현 금지.
 
 ---
 
