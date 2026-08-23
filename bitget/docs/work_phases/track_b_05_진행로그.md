@@ -19,6 +19,32 @@
 
 ---
 
+## UNIVERSE-BT-U3 — VPS 재실행 (1H 폴백) [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **원인** | FUT_1D≈90봉 < min_bars=240 → futures rows=0 (게이트 전 데이터) |
+| **조치** | `select_run_symbols` 메이저+깊이 · `resolve_run_timeframe` 1D→1H 폴백 (`0955088`) |
+| **run_id** | `live-20260823T114203Z` · MAX_SYMBOLS=10 |
+| **실측** | SPOT bars=110 · hit≈8.2% · cand=9 · gate=0 · FUT bars=110 · cand=0 |
+| **paper** | delta=0 |
+| **status** | WAIT_CLAUDE_OK (1H 폴백 disclosure) · 관측/백필은 디렉터 |
+
+---
+
+## UNIVERSE-BT-U3 — VPS 첫 실측 검증 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **run_id** | `live-20260823T092525Z` · MAX_SYMBOLS=10 |
+| **실측** | SPOT bars=77 · hit≈1.3% · gate_pass=0 · virtual=0 · FUTURES rows=0 |
+| **Claude** | **OK** (Kill·분모 null·paper 격리·축소 disclosure·지표4 N/A) — 코드/config 미착수 |
+| **해석 보강** | FUTURES는 gate 전 §1 스냅샷(universe∩OHLCV) 공백 무게 ↑ · CAT-C 용의 낮음 |
+| **디렉터** | A/B 보류 · **관측만 유지** (선택 3) |
+| **status** | **OBSERVE** · 신규 Handoff 없음 · 09/NEXT_STEP 비갱신(룰13) |
+
+---
+
 ## UNIVERSE-BT-U3 — L0 정량 리포트 (지표4 제외) [2026-08-23]
 
 | 항목 | 내용 |

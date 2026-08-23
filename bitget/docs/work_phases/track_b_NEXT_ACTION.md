@@ -3,27 +3,13 @@
 | 필드 | 값 |
 |------|-----|
 | **주 트랙** | **B1-LADDER-R1a** · **OBSERVE** |
-| **병렬 R&D** | **UNIVERSE-BT L0** · **WAIT_DIRECTOR** (실데이터 실행 = **코인 VPS**) |
-| **로컬 PC** | `bitget_market_data.sqlite` **비어 있음** (테이블 0) → 과거 검증 **불가** |
-| **지표4** | 보류 |
+| **병렬 R&D** | **UNIVERSE-BT L0** · **WAIT_CLAUDE_OK** (1H 폴백 재실측) |
+| **status** | Claude: 1H 폴백 OK? · 디렉터: FUT 1D 백필 / 심볼↑ / 관측 |
+| **코드** | 구현 완료 push `0955088` — 추가 Handoff 전 대기 |
 
 ---
 
-## 디렉터 (지금)
-
-### A · R1a
-텔레그램 OPEN/CLOSED
-
-### B · 과거 검증 실실행 (막힘 → VPS)
-로컬에는 OHLCV가 없음. **코인 서버**에서:
-
-```bash
-cd ~/dante_bots/Dual-Screener-Bot   # 설치 경로에 맞게
-export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
-# 코드 pull 후
-bash bitget/deploy/run_universe_bt_l0.sh
-# 심볼 수 조절: BITGET_UNIVERSE_BT_MAX_SYMBOLS=20
-# 전체: BITGET_UNIVERSE_BT_MAX_SYMBOLS=0
-```
-
-끝나면 리포트 경로·숫자를 Cursor/Claude에 회신.
+## 최신 L0 (`live-20260823T114203Z`)
+- SPOT 1D: bars=110 · hit≈8.2% · candidates=9 · gate=0  
+- FUTURES 1H: bars=110 · candidates=0  
+- paper OK · CAGR 금지
