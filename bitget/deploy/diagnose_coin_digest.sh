@@ -2,7 +2,7 @@
 # =============================================================================
 # 코인 북극성(POST_DEPLOY_OBS) 왜 안 오는지 진단 + 선택적 즉시 발송
 #   cd INSTALL_ROOT && bash bitget/deploy/diagnose_coin_digest.sh
-#   bash bitget/deploy/diagnose_coin_digest.sh --send    # 텔레그램 지금 1회
+#   bash bitget/deploy/diagnose_coin_digest.sh --send    # 텔레그램 지금 1회 + 로그/결과 표시
 #   bash bitget/deploy/diagnose_coin_digest.sh --dry-run
 # =============================================================================
 set -eu -o pipefail
@@ -54,7 +54,7 @@ else
 fi
 echo ""
 
-echo "[3] REPORT_BOT (코인 일보 전송 채널)"
+echo "[3] 봇 채널 — REPORT(북극성) vs BITGET(AI감시관) ※ 채팅이 다르면 '안 온 것'처럼 보임"
 PY="${INSTALL_ROOT}/venv/bin/python"
 [[ -x "$PY" ]] || PY="${INSTALL_ROOT}/.venv/bin/python"
 if [[ -f "${INSTALL_ROOT}/.env" ]]; then
@@ -72,9 +72,14 @@ fi
 if [[ -x "$PY" ]]; then
   "$PY" -c "
 import telegram_env as t
-rt, rc = t.get_report_token(), t.get_report_chat_id()
-print('  token:', 'set' if rt else 'MISSING')
-print('  chat:', 'set' if rc else 'MISSING')
+rt, rc = (t.get_report_token() or '').strip(), (t.get_report_chat_id() or '').strip()
+bt, bc = (t.get_bitget_bot_token() or '').strip(), (t.get_bitget_chat_id() or '').strip()
+print('  REPORT_BOT token:', 'set' if rt else 'MISSING', ' chat_tail:', (rc[-4:] if len(rc)>=4 else rc or 'MISSING'))
+print('  BITGET_BOT token:', 'set' if bt else 'MISSING', ' chat_tail:', (bc[-4:] if len(bc)>=4 else bc or 'MISSING'))
+if rc and bc:
+    print('  same chat?:', 'YES' if rc == bc else 'NO ← AI감시관 채팅만 보면 코인 북극성 안 보임')
+elif not rc:
+    print('  ✗ REPORT_BOT_CHAT_ID missing — 코인 북극성 발송 불가')
 " 2>/dev/null || warn "telegram_env 조회 실패"
 else
   warn "python/venv 없음"
@@ -84,8 +89,18 @@ if [[ "${POST_DEPLOY_OBS_DIGEST_ENABLED:-}" == "0" || "${POST_DEPLOY_OBS_DIGEST_
 fi
 echo ""
 
-echo "[4] 최근 실행 로그 (bitget_post_deploy_obs_*.log)"
 LOG_DIR="${BITGET_LOG_DIR:-${BITGET_ROOT}/logs}"
+# data path override (VPS often /var/lib/quant-bitget/logs)
+if [[ -x "$PY" ]]; then
+  _ld="$("$PY" -c 'from bitget.infra.data_paths import logs_dir; print(logs_dir())' 2>/dev/null || true)"
+  [[ -n "${_ld:-}" ]] && LOG_DIR="$_ld"
+fi
+# VPS 관측 경로 (env 미로드 시)
+if [[ ! -d "$LOG_DIR" && -d /var/lib/quant-bitget/logs ]]; then
+  LOG_DIR=/var/lib/quant-bitget/logs
+fi
+
+echo "[4] 최근 실행 로그 ($LOG_DIR/bitget_post_deploy_obs_*.log)"
 shopt -s nullglob
 logs=("$LOG_DIR"/bitget_post_deploy_obs_*.log)
 if ((${#logs[@]} == 0)); then
@@ -95,22 +110,56 @@ else
   pass "최신: $newest"
   echo "    mtime: $(date -r "$newest" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || stat -c %y "$newest" 2>/dev/null || true)"
   echo "    --- tail ---"
-  tail -n 25 "$newest" | sed 's/^/    /'
+  tail -n 40 "$newest" | sed 's/^/    /'
 fi
 echo ""
 
 echo "[5] 스케줄 안내"
-echo "  코인 북극성 = 매일 20:00 KST 만 (주간/월간 텔레그램 없음)"
-echo "  주식 북극성 = 주식 VPS 19:30 — 코인 서버에서 돌리면 안 됨"
+echo "  코인 북극성 = 매일 20:00 KST 만 · REPORT_BOT 채팅"
+echo "  AI 감시관 = BITGET_BOT 채팅 (다를 수 있음)"
+echo "  주식 북극성 = 주식 VPS 19:30 — 코인 서버 금지"
 echo ""
 
 if [[ "$DRY" -eq 1 ]]; then
-  echo "[6] dry-run (전송 없음)"
+  echo "[6] dry-run (전송 없음 · 터미널에 JSON 출력)"
+  set +e
   bash "${SCRIPT_DIR}/bitget.sh" --post-deploy-obs-digest --dry-run
+  rc=$?
+  set -e
+  echo "  exit=$rc"
 elif [[ "$SEND" -eq 1 ]]; then
-  echo "[6] 지금 텔레그램 1회 발송"
+  echo "[6] 지금 텔레그램 1회 발송 (결과는 로그+아래 요약)"
+  before_newest=""
+  shopt -s nullglob
+  _b=("$LOG_DIR"/bitget_post_deploy_obs_*.log)
+  ((${#_b[@]} > 0)) && before_newest="$(ls -t "${_b[@]}" | head -1)"
+  set +e
   bash "${SCRIPT_DIR}/bitget.sh" --post-deploy-obs-digest
-  echo "  → 텔레그램에 「📊 코인 북극성 · Bitget」이 왔는지 확인"
+  rc=$?
+  set -e
+  echo "  bitget.sh exit=$rc"
+  sleep 1
+  shopt -s nullglob
+  _a=("$LOG_DIR"/bitget_post_deploy_obs_*.log)
+  after_newest="$(ls -t "${_a[@]}" 2>/dev/null | head -1 || true)"
+  echo "  log: ${after_newest:-none}"
+  if [[ -n "${after_newest:-}" ]]; then
+    echo "  --- 이번 실행 로그 ---"
+    tail -n 60 "$after_newest" | sed 's/^/    /'
+    if grep -q '"sent": true' "$after_newest" 2>/dev/null \
+      || grep -q '"sent":true' "$after_newest" 2>/dev/null; then
+      pass "JSON sent=true — REPORT_BOT 채팅을 확인 (AI감시관 채팅과 다를 수 있음)"
+    elif grep -qiE 'send HTTP|send failed|send skipped|REPORT_BOT send failed|"sent": false' "$after_newest" 2>/dev/null; then
+      fail "발송 실패 흔적 — 위 로그의 HTTP/error 줄 확인"
+    elif [[ "$rc" -ne 0 ]]; then
+      fail "exit=$rc — 로그에 traceback/disabled 있는지 확인"
+    else
+      warn "sent=true 문자열 없음 — 로그 전체 확인: less $after_newest"
+    fi
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    exit "$rc"
+  fi
 else
   echo "[6] 미실행. 지금 보내려면:"
   echo "    bash bitget/deploy/diagnose_coin_digest.sh --send"

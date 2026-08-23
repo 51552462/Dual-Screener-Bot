@@ -938,8 +938,10 @@ def persist_digest(snap: Dict[str, Any]) -> bool:
 
 
 def _send_report_html(message: str) -> bool:
+    """REPORT_BOT direct HTTP — HTML 400 시 plain 재시도 (telegram_html_delivery SSOT)."""
     import requests
     import telegram_env
+    from telegram_html_delivery import post_telegram_message
 
     token = (telegram_env.get_report_token() or "").strip()
     chat_id = (telegram_env.get_report_chat_id() or "").strip()
@@ -949,18 +951,32 @@ def _send_report_html(message: str) -> bool:
         )
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+    text = str(message or "")
+    # Telegram hard limit 4096 — 한 칸이 길면 잘라 보냄
+    max_len = 3500
+    pieces = [text[i : i + max_len] for i in range(0, len(text), max_len)] or [""]
     try:
-        resp = requests.post(url, json=payload, timeout=20)
-        if resp.status_code == 200:
-            return True
-        body = (resp.text or "")[:240]
-        logger.warning(
-            "post_deploy_obs digest send HTTP %s: %s",
-            resp.status_code,
-            body,
-        )
-        return False
+        for piece in pieces:
+            if not piece.strip():
+                continue
+            resp = post_telegram_message(
+                url=url,
+                chat_id=chat_id,
+                text=piece,
+                parse_mode="HTML",
+                timeout=20.0,
+                session=requests,
+            )
+            code = int(getattr(resp, "status_code", 0) or 0)
+            if code != 200:
+                body = (getattr(resp, "text", None) or "")[:240]
+                logger.warning(
+                    "post_deploy_obs digest send HTTP %s: %s",
+                    code,
+                    body,
+                )
+                return False
+        return True
     except Exception as ex:
         logger.warning("post_deploy_obs digest send failed: %s", ex)
         return False

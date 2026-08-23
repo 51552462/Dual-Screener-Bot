@@ -5,6 +5,51 @@
 
 ---
 
+## OUTBOX — 2026-08-23 · AI 감시관「활동 부재」감사 (Cursor 단독 판독)
+
+**계기:** 디렉터 텔레그램 「👁️ Bitget AI 상시 감사관」문제점 = 활동 부재 · 기회 상실.  
+**질문:** 의도적으로 막아둔 건지 vs 파이프라인 고장인지.
+
+### Cursor 판정 (코드 SSOT · **서버 DB 실측 반영 2026-08-23**)
+
+**VPS 실측:**
+```
+CLOSED_LOSS|8
+CLOSED_WIN|2
+(OPEN 행 없음 → OPEN=0)
+```
+→ 장부·파이프라인 **과거 배선 OK** (누적 CLOSED=10 = POST_DEPLOY 실측과 일치).  
+→ **지금**은 포지션 0 · 신규 진입 대기 국면. DB 단절/전선 절단 ❌.
+
+| 층 | 무엇인가 | 판정 |
+|----|----------|------|
+| **1. 리포트 문구** | Gemini 자유 서술 | 「활동 부재」= **하드 킬스위치 아님** |
+| **2. 팩트 구멍** | facts에 OPEN 미조회 | 「보유 정보 부재」문구는 **과잉** 가능(실제 OPEN=0이면 내용상 맞음) |
+| **3. 정책 보수** | kelly 0.006 · HIGH_VOL · B0 · DNA 대기 | **의도적 축소** · 버그 단정 ❌ |
+| **4. 현재 상태** | OPEN=0 · 누적 CLOSED=10 | **파이프라인 생존 + 신규 진입 정체** (고장≠전무) |
+| **5. POST_DEPLOY** | Cos n≈0 · DNA RANK 재료 대기 | 신규 OPEN이 안 생기는 **주 원인 후보** |
+
+**결론 한 줄:** 배선은 살아 있고(CLOSED 10), 지금은 OPEN이 비어 **관측·게이트·재료 대기** 쪽. 「막아서 활동부재」가 아니라 「들어가지 못해 비어 있음」.
+
+### 디렉터 서버 한 줄(구분용)
+
+```bash
+DATA="${BITGET_DB_STORAGE_PATH:-/var/lib/quant-bitget/data}"
+sqlite3 "$DATA/bitget_market_data.sqlite" \
+  "SELECT status, COUNT(*) FROM bitget_forward_trades GROUP BY status;"
+# + POST_DEPLOY digest / short_funnel 칸
+```
+
+### Ask Claude (설계만 · Critical 비접촉)
+
+1. 위 3층 판정 OK?  
+2. 다음 mini Handoff 필요? 예: **OVERSEER-FACTS-01** — facts에 OPEN 수·blocked_today 요약 추가(표시만, Kelly/gate 비접촉).  
+3. 불필요면 SUB_DONE · 관측 유지.
+
+**작업 방향(디렉터 승인됨):** 본 감사 = Cursor 단독. 팩트 보강 구현만 Claude Handoff 후.
+
+---
+
 ## OUTBOX — 2026-08-23 · NS-BG-CRON-ISO-01 주식 북극성 → 코인 채팅
 
 **증상 (디렉터 스크린샷):** 코인 구조 텔레그램에 `📊 주식 북극성 · 일간/주간` + `no such table: forward_trades` + Track A KR/US.  
@@ -18,10 +63,10 @@
 |------|------|
 | `update_bitget.sh` | director-digest **설치 제거** · 잔여 시 uninstall |
 | `uninstall_stock_north_star_cron.sh` | 신규 |
-| `diagnose_coin_digest.sh` | 신규 — cron/로그/REPORT_BOT + `--send` |
+| `diagnose_coin_digest.sh` | 신규 — cron/로그/REPORT vs BITGET 채팅 + `--send` 후 **exit·로그·sent=** 표시 |
 | `install_bitget_cron.sh` | post-deploy-obs 줄 **필수** 검증 |
 | `audit_bitget_stack.sh` | 주식 cron 있으면 fail · digest 로그 유무 warn |
-| `post_deploy_obs_digest_bg.py` | Telegram HTTP 실패 본문 로그 |
+| `post_deploy_obs_digest_bg.py` | Telegram HTML→plain 재시도 · 길이 분할 · HTTP 실패 로그 |
 
 **디렉터 즉시:**
 ```bash

@@ -2,39 +2,17 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **NS-BG-CRON-ISO-01** · 코인 일보 미수신 |
-| **status** | **WAIT_DIRECTOR** |
-| **코드** | 진단 스크립트·발송 로그 보강 완료 · **서버에서 --send 1회** |
+| **sub-phase** | **OVERSEER-AUDIT-01** (활동 부재 판독) · NS-BG-CRON-ISO 병행 |
+| **status** | **WAIT_DIRECTOR** (+ Claude Ask: OVERSEER-FACTS 필요 여부) |
+| **코드** | 구현 없음 · 감사 OUTBOX만 |
 
 ---
 
-## 디렉터 (지금 · 코인 북극성 안 올 때)
+## 디렉터 (지금)
 
-주식 북극성만 오고 코인이 안 오면 → **코인 cron이 없거나 한 번도 안 돌았거나 실패**인 경우가 대부분.  
-(코인은 **매일 20:00 KST만**. 주간 텔레그램 없음.)
+1. **활동 부재 결론(로컬 코드):** 킬스위치로 막아둔 것 **아님**. 감시관이 OPEN을 안 읽고 + 켈리 0.006(의도) + 당일 청산/R&D 0을 Gemini가 “활동 부재”로 쓴 것.
+2. **파이프라인 생존 확인(서버 1줄):** `bitget_forward_trades` OPEN/CLOSED 카운트 — OPEN≥1이면 장부 살아 있음.
+3. **코인 북극성 미수신:** 이전 안내 `diagnose_coin_digest.sh --send` 유지.
+4. Claude: `track_b_CURSOR_TO_CLAUDE` 상단「활동 부재 감사」Ask 붙여넣기.
 
-```bash
-cd /home/ubuntu/dante_bots/Dual-Screener-Bot
-git pull --ff-only
-
-# 1) 주식 오염 cron 제거
-sudo bash bitget/deploy/uninstall_stock_north_star_cron.sh
-
-# 2) 코인 일보 cron 재설치 (post-deploy-obs 줄 강제)
-sudo INSTALL_ROOT=$PWD bash bitget/deploy/install_bitget_cron.sh
-
-# 3) 진단 + 지금 텔레그램 1회 강제 발송
-bash bitget/deploy/diagnose_coin_digest.sh --send
-```
-
-기대: 텔레그램에 **`📊 코인 북극성 · Bitget`** + 코인 연습 대시보드.  
-안 오면 `diagnose` [4] 로그 tail / REPORT_BOT 줄을 이 채팅에 붙여넣기.
-
----
-
-## 병행
-
-- Claude: `track_b_CURSOR_TO_CLAUDE` OUTBOX (cron 격리 + 미수신)
-- SHORT SECTOR 최종 OK 대기
-
-**금지:** C-2 · MDD 5% · live · `ENABLE_REAL_EXECUTION`
+**금지:** C-2 · MDD 5% · live · Kelly 임의 상향 · `ENABLE_REAL_EXECUTION`
