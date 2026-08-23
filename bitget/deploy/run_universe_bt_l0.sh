@@ -14,6 +14,15 @@ cd "$ROOT"
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 export BITGET_UNIVERSE_BT_OHLCV_ONLY="${BITGET_UNIVERSE_BT_OHLCV_ONLY:-1}"
 
+# Prefer factory venv (pandas etc.); bare python3 on VPS has no deps.
+PY="${ROOT}/venv/bin/python"
+[[ -x "$PY" ]] || PY="${ROOT}/.venv/bin/python"
+[[ -x "$PY" ]] || PY="$(command -v python3 || true)"
+if [[ -z "${PY}" || ! -x "${PY}" ]]; then
+  echo "ERROR: venv/python not found under ${ROOT}/venv or ${ROOT}/.venv" >&2
+  exit 1
+fi
+
 if [[ -z "${BITGET_DB_STORAGE_PATH:-}" ]]; then
   if [[ -d /var/lib/quant-bitget/data ]]; then
     export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
@@ -21,10 +30,11 @@ if [[ -z "${BITGET_DB_STORAGE_PATH:-}" ]]; then
 fi
 
 echo "[universe-bt] ROOT=$ROOT"
+echo "[universe-bt] PY=$PY"
 echo "[universe-bt] BITGET_DB_STORAGE_PATH=${BITGET_DB_STORAGE_PATH:-unset}"
 echo "[universe-bt] MAX_SYMBOLS=${BITGET_UNIVERSE_BT_MAX_SYMBOLS:-10}"
 
-python3 - <<'PY'
+"$PY" - <<'PY'
 import os, sys
 os.environ.setdefault("BITGET_UNIVERSE_BT_OHLCV_ONLY", "1")
 # default cap for first VPS pass; 0 or empty = no cap
