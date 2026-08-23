@@ -206,7 +206,16 @@ fi
 echo "[3/7] reinstall bitget systemd + cron SSOT"
 sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${SCRIPT_DIR}/deploy_bitget_factory.sh"
 sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${SCRIPT_DIR}/install_bitget_cron.sh"
-sudo INSTALL_ROOT="$INSTALL_ROOT" bash "${REPO_ROOT}/deploy/install_director_digest_cron.sh"
+# Bot-2(코인 전용): 주식 북극성(factory.sh --north-star-digest) cron 설치 금지.
+# 원인: director-digest가 REPORT_BOT으로 「📊 주식 북극성」을 보내고,
+# Bitget DB에는 forward_trades 테이블이 없어 장부 오류가 난다.
+# 코인 일보 SSOT = bitget.sh --post-deploy-obs-digest (20:00 KST, 코인 북극성).
+# 잔여 파일 제거: bash bitget/deploy/uninstall_stock_north_star_cron.sh
+if [[ -f /etc/cron.d/dual-screener-director-digest ]] \
+  && grep -q 'factory.sh --north-star-digest' /etc/cron.d/dual-screener-director-digest 2>/dev/null; then
+  echo "  (fix) removing stock north-star cron from coin server"
+  sudo bash "${SCRIPT_DIR}/uninstall_stock_north_star_cron.sh" || true
+fi
 
 echo "[4/7] graceful stop bitget stack"
 _bitget_stop_services

@@ -1,22 +1,23 @@
 # NEXT_STEP — 다음 한 걸음
 
-> **갱신**: 2026-08-21 · NS-BG-DASH-01 Claude OK · SUB_DONE
+> **갱신**: 2026-08-23 · 코인 채팅에 주식 북극성 → cron 격리 · 서버 uninstall
 
 ---
 
 | 필드 | 값 |
 |------|-----|
-| **지금 단계** | Bitget 북극성 쉬운판 — Claude OK, 서버 육안 확인만 잔여 |
-| **status** | `SUB_DONE` |
-| **한 줄** | 20:00 첫 메시지 = Bitget 북극성(MDD5%·연12~25%) · 그다음 DNA/연습 관측. 코드 작업 끝. |
+| **지금 단계** | NS-BG-CRON-ISO-01 · 코인 VPS에서 주식 north-star cron 제거 |
+| **status** | `WAIT_DIRECTOR` |
+| **한 줄** | `sudo bash bitget/deploy/uninstall_stock_north_star_cron.sh` 후 audit [1b] 확인 |
 
 ---
 
 ## 당신 체크리스트
 
-- [ ] 서버 `git pull` (+ 필요 시 `update_bitget.sh`)
-- [ ] 텔레그램 첫 메시지: `Bitget 북극성` · 목표 MDD ≤5% · 연복리
-- [x] Claude: OUTBOX(NS-BG-DASH-01) OK
+- [ ] 코인 VPS: `uninstall_stock_north_star_cron.sh` (또는 update_bitget.sh)
+- [ ] `audit_bitget_stack.sh` → [1b] no stock north-star · post-deploy-obs OK
+- [ ] 다음날: 19:30 주식 북극성 **안 옴** · 20:00 코인 북극성 **옴**
+- [ ] (병행) Claude SECTOR 최종 OK
 - [ ] C-2 · MDD 5% · live · 실전 **금지**
 
 ---
@@ -25,6 +26,7 @@
 
 | 순서 | ID | 등급 |
 |------|-----|------|
-| **1** | 신규 Handoff 없음 — 디렉터 서버 육안 확인 대기 | ① |
-| 메모 | DATA_WAIT streak / digest·01b 헬퍼 통합 | 별도 Ask 후에만 |
+| **0** | 서버 cron 격리 (본 이슈) | Ops |
+| **1** | Claude SECTOR 최종 OK 후 관측 | ① |
+| **2** | SHORT-DNA-01 | 재료 조건 + Handoff |
 | 금지 | C-2 · MDD 5% · alloc live · 실전 ON | 🔴 |

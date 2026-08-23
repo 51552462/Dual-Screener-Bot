@@ -72,6 +72,19 @@ else
   else
     warn "no daily-audit line"
   fi
+  if grep -q 'bitget.sh --post-deploy-obs-digest' "$CRON_BITGET"; then
+    pass "post-deploy-obs-digest scheduled (코인 북극성 20:00 KST)"
+  else
+    fail "post-deploy-obs-digest missing — coin north star will not send"
+  fi
+  LOG_DIR_OBS="${BITGET_LOG_DIR:-${BITGET_ROOT}/logs}"
+  newest_obs="$(ls -t "$LOG_DIR_OBS"/bitget_post_deploy_obs_*.log 2>/dev/null | head -1 || true)"
+  if [[ -n "${newest_obs:-}" ]]; then
+    pass "recent digest log: $(basename "$newest_obs")"
+  else
+    warn "no bitget_post_deploy_obs_*.log yet — cron never ran or wrong LOG_DIR"
+    echo "    → bash bitget/deploy/diagnose_coin_digest.sh --send"
+  fi
   if grep -q "${INSTALL_ROOT}" "$CRON_BITGET"; then
     pass "cron paths match INSTALL_ROOT"
   else
@@ -81,30 +94,16 @@ fi
 
 CRON_DIGEST="${BITGET_DIRECTOR_CRON_PATH:-/etc/cron.d/dual-screener-director-digest}"
 echo ""
-echo "[1b] Director digest cron ($CRON_DIGEST)"
-if [[ ! -f "$CRON_DIGEST" ]]; then
-  fail "director digest cron missing — run: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_director_digest_cron.sh"
+echo "[1b] Stock north-star cron must be ABSENT on coin-only Bot-2 ($CRON_DIGEST)"
+if [[ -f "$CRON_DIGEST" ]] && grep -q 'factory.sh --north-star-digest' "$CRON_DIGEST" 2>/dev/null; then
+  fail "stock 「주식 북극성」 cron on coin server — REPORT_BOT gets KR/US digests + forward_trades missing"
+  fail "  fix: sudo bash bitget/deploy/uninstall_stock_north_star_cron.sh"
 else
-  if grep -q 'factory.sh --north-star-digest daily' "$CRON_DIGEST"; then
-    pass "north-star-digest daily (19:30 KST)"
-  else
-    fail "north-star-digest daily missing in $CRON_DIGEST"
-  fi
-  if grep -q '^CRON_TZ=Asia/Seoul' "$CRON_DIGEST"; then
-    pass "director CRON_TZ=Asia/Seoul"
-  else
-    fail "director CRON_TZ=Asia/Seoul missing"
-  fi
-  if grep -q 'factory.sh --deploy-watch' "$CRON_DIGEST"; then
-    fail "deploy-watch in director digest — equity-only; reinstall: sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_director_digest_cron.sh"
-  else
-    pass "no deploy-watch in director digest (equity-only job)"
-  fi
-  if grep -q 'factory.sh --iv-observation' "$CRON_DIGEST"; then
-    fail "iv-observation in director digest — equity-only; reinstall director digest cron"
-  else
-    pass "no iv-observation in director digest (equity-only job)"
-  fi
+  pass "no stock north-star director-digest (expected on Bot-2)"
+fi
+if [[ -f /etc/cron.d/dual-screener-factory-kr ]] \
+  && grep -q 'factory.sh --north-star-digest' /etc/cron.d/dual-screener-factory-kr 2>/dev/null; then
+  fail "factory-kr north-star on coin host — stock digest must run on equity VPS only"
 fi
 
 if crontab -l -u ubuntu 2>/dev/null | grep -q 'bitget\.sh'; then
@@ -224,7 +223,7 @@ rok = bool(rtok and rchat)
 rmark = '✓' if rok else '✗'
 print(f'  {rmark} REPORT bot: token={\"set\" if rtok else \"MISSING\"} chat={\"set\" if rchat else \"MISSING\"}')
 if not rok:
-    print('  → north-star / deploy-watch cron will fail silently without REPORT_BOT_*')
+    print('  → POST_DEPLOY_OBS digest (코인 북극성) needs REPORT_BOT_*')
 " 2>/dev/null || warn "telegram_env check failed"
 else
   warn "skip telegram check (no python)"
@@ -308,4 +307,4 @@ echo "  sudo INSTALL_ROOT=$INSTALL_ROOT ./bitget/deploy/update_bitget.sh"
 echo "  bash bitget/deploy/master_sync_bitget.sh"
 echo "  sudo systemctl start dante-bitget-ws dante-bitget-async dante-bitget-factory dante-bitget-queue-worker"
 echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash bitget/deploy/install_bitget_cron.sh"
-echo "  sudo INSTALL_ROOT=$INSTALL_ROOT bash deploy/install_director_digest_cron.sh"
+echo "  sudo bash bitget/deploy/uninstall_stock_north_star_cron.sh   # if stock 북극성 still arrives"

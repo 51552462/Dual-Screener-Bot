@@ -1,7 +1,114 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-08-21  
-> **유형**: NS-BG-DASH-01 · **Claude OK** · SUB_DONE · 서버 육안만 잔여
+> **갱신**: 2026-08-23  
+> **유형**: Ops 버그픽스 · 코인 서버에 주식 북극성 cron 혼입 (NS-BG-CRON-ISO-01)
+
+---
+
+## OUTBOX — 2026-08-23 · NS-BG-CRON-ISO-01 주식 북극성 → 코인 채팅
+
+**증상 (디렉터 스크린샷):** 코인 구조 텔레그램에 `📊 주식 북극성 · 일간/주간` + `no such table: forward_trades` + Track A KR/US.  
+**추가 보고:** 코인 북극성·POST_DEPLOY_OBS는 **한 통도 안 옴**.
+
+**원인 A (오염):** `update_bitget.sh` → `install_director_digest_cron.sh` → 주식 19:30이 Bot-2에서 REPORT_BOT 발송.  
+**원인 B (미수신 · 가설):** 코인 일보 cron(`--post-deploy-obs-digest` UTC 11:00) 미설치·미실행·실패. 주식 cron은 매 업데이트마다 강제 설치되어 왔고, 코인 일보 줄은 예전 crontab에 없으면 **조용히 안 감**. 코인은 **일 20:00만**(주간 없음).
+
+**수정 (bitget/** only):**
+| 파일 | 변경 |
+|------|------|
+| `update_bitget.sh` | director-digest **설치 제거** · 잔여 시 uninstall |
+| `uninstall_stock_north_star_cron.sh` | 신규 |
+| `diagnose_coin_digest.sh` | 신규 — cron/로그/REPORT_BOT + `--send` |
+| `install_bitget_cron.sh` | post-deploy-obs 줄 **필수** 검증 |
+| `audit_bitget_stack.sh` | 주식 cron 있으면 fail · digest 로그 유무 warn |
+| `post_deploy_obs_digest_bg.py` | Telegram HTTP 실패 본문 로그 |
+
+**디렉터 즉시:**
+```bash
+git pull && sudo bash bitget/deploy/uninstall_stock_north_star_cron.sh
+sudo INSTALL_ROOT=$PWD bash bitget/deploy/install_bitget_cron.sh
+bash bitget/deploy/diagnose_coin_digest.sh --send
+```
+
+**Ask Claude:** Ops 격리+진단 OK 한 줄. 루트 install_director 주석 Track A 정리 권고.
+
+---
+
+## OUTBOX — 2026-08-21 · SHORT 조건부 OK 3확인 회신 (Cursor)
+
+Claude 요청 형식에 대한 로컬 확인:
+
+### SHORT-DANTE-FUT-01 — blocked_history
+**확인:** spot SHORT hard-reject · SHORT Cos reject 모두 `bitget.shadow_tracking.record_blocked_trade` **동일 함수** → 테이블 `bitget_blocked_trade_history` **기존 컬럼만** INSERT. 신규 테이블/컬럼 **없음** (CAT-D 스키마 비접촉).
+
+### CRYPTO-SECTOR-01 — ①②③
+
+| # | 질문 | 결과 |
+|---|------|------|
+| ① | CAT-MAP Single Writer 표 | **추가함** — `PREDICTED_NEXT_SECTOR` \| `auto_pilot.detect_coin_regime` (+ system_auto_pilot) \| Readers D/J/M · G meta_sync **아님** |
+| ② | 맵 입력 | **신규 breadth 공식 없음.** 동일 함수 안 기존 `regime`/`breadth_state` 재사용 → 이미 `CURRENT_REGIME_KEY`·`CRYPTO_BREADTH_STATUS`로 쓰이던 값. (meta_sync `REGIME_ANALYSIS` ensemble 키가 아니라 **coin detect_coin_regime 기존 경로**) |
+| ③ | C/F 미소비 | **C 스캐너·signal_engines·F trading/Kelly 모듈: `PREDICTED_NEXT_SECTOR` 미참조.** Reader는 **D ledger `rotation_prebuy`**(기존: Cos×0.85 · `ROTATION_ADVANTAGE_ACTIVE`일 때만 Kelly×2) + J digest + M overseer. digest-only는 아님 · **C/F 직접 소비 아님** → CAT-G 🔴 Critical 재분류 **불필요** (기존 D soft boost 배선만 Writer가 살아남) |
+
+### 요청
+- CRYPTO-SECTOR-01 → **최종 OK** 한 줄  
+- 4건 Claude OK를 `track_b_05`에 기록해도 되는지 확정
+
+---
+
+Claude 요청 형식에 대한 로컬 확인:
+
+### SHORT-DANTE-FUT-01 — blocked_history
+**확인:** spot SHORT hard-reject · SHORT Cos reject 모두 `bitget.shadow_tracking.record_blocked_trade` **동일 함수** → 테이블 `bitget_blocked_trade_history` **기존 컬럼만** INSERT. 신규 테이블/컬럼 **없음** (CAT-D 스키마 비접촉).
+
+### CRYPTO-SECTOR-01 — ①②③
+
+| # | 질문 | 결과 |
+|---|------|------|
+| ① | CAT-MAP Single Writer 표 | **추가함** — `PREDICTED_NEXT_SECTOR` \| `auto_pilot.detect_coin_regime` (+ system_auto_pilot) \| Readers D/J/M · G meta_sync **아님** |
+| ② | 맵 입력 | **신규 breadth 공식 없음.** 동일 함수 안 기존 `regime`/`breadth_state` 재사용 → 이미 `CURRENT_REGIME_KEY`·`CRYPTO_BREADTH_STATUS`로 쓰이던 값. (meta_sync `REGIME_ANALYSIS` ensemble 키가 아니라 **coin detect_coin_regime 기존 경로**) |
+| ③ | C/F 미소비 | **C 스캐너·signal_engines·F trading/Kelly 모듈: `PREDICTED_NEXT_SECTOR` 미참조.** Reader는 **D ledger `rotation_prebuy`**(기존: Cos×0.85 · `ROTATION_ADVANTAGE_ACTIVE`일 때만 Kelly×2) + J digest + M overseer. digest-only는 아님 · **C/F 직접 소비 아님** → CAT-G 🔴 Critical 재분류 **불필요** (기존 D soft boost 배선만 Writer가 살아남) |
+
+### 요청
+- CRYPTO-SECTOR-01 → **최종 OK** 한 줄  
+- 4건 Claude OK를 `track_b_05`에 기록해도 되는지 확정
+
+---
+
+## OUTBOX — 2026-08-21 · SHORT 최상경로 Ask (디렉터 승인 로드맵)
+
+**계기:** 롱만 진입 · 숏 미사용 · `predicted_sector=UNKNOWN` · R&D/청산 정체.  
+**디렉터 승인 계획:** Bitget best-path roadmap (B0 paper · Critical 비접촉).
+
+### Ask (Claude Pro)
+
+Track B **B0**. 숏 구조(TV_SHORT / dante / ledger SHORT)는 있으나:
+
+1. SPOT dante → ledger `현물 숏 불가`로 낭비  
+2. FUTURES Cos/funding/국면 페널티로 숏 탈락  
+3. `PREDICTED_NEXT_SECTOR` writer 없음 → 항상 UNKNOWN  
+
+**요청:** 아래 순서로 Handoff 검토·OK (또는 수정 spec). Cursor는 디렉터 승인 로드맵대로 **이미 구현**했음 → 스펙 일치 검증.
+
+| 순서 | ID | 내용 |
+|------|-----|------|
+| 1 | SHORT-FUNNEL-01 | 숏 OPEN/CLOSED·차단사유 read-only 집계 |
+| 2 | SHORT-DANTE-FUT-01 | SPOT dante no-op (futures-only SHORT) |
+| 3 | SHORT-OBS-GATE-01 | funding/국면/Cos 탈락 관측 (임계값 변경 없음) |
+| 4 | CRYPTO-SECTOR-01 | `PREDICTED_NEXT_SECTOR` 코인 writer |
+| 5 | SHORT-DNA-01 | **defer** — SHORT CLOSED/MFE 충분 시에만 |
+
+**금지:** C-2 · MDD5% tier · B-2/B-3 live · `ENABLE_REAL_EXECUTION` · Cos/funding **임계값 변경**
+
+### 구현 스냅샷 (검증용)
+- `bitget/observability/short_funnel_report_bg.py` + digest 연동
+- `master_scanner` / scanner_hooks: spot+dante skip
+- ledger: SHORT Cos/spot 차단 → blocked_history 기록(관측)
+- `auto_pilot` regime: `PREDICTED_NEXT_SECTOR` writer
+- 테스트: funnel · schedule/skip · sector
+
+### Claude 응답 요청
+- 각 ID OK / 수정 spec 한 줄  
+- SHORT-DNA-01 착수 조건(예: TF당 SHORT mfe≥8 ≥N) 제안 환영
 
 ---
 

@@ -60,7 +60,14 @@ if grep -E '^[^#[:space:]].*--scan-all' "${DEST}" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! grep -q 'bitget.sh --post-deploy-obs-digest' "${DEST}"; then
+  echo "ERROR: ${DEST} missing --post-deploy-obs-digest (coin north star)" >&2
+  exit 1
+fi
+
 chmod +x "${INSTALL_ROOT}/bitget/deploy/bitget.sh" 2>/dev/null || true
+chmod +x "${INSTALL_ROOT}/bitget/deploy/diagnose_coin_digest.sh" 2>/dev/null || true
+chmod +x "${INSTALL_ROOT}/bitget/deploy/uninstall_stock_north_star_cron.sh" 2>/dev/null || true
 
 echo "✓ installed ${DEST} (CRON_TZ=UTC)"
 echo "  INSTALL_ROOT=${INSTALL_ROOT}"

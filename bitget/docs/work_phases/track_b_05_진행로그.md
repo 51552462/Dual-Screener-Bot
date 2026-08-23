@@ -19,6 +19,35 @@
 
 ---
 
+## NS-BG-CRON-ISO-01 — 코인 서버 주식 북극성 cron 제거 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **계기** | 디렉터: 코인 텔레그램에 `📊 주식 북극성` + `no such table: forward_trades` |
+| **원인** | `update_bitget.sh` → `install_director_digest_cron.sh` (주식 19:30) on Bot-2 |
+| **수정** | 설치 제거 · `uninstall_stock_north_star_cron.sh` · audit fail-if-present |
+| **비변경** | `gates.py` · Kelly · MDD · live · `dual_north_star_telegram.py` 본체 |
+| **status** | **WAIT_DIRECTOR** (코인 VPS에서 uninstall 1회) · Claude Ops OK 선택 |
+| **Claude OK** | (대기) |
+
+---
+
+## SHORT 최상경로 — FUNNEL/DANTE/OBS/SECTOR [2026-08-21]
+
+| 항목 | 내용 |
+|------|------|
+| **계기** | 롱만 진입 · 숏 미사용 · predicted_sector=UNKNOWN · 디렉터 승인 best-path 로드맵 |
+| **구현** | SHORT-FUNNEL-01 · SHORT-DANTE-FUT-01 · SHORT-OBS-GATE-01 · CRYPTO-SECTOR-01 |
+| **파일** | `short_funnel_report_bg.py` · digest 연동 · `scanner_hooks`/`master_scanner` spot dante no-op · ledger SHORT 차단 기록 · `signal_engines._apply_short_score_guards` · `auto_pilot`/`system_auto_pilot` sector writer · `CAT-MAP` PREDICTED_NEXT_SECTOR Writer 행 |
+| **테스트** | `test_short_funnel_best_path_bg.py` **8 passed** · schedule/short scoring 회귀 OK |
+| **비변경** | Cos/funding **임계값** · C-2 · MDD5% · live · `ENABLE_REAL_EXECUTION` · exit rewrite |
+| **SHORT-DNA-01** | **defer** — TF당 SHORT CLOSED(mfe≥`BITGET_MIN_MFE_FOR_MINING`) ≥ `GMM_FIT_MIN_ROWS_OBSERVED`(12) 후 Claude Handoff |
+| **Claude 1차** | FUNNEL OK · DANTE OK(조건) · OBS OK · SECTOR 조건부 OK → Cursor 3확인 회신(OUTBOX) |
+| **status** | **WAIT_CLAUDE_OK** (SECTOR 최종 OK 한 줄) |
+| **Claude OK** | (최종 한 줄 대기 — 3확인 회신 후) |
+
+---
+
 ## NS-BG-DASH-01 — Bitget 북극성 쉬운판 [2026-08-21]
 
 | 항목 | 내용 |

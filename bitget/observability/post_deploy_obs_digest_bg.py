@@ -370,6 +370,29 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
+    sf = checks.get("short_funnel") or {}
+    if sf:
+        sf_item = {
+            "id": "short_funnel",
+            "title": "숏(선물) 연습",
+            "plain": str(sf.get("plain") or "숏 퍼널"),
+        }
+        st = str(sf.get("state") or "")
+        if st == "SHORT_ACTIVE":
+            working.append(sf_item)
+        else:
+            missing.append(sf_item)
+        sector = str(sf.get("predicted_sector") or "UNKNOWN")
+        sec_item = {
+            "id": "predicted_sector",
+            "title": "다음 섹터 힌트",
+            "plain": f"predicted_sector={sector}",
+        }
+        if sector and sector not in ("UNKNOWN", ""):
+            working.append(sec_item)
+        else:
+            missing.append(sec_item)
+
     if _ops_status_ok(ops, "l1_logrotate"):
         working.append({"id": "l1", "title": "로그 자동 정리(L-1)", "plain": "켜져 있어요"})
     elif ops.get("l1_logrotate"):
@@ -482,7 +505,18 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # progress = now-lane items that are working vs (working+problem+missing) excluding later & static code labels
-    now_ids_ok = {"book", "dna", "cos", "l1", "l2", "overseer", "tg", "r01b"}
+    now_ids_ok = {
+        "book",
+        "dna",
+        "cos",
+        "l1",
+        "l2",
+        "overseer",
+        "tg",
+        "r01b",
+        "short_funnel",
+        "predicted_sector",
+    }
     done_n = sum(1 for x in working if x["id"] in now_ids_ok)
     need_n = done_n + sum(1 for x in problem if x["id"] in now_ids_ok) + sum(
         1 for x in missing if x["id"] in now_ids_ok
@@ -611,6 +645,27 @@ def compute_post_deploy_obs_digest(
             "expect": "CRYPTO_DNA_ALPHA_RANK1~3 present",
         },
     }
+    try:
+        from bitget.config_hub import load_config as _load_cfg
+        from bitget.observability.short_funnel_report_bg import (
+            attach_predicted_sector,
+            collect_short_funnel_report,
+        )
+
+        _sf = collect_short_funnel_report(forward_db_path=forward_db_path)
+        try:
+            _sf = attach_predicted_sector(_sf, _load_cfg())
+        except Exception:
+            _sf = attach_predicted_sector(_sf, {})
+        checks["short_funnel"] = _sf
+    except Exception as _sf_exc:
+        checks["short_funnel"] = {
+            "state": "SHORT_EMPTY",
+            "light": "🟡",
+            "plain": "숏 퍼널을 못 읽었어요",
+            "last_error": str(_sf_exc)[:200],
+            "predicted_sector": "UNKNOWN",
+        }
     probes = _server_ops_probes() if include_server_probes else {}
     now_kst = datetime.now(_KST)
     payload = {
@@ -789,6 +844,17 @@ def format_numbers_html(snap: Dict[str, Any]) -> str:
         ),
         f"DNA keys={_esc(dna.get('keys_present'))} shape={_esc(dna.get('shape_source_distribution'))}",
     ]
+    sf = checks.get("short_funnel") or {}
+    if sf:
+        lines.append(
+            f"SHORT funnel state={_esc(sf.get('state'))} "
+            f"openL/S={_esc((sf.get('open_by_side') or {}).get('LONG'))}/"
+            f"{_esc((sf.get('open_by_side') or {}).get('SHORT'))} "
+            f"blocked={_esc(sf.get('blocked_short_total'))} "
+            f"top={_esc(sf.get('blocked_short_top_bucket'))} "
+            f"sector={_esc(sf.get('predicted_sector'))}"
+        )
+        lines.append(f"blocked_buckets={_esc(sf.get('blocked_short_by_bucket'))}")
     if diag:
         lines.extend(
             [
@@ -878,12 +944,23 @@ def _send_report_html(message: str) -> bool:
     token = (telegram_env.get_report_token() or "").strip()
     chat_id = (telegram_env.get_report_chat_id() or "").strip()
     if not token or not chat_id:
+        logger.warning(
+            "post_deploy_obs digest send skipped — REPORT_BOT token/chat missing"
+        )
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
     try:
         resp = requests.post(url, json=payload, timeout=20)
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            return True
+        body = (resp.text or "")[:240]
+        logger.warning(
+            "post_deploy_obs digest send HTTP %s: %s",
+            resp.status_code,
+            body,
+        )
+        return False
     except Exception as ex:
         logger.warning("post_deploy_obs digest send failed: %s", ex)
         return False
