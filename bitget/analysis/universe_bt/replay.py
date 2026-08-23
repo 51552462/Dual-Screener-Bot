@@ -12,6 +12,7 @@ from bitget.analysis.universe_bt.gate_adapter import dry_try_add_virtual_positio
 from bitget.analysis.universe_bt.regime import resolve_historical_regime
 from bitget.analysis.universe_bt.store import write_bt_results
 from bitget.analysis.universe_bt.universe import (
+    resolve_run_timeframe,
     resolve_universe_snapshot,
     select_run_symbols,
 )
@@ -132,6 +133,7 @@ def replay_symbol_window(
     run_id: Optional[str] = None,
     db_path: Optional[str] = None,
     scratch_path: Optional[str] = None,
+    timeframe: str = _U1_TIMEFRAME,
 ) -> list[dict]:
     """Replay one symbol on bars with start_ts < bar_ts <= end_ts (U1 capped)."""
     mt = str(market_type).strip().lower()
@@ -139,12 +141,13 @@ def replay_symbol_window(
         mt = "futures"
     if mt not in ("spot", "futures"):
         raise ValueError(f"market_type must be spot|futures, got {market_type!r}")
+    tf = str(timeframe or _U1_TIMEFRAME).strip().upper()
 
-    df = _load_ohlcv(symbol, mt, db_path=db_path)
+    df = _load_ohlcv(symbol, mt, db_path=db_path, timeframe=tf)
     if df is None or len(df) < _U1_MIN_BARS:
         return []
 
-    idx_close = _load_benchmark_close(mt, db_path=db_path)
+    idx_close = _load_benchmark_close(mt, db_path=db_path, timeframe=tf)
     engines = _engine_pool_u1()
     rid = run_id or uuid.uuid4().hex[:12]
 
@@ -182,7 +185,7 @@ def replay_symbol_window(
 
         for engine_name, engine in engines:
             try:
-                hit, sig_type, out_df, dbg = engine(window, bench, _U1_TIMEFRAME)
+                hit, sig_type, out_df, dbg = engine(window, bench, tf)
             except Exception as ex:
                 logger.debug("engine %s skip %s: %s", engine_name, symbol, ex)
                 continue
@@ -254,13 +257,15 @@ def run_universe_bt_u1(
     if mt in ("fut", "linear"):
         mt = "futures"
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    symbols = resolve_universe_snapshot(mt, db_path=market_db)
+    tf, tf_reason = resolve_run_timeframe(mt, min_bars=_U1_MIN_BARS, db_path=market_db)
+    symbols = resolve_universe_snapshot(mt, db_path=market_db, timeframe=tf)
     if max_symbols is not None:
         symbols = select_run_symbols(
             mt,
             symbols,
             max_symbols=max_symbols,
             min_bars=_U1_MIN_BARS,
+            timeframe=tf,
             db_path=market_db,
         )
 
@@ -277,6 +282,7 @@ def run_universe_bt_u1(
             run_id=run_id,
             db_path=market_db,
             scratch_path=scratch_path,
+            timeframe=tf,
         )
         all_rows.extend(part)
 
@@ -284,6 +290,8 @@ def run_universe_bt_u1(
     summary = {
         "run_id": run_id,
         "market_type": mt,
+        "timeframe": tf,
+        "timeframe_reason": tf_reason,
         "symbols": len(symbols),
         "rows_written": n,
         "policy": "C3",

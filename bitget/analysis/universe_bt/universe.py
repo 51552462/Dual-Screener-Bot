@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 from bitget.infra.data_paths import market_data_db_path, market_db_read_path
 from bitget.infra.logging_setup import get_logger
@@ -38,8 +38,9 @@ def _table_prefix(market_type: str) -> str:
     return "BITGET_SPOT_"
 
 
-def _1d_bar_count(conn, market_type: str, symbol: str) -> int:
-    tbl = f"{_table_prefix(market_type)}{symbol}_1D"
+def _tf_bar_count(conn, market_type: str, symbol: str, timeframe: str = "1D") -> int:
+    tf = str(timeframe or "1D").strip().upper()
+    tbl = f"{_table_prefix(market_type)}{symbol}_{tf}"
     try:
         row = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
@@ -52,21 +53,69 @@ def _1d_bar_count(conn, market_type: str, symbol: str) -> int:
         return 0
 
 
+def _1d_bar_count(conn, market_type: str, symbol: str) -> int:
+    return _tf_bar_count(conn, market_type, symbol, "1D")
+
+
+def resolve_run_timeframe(
+    market_type: str,
+    *,
+    min_bars: int = 240,
+    db_path: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Pick OHLCV TF for a market. Default 1D; if too shallow, fall back to 1H.
+
+    Coin VPS (2026-08): FUT_1D ≈90 bars (<240) while FUT_1H ≈1000 — without
+    fallback futures L0 always writes 0 rows. Override: BITGET_UNIVERSE_BT_TIMEFRAME.
+    """
+    forced = (os.environ.get("BITGET_UNIVERSE_BT_TIMEFRAME") or "").strip().upper()
+    if forced:
+        return forced, "env"
+
+    path = db_path or market_db_read_path()
+    if not os.path.isfile(path):
+        path = db_path or market_data_db_path()
+    if not os.path.isfile(path):
+        return "1D", "no_db"
+
+    probe = "BTC_USDT"
+    conn = get_connection(path, read_only=True)
+    try:
+        n1d = _tf_bar_count(conn, market_type, probe, "1D")
+        if n1d >= int(min_bars):
+            return "1D", f"probe={probe} bars_1d={n1d}"
+        n1h = _tf_bar_count(conn, market_type, probe, "1H")
+        if n1h >= int(min_bars):
+            logger.warning(
+                "UNIVERSE-BT TF fallback market=%s 1D→1H (1D_bars=%s < min=%s, 1H_bars=%s)",
+                market_type,
+                n1d,
+                min_bars,
+                n1h,
+            )
+            return "1H", f"1D_depth={n1d}<{min_bars};1H={n1h}"
+        return "1D", f"insufficient probe_1d={n1d} probe_1h={n1h}"
+    finally:
+        conn.close()
+
+
 def select_run_symbols(
     market_type: str,
     symbols: List[str],
     *,
     max_symbols: Optional[int] = None,
     min_bars: int = 240,
+    timeframe: str = "1D",
     db_path: Optional[str] = None,
 ) -> List[str]:
-    """Cap run symbols by 1D depth — skip thin listings that yield 0 windows.
+    """Cap run symbols by TF depth — skip thin listings that yield 0 windows.
 
     Alphabetical ``symbols[:N]`` picks brand-new tickers first; futures L0 then
-    writes 0 rows even when FUT_1D coverage is healthy. Prefer majors, then any
-    symbol with ``COUNT(1D) >= min_bars`` (default = U1 ``_U1_MIN_BARS``).
+    writes 0 rows even when FUT coverage is healthy. Prefer majors, then any
+    symbol with ``COUNT(TF) >= min_bars`` (default = U1 ``_U1_MIN_BARS``).
     """
     syms = list(symbols)
+    tf = str(timeframe or "1D").strip().upper()
     if max_symbols is None:
         return syms
     cap = max(0, int(max_symbols))
@@ -88,7 +137,7 @@ def select_run_symbols(
     conn = get_connection(path, read_only=True)
     try:
         for s in ordered:
-            n = _1d_bar_count(conn, market_type, s)
+            n = _tf_bar_count(conn, market_type, s, tf)
             if n < int(min_bars):
                 skipped_thin += 1
                 continue
@@ -99,8 +148,9 @@ def select_run_symbols(
         conn.close()
 
     logger.info(
-        "select_run_symbols market=%s cap=%s eligible=%s skipped_thin(<%s)=%s sample=%s",
+        "select_run_symbols market=%s tf=%s cap=%s eligible=%s skipped_thin(<%s)=%s sample=%s",
         market_type,
+        tf,
         cap,
         len(out),
         min_bars,
@@ -109,19 +159,26 @@ def select_run_symbols(
     )
     return out
 
-def list_ohlcv_symbols(market_type: str, *, db_path: Optional[str] = None) -> List[str]:
-    """Symbols that have at least one OHLCV table for market_type."""
+def list_ohlcv_symbols(
+    market_type: str,
+    *,
+    db_path: Optional[str] = None,
+    timeframe: Optional[str] = None,
+) -> List[str]:
+    """Symbols that have at least one OHLCV table for market_type (optional TF)."""
     prefix = _table_prefix(market_type)
     path = db_path or market_db_read_path()
     if not os.path.isfile(path):
         path = db_path or market_data_db_path()
     if not os.path.isfile(path):
         return []
+    tf = str(timeframe).strip().upper() if timeframe else None
+    like = f"{prefix}%_{tf}" if tf else f"{prefix}%"
     conn = get_connection(path, read_only=True)
     try:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
-            (f"{prefix}%",),
+            (like,),
         ).fetchall()
     finally:
         conn.close()
@@ -176,24 +233,29 @@ def load_live_universe_symbols(market_type: str) -> Optional[List[str]]:
 
 
 def resolve_universe_snapshot(
-    market_type: str, *, db_path: Optional[str] = None
+    market_type: str,
+    *,
+    db_path: Optional[str] = None,
+    timeframe: Optional[str] = None,
 ) -> List[str]:
     """U = live_universe ∩ OHLCV; if live unavailable → OHLCV-only (logged)."""
-    ohlcv = set(list_ohlcv_symbols(market_type, db_path=db_path))
+    ohlcv = set(list_ohlcv_symbols(market_type, db_path=db_path, timeframe=timeframe))
     live = load_live_universe_symbols(market_type)
     if live is None:
         logger.info(
-            "universe snapshot OHLCV-only n=%s market=%s (live filter unavailable)",
+            "universe snapshot OHLCV-only n=%s market=%s tf=%s (live filter unavailable)",
             len(ohlcv),
             market_type,
+            timeframe or "*",
         )
         return sorted(ohlcv)
     inter = sorted(ohlcv & set(live))
     logger.info(
-        "universe snapshot live∩ohlcv n=%s (live=%s ohlcv=%s) market=%s",
+        "universe snapshot live∩ohlcv n=%s (live=%s ohlcv=%s) market=%s tf=%s",
         len(inter),
         len(live),
         len(ohlcv),
         market_type,
+        timeframe or "*",
     )
     return inter

@@ -26,6 +26,7 @@ from bitget.analysis.universe_bt.replay import (
 )
 from bitget.analysis.universe_bt.store import write_bt_results
 from bitget.analysis.universe_bt.universe import (
+    resolve_run_timeframe,
     resolve_universe_snapshot,
     select_run_symbols,
 )
@@ -59,6 +60,7 @@ def get_symbol_window_batches(
     batch_size: int,
     *,
     db_path: Optional[str] = None,
+    timeframe: str = _U1_TIMEFRAME,
 ) -> list[tuple[int, int]]:
     """Split eligible bar endpoints into (start_ts, end_ts) batches.
 
@@ -69,7 +71,8 @@ def get_symbol_window_batches(
     mt = str(market_type).strip().lower()
     if mt in ("fut", "linear"):
         mt = "futures"
-    df = _load_ohlcv(symbol, mt, db_path=db_path)
+    tf = str(timeframe or _U1_TIMEFRAME).strip().upper()
+    df = _load_ohlcv(symbol, mt, db_path=db_path, timeframe=tf)
     if df is None or len(df) < _U1_MIN_BARS:
         return []
     # Cap load length by TIME_MACHINE_MAX_BARS_PER_TABLE (reuse)
@@ -138,14 +141,16 @@ def run_universe_bt_u2(
     paper_before = count_paper_forward_trades(paper_db)
     paper_log: List[Dict[str, Any]] = [{"event": "start", "paper_count": paper_before}]
 
-    symbols = resolve_universe_snapshot(mt, db_path=market_db)
+    tf, tf_reason = resolve_run_timeframe(mt, min_bars=_U1_MIN_BARS, db_path=market_db)
+    symbols = resolve_universe_snapshot(mt, db_path=market_db, timeframe=tf)
     if max_symbols is not None:
-        # Prefer majors + 1D depth ≥ U1 min bars (alpha-slice caused FUT rows=0)
+        # Prefer majors + TF depth ≥ U1 min bars (alpha-slice / shallow 1D caused FUT=0)
         symbols = select_run_symbols(
             mt,
             symbols,
             max_symbols=max_symbols,
             min_bars=_U1_MIN_BARS,
+            timeframe=tf,
             db_path=market_db,
         )
 
@@ -159,7 +164,7 @@ def run_universe_bt_u2(
     for shard_index, shard in enumerate(shards):
         for symbol in shard:
             batches = get_symbol_window_batches(
-                symbol, mt, batch_size, db_path=market_db
+                symbol, mt, batch_size, db_path=market_db, timeframe=tf
             )
             existing = result_keys_existing(
                 run_id, mt, symbol, db_path=results_db
@@ -169,7 +174,7 @@ def run_universe_bt_u2(
                     continue
 
                 # One bar per replay call → bypasses U1 window≤5 without editing U1
-                df = _load_ohlcv(symbol, mt, db_path=market_db)
+                df = _load_ohlcv(symbol, mt, db_path=market_db, timeframe=tf)
                 batch_rows: List[dict] = []
                 if df is not None and len(df) >= _U1_MIN_BARS:
                     max_bars = max(1, int(TIME_MACHINE_MAX_BARS_PER_TABLE))
@@ -189,11 +194,13 @@ def run_universe_bt_u2(
                             run_id=run_id,
                             db_path=market_db,
                             scratch_path=scratch_path,
+                            timeframe=tf,
                         )
                         for r in part:
                             # C3 inheritance
                             r["exit_trigger"] = None
                             r["regime_label"] = r.get("regime_label") or "UNKNOWN"
+                            r["timeframe"] = tf
                         batch_rows.extend(part)
                         existing.add(bts)
 
@@ -234,6 +241,8 @@ def run_universe_bt_u2(
     summary = {
         "run_id": run_id,
         "market_type": mt,
+        "timeframe": tf,
+        "timeframe_reason": tf_reason,
         "symbols": len(symbols),
         "shards": len(shards),
         "shards_done": shards_done,

@@ -85,6 +85,7 @@ def main() -> int:
         print(
             f"  rows_written={out.get('rows_written')} "
             f"symbols={out.get('symbols')} "
+            f"tf={out.get('timeframe')} ({out.get('timeframe_reason')}) "
             f"paper_ok={out.get('paper_invariant_ok')}"
         )
 

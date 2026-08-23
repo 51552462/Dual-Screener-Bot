@@ -213,3 +213,42 @@ def test_select_run_symbols_skips_thin_prefers_btc(tmp_path):
         db_path=market,
     )
     assert picked == ["BTC_USDT"]
+
+
+def test_resolve_run_timeframe_falls_back_to_1h(tmp_path):
+    from bitget.analysis.universe_bt.universe import resolve_run_timeframe
+
+    market = str(tmp_path / "m.sqlite")
+    # shallow 1D, deep 1H for BTC futures
+    dates_d = pd.date_range("2026-01-01", periods=90, freq="D")
+    df_d = pd.DataFrame(
+        {
+            "Date": dates_d.strftime("%Y-%m-%d"),
+            "Open": 1.0,
+            "High": 1.1,
+            "Low": 0.9,
+            "Close": 1.0,
+            "Volume": 1.0,
+        }
+    )
+    dates_h = pd.date_range("2026-01-01", periods=300, freq="h")
+    df_h = pd.DataFrame(
+        {
+            "Date": dates_h.strftime("%Y-%m-%d %H:%M:%S"),
+            "Open": 1.0,
+            "High": 1.1,
+            "Low": 0.9,
+            "Close": 1.0,
+            "Volume": 1.0,
+        }
+    )
+    conn = sqlite3.connect(market)
+    try:
+        df_d.to_sql("BITGET_FUT_BTC_USDT_1D", conn, if_exists="replace", index=False)
+        df_h.to_sql("BITGET_FUT_BTC_USDT_1H", conn, if_exists="replace", index=False)
+        conn.commit()
+    finally:
+        conn.close()
+    tf, reason = resolve_run_timeframe("futures", min_bars=240, db_path=market)
+    assert tf == "1H"
+    assert "1D_depth" in reason
