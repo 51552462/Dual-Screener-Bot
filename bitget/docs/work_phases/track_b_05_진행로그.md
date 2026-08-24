@@ -19,6 +19,60 @@
 
 ---
 
+## FULL-BT-2 — 배치·체크포인트 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | FULL-BT-1 **Claude OK** |
+| **산출** | `bitget/full_bt/batch.py` · `checkpoint.py` · `tests/full_bt/` |
+| **재사용값** | `TIME_MACHINE_MAX_TABLES=300` · `TIME_MACHINE_MAX_BARS_PER_TABLE=5000` (`memory_policy`) |
+| **엔진** | base 5종 `EMA5/MASTER/NULRIM/TV_SHORT_V1/TV_SHORT_V2` 확인 |
+| **테스트** | resume idempotency + paper 불변 · **4 passed** |
+| **status** | **Claude OK** · FULL-BT-3 대기 |
+| **원본** | CAT-C/D/E · harness 로직 재작성 **없음** (run_replay 호출만) |
+
+---
+
+## FULL-BT-1 — read-only 하니스 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | FULL-BT-0 **Claude OK** |
+| **산출** | `bitget/full_bt/harness.py` · `paths.py` · smoke test |
+| **TF** | 재사용 `['1D','4H','2H','1H']` (`master_scanner.TIMEFRAMES`) |
+| **funding** | (c) 과거 rate 시계열 없음 → 추적 없이 진행 |
+| **status** | **Claude OK** · FULL-BT-2 진행 |
+| **smoke** | 격리 row↑ · paper before=after · **1 passed** |
+
+---
+
+## FULL-BT-0 — 전체이식 가상매매 정의문서 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **산출** | `15_FULL-BT_전체이식가상매매.md` 신규 · `00_마스터_로드맵` 포인터 1줄 |
+| **분리 사유** | U-track L0 Kill(PnL/CAGR 금지) vs 디렉터 요구(풀 이식·PnL/MDD·단서) 충돌 → **U4 금지 · FULL-BT 신규** |
+| **범위** | 문서만 · FULL-BT-1 코드 금지 · 14_/13_ 본문 비변경 |
+| **paper** | `bitget_full_bt.sqlite` 신규 예정 · forward_trades 비접촉 |
+| **B1** | 참고 대조만 · 공식 판정=R6 |
+| **Claude OK** | **2026-08-23** |
+| **status** | **Claude OK** · FULL-BT-1 진행 |
+
+---
+
+## UNIVERSE-BT-U3 — VPS 재실측 MAX=30 [2026-08-23]
+
+| 항목 | 내용 |
+|------|------|
+| **run_id** | `live-20260823T121158Z` · HEAD `57d3735` |
+| **SPOT** | 1D · bars=330 · hit≈4.85% · cand=16 · gate=0 · virtual=0 |
+| **FUTURES** | 1H 폴백 · bars=330 · hit≈0.30% · cand=1 · gate=0 · virtual=0 |
+| **paper** | delta=0 |
+| **Claude OK** | **2026-08-23** (`live-20260823T121158Z` · 1H 폴백 포함 · 룰5 재사용 확인) |
+| **status** | U3 최종 OK · 지표4=디렉터 결정 대기 · 코드 금지 |
+
+---
+
 ## UNIVERSE-BT-U3 — VPS 재실행 (1H 폴백) [2026-08-23]
 
 | 항목 | 내용 |

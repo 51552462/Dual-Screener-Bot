@@ -1,4 +1,248 @@
-﻿# CLAUDE → CURSOR · UNIVERSE-BT-U3 OK (상단)
+# CLAUDE → CURSOR · FULL-BT-3 Handoff (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
+
+> **작성**: Claude Pro (Architect) · 2026-08-23 · [CAT-Q]
+> **상태**: **FULL-BT-2 검증 = OK** · **FULL-BT-3 착수 승인**
+> **병행**: B1-LADDER-R1a OBSERVE 유지 (본 트랙과 게이팅 없음, 우선순위 R1a보다 낮음)
+
+---
+
+## FULL-BT-2 검증 결과: OK
+
+판정 근거:
+- 산출물(`batch.py`/`checkpoint.py`) — Handoff 함수 시그니처 골격(run_full_bt_batch·shards·window batches·checkpoint)과 일치
+- 재사용값 `TIME_MACHINE_MAX_TABLES=300`·`TIME_MACHINE_MAX_BARS_PER_TABLE=5000`, 출처 `bitget.infra.memory_policy` — U2 재사용 확인값과 동일, 신규 상수 없음(룰5)
+- 정책 승계: `harness.run_replay` 재사용만·TF `['1D','4H','2H','1H']`·funding 미추적·국면 UNKNOWN·step11 N/A skip — FULL-BT-1 OK 판정과 100% 일치, 재조사·확장 없음
+- 엔진 5종 확인(`EMA5`/`MASTER`/`NULRIM`/`TV_SHORT_V1`/`TV_SHORT_V2`, `_build_engine_pool` 원본 import) — FULL-BT-1 OK 시 권장했던 선택 보고 항목 이행
+- resume idempotency: 최초 `paper_count=2` 유지 → 재실행(동일 run_id) 시 `batches_run=0`·`batches_skipped=n1` — 완료분 skip·중복 삽입 없음 확인(Handoff 정책 5항)
+- 비접촉: `forward/ledger.py`·`shared.py`·`signal_engines`·exit 3파일·config_kv·paper 원장·FULL-BT-1 harness 로직 재작성 없음 — 전부 확인
+- 테스트: resume + paper 케이스 포함 **4 passed** — Handoff 필수 케이스 충족
+- 루트 주식 경로 무접촉, `bitget/full_bt/` 하위만
+
+**참고(비차단)**: 결과 격리 테이블의 실제 컬럼명(FULL-BT-1 `paths.py`/`harness.py` 확정본)은 OUTBOX에 별도 명시 안 됨 — FULL-BT-2는 체크포인트 테이블만 다루므로 이번 단계엔 불필요. FULL-BT-3 착수 시 재확인 필요(아래 Handoff에 반영).
+
+**다음:** `05_진행로그.md`에 이 OK 기록 · 아래 FULL-BT-3 Handoff로 진행.
+
+---
+
+## [CAT-Q] 진단&레거시 — FULL-BT-3 리포트 (§2 스키마 · CAT-J 비편입)
+
+### sub-phase ID
+FULL-BT-3
+
+### SSOT (변경 금지 unless noted)
+- 신규 파일: `bitget/full_bt/report.py` (기존 `full_bt/` 컨벤션에 맞춰 Cursor 배치)
+- 참조만(원본 비접촉): FULL-BT-1 격리 결과 테이블(`bitget_full_bt.sqlite` 내부 — 정확 테이블/컬럼명은 `paths.py`/`harness.py` 확정본 기준, 재조사 후 보고, 임의 명명 금지 룰5) + `bitget_full_bt_checkpoint`(FULL-BT-2, 완료 batch만 집계 대상 판별용), `13_B1_신뢰사다리.md` §1(인용만), `CAT-SPOT-FUT_비대칭표.md`(인용만)
+- 변경 없음: `forward/ledger.py`, `forward/shared.py`, `signal_engines.py`, `master_scanner.py`, exit 3파일, config_kv, `bitget_forward_trades`, FULL-BT-1/2 코드 전체, CAT-B/C/D/E/F/G/N 원본
+
+### 변경 Spec
+
+**함수 시그니처 (골격만)**
+```
+generate_full_bt_l1_report(market_type: str, run_id: str) -> dict
+render_full_bt_l1_report_md(report: dict) -> str   # 배너 고정 + §2 정량표/개선단서만
+```
+
+**정책**
+1. 상단 고정 배너를 `render_full_bt_l1_report_md` 최상단에 원문 그대로 삽입(15_FULL-BT §3, 요약·재작성 금지):
+   `"IV L1 전체이식 가상매매 — 격리 리플레이 결과, LIVE 승격·R6 대체·B1「달성」 판정 금지. 공식 B1 판정은 R6(L2 forward 56일+)만."`
+2. PnL/MDD 정량표 키(§2) 그대로: `run_id, market_type, symbol_or_agg, period_start, period_end, total_return_pct, mdd_pct, trade_count, b1_reference_band`. `b1_reference_band`는 고정 문자열 `"12~18%/≤5%, 참고용 — 판정 아님"`(13_B1 §1 인용만, 수치 재계산·재해석 금지).
+3. 개선 단서 슬롯(§2) 키 그대로: `gate_bottleneck_by_step`(try_add 11단계별 거절 카운트, step11은 N/A 고정), `side_asymmetry`(LONG/SHORT 진입·거절), `symbol_breakdown`(top rejected/entered), `tf_note`(재사용 TF 1줄).
+4. 집계 대상은 `bitget_full_bt_checkpoint`상 완료 표시된 (symbol×batch)만 — 미완료 run_id 부분 집계 시 report에 "미완료 run — 부분 결과" 경고 문자열 포함(체크포인트 완료 플래그 그대로 필터, 신규 판정 로직 발명 아님).
+5. Kill(§2) 준수: CAGR 과신·승률 단정·연복리 환산 과대표현 금지 — 정량표·개선단서 슬롯 값 그대로만 출력, 해석성 자유서술 삽입 금지.
+6. CAT-J 비편입: `reports/` 등 독립 디렉터리 산출물로만 존재, 리포팅 파이프라인 등록·자동 트리거 연결 금지(U3와 동일 원칙, §5 로드맵 그대로).
+
+### Config 변경 (있으면)
+없음 — config_kv 쓰기 전면 금지(FULL-BT-1/2와 동일)
+
+### SPOT/FUT 분기
+- `market_type` 파라미터 관통, 하드코딩 금지(§4)
+- 리포트는 SPOT·FUT **분리 집계 후 나란히 제시** — 합산 금지(§4)
+- SPOT: SHORT는 ledger hard reject로 `trade_count=0` 자연 발생(특수분기 불필요), `side_asymmetry`는 U3 `side_asymmetry_ratio` null 처리 선례 준용(신규 정의 금지)
+
+### 인접 CAT 영향
+- **CAT-J**: 없음 — 읽기도 아님, 파이프라인 미등록(§5 로드맵 "CAT-J 비편입" 그대로)
+- **CAT-B/C/D/E/F/G/N**: 없음 — FULL-BT-1/2와 동일 비접촉 헌법 유지, 결과 테이블 읽기 전용
+- **Track B(B1-LADDER)**: 없음, 병렬 독립. `b1_reference_band`는 13_B1 §1 인용 표기일 뿐 B1 판정에 미반영(§3 Kill: R6 대체 금지)
+
+CAT-F/G/N/B/D 관련 — 본 Handoff은 위 CAT들을 변경하지 않고 원본/결과 참조만 하므로 🔴 Critical 아님(룰7: 변경 시에만 Critical 판정 대상).
+
+### 롤백 조건
+신규 `report.py` 파일 삭제만으로 완전 롤백. FULL-BT-1/2 하니스·배치·체크포인트·paper DB·config_kv·원본 CAT 코드 무영향.
+
+### Cursor 지시
+- Targeted 신규 파일만. FULL-BT-1/2/CAT-B/C/D/E 원본 파일 diff 금지 — 읽기 전용 쿼리만.
+- **루트 주식 경로 수정 금지** — bitget/ 하위만.
+- FULL-BT-1 격리 결과 테이블 실제 컬럼명(`paths.py`/`harness.py` 확정본) 재조사 후 `CURSOR_TO_CLAUDE.md`에 "결과 테이블: {실제명}, 컬럼 매핑: {...}" 1줄 보고(임의 컬럼명 금지, 룰5)
+- 상단 배너·`b1_reference_band` 문자열은 원문 그대로 복사 — 요약·재계산 금지
+- 충돌 시 Adapter 제안 후 디렉터 Ask
+- 테스트: `pytest bitget/tests/full_bt/` (신규 — 정량표 키 존재 확인 + SPOT/FUT 분리집계 케이스 + 배너/Kill 문구 고정 확인 + 미완료 run 부분결과 경고 케이스 필수 포함)
+
+### 세션 종료 의무
+- `bitget/docs/work_phases/05_진행로그.md` FULL-BT-3 섹션
+- `bitget/docs/work_phases/00_전체현황판.md` Phase·SSOT
+- `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md` 갱신
+- `bitget/docs/work_phases/NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+- `bitget/docs/work_phases/09_디렉터_쉬운요약.md` / `NEXT_STEP.md` — 아래 갱신본 그대로 반영(룰13)
+
+### 위험도
+🟢 (read-only 리포트 생성 · 원본 코드/DB 쓰기 없음 · CAT-F/G/N Critical 코드 비접촉)
+
+---
+
+*버전 2026-08-23 · FULL-BT-3 Handoff · Architect: Claude Pro · Engineer: Cursor*
+
+---
+---
+
+# (룰13) 디렉터 문서 갱신본 — 그대로 덮어쓰기
+
+## `09_디렉터_쉬운요약.md`
+
+```markdown
+# 디렉터용 쉬운 요약 (비개발자 OK)
+
+> 갱신: 2026-08-23 · FULL-BT-2 통과 · FULL-BT-3(결과 보고서) Handoff 발급
+
+## 지금 한 줄
+전체 코인×기간을 나눠 돌리고 끊기면 이어서 하는 배치(FULL-BT-2)가 검증을 통과했습니다.
+이제 마지막 단계, **"과거로 돌려본 결과를 숫자표로 정리하는 보고서(FULL-BT-3)"**를 Cursor가 만들 차례입니다.
+
+신호등: 🟢 FULL-BT-1 통과 · 🟢 FULL-BT-2 통과 · 🟡 **FULL-BT-3 = Cursor 구현 대기** · 🟡 R1a 관측 계속
+
+### 당신이 할 일
+1. Cursor에게 이 Handoff 파일 전달 → FULL-BT-3(보고서) 구현 요청
+2. 완료되면 Claude에게 다시 검증 요청 (지금과 같은 방식)
+3. 매일 텔레그램 OPEN/CLOSED(R1a) 계속 확인
+4. 보고서가 나와도 **"수익률 확정"이 아닙니다** — 상단에 항상 "참고용, 실전 증명 아님" 배너가 붙습니다. 진짜 합격 판정은 R6(실거래 56일+)에서만 나옵니다.
+```
+
+## `NEXT_STEP.md`
+
+```markdown
+# NEXT STEP
+
+> 갱신: 2026-08-23 · FULL-BT-2 Claude 검증 OK · FULL-BT-3 Handoff 발급
+
+## 지금 상태
+FULL-BT-2(배치+체크포인트) Claude 검증 **OK**. FULL-BT-3(§2 스키마 리포트 · CAT-J 비편입) Handoff 발급 완료, Cursor 구현 대기.
+
+## 다음 행동
+1. Cursor: 위 FULL-BT-3 Handoff 기준 `bitget/full_bt/report.py` 구현
+2. Cursor: 세션 종료 시 `05_진행로그.md`/`00_전체현황판.md`/`CURSOR_TO_CLAUDE.md`/`NEXT_ACTION.md` 갱신 → `WAIT_CLAUDE_OK`
+3. 디렉터: Cursor 완료 보고 오면 `CURSOR_TO_CLAUDE.md` FULL-BT-3 검증을 Claude에게 요청
+4. 병행: R1a 매일 관측 유지, 게이팅 없음
+5. FULL-BT 산출을 R6 대체·B1「달성」·LIVE 근거로 사용 금지 (전 단계 공통)
+```
+
+---
+
+﻿# CLAUDE → CURSOR · FULL-BT-2 Handoff (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
+
+> **작성**: Claude Pro (Architect) · 2026-08-23 · [CAT-Q]
+> **상태**: **FULL-BT-1 검증 = OK** · **FULL-BT-2 착수 승인**
+> **병행**: B1-LADDER-R1a OBSERVE 유지 (본 트랙과 게이팅 없음, 우선순위 R1a보다 낮음)
+
+---
+
+## FULL-BT-1 검증 결과: OK
+
+판정 근거:
+- 엔진 풀: CAT-C `_build_engine_pool` **원본 import** 확인, diff 없음 — 스펙 "signal_engines 원본 그대로" 준수
+- candidate→진입: `try_add` **원본 호출**, step11(`execution_safety`, real 전용)은 paper replay에서 자연 N/A skip — 디렉터 원문 "게이트13" 용어 정정(=CAT-N execution_safety, paper 범위 아님) 정확 반영
+- 청산: CAT-E 3파일(`position_manager`/`tail_risk_gate`/`mega_trend_kill_bg`) evaluate **원본 import**, CLOSED write만 격리 Adapter — 스펙 일치
+- TF 조사: `재사용 TF: ['1D','4H','2H','1H']` — 출처 `master_scanner.TIMEFRAMES` 명시, 임의 확장 없음(룰5)
+- funding 조사: (a)/(b)/(c) 모두 확인 후 "추적 없이 진행" 채택, 근사치 창조 없음(룰5), P1-3 미차감 라이브와 동일 승계
+- 격리 검증: 격리 DB row 증가 · paper `bitget_forward_trades` **before=after** · config_kv 비접촉 — U1과 동일한 물리적 격리 원칙 충족
+- 비접촉 리스트(`forward/ledger.py`·`shared.py`·`signal_engines`·exit 3파일·config_kv·paper 원장) 전부 원본 diff 없음 확인
+- 테스트 1 passed(smoke) — FULL-BT-1 범위(read-only 하니스 존재 확인)에 충분
+
+**참고(비차단, 기록용)**: OUTBOX가 "5종 엔진 + master_scanner C-1 pre-candidate hook" 커버리지를 항목별로 명시하진 않았음(`_build_engine_pool` import라고만 보고). diff 없음이 확인된 이상 안전성 문제는 아니며, 실제 엔진 커버리지는 FULL-BT-3 리포트의 `symbol_breakdown`/엔진별 집계에서 자연히 드러날 사항이라 이번 read-only 검증 단계의 필수 차단 요건은 아님. FULL-BT-2 세션 종료 보고 시 "관여 엔진 5종 확인" 1줄 추가를 권장(선택).
+
+---
+
+## [CAT-Q] 진단&레거시 — FULL-BT-2 배치·체크포인트 (전체 유니버스×전체 히스토리 확장)
+
+### sub-phase ID
+FULL-BT-2
+
+### SSOT (변경 금지 unless noted)
+- 신규 파일: `bitget/full_bt/` 하위 (배치 오케스트레이터 — 기존 디렉토리 컨벤션에 맞춰 Cursor 배치)
+- 신규 테이블(격리 DB 내부): `bitget_full_bt_checkpoint` (`bitget_full_bt.sqlite` 전용, paper DB와 무관)
+- 참조만(원본 비접촉): FULL-BT-1 `harness.run_replay`(및 그 내부 CAT-C 엔진풀·CAT-D try_add 11단계·CAT-E exit 3파일 import 경로 그대로), `bitget.infra.memory_policy`의 `TIME_MACHINE_MAX_TABLES`/`TIME_MACHINE_MAX_BARS_PER_TABLE`(U2에서 재사용 확인된 값 — **재사용만, 재정의 금지**, 룰5)
+- 변경 없음: `forward/ledger.py`, `forward/shared.py`, `signal_engines.py`, `master_scanner.py`, `trading/position_manager.py`/`tail_risk_gate.py`/`mega_trend_kill_bg.py`, config_kv, `bitget_forward_trades`(paper ledger), CAT-B/C/D/E/F/G/N 원본 코드 전체, FULL-BT-1의 국면 처리(UNKNOWN 고정)·funding 미추적 정책
+
+### 변경 Spec
+
+**함수 시그니처 (골격만)**
+```
+run_full_bt_batch(market_type: str, run_id: str, resume: bool = True) -> None
+build_full_bt_shards(symbols: list[str], shard_size: int) -> list[list[str]]
+get_full_bt_window_batches(symbol: str, market_type: str, batch_size: int) -> list[tuple[int, int]]
+load_full_bt_checkpoint(run_id: str, market_type: str) -> dict | None
+save_full_bt_checkpoint(run_id: str, market_type: str, symbol: str, batch_idx: int) -> None
+```
+
+**정책**
+1. `run_full_bt_batch`는 FULL-BT-1 `harness.run_replay`를 **원본 그대로 재사용**하는 상위 오케스트레이터. 내부 로직(엔진풀 호출·try_add 11단계·exit 3파일 evaluate·CLOSED Adapter write) 재작성·복제 금지 — 배치/체크포인트 Adapter만 추가.
+2. 유니버스 스냅샷을 `build_full_bt_shards`로 분할 — `shard_size`는 `TIME_MACHINE_MAX_TABLES`(U2 재사용값=300) 그대로. Cursor가 codebase 재확인 후 "재사용값: {실제값}" 1줄 보고(임의 값 금지, 룰5).
+3. 심볼별 `get_full_bt_window_batches`로 시간축 배치 분할 — `batch_size`는 `TIME_MACHINE_MAX_BARS_PER_TABLE`(U2 재사용값=5000) 그대로.
+4. 배치(심볼×윈도우) 완료마다 `save_full_bt_checkpoint` 기록 — 대상은 `bitget_full_bt.sqlite` 내부 `bitget_full_bt_checkpoint` 테이블만. config_kv·paper DB(`bitget_forward_trades`) 접촉 금지(FULL-BT-1 원칙 승계).
+5. `resume=True` + 동일 `run_id` 체크포인트 존재 시 완료분 skip, 중단 지점부터 재개. 격리 결과 테이블 중복 삽입 방지(unique 제약 또는 사전 skip 로직).
+6. 엔진풀(5종+`master_scanner` hook)·try_add 11단계(step11 N/A skip)·exit 3파일·funding 미추적·국면 UNKNOWN 고정 — FULL-BT-1과 **동일 유지**, 본 Handoff 범위 밖(재조사·확장 금지).
+7. TF: FULL-BT-1 조사값 `['1D','4H','2H','1H']` 그대로 재사용, 확장 금지.
+8. 실행 규모 확대(전체 유니버스×전체 히스토리)에 따라 paper DB(`bitget_forward_trades`) row count 불변 검증을 **배치 실행 전/후 + 샤드마다** 재확인(FULL-BT-1은 1회성 smoke, FULL-BT-2는 노출 시간 증가로 반복 확인 필요 — U2 원칙과 동일).
+
+**신규 테이블 스키마 (키만)**
+`bitget_full_bt_checkpoint`: `run_id, market_type, shard_index, completed_symbol, completed_batch_idx, updated_at`
+
+### Config 변경 (있으면)
+없음 — config_kv 쓰기 전면 금지 (FULL-BT-1과 동일)
+
+### SPOT/FUT 분기
+- `market_type` 파라미터 FULL-BT-1과 동일하게 관통 (하드코딩 금지)
+- SPOT: SHORT는 ledger hard reject로 자연 0건(특수분기 불필요)
+- FUTURES: LONG/SHORT 모두 기록
+- SPOT·FUT 분리 집계 리포트는 FULL-BT-3 범위 — 본 phase는 실행·저장만
+
+### 인접 CAT 영향
+- **CAT-B**: 읽기만(OHLCV) — 규모 확대로 읽기량 증가, 쓰기 없음 불변
+- **CAT-C**: 읽기만(엔진풀 원본 import 승계), 원본 수정 금지
+- **CAT-D**: 참조만 — try_add 11단계 원본 호출 승계, 실 write(`bitget_forward_trades`) 절대 금지, 검증 빈도 상향(위 8항)
+- **CAT-E**: 참조만 — exit 3파일 원본 evaluate 승계, CLOSED write는 격리 Adapter만
+- **CAT-F/G/N**: 비접촉 — Kelly UNKNOWN cap·regime UNKNOWN·execution_safety step11 N/A skip 그대로 승계(재조사 없음)
+- **Track B (B1-LADDER)**: 없음, 병렬 독립 유지
+
+CAT-F/G/N/B/D 관련 — 본 Handoff은 위 CAT들을 **변경하지 않고 원본 참조만** 하므로 🔴 Critical 아님(룰7: 변경 시에만 Critical 판정 대상).
+
+### 롤백 조건
+신규 오케스트레이터 파일 + `bitget_full_bt_checkpoint` 테이블 삭제만으로 완전 롤백. FULL-BT-1 하니스·paper DB·config_kv·원본 CAT 코드 무영향.
+
+### Cursor 지시
+- Targeted 신규 파일만. FULL-BT-1/CAT-B/C/D/E 원본 파일 diff 금지 — import만.
+- **루트 주식 경로 수정 금지** — bitget/ 하위만.
+- `TIME_MACHINE_MAX_*` 정확 값·위치는 codebase 재조사 후 `CURSOR_TO_CLAUDE.md`에 "재사용값: {실제값}" 1줄 보고(임의 값 사용 금지).
+- 하니스 실행 전후 + 샤드마다 paper DB(`bitget_forward_trades`) row count 대조, 세션 종료 보고에 숫자로 기록.
+- 충돌 시 Adapter 제안 후 디렉터 Ask.
+- 테스트: `pytest bitget/tests/full_bt/` (신규 — 체크포인트 재개(resume) idempotency 케이스 + paper DB 불변 케이스 필수 포함)
+
+### 세션 종료 의무
+- `bitget/docs/work_phases/05_진행로그.md` FULL-BT-2 섹션
+- `bitget/docs/work_phases/00_전체현황판.md` Phase·SSOT
+- `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md` 갱신
+- `bitget/docs/work_phases/NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+
+### 위험도
+🟡 Medium (원본 CAT 코드 비접촉·paper 격리 유지되나, 실행 규모·노출 시간 증가로 격리 실패 리스크 누적 — 위 8항 반복 검증 필수. 실자금·config_kv 미접촉이라 🔴 Critical 아님)
+
+---
+
+> **NOTE (Cursor 2026-08-23)**: PowerShell 붙여넣기 중 기존 INBOX UTF-8이 손상됨.
+> 아래는 `git HEAD`의 직전 커밋본을 복구한 이력 스택이다.
+> 미커밋이던 FULL-BT-0/1 Handoff 본문이 필요하면 Downloads에서 재붙여넣기 요청.
+
+---
+
+# CLAUDE → CURSOR · UNIVERSE-BT-U3 OK (상단)
 
 ## UNIVERSE-BT-U3 검증 결과: OK
 

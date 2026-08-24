@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | UNIVERSE-BT L0 **일단락** · 지표4=디렉터 선택 · R1a OBSERVE | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-08-23 | U3 Claude OK · 09/NEXT_STEP 갱신 |
+| **다음 Handoff** | **FULL-BT-3 WAIT_CURSOR_IMPL** · R1a OBSERVE | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-08-24 | FULL-BT-2 Claude OK · FULL-BT-3 Handoff 발행 |
 
 ---
 
@@ -161,7 +161,10 @@
 | `UNIVERSE-BT-U0` | 스냅샷·지표5·L0 Kill 문서화 (코드 비접촉) | UNIVERSE-BT-U0 | work_phases |
 | `UNIVERSE-BT-U1` | read-only 리플레이 하니스 · C3(지표4 보류) | UNIVERSE-BT-U1 | `analysis/universe_bt/` |
 | `UNIVERSE-BT-U2` | 샤드·배치·체크포인트 오케스트레이터 | UNIVERSE-BT-U2 | `analysis/universe_bt/u2.py` |
-| `UNIVERSE-BT-U3` | L0 정량 리포트(지표4 제외·CAT-J 비편입) | UNIVERSE-BT-U3 | `analysis/universe_bt/u3_report.py` |
+| `UNIVERSE-BT-U3` | L0 정량 리포트(지표4 제외·CAT-J 비편입) · **1H 폴백 포함 최종 OK** (`live-20260823T121158Z`) | UNIVERSE-BT-U3 | `analysis/universe_bt/u3_report.py` |
+| `15_FULL-BT_전체이식가상매매.md` | L1 전체이식 가상매매 SSOT · U-track·Track B 병렬 독립 | FULL-BT-0 | work_phases |
+| `FULL-BT-0` | 이식 범위·스키마·Kill·paper·로드맵 문서화 (코드 비접촉) | FULL-BT-0 | work_phases |
+| `bitget_full_bt.sqlite` | FULL-BT 격리 DB (paper/config_kv 비접촉) | FULL-BT-0 | FULL-BT-1 paths |
 | `13_B1_신뢰사다리.md` | B1 성공계약·렁 R0~R6·Kill·승인문구 SSOT | B1-LADDER-R0 | `docs/work_phases/` |
 | `B1-LADDER-R0` | 신뢰사다리 문서화 sub-phase (코드 비접촉) | B1-LADDER-R0 | work_phases |
 | `ENABLE_REAL_EXECUTION` | 실주문 마스터 스위치 (default false) | N | config_kv |

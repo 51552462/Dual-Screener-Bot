@@ -86,7 +86,7 @@ L0 구조단서 — 수익률/승률 아님, LIVE·B1「달성」·CAGR 단정 �
 | **U0** | 본 SSOT — 스냅샷·지표 5종·L0·Kill·로드맵 | 🟢 문서 | **Claude OK** |
 | **U1** | read-only 리플레이 하니스 — CAT-C **원본 import만**(수정 금지), 결과 → 격리 `bitget_universe_bt.sqlite` (paper DB·config_kv **쓰기 금지**) · **C3: `exit_trigger`/지표4 보류** | 🟡 Medium | **Claude OK** |
 | **U2** | 배치·샤드·체크포인트 · 기존 `TIME_MACHINE_MAX_*` **재사용** (신규 상수 창조 금지) | 🟢 | **Claude OK** |
-| **U3** | 리포트 — L0 배너 고정 · **정량표만** (자유서술 승격 금지) · CAT-J 인접·편입 아님 · **지표4=N/A** | 🟢 | **Claude OK** |
+| **U3** | 리포트 — L0 배너 고정 · **정량표만** · CAT-J 비편입 · **지표4=N/A** · VPS 1H 폴백 실측 포함 | 🟢 | **Claude OK 2026-08-23** (`live-20260823T121158Z`) |
 
 **Track B (B1-LADDER R1a~R6):** OBSERVE / Kill / PASS에 본 트랙 **게이트 없음**. 본 트랙도 R1a를 **막지 않음**.
 

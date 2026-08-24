@@ -1,44 +1,33 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
 > **갱신**: 2026-08-23  
-> **유형**: **UNIVERSE-BT L0 VPS 재실행** · 원인 수정 후 듀얼 실측
+> **유형**: **FULL-BT-2** 구현 완료 · **WAIT_CLAUDE_OK** · 원본 CAT-C/D/E **diff 없음**
 
 ---
 
-## OUTBOX — 2026-08-23 · VPS 재검증 (`live-20260823T114203Z`)
+## OUTBOX — 2026-08-23 · FULL-BT-2 완료
 
-### 원인 (첫 패스 FUTURES=0)
-| 항목 | 실측 |
+### 산출
+| 경로 | 역할 |
 |------|------|
-| FUT_1D BTC | **n=90** (2026-05-26~08-23) |
-| SPOT_1D BTC | **n=300** |
-| FUT_1H BTC | **n=1000** |
-| U1 `min_bars` | 240 → FUT_1D 전 심볼 탈락 (게이트 이전) |
+| `bitget/full_bt/batch.py` | `run_full_bt_batch` · shards · window batches · paper 샤드별 불변 |
+| `bitget/full_bt/checkpoint.py` | `bitget_full_bt_checkpoint` (격리 DB only) |
+| `bitget/tests/full_bt/test_full_bt_batch_fb2.py` | resume + paper · **4 passed** |
 
-알파벳 밈코인 가설은 SPOT 축소에만 해당. FUTURES 0행의 주원인은 **1D 깊이 부족**.
+### 재사용값 (룰5)
+`재사용값: TIME_MACHINE_MAX_TABLES=300 · TIME_MACHINE_MAX_BARS_PER_TABLE=5000` — 출처 `bitget.infra.memory_policy`
 
-### 코드 조치 (push `0955088`)
-1. `select_run_symbols` — 메이저 우선 + TF 깊이 ≥240  
-2. `resolve_run_timeframe` — 1D 부족 시 **1H 폴백** (disclosure 로그)
+### 엔진 5종 (선택 보고)
+관여 엔진 5종 확인: `EMA5` · `MASTER` · `NULRIM` · `TV_SHORT_V1` · `TV_SHORT_V2` (`_build_engine_pool` base · 원본 import)
 
-### 재실측 L0 (`MAX_SYMBOLS=10` · paper delta=0)
+### paper 불변 (테스트 숫자)
+- start/end/shard: **paper_count=2** 유지 · resume 재실행 시 `batches_run=0` · `batches_skipped=n1`
 
-| | SPOT (1D) | FUTURES (1H 폴백) |
-|--|-----------|-------------------|
-| total_bars_scanned | 110 | **110** |
-| candidates_generated | 9 | 0 |
-| hit_rate | 0.081818 | 0.000000 |
-| gate_pass_rate | 0.000000 | null |
-| virtual_entries | 0 | 0 |
+### 정책 승계
+FULL-BT-1 `harness.run_replay` 재사용만 · TF `['1D','4H','2H','1H']` · funding 미추적 · 국면 UNKNOWN · step11 N/A skip
 
-report: `bitget/analysis/universe_bt/reports/u3_live-20260823T114203Z.md`
-
-### 해석 (L0 단서만 · CAGR 금지)
-- 파이프·paper 격리·듀얼 스캔 **정상화**  
-- SPOT: 후보 있음 · **게이트 0통과** (구조 사망 단정 아님)  
-- FUTURES: 1H로 스캔은 되나 이번 10메이저에서 엔진 후보 0  
-- FUT_1D 백필(≥240일) 또는 더 큰 심볼셋은 디렉터 선택
+### 비접촉
+`forward/ledger.py` · `shared.py` · `signal_engines` · exit 3파일 · config_kv · paper 원장 · FULL-BT-1 harness 로직 재작성 **없음**
 
 ### Ask
-- Claude: 1H 폴백 disclosure OK?  
-- 디렉터: FUT 1D 히스토리 백필 / MAX_SYMBOLS↑ / 관측 유지
+FULL-BT-2 검증. OK면 FULL-BT-3 Handoff만 파일로.

@@ -1,14 +1,13 @@
 # NEXT STEP
 
-> **갱신**: 2026-08-23 · L0 실실행 = 코인 VPS
-
----
+> 갱신: 2026-08-23 · FULL-BT-2 Claude 검증 OK · FULL-BT-3 Handoff 발급
 
 ## 지금 상태
-
-실험실(U0~U3) 완료. **본검증(과거 OHLCV 돌리기)** 은 로컬 DB 공백으로 미완 → **VPS 실행**이 다음 한 걸음.
+FULL-BT-2(배치+체크포인트) Claude 검증 **OK**. FULL-BT-3(§2 스키마 리포트 · CAT-J 비편입) Handoff 발급 완료, Cursor 구현 대기.
 
 ## 다음 행동
-1. 디렉터/서버: `bitget/deploy/run_universe_bt_l0.sh` (BITGET_DB_STORAGE_PATH 설정)
-2. 결과 md·지표 숫자를 Cursor OUTBOX / Claude에 회신
-3. R1a 관측 병행
+1. Cursor: 위 FULL-BT-3 Handoff 기준 `bitget/full_bt/report.py` 구현
+2. Cursor: 세션 종료 시 `05_진행로그.md`/`00_전체현황판.md`/`CURSOR_TO_CLAUDE.md`/`NEXT_ACTION.md` 갱신 → `WAIT_CLAUDE_OK`
+3. 디렉터: Cursor 완료 보고 오면 `CURSOR_TO_CLAUDE.md` FULL-BT-3 검증을 Claude에게 요청
+4. 병행: R1a 매일 관측 유지, 게이팅 없음
+5. FULL-BT 산출을 R6 대체·B1「달성」·LIVE 근거로 사용 금지 (전 단계 공통)

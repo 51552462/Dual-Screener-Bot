@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-20 · **앵커 ID**: `SYNC-2026-08-20-C`
+> **갱신**: 2026-08-23 · **앵커 ID**: `SYNC-2026-08-23-F`
 
 ---
 
@@ -40,24 +40,25 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-20-C` |
-| **마지막 갱신** | 2026-08-20 — **OPS-LIQ-TG-01** Claude OK · **CLOSED** |
-| **활성 트랙** | KR/US — 품질유니버스 · 잡주개방 금지 |
-| **진행 중 sub-phase** | 없음 (`SUB_DONE`) — 배포·관측만 |
-| **직전 완료** | **OPS-LIQ-TG-01** `[LIQ_BAND]` · Claude OK 2026-08-20 |
-| **다음** | VPS `update_factory` → 19:30 `[LIQ_BAND]` 육안 |
-| **VPS 배포 SSOT** | **`18_디렉터_VPS_원클릭.md`** |
-| **Handoff SSOT** | `CLAUDE_TO_CURSOR.md` 최상단 Claude OK · 신규 Handoff 없음 |
+| **앵커 ID** | `SYNC-2026-08-23-F` |
+| **마지막 갱신** | 2026-08-23 — **Bitget FULL-BT-2** 배치 완료 · **WAIT_CLAUDE_OK** |
+| **활성 트랙** | **BG** (Bitget) — FULL-BT · R1a OBSERVE 병행 |
+| **진행 중 sub-phase** | **FULL-BT-2** (`WAIT_CLAUDE_OK`) · R1a OBSERVE |
+| **직전 완료** | FULL-BT-1 Claude OK · FULL-BT-0 · UNIVERSE-BT-U3 |
+| **다음** | Claude: `bitget/.../CURSOR_TO_CLAUDE.md` FULL-BT-2 검증 → OK면 FULL-BT-3 Handoff |
+| **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` · Bitget: coin VPS 별도 |
+| **Handoff SSOT** | Bitget: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | Claude OK 후 배포 대기 |
+| **git main** | FULL-BT-2 커밋 대기(디렉터 지시 시) |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[CLOSED→B] OPS-LIQ-FORK-01 Phase1 — LOW_TAIL · 임계 0
-[CLOSED] OPS-LIQ-TG-01 — [LIQ_BAND] Claude OK · 관측 장치만
-[다음] VPS 배포 · 19:30 육안 · PHASE2_CANDIDATE 시 별도 Claude 재소집
-[금지] 잡주완화 · Critical · 자동 Phase2 · LIQUIDITY threshold 변경
+[BG·WAIT] FULL-BT-2 — batch+checkpoint · Claude 검증 대기
+[BG·OBS] B1-LADDER-R1a — 텔레그램 OPEN/CLOSED (BT와 비게이팅)
+[CLOSED] FULL-BT-0/1 · UNIVERSE-BT-U0~U3
+[KR/US] GOAL-REALITY-01 S2 · NS-BOOK-COUNT — Track A 창 전용
+[금지] FULL-BT→R6/LIVE 승격 · U4 PnL · CAT-C/D/E 원본 rewrite
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
