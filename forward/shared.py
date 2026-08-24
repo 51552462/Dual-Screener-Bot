@@ -2256,13 +2256,14 @@ def try_add_virtual_position(
         sig_type += flow_entry_tag
 
     # ⚡ [Ch.3] 진입 시점 오버드라이브 후보 태그 — 감사·청산 상관 분석용
+    # NOTE: 이 함수 본문에서 load_system_config 를 지연 import 하면
+    # 함수 전체 스코프에 지역 변수로 잡혀, 상단 pre_sys_config = load_system_config()
+    # 에서 UnboundLocalError 가 난다. 모듈 레벨 load_system_config 만 사용한다.
     try:
         from overdrive_telemetry import annotate_entry_overdrive_candidate
 
         _pre_cfg = None
         try:
-            from config_manager import load_system_config
-
             _pre_cfg = load_system_config()
         except Exception:
             pass
