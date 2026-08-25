@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# FULL-BT-HIST-1 pilot — max_symbols=10, SPOT then FUTURES (paper untouched).
+# Usage (coin VPS):
+#   cd ~/dante_bots/Dual-Screener-Bot
+#   git pull
+#   export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+#   bash bitget/deploy/run_full_bt_hist_pilot.sh
+# Optional:
+#   BITGET_FULL_BT_MAX_SYMBOLS=10   # Handoff default (U3 reuse); do not invent
+set -euo pipefail
+
+ROOT="${BITGET_INSTALL_ROOT:-${INSTALL_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+cd "$ROOT"
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
+PY="${ROOT}/venv/bin/python"
+[[ -x "$PY" ]] || PY="${ROOT}/.venv/bin/python"
+[[ -x "$PY" ]] || PY="$(command -v python3 || true)"
+if [[ -z "${PY}" || ! -x "${PY}" ]]; then
+  echo "ERROR: venv/python not found under ${ROOT}/venv or ${ROOT}/.venv" >&2
+  exit 1
+fi
+
+if [[ -z "${BITGET_DB_STORAGE_PATH:-}" ]]; then
+  if [[ -d /var/lib/quant-bitget/data ]]; then
+    export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+  fi
+fi
+
+export BITGET_FULL_BT_MAX_SYMBOLS="${BITGET_FULL_BT_MAX_SYMBOLS:-10}"
+
+echo "[full-bt-pilot] ROOT=$ROOT"
+echo "[full-bt-pilot] PY=$PY"
+echo "[full-bt-pilot] BITGET_DB_STORAGE_PATH=${BITGET_DB_STORAGE_PATH:-unset}"
+echo "[full-bt-pilot] MAX_SYMBOLS=${BITGET_FULL_BT_MAX_SYMBOLS}"
+
+"$PY" - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import sys
+from datetime import datetime, timezone
+
+ROOT = os.environ.get("BITGET_INSTALL_ROOT") or os.getcwd()
+sys.path.insert(0, ROOT)
+
+from bitget.full_bt.batch import count_paper_forward_trades, run_full_bt_batch
+from bitget.full_bt.paths import full_bt_db_path
+from bitget.full_bt.report import (
+    L1_BANNER,
+    generate_full_bt_l1_report,
+    render_full_bt_l1_report_md,
+)
+from bitget.infra.data_paths import market_data_db_path, market_db_read_path
+
+
+def _ts() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _cols(db: str, table: str) -> list[str]:
+    if not os.path.isfile(db):
+        return []
+    conn = sqlite3.connect(db)
+    try:
+        return [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+    finally:
+        conn.close()
+
+
+def _count(db: str) -> int:
+    if not os.path.isfile(db):
+        return 0
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='bitget_forward_trades'"
+        ).fetchone()
+        if not row:
+            return 0
+        return int(conn.execute("SELECT COUNT(*) FROM bitget_forward_trades").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str, max_sym: int) -> dict:
+    paper_before = count_paper_forward_trades(paper_db)
+    table_before = _count(results_db)
+    out = run_full_bt_batch(
+        mt,
+        run_id,
+        resume=True,
+        results_db=results_db,
+        market_db=market_db,
+        paper_db=paper_db,
+        max_symbols=max_sym,
+    )
+    paper_after = count_paper_forward_trades(paper_db)
+    table_after = _count(results_db)
+    rep = generate_full_bt_l1_report(mt, run_id, db_path=results_db, market_db=market_db)
+    md = render_full_bt_l1_report_md(rep)
+    q = rep.get("quantitative") or {}
+    clues = rep.get("clues") or {}
+    return {
+        "market_type": mt,
+        "run_id": run_id,
+        "batch": {
+            "symbol_count": out.get("symbol_count"),
+            "batches_run": out.get("batches_run"),
+            "batches_skipped": out.get("batches_skipped"),
+        },
+        "paper_before": paper_before,
+        "paper_after": paper_after,
+        "results_table_before": table_before,
+        "results_table_after": table_after,
+        "trade_count": q.get("trade_count"),
+        "total_return_pct": q.get("total_return_pct"),
+        "mdd_pct": q.get("mdd_pct"),
+        "gate_bottleneck_by_step": clues.get("gate_bottleneck_by_step"),
+        "side_asymmetry": clues.get("side_asymmetry"),
+        "banner_ok": md.startswith(L1_BANNER),
+        "warnings": rep.get("warnings"),
+    }
+
+
+def main() -> int:
+    market_db = market_db_read_path()
+    paper_db = market_data_db_path()
+    results_db = full_bt_db_path()
+    max_sym = int(os.environ.get("BITGET_FULL_BT_MAX_SYMBOLS", "10") or "10")
+    stamp = _ts()
+    spot_id = f"pilot-spot-{stamp}"
+    fut_id = f"pilot-fut-{stamp}"
+
+    print(f"[full-bt-pilot] market_db={market_db}")
+    print(f"[full-bt-pilot] paper_db={paper_db}")
+    print(f"[full-bt-pilot] results_db={results_db}")
+    if not os.path.isfile(market_db):
+        print("FAIL: market DB missing", file=sys.stderr)
+        return 2
+
+    spot = _one(
+        "spot", spot_id, market_db=market_db, results_db=results_db, paper_db=paper_db, max_sym=max_sym
+    )
+    fut = _one(
+        "futures",
+        fut_id,
+        market_db=market_db,
+        results_db=results_db,
+        paper_db=paper_db,
+        max_sym=max_sym,
+    )
+    cols = _cols(results_db, "bitget_forward_trades")
+    summary = {
+        "results_db": results_db,
+        "market_db": market_db,
+        "paper_db": paper_db,
+        "result_table_columns": cols,
+        "run_id_column_present": "run_id" in cols,
+        "spot": spot,
+        "futures": fut,
+    }
+    out_path = os.path.join(
+        os.environ.get("BITGET_DB_STORAGE_PATH") or os.path.dirname(results_db) or ".",
+        f"full_bt_pilot_summary_{stamp}.json",
+    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
+    # ASCII-safe console dump
+    print(json.dumps(summary, ensure_ascii=True, indent=2, default=str))
+    print(f"WROTE {out_path}")
+    return 0
+
+
+raise SystemExit(main())
+PY

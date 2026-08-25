@@ -75,10 +75,11 @@ CAGR 과신 · 승률 단정 · 연복리 환산 과대표현 금지 — **정�
 
 | ID | 내용 | 위험 | 상태 |
 |----|------|------|------|
-| **FULL-BT-0** | 본 SSOT — 이식 범위·스키마·Kill·paper·로드맵 | 🟢 문서 | **본 Handoff · WAIT_CLAUDE_OK** |
-| **FULL-BT-1** | read-only 하니스 — 엔진풀+try_add 11+청산 Adapter · TF/funding 조사 포함 | 착수 시 재평가 (U1보다 넓음) | 🟡 대기 |
-| **FULL-BT-2** | 배치·체크포인트 · `TIME_MACHINE_MAX_*` 재사용 | 🟡 | 🟢 대기 |
-| **FULL-BT-3** | 리포트 — §2 스키마 · CAT-J 비편입 | 🟢 | 🟢 대기 |
+| **FULL-BT-0** | 본 SSOT — 이식 범위·스키마·Kill·paper·로드맵 | 🟢 문서 | **✅ Done · Claude OK** |
+| **FULL-BT-1** | read-only 하니스 — 엔진풀+try_add 11+청산 Adapter · TF/funding 조사 포함 | 착수 시 재평가 (U1보다 넓음) | **✅ Done · Claude OK** |
+| **FULL-BT-2** | 배치·체크포인트 · `TIME_MACHINE_MAX_*` 재사용 | 🟡 | **✅ Done · Claude OK** |
+| **FULL-BT-3** | 리포트 — §2 스키마 · CAT-J 비편입 | 🟢 | **✅ Done · Claude OK 2026-08-24** |
+| **FULL-BT-HIST-1** | `run_replay` 실제 OHLCV 바 워크 (캔들축) | 🟡 | **WAIT_CLAUDE_OK** |
 
 **비접촉 (FULL-BT-0~3 공통 헌법):**  
 `bitget_forward_trades` · `config_kv` · CAT-B/C/D/E/F/G/N **원본 수정** · `ENABLE_REAL_EXECUTION` · U-track `14_` 본문 재작성.

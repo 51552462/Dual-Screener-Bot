@@ -19,6 +19,62 @@
 
 ---
 
+## FULL-BT-HIST-1 파일럿 실런 시도 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | FULL-BT-HIST-1 **Claude OK** · 파일럿 지시(max_symbols=10) |
+| **실행** | SPOT `pilot-spot-20260825T021558Z` · FUT `pilot-fut-20260825T021558Z` · resume=true |
+| **결과** | symbol_count=**0** / batches_run=**0** (양 시장) |
+| **원인** | 로컬 `bitget_market_data.sqlite` OHLCV 테이블 0 · live∩ohlcv=0 |
+| **paper** | before=after **0=0** |
+| **status** | **WAIT_DIRECTOR** (OHLCV 경로/VPS) |
+| **코드** | diff 없음 (실행만) |
+
+---
+
+## FULL-BT-HIST-1 — 실제 OHLCV 바 워크 [2026-08-24]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | FULL-BT-0~3 골격 · 디렉터 Ask(실데이터) · Claude Handoff |
+| **산출** | `bitget/full_bt/harness.py` `run_replay` 실데이터 바 워크 · `tests/full_bt/test_full_bt_hist1.py` |
+| **재사용 소스** | `bitget.analysis.universe_bt.replay._load_ohlcv` |
+| **시간축** | entry/exit = **캔들** · report `CANDLE_ENTRY_AXIS`로 wall `updated_at` 창 비활성(정합 Adapter) |
+| **테스트** | multi-bar exit · candle≠wall · SPOT/FUT 소스 · max_symbols resume · **14 passed** (full_bt) |
+| **status** | **Claude OK: 2026-08-25** · 파일럿은 OHLCV 경로 **WAIT_DIRECTOR** |
+| **원본** | CAT-C/D/E · batch/checkpoint · ledger/shared **diff 없음** (호출만) |
+
+---
+
+## FULL-BT-3 보완 — run_id 공유 필터 + 미측정 각주 [2026-08-24]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | FULL-BT-3 검증 **보완 필요** (OK 아님) |
+| **(A)** | `paths.py` = **공유** (`bitget_full_bt.sqlite` · run_id 미포함) → `checkpoint.updated_at` 일자 창으로 entry/exit 제한 |
+| **(B)** | render 각주 `미측정(거절 이벤트 미저장, 0 아님)` · gate_bottleneck·top_rejected |
+| **테스트** | 기존 4 + shared isolation + unmeasured footnote · full_bt **10 passed** |
+| **status** | **Claude OK: 2026-08-24** · FULL-BT 트랙 종료 |
+| **원본** | FULL-BT-1/2 · CAT · schema **diff 없음** (`report.py` 내부만) |
+| **비차단 확인** | `updated_at`=`utc_datetime_str`(wall) · `entry_date`=`ledger.utc_date_str`(wall) · `exit_date`=harness UTC now(wall) — **동일 wall-clock 축** (캔들 Date 미기입; harness `start`/`end` 미사용) |
+
+---
+
+## FULL-BT-3 — L1 리포트 (§2 스키마) [2026-08-24]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | FULL-BT-2 **Claude OK** |
+| **산출** | `bitget/full_bt/report.py` · `tests/full_bt/test_full_bt_report_fb3.py` |
+| **함수** | `generate_full_bt_l1_report` · `render_full_bt_l1_report_md` (+ side-by-side helper) |
+| **결과 테이블** | `bitget_forward_trades` (격리 DB) · 체크포인트 `bitget_full_bt_checkpoint` 완료 심볼만 집계 |
+| **테스트** | quant keys · banner/Kill · SPOT/FUT 분리 · 미완료 경고 · **4 passed** (full_bt 합계 **8 passed**) |
+| **status** | **Claude OK: 2026-08-24** (보완 포함) · 트랙 종료 |
+| **원본** | CAT-C/D/E · FULL-BT-1/2 · paper/config_kv **diff 없음** (read-only) |
+
+---
+
 ## FULL-BT-2 — 배치·체크포인트 [2026-08-23]
 
 | 항목 | 내용 |

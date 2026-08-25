@@ -1,3 +1,271 @@
+# CLAUDE → CURSOR · FULL-BT-HIST-1 Claude OK + 파일럿 실런 지시
+# (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
+
+> **작성**: Claude Pro (Architect) · 2026-08-25 · [CAT-Q]
+> **상태**: **FULL-BT-HIST-1 검증 = OK (비차단 caveat 1건)** · 전체런 전 **파일럿 실런 승인**
+> **병행**: B1-LADDER-R1a OBSERVE 유지 (본 트랙과 게이팅 없음, 우선순위 R1a보다 낮음)
+
+---
+
+## FULL-BT-HIST-1 검증 결과: OK
+
+판정 근거:
+- 재사용 소스 `bitget.analysis.universe_bt.replay._load_ohlcv` — 신규 근사·로직 창조 없음(룰5)
+- entry/exit **캔들축** 전환 — `15_FULL-BT_전체이식가상매매.md` §6 로드맵 목표("`run_replay` 실제 OHLCV 바 워크, 캔들축")와 정확히 일치
+- 산출 3파일(`harness.py` 바 워크, `report.py` Adapter, 테스트) — 신규 파일 범위 내. CAT-C 엔진풀·CAT-D try_add 11단계·CAT-E exit 3파일 원본 로직 재작성 없음(호출만) 재확인
+- 비접촉 리스트(`forward/ledger.py`·`shared.py`·`signal_engines`·exit 3파일·config_kv·paper·batch/checkpoint) 전부 diff 없음 확인 — FULL-BT-1/2/3 헌법 그대로 승계
+- SSOT 충돌(entry/exit 축 전환으로 기존 wall-window report 필터 무효화) → 원본 수정이 아닌 **Adapter(`CANDLE_ENTRY_AXIS`)** 제안 — 룰6 준수
+- batch 호환 시그니처 유지(`run_replay(market_type, symbol, engine, start, end, db_path, *, market_db=None)`) — FULL-BT-2 오케스트레이터 재작성 불필요
+- 테스트 **14 passed**(기존 10 + 신규 4: multi-bar exit·candle≠wall·SPOT/FUT 소스·pilot resume)
+- 루트 주식 경로 무접촉, `bitget/full_bt/` 하위만
+
+**참고(비차단 — 다음 보고에서 1줄 확인 요청)**:
+`bitget_full_bt.sqlite`는 `paths.py`상 **공유**(run_id 미포함 물리 파일)다. `CANDLE_ENTRY_AXIS=True`로 wall-window 필터를 끄면 집계는 `checkpoint 완료 심볼 ∩ market_type`만으로 좁혀지는데, **결과 테이블 자체에 run_id 컬럼이 없다면** 같은 심볼을 처리한 서로 다른 run_id(예: 이번 파일럿 vs 이후 전체런)의 트레이드가 같은 결과 테이블에 누적될 때 report가 **다른 run의 트레이드까지 합산**할 위험이 있음 — FULL-BT-3 보완 (A)가 원래 막으려던 것과 동일 클래스 문제. **코드 변경 요청 아님.** 아래 파일럿 실행 결과에 "결과 테이블 run_id 컬럼 존재 여부" + "이번 run 트레이드 건수 vs 결과 테이블 전체 건수" 1줄만 같이 보고.
+
+또한 원본 FULL-BT-HIST-1 Handoff 텍스트가 `CLAUDE_TO_CURSOR.md`에서 검색되지 않음(과거 UTF-8 손상 이력과 유사 — 문서 보관 공백 가능). 이번 OUTBOX 내용은 `15_FULL-BT §6` 로드맵과 자체 정합하므로 검증 차단 사유는 아니나, 다음 세션 종료 시 본 파일 자체를 그대로 `CLAUDE_TO_CURSOR.md`에 보관해 재발 방지 권장(비차단).
+
+**다음**: 전체 유니버스×전체 히스토리 런 전, 아래 **파일럿** 먼저 실행.
+
+---
+
+## 파일럿 실런 지시 (신규 코드 없음 · 실행만)
+
+- **market_type**: SPOT, FUTURES 각 1회 (분리 실행, 합산 실행 금지 — §4)
+- **max_symbols**: **10** (U3 VPS 파일럿 재사용값 — 신규 상수 아님, 룰5)
+- **run_id**: 신규 생성(pilot 접두, 예: `pilot-{ts}`) — 기존 run_id 재사용 금지(체크포인트 오염 방지)
+- **resume**: true (기본값 그대로 — 재개 idempotency 실사용 확인 겸함)
+
+### 실행 후 보고 (`CURSOR_TO_CLAUDE.md`에 1줄씩)
+1. SPOT/FUT 각 `trade_count`·`total_return_pct`·`mdd_pct` (`report.py` §2 스키마 그대로, 재계산·해석 금지)
+2. 위 caveat 확인: 결과 테이블 run_id 컬럼 유무 + (이번 run 트레이드 수) vs (테이블 전체 행 수) 비교
+3. `gate_bottleneck_by_step`·`side_asymmetry` 슬롯 값 채워지는지(§2 개선단서, N/A 고정 아님 확인)
+4. paper `bitget_forward_trades`(라이브 원장) before=after 재확인 — FULL-BT 공통 헌법(§5) 불변 재확인
+5. 상단 고정 배너("IV L1 전체이식 가상매매...") 원문 그대로 출력되는지
+
+### 비접촉 (재확인)
+`forward/ledger.py`·`shared.py`·`signal_engines`·exit 3파일·config_kv·`bitget_forward_trades`(라이브 paper)·CAT-B/C/D/E/F/G/N 원본 — 파일럿은 **실행만**, diff 없음.
+
+### 인접 CAT 영향
+CAT-D/E: 없음(원본 참조·호출만, 변경 아님 — 룰7 Critical 대상 아님) · CAT-B: 읽기만(OHLCV) · CAT-F/G/N: 비접촉.
+
+### 롤백 조건
+파일럿 run_id + 해당 checkpoint/결과 행 삭제만으로 완전 롤백. HIST-1 코드·FULL-BT-1/2/3·paper DB·config_kv·원본 CAT 무영향.
+
+### 위험도
+🟢 (read-only 파일럿 · 실자금/config_kv 미접촉 · 결과는 L1 참고용 라벨 고정)
+
+### 세션 종료 의무
+- `bitget/docs/work_phases/05_진행로그.md` FULL-BT-HIST-1 파일럿 섹션(위 1~5 숫자 그대로)
+- `bitget/docs/work_phases/00_전체현황판.md`
+- `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md` 갱신
+- `bitget/docs/work_phases/NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+
+---
+
+*버전 2026-08-25 · FULL-BT-HIST-1 OK + 파일럿 지시 · Architect: Claude Pro · Engineer: Cursor*
+
+---
+---
+
+# (룰13) 디렉터 문서 갱신본 — 그대로 덮어쓰기
+
+## `09_디렉터_쉬운요약.md`
+
+```markdown
+# 디렉터용 쉬운 요약 (비개발자 OK)
+
+> 갱신: 2026-08-25 · FULL-BT-HIST-1(진짜 시세 연결) 통과 · 소규모 시험(파일럿) 지시
+
+## 지금 한 줄
+"과거 진짜 시세로 진짜처럼 돌려보는" 마지막 퍼즐 조각(FULL-BT-HIST-1)이 검증을 통과했습니다.
+다만 큰 규모로 돌리기 전에, **코인 10개짜리 소규모 시험(파일럿)**을 먼저 한 번 돌려서
+숫자가 이상 없이 나오는지 확인하는 단계입니다. 자동차로 치면 "고속도로 타기 전 동네 한 바퀴 시운전"입니다.
+
+신호등: 🟢 FULL-BT-0~3(골격) · 🟢 FULL-BT-HIST-1(진짜 시세 연결) · 🟡 **소규모 시험(파일럿) 대기** · 🟡 R1a 관측 계속
+
+### 당신이 할 일
+1. Cursor에게 이 파일 전달 → **코인 10개 시험 실행** 요청 (SPOT 1번, FUTURES 1번)
+2. 결과 숫자(수익률/승률 아님, "참고용" 표) 나오면 Claude에게 다시 검증 요청
+3. 매일 텔레그램 OPEN/CLOSED(R1a) 계속 확인
+4. 이 시험 결과도 **"수익률 확정"이 아닙니다** — 상단에 항상 "참고용, 실전 증명 아님" 배너가 붙습니다. 진짜 합격 판정은 R6(실거래 56일+)에서만 나옵니다.
+```
+
+## `NEXT_STEP.md`
+
+```markdown
+# NEXT STEP
+
+> 갱신: 2026-08-25 · FULL-BT-HIST-1 Claude 검증 OK(비차단 확인 1건) · 파일럿 실런 지시 발급
+
+## 지금 상태
+FULL-BT-HIST-1(실제 OHLCV 캔들축 바 워크) Claude 검증 **OK**. 전체 유니버스 런 전 **파일럿(max_symbols=10, SPOT/FUT 각 1회)** 먼저 실행하도록 지시. 비차단 확인 1건(결과 테이블 run_id 스코프)은 파일럿 결과 보고에 포함.
+
+## 다음 행동
+1. Cursor: 위 파일럿 실런 지시대로 SPOT/FUT 각 1회 실행, 5개 항목 `CURSOR_TO_CLAUDE.md`에 보고
+2. Cursor: 세션 종료 시 `05_진행로그.md`/`00_전체현황판.md`/`CURSOR_TO_CLAUDE.md`/`NEXT_ACTION.md` 갱신 → `WAIT_CLAUDE_OK`
+3. 디렉터: 파일럿 결과 오면 `CURSOR_TO_CLAUDE.md` 검증을 Claude에게 요청(비차단 확인 1건 포함 여부 체크)
+4. 파일럿 통과 시에만 전체 유니버스×전체 히스토리 런 Handoff 진행 — 파일럿 생략한 전체런 착수 금지
+5. 병행: R1a 매일 관측 유지, 게이팅 없음
+6. FULL-BT 산출을 R6 대체·B1「달성」·LIVE 근거로 사용 금지 (전 단계 공통)
+```
+
+---
+
+# CLAUDE → CURSOR · FULL-BT-HIST-1 Handoff (bitget/docs/work_phases/CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
+
+> **작성**: Claude Pro (Architect) · 2026-08-24 · [CAT-Q]
+> **상태**: Cursor **구현 대기** · `CURSOR_TO_CLAUDE.md` Ask(FULL-BT 실제 히스토리 바 워크) 해소용 Handoff
+> **병행**: B1-LADDER-R1a OBSERVE 유지 (본 트랙과 게이팅 없음, 우선순위 R1a보다 낮음)
+
+---
+
+## Ask 확인 (CURSOR_TO_CLAUDE.md)
+FULL-BT-0~3은 골격(배치·체크포인트·리포트) 완료였으나 `harness.run_replay`가 `_ = (start, end)`로 **미사용**, hist가 **합성 120일 flat**, 청산이 바 워크가 아닌 **즉시 Adapter**라 전 코인×기간 PnL/MDD 방향 검증이 실행 불가하다는 갭 확인. 아래 Handoff로 실데이터 바 워크 전환.
+
+---
+
+## [CAT-Q] 진단&레거시 — FULL-BT-HIST-1 · `run_replay` 실제 OHLCV 바 워크 전환
+
+### sub-phase ID
+**FULL-BT-HIST-1** (FULL-BT-0~3 로드맵은 "트랙 종료"로 닫혀 있어 번호 재사용 대신 HIST 접두로 신규 sub-phase 구분 — 15_FULL-BT §6 로드맵 표에 행 추가만, 기존 행 재작성 금지)
+
+### SSOT (변경 금지 unless noted)
+- 수정(targeted diff): `bitget/full_bt/harness.py` — `run_replay` 내부만 교체, 시그니처·파일 위치 유지
+- 조사 후 재사용(원본 비접촉): `bitget/analysis/universe_bt/` 내 OHLCV 로더(가칭 `_load_ohlcv`) — **정확 경로/시그니처는 Cursor 조사 후 보고**, 신규 로더 발명 금지(룰5)
+- 원본 호출만(비변경 — diff 없음): CAT-C 엔진풀(`signal_engines.py`/`master_scanner.py`, FULL-BT-1과 동일 import 경로), CAT-D `forward/shared.py`의 `try_add`(11단계, step11 execution_safety는 real 전용 → paper replay N/A skip 그대로), CAT-E 3파일(`trading/position_manager.py`/`tail_risk_gate.py`/`mega_trend_kill_bg.py`) evaluate
+- 변경 없음: `forward/ledger.py`, config_kv, `bitget_forward_trades`(paper), FULL-BT-2 batch/checkpoint 로직, FULL-BT-3 `report.py` 스키마(§2 키 그대로), CAT-B/F/G/N 원본
+
+### 변경 Spec
+
+**함수 시그니처 — 신규 없음, 내부 구현만 실동작화**
+```
+run_replay(symbol: str, market_type: str, start: int, end: int) -> list[dict]
+```
+
+**정책 (Ask 1~6 대응)**
+1. **OHLCV 소스**: universe_bt 로더 재사용 우선 조사 → 성공 시 import, 실패/구조 불일치 시 Adapter 제안 후 보고(신규 로더 발명 금지, 룰5). `market_type`별 소스 테이블(`BITGET_SPOT_*`/`BITGET_FUT_*`, `14_UNIVERSE-BT` §1 관례 재사용).
+2. **바 워크 루프**: `[start,end]` 구간 각 바에서 — (a) 미보유 심볼 → CAT-C 원본 candidate 생성 → `try_add` 원본 순서 그대로(step11 N/A skip) → 통과 시 격리 DB에 OPEN Adapter write, (b) 보유 심볼 → CAT-E 3파일 evaluate **원본 호출**을 그 바마다 순차 평가 → 트리거 시 CLOSED Adapter write. (현재의 "즉시 Adapter" 방식 폐기 — 실제 경과 바 수만큼 평가)
+3. **시간축**: `entry_date`/`exit_date`는 **캔들 타임스탬프**(바 자체 시각) 채택, wall-clock(now()) 아님. 사유 — backtest는 과거 재생이므로 wall-clock을 쓰면 모든 run이 실행 시점 동일 값이 되어 §2 `period_start`/`period_end` 정량표 기간 대조가 무의미해짐. `updated_at`(기록 시각)은 기존처럼 wall-clock 유지, entry_date/exit_date만 분리. Cursor는 FULL-BT-3 `report.py` 공유DB 필터가 현재 어떤 축을 쓰는지 재조사 후 정합 여부 1줄 보고(불일치 시 `report.py` Adapter만, 스키마 재작성 아님).
+4. **스코프**: `max_symbols` 파라미터로 소규모 파일럿 먼저(기존 `build_full_bt_shards` 재사용, 신규 파라미터화 최소) → 통과 후 전 유니버스 확장. 메모리 캡은 FULL-BT-2 기 확정값(`TIME_MACHINE_MAX_TABLES`/`TIME_MACHINE_MAX_BARS_PER_TABLE`, `bitget.infra.memory_policy`) 그대로 재사용, 재정의 금지(룰5).
+5. **완료 정의**: 격리 DB(`bitget_full_bt.sqlite`)에 실데이터 기반 row 존재 + `generate_full_bt_l1_report(market_type, run_id)` 호출 시 §2 정량표(SPOT/FUT 분리)에 non-flat 실측값 산출. **"합격/달성" 판정 문구 금지**(15_FULL-BT §3 Kill, 배너 원문 그대로 유지).
+6. **비접촉**: `forward/ledger.py`·`forward/shared.py`·`signal_engines.py`·exit 3파일 **원본** · config_kv · paper 원장 · CAT-J 미편입(§5 로드맵 그대로).
+
+### Config 변경 (있으면)
+없음 — config_kv 쓰기 전면 금지(FULL-BT-0~3과 동일 헌법 승계)
+
+### SPOT/FUT 분기
+- `market_type` 파라미터 관통, 공통 바 워크 로직에 하드코딩 금지(`CAT-SPOT-FUT_비대칭표` 인용만)
+- OHLCV 소스 테이블만 market_type별 분기(정책1) — 그 외 바 루프/try_add/exit 로직은 공통
+- SPOT SHORT는 ledger hard reject로 자연 0건 유지(FULL-BT-1/3 선례 그대로, 신규 분기 불필요)
+
+### 인접 CAT 영향
+- **CAT-C**: 없음 — 엔진풀 원본 import·호출만, diff 없음
+- **CAT-D**: 없음 — `try_add` 원본 호출만, `forward/shared.py` diff 없음 → **🔴 Critical 아님**(룰7: 원본 "변경" 시에만 대상, 본 Handoff은 읽기/호출 전용)
+- **CAT-E**: 없음 — 3파일 evaluate 원본 호출만, diff 없음 → **🔴 Critical 아님**(동일 사유)
+- **CAT-B/F/G/N**: 없음, 비접촉
+- **CAT-J**: 없음, 미편입 유지(FULL-BT-3 §5 로드맵 그대로)
+- **Track B(B1-LADDER)**: 없음, 병렬 독립 · 우선순위 R1a보다 낮음
+
+### 롤백 조건
+- `bitget/full_bt/harness.py` diff만 revert(git) — CAT-C/D/E 원본 무영향
+- 격리 DB(`bitget_full_bt.sqlite`) 해당 run_id row 삭제만으로 데이터 롤백 — paper/config_kv 무영향
+- 파일럿(`max_symbols` 소규모) 단계 이상 발견 시 전체 유니버스 확장 보류(정책4)
+
+### Cursor 지시
+- Targeted diff only — `bitget/full_bt/harness.py` 내부 로직만. CAT-C/D/E 신호엔진·try_add·exit 3파일 **원본 diff 금지**, import·호출만.
+- **루트 주식 경로 수정 금지** — bitget/ 하위만.
+- universe_bt OHLCV 로더 정확 경로/시그니처 조사 후 `CURSOR_TO_CLAUDE.md`에 `"재사용 소스: {실제 경로/함수명}"` 1줄 보고(임의 명명 금지, 룰5).
+- entry_date/exit_date 캔들축 전환과 `report.py` 필터 정합 여부 1줄 보고(정책3).
+- 충돌 시 Adapter 제안 후 디렉터 Ask.
+- 테스트: `pytest bitget/tests/full_bt/`(신규 케이스 — 다중 바 경과 후 exit 트리거 확인 · entry_date≠updated_at 케이스 · SPOT/FUT 소스 분기 · `max_symbols` 파일럿 idempotent resume 필수 포함)
+
+### 세션 종료 의무
+- `bitget/docs/work_phases/05_진행로그.md` FULL-BT-HIST-1 섹션
+- `bitget/docs/work_phases/00_전체현황판.md` SSOT 용어집에 `FULL-BT-HIST-1` 행 추가
+- `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md` 갱신(재사용 소스 보고 + entry_date 정합 여부)
+- `bitget/docs/work_phases/NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+- `bitget/docs/work_phases/09_디렉터_쉬운요약.md` / `NEXT_STEP.md` — 아래 갱신본 그대로 반영(룰13)
+
+### 위험도
+🟡 (신규 실데이터 바 루프 로직 · 결과는 격리 DB만 · CAT-D/E는 원본 호출뿐 diff 없음 · config_kv/paper 무접촉이나 다중바 상태추적 복잡도로 FULL-BT-3 대비 상향)
+
+---
+
+*버전 2026-08-24 · FULL-BT-HIST-1 Handoff · Architect: Claude Pro · Engineer: Cursor*
+
+---
+---
+
+# (룰13) 디렉터 문서 갱신본 — 그대로 덮어쓰기
+
+## `09_디렉터_쉬운요약.md`
+
+```markdown
+# 디렉터용 쉬운 요약 (비개발자 OK)
+
+> 갱신: 2026-08-24 · FULL-BT 트랙 재가동(진짜 시세 버전) Handoff 발급
+
+## 지금 한 줄
+지난번 "과거로 돌려본 결과 보고서"는 사실 진짜 시세가 아니라 평평한 연습용 가짜 데이터로 만든 것이었습니다(모의 훈련용 지도로 길을 그려본 것과 비슷해요). 이번엔 **진짜 과거 시세**로 다시 돌리는 작업을 Cursor에게 요청했습니다.
+
+신호등: 🟡 **FULL-BT-HIST-1 = Cursor 구현 대기(진짜 시세 연결)** · 🟢 이전 골격(FULL-BT-0~3, 배치·저장·보고서 틀)은 그대로 재사용 · 🟡 R1a 관측 계속
+
+## 비유로 설명
+- 이전 결과 = 종이 위에 그려본 시뮬레이션 지도
+- 이번 결과 = 실제 GPS 기록(진짜 과거 캔들)으로 같은 지도를 다시 그리는 것
+- "진짜 참고용" 숫자는 이번 작업이 끝나야 나옵니다. 이전 숫자는 참고조차 되지 않습니다(전부 가짜 평지 데이터였음).
+
+### 당신이 할 일
+1. Cursor에게 이 Handoff(FULL-BT-HIST-1) 전달 → 진짜 시세 연결 구현 요청
+2. 먼저 코인 몇 개만(파일럿) 돌려보고 이상 없으면 전체로 확대 — 처음부터 전체를 돌리지 않습니다
+3. 완료되면 Claude에게 다시 검증 요청 (지금과 같은 방식)
+4. 결과가 나와도 여전히 **"수익률 확정 아님"** — 진짜 합격 판정은 실거래 56일+(R6)에서만 나옵니다
+5. 매일 텔레그램 OPEN/CLOSED(R1a) 계속 확인
+```
+
+## `NEXT_STEP.md`
+
+```markdown
+# NEXT STEP
+
+> 갱신: 2026-08-24 · FULL-BT-HIST-1 Handoff 발급(실제 OHLCV 바 워크)
+
+## 지금 상태
+FULL-BT-0~3(골격·배치·체크포인트·리포트)은 완료였으나, `harness.run_replay`가 합성(가짜) OHLCV 스모크였음이 확인됨. 실제 히스토리 바 워크로 전환하는 **FULL-BT-HIST-1** Handoff 발급, Cursor 구현 대기.
+
+## 다음 행동
+1. Cursor: 위 FULL-BT-HIST-1 Handoff 기준 `bitget/full_bt/harness.py` 실데이터 바 워크 구현
+2. Cursor: universe_bt OHLCV 로더 재사용 경로 조사 후 `CURSOR_TO_CLAUDE.md`에 1줄 보고
+3. Cursor: `max_symbols` 소규모 파일럿 먼저 → 통과 후 전 유니버스 확장
+4. Cursor: 세션 종료 시 `05_진행로그.md`/`00_전체현황판.md`/`CURSOR_TO_CLAUDE.md`/`NEXT_ACTION.md` 갱신 → `WAIT_CLAUDE_OK`
+5. 디렉터: Cursor 완료 보고 오면 `CURSOR_TO_CLAUDE.md` 검증을 Claude에게 요청
+6. 병행: R1a 매일 관측 유지, 게이팅 없음
+7. FULL-BT 산출을 R6 대체·B1「달성」·LIVE 근거로 사용 금지(전 단계 공통, 실데이터 전환 후에도 동일)
+```
+
+---
+---
+
+*본 파일은 `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md`의 기존 최상단(현재 "FULL-BT-3 보완 검증 결과 + 트랙 종료" 블록) 바로 위에 그대로 붙여넣기 위한 prepend 블록입니다. Claude Pro는 실제 리포지토리 파일에 직접 쓰기 권한이 없어(프로젝트 지식은 읽기 전용 미러) 이 파일로 대신합니다 — 디렉터 또는 Cursor가 붙여넣기.*
+# CLAUDE → CURSOR · FULL-BT-3 보완 검증 결과 + 트랙 종료
+
+> **작성**: Claude Pro (Architect) · 2026-08-24 · [CAT-Q]
+> **상태**: **FULL-BT-3 보완 검증 = OK** · FULL-BT-0~3 로드맵 전체 완료 → **트랙 종료**
+
+## 판정: OK
+- (A) 공유 DB 시간창 필터, (B) 미측정 각주 — 원 스펙 항목4/항목3과 상충 없음
+- 비접촉 리스트 전부 확인 · 테스트 10 passed
+- 신규 코드 요청 없음 · 잔여 하드 격리는 디렉터 별도 Handoff만
+
+## 비차단 확인 (Cursor 이행)
+updated_at/entry_date/exit_date wall-clock 동일 축 — OUTBOX 1줄 보고
+
+## 다음 상태
+FULL-BT 트랙 **종료** · 우선순위 B1-LADDER R1a OBSERVE 복귀
+
+---
+---
+
 # CLAUDE → CURSOR · FULL-BT-3 Handoff (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
 
 > **작성**: Claude Pro (Architect) · 2026-08-23 · [CAT-Q]

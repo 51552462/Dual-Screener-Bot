@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **FULL-BT-3 WAIT_CURSOR_IMPL** · R1a OBSERVE | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-08-24 | FULL-BT-2 Claude OK · FULL-BT-3 Handoff 발행 |
+| **다음 Handoff** | **FULL-BT 파일럿 WAIT_DIRECTOR**(로컬 OHLCV=0) · R1a OBSERVE | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-08-25 | HIST-1 Claude OK · 파일럿 시도 · market DB에 1D OHLCV 없음 |
 
 ---
 
@@ -165,6 +165,8 @@
 | `15_FULL-BT_전체이식가상매매.md` | L1 전체이식 가상매매 SSOT · U-track·Track B 병렬 독립 | FULL-BT-0 | work_phases |
 | `FULL-BT-0` | 이식 범위·스키마·Kill·paper·로드맵 문서화 (코드 비접촉) | FULL-BT-0 | work_phases |
 | `bitget_full_bt.sqlite` | FULL-BT 격리 DB (paper/config_kv 비접촉) | FULL-BT-0 | FULL-BT-1 paths |
+| `FULL-BT-3` / `report.py` | §2 L1 리포트 · CAT-J 비편입 · banner+정량표 · **트랙 골격 Done** | FULL-BT-3 | `bitget/full_bt/report.py` |
+| `FULL-BT-HIST-1` | 실제 OHLCV 바 워크 · candle entry/exit · CAT-C/D/E 원본 호출 | FULL-BT-HIST-1 | `bitget/full_bt/harness.py` |
 | `13_B1_신뢰사다리.md` | B1 성공계약·렁 R0~R6·Kill·승인문구 SSOT | B1-LADDER-R0 | `docs/work_phases/` |
 | `B1-LADDER-R0` | 신뢰사다리 문서화 sub-phase (코드 비접촉) | B1-LADDER-R0 | work_phases |
 | `ENABLE_REAL_EXECUTION` | 실주문 마스터 스위치 (default false) | N | config_kv |
