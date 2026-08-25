@@ -19,6 +19,42 @@
 
 ---
 
+## FULL-BT-HIST-3 — Claude OK · VPS 실행 승인 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **Claude OK** (비차단 caveat 1: Handoff append 보관) |
+| **다음** | 커밋·푸시 → VPS dry(3)→10×2 · 5개 숫자 OUTBOX |
+| **금지** | 전체런 · lookback 지금 미착수 · 미분리 시 HIST-4 금지 |
+
+---
+
+## FULL-BT-HIST-3 — 호출/TF/warmup 분리 계측 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | HIST-2 엔진 미히트 재판정 OK · HIST-3 Handoff |
+| **산출** | `harness.py` full_bt_diag `tf` ALTER · engine_call/outcome/tf_coverage · `test_full_bt_hist3_diag.py` |
+| **비접촉** | CAT-C/B/D 원본 · 결과 trade 스키마 · 신규 테이블 없음 |
+| **테스트** | `pytest bitget/tests/full_bt/` **29 passed** |
+| **status** | **WAIT_CLAUDE_OK** · VPS dry→10×2는 OK·푸시 후 · 전체런 금지 |
+| **에스컬레이션** | trade_count=0 **3번째** 진단 — 미해결 시 디렉터 (HIST-4 금지) |
+
+---
+
+## FULL-BT-HIST-2 VPS dry→10×2 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **배포** | `18939bd` |
+| **dry (3)** | SPOT/FUT hit=0 reject=0 · paper 10→10 · summary `…T025428Z.json` |
+| **10×2** | SPOT/FUT hit=0 reject=0 · trade_count=0 · paper 10→10 · summary `…T025527Z.json` |
+| **분리** | try_add 전량 거절 **기각** · **엔진 미히트** 쪽 |
+| **caveat 1** | 결과 테이블 컬럼 = forward 클론 · `run_id` 없음 · ALTER 없음 |
+| **status** | **WAIT_CLAUDE_OK** (원인 재판정) · 전체런 금지 |
+
+---
+
 ## FULL-BT-HIST-2 — Claude OK · VPS dry→10×2 승인 [2026-08-25]
 
 | 항목 | 내용 |

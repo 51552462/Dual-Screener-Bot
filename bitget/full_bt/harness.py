@@ -4,10 +4,12 @@ IV L1 전체이식 가상매매 — 격리 리플레이 결과, LIVE 승격·R6 
 
 FULL-BT-HIST-1: run_replay uses real OHLCV bar walk (universe_bt._load_ohlcv reuse).
 FULL-BT-HIST-2: harness wrappers → full_bt_diag (engine_hit / gate_reject); CAT-C/D 원본 비접촉.
+FULL-BT-HIST-3: engine_call / outcome(candidate|none|exception) / tf_ohlcv_coverage — full_bt_diag 확장.
 """
 from __future__ import annotations
 
 import os
+from collections import Counter
 from contextlib import ExitStack, contextmanager
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, List, Optional, Union
@@ -31,7 +33,7 @@ OHLCV_LOADER = "bitget.analysis.universe_bt.replay._load_ohlcv"
 
 DateLike = Union[date, datetime, int, float, str]
 
-# FULL-BT-HIST-2 — 진단 전용 테이블 (결과 스키마 비접촉)
+# FULL-BT-HIST-2/3 — 진단 전용 테이블 (결과 스키마 비접촉). HIST-3: tf 컬럼 확장.
 _DIAG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS full_bt_diag (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +48,36 @@ CREATE TABLE IF NOT EXISTS full_bt_diag (
     updated_at TEXT NOT NULL
 );
 """
+
+
+def ensure_diag_schema(db_path: Optional[str] = None) -> str:
+    """Create full_bt_diag; HIST-3 adds optional ``tf`` column (ALTER, no new table)."""
+    path = db_path or full_bt_db_path()
+    from bitget.infra.shared_db_connector import get_connection
+
+    conn = get_connection(path)
+    try:
+        conn.executescript(_DIAG_SCHEMA)
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(full_bt_diag)").fetchall()}
+        if "tf" not in cols:
+            conn.execute(
+                "ALTER TABLE full_bt_diag ADD COLUMN tf TEXT NOT NULL DEFAULT ''"
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return path
+
+
+def map_reject_msg_to_step(msg: str) -> int:
+    """CAT-D §4 step 1~10; unmapped → 0 (invent 금지, 관측만)."""
+    s = str(msg or "")
+    for step, keys in _REJECT_STEP_KEYWORDS:
+        for k in keys:
+            if k.lower() in s.lower() or k in s:
+                return int(step)
+    return 0
+
 
 # CAT-D §4 거절 메시지 → step 매핑 (원본 미수정 · 관측만). 미매칭=0
 # 키워드 = ledger try_add 실제 반환문 기준 (broad false-positive 금지)
@@ -74,29 +106,6 @@ _REJECT_STEP_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
 ]
 
 
-def ensure_diag_schema(db_path: Optional[str] = None) -> str:
-    path = db_path or full_bt_db_path()
-    from bitget.infra.shared_db_connector import get_connection
-
-    conn = get_connection(path)
-    try:
-        conn.executescript(_DIAG_SCHEMA)
-        conn.commit()
-    finally:
-        conn.close()
-    return path
-
-
-def map_reject_msg_to_step(msg: str) -> int:
-    """CAT-D §4 step 1~10; unmapped → 0 (invent 금지, 관측만)."""
-    s = str(msg or "")
-    for step, keys in _REJECT_STEP_KEYWORDS:
-        for k in keys:
-            if k.lower() in s.lower() or k in s:
-                return int(step)
-    return 0
-
-
 def record_diag(
     db_path: str,
     *,
@@ -108,8 +117,11 @@ def record_diag(
     step: Optional[int] = None,
     count: int = 1,
     detail: str = "",
+    tf: str = "",
 ) -> None:
     """Insert one diag row into full_bt_diag (harness Adapter only)."""
+    if int(count) <= 0 and metric != "tf_ohlcv_coverage":
+        return
     ensure_diag_schema(db_path)
     from bitget.infra.clock import utc_datetime_str
     from bitget.infra.shared_db_connector import get_connection
@@ -119,8 +131,8 @@ def record_diag(
         conn.execute(
             """
             INSERT INTO full_bt_diag (
-                run_id, market_type, symbol, metric, engine_name, step, count, detail, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?)
+                run_id, market_type, symbol, metric, engine_name, step, count, detail, updated_at, tf
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 str(run_id or ""),
@@ -132,6 +144,7 @@ def record_diag(
                 int(count),
                 str(detail or "")[:500],
                 utc_datetime_str(),
+                str(tf or ""),
             ),
         )
         conn.commit()
@@ -140,7 +153,7 @@ def record_diag(
 
 
 def summarize_diag(db_path: str, run_id: str, market_type: str) -> dict[str, Any]:
-    """Read-only aggregate for OUTBOX (SPOT/FUT 분리)."""
+    """Read-only aggregate for OUTBOX (SPOT/FUT 분리). HIST-2 + HIST-3 keys."""
     ensure_diag_schema(db_path)
     mt = str(market_type).lower()
     from bitget.infra.shared_db_connector import get_connection
@@ -166,12 +179,72 @@ def summarize_diag(db_path: str, run_id: str, market_type: str) -> dict[str, Any
             """,
             (run_id, mt),
         ).fetchall()
+        calls = conn.execute(
+            """
+            SELECT engine_name, symbol, COALESCE(tf, ''), SUM(count)
+            FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='engine_call'
+            GROUP BY engine_name, symbol, COALESCE(tf, '')
+            """,
+            (run_id, mt),
+        ).fetchall()
+        outcomes = conn.execute(
+            """
+            SELECT metric, engine_name, symbol, COALESCE(tf, ''), SUM(count),
+                   GROUP_CONCAT(DISTINCT detail)
+            FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric LIKE 'engine_outcome_%'
+            GROUP BY metric, engine_name, symbol, COALESCE(tf, '')
+            """,
+            (run_id, mt),
+        ).fetchall()
+        cov = conn.execute(
+            """
+            SELECT COALESCE(tf, ''), MAX(count), GROUP_CONCAT(DISTINCT symbol)
+            FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='tf_ohlcv_coverage'
+            GROUP BY COALESCE(tf, '')
+            """,
+            (run_id, mt),
+        ).fetchall()
     finally:
         conn.close()
+
     engine_hit_count: dict[str, dict[str, int]] = {}
     for eng, sym, n in hits:
         engine_hit_count.setdefault(str(eng), {})[str(sym)] = int(n or 0)
     gate_reject_count = {int(s): int(n or 0) for s, n in rejects}
+
+    engine_call_count: dict[str, dict[str, dict[str, int]]] = {}
+    call_total = 0
+    for eng, sym, tfx, n in calls:
+        n_i = int(n or 0)
+        call_total += n_i
+        engine_call_count.setdefault(str(eng), {}).setdefault(str(sym), {})[
+            str(tfx or "")
+        ] = n_i
+
+    engine_call_outcome: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
+    outcome_totals = {"candidate": 0, "none": 0, "exception": 0}
+    exception_types: dict[str, int] = {}
+    for metric, eng, sym, tfx, n, detail in outcomes:
+        key = str(metric).replace("engine_outcome_", "")
+        n_i = int(n or 0)
+        outcome_totals[key] = outcome_totals.get(key, 0) + n_i
+        engine_call_outcome.setdefault(str(eng), {}).setdefault(str(sym), {}).setdefault(
+            str(tfx or ""), {}
+        )[key] = n_i
+        if key == "exception" and detail:
+            for part in str(detail).split(","):
+                p = part.strip()
+                if p:
+                    exception_types[p] = exception_types.get(p, 0) + n_i
+
+    tf_ohlcv_coverage: dict[str, bool] = {}
+    for tfx, mx, _syms in cov:
+        # count==1 means present for that probe row; OR across symbols via MAX
+        tf_ohlcv_coverage[str(tfx or "")] = bool(int(mx or 0) > 0)
+
     return {
         "run_id": run_id,
         "market_type": mt,
@@ -179,6 +252,15 @@ def summarize_diag(db_path: str, run_id: str, market_type: str) -> dict[str, Any
         "gate_reject_count": gate_reject_count,
         "engine_hit_total": sum(sum(v.values()) for v in engine_hit_count.values()),
         "gate_reject_total": sum(gate_reject_count.values()),
+        # HIST-3
+        "engine_call_count": engine_call_count,
+        "engine_call_total": call_total,
+        "engine_call_outcome": engine_call_outcome,
+        "engine_call_outcome_totals": outcome_totals,
+        "engine_exception_types": exception_types,
+        "tf_ohlcv_coverage": tf_ohlcv_coverage,
+        "walk_tf": REUSED_SCANNER_TIMEFRAMES[0],
+        "probed_tfs": list(REUSED_SCANNER_TIMEFRAMES),
     }
 
 
@@ -414,7 +496,7 @@ def run_replay(
 ) -> list[dict]:
     """FULL-BT-HIST-1: real OHLCV bar walk → try_add / CAT-E exit on isolated DB.
 
-    FULL-BT-HIST-2: harness-level engine_hit / gate_reject diag → ``full_bt_diag``.
+    FULL-BT-HIST-2/3: harness diag → ``full_bt_diag`` (hit/reject + call/outcome/tf).
     Signature kept batch-compatible. ``entry_date``/``exit_date`` = candle axis.
     """
     from bitget.analysis.universe_bt.replay import _bar_ts_from_date, _load_ohlcv
@@ -447,9 +529,49 @@ def run_replay(
     if not callable(eng_fn):
         raise TypeError(f"engine not callable: {eng_name}")
 
+    # HIST-3: TF coverage probe (loader read-only; no loader edit)
+    for probe_tf in REUSED_SCANNER_TIMEFRAMES:
+        probe_df = _load_ohlcv(
+            str(symbol), mt, db_path=market_db, timeframe=probe_tf
+        )
+        present = probe_df is not None and not probe_df.empty
+        record_diag(
+            path,
+            run_id=rid,
+            market_type=mt,
+            metric="tf_ohlcv_coverage",
+            symbol=str(symbol),
+            tf=str(probe_tf),
+            count=1 if present else 0,
+            detail=f"bars={0 if not present else len(probe_df)}",
+        )
+
     df = _load_ohlcv(str(symbol), mt, db_path=market_db, timeframe=tf)
     if df is None or df.empty:
         logger.warning("full_bt no OHLCV for %s %s", mt, symbol)
+        # HIST-3: call_count=0 explicit (경로 미실행 vs none 구분)
+        record_diag(
+            path,
+            run_id=rid,
+            market_type=mt,
+            metric="engine_call",
+            symbol=str(symbol),
+            engine_name=eng_name,
+            tf=tf,
+            count=0,
+            detail="no_walk_ohlcv",
+        )
+        for kind in ("candidate", "none", "exception"):
+            record_diag(
+                path,
+                run_id=rid,
+                market_type=mt,
+                metric=f"engine_outcome_{kind}",
+                symbol=str(symbol),
+                engine_name=eng_name,
+                tf=tf,
+                count=0,
+            )
         return events
 
     # Benchmark for engine(window, bench, tf) — BTC close align (U1 선례 재사용)
@@ -469,6 +591,10 @@ def run_replay(
         return GateResult(ExecutionGateOutcome.APPROVED, "full_bt_hist_gross_ok", {})
 
     min_i = max(0, REUSED_MIN_BARS - 1)
+    # HIST-3: in-memory flush per symbol (avoid per-bar INSERT storm)
+    call_n = 0
+    outcome_n = {"candidate": 0, "none": 0, "exception": 0}
+    exc_types: Counter[str] = Counter()
 
     with isolated_full_bt_book(path):
         with ExitStack() as stack:
@@ -551,14 +677,19 @@ def run_replay(
                             )
                         continue
 
-                    # Flat: CAT-C engine → try_add (step11 N/A) + HIST-2 diag wrappers
+                    # Flat: CAT-C engine → try_add (step11 N/A) + HIST-2/3 diag
+                    call_n += 1
                     try:
                         hit, sig_type, _out_df, dbg = eng_fn(window, bench, tf)
                     except Exception as ex:
+                        outcome_n["exception"] += 1
+                        exc_types[type(ex).__name__] += 1
                         logger.debug("engine skip %s %s: %s", eng_name, symbol, ex)
                         continue
                     if not hit:
+                        outcome_n["none"] += 1
                         continue
+                    outcome_n["candidate"] += 1
                     # HIST-2: candidate 생성 계측 (원본 엔진 미수정)
                     record_diag(
                         path,
@@ -569,6 +700,7 @@ def run_replay(
                         engine_name=eng_name,
                         count=1,
                         detail=str(sig_type or "")[:200],
+                        tf=tf,
                     )
                     dbg = dbg if isinstance(dbg, dict) else {}
                     side = str(dbg.get("side", "LONG")).upper()
@@ -618,16 +750,45 @@ def run_replay(
                             step=step,
                             count=1,
                             detail=str(msg or "")[:500],
+                            tf=tf,
                         )
                         logger.debug("try_add reject %s step=%s: %s", symbol, step, msg)
                 finally:
                     stack_bar.stop()
 
+    # HIST-3 flush (call / outcome) — once per symbol walk
+    record_diag(
+        path,
+        run_id=rid,
+        market_type=mt,
+        metric="engine_call",
+        symbol=str(symbol),
+        engine_name=eng_name,
+        tf=tf,
+        count=call_n,
+    )
+    for kind, n in outcome_n.items():
+        record_diag(
+            path,
+            run_id=rid,
+            market_type=mt,
+            metric=f"engine_outcome_{kind}",
+            symbol=str(symbol),
+            engine_name=eng_name,
+            tf=tf,
+            count=int(n),
+            detail=",".join(sorted(exc_types.keys()))
+            if kind == "exception" and exc_types
+            else "",
+        )
+
     logger.info(
-        "full_bt HIST done sym=%s events=%s step11=%s",
+        "full_bt HIST done sym=%s events=%s step11=%s calls=%s outcome=%s",
         symbol,
         len(events),
         step11["policy"],
+        call_n,
+        dict(outcome_n),
     )
     return events
 

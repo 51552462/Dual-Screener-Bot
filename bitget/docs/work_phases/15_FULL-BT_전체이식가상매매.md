@@ -80,7 +80,8 @@ CAGR 과신 · 승률 단정 · 연복리 환산 과대표현 금지 — **정�
 | **FULL-BT-2** | 배치·체크포인트 · `TIME_MACHINE_MAX_*` 재사용 | 🟡 | **✅ Done · Claude OK** |
 | **FULL-BT-3** | 리포트 — §2 스키마 · CAT-J 비편입 | 🟢 | **✅ Done · Claude OK 2026-08-24** |
 | **FULL-BT-HIST-1** | `run_replay` 실제 OHLCV 바 워크 (캔들축) | 🟡 | 파일럿 미통과(계측 무효) → HIST-2 |
-| **FULL-BT-HIST-2** | engine_hit / gate_reject 진단 계측 (`full_bt_diag`) | 🟢 | **Claude OK** · VPS dry→10×2 · 전체런 금지 |
+| **FULL-BT-HIST-2** | engine_hit / gate_reject 진단 계측 (`full_bt_diag`) | 🟢 | **Claude OK** · 엔진 미히트 재판정 |
+| **FULL-BT-HIST-3** | call/outcome/tf_coverage 분리 계측 | 🟢 | **WAIT_CLAUDE_OK** · 전체런 금지 · 3회 진단 |
 
 **비접촉 (FULL-BT-0~3 공통 헌법):**  
 `bitget_forward_trades` · `config_kv` · CAT-B/C/D/E/F/G/N **원본 수정** · `ENABLE_REAL_EXECUTION` · U-track `14_` 본문 재작성.

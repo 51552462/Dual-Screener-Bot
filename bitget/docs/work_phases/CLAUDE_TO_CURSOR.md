@@ -1,3 +1,78 @@
+# CLAUDE → CURSOR · FULL-BT-HIST-3 스펙 OK → VPS dry→10×2 실행
+# (append 보관 · 덮어쓰기 금지 · 2026-08-25)
+
+> **작성**: Claude Pro (Architect) · 2026-08-25 · [CAT-Q]
+> **상태**: **FULL-BT-HIST-3 검증 = OK (비차단 caveat 1건)** · **VPS dry→10×2 실행 승인** · 코드 diff 종료
+> **에스컬레이션**: 3원인 미분리 시 HIST-4 금지 · 디렉터 에스컬레이션만
+
+---
+
+## [CAT-Q] 진단&레거시 — FULL-BT-HIST-3 스펙 OK → VPS dry→10×2 실행
+
+### sub-phase ID
+FULL-BT-HIST-3 (VPS 실행 단계)
+
+### SSOT (변경 금지)
+- 코드 diff 종료(스펙 OK) — 이번 라운드는 실행만
+- full_bt_diag(tf 확장 완료) · CAT-C/B/D 원본 비접촉 유지
+
+### 변경 Spec
+- VPS 실행: 회신 원문 명령 그대로(git pull → dry(3) → 10×2), 신규 명령 추가 없음
+- 보고 키(5개 숫자만): engine_call_total · engine_call_outcome_totals · tf_ohlcv_coverage · exception_types · HIST-2 hit/reject
+
+### Config 변경
+없음
+
+### 인접 CAT 영향
+- CAT-C/B/D: 읽기만(재확인) · 🔴 아님
+
+### 롤백 조건
+diag 테이블 `tf` 컬럼 무시/삭제만으로 완전 롤백 — 결과 trade 스키마 무영향
+
+### Cursor 지시
+- 커밋·푸시 후 VPS: dry(3) → 10×2 순서 그대로. **전체 유니버스 런 금지 유지**
+- 보고는 숫자만(해석·재판정은 Claude 몫)
+- "call>0 ∧ TF 전부 True ∧ none 지배" 확인되면 → lookback(N bars) 조사는 **별도 Handoff 대기**, 지금 미착수
+- 3원인 미분리(여전히 판별 불가) → **HIST-4 설계 금지**, `CURSOR_TO_CLAUDE.md`에 디렉터 에스컬레이션 필요로 명시
+- 이번 Handoff 원문 `CLAUDE_TO_CURSOR.md`에 **append 보관**(덮어쓰기 금지, 재발 방지)
+
+### 위험도
+🟢 (read-only 진단 VPS 실행 · 실자금/config_kv 미접촉)
+
+### 세션 종료 의무
+- 05_진행로그.md HIST-3 VPS 결과 섹션
+- 00_전체현황판.md
+- CURSOR_TO_CLAUDE.md 4개 숫자 + 3원인 판별 결과
+- NEXT_ACTION.md → WAIT_CLAUDE_OK 유지
+
+### caveat (비차단)
+HIST-3 원 Handoff 원문 보관 누락 재발 — 이후 append 의무.
+
+---
+
+# CLAUDE → CURSOR · FULL-BT-HIST-3 Handoff (엔진 호출/TF/warmup 분리 계측)
+# (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
+
+> **작성**: Claude Pro (Architect) · 2026-08-25 · [CAT-Q]
+> **상태**: HIST-2 원인 재판정 **OK**(엔진 미히트) · **FULL-BT-HIST-3** 진단 Handoff · 🟢
+> **에스컬레이션**: 동일 trade_count=0 이슈 **3번째** 진단 — HIST-3도 미해결 시 HIST-4 금지·디렉터 에스컬레이션
+
+---
+
+## HIST-2 재판정 요약
+- Ask1: 엔진 미히트 재판정 **OK** (hit=0 ∧ reject=0 · dry·10×2 결정론적 0)
+- Ask2: **HIST-3** — 후보 (1) TF 갭 (2) warmup/lookback (3) 호출 경로 미실행 — **계측만·수정 아님**
+- Ask3: 전체 유니버스 런 **금지 유지**
+
+### Spec (요약)
+- `engine_call_count[engine][symbol][mt][tf]` — 함수 진입
+- `engine_call_outcome` — candidate / none / exception
+- `tf_ohlcv_coverage[mt][tf] -> bool` — 하니스가 로드 가능한 TF
+- `full_bt_diag` **확장 우선** · 하니스 wrapper만 · CAT-C/B 원본 금지
+- dry(2~3) → 10×2 · pytest full_bt · OUTBOX에 4개 판정 정책 숫자 · WAIT_CLAUDE_OK
+
+---
+
 # CLAUDE → CURSOR · FULL-BT-HIST-2 Claude OK + VPS dry→10×2 실행 승인
 # (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
 
