@@ -176,6 +176,8 @@ def run_full_bt_batch(
                     start_d,
                     end_d,
                     full_db,
+                    market_db=market_db,
+                    run_id=run_id,
                 )
                 save_full_bt_checkpoint(
                     run_id,
@@ -209,6 +211,8 @@ def run_full_bt_batch(
             f"paper bitget_forward_trades invariant broken: {paper_before} -> {paper_after}"
         )
 
+    from bitget.full_bt.harness import summarize_diag
+
     out = {
         "run_id": run_id,
         "market_type": mt,
@@ -221,6 +225,7 @@ def run_full_bt_batch(
         "paper_log": paper_log,
         "reused_time_machine": dict(REUSED_TIME_MACHINE),
         "tf_reused": list(REUSED_SCANNER_TIMEFRAMES),
+        "diag": summarize_diag(full_db, run_id, mt),
     }
     logger.info("full_bt_batch done %s", {k: out[k] for k in out if k != "paper_log"})
     return out

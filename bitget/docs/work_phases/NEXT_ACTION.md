@@ -1,5 +1,7 @@
 # NEXT_ACTION — Bitget
 
+> SSOT 별칭: `track_b_NEXT_ACTION.md` 와 동기화
+
 | 필드 | 값 |
 |------|-----|
 | **주 트랙** | **B1-LADDER-R1a** · **OBSERVE** |

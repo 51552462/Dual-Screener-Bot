@@ -84,7 +84,7 @@ def test_resume_idempotency_and_paper_invariant(tmp_path):
 
     calls: list[tuple] = []
 
-    def _fake_replay(mt, symbol, engine, start, end, db_path):
+    def _fake_replay(mt, symbol, engine, start, end, db_path, **_kw):
         calls.append((mt, symbol, engine, start, end, db_path))
 
     with mock.patch("bitget.forward.shared.DB_PATH", paper), mock.patch(

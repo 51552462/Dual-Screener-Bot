@@ -1,3 +1,104 @@
+# CLAUDE → CURSOR · FULL-BT-HIST-2 Claude OK + VPS dry→10×2 실행 승인
+# (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
+
+> **작성**: Claude Pro (Architect) · 2026-08-25 · [CAT-Q]
+> **상태**: **FULL-BT-HIST-2 검증 = OK (비차단 caveat 2건)** · **VPS dry→10×2 실행 승인** · 추가 코드 변경 없음
+> **병행**: B1-LADDER-R1a OBSERVE 유지 (게이팅 없음)
+
+---
+
+## FULL-BT-HIST-2 검증 결과: OK
+
+Spec 1~6 대조 통과. 위험도 🟢 유지. CAT-C/D 원본 비접촉 확인.
+
+**비차단 caveat**
+1. 다음 보고 1줄: `bitget_full_bt.sqlite` **FULL-BT 결과 테이블**(`bitget_forward_trades` 클론·report §2) 컬럼 목록 불변 여부 (paper 라이브 원장과 별개로 명시)
+2. 기록용: Handoff는 harness-only였으나 batch.py·pilot.sh까지 FULL-BT 스캐폴드 확장 — 🔴 아님. 이후 유사 확장 시 사전 Ask
+
+**실행 승인 (코드 변경 없음)**
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_full_bt_hist_pilot.sh
+# 통과 시
+BITGET_FULL_BT_MAX_SYMBOLS=10 bash bitget/deploy/run_full_bt_hist_pilot.sh
+```
+**전체 유니버스 런: 금지 유지**
+
+### 결과 보고 (`CURSOR_TO_CLAUDE.md`)
+- spot.diag / futures.diag — engine_hit_total · gate_reject_count
+- hit=0 vs reject>0 분리 → HIST-1 병기 원인 재판정
+- caveat 1 컬럼 불변 1줄 · paper before=after
+
+---
+
+# [CAT-Q] FULL-BT-HIST-1 파일럿 판정 → FULL-BT-HIST-2 진단 Handoff
+
+> 이 파일은 3개 섹션으로 구성. 각 섹션을 해당 대상 파일에 반영.
+> 대상: ① `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` ② `bitget/docs/work_phases/09_디렉터_쉬운요약.md` ③ `bitget/docs/work_phases/NEXT_STEP.md`
+
+---
+
+## ① CLAUDE_TO_CURSOR.md 반영분
+
+### 판정: trade_count=0 → **미통과 (b) 진단 Handoff 필요**
+
+| # | 항목 | 판정 |
+|---|------|------|
+| 1 | SPOT/FUT 정량 | 참고만 — 값 0 자체는 무해 |
+| 2 | caveat | OK — 빈 테이블, 혼입 관측 없음 |
+| 3 | 개선단서 | **FAIL** — step1~10 전부 0, side_asymmetry 전부 0 → 계측 무효 |
+| 4 | paper | OK — before=after=10 |
+| 5 | 배너 | OK |
+
+**이유 (1줄):** gate_bottleneck 전부 0/N/A는 "거절이 없었다"와 "거절 이벤트가 기록 자체가 안 됐다"를 구분 못 함. Cursor 본인 보고에도 원인이 "엔진 hit 없음 또는 try_add 전량 미통과" 2택 병기 — 상호 배타적 원인을 현재 계측으로 특정 불가. 하니스는 완주했지만 "동작 검증"은 안 된 상태이므로 파일럿 목적(FULL-BT-0) 미충족.
+
+**전체 유니버스 런: 금지 유지** (FULL-BT-0 §6 원칙 그대로).
+
+---
+
+### [CAT-Q] FULL-BT-HIST-2 — 원인 분리 계측 (진단 전용, 정책 변경 없음)
+
+**sub-phase ID:** HIST-2
+
+**SSOT (변경 금지)**
+- 5종 엔진 / `forward/shared.py` try_add / `master_scanner.py` — 원본 수정 금지 (FULL-BT-0 비접촉 승계)
+- 계측은 FULL-BT-1 하니스(read-only 드라이버) 레벨 Adapter로만 삽입
+
+**Spec**
+- `engine_hit_count[engine_name][symbol][market_type]` — 5종 엔진 + master_scanner pre-candidate hook이 candidate 생성한 횟수. 원본 콜 전/후 카운트하는 하니스 wrapper만.
+- `gate_reject_count[step][market_type]` — `try_add_virtual_position(...)` 진입점 wrapper에서 반환/예외의 거절 사유를 CAT-D §4 step 1~10에 매핑해 카운트 (11=execution_safety real-only이므로 paper 경로는 그대로 N/A)
+- 저장: `bitget_full_bt.sqlite` 신규 진단 전용 테이블(`full_bt_diag`) — 기존 결과 스키마 비접촉
+
+**SPOT/FUT 분기**
+공통 로직 + market_type 파라미터로 분리 집계, 합산 금지 (SPOT-FUT 표 원칙 승계)
+
+**인접 CAT 영향**
+- CAT-D: 읽기만 — `try_add_virtual_position` 반환/예외 관측, 내부 미수정 → Adapter
+- CAT-C: 읽기만 — 엔진 호출 지점 wrapper → Adapter
+- 🔴 Critical 아님 (진단 read-only, 실행/게이트 정책 변경 없음)
+
+**롤백 조건**
+- wrapper가 하니스 실행시간을 유의미하게 늘리면 제거 후 표본 축소 재시도
+
+**Cursor 지시**
+- Targeted diff only — 하니스 드라이버(FULL-BT-1 파일) 내부에만 wrapper 추가
+- CAT-C/D 원본 파일 수정 금지
+- 소표본(SPOT/FUT 각 2~3심볼) dry 확인 → 통과 시 10×2 재실행
+- 테스트: `pytest bitget/tests/full_bt`
+
+**세션 종료 의무**
+- `05_진행로그.md` HIST-2 섹션
+- `00_전체현황판.md` Phase·SSOT
+- `CURSOR_TO_CLAUDE.md` 결과 회신
+- `NEXT_ACTION.md` → `WAIT_CLAUDE_OK`
+
+**위험도:** 🟢 (읽기 전용 계측, 정책/실행 로직 변경 없음)
+
+---
+
+---
+
 # CLAUDE → CURSOR · FULL-BT-HIST-1 Claude OK + 파일럿 실런 지시
 # (기존 CLAUDE_TO_CURSOR.md 최상단에 붙여넣기)
 

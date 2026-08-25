@@ -19,17 +19,44 @@
 
 ---
 
+## FULL-BT-HIST-2 — Claude OK · VPS dry→10×2 승인 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **Claude OK** (비차단 caveat 2건) |
+| **caveat 1** | FULL-BT 결과 테이블(`bitget_full_bt` 내 trades 클론) 컬럼 불변 → VPS 보고 시 1줄 확인 |
+| **caveat 2** | batch.py·pilot.sh 확장 — 기록용(🔴 아님) |
+| **다음** | 코드 변경 없음 · VPS dry(3)→10×2 · 결과 OUTBOX → 원인 재판정 |
+| **금지** | 전체 유니버스 런 |
+
+### caveat 1 선확인 (로컬 diff · VPS 전)
+HIST-2 diff는 `CREATE TABLE IF NOT EXISTS full_bt_diag`만 추가. `bitget_forward_trades` / checkpoint / report §2 **ALTER 없음** (결과 스키마 컬럼 불변).
+
+---
+
+## FULL-BT-HIST-2 — 원인 분리 진단 계측 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | HIST-1 파일럿 미통과(Claude: trade_count=0 · gate 계측 무효) · HIST-2 Handoff |
+| **산출** | `harness.py` full_bt_diag + wrappers · `batch.py` run_id/diag · pilot summary `diag` · `test_full_bt_hist2_diag.py` |
+| **비접촉** | CAT-C/D/E 원본 · paper · config_kv · 결과 trade 스키마 |
+| **테스트** | `pytest bitget/tests/full_bt/` **26 passed** |
+| **status** | **WAIT_CLAUDE_OK** · VPS dry(3)→10×2는 푸시 후 · 전체런 금지 |
+| **Kill** | IV L1 참고만 · LIVE/R6/B1「달성」 금지 |
+
+---
+
 ## FULL-BT-HIST-1 파일럿 실런 시도 [2026-08-25]
 
 | 항목 | 내용 |
 |------|------|
 | **선행** | FULL-BT-HIST-1 **Claude OK** · 파일럿 지시(max_symbols=10) |
-| **실행** | SPOT `pilot-spot-20260825T021558Z` · FUT `pilot-fut-20260825T021558Z` · resume=true |
-| **결과** | symbol_count=**0** / batches_run=**0** (양 시장) |
-| **원인** | 로컬 `bitget_market_data.sqlite` OHLCV 테이블 0 · live∩ohlcv=0 |
-| **paper** | before=after **0=0** |
-| **status** | **WAIT_DIRECTOR** (OHLCV 경로/VPS) |
-| **코드** | diff 없음 (실행만) |
+| **로컬** | OHLCV=0 → symbol_count=0 (실패) |
+| **VPS** | SPOT/FUT 각 10심볼 · batches_run=10 · **trade_count=0** · paper 10=10 · banner_ok |
+| **caveat** | `run_id` 컬럼 없음 · 결과 테이블 0→0 |
+| **status** | **WAIT_CLAUDE_OK** (파일럿 결과 검증) |
+| **코드** | diff 없음 (실행만 · `e647682`) |
 
 ---
 

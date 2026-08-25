@@ -1,37 +1,25 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
 > **갱신**: 2026-08-25  
-> **유형**: **FULL-BT-HIST-1 Claude OK 수신** · **파일럿 실런 시도** · **데이터 블로커** · **WAIT_DIRECTOR** (OHLCV 경로)
+> **유형**: **FULL-BT-HIST-2 Claude OK 수신** · **VPS dry→10×2 대기** (푸시 후 실행)  
+> **선행**: HIST-2 스펙 OK (비차단 caveat 2건)
 
 ---
 
-## HIST-1 코드 판정
-Claude OK(비차단 caveat 1건) 수령 · Handoff 파일 `CLAUDE_TO_CURSOR.md` 최상단 보관 완료.
+## Claude OK 수령 · 실행 대기
 
-## 파일럿 실런 결과 (로컬 PC)
+스펙 검증 OK. 코드 추가 변경 없음. VPS dry→10×2 승인됨 — **커밋/푸시 후** coin VPS에서 실행.
 
-| 항목 | SPOT | FUTURES |
-|------|------|---------|
-| run_id | `pilot-spot-20260825T021558Z` | `pilot-fut-20260825T021558Z` |
-| max_symbols | 10 | 10 |
-| symbol_count / batches_run | **0 / 0** | **0 / 0** |
-| trade_count / total_return_pct / mdd_pct | N/A (집계 대상 없음) | N/A |
+### caveat 1 (선확인 · VPS 보고에도 재기재)
+HIST-2 diff = `full_bt_diag` **신규 CREATE만**. `bitget_full_bt.sqlite` 결과 테이블(`bitget_forward_trades` 클론) · `bitget_full_bt_checkpoint` · report §2 **컬럼 ALTER 없음** → FULL-BT 결과 스키마 불변.
 
-**원인 (팩트):** `market_db_read_path()` → `bitget/bitget_market_data.sqlite` (32KB). 테이블은 `strategy_registry` 등만 존재, **`BITGET_SPOT_*_1D` / `BITGET_FUT_*_1D` OHLCV = 0**. live∩ohlcv n=0 → `select_run_symbols` eligible=0. 코드/Handoff 문제가 아니라 **로컬에 히스토리 시세 DB가 없음**.
+### caveat 2 (기록 수용)
+Handoff harness-only 대비 batch.py·pilot.sh 확장 — FULL-BT 스캐폴드 내부·🔴 아님. 이후 유사 시 사전 Ask.
 
-### 지시 5항 보고
-1. SPOT/FUT 정량표: 실행 가능 심볼 0 → trade_count 미산출 (가짜 숫자 생성 안 함, 룰5)
-2. caveat: 결과 테이블 `run_id` 컬럼 **없음**(스키마 클론). 이번 런 트레이드 0 · 테이블 전체도 신규/빈 수준 — 혼입 관측 불가(데이터 없어 미발생)
-3. gate_bottleneck / side_asymmetry: 집계 대상 0이라 슬롯 기본값만 (실측 미발생)
-4. paper before=after: **0=0** (불변 확인)
-5. 배너: report 호출 시 L1 배너 원문 유지(코드 경로) — 실측 row 없음
+### VPS 보고 예정 항목 (실행 후 본 파일 갱신)
+1. spot.diag / futures.diag — `engine_hit_total` · `gate_reject_count`
+2. hit=0 vs reject>0 분리 여부
+3. caveat 1 컬럼 불변 재확인 1줄
+4. paper `bitget_forward_trades` before=after
 
-## Ask (디렉터)
-파일럿을 완료하려면 **OHLCV가 있는 market DB**가 필요합니다.
-- VPS에서 파일럿 실행, 또는
-- `BITGET_DB_STORAGE_PATH`(또는 해당 market sqlite)를 OHLCV 포함 경로로 지정
-
-경로 확정 후 Cursor가 **동일 파라미터**(max_symbols=10, SPOT/FUT 각 1회, pilot-{ts})로 재실행·5항 보고하겠습니다. **신규 코드/스키마 선확장 없음.**
-
-## 비접촉
-파일럿은 실행만 · HIST-1/원본 CAT diff 없음.
+**전체 유니버스 런: 금지 유지**

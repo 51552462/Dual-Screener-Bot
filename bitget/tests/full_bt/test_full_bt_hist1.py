@@ -226,7 +226,7 @@ def test_max_symbols_pilot_resume_idempotent(tmp_path):
 
     calls = []
 
-    def _fake(mt, symbol, engine, start, end, db_path):
+    def _fake(mt, symbol, engine, start, end, db_path, **_kw):
         calls.append((mt, symbol, start, end))
 
     with mock.patch("bitget.forward.shared.DB_PATH", paper), mock.patch(

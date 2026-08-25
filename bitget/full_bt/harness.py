@@ -3,6 +3,7 @@
 IV L1 전체이식 가상매매 — 격리 리플레이 결과, LIVE 승격·R6 대체·B1「달성」 판정 금지.
 
 FULL-BT-HIST-1: run_replay uses real OHLCV bar walk (universe_bt._load_ohlcv reuse).
+FULL-BT-HIST-2: harness wrappers → full_bt_diag (engine_hit / gate_reject); CAT-C/D 원본 비접촉.
 """
 from __future__ import annotations
 
@@ -29,6 +30,156 @@ REUSED_MIN_BARS = int(OHLCV_SIGNAL_BAR_LIMIT)
 OHLCV_LOADER = "bitget.analysis.universe_bt.replay._load_ohlcv"
 
 DateLike = Union[date, datetime, int, float, str]
+
+# FULL-BT-HIST-2 — 진단 전용 테이블 (결과 스키마 비접촉)
+_DIAG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS full_bt_diag (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL DEFAULT '',
+    market_type TEXT NOT NULL,
+    symbol TEXT NOT NULL DEFAULT '',
+    metric TEXT NOT NULL,
+    engine_name TEXT NOT NULL DEFAULT '',
+    step INTEGER,
+    count INTEGER NOT NULL DEFAULT 1,
+    detail TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+"""
+
+# CAT-D §4 거절 메시지 → step 매핑 (원본 미수정 · 관측만). 미매칭=0
+# 키워드 = ledger try_add 실제 반환문 기준 (broad false-positive 금지)
+_REJECT_STEP_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
+    (1, ("서킷", "circuit")),
+    (2, ("둠스데이", "doomsday", "DEFCON", "defcon")),
+    (3, ("ANTI_PATTERNS", "참사 DNA", "시계열 게이트")),
+    (4, ("KILL_SWITCH", "킬스위치")),
+    (5, ("중복 보유", "중복")),
+    (6, ("시장 쿼터", "max open", "보유 한도")),
+    (7, ("daily", "일일 진입", "per-logic")),
+    (8, ("집중도", "concentration", "BTC-proxy", "명목노출")),
+    (9, ("예수금", "잔고 부족", "가용 자산", "treasury")),
+    (
+        10,
+        (
+            "수량 산출",
+            "ATR",
+            "히스토리 부족",
+            "리스크 거리",
+            "배드틱",
+            "price_sanity",
+            "notional",
+        ),
+    ),
+]
+
+
+def ensure_diag_schema(db_path: Optional[str] = None) -> str:
+    path = db_path or full_bt_db_path()
+    from bitget.infra.shared_db_connector import get_connection
+
+    conn = get_connection(path)
+    try:
+        conn.executescript(_DIAG_SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+    return path
+
+
+def map_reject_msg_to_step(msg: str) -> int:
+    """CAT-D §4 step 1~10; unmapped → 0 (invent 금지, 관측만)."""
+    s = str(msg or "")
+    for step, keys in _REJECT_STEP_KEYWORDS:
+        for k in keys:
+            if k.lower() in s.lower() or k in s:
+                return int(step)
+    return 0
+
+
+def record_diag(
+    db_path: str,
+    *,
+    run_id: str,
+    market_type: str,
+    metric: str,
+    symbol: str = "",
+    engine_name: str = "",
+    step: Optional[int] = None,
+    count: int = 1,
+    detail: str = "",
+) -> None:
+    """Insert one diag row into full_bt_diag (harness Adapter only)."""
+    ensure_diag_schema(db_path)
+    from bitget.infra.clock import utc_datetime_str
+    from bitget.infra.shared_db_connector import get_connection
+
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO full_bt_diag (
+                run_id, market_type, symbol, metric, engine_name, step, count, detail, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                str(run_id or ""),
+                str(market_type).lower(),
+                str(symbol or ""),
+                str(metric),
+                str(engine_name or ""),
+                step,
+                int(count),
+                str(detail or "")[:500],
+                utc_datetime_str(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def summarize_diag(db_path: str, run_id: str, market_type: str) -> dict[str, Any]:
+    """Read-only aggregate for OUTBOX (SPOT/FUT 분리)."""
+    ensure_diag_schema(db_path)
+    mt = str(market_type).lower()
+    from bitget.infra.shared_db_connector import get_connection
+
+    conn = get_connection(db_path, read_only=True)
+    try:
+        hits = conn.execute(
+            """
+            SELECT engine_name, symbol, SUM(count)
+            FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='engine_hit'
+            GROUP BY engine_name, symbol
+            """,
+            (run_id, mt),
+        ).fetchall()
+        rejects = conn.execute(
+            """
+            SELECT COALESCE(step, 0), SUM(count)
+            FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='gate_reject'
+            GROUP BY COALESCE(step, 0)
+            ORDER BY 1
+            """,
+            (run_id, mt),
+        ).fetchall()
+    finally:
+        conn.close()
+    engine_hit_count: dict[str, dict[str, int]] = {}
+    for eng, sym, n in hits:
+        engine_hit_count.setdefault(str(eng), {})[str(sym)] = int(n or 0)
+    gate_reject_count = {int(s): int(n or 0) for s, n in rejects}
+    return {
+        "run_id": run_id,
+        "market_type": mt,
+        "engine_hit_count": engine_hit_count,
+        "gate_reject_count": gate_reject_count,
+        "engine_hit_total": sum(sum(v.values()) for v in engine_hit_count.values()),
+        "gate_reject_total": sum(gate_reject_count.values()),
+    }
 
 
 @contextmanager
@@ -259,11 +410,12 @@ def run_replay(
     db_path: str,
     *,
     market_db: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> list[dict]:
     """FULL-BT-HIST-1: real OHLCV bar walk → try_add / CAT-E exit on isolated DB.
 
-    Signature kept batch-compatible (FULL-BT-1/2). Returns event list (entries/exits).
-    ``entry_date``/``exit_date`` = candle axis (not wall-clock).
+    FULL-BT-HIST-2: harness-level engine_hit / gate_reject diag → ``full_bt_diag``.
+    Signature kept batch-compatible. ``entry_date``/``exit_date`` = candle axis.
     """
     from bitget.analysis.universe_bt.replay import _bar_ts_from_date, _load_ohlcv
     from bitget.forward.ledger import try_add_virtual_position
@@ -271,15 +423,17 @@ def run_replay(
 
     mt = _normalize_mt(market_type)
     path = db_path or full_bt_db_path()
+    rid = str(run_id or os.environ.get("BITGET_FULL_BT_DIAG_RUN_ID") or "")
     eng_name, eng_fn = _resolve_engine(engine)
     step11 = _adapter_step11_note()
     tf = REUSED_SCANNER_TIMEFRAMES[0]
     start_d = _to_date(start)
     end_d = _to_date(end)
     events: List[dict] = []
+    ensure_diag_schema(path)
 
     logger.info(
-        "full_bt run_replay HIST mt=%s sym=%s engine=%s start=%s end=%s step11=%s ohlcv=%s",
+        "full_bt run_replay HIST mt=%s sym=%s engine=%s start=%s end=%s step11=%s ohlcv=%s run_id=%s",
         mt,
         symbol,
         eng_name,
@@ -287,6 +441,7 @@ def run_replay(
         end_d,
         step11["policy"],
         OHLCV_LOADER,
+        rid or "-",
     )
 
     if not callable(eng_fn):
@@ -396,7 +551,7 @@ def run_replay(
                             )
                         continue
 
-                    # Flat: CAT-C engine → try_add (step11 N/A)
+                    # Flat: CAT-C engine → try_add (step11 N/A) + HIST-2 diag wrappers
                     try:
                         hit, sig_type, _out_df, dbg = eng_fn(window, bench, tf)
                     except Exception as ex:
@@ -404,6 +559,17 @@ def run_replay(
                         continue
                     if not hit:
                         continue
+                    # HIST-2: candidate 생성 계측 (원본 엔진 미수정)
+                    record_diag(
+                        path,
+                        run_id=rid,
+                        market_type=mt,
+                        metric="engine_hit",
+                        symbol=str(symbol),
+                        engine_name=eng_name,
+                        count=1,
+                        detail=str(sig_type or "")[:200],
+                    )
                     dbg = dbg if isinstance(dbg, dict) else {}
                     side = str(dbg.get("side", "LONG")).upper()
                     if side not in ("LONG", "SHORT"):
@@ -440,7 +606,20 @@ def run_replay(
                             }
                         )
                     else:
-                        logger.debug("try_add reject %s: %s", symbol, msg)
+                        # HIST-2: try_add 거절 계측 (반환 관측만)
+                        step = map_reject_msg_to_step(str(msg))
+                        record_diag(
+                            path,
+                            run_id=rid,
+                            market_type=mt,
+                            metric="gate_reject",
+                            symbol=str(symbol),
+                            engine_name=eng_name,
+                            step=step,
+                            count=1,
+                            detail=str(msg or "")[:500],
+                        )
+                        logger.debug("try_add reject %s step=%s: %s", symbol, step, msg)
                 finally:
                     stack_bar.stop()
 

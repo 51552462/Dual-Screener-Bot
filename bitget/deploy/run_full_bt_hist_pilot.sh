@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# FULL-BT-HIST-1 pilot — max_symbols=10, SPOT then FUTURES (paper untouched).
+# FULL-BT-HIST-1/2 pilot — max_symbols=10, SPOT then FUTURES (paper untouched).
+# HIST-2: batch out includes diag (engine_hit / gate_reject) from full_bt_diag.
 # Usage (coin VPS):
 #   cd ~/dante_bots/Dual-Screener-Bot
 #   git pull
@@ -7,7 +8,7 @@
 #   bash bitget/deploy/run_full_bt_hist_pilot.sh
 # Optional:
 #   BITGET_FULL_BT_MAX_SYMBOLS=10   # Handoff default (U3 reuse); do not invent
-set -euo pipefail
+#   BITGET_FULL_BT_MAX_SYMBOLS=3    # HIST-2 dry (소표본)set -euo pipefail
 
 ROOT="${BITGET_INSTALL_ROOT:-${INSTALL_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
 cd "$ROOT"
@@ -111,6 +112,7 @@ def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str
             "batches_run": out.get("batches_run"),
             "batches_skipped": out.get("batches_skipped"),
         },
+        "diag": out.get("diag"),
         "paper_before": paper_before,
         "paper_after": paper_after,
         "results_table_before": table_before,

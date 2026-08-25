@@ -40,25 +40,25 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-23-F` |
-| **마지막 갱신** | 2026-08-23 — **Bitget FULL-BT-2** 배치 완료 · **WAIT_CLAUDE_OK** |
-| **활성 트랙** | **BG** (Bitget) — FULL-BT · R1a OBSERVE 병행 |
-| **진행 중 sub-phase** | **FULL-BT-2** (`WAIT_CLAUDE_OK`) · R1a OBSERVE |
-| **직전 완료** | FULL-BT-1 Claude OK · FULL-BT-0 · UNIVERSE-BT-U3 |
-| **다음** | Claude: `bitget/.../CURSOR_TO_CLAUDE.md` FULL-BT-2 검증 → OK면 FULL-BT-3 Handoff |
+| **앵커 ID** | `SYNC-2026-08-25-BG-HIST2-OK` |
+| **마지막 갱신** | 2026-08-25 — **Bitget FULL-BT-HIST-2 Claude OK** · VPS dry→10×2 승인 |
+| **활성 트랙** | **BG** (Bitget) — FULL-BT-HIST · R1a OBSERVE 병행 |
+| **진행 중 sub-phase** | **FULL-BT-HIST-2** (실행: VPS dry→10×2) · R1a OBSERVE |
+| **직전 완료** | HIST-2 스펙 Claude OK · HIST-1 파일럿 미통과(계측 무효) |
+| **다음** | HIST-2 커밋·푸시 → VPS dry→10×2 → `CURSOR_TO_CLAUDE` 원인 재판정 (전체런 금지) |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` · Bitget: coin VPS 별도 |
 | **Handoff SSOT** | Bitget: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | FULL-BT-2 커밋 대기(디렉터 지시 시) |
+| **git main** | HIST-2 커밋·푸시 대기(디렉터 지시) |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[BG·WAIT] FULL-BT-2 — batch+checkpoint · Claude 검증 대기
+[BG·RUN] FULL-BT-HIST-2 — Claude OK · VPS dry(3)→10×2 대기(푸시 후)
 [BG·OBS] B1-LADDER-R1a — 텔레그램 OPEN/CLOSED (BT와 비게이팅)
-[CLOSED] FULL-BT-0/1 · UNIVERSE-BT-U0~U3
+[CLOSED] FULL-BT-0~3 · HIST-1 코드 · HIST-2 스펙검증
 [KR/US] GOAL-REALITY-01 S2 · NS-BOOK-COUNT — Track A 창 전용
-[금지] FULL-BT→R6/LIVE 승격 · U4 PnL · CAT-C/D/E 원본 rewrite
+[금지] FULL-BT 전체 유니버스 런 · FULL-BT→R6/LIVE · CAT-C/D/E 원본 rewrite
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
