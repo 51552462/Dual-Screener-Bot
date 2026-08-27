@@ -19,6 +19,104 @@
 
 ---
 
+## B1-LADDER-R1a-FASTCHECK — 구현 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **산출** | `observability/b1_ladder_fastcheck_bg.py` · weekly StepSpec · `13_` §6 FASTCHECK 소절 |
+| **config** | `B1_LADDER_FASTCHECK_ENABLED=true` · `WINDOW_DAYS=7` (memory_policy default) |
+| **출력** | `ops_events` `b1_ladder_fastcheck_weekly` × SPOT/FUT |
+| **비접촉** | gates/Kelly/MDD/live · R1b 미착수 · Kill표 비변경 |
+| **테스트** | `pytest bitget/tests/test_b1_ladder_fastcheck_bg.py` **7 passed** |
+| **status** | **WAIT_CLAUDE_OK** |
+| **잔여** | Claude OK · 서버 배포(디렉터) · FAIL(b) 시 R1b는 별도 승인 |
+
+---
+
+## 디렉터 동의 — B1-LADDER-R1a-FASTCHECK [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **원문** | `동의` (B0 Ask 제3안 창) |
+| **판정** | FASTCHECK **승인** · Claude Handoff 발급 대기 |
+| **병행** | FULL-BT **(A)** 도 확정됨 — **별도** Handoff · 비게이팅 |
+| **코드** | Handoff 전 **구현 금지** |
+| **status** | **WAIT_CLAUDE_HANDOFF** |
+
+---
+
+## Ask — B0 표본 기아 · Claude 답변 반영 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | Ask 1~5 **답변 완료** · 코드 diff **없음** |
+| **우선순위** | 제3안: R1a **FAIL(b)** 를 기존 계측으로 가속 |
+| **후보** | `B1-LADDER-R1a-FASTCHECK` |
+| **status** | **→ 동의 완료** (위 섹션) |
+
+---
+
+## FULL-BT-HIST-3-FIX Claude OK · VPS 승인 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | Spec 1~4 **OK** (조건부 — Handoff 원문 누락 caveat 2회째) |
+| **조치** | 검증 응답을 `CLAUDE_TO_CURSOR.md` **append** (소급 원문) |
+| **롤백** | `harness.py` 커밋 revert만 |
+| **다음** | 커밋·푸시 → VPS dry→10×2 · 7키 OUTBOX · WAIT_CLAUDE_OK |
+| **금지** | 전체런 |
+
+---
+
+## FULL-BT-HIST-3-FIX — warmup fetch-range 교정 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **선행** | 디렉터 (A) · Claude HIST-3-FIX Handoff |
+| **조사** | `_load_ohlcv` start 미지원 · `REUSED_MIN_BARS`=`replay._U1_MIN_BARS` |
+| **산출** | `harness._load_ohlcv_fetch_range` Adapter · walk `range(min_bars,len)` · tests |
+| **비접촉** | replay.py · CAT-C/D/E · batch/report · paper |
+| **테스트** | **33 passed** |
+| **status** | **WAIT_CLAUDE_OK** · VPS는 OK·푸시 후 · 전체런 금지 |
+
+---
+
+## 디렉터 (A) 확정 — 좁은 수정 경로 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **결정** | **(A)** 용의점(min_bars=loader tail→walk 1바)만 좁혀 수정 |
+| **거부** | (B) FULL-BT 보류 아님 |
+| **다음** | Claude **좁은 범위 수정 Handoff** · Cursor는 **WAIT_CLAUDE_HANDOFF** |
+| **금지** | 열린 lookback 진단 · HIST-4 · 전체런 · Handoff 전 코드 착수 |
+
+---
+
+## FULL-BT-HIST-3 Claude 재판정 = 부분반려 + 디렉터 에스컬레이션 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **승인** | 원인(1) TF갭 · (3) 호출경로 배제 (수치 근거) |
+| **반려** | Cursor "에스컬레이션 해당없음" — 트리거는 **미해결 시**(증상 trade_count=0 유지) |
+| **단서** | REUSED_MIN_BARS=로더tail(250)→walk 1바 · calls=1 정합 |
+| **HOLD** | lookback/HIST-4/신규 코드 **착수 금지** · 전체런 금지 |
+| **status** | **WAIT_DIRECTOR** — (A)좁은 수정 / (B)FULL-BT 보류 |
+
+---
+
+## FULL-BT-HIST-3 VPS dry→10×2 [2026-08-25]
+
+| 항목 | 내용 |
+|------|------|
+| **배포** | `7c2d04a` |
+| **dry** | SPOT/FUT call=3 · none=3 · TF all true · hit/reject=0 · paper 10→10 |
+| **10×2** | SPOT/FUT call=10 · none=10 · TF all true · hit/reject=0 |
+| **3원인** | 호출경로 **배제** · TF갭 **배제** · **warmup 잔존** |
+| **에스컬레이션** | **비해당** (분리 성공) |
+| **status** | **WAIT_CLAUDE_OK** · lookback은 별도 Handoff · 전체런 금지 |
+
+---
+
 ## FULL-BT-HIST-3 — Claude OK · VPS 실행 승인 [2026-08-25]
 
 | 항목 | 내용 |

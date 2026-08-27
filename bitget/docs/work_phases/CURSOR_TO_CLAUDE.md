@@ -1,14 +1,21 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-08-25  
-> **유형**: **FULL-BT-HIST-3 Claude OK 수신** · **커밋·푸시 → VPS dry→10×2 대기**  
-> **코드**: HIST-3 스펙 OK · 추가 diff 없음(실행만)
+> **갱신**: 2026-08-28  
+> **유형**: **FULL-BT-HIST-3-FIX Claude OK 수신** · **커밋·푸시 → VPS dry→10×2 대기**  
+> **코드**: 추가 diff 없음(실행만)
 
 ---
 
 ## Claude OK 수령
-스펙 1~5 OK · caveat 1(Handoff append 보관) 수용 · VPS 실행 승인.
+Spec 1~4 OK. Handoff 원문 누락 caveat 수용 → 본 검증 응답을 `CLAUDE_TO_CURSOR.md`에 **append** 완료.
 
-커밋·푸시 후 VPS에서 dry(3)→10×2 실행. 결과는 **숫자만** 본 파일에 갱신 → WAIT_CLAUDE_OK.
+롤백: `harness.py` 해당 커밋 revert만 — 결과 스키마·paper·config_kv 무영향.
 
-**전체 유니버스 런: 금지 유지** · 3원인 미분리 시 HIST-4 금지·디렉터 에스컬레이션.
+### VPS (푸시 후)
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_full_bt_hist_pilot.sh
+BITGET_FULL_BT_MAX_SYMBOLS=10 bash bitget/deploy/run_full_bt_hist_pilot.sh
+```
+7키 숫자만 보고 → **WAIT_CLAUDE_OK** · 전체런 금지.

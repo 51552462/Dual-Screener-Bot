@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **HIST-3 Claude OK** · VPS dry→10×2 · R1a OBSERVE | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-08-25 | HIST-3 OK · VPS 실행 대기 · 전체런 금지 · 3회 진단 |
+| **다음 Handoff** | **WAIT_CLAUDE_OK** ×2: `R1a-FASTCHECK` · `FULL-BT-HIST-3-FIX` · **혼합 금지** | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-08-28 | FASTCHECK 구현(7 passed) · HIST-3-FIX 병행 |
 
 ---
 
@@ -245,6 +245,10 @@
 | `GMM_DNA_ALPHA_REPORT_ENABLED` | 01b 리포트 kill-switch (default true) | I-GMM-DNA-01b | config_kv / env |
 | `GMM_DNA_ALPHA_REPORT_WINDOW_DAYS` | 01b Cos 로그 창 (default 7) | I-GMM-DNA-01b | config_kv / env |
 | `GMM_DNA_ALPHA_REPORT_LOG_SOURCE` | journal\|file 우선 (default journal) | I-GMM-DNA-01b | config_kv / env |
+| `B1_LADDER_FASTCHECK_ENABLED` | R1a FASTCHECK weekly kill-switch (default true) | B1-LADDER-R1a-FASTCHECK | config_kv / env |
+| `B1_LADDER_FASTCHECK_WINDOW_DAYS` | FASTCHECK CLOSED Δ 창 (default 7) | B1-LADDER-R1a-FASTCHECK | config_kv / env |
+| `compute_b1_ladder_fastcheck_bg` | SPOT/FUT R1a verdict read-only | B1-LADDER-R1a-FASTCHECK | `observability/b1_ladder_fastcheck_bg.py` |
+| `b1_ladder_fastcheck_weekly` | ops_events mt별 1건 | B1-LADDER-R1a-FASTCHECK | `ops_events` |
 | `POST_DEPLOY_OBS_DIGEST_ENABLED` | 일일 관측 텔레그램 kill-switch (default true) | POST_DEPLOY_OBS | config_kv / env |
 | `POST_DEPLOY_OBS_DNA_DIAGNOSIS_ENABLED` | DNA why-진단 (default true · false=이진 RANK 문구) | POST_DEPLOY_OBS-DNA-UX-01 | config_kv / env |
 | `POST_DEPLOY_OBS_LS_SPLIT_ENABLED` | 롱/숏 진행 표시 분리 (default true · 목표 숫자는 Track B 공유) | LS-GOAL-UX-01 | config_kv / env |

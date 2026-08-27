@@ -4,34 +4,110 @@ IV L1 전체이식 가상매매 — 격리 리플레이 결과, LIVE 승격·R6 
 
 FULL-BT-HIST-1: run_replay uses real OHLCV bar walk (universe_bt._load_ohlcv reuse).
 FULL-BT-HIST-2: harness wrappers → full_bt_diag (engine_hit / gate_reject); CAT-C/D 원본 비접촉.
-FULL-BT-HIST-3: engine_call / outcome(candidate|none|exception) / tf_ohlcv_coverage — full_bt_diag 확장.
+FULL-BT-HIST-3: engine_call / outcome / tf_ohlcv_coverage — full_bt_diag 확장.
+FULL-BT-HIST-3-FIX: fetch [start-REUSED_MIN_BARS, end] Adapter · multi-bar walk (calls≠1).
 """
 from __future__ import annotations
 
 import os
 from collections import Counter
 from contextlib import ExitStack, contextmanager
-from datetime import date, datetime, timezone
-from typing import Any, Iterator, List, Optional, Union
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Iterator, List, Optional, Tuple, Union
 from unittest import mock
 
 import pandas as pd
 
 from bitget.full_bt.paths import full_bt_db_path
 from bitget.infra.logging_setup import get_logger
-from bitget.infra.memory_policy import OHLCV_SIGNAL_BAR_LIMIT
+# HIST-3-FIX: warmup SSOT = universe_bt walk min (CAT-C/U1), NOT OHLCV_SIGNAL_BAR_LIMIT
+from bitget.analysis.universe_bt.replay import _U1_MIN_BARS
 
 logger = get_logger("bitget.full_bt.harness")
 
 # Live scanner TF SSOT (report-only; no invention) — master_scanner / auto_pilot
 REUSED_SCANNER_TIMEFRAMES = ["1D", "4H", "2H", "1H"]
 STEP11_POLICY = "N/A_skip"  # execution_safety real-only — Adapter context, not gate edit
-# Warmup bars before engine call — reuse memory_policy (룰5, 신규 상수 금지)
-REUSED_MIN_BARS = int(OHLCV_SIGNAL_BAR_LIMIT)
-# 재사용 소스: bitget.analysis.universe_bt.replay._load_ohlcv
+# Warmup before engine call — reuse universe_bt._U1_MIN_BARS (룰5; 리터럴 금지)
+REUSED_MIN_BARS = int(_U1_MIN_BARS)
+# Coverage probe still uses universe_bt._load_ohlcv (tail-N; start 오프셋 미지원)
 OHLCV_LOADER = "bitget.analysis.universe_bt.replay._load_ohlcv"
+# HIST-3-FIX walk fetch Adapter (harness-local; replay.py 원본 비수정)
+OHLCV_FETCH_ADAPTER = "bitget.full_bt.harness._load_ohlcv_fetch_range"
 
 DateLike = Union[date, datetime, int, float, str]
+
+
+def _walk_bar_count(start_d: Optional[date], end_d: Optional[date]) -> int:
+    """1D walk length from calendar span (FULL-BT walk_tf=1D). Reuses TM cap if open-ended."""
+    if start_d is not None and end_d is not None:
+        return max(1, int((end_d - start_d).days) + 1)
+    from bitget.infra.memory_policy import TIME_MACHINE_MAX_BARS_PER_TABLE
+
+    return max(1, int(TIME_MACHINE_MAX_BARS_PER_TABLE))
+
+
+def _load_ohlcv_fetch_range(
+    symbol: str,
+    market_type: str,
+    *,
+    db_path: Optional[str],
+    timeframe: str,
+    start_d: Optional[date],
+    end_d: Optional[date],
+    min_bars: int,
+) -> Tuple[Optional[pd.DataFrame], int, int]:
+    """Harness Adapter: fetch [start - min_bars, end] (1D day units).
+
+    조사: ``universe_bt.replay._load_ohlcv`` = tail-``OHLCV_SIGNAL_BAR_LIMIT`` only,
+    **start 오프셋 미지원** → replay.py 원본 비수정, 본 Adapter만 사용.
+    Returns (df, requested_bar_count, loaded_bar_count).
+    """
+    import memory_bounds
+    from bitget.analysis.universe_bt.replay import _ohlcv_table
+    from bitget.infra.data_paths import market_data_db_path, market_db_read_path
+    from bitget.infra.shared_db_connector import get_connection
+
+    walk_n = _walk_bar_count(start_d, end_d)
+    requested = int(min_bars) + int(walk_n)
+    path = db_path or market_db_read_path()
+    if not os.path.isfile(path):
+        path = db_path or market_data_db_path()
+    tbl = _ohlcv_table(str(symbol), market_type, timeframe)
+    conn = get_connection(path, read_only=True)
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+            (tbl,),
+        ).fetchone()
+        if not exists:
+            return None, requested, 0
+        if start_d is not None and end_d is not None:
+            fetch_start = start_d - timedelta(days=int(min_bars))
+            clause, params = memory_bounds.ohlcv_date_range_sql(
+                start=fetch_start.isoformat(),
+                end=end_d.isoformat(),
+                bar_limit=requested,
+            )
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"{clause}',
+                conn,
+                params=params,
+            )
+        else:
+            tail = memory_bounds.ohlcv_limit_sql(bar_limit=requested)
+            df = pd.read_sql(
+                f'SELECT Date, Open, High, Low, Close, Volume FROM "{tbl}"{tail}',
+                conn,
+            )
+    finally:
+        conn.close()
+    if df is None or df.empty:
+        return None, requested, 0
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    return df, requested, int(len(df))
+
 
 # FULL-BT-HIST-2/3 — 진단 전용 테이블 (결과 스키마 비접촉). HIST-3: tf 컬럼 확장.
 _DIAG_SCHEMA = """
@@ -207,6 +283,27 @@ def summarize_diag(db_path: str, run_id: str, market_type: str) -> dict[str, Any
             """,
             (run_id, mt),
         ).fetchall()
+        fetch_req = conn.execute(
+            """
+            SELECT SUM(count) FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='fetch_requested'
+            """,
+            (run_id, mt),
+        ).fetchone()
+        fetch_loaded = conn.execute(
+            """
+            SELECT SUM(count) FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='fetch_loaded'
+            """,
+            (run_id, mt),
+        ).fetchone()
+        walk_exp = conn.execute(
+            """
+            SELECT SUM(count) FROM full_bt_diag
+            WHERE run_id=? AND market_type=? AND metric='walk_bar_expected'
+            """,
+            (run_id, mt),
+        ).fetchone()
     finally:
         conn.close()
 
@@ -261,6 +358,12 @@ def summarize_diag(db_path: str, run_id: str, market_type: str) -> dict[str, Any
         "tf_ohlcv_coverage": tf_ohlcv_coverage,
         "walk_tf": REUSED_SCANNER_TIMEFRAMES[0],
         "probed_tfs": list(REUSED_SCANNER_TIMEFRAMES),
+        # HIST-3-FIX
+        "fetch_requested_total": int((fetch_req or [0])[0] or 0),
+        "fetch_loaded_total": int((fetch_loaded or [0])[0] or 0),
+        "walk_bar_expected_total": int((walk_exp or [0])[0] or 0),
+        "reused_min_bars": int(REUSED_MIN_BARS),
+        "reused_min_bars_source": "bitget.analysis.universe_bt.replay._U1_MIN_BARS",
     }
 
 
@@ -546,10 +649,56 @@ def run_replay(
             detail=f"bars={0 if not present else len(probe_df)}",
         )
 
-    df = _load_ohlcv(str(symbol), mt, db_path=market_db, timeframe=tf)
-    if df is None or df.empty:
-        logger.warning("full_bt no OHLCV for %s %s", mt, symbol)
-        # HIST-3: call_count=0 explicit (경로 미실행 vs none 구분)
+    # HIST-3-FIX: fetch [start-REUSED_MIN_BARS, end] via harness Adapter
+    walk_expected = _walk_bar_count(start_d, end_d)
+    df, requested_n, loaded_n = _load_ohlcv_fetch_range(
+        str(symbol),
+        mt,
+        db_path=market_db,
+        timeframe=tf,
+        start_d=start_d,
+        end_d=end_d,
+        min_bars=REUSED_MIN_BARS,
+    )
+    record_diag(
+        path,
+        run_id=rid,
+        market_type=mt,
+        metric="fetch_requested",
+        symbol=str(symbol),
+        engine_name=eng_name,
+        tf=tf,
+        count=int(requested_n),
+    )
+    record_diag(
+        path,
+        run_id=rid,
+        market_type=mt,
+        metric="fetch_loaded",
+        symbol=str(symbol),
+        engine_name=eng_name,
+        tf=tf,
+        count=int(loaded_n),
+    )
+    record_diag(
+        path,
+        run_id=rid,
+        market_type=mt,
+        metric="walk_bar_expected",
+        symbol=str(symbol),
+        engine_name=eng_name,
+        tf=tf,
+        count=int(walk_expected),
+    )
+    if df is None or df.empty or loaded_n < int(REUSED_MIN_BARS):
+        logger.warning(
+            "full_bt warmup skip sym=%s mt=%s loaded=%s need=%s requested=%s",
+            symbol,
+            mt,
+            loaded_n,
+            REUSED_MIN_BARS,
+            requested_n,
+        )
         record_diag(
             path,
             run_id=rid,
@@ -559,7 +708,7 @@ def run_replay(
             engine_name=eng_name,
             tf=tf,
             count=0,
-            detail="no_walk_ohlcv",
+            detail="warmup_insufficient_or_no_ohlcv",
         )
         for kind in ("candidate", "none", "exception"):
             record_diag(
@@ -574,8 +723,16 @@ def run_replay(
             )
         return events
 
-    # Benchmark for engine(window, bench, tf) — BTC close align (U1 선례 재사용)
-    bench_df = _load_ohlcv("BTC_USDT", mt, db_path=market_db, timeframe=tf)
+    # Benchmark — same Adapter window (warmup+walk), not tail-only probe
+    bench_df, _, _ = _load_ohlcv_fetch_range(
+        "BTC_USDT",
+        mt,
+        db_path=market_db,
+        timeframe=tf,
+        start_d=start_d,
+        end_d=end_d,
+        min_bars=REUSED_MIN_BARS,
+    )
     if bench_df is not None and not bench_df.empty:
         idx_close = bench_df.set_index("Date")["Close"].astype(float)
         idx_close.index = pd.to_datetime(idx_close.index)
@@ -590,7 +747,8 @@ def run_replay(
     def _gross_ok(_cfg=None):
         return GateResult(ExecutionGateOutcome.APPROVED, "full_bt_hist_gross_ok", {})
 
-    min_i = max(0, REUSED_MIN_BARS - 1)
+    # Spec: warmup 앞 REUSED_MIN_BARS개는 컨텍스트만 · evaluate from index REUSED_MIN_BARS
+    min_i = int(REUSED_MIN_BARS)
     # HIST-3: in-memory flush per symbol (avoid per-bar INSERT storm)
     call_n = 0
     outcome_n = {"candidate": 0, "none": 0, "exception": 0}

@@ -1,3 +1,206 @@
+# CLAUDE → CURSOR · B1-LADDER-R1a-FASTCHECK Handoff
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28)
+
+> **작성**: Claude Pro · 2026-08-28 · [CAT-F]
+> **상태**: **WAIT_CURSOR_IMPL** → Cursor 구현 후 WAIT_CLAUDE_OK
+> **병행**: FULL-BT(A) 좁은 수정 — **별도 트랙 · 비게이팅 · 혼합 금지**
+
+---
+
+## [CAT-F] 자본배분&리스크 — B1-LADDER-R1a-FASTCHECK read-only 주간 집계
+
+### sub-phase ID
+B1-LADDER-R1a-FASTCHECK
+
+### SSOT (변경 금지 unless noted)
+- 신규: `bitget/observability/b1_ladder_fastcheck_bg.py`
+- 수정(추가만): `bitget/docs/work_phases/13_B1_신뢰사다리.md` §6 아래 "R1a FASTCHECK 절차" 소절
+- 참조만(비변경): `bitget_forward_trades`, §6 SQL, §3 판정표, `short_funnel_report_bg.py`
+- config: `B1_LADDER_FASTCHECK_ENABLED`(config_kv), `B1_LADDER_FASTCHECK_WINDOW_DAYS`(config_kv)
+
+### 변경 Spec
+- 함수: `compute_b1_ladder_fastcheck_bg(window_days: int = 7) -> dict[str, dict]`
+- market_type(SPOT/FUT)별 open_count·closed_weekly_delta·blocked_short_total·r6_pace_flag → 기존 §3 판정표 대입 → verdict 문자열만
+- weekly_evolution 훅 등록(read-only), 기존 훅 순서 비접촉
+- 출력: `ops_events` → `b1_ladder_fastcheck_weekly` (mt별 1건)
+- SPOT/FUT: 완전 분리, 합산 금지
+
+### Config 변경
+| KEY | old | new | default |
+|-----|-----|-----|---------|
+| `B1_LADDER_FASTCHECK_ENABLED` | — | 신규 | true |
+| `B1_LADDER_FASTCHECK_WINDOW_DAYS` | — | 신규 | 7 |
+
+### 인접 CAT 영향
+- CAT-C: 없음 (R1b 이름만 예약, 착수 금지 유지)
+- CAT-J: 읽기만 (short_funnel 기존 출력)
+- CAT-D/N: 비접촉
+
+### 롤백 조건
+`B1_LADDER_FASTCHECK_ENABLED=false` → 즉시 비활성, ops_events 신규 기록만 중단
+
+### Cursor 지시
+- Targeted diff only. 전체 파일 rewrite 금지.
+- **루트 주식 경로 수정 금지** — bitget/ 하위만.
+- FAIL(b) verdict 나와도 R1b 코드 착수 금지 — verdict 산출까지만
+- 신규 정책·게이트·Critical·상수 창조 금지
+- 테스트: `pytest bitget/tests/test_b1_ladder_fastcheck_bg.py`
+
+### 위험도
+🟢 (read-only 집계 · config_kv kill-switch 2개뿐 · gate/Kelly/MDD/live 비접촉)
+
+---
+
+# CLAUDE → CURSOR · FULL-BT-HIST-3-FIX 검증 OK → VPS dry→10×2 + 원문 append
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28)
+# ⚠️ HIST-3-FIX 좁은 수정 Handoff가 INBOX에 누락됐던 재발(2회째) — 본 검증 응답을 원문으로 소급 append
+
+> **작성**: Claude Pro (Architect) · 2026-08-28 · [CAT-Q]
+> **상태**: **FULL-BT-HIST-3-FIX Spec 1~4 = OK** · **VPS dry→10×2 실행 승인** · 전체런 금지
+> **caveat**: `_U1_MIN_BARS` 언더스코어 재사용 — 다음 라운드 CAT-CONSTANTS 승격 권고(지금 조치 아님)
+
+---
+
+## [CAT-Q] FULL-BT-HIST-3-FIX 검증 OK → VPS dry→10×2 실행 + 원문 append
+
+### 판정
+Spec 1~4 전부 OK. VPS 실행 승인. 전체런 금지 유지.
+
+### Spec 대조 (소급 원문)
+1. fetch [start−min_bars, end] Adapter — OK (tail-only 한계 → date-range Adapter, `_load_ohlcv` 비접촉)
+2. walk `range(REUSED_MIN_BARS, len)` — OK (walk 1바 단서 대응)
+3. warmup 부족 skip(보간 없음) — OK
+4. 원본 비접촉 — OK (replay/CAT-C/D/E/batch/report)
+- REUSED_MIN_BARS = `bitget.analysis.universe_bt.replay._U1_MIN_BARS` (240)
+
+### 실행 (원문 그대로)
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_full_bt_hist_pilot.sh
+BITGET_FULL_BT_MAX_SYMBOLS=10 bash bitget/deploy/run_full_bt_hist_pilot.sh
+```
+
+### 보고 (7키)
+call_total · outcome_totals · tf_coverage · exception_types · hit/reject ·
+fetch_requested vs fetch_loaded · call_total vs walk_bar_expected
+
+### 필수 조치
+1. 본 검증 응답 전체를 `CLAUDE_TO_CURSOR.md`에 **append**(덮어쓰기 금지)
+2. 롤백: `harness.py` 해당 커밋 revert만 — 결과 스키마·paper·config_kv 무영향
+
+### 세션 종료 의무
+- 05: VPS 숫자 + 재판정 · 00 · CURSOR_TO_CLAUDE 7키 · NEXT_ACTION WAIT_CLAUDE_OK · 09/NEXT_STEP
+
+### 위험도
+🟢 (read-only 진단 VPS · 실자금/config_kv 미접촉)
+
+---
+
+# CLAUDE → CURSOR · FULL-BT-HIST-3-FIX (warmup fetch-range 교정)
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28)
+
+> **작성**: Claude Pro (Architect) · 2026-08-28 · [CAT-Q]
+> **상태**: 디렉터 **(A)** 확정 · **FULL-BT-HIST-3-FIX** Handoff · 🟡
+> **금지**: HIST-4 · 열린 lookback · 전체런
+
+---
+
+## [CAT-Q] 진단&레거시 — FULL-BT-HIST-3-FIX: warmup 창 반영 fetch-range 교정
+
+### sub-phase ID
+FULL-BT-HIST-3-FIX
+(주의: HIST-4 아님 — HIST-3 단일 용의점의 좁은 수정. 디렉터 (A) 확정.)
+
+### SSOT
+- 파일: `bitget/full_bt/harness.py` (`run_replay` 내부만)
+- `_load_ohlcv` start 오프셋 미지원 시 harness Adapter — `replay.py` 원본 수정 금지
+- REUSED_MIN_BARS: 신규 상수 금지 · CAT-C/universe 기존 min-bars import
+
+### Spec
+- `fetch_range` / `requested_bar_count = REUSED_MIN_BARS + walk_bar_count`
+- walk: `for i in range(REUSED_MIN_BARS, len(window))` — 더 이상 calls=1 고정 아님
+- warmup 부족 심볼 skip · 보간 금지
+
+### Cursor
+- Targeted diff only · pytest full_bt · dry→10×2 · WAIT_CLAUDE_OK
+- 보고: 기존 5키 + requested vs loaded + call vs 기대 walk
+
+---
+
+# CLAUDE → CURSOR · FULL-BT-HIST-3 재판정 = 부분반려 + 디렉터 에스컬레이션
+# (append 보관 · 덮어쓰기 금지 · 2026-08-25)
+
+> **작성**: Claude Pro (Architect) · 2026-08-25 · [CAT-Q]
+> **상태**: 원인(1)(3) 배제 **승인** · "에스컬레이션 해당없음" **반려** · **WAIT_DIRECTOR**
+> **HOLD**: lookback/HIST-4/신규 코드 착수 금지 · 전체런 금지
+
+---
+
+## 판정 요약
+- Ask1: TF·호출경로 배제 OK / 에스컬레이션 해당없음 **반려** (트리거=**미해결 시**)
+- Ask2: lookback Handoff **보류** (디렉터 승인 전)
+- Ask3: 전체런 금지 **유지**
+- 단서 유지: REUSED_MIN_BARS=로더tail(250)→walk 1바 · calls=1
+
+## 디렉터 질문
+(A) 용의점만 좁혀 수정 vs (B) FULL-BT 보류·R1a/B1 집중
+
+## Cursor
+신규 코드 금지 · NEXT_ACTION=`WAIT_DIRECTOR` · 05에 본 판정 기록
+
+---
+
+# CLAUDE → CURSOR · B0 표본 기아 Ask 답변
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28)
+
+> **작성**: Claude Pro · 2026-08-28 · [CAT-F]
+> **상태**: Ask 1~5 답변 완료 · 코드 diff 없음 · 코드 Handoff는 디렉터 확정 후
+> **병행**: FULL-BT-HIST-3 VPS 유지(비게이팅) · B1-LADDER-R1a OBSERVE 유지
+
+---
+
+## [CAT-F] B0 표본 기아 Ask 답변 — R1a 빠른 판정 경로 제안 (코드 diff 없음)
+
+### SSOT (변경/비변경)
+- **비변경**: `13_B1_신뢰사다리.md` §2/§3 렁·Kill 표, `bitget_forward_trades` 스키마, `short_funnel_report_bg.py`, gates/Kelly/execution_safety 전체
+- **다음 라운드 추가 예정만(이번엔 미실행)**: `13_B1_신뢰사다리.md` §6에 "R1a FASTCHECK" 절차 소절 — Cursor 확정 후 별도 Handoff
+
+### Spec (Ask 1~5 판정)
+
+**1) 오해/팩트 표 — 수용 OK.** 「누적」= `bitget_forward_trades` CLOSED 사이드별 전 기간 COUNT, 주간 하드쿼터 아님. MAX open positions ~20(CAT-CONSTANTS) 재확인. 배선 생존(CLOSED≈10) + 신규진입 정체(OPEN=0) 동시 성립 인정.
+
+**2) 디렉터 공식 답변 문구** — `09_디렉터_쉬운요약.md` 갱신본 참조.
+
+**3) 우선순위 — (i)도 (ii)도 아님, 제3안.**
+`13_` Kill표 R1a는 이미 두 갈래 FAIL 경로: (a) 4주 시간경과, (b) short_funnel 반복 거절 패턴. 4주((a)) 대기도, FAIL 미확정 상태에서 곧장 R1b CAT-C 코드 Handoff((ii))도 Kill표 순서 위반. 대신 **(b) 조건을 기존 계측만으로 지금 판정**. HIST-3(FULL-BT L1)은 다른 트랙(히스토리 리플레이, engine_hit=0 원인규명)이고 R6/B1 근거 사용이 이미 금지(`15_` SSOT) → 완료돼도 디렉터의 진짜 문제(L2 표본 증가 속도)를 풀어주지 않음 → **HIST-3는 병렬·비차단 유지, R1a 판정만 이번 라운드에서 가속.**
+
+**4) 최소 관측 계약** (기존 숫자만 재사용, 신규 상수 없음)
+
+| 신호 | 재사용 출처 | 판정 기여 |
+|------|-------------|---------|
+| OPEN 재개 | `13_` §6 SQL 그대로 | OPEN>0 → 즉시 PASS 재검토 |
+| CLOSED 주간 Δ | 동일 SQL, 기존 timestamp 컬럼 7일 필터만 추가(신규 로직 아님) | 누적치 대신 최근 추이 |
+| blocked_short_total 추이 | `short_funnel_report_bg.py` 기존 출력 | 반복되면 FAIL(b) 근거 (LONG 가시성 없음 — 기존 caveat 유지) |
+| R6 페이스 환산 | (CLOSED 주간Δ ÷ 7 × 56) vs 기존 30건/56일(`13_` R6, 재발명 아님) | 부족 시 "페이스 부족" flag만, 게이트 변경 아님 |
+
+**5) 다음 Handoff ID 후보:** `B1-LADDER-R1a-FASTCHECK` — 문서(`13_` §6) + 위 4개 값을 조합하는 read-only weekly 집계 1개. 신규 상수·게이트·Critical 없음. R1b(CAT-C)는 FASTCHECK가 FAIL(b) 확정할 때만 별도 라운드 착수.
+
+### SPOT/FUT 분기
+공통 — SHORT는 SPOT에서 구조적으로 0(SPOT-FUT 표 기존 각주), FASTCHECK 지표는 market_type별 분리 집계만, 합산 금지.
+
+### 인접 CAT 영향
+- CAT-C: 없음 (R1b 미착수, 이번엔 이름만 예약)
+- CAT-D/J: 읽기만 (기존 컬럼·기존 short_funnel 출력 재사용)
+- CAT-N/F(execution_safety/Kelly/live): 비접촉, 🔴 Critical 아님
+
+### Cursor 지시 (이번 라운드 = 확정 답변 반영만 · 코드 Handoff 아님)
+- `09` · `NEXT_STEP` · `NEXT_ACTION`(WAIT_DIRECTOR) · `05` · `00` 현황판 반영
+- **다음:** 디렉터가 3)/5) 방향 동의 시, 다음 대화에서 `B1-LADDER-R1a-FASTCHECK` 단일 sub-phase CAT-HANDOFF 발급(CAT-F, 🟢, read-only).
+- 그 전까지 HIST-3 VPS dry→10×2 숫자 보고는 별도 트랙 계속.
+
+---
+
 # CLAUDE → CURSOR · FULL-BT-HIST-3 스펙 OK → VPS dry→10×2 실행
 # (append 보관 · 덮어쓰기 금지 · 2026-08-25)
 

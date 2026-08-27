@@ -40,25 +40,26 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-25-BG-HIST3-OK` |
-| **마지막 갱신** | 2026-08-25 — **HIST-3 Claude OK** · VPS dry→10×2 승인 |
-| **활성 트랙** | **BG** (Bitget) — FULL-BT-HIST · R1a OBSERVE 병행 |
-| **진행 중 sub-phase** | **FULL-BT-HIST-3** (VPS 실행) · R1a OBSERVE |
-| **직전 완료** | HIST-3 스펙 Claude OK |
-| **다음** | 커밋·푸시 → VPS dry→10×2 → OUTBOX 숫자 (전체런 금지 · 미분리 시 디렉터) |
+| **앵커 ID** | `SYNC-2026-08-28-BG-FASTCHECK-IMPL` |
+| **마지막 갱신** | 2026-08-28 — **FASTCHECK 구현** WAIT_CLAUDE_OK · HIST-3-FIX 병행 |
+| **활성 트랙** | **BG** (Bitget) — FASTCHECK 검증 · HIST-3-FIX 검증 · R1a |
+| **진행 중 sub-phase** | **R1a-FASTCHECK WAIT_CLAUDE_OK** · **FULL-BT-HIST-3-FIX WAIT_CLAUDE_OK** · R1a OBSERVE |
+| **직전 완료** | FASTCHECK 코드(7 passed) · HIST-3-FIX(33 passed) |
+| **다음** | Claude: FASTCHECK OK · (별도) HIST-3-FIX OK · 혼합 금지 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` · Bitget: coin VPS 별도 |
 | **Handoff SSOT** | Bitget: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | HIST-3 푸시 직후 |
+| **git main** | HIST-3-FIX 커밋 대기 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[BG·RUN] FULL-BT-HIST-3 — Claude OK · VPS dry(3)→10×2
-[BG·OBS] B1-LADDER-R1a — 텔레그램 OPEN/CLOSED (BT와 비게이팅)
-[CLOSED] FULL-BT-0~3 · HIST-1/2 · HIST-3 스펙검증
-[KR/US] GOAL-REALITY-01 S2 · NS-BOOK-COUNT — Track A 창 전용
-[금지] FULL-BT 전체 유니버스 런 · HIST-4(미해결 시 디렉터) · CAT-C/D 원본 rewrite
+[BG·WAIT] B1-LADDER-R1a-FASTCHECK — 구현✅ · WAIT_CLAUDE_OK
+[BG·WAIT] FULL-BT-HIST-3-FIX — fetch-range Adapter · WAIT_CLAUDE_OK (별도·비게이팅)
+[BG·OBS] B1-LADDER-R1a — OPEN=0·CLOSED≈10
+[CLOSED] FASTCHECK 구현 · HIST-3-FIX 구현 · 디렉터 동의/A
+[KR/US] Track A 창 전용
+[금지] live ON · 두 검증 한 세션 혼합 · R1b 자동착수 · 전체런
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
