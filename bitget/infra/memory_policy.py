@@ -112,6 +112,9 @@ COST_REPORT_WINDOW_DAYS: int = 7
 GMM_DNA_ALPHA_REPORT_ENABLED: bool = True
 GMM_DNA_ALPHA_REPORT_WINDOW_DAYS: int = 7
 GMM_DNA_ALPHA_REPORT_LOG_SOURCE: str = "journal"
+# B1-LADDER-R1a-FASTCHECK weekly R1a verdict (read-only)
+B1_LADDER_FASTCHECK_ENABLED: bool = True
+B1_LADDER_FASTCHECK_WINDOW_DAYS: int = 7
 # POST_DEPLOY_OBS daily telegram digest (REPORT_BOT)
 POST_DEPLOY_OBS_DIGEST_ENABLED: bool = True
 # DNA why-diagnosis in digest (false → legacy RANK binary wording)

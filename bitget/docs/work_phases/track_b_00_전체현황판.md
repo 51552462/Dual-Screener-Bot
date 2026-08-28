@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **WAIT_CLAUDE_OK** ×2: `R1a-FASTCHECK` · `FULL-BT-HIST-3-FIX` · **혼합 금지** | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-08-28 | FASTCHECK 구현(7 passed) · HIST-3-FIX 병행 |
+| **다음 Handoff** | **LANE_FASTCHECK DONE** (B0-SAMPLE-CONTRACT) · R2 관측 · HIST 별도 | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-08-28 | §7 Claude OK · 표본 부족은 관측 과제 유지 |
 
 ---
 

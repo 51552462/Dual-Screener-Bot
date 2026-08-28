@@ -19,6 +19,56 @@
 
 ---
 
+## B0-SAMPLE-CONTRACT — Claude OK · DONE [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **OK** · §7.1~7.5 스펙 일치 · HIST 비접촉 · 수정 spec 없음 |
+| **산출** | `13_B1_신뢰사다리.md` §7 (문서만) |
+| **코드** | 없음 |
+| **status** | **DONE** |
+| **잔여** | 원본 이슈(표본 부족) **미해결·관측** · R2·페이스 경고 · FAIL(b) 시 Claude |
+| **Claude OK: 2026-08-28** | |
+
+---
+
+## B0-SAMPLE-CONTRACT — §7 문서 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **산출** | `13_B1_신뢰사다리.md` **§7만** (배너·페이스 30÷56×7·R2 표시·트리거 A/B/C·금지) |
+| **코드** | **없음** · config 없음 |
+| **레인** | `LANE_FASTCHECK` · HIST 비접촉 |
+| **09/NEXT_STEP** | Claude OK 후 레인 09·NEXT 갱신됨 |
+| **status** | **→ DONE** |
+| **롤백** | §7 삭제만 |
+
+---
+
+## 멀티창 레인 분리 [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **산출** | `16_멀티창_레인_프로토콜.md` · `lanes/ACTIVE_LANES.md` · `LANE_FASTCHECK/` · `LANE_HIST3FIX/` |
+| **의도** | Bitget 병렬 Cursor 창이 루트 `NEXT_ACTION`/`09`/`OUTBOX` 덮어쓰기 혼선 방지 |
+| **규칙** | 본문=레인 폴더 · 루트=표/인덱스만 · 05는 섹션 append만 |
+| **코드** | .py 변경 없음 (문서만) |
+
+---
+
+## B1-LADDER-R1a-FASTCHECK — Claude OK [2026-08-28]
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **Claude OK** (1단계 스펙) · 비차단 확인 2건 OUTBOX 회신 |
+| **확인1** | R6 페이스 = 코드 `_r6_pace_flag` / `r6_pace_flag` 포함 |
+| **확인2** | SPOT blocked=0 = **하드코딩** (`out["SPOT"]=0`) · FUT에 funnel total 인용 |
+| **status** | **WAIT_DIRECTOR** (배포) · 2~4주 관측은 배포 후 |
+| **잔여** | 디렉터 배포 · (선택) SPOT blocked 쿼리화 🟢 Handoff |
+| **Claude OK: 2026-08-28** | |
+
+---
+
 ## B1-LADDER-R1a-FASTCHECK — 구현 [2026-08-28]
 
 | 항목 | 내용 |
@@ -28,8 +78,8 @@
 | **출력** | `ops_events` `b1_ladder_fastcheck_weekly` × SPOT/FUT |
 | **비접촉** | gates/Kelly/MDD/live · R1b 미착수 · Kill표 비변경 |
 | **테스트** | `pytest bitget/tests/test_b1_ladder_fastcheck_bg.py` **7 passed** |
-| **status** | **WAIT_CLAUDE_OK** |
-| **잔여** | Claude OK · 서버 배포(디렉터) · FAIL(b) 시 R1b는 별도 승인 |
+| **status** | **→ Claude OK** (위 섹션) |
+| **잔여** | 배포(디렉터) |
 
 ---
 

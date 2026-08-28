@@ -11,6 +11,7 @@ alwaysApply: false
 ## SSOT
 
 - 진행·Handoff: `bitget/docs/work_phases/`
+- **병렬 창**: `16_멀티창_레인_프로토콜.md` · `lanes/ACTIVE_LANES.md` · 본문=`lanes/<LANE_ID>/`
 - 구조·CAT: `bitget/docs/claude_project/`
 - P0 헌법: `bitget/docs/13_institutional_grade_audit_and_roadmap.md`
 
@@ -24,14 +25,17 @@ alwaysApply: false
 
 ## 세션 시작
 
-1. `bitget/docs/work_phases/NEXT_ACTION.md`
-2. `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` (= 유일한 spec)
-3. (Mirror용) `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md`
+1. `lanes/ACTIVE_LANES.md` — **내 레인 ID**
+2. `lanes/<LANE_ID>/NEXT_ACTION.md`
+3. `CLAUDE_TO_CURSOR.md` (= 유일 spec · 내 sub-phase)
+4. OUTBOX 본문: `lanes/<LANE_ID>/CURSOR_TO_CLAUDE.md` (루트 OUTBOX는 인덱스만)
+
+**금지**: 다른 레인 `lanes/*/CURSOR_TO_CLAUDE|09|NEXT_*` 덮어쓰기.
 
 ## 협업
 
 - Claude Handoff 없이 구현 **금지**
-- 한 세션 = sub-phase **하나** · targeted diff only
+- 한 세션 = sub-phase **하나** = 레인 **하나** · targeted diff only
 - Claude OK 전 Done **금지**
 - 동일 에러 3회 → 중단 · 로그 요약 · Claude spec 질의
 
@@ -44,20 +48,15 @@ alwaysApply: false
 
 - `WALK_FORWARD_PROMOTION_BLOCK_ENABLED` **임의 활성화 금지**
 - production Kelly·mult 변경 금지 — shadow 격리 테스트만
-- `docs/independent_verification/02_편향_체크리스트` IV-04, IV-25 참고
 - 로그·테이블 read + 보고만
 
-부팅: `08_디렉터_중계_가이드.md` B-2 · `17_Cursor_세션_부팅_가이드.md`
+## 세션 종료 (Bitget)
 
-## 세션 종료 (Bitget 추가 항목)
+- [ ] `lanes/<ID>/` OUTBOX·NEXT·STEP·09
+- [ ] `lanes/ACTIVE_LANES.md` 자기 행
+- [ ] 루트 `NEXT_ACTION` / `09` / `CURSOR_TO_CLAUDE` **인덱스만**
+- [ ] `track_b_05_진행로그.md` 해당 sub 섹션
+- [ ] `track_b_00_전체현황판.md` (필요 시)
+- [ ] 디렉터 3줄 (레인 ID 포함)
 
-- [ ] `bitget/docs/work_phases/05_진행로그.md`
-- [ ] `bitget/docs/work_phases/00_전체현황판.md`
-- [ ] `bitget/docs/work_phases/CURSOR_TO_CLAUDE.md` (로컬 구조 스냅샷)
-- [ ] `bitget/docs/work_phases/NEXT_ACTION.md`
-- [ ] `bitget/docs/work_phases/NEXT_STEP.md` (09와 다음 한 문장 **일치**)
-- [ ] `bitget/docs/work_phases/09_디렉터_쉬운요약.md` (비유·신호등 — 함수명 나열 금지)
-- [ ] `bitget/docs/work_phases/11_협업_효율_점검.md` (필요 시 한 줄)
-- [ ] 디렉터 3줄 + 기술 1줄
-
-부팅 문구: `docs/work_phases/17_Cursor_세션_부팅_가이드.md` §Track B
+부팅: `17_Cursor_세션_부팅_가이드.md` §Track B · 첫 메시지에 `레인: LANE_XXX` 명시

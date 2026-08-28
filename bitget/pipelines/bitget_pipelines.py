@@ -348,6 +348,13 @@ def _step_gmm_dna_alpha_report() -> None:
     run_gmm_dna_alpha_report_job()
 
 
+def _step_b1_ladder_fastcheck() -> None:
+    """B1-LADDER-R1a-FASTCHECK — weekly R1a verdict (read-only)."""
+    from bitget.observability.b1_ladder_fastcheck_bg import run_b1_ladder_fastcheck_job
+
+    run_b1_ladder_fastcheck_job()
+
+
 def _step_weekly_flow_master() -> None:
     """주식 factory weekly_master → weekly_flow_master 패리티."""
     from bitget.auto_pilot import send_weekly_flow_master_report
@@ -874,6 +881,7 @@ def _pipeline_weekly_evolution() -> List[StepSpec]:
             StepSpec("llm_proposal_summary", _step_llm_proposal_summary, critical=False),
             StepSpec("cost_report", _step_cost_report, critical=False),
             StepSpec("gmm_dna_alpha_report", _step_gmm_dna_alpha_report, critical=False),
+            StepSpec("b1_ladder_fastcheck", _step_b1_ladder_fastcheck, critical=False),
             StepSpec("weekly_coin_pri", _step_weekly_coin_pri, critical=False),
             StepSpec("weekly_coin_regime_archive", _step_weekly_coin_regime_archive, critical=False),
             StepSpec("regime_deep_archive", _step_regime_deep_archive_bg, critical=False),

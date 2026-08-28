@@ -1,21 +1,13 @@
-# CURSOR → CLAUDE (Bitget 검증 OUTBOX)
+# CURSOR → CLAUDE (Bitget OUTBOX · 인덱스)
 
-> **갱신**: 2026-08-28  
-> **유형**: **FULL-BT-HIST-3-FIX Claude OK 수신** · **커밋·푸시 → VPS dry→10×2 대기**  
-> **코드**: 추가 diff 없음(실행만)
+> **갱신**: 2026-08-28 · **레인 분리**  
+> **규칙**: 본문은 `lanes/<LANE_ID>/CURSOR_TO_CLAUDE.md` — 이 파일은 **어느 레인을 볼지**만.
 
----
+| 레인 | 상태 | OUTBOX 경로 |
+|------|------|-------------|
+| **LANE_FASTCHECK** | **DONE** (B0-SAMPLE-CONTRACT) | `lanes/LANE_FASTCHECK/CURSOR_TO_CLAUDE.md` |
+| **LANE_HIST3FIX** | VPS dry→10×2 대기 | `lanes/LANE_HIST3FIX/CURSOR_TO_CLAUDE.md` |
 
-## Claude OK 수령
-Spec 1~4 OK. Handoff 원문 누락 caveat 수용 → 본 검증 응답을 `CLAUDE_TO_CURSOR.md`에 **append** 완료.
+Claude: **한 번에 레인 하나만** 검증. 두 OUTBOX를 한 응답에 섞지 말 것.
 
-롤백: `harness.py` 해당 커밋 revert만 — 결과 스키마·paper·config_kv 무영향.
-
-### VPS (푸시 후)
-```bash
-cd ~/dante_bots/Dual-Screener-Bot && git pull
-export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
-BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_full_bt_hist_pilot.sh
-BITGET_FULL_BT_MAX_SYMBOLS=10 bash bitget/deploy/run_full_bt_hist_pilot.sh
-```
-7키 숫자만 보고 → **WAIT_CLAUDE_OK** · 전체런 금지.
+보관용(히스토리): 아래에 예전 단일 OUTBOX 조각이 이어질 수 있음 — **실행 SSOT는 레인 폴더**.

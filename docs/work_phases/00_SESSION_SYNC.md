@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-28-BG-FASTCHECK-IMPL` |
-| **마지막 갱신** | 2026-08-28 — **FASTCHECK 구현** WAIT_CLAUDE_OK · HIST-3-FIX 병행 |
-| **활성 트랙** | **BG** (Bitget) — FASTCHECK 검증 · HIST-3-FIX 검증 · R1a |
-| **진행 중 sub-phase** | **R1a-FASTCHECK WAIT_CLAUDE_OK** · **FULL-BT-HIST-3-FIX WAIT_CLAUDE_OK** · R1a OBSERVE |
-| **직전 완료** | FASTCHECK 코드(7 passed) · HIST-3-FIX(33 passed) |
-| **다음** | Claude: FASTCHECK OK · (별도) HIST-3-FIX OK · 혼합 금지 |
+| **앵커 ID** | `SYNC-2026-08-28-BG-B0-DONE` |
+| **마지막 갱신** | 2026-08-28 — **B0-SAMPLE-CONTRACT DONE** · R2 관측 |
+| **활성 트랙** | **BG** — FASTCHECK DONE(관측) + HIST 별도 |
+| **진행 중 sub-phase** | FASTCHECK **관측만** · HIST=`LANE_HIST3FIX` |
+| **직전 완료** | B0-SAMPLE-CONTRACT Claude OK · §7 |
+| **다음** | 페이스 경고/FAIL(b) 시 Claude · HIST는 HIST 창 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` · Bitget: coin VPS 별도 |
 | **Handoff SSOT** | Bitget: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -54,12 +54,9 @@
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[BG·WAIT] B1-LADDER-R1a-FASTCHECK — 구현✅ · WAIT_CLAUDE_OK
-[BG·WAIT] FULL-BT-HIST-3-FIX — fetch-range Adapter · WAIT_CLAUDE_OK (별도·비게이팅)
-[BG·OBS] B1-LADDER-R1a — OPEN=0·CLOSED≈10
-[CLOSED] FASTCHECK 구현 · HIST-3-FIX 구현 · 디렉터 동의/A
-[KR/US] Track A 창 전용
-[금지] live ON · 두 검증 한 세션 혼합 · R1b 자동착수 · 전체런
+[BG·LANE_FASTCHECK] B0-SAMPLE-CONTRACT **DONE** · R2 관측 · 표본 부족은 과제 유지
+[BG·LANE_HIST3FIX] 별도 창만
+[금지] 게이트 풀기 · 레인 혼합 · FASTCHECK=검증완료 서술
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
@@ -107,8 +104,12 @@
 ### Bitget Cursor (Track B)
 
 ```text
-Track B — bitget/ only. bitget/docs/work_phases/ SSOT.
-17_Cursor_세션_부팅_가이드.md §3-B
+Track B — bitget/ only.
+1) bitget/docs/work_phases/lanes/ACTIVE_LANES.md — 내 레인
+2) lanes/<LANE_ID>/NEXT_ACTION.md · CURSOR_TO_CLAUDE.md
+3) CLAUDE_TO_CURSOR.md (내 sub-phase Handoff만)
+4) 16_멀티창_레인_프로토콜.md — 다른 레인 MD 덮어쓰기 금지
+첫 메시지: 「레인: LANE_XXX · sub-phase: …」
 ```
 
 ### 텔레그램 → Cursor / Claude (deploy_watch · IV_OBS)
@@ -133,7 +134,7 @@ deploy_watch cursor_action SSOT:
 1. **`NEXT_ACTION`과 `05_진행로그`가 다르면** → `05`의 **해당 sub-phase 최신 섹션** 우선, `NEXT_ACTION`을 맞춘다.  
 2. **`CLAUDE_TO_CURSOR` 상단 "현재"와 `00_SESSION_SYNC` §3이 다르면** → **§3을 먼저 디렉터에게 질문** ("어느 쪽이 최신인가?")  
 3. **Downloads에 `CURSOR_TO_CLAUDE (1).md` 등** → 레포 `docs/work_phases/`에 merge된 뒤에만 신뢰.  
-4. **두 Cursor 창이 동시에 같은 파일 수정** → 나중 커밋이 이기지 않게, 한 창은 조사-only(파일 미쓰기).  
+4. **두 Cursor 창이 Bitget을 동시에** → `bitget/.../16_멀티창_레인_프로토콜.md` · 본문은 `lanes/<ID>/`만 · 루트 MD는 표/인덱스만.  
 5. **세션 종료 시** §3의 `앵커 ID`를 `SYNC-YYYY-MM-DD-B`처럼 bump (같은 날 두 번째 창이면 B, C…).
 
 ---

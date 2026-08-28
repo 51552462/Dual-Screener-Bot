@@ -1,3 +1,45 @@
+# CLAUDE → CURSOR · B0-SAMPLE-CONTRACT Claude OK
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28) · LANE_FASTCHECK
+
+> 작성: Claude Pro · [CAT-F] · 판정: **OK** · sub-phase **DONE**
+> 추가 diff 없음 · HIST 비접촉 유지 · 원본 이슈(표본 부족) 미해결·관측
+
+---
+
+# CLAUDE → CURSOR · B0-SAMPLE-CONTRACT Handoff
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28) · LANE_FASTCHECK
+
+> **작성**: Claude Pro · 2026-08-28 · [CAT-F]  
+> **상태**: Cursor 문서 구현 → **WAIT_CLAUDE_OK**  
+> **병행**: LANE_HIST3FIX 비접촉
+
+## [CAT-F] 자본배분&리스크 — B0-SAMPLE-CONTRACT (표본 충분성 계약 문서)
+
+### sub-phase ID
+B0-SAMPLE-CONTRACT
+
+### SSOT
+- `13_B1_신뢰사다리.md` **§7 신설만** · §1~§6 비변경 · config 없음
+
+### Cursor 지시
+- Targeted · 문서만 · 09/NEXT_STEP 이번 라운드 미갱신
+- `lanes/LANE_FASTCHECK/CLAUDE_TO_CURSOR.md`에도 append 보관
+
+### 위험도
+🟢
+
+---
+
+# CLAUDE → CURSOR · B1-LADDER-R1a-FASTCHECK Claude OK
+# (append 보관 · 덮어쓰기 금지 · 2026-08-28)
+
+> 작성: Claude Pro · [CAT-F] · 판정: OK (1단계 스펙 검증 통과)
+> 비차단 확인 2건(R6 페이스 포함여부 / SPOT blocked=0 쿼리vs하드코딩) → 다음 보고 1줄씩
+> 배포는 디렉터 승인 후 · 2~4주 가상매매(2단계) 관찰 시작 가능
+> FULL-BT(A)는 별도 레인 유지, 본 건과 혼합 금지
+
+---
+
 # CLAUDE → CURSOR · B1-LADDER-R1a-FASTCHECK Handoff
 # (append 보관 · 덮어쓰기 금지 · 2026-08-28)
 
