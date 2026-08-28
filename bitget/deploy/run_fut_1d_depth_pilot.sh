@@ -11,8 +11,10 @@
 #   export BITGET_FUT_DEPTH_DB=/var/lib/quant-bitget/data/bitget_fut_depth_staging.sqlite
 #   bash bitget/deploy/run_fut_1d_depth_pilot.sh
 #
-# FULL-BT=1 은 디렉터·Claude 조건1 확인 후만 (프로덕션 write 시 mtf refresh 일시 정지).
-#   BITGET_FUT_DEPTH_RUN_FULL_BT=1 BITGET_FULL_BT_MAX_SYMBOLS=3 bash ...
+# FULL-BT=1 (Claude Go · staging only · futures · max=3):
+#   export BITGET_FUT_DEPTH_DB=/var/lib/quant-bitget/data/bitget_fut_depth_staging.sqlite
+#   BITGET_FUT_DEPTH_RUN_FULL_BT=1 BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_fut_1d_depth_pilot.sh
+# Requires staging DB; refuses FULL-BT without BITGET_FUT_DEPTH_DB (prod OHLCV write forbidden this Go).
 set -euo pipefail
 
 ROOT="${BITGET_INSTALL_ROOT:-${INSTALL_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
@@ -65,13 +67,18 @@ print("OK: all_warmup_ok write_mode=", out.get("write_mode"))
 PY
 
 if [[ "${BITGET_FUT_DEPTH_RUN_FULL_BT:-0}" == "1" ]]; then
-  if [[ -n "${BITGET_FUT_DEPTH_DB:-}" ]]; then
-    echo "[fut-depth] FULL-BT against staging: export BITGET_DB_STORAGE_PATH to staging or pass market_db" >&2
-    export BITGET_DB_STORAGE_PATH="$(dirname "${BITGET_FUT_DEPTH_DB}")"
-    # Prefer pointing market read at staging file via BITGET_FULL_BT market — pilot uses storage path
-    echo "[fut-depth] NOTE: for staging FULL-BT, set BITGET_DB_STORAGE_PATH to staging dir carefully" >&2
-  fi
   export BITGET_FULL_BT_MAX_SYMBOLS="${BITGET_FULL_BT_MAX_SYMBOLS:-3}"
-  echo "[fut-depth] running FULL-BT pilot MAX_SYMBOLS=${BITGET_FULL_BT_MAX_SYMBOLS}"
+  STAGING_DB="${BITGET_FUT_DEPTH_DB:-}"
+  if [[ -z "${STAGING_DB}" ]]; then
+    echo "ERROR: FULL-BT=1 requires BITGET_FUT_DEPTH_DB=staging (prod OHLCV write forbidden this Go)" >&2
+    exit 3
+  fi
+  if [[ ! -f "${STAGING_DB}" ]]; then
+    echo "ERROR: staging DB missing: ${STAGING_DB}" >&2
+    exit 3
+  fi
+  echo "[fut-depth] FULL-BT futures-only vs staging market_db=${STAGING_DB} MAX=${BITGET_FULL_BT_MAX_SYMBOLS}"
+  export BITGET_FULL_BT_MARKET_DB="${STAGING_DB}"
+  export BITGET_FULL_BT_ONLY_MT=futures
   bash "${ROOT}/bitget/deploy/run_full_bt_hist_pilot.sh"
 fi

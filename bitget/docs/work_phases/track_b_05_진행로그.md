@@ -31,6 +31,11 @@
 | **금지** | 전체런 · 심볼>3 확장 · LIVE/R6/생존 단정 |
 | **status** | **WAIT_DIRECTOR** (staging COUNT) |
 
+### VPS staging COUNT PASS [2026-08-29]
+write_mode=staging · BTC/ETH/SOL merged=300 · first=2025-10-31 last=2026-08-28 · warmup_ok · 프로덕션 비접촉
+
+**Claude OK: 2026-08-29** (staging Go, max=3) · status **WAIT_CURSOR_VPS** · FULL-BT=1 futures-only vs staging · 프로덕션 OHLCV write 금지 · IV L1만
+
 ---
 
 ## B0-SAMPLE-CONTRACT — Claude OK · DONE [2026-08-28]

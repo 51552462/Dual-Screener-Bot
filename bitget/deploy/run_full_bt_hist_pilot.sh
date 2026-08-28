@@ -128,10 +128,11 @@ def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str
 
 
 def main() -> int:
-    market_db = market_db_read_path()
+    market_db = (os.environ.get("BITGET_FULL_BT_MARKET_DB") or "").strip() or market_db_read_path()
     paper_db = market_data_db_path()
     results_db = full_bt_db_path()
     max_sym = int(os.environ.get("BITGET_FULL_BT_MAX_SYMBOLS", "10") or "10")
+    only_mt = (os.environ.get("BITGET_FULL_BT_ONLY_MT") or "").strip().lower()
     stamp = _ts()
     spot_id = f"pilot-spot-{stamp}"
     fut_id = f"pilot-fut-{stamp}"
@@ -139,31 +140,44 @@ def main() -> int:
     print(f"[full-bt-pilot] market_db={market_db}")
     print(f"[full-bt-pilot] paper_db={paper_db}")
     print(f"[full-bt-pilot] results_db={results_db}")
+    print(f"[full-bt-pilot] only_mt={only_mt or 'spot+futures'}")
     if not os.path.isfile(market_db):
         print("FAIL: market DB missing", file=sys.stderr)
         return 2
 
-    spot = _one(
-        "spot", spot_id, market_db=market_db, results_db=results_db, paper_db=paper_db, max_sym=max_sym
-    )
-    fut = _one(
-        "futures",
-        fut_id,
-        market_db=market_db,
-        results_db=results_db,
-        paper_db=paper_db,
-        max_sym=max_sym,
-    )
-    cols = _cols(results_db, "bitget_forward_trades")
     summary = {
         "results_db": results_db,
         "market_db": market_db,
         "paper_db": paper_db,
-        "result_table_columns": cols,
-        "run_id_column_present": "run_id" in cols,
-        "spot": spot,
-        "futures": fut,
+        "only_mt": only_mt or "spot+futures",
+        "result_table_columns": _cols(results_db, "bitget_forward_trades"),
+        "run_id_column_present": "run_id" in _cols(results_db, "bitget_forward_trades"),
     }
+    if only_mt not in ("futures", "fut"):
+        summary["spot"] = _one(
+            "spot",
+            spot_id,
+            market_db=market_db,
+            results_db=results_db,
+            paper_db=paper_db,
+            max_sym=max_sym,
+        )
+    else:
+        summary["spot"] = {"skipped": True, "reason": "BITGET_FULL_BT_ONLY_MT=futures"}
+    if only_mt not in ("spot",):
+        summary["futures"] = _one(
+            "futures",
+            fut_id,
+            market_db=market_db,
+            results_db=results_db,
+            paper_db=paper_db,
+            max_sym=max_sym,
+        )
+    else:
+        summary["futures"] = {"skipped": True, "reason": "BITGET_FULL_BT_ONLY_MT=spot"}
+
+    cols = summary["result_table_columns"]
+    summary["run_id_column_present"] = "run_id" in cols
     out_path = os.path.join(
         os.environ.get("BITGET_DB_STORAGE_PATH") or os.path.dirname(results_db) or ".",
         f"full_bt_pilot_summary_{stamp}.json",

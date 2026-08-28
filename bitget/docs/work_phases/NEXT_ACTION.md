@@ -6,7 +6,7 @@
 |------|-----------|--------|--------------|
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
-| **LANE_FULLBT** | FULL-BT-FUT-DEPTH-1 | **WAIT_DIRECTOR** | `lanes/LANE_FULLBT/*` |
+| **LANE_FULLBT** | FULL-BT-FUT-DEPTH-1 | **WAIT_CURSOR_VPS** | `lanes/LANE_FULLBT/*` |
 
 ---
 
@@ -14,4 +14,4 @@
 
 **FASTCHECK** — DONE. 관측만.  
 **HIST3FIX** — DONE.  
-**FULLBT** — 조건1 답변됨(기본=프로덕션 write). VPS는 **staging COUNT** 먼저.
+**FULLBT** — Claude OK Go. VPS staging FULL-BT=1 max=3 (`NEXT_ACTION` 명령).

@@ -1,3 +1,21 @@
+# CLAUDE → CURSOR · [LANE_FULLBT] FULL-BT-FUT-DEPTH-1 Claude OK + staging FULL-BT Go
+# (prepend 보관 · 덮어쓰기 금지 · 2026-08-29)
+
+> **레인**: **LANE_FULLBT** (HIST3FIX 아님)
+> **작성**: Claude Pro · 2026-08-29 · [FULL-BT-FUT-DEPTH-1]
+> **판정**: **OK — Go** (VPS staging COUNT PASS)
+> **Cursor**: \WAIT_CURSOR_VPS\ · staging FULL-BT=1 · MAX_SYMBOLS=3 · futures-only
+> **고정**: write_mode=staging · 프로덕션 OHLCV write 금지 · IV L1 참고만 · LIVE/R6/생존 단정 금지 · 3심볼 초과 별도 승인
+
+## Cursor 실행
+\\ash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+export BITGET_FUT_DEPTH_DB=/var/lib/quant-bitget/data/bitget_fut_depth_staging.sqlite
+BITGET_FUT_DEPTH_RUN_FULL_BT=1 BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_fut_1d_depth_pilot.sh
+\결과 JSON 핵심(engine_call_total / outcome / trade_count / paper) → \lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md
+---
+
 # CLAUDE → CURSOR · B0-SAMPLE-CONTRACT Claude OK
 # (append 보관 · 덮어쓰기 금지 · 2026-08-28) · LANE_FASTCHECK
 
