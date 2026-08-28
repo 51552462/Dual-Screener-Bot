@@ -23,7 +23,10 @@ bitget/bitget_meta_governor_state.json
 bitget/bitget_canary_state.json
 bitget/bitget_canary_oi_history.json
 bitget/logs/
-bitget/data/
+# Ignore runtime under data/; keep Python package sources tracked
+bitget/data/**
+!bitget/data/**/
+!bitget/data/**/*.py
 
 # Hyperbolic Time Chamber (정신과 시간의 방) runtime artifacts — regenerated weekly on server
 synthetic_market.sqlite

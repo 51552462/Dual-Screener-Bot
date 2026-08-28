@@ -5,11 +5,13 @@
 | 레인 | sub-phase | status | 창이 쓸 파일 |
 |------|-----------|--------|--------------|
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
-| **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | (HIST 창이 갱신) | `lanes/LANE_HIST3FIX/*` |
+| **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
+| **LANE_FULLBT** | FULL-BT-FUT-DEPTH-1 | **WAIT_DIRECTOR** | `lanes/LANE_FULLBT/*` |
 
 ---
 
 ## 디렉터 한 줄
 
-**FASTCHECK** — DONE. 관측만. 페이스 경고/FAIL(b) 시 Claude 재호출.  
-**HIST** — HIST 창만.
+**FASTCHECK** — DONE. 관측만.  
+**HIST3FIX** — DONE.  
+**FULLBT** — 조건1 답변됨(기본=프로덕션 write). VPS는 **staging COUNT** 먼저.

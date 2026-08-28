@@ -1,1 +1,1 @@
-"""Bitget data layer — REST ingest, WebSocket streams, buffers."""
+"""Bitget data helpers (OHLCV history backfill Adapter)."""

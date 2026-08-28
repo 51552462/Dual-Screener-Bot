@@ -63,6 +63,7 @@ OHLCV SQLite, WebSocket 실시간, data refresh, gap heal, symbol universe, CQRS
 | 1 | load_test symbol_count=0 (dev DB) | Track B |
 | 2 | integrity backup cron 미연결 | P0-5 |
 | 3 | bad tick filter 없음 | P1-6 (CAT-C link) |
+| 4 | SPOT/FUT **initial backfill lookback 비대칭** — VPS FUT_1D 과거 n≈90 vs SPOT≈300. **원인**: `mtf_data_updater` tail-only(limit, no since). **API**: Bitget swap 1D `since`+paginate로 90일 이전 **제공 확인**(2026-08-29 · LANE_FULLBT). **조치**: `bitget/data/ohlcv_history_backfill.py` 파일럿 Adapter(BTC/ETH/SOL) · 기본 refresh 비접촉. VPS 적용·Claude OK 대기 | LANE_FULLBT FULL-BT-FUT-DEPTH-1 |
 
 ---
 

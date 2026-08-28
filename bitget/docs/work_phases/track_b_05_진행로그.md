@@ -19,6 +19,20 @@
 
 ---
 
+## FULL-BT-FUT-DEPTH-1 — 조건부 OK · 조건1 답변 [2026-08-29]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** (HIST3FIX 아님) |
+| **Claude** | 조건부 OK · 정식 CAT-B Handoff 보강 불필요 · 조건1만 05 append |
+| **조건1 write** | **기본=프로덕션 직접 merge-write** (`BITGET_DB_STORAGE_PATH` OHLCV). staging=`BITGET_FUT_DEPTH_DB`. mtf tail-only 이후 refresh가 **깊이 소실** 가능 → COUNT는 staging 권장 · 프로덕션 write 시 mtf pause |
+| **hit/reject** | 로컬 candidate=3·hit=3·reject=1 — hit=후보, reject=try_add 관측(비차단) |
+| **VPS** | staging COUNT만 선행 · `FULL_BT=1`은 조건1 후·디렉터 Go |
+| **금지** | 전체런 · 심볼>3 확장 · LIVE/R6/생존 단정 |
+| **status** | **WAIT_DIRECTOR** (staging COUNT) |
+
+---
+
 ## B0-SAMPLE-CONTRACT — Claude OK · DONE [2026-08-28]
 
 | 항목 | 내용 |
