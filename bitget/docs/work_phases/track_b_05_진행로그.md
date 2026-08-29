@@ -19,6 +19,38 @@
 
 ---
 
+## FULL-BT-FUT-DIAG-2 — reject 원문 확보 [2026-08-29]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** |
+| **선행** | DIAG-1 **Claude OK** |
+| **코드** | **없음** (조회만) |
+| **로컬** | full_bt_diag **없음** · gate_reject **0** · ops `fullbt_candidate_reject` **0** |
+| **VPS** | 이 PC **미접속** · 원문 **미조회** (“VPS 0건” 단정 안 함) |
+| **status** | **WAIT_DIRECTOR** (VPS SELECT 붙여넣기) |
+| **금지** | 재실행 · 해석 · CAT-D/B 분기 · DEPTH-2 |
+
+---
+
+## FULL-BT-FUT-DIAG-1 — candidate→trade reject 태그 [2026-08-29]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** |
+| **판정 대기** | **Claude OK: 2026-08-29** |
+| **A안** | candidate=3·reject=3·trade=0 → 진단 우선 (표본 확대 B 보류) |
+| **시그니처** | `try_add_virtual_position` → `(ok: bool, msg: str)` · 거절 사유=`msg` **존재** → Adapter 불필요 |
+| **산출** | `observability/fullbt_candidate_diag_bg.py` · harness 호출부 직후 hook · `FULLBT_CANDIDATE_DIAG_ENABLED` default true |
+| **이벤트** | `ops_events` `fullbt_candidate_reject` · component `observability.fullbt_candidate_diag` · payload=`run_id/symbol/market_type/ok/reject_msg` |
+| **CAT** | D 읽기만 · N 비접촉 · C hook만 |
+| **테스트** | `pytest bitget/tests/test_fullbt_candidate_diag.py` → **5 passed** |
+| **재분석** | 로컬 `bitget_full_bt.sqlite`에 `full_bt_diag`/pilot run **없음** (checkpoint만). VPS `pilot-fut-20260829T062221Z` gate_reject.detail 조회 또는 DIAG on 후 심볼≤3 재파일럿 필요 |
+| **금지** | 전체런 · 심볼>3 · 프로덕션 OHLCV write · DEPTH-2 · LIVE/생존 단정 |
+| **롤백** | `FULLBT_CANDIDATE_DIAG_ENABLED=false` |
+
+---
+
 ## FULL-BT-FUT-DEPTH-1 — 조건부 OK · 조건1 답변 [2026-08-29]
 
 | 항목 | 내용 |
@@ -35,6 +67,11 @@
 write_mode=staging · BTC/ETH/SOL merged=300 · first=2025-10-31 last=2026-08-28 · warmup_ok · 프로덕션 비접촉
 
 **Claude OK: 2026-08-29** (staging Go, max=3) · status **WAIT_CURSOR_VPS** · FULL-BT=1 futures-only vs staging · 프로덕션 OHLCV write 금지 · IV L1만
+
+### VPS staging FULL-BT=1 결과 [2026-08-29]
+`pilot-fut-20260829T062221Z` · call=**183** · candidate=**3** · hit=reject=**3** · trade_count=**0** · paper **10→10** · staging
+
+**Claude OK: 2026-08-29** (1D staging pilot 한정 **SUB_DONE** · trade_count=0 후속 **PARK**) · 다중 TF(1H/2H/4H)는 DEPTH-1 밖 → 필요 시 **FULL-BT-FUT-DEPTH-2** 신설 · 전체런·심볼>3·프로덕션 OHLCV write·LIVE/생존 단정 금지 유지
 
 ---
 

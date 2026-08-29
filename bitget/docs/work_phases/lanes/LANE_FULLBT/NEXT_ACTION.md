@@ -3,19 +3,15 @@
 | 필드 | 값 |
 |------|-----|
 | **레인** | **LANE_FULLBT** |
-| **sub-phase** | **FULL-BT-FUT-DEPTH-1** |
-| **status** | **WAIT_CURSOR_VPS** (Claude OK · staging FULL-BT=1 Go) |
-| **고정** | staging · MAX=3 · futures-only · 프로덕션 OHLCV write 금지 · IV L1만 |
+| **sub-phase** | **FULL-BT-FUT-DIAG-2** |
+| **status** | **WAIT_DIRECTOR** (VPS SELECT 붙여넣기) |
+| **DIAG-1** | **Claude OK** 2026-08-29 |
+| **스코프** | 코드/재실행 금지 · 원문 확보만 |
 
 ---
 
-## VPS 실행 (지금)
+## 지금
+로컬 gate_reject / fullbt_candidate_reject = **0건**. VPS 미접속 → 디렉터 VPS SELECT 결과 대기.
 
-```bash
-cd ~/dante_bots/Dual-Screener-Bot && git pull
-export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
-export BITGET_FUT_DEPTH_DB=/var/lib/quant-bitget/data/bitget_fut_depth_staging.sqlite
-BITGET_FUT_DEPTH_RUN_FULL_BT=1 BITGET_FULL_BT_MAX_SYMBOLS=3 bash bitget/deploy/run_fut_1d_depth_pilot.sh
-```
-
-출력 futures diag(engine_call_total·outcome·trade_count·paper)를 채팅/`CURSOR_TO_CLAUDE.md`에 붙여넣기.
+## 금지
+재파일럿 · 전체런 · 심볼>3 · CAT-D/B 분기 추정 · DEPTH-2

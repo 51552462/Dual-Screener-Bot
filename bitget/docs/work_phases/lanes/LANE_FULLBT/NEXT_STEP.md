@@ -1,11 +1,10 @@
 # NEXT STEP — LANE_FULLBT
 
-> Claude OK Go · VPS staging FULL-BT=1 실행
+> WAIT_DIRECTOR · FULL-BT-FUT-DIAG-2
 
 ## 지금
-임시 DB 기준 선물 파일럿 백테스트(심볼 3)만 돌리면 됩니다.
+VPS에서 gate_reject / fullbt_candidate_reject SELECT → Cursor에 붙여넣기.
 
 ## 다음
-1. VPS에서 NEXT_ACTION 명령 실행
-2. 결과 OUTBOX append · Claude 검증
-3. 생존/성공 발표 금지 · 전체런 금지
+원문 확보 후 Claude에 OUTBOX → 구조적(CAT-D) vs 우연(B) 분기 Handoff.  
+VPS도 0건이면 재실행 없이 대기 → ≤3 DIAG-on은 **별 Handoff**.

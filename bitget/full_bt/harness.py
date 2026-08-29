@@ -883,6 +883,19 @@ def run_replay(
                             side=side,
                             entry_high=entry_high,
                         )
+                    # FULL-BT-FUT-DIAG-1: try_add 반환 관측만 → ops_events (CAT-D 비접촉)
+                    try:
+                        from bitget.observability.fullbt_candidate_diag_bg import (
+                            tag_candidate_reject_reason,
+                        )
+
+                        tag_candidate_reject_reason(
+                            rid, str(symbol), mt, (ok, msg)
+                        )
+                    except Exception:
+                        logger.debug(
+                            "fullbt_candidate_diag tag skip", exc_info=True
+                        )
                     if ok:
                         events.append(
                             {

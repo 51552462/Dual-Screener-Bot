@@ -8,7 +8,7 @@
 |---------|-----------|--------|---------|-------------|--------|
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** (Claude OK 2026-08-28) | 표본 계약 승인 · R2 관측 | 2026-08-28 | `LANE_FASTCHECK/CURSOR_TO_CLAUDE.md` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** (Claude OK · 백필 PARK) | FULL-BT warmup 좁은 수정 | 2026-08-28 | `LANE_HIST3FIX/CURSOR_TO_CLAUDE.md` |
-| **LANE_FULLBT** | FULL-BT-FUT-DEPTH-1 | **WAIT_CURSOR_VPS** (staging FULL-BT=1 Go) | FUT depth→파일럿 BT | 2026-08-29 | `LANE_FULLBT/CURSOR_TO_CLAUDE.md` |
+| **LANE_FULLBT** | FULL-BT-FUT-DIAG-2 | **WAIT_DIRECTOR** (VPS SELECT 붙여넣기) | FUT reject 원문 확보 | 2026-08-29 | `LANE_FULLBT/CURSOR_TO_CLAUDE.md` |
 
 ## 부팅 한 줄 (창에 붙이기)
 
@@ -24,5 +24,5 @@
 
 **FULLBT 창**
 ```
-레인: LANE_FULLBT · FULL-BT-FUT-DEPTH-1 · lanes/LANE_FULLBT/ 만 쓰기
+레인: LANE_FULLBT · FULL-BT-FUT-DIAG-2 WAIT_DIRECTOR · VPS SELECT 붙여넣기 · 코드/재실행 금지 · lanes/LANE_FULLBT/ 만
 ```
