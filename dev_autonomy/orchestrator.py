@@ -18,7 +18,7 @@ from dev_autonomy.adapters import (
 )
 from dev_autonomy.audit_log import log_round
 from dev_autonomy.context_pack import build_claude_pack, build_cursor_pack
-from dev_autonomy.paths import SHADOW_REPORT_DIR, TRACK_SSOT
+from dev_autonomy.paths import SHADOW_REPORT_DIR, resolve_track_ssot
 from dev_autonomy.safety_guard import evaluate_pre_ai_safety
 from dev_autonomy.state_resolver import resolve_state
 from dev_autonomy.types import OrchestratorPhase, ResolvedState, RoundRecord, RunMode, Track
@@ -77,7 +77,8 @@ class P0Orchestrator:
         cursor_pack = build_cursor_pack(state)
         handoff_excerpt = cursor_pack.get("handoff_section", "")
         next_action_text = ""
-        na_path = TRACK_SSOT[track]["next_action"]
+        ssot, _ = resolve_track_ssot(track, subphase_id=state.subphase_id)
+        na_path = ssot["next_action"]
         if na_path.is_file():
             next_action_text = na_path.read_text(encoding="utf-8", errors="replace")[:6000]
         safety = evaluate_pre_ai_safety(
@@ -166,7 +167,8 @@ class P0Orchestrator:
             cursor_pack = build_cursor_pack(state)
             handoff_excerpt = cursor_pack.get("handoff_section", "")
             next_action_text = ""
-            na_path = TRACK_SSOT[track]["next_action"]
+            ssot, _ = resolve_track_ssot(track, subphase_id=state.subphase_id)
+            na_path = ssot["next_action"]
             if na_path.is_file():
                 next_action_text = na_path.read_text(encoding="utf-8", errors="replace")[:6000]
             safety = evaluate_pre_ai_safety(

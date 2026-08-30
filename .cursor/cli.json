@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "deny": [
+      "Shell(git)",
+      "Shell(ssh)",
+      "Shell(scp)",
+      "Shell(sftp)",
+      "Shell(rsync)",
+      "Shell(curl)",
+      "Shell(wget)",
+      "Shell(rm)",
+      "Shell(sudo)",
+      "Read(.env*)",
+      "Read(**/.env*)",
+      "Read(**/*.key)",
+      "Read(**/*.pem)",
+      "Write(.cursor/**)",
+      "Write(.github/**)",
+      "Write(deploy/**)",
+      "Write(**/.env*)",
+      "Write(**/*.key)",
+      "Write(**/*.pem)",
+      "WebFetch(*)",
+      "Mcp(*:*)"
+    ]
+  }
+}

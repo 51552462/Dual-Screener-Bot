@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from dev_autonomy.paths import CANONICAL_STATUSES, TRACK_SSOT, VPS_DEPLOY_HINTS
+from dev_autonomy.paths import CANONICAL_STATUSES, VPS_DEPLOY_HINTS, resolve_track_ssot
 from dev_autonomy.subphase_id import normalize_subphase_id, subphase_ids_match
 from dev_autonomy.types import ResolvedState, SourceRef, Track
 
@@ -62,6 +62,15 @@ def _session_sync_subphase(text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _session_sync_is_track_a(text: str) -> bool:
+    """Only compare Track A NEXT_ACTION against a Track A session snapshot."""
+    active = _extract_table_field(text, "활성 트랙").upper()
+    if not active:
+        return True
+    markers = ("TRACK A", "KR/US", "KR+US", "주식")
+    return any(marker in active for marker in markers)
+
+
 def _infer_next_actor(canonical: str, human_required: bool) -> str:
     if human_required:
         return "director"
@@ -71,6 +80,9 @@ def _infer_next_actor(canonical: str, human_required: bool) -> str:
         "WAIT_CLAUDE_HANDOFF": "claude",
         "WAIT_DIRECTOR": "director",
         "SUB_DONE": "claude",
+        "CLOSED": "none",
+        "DONE": "none",
+        "PARK": "none",
         "IMPLEMENTATION_VERIFIED": "director",
         "FAILED_REQUIRES_REVIEW": "director",
     }
@@ -98,7 +110,7 @@ def _deferred_hint(text: str) -> bool:
 
 
 def resolve_state(track: Track) -> ResolvedState:
-    ssot = TRACK_SSOT[track]
+    ssot, ssot_error = resolve_track_ssot(track)
     next_action_path = ssot["next_action"]
     handoff_path = ssot["handoff"]
     session_sync_path = ssot.get("session_sync")
@@ -135,19 +147,23 @@ def resolve_state(track: Track) -> ResolvedState:
     canonical = _canonical_status(status_raw)
 
     phase = ""
-    if track == Track.A and sync_text:
-        phase = _extract_table_field(sync_text, "활성 트랙") or "KR/US"
+    if track == Track.A:
+        phase = "KR/US"
+        if sync_text and _session_sync_is_track_a(sync_text):
+            phase = _extract_table_field(sync_text, "활성 트랙") or phase
 
     conflict = False
     conflict_detail = ""
-    if track == Track.A and sync_text:
+    if track == Track.A and sync_text and _session_sync_is_track_a(sync_text):
         sync_sub = _session_sync_subphase(sync_text)
         if sync_sub and subphase_id:
             if not subphase_ids_match(subphase_id, sync_sub):
                 conflict = True
-                conflict_detail = (
-                    f"NEXT_ACTION id={subphase_id} vs SESSION_SYNC={normalize_subphase_id(sync_sub)}"
-                )
+                conflict_detail = f"NEXT_ACTION id={subphase_id} vs SESSION_SYNC={normalize_subphase_id(sync_sub)}"
+
+    if ssot_error:
+        conflict = True
+        conflict_detail = ssot_error
 
     handoff_ok = _handoff_has_subphase(handoff_text, subphase_id)
     vps_hint = _vps_hint(next_text) or _vps_hint(status_raw)

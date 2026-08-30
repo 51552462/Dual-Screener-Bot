@@ -52,6 +52,13 @@ news_data.sqlite
 # RP-1 L0 OHLCV parquet cache (local, not CAT-B live data)
 data/rp1_ohlcv/
 
+# Local autonomy control-plane runtime (reports, queue, locks)
+data/dev_autonomy/
+
+# Local test runner artifacts
+.pytest_cache/
+pytest-of-root/
+
 # Local IDE / OS
 .DS_Store
 Thumbs.db
