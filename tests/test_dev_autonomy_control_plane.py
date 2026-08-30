@@ -106,6 +106,12 @@ def test_wait_director_is_deferred_to_weekend():
     assert decision.action == ControlAction.WAIT_WEEKEND
 
 
+def test_wait_cursor_vps_is_deferred_to_weekend():
+    decision = decide_report(_report(source_status="WAIT_CURSOR_VPS", cursor_action=""))
+    assert decision.action == ControlAction.WAIT_WEEKEND
+    assert decision.reason_code == "DIRECTOR_REQUIRED"
+
+
 def test_terminal_ssot_with_deploy_hint_waits_for_weekend():
     decision = decide_report(_report(source_status="SUB_DONE", cursor_action="", flags=("VPS_OR_DEPLOY",)))
     assert decision.action == ControlAction.WAIT_WEEKEND
