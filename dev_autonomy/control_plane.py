@@ -75,6 +75,9 @@ class AutonomyEnvelope:
     allow_deploy: bool = False
     allow_live: bool = False
     allow_merge: bool = False
+    allow_cursor_write: bool = False
+    allow_branch_push: bool = False
+    allow_draft_pr: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AutonomyEnvelope":
@@ -124,6 +127,9 @@ class AutonomyEnvelope:
             allowed_actions=actions,
             max_tasks_per_day=max_tasks,
             require_pull_request=bool(data.get("require_pull_request", True)),
+            allow_cursor_write=_strict_bool(data, "allow_cursor_write", False),
+            allow_branch_push=_strict_bool(data, "allow_branch_push", False),
+            allow_draft_pr=_strict_bool(data, "allow_draft_pr", False),
             **unsafe,
         )
 
@@ -138,6 +144,22 @@ class AutonomyEnvelope:
             and not self.allow_live
             and not self.allow_merge
         )
+
+    def allows_pr_worker(self, report: NormalizedReport, now: datetime) -> bool:
+        """Require a second, explicit capability set for code and PR writes."""
+        return (
+            self.allows(report, ControlAction.CURSOR_IMPLEMENT, now)
+            and self.allow_cursor_write
+            and self.allow_branch_push
+            and self.allow_draft_pr
+        )
+
+
+def _strict_bool(data: dict[str, Any], key: str, default: bool) -> bool:
+    value = data.get(key, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a boolean")
+    return value
 
 
 def _as_utc(value: datetime) -> datetime:

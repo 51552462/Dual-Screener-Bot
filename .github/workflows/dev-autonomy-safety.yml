@@ -7,9 +7,13 @@ on:
       - ".github/workflows/dev-autonomy-safety.yml"
       - "dev_autonomy/**"
       - "deploy/*dev_autonomy*"
+      - "deploy/*dev_pr_worker*"
       - "deploy/entrypoints/run_dev_autonomy_service.sh"
+      - "deploy/entrypoints/run_dev_pr_worker_service.sh"
       - "deploy/systemd/quant-dev-autonomy@.*"
+      - "deploy/systemd/quant-dev-pr-worker@.*"
       - "docs/VPS_DEV_AUTONOMY_DEPLOY.md"
+      - "docs/VPS_CURSOR_PR_WORKER.md"
       - "dual_north_star_ledger.py"
       - "bitget/*.sqlite*"
       - "tests/test_dev_autonomy*.py"
@@ -21,9 +25,13 @@ on:
       - ".github/workflows/dev-autonomy-safety.yml"
       - "dev_autonomy/**"
       - "deploy/*dev_autonomy*"
+      - "deploy/*dev_pr_worker*"
       - "deploy/entrypoints/run_dev_autonomy_service.sh"
+      - "deploy/entrypoints/run_dev_pr_worker_service.sh"
       - "deploy/systemd/quant-dev-autonomy@.*"
+      - "deploy/systemd/quant-dev-pr-worker@.*"
       - "docs/VPS_DEV_AUTONOMY_DEPLOY.md"
+      - "docs/VPS_CURSOR_PR_WORKER.md"
       - "dual_north_star_ledger.py"
       - "bitget/*.sqlite*"
       - "tests/test_dev_autonomy*.py"
@@ -61,6 +69,7 @@ jobs:
           tests/test_dev_autonomy_p0.py
           tests/test_dev_autonomy_p0_adversarial.py
           tests/test_dev_autonomy_p0_safety_hardening.py
+          tests/test_dev_autonomy_pr_worker.py
           tests/test_dev_autonomy_control_plane.py
           tests/test_dev_autonomy_deploy.py
           tests/test_dev_autonomy_weekday_runner.py

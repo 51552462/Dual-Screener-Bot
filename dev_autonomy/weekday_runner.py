@@ -90,6 +90,12 @@ def build_job_packet(evaluated: dict[str, Any]) -> dict[str, Any]:
             "allow_ssh": False,
             "require_pull_request": True,
         },
+        "pr_policy": {
+            "cursor_write_requires_envelope": True,
+            "branch_push_requires_envelope": True,
+            "draft_pr_only": True,
+            "auto_merge": False,
+        },
     }
 
 

@@ -81,3 +81,19 @@ For the supported two-VPS systemd installation, follow
 `docs/VPS_DEV_AUTONOMY_DEPLOY.md`. The installer keeps timers disabled until
 the non-root Claude/Cursor browser logins are complete, performs a dry-run,
 and uses separate `stock` and `bitget` runtime queues.
+
+## Isolated draft-PR worker (Phase 3)
+
+`pr_worker` consumes only deduplicated `CURSOR_IMPLEMENT` packets. It requires
+a current envelope with `allow_cursor_write`, `allow_branch_push`, and
+`allow_draft_pr` all explicitly true. Cursor runs in a separate Git worktree;
+the controller then enforces the Handoff file allowlist, pytest-only validation,
+and a read-only Claude `OK` before it commits, pushes, and opens a **Draft PR**.
+
+Cursor never receives Git or network permission. The trusted controller owns
+the narrow branch push and `gh pr create --draft` step. It never merges,
+deploys, uses SSH, touches live execution, or changes risk settings. Failed
+worktrees are preserved for human review and never retried automatically.
+
+VPS installation and one-time GitHub browser login are documented in
+`docs/VPS_CURSOR_PR_WORKER.md`.
