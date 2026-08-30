@@ -1,0 +1,9 @@
+# Example only. Verify paths and dry-run before installing on the VPS.
+# The server must support CRON_TZ. Otherwise set the VPS timezone explicitly.
+CRON_TZ=Asia/Seoul
+
+# Weekdays: check every 30 minutes. Unchanged report IDs are deduplicated.
+*/30 * * * 1-5 cd /opt/Dual-Screener-Bot && .venv/bin/python -m dev_autonomy.weekday_runner --north-star-ledger /var/lib/quant-factory/data/dual_north_star_ledger.json --bitget-ops-db /var/lib/bitget-factory/data/bitget_ops_events.sqlite --envelope /etc/quant-dev-autonomy/envelope.json --run-claude-review --notify-telegram --json >> /var/log/quant-dev-autonomy.log 2>&1
+
+# Weekend: keep intake/reporting alive, but director-only items remain waiting.
+15 10 * * 6,0 cd /opt/Dual-Screener-Bot && .venv/bin/python -m dev_autonomy.weekday_runner --north-star-ledger /var/lib/quant-factory/data/dual_north_star_ledger.json --bitget-ops-db /var/lib/bitget-factory/data/bitget_ops_events.sqlite --envelope /etc/quant-dev-autonomy/envelope.json --run-claude-review --notify-telegram --json >> /var/log/quant-dev-autonomy.log 2>&1

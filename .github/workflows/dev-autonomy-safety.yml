@@ -3,6 +3,7 @@ name: dev-autonomy-safety
 on:
   pull_request:
     paths:
+      - ".cursor/cli.json"
       - ".github/workflows/dev-autonomy-safety.yml"
       - "dev_autonomy/**"
       - "dual_north_star_ledger.py"
@@ -12,6 +13,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".cursor/cli.json"
       - ".github/workflows/dev-autonomy-safety.yml"
       - "dev_autonomy/**"
       - "dual_north_star_ledger.py"
@@ -52,5 +54,6 @@ jobs:
           tests/test_dev_autonomy_p0_adversarial.py
           tests/test_dev_autonomy_p0_safety_hardening.py
           tests/test_dev_autonomy_control_plane.py
+          tests/test_dev_autonomy_weekday_runner.py
           tests/test_ns_book_count_01.py
           -q --tb=short
