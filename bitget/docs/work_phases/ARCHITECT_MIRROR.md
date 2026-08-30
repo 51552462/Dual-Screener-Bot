@@ -6,6 +6,22 @@
 
 ---
 
+## Mirror — 2026-08-30 · [CAT-D] · FULL-BT-FUT-DEFCON-1 SUB_DONE
+
+### 판정
+- Claude OK · **SUB_DONE** · 6항목 충족 (bypass=3, prod=0, FUT≤3, staging, 1회, 단정문구 없음)
+- Adapter A 의도대로 동작 (step2 bottleneck=0 · bypass=3 · prod 유입 0)
+
+### 지시
+- VPS `FULLBT_DEFCON_BYPASS_ENABLED=false` **즉시** (코드 default 이미 False)
+- `_load_bench_close` 노이즈 = 비차단 · 별건 CAT
+- FULL-BT = IV L1 참고만 · LIVE/R6/생존 단정 금지
+
+### 다음
+- 이 레인 추가 구현 없음 · 새 Handoff 후만
+
+---
+
 ## Mirror — 2026-08-29 · [CAT-D] · FULL-BT-FUT-DEFCON-1 조건부 OK
 
 ### 로컬 구조 이해 (Cursor 스냅샷 대비)

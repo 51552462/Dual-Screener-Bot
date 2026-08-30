@@ -8,7 +8,9 @@
 #   bash bitget/deploy/run_full_bt_hist_pilot.sh
 # Optional:
 #   BITGET_FULL_BT_MAX_SYMBOLS=10   # Handoff default (U3 reuse); do not invent
-#   BITGET_FULL_BT_MAX_SYMBOLS=3    # HIST-2 dry (소표본)set -euo pipefail
+#   BITGET_FULL_BT_MAX_SYMBOLS=3    # HIST-2 dry (소표본)
+#   BITGET_FULL_BT_START_DATE=YYYY-MM-DD  # RUN-2: COUNT first bar (no hardcode)
+set -euo pipefail
 
 ROOT="${BITGET_INSTALL_ROOT:-${INSTALL_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
 cd "$ROOT"
@@ -86,7 +88,7 @@ def _count(db: str) -> int:
         conn.close()
 
 
-def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str, max_sym: int) -> dict:
+def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str, max_sym: int, start_date=None) -> dict:
     paper_before = count_paper_forward_trades(paper_db)
     table_before = _count(results_db)
     out = run_full_bt_batch(
@@ -97,6 +99,7 @@ def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str
         market_db=market_db,
         paper_db=paper_db,
         max_symbols=max_sym,
+        start_date=start_date,
     )
     paper_after = count_paper_forward_trades(paper_db)
     table_after = _count(results_db)
@@ -128,11 +131,17 @@ def _one(mt: str, run_id: str, *, market_db: str, results_db: str, paper_db: str
 
 
 def main() -> int:
+    from datetime import date as date_cls
+
     market_db = (os.environ.get("BITGET_FULL_BT_MARKET_DB") or "").strip() or market_db_read_path()
     paper_db = market_data_db_path()
     results_db = full_bt_db_path()
     max_sym = int(os.environ.get("BITGET_FULL_BT_MAX_SYMBOLS", "10") or "10")
     only_mt = (os.environ.get("BITGET_FULL_BT_ONLY_MT") or "").strip().lower()
+    start_raw = (os.environ.get("BITGET_FULL_BT_START_DATE") or "").strip()
+    start_date = None
+    if start_raw:
+        start_date = date_cls.fromisoformat(start_raw)
     stamp = _ts()
     spot_id = f"pilot-spot-{stamp}"
     fut_id = f"pilot-fut-{stamp}"
@@ -141,6 +150,7 @@ def main() -> int:
     print(f"[full-bt-pilot] paper_db={paper_db}")
     print(f"[full-bt-pilot] results_db={results_db}")
     print(f"[full-bt-pilot] only_mt={only_mt or 'spot+futures'}")
+    print(f"[full-bt-pilot] start_date={start_date.isoformat() if start_date else 'None'}")
     if not os.path.isfile(market_db):
         print("FAIL: market DB missing", file=sys.stderr)
         return 2
@@ -150,6 +160,7 @@ def main() -> int:
         "market_db": market_db,
         "paper_db": paper_db,
         "only_mt": only_mt or "spot+futures",
+        "start_date": start_date.isoformat() if start_date else None,
         "result_table_columns": _cols(results_db, "bitget_forward_trades"),
         "run_id_column_present": "run_id" in _cols(results_db, "bitget_forward_trades"),
     }
@@ -161,6 +172,7 @@ def main() -> int:
             results_db=results_db,
             paper_db=paper_db,
             max_sym=max_sym,
+            start_date=start_date,
         )
     else:
         summary["spot"] = {"skipped": True, "reason": "BITGET_FULL_BT_ONLY_MT=futures"}
@@ -172,6 +184,7 @@ def main() -> int:
             results_db=results_db,
             paper_db=paper_db,
             max_sym=max_sym,
+            start_date=start_date,
         )
     else:
         summary["futures"] = {"skipped": True, "reason": "BITGET_FULL_BT_ONLY_MT=spot"}

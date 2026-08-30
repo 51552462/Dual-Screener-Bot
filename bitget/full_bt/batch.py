@@ -57,19 +57,30 @@ def get_full_bt_window_batches(
     *,
     db_path: Optional[str] = None,
     timeframe: Optional[str] = None,
+    start_date: Optional[date] = None,
 ) -> list[tuple[int, int]]:
     """Split OHLCV bar timeline into (start_ts, end_ts) batches.
 
     ``batch_size`` = TIME_MACHINE_MAX_BARS_PER_TABLE (reused). TF = FULL-BT-1 list[0].
-    OHLCV loader: universe_bt read-only helper (CAT-B read; no write).
+    OHLCV: FULL-BT isolated ``load_full_bt_ohlcv`` (no CAT-C 250-bar tail).
+    ``start_date`` gap → ``FullBtDataGapError`` (no silent truncation).
     """
-    from bitget.analysis.universe_bt.replay import _bar_ts_from_date, _load_ohlcv
+    from bitget.analysis.universe_bt.replay import _bar_ts_from_date
+    from bitget.full_bt.ohlcv_load import load_full_bt_ohlcv
 
     mt = _normalize_mt(market_type)
     tf = str(timeframe or REUSED_SCANNER_TIMEFRAMES[0]).strip().upper()
-    df = _load_ohlcv(symbol, mt, db_path=db_path, timeframe=tf)
+    df = load_full_bt_ohlcv(
+        symbol, mt, start_date=start_date, db_path=db_path, timeframe=tf
+    )
     if df is None or len(df) == 0:
         return []
+
+    if start_date is not None:
+        # Walk from requested start (inclusive); gap already guarded in loader.
+        df = df[df["Date"].dt.date >= start_date].reset_index(drop=True)
+        if len(df) == 0:
+            return []
 
     max_bars = max(1, int(TIME_MACHINE_MAX_BARS_PER_TABLE))
     if len(df) > max_bars:
@@ -137,6 +148,7 @@ def run_full_bt_batch(
     max_symbols: Optional[int] = None,
     engine: str = "MASTER",
     replay_fn: Optional[Callable[..., None]] = None,
+    start_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """Shard + checkpoint orchestrator over FULL-BT-1 ``run_replay``."""
     mt = _normalize_mt(market_type)
@@ -161,7 +173,11 @@ def run_full_bt_batch(
     for shard_index, shard in enumerate(shards):
         for symbol in shard:
             batches = get_full_bt_window_batches(
-                symbol, mt, batch_size, db_path=market_db
+                symbol,
+                mt,
+                batch_size,
+                db_path=market_db,
+                start_date=start_date,
             )
             for batch_idx, (start_ts, end_ts) in enumerate(batches):
                 if resume and (symbol, batch_idx) in completed:
@@ -223,6 +239,7 @@ def run_full_bt_batch(
         "paper_before": paper_before,
         "paper_after": paper_after,
         "paper_log": paper_log,
+        "start_date": start_date.isoformat() if start_date else None,
         "reused_time_machine": dict(REUSED_TIME_MACHINE),
         "tf_reused": list(REUSED_SCANNER_TIMEFRAMES),
         "diag": summarize_diag(full_db, run_id, mt),

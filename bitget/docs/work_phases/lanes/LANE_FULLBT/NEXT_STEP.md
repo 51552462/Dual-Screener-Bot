@@ -1,9 +1,7 @@
 # NEXT STEP — LANE_FULLBT
 
-> WAIT_CURSOR_VPS · DEFCON-1 Claude 최종 OK
+> WAIT_CURSOR_VPS · RUN-2 COUNT
 
-## 지금
-VPS: `FULLBT_DEFCON_BYPASS_ENABLED=true` · FUT max=3 staging FULL-BT 1회.
-
-## 다음
-결과 → OUTBOX → Claude 재검증. 끝나면 flag off 권장.
+1. VPS COUNT  
+2. start=first → 실런 (bypass off)  
+3. OUTBOX → WAIT_CLAUDE_OK
