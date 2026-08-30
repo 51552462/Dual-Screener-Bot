@@ -279,7 +279,8 @@ def _forward_book_counts_a() -> Dict[str, Any]:
         if st in ("OPEN", "ACTIVE"):
             open_n += n
             open_by[m] = open_by.get(m, 0) + n
-        elif st == "CLOSED":
+        elif st.startswith("CLOSED"):
+            # CAT-D status identity is CLOSED_WIN / CLOSED_LOSS / ...
             closed_n += n
             closed_by[m] = closed_by.get(m, 0) + n
     return {

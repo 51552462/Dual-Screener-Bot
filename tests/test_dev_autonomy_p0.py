@@ -11,7 +11,7 @@ import pytest
 
 from dev_autonomy.adapters import FakeClaudeVerifier, FakeCursorExecutor
 from dev_autonomy.orchestrator import P0Orchestrator
-from dev_autonomy.paths import REPO_ROOT, TRACK_SSOT
+from dev_autonomy.paths import REPO_ROOT, TRACK_SSOT, resolve_track_ssot
 from dev_autonomy.safety_guard import (
     check_path_safety,
     check_text_commands,
@@ -26,17 +26,29 @@ from dev_autonomy.worktree import inspect_worktree
 # --- State resolver ---
 
 
-def test_resolve_track_a_bull_recency_blocked():
+def test_resolve_track_a_current_state_blocked_without_cross_track_conflict():
     state = resolve_state(Track.A)
-    assert state.subphase_id == "BULL-RECENCY-01"
+    assert state.subphase_id == "OPS-LIQ-TG-01"
+    assert state.phase == "KR/US"
     assert state.blocked
+    assert not state.conflict
     assert state.human_required or state.vps_or_deploy_hint
 
 
 def test_resolve_track_b_deploy_blocked():
     state = resolve_state(Track.B)
+    assert state.subphase_id == "FULL-BT-FUT-DIAG-2"
+    assert state.status_canonical == "WAIT_DIRECTOR"
     assert state.blocked
     assert state.human_required
+
+
+def test_resolve_track_b_uses_active_lane_files():
+    ssot, error = resolve_track_ssot(Track.B)
+    assert error == ""
+    assert ssot["root"].name == "LANE_FULLBT"
+    assert ssot["next_action"].parent.name == "LANE_FULLBT"
+    assert ssot["handoff"].parent.name == "LANE_FULLBT"
 
 
 def test_resolve_track_iv_wait_claude_ok():
@@ -130,6 +142,14 @@ def test_validation_pytest_pass():
 
     result = run_pytest(["pytest --version"], repo_root=REPO_ROOT)
     assert result.passed
+
+
+def test_parse_pytest_uses_current_interpreter():
+    from dev_autonomy.validation_gate import parse_pytest_argv
+
+    argv, error = parse_pytest_argv("pytest --version")
+    assert error is None
+    assert argv[:3] == [sys.executable, "-m", "pytest"]
 
 
 def test_validation_pytest_fail():

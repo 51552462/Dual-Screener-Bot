@@ -1,0 +1,56 @@
+name: dev-autonomy-safety
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/dev-autonomy-safety.yml"
+      - "dev_autonomy/**"
+      - "dual_north_star_ledger.py"
+      - "bitget/*.sqlite*"
+      - "tests/test_dev_autonomy*.py"
+      - "tests/test_ns_book_count_01.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dev-autonomy-safety.yml"
+      - "dev_autonomy/**"
+      - "dual_north_star_ledger.py"
+      - "bitget/*.sqlite*"
+      - "tests/test_dev_autonomy*.py"
+      - "tests/test_ns_book_count_01.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-autonomy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safety-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test tools
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Reject tracked runtime databases
+        run: |
+          tracked="$(git ls-files 'bitget/*.sqlite' 'bitget/*.sqlite-shm' 'bitget/*.sqlite-wal')"
+          if [ -n "$tracked" ]; then
+            printf 'Runtime databases must not be tracked:\n%s\n' "$tracked"
+            exit 1
+          fi
+      - name: Run autonomy and report safety tests
+        run: >-
+          python -m pytest
+          tests/test_dev_autonomy_p0.py
+          tests/test_dev_autonomy_p0_adversarial.py
+          tests/test_dev_autonomy_p0_safety_hardening.py
+          tests/test_dev_autonomy_control_plane.py
+          tests/test_ns_book_count_01.py
+          -q --tb=short

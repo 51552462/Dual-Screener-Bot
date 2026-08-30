@@ -41,7 +41,10 @@ def parse_pytest_argv(cmd: str) -> Tuple[Optional[List[str]], Optional[str]]:
         return None, "empty argv"
 
     if parts[0] == "pytest":
-        return ["pytest"] + parts[1:], None
+        # Do not depend on PATH having a pytest console script.  The
+        # orchestrator must validate inside the interpreter environment that
+        # launched it (venv, container, or system Python).
+        return [sys.executable, "-m", "pytest"] + parts[1:], None
 
     if parts[0] in ("python", sys.executable) or parts[0].endswith("python.exe"):
         if len(parts) >= 3 and parts[1] == "-m" and parts[2] == "pytest":

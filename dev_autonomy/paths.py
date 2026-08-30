@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from dev_autonomy.types import Track
@@ -30,13 +31,11 @@ TRACK_SSOT: dict[Track, dict[str, Path]] = {
     },
     Track.B: {
         "root": BITGET_WORK_PHASES,
-        "next_action": _first_existing(BITGET_WORK_PHASES, ("track_b_NEXT_ACTION.md", "NEXT_ACTION.md")),
-        "handoff": _first_existing(
-            BITGET_WORK_PHASES, ("track_b_CLAUDE_TO_CURSOR.md", "CLAUDE_TO_CURSOR.md")
-        ),
-        "outbox": _first_existing(
-            BITGET_WORK_PHASES, ("track_b_CURSOR_TO_CLAUDE.md", "CURSOR_TO_CLAUDE.md")
-        ),
+        # The root files are the lane dashboard/index.  resolve_track_ssot()
+        # selects the one active lane and then returns that lane's files.
+        "next_action": BITGET_WORK_PHASES / "NEXT_ACTION.md",
+        "handoff": BITGET_WORK_PHASES / "CLAUDE_TO_CURSOR.md",
+        "outbox": BITGET_WORK_PHASES / "CURSOR_TO_CLAUDE.md",
         "session_sync": _first_existing(
             BITGET_WORK_PHASES, ("track_b_00_SESSION_SYNC_POINTER.md", "00_SESSION_SYNC.md")
         ),
@@ -51,6 +50,78 @@ TRACK_SSOT: dict[Track, dict[str, Path]] = {
         "progress": None,
     },
 }
+
+BITGET_LANES_DIR = BITGET_WORK_PHASES / "lanes"
+TERMINAL_LANE_STATUSES = {"DONE", "SUB_DONE", "CLOSED", "PARK"}
+
+
+def _clean_markdown_cell(value: str) -> str:
+    return re.sub(r"[*`]", "", value).strip()
+
+
+def bitget_dashboard_rows(path: Path | None = None) -> list[dict[str, str]]:
+    """Parse only LANE_* data rows from the Bitget dashboard."""
+    dashboard = path or TRACK_SSOT[Track.B]["next_action"]
+    if not dashboard.is_file():
+        return []
+    text = dashboard.read_text(encoding="utf-8", errors="replace")
+    rows: list[dict[str, str]] = []
+    for raw in text.splitlines():
+        if not raw.lstrip().startswith("|"):
+            continue
+        cells = [_clean_markdown_cell(cell) for cell in raw.strip().strip("|").split("|")]
+        if len(cells) < 3 or not cells[0].upper().startswith("LANE_"):
+            continue
+        status_match = re.search(r"[A-Z][A-Z0-9_]+", cells[2].upper())
+        rows.append(
+            {
+                "lane": cells[0].upper(),
+                "subphase": cells[1],
+                "status": status_match.group(0) if status_match else "UNKNOWN",
+            }
+        )
+    return rows
+
+
+def resolve_track_ssot(
+    track: Track,
+    *,
+    subphase_id: str = "",
+) -> tuple[dict[str, Path], str]:
+    """Return concrete SSOT paths and a fail-closed resolution error."""
+    ssot = dict(TRACK_SSOT[track])
+    if track != Track.B:
+        return ssot, ""
+
+    rows = bitget_dashboard_rows(ssot["next_action"])
+    if subphase_id:
+        wanted = subphase_id.strip().upper()
+        candidates = [row for row in rows if row["subphase"].strip().upper() == wanted]
+    else:
+        candidates = [row for row in rows if row["status"] not in TERMINAL_LANE_STATUSES]
+
+    if len(candidates) != 1:
+        detail = "no active Bitget lane" if not candidates else "multiple active Bitget lanes"
+        return ssot, detail
+
+    lane = candidates[0]["lane"]
+    lane_root = BITGET_LANES_DIR / lane
+    next_action = lane_root / "NEXT_ACTION.md"
+    if not next_action.is_file():
+        return ssot, f"active Bitget lane missing NEXT_ACTION: {lane}"
+
+    ssot["dashboard"] = ssot["next_action"]
+    ssot["root"] = lane_root
+    ssot["next_action"] = next_action
+    for key, filename in (
+        ("handoff", "CLAUDE_TO_CURSOR.md"),
+        ("outbox", "CURSOR_TO_CLAUDE.md"),
+    ):
+        candidate = lane_root / filename
+        if candidate.is_file():
+            ssot[key] = candidate
+    return ssot, ""
+
 
 AUTONOMY_DATA_DIR = REPO_ROOT / "data" / "dev_autonomy"
 AUDIT_LOG_PATH = AUTONOMY_DATA_DIR / "audit_log.jsonl"
@@ -77,6 +148,9 @@ CANONICAL_STATUSES = (
     "WAIT_CLAUDE_OK",
     "WAIT_DIRECTOR",
     "SUB_DONE",
+    "CLOSED",
+    "DONE",
+    "PARK",
     "IMPLEMENTATION_VERIFIED",
     "FAILED_REQUIRES_REVIEW",
     "UNKNOWN",

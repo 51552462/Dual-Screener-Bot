@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dev_autonomy.context_pack import build_claude_pack
 from dev_autonomy.handoff_scope import extract_allowed_paths, path_matches_allowlist
-from dev_autonomy.paths import REPO_ROOT, TRACK_SSOT, Track
+from dev_autonomy.paths import REPO_ROOT, TRACK_SSOT, Track, resolve_track_ssot
 from dev_autonomy.safety_guard import evaluate_post_mutation_safety
 from dev_autonomy.subphase_id import normalize_subphase_id, subphase_ids_match
 from dev_autonomy.types import ResolvedState, Track as TrackEnum
@@ -214,7 +214,11 @@ def test_norm_path_preserves_dot_env():
 
 def test_track_b_ssot_paths_exist():
     b = TRACK_SSOT[Track.B]
-    assert b["next_action"].name == "track_b_NEXT_ACTION.md"
+    assert b["next_action"].name == "NEXT_ACTION.md"
     assert b["next_action"].is_file()
-    assert b["handoff"].name == "track_b_CLAUDE_TO_CURSOR.md"
+    assert b["handoff"].name == "CLAUDE_TO_CURSOR.md"
     assert b["handoff"].is_file()
+
+    active, error = resolve_track_ssot(Track.B)
+    assert error == ""
+    assert active["root"].name == "LANE_FULLBT"

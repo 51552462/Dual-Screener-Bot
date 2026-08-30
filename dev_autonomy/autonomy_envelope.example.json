@@ -1,0 +1,12 @@
+{
+  "envelope_id": "WEEK-2026-08-31",
+  "valid_from": "2026-08-31T00:00:00+09:00",
+  "valid_until": "2026-09-06T23:59:59+09:00",
+  "allowed_tracks": ["A", "B", "IV"],
+  "allowed_actions": ["CLAUDE_REVIEW", "CURSOR_IMPLEMENT"],
+  "max_tasks_per_day": 1,
+  "require_pull_request": true,
+  "allow_deploy": false,
+  "allow_live": false,
+  "allow_merge": false
+}

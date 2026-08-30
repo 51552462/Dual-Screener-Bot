@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from dev_autonomy.paths import TRACK_SSOT
+from dev_autonomy.paths import resolve_track_ssot
 from dev_autonomy.types import ResolvedState, Track
 
 
@@ -46,7 +46,7 @@ def _infer_test_commands(handoff_section: str, subphase: str) -> list[str]:
 
 
 def build_cursor_pack(state: ResolvedState) -> dict:
-    ssot = TRACK_SSOT[state.track]
+    ssot, _ = resolve_track_ssot(state.track, subphase_id=state.subphase_id)
     handoff_full = _read(ssot["handoff"])
     handoff_section = _extract_handoff_section(handoff_full, state.subphase_id or state.subphase)
     next_action = _read(ssot["next_action"], 4000)
@@ -94,7 +94,7 @@ def build_claude_pack(
     test_exit_code: int | None = None,
     diff_excerpt: str = "",
 ) -> dict:
-    ssot = TRACK_SSOT[state.track]
+    ssot, _ = resolve_track_ssot(state.track, subphase_id=state.subphase_id)
     handoff_full = _read(ssot["handoff"])
     handoff_section = _extract_handoff_section(handoff_full, state.subphase_id or state.subphase)
     outbox = cursor_outbox_excerpt or _read(ssot["outbox"], 6000)
