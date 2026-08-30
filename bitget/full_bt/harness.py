@@ -747,6 +747,41 @@ def run_replay(
     def _gross_ok(_cfg=None):
         return GateResult(ExecutionGateOutcome.APPROVED, "full_bt_hist_gross_ok", {})
 
+    # FULL-BT-FUT-DEFCON-1 Adapter A — doomsday_gate 본체 미수정 · harness mock만
+    import bitget.forward.ledger as _ledger_mod
+    import bitget.trading.doomsday_gate as _doom_mod
+    from bitget.full_bt.defcon_bypass import wrap_doomsday_long_entry_blocked
+
+    def _doom_ctx():
+        def _on_bypass(meta: dict) -> None:
+            if not rid:
+                return
+            record_diag(
+                path,
+                run_id=rid,
+                market_type=mt,
+                metric="defcon_bypassed",
+                symbol="",
+                engine_name="",
+                step=2,
+                count=1,
+                detail="IV L1 참고용|defcon_bypassed=true",
+                tf=tf,
+            )
+
+        return {
+            "isolated": True,
+            "full_bt_db_path": path,
+            "ledger_db_path": getattr(_ledger_mod, "DB_PATH", ""),
+            "market_type": mt,
+            "on_bypass": _on_bypass,
+        }
+
+    _doom_wrapped = wrap_doomsday_long_entry_blocked(
+        _doom_mod.doomsday_long_entry_blocked,
+        context_provider=_doom_ctx,
+    )
+
     # Spec: warmup 앞 REUSED_MIN_BARS개는 컨텍스트만 · evaluate from index REUSED_MIN_BARS
     min_i = int(REUSED_MIN_BARS)
     # HIST-3: in-memory flush per symbol (avoid per-bar INSERT storm)
@@ -766,6 +801,13 @@ def run_replay(
                 mock.patch(
                     "bitget.trading.execution_safety.evaluate_gross_notional_gate",
                     _gross_ok,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    _doom_mod,
+                    "doomsday_long_entry_blocked",
+                    _doom_wrapped,
                 )
             )
 

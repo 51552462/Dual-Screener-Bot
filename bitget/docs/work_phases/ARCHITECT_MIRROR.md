@@ -6,6 +6,25 @@
 
 ---
 
+## Mirror — 2026-08-29 · [CAT-D] · FULL-BT-FUT-DEFCON-1 조건부 OK
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 맞게 반영: 본체 비수정 · 3중 AND · default false · IV L1 로깅 · FUT=`market_type`만 · Adapter A(절차 적법) · 40 passed
+- 편차(승인): STEP1 리터럴 wrapper → STEP0 공유 발견 후 harness ExitStack Adapter A (규칙6)
+- **조건부**: ExitStack이 라이브 데몬 모듈 전역을 건드리지 않는지 스냅샷 필요 → Cursor 회신 대기 후 최종 OK · VPS bypass=true **보류**
+
+### Cursor 격리 스냅샷 (회신 반영)
+- `patch.object(doomsday_gate, "doomsday_long_entry_blocked")` = **`run_replay` ExitStack `with` 한정** · exit 시 원본 복원
+- 라이브 데몬 = **별도 OS 프로세스** → 해당 ExitStack 미진입 · 디스크 `doomsday_gate.py` 불변
+- 3중 단독실패 테스트: `test_kill_switch_off_blocks_bypass` · `test_not_isolated_blocks_bypass` · `test_wrong_db_blocks_bypass` (+ wrap/kill variants)
+
+### 다음
+1. ~~Claude 최종 OK~~ → **Claude OK: 2026-08-30 (최종)**
+2. VPS `FULLBT_DEFCON_BYPASS_ENABLED=true` · FUT≤3 staging 재파일럿 (**WAIT_CURSOR_VPS**)
+3. 결과 OUTBOX · 전체런·LIVE/R6 단정 금지 유지
+
+---
+
 ## Mirror — 2026-08-21 · [CAT-J] · NS-BG-DASH-01 OK
 
 ### 로컬 구조 이해 (Cursor 스냅샷 대비)

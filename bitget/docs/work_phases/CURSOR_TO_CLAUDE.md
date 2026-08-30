@@ -7,7 +7,7 @@
 |------|------|-------------|
 | **LANE_FASTCHECK** | **DONE** (B0-SAMPLE-CONTRACT) | `lanes/LANE_FASTCHECK/CURSOR_TO_CLAUDE.md` |
 | **LANE_HIST3FIX** | **DONE** (HIST-3-FIX) | `lanes/LANE_HIST3FIX/CURSOR_TO_CLAUDE.md` |
-| **LANE_FULLBT** | **WAIT_DIRECTOR** (DIAG-2 VPS SELECT) | `lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md` ← **디렉터 붙여넣기 후 갱신** |
+| **LANE_FULLBT** | **WAIT_CURSOR_VPS** (DEFCON-1 Claude OK 최종) | `lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md` |
 
 Claude: **한 번에 레인 하나만** 검증. OUTBOX를 한 응답에 섞지 말 것. **지금은 LANE_FULLBT만.**
 
