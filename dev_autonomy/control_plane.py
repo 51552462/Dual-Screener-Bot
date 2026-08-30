@@ -393,7 +393,10 @@ def decide_report(
             "active implementation/verification status has no matching Handoff",
         )
 
-    if status == "WAIT_DIRECTOR" or cursor_action in {"DIRECTOR_SSH_CHECK", "DIRECTOR_ACTION"}:
+    if status in {"WAIT_CURSOR_VPS", "WAIT_DIRECTOR"} or cursor_action in {
+        "DIRECTOR_SSH_CHECK",
+        "DIRECTOR_ACTION",
+    }:
         return _decision(
             ControlAction.WAIT_WEEKEND, "DIRECTOR_REQUIRED", "VPS/director action is outside weekday autonomy"
         )

@@ -76,6 +76,7 @@ def _infer_next_actor(canonical: str, human_required: bool) -> str:
         return "director"
     mapping = {
         "WAIT_CURSOR_IMPL": "cursor",
+        "WAIT_CURSOR_VPS": "director",
         "WAIT_CLAUDE_OK": "claude",
         "WAIT_CLAUDE_HANDOFF": "claude",
         "WAIT_DIRECTOR": "director",
@@ -184,7 +185,7 @@ def resolve_state(track: Track) -> ResolvedState:
         blocked = True
         block_reason = block_reason or f"non-canonical status: {status_raw}"
 
-    if canonical == "WAIT_DIRECTOR" or canonical == "CONFLICT":
+    if canonical in {"WAIT_CURSOR_VPS", "WAIT_DIRECTOR", "CONFLICT"}:
         human_required = True
         blocked = True
         block_reason = block_reason or canonical

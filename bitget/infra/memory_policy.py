@@ -117,6 +117,8 @@ B1_LADDER_FASTCHECK_ENABLED: bool = True
 B1_LADDER_FASTCHECK_WINDOW_DAYS: int = 7
 # FULL-BT-FUT-DIAG-1 — candidate→trade reject ops_events tag (read-only)
 FULLBT_CANDIDATE_DIAG_ENABLED: bool = True
+# FULL-BT-FUT-DEFCON-1 — harness-only DEFCON bypass (default OFF)
+FULLBT_DEFCON_BYPASS_ENABLED: bool = False
 # POST_DEPLOY_OBS daily telegram digest (REPORT_BOT)
 POST_DEPLOY_OBS_DIGEST_ENABLED: bool = True
 # DNA why-diagnosis in digest (false → legacy RANK binary wording)

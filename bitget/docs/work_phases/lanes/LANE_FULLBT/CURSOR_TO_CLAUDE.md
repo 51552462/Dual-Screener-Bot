@@ -1,59 +1,59 @@
 # CURSOR → CLAUDE · LANE_FULLBT
 
-> **레인**: `LANE_FULLBT`  
-> **sub-phase**: **FULL-BT-FUT-DIAG-2**  
-> **갱신**: 2026-08-29  
-> **유형**: read-only 조회 · **WAIT_DIRECTOR** (VPS SELECT 붙여넣기 대기)  
-> **선행**: FULL-BT-FUT-DIAG-1 = **Claude OK**
+> **레인**: **LANE_FULLBT**  
+> **sub-phase**: **FULL-BT-FUT-DEFCON-1**  
+> **갱신**: 2026-08-30  
+> **유형**: Claude **최종 OK** 수신 · **WAIT_CURSOR_VPS** (재파일럿 대기)  
+> **VPS bypass**: 지시 = **true** (실행 후 결과 append)
 
 ---
 
-## 원문 표 (가공·해석 없음)
+## Claude 최종 OK (수신)
 
-### A) 로컬 `bitget_full_bt.sqlite` (read-only uri)
+**Claude OK: 2026-08-30 (최종)** — 조건부 잔여 3건 해소.
 
-| 항목 | 값 |
-|------|-----|
-| path | `bitget/bitget_full_bt.sqlite` |
-| tables | `bitget_full_bt_checkpoint` only |
-| `full_bt_diag` | **없음** |
-| `SELECT symbol, step, detail … gate_reject` · run_id=`pilot-fut-20260829T062221Z` | **0건** |
+### 자가 재확인 — 3중 단독실패 테스트명 (OUTBOX 원문)
 
-### B) 로컬 ops_events
+| 조건 실패 | 테스트명 |
+|-----------|----------|
+| kill-switch off | `test_kill_switch_off_blocks_bypass` · `test_wrap_keeps_block_when_kill_off` |
+| isolated=false | `test_not_isolated_blocks_bypass` |
+| DB_PATH ≠ full_bt | `test_wrong_db_blocks_bypass` |
 
-| 항목 | 값 |
-|------|-----|
-| path tried | `bitget/bitget_ops_events.sqlite` (exists) |
-| `ops_events` table | **없음** |
-| `event='fullbt_candidate_reject'` · run_id 포함 | **0건** |
-
-### C) VPS
-
-| 항목 | 값 |
-|------|-----|
-| Cursor 이 PC → VPS SSH/DB | **미접속** (선행 SSOT와 동일) |
-| VPS `full_bt_diag` / `ops_events` 원문 | **미조회** — “VPS도 0건” **단정 금지** |
-
-코드 변경 · 재실행 · retag · DEPTH-2 · CAT-D/B 분기: **없음**
+파일: `bitget/tests/test_fullbt_defcon_bypass.py` (실재 확인됨)
 
 ---
 
-## 디렉터 할 일 (VPS에서 복붙 후 Cursor에 붙여넣기)
+## VPS 재파일럿 지시 (승인 범위만)
+
+```bash
+cd ~/dante_bots/Dual-Screener-Bot && git pull
+export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+export BITGET_FUT_DEPTH_DB=/var/lib/quant-bitget/data/bitget_fut_depth_staging.sqlite
+export FULLBT_DEFCON_BYPASS_ENABLED=true
+BITGET_FUT_DEPTH_RUN_FULL_BT=1 BITGET_FULL_BT_MAX_SYMBOLS=3 \
+  bash bitget/deploy/run_fut_1d_depth_pilot.sh
+```
+
+검증 SQL (재파일럿 후):
 
 ```bash
 DATA="${BITGET_DB_STORAGE_PATH:-/var/lib/quant-bitget/data}"
-sqlite3 "$DATA/bitget_full_bt.sqlite" "
-SELECT symbol, step, detail
-FROM full_bt_diag
-WHERE run_id='pilot-fut-20260829T062221Z' AND metric='gate_reject';
-"
-sqlite3 "$DATA/bitget_ops_events.sqlite" "
-SELECT ts_utc, payload_json
-FROM ops_events
-WHERE event='fullbt_candidate_reject'
-  AND payload_json LIKE '%pilot-fut-20260829T062221Z%';
-"
+# bypass 건수 (run_id는 파일럿 JSON의 futures run_id)
+sqlite3 "$DATA/bitget_full_bt.sqlite" \
+  "SELECT COUNT(*) FROM full_bt_diag WHERE metric='defcon_bypassed';"
+# 프로덕션 forward 유입 0 (파일럿 전후 delta — OPEN/신규 없으면 0 보고)
+sqlite3 "$DATA/bitget_market_data.sqlite" \
+  "SELECT COUNT(*) FROM bitget_forward_trades WHERE status LIKE 'OPEN%' OR entry_date >= date('now');"
 ```
 
-출력 그대로 채팅/파일에 주시면 OUTBOX 원문 표 채우고 `WAIT_CLAUDE_OK`로 넘김.  
-둘 다 0건이면 Handoff대로 재파일럿 없이 대기 → 다음 Claude Handoff(≤3 DIAG-on).
+### 결과 표 (디렉터/VPS 붙여넣기 후 Cursor가 채움)
+
+| 필드 | 값 |
+|------|-----|
+| run_id (FUT) | *(대기)* |
+| defcon_bypassed count | *(대기)* |
+| trade_count / paper | *(대기)* |
+| production forward 유입 | *(대기 · 목표 0)* |
+
+금지: 전체런 · 심볼>3 · 프로덕션 OHLCV write · LIVE/R6/생존 단정 · SPOT

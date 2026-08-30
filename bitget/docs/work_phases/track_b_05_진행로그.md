@@ -19,6 +19,40 @@
 
 ---
 
+## FULL-BT-FUT-DEFCON-1 — Adapter A 구현 [2026-08-29]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** |
+| **디렉터** | Adapter A **승인** |
+| **산출** | `full_bt/defcon_bypass.py` · harness ExitStack doomsday wrap · `FULLBT_DEFCON_BYPASS_ENABLED` default **false** |
+| **비접촉** | ledger · doomsday_gate · execution_safety 본체 |
+| **3중** | isolated + DB_PATH==full_bt + kill-switch · FUT only |
+| **로깅** | `full_bt_diag` `defcon_bypassed` · IV L1 참고용 |
+| **테스트** | **40 passed** (`test_fullbt_defcon_bypass` + `full_bt/`) |
+| **status** | **WAIT_CURSOR_VPS** |
+
+**Claude 조건부 OK: 2026-08-29** (격리 스코프 확인 대기)  
+→ Cursor 회신: ExitStack=`patch.object` · `run_replay` with 구간만 · 라이브=별도 프로세스·디스크 불변 · 3중 단독실패 테스트명 OUTBOX 기재. VPS bypass **off 유지**.
+
+**Claude OK: 2026-08-30 (최종)** — 조건부 잔여 해소 · VPS `FULLBT_DEFCON_BYPASS_ENABLED=true` · FUT≤3 staging 재파일럿 1회 승인 · 전체런/프로덕션 write/LIVE 단정 금지 · 결과(bypass 건수·prod 유입 0) OUTBOX
+
+---
+
+## FULL-BT-FUT-DEFCON-1 — STEP 0 경계 grep [2026-08-29]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** |
+| **코드** | **없음** (STEP 0만) |
+| **발견** | paper `ledger.try_add` → `doomsday_gate.doomsday_long_entry_blocked` **직접** · CAT-N `execution_safety.evaluate_doomsday_gate`도 **동일 함수** |
+| **detail** | ledger L308 하드코딩 · harness step=2 매핑 |
+| **격리 컨텍스트** | `isolated_full_bt_book` DB_PATH patch · doomsday는 **미 patch** (nav/gross만 patch) |
+| **분기** | 모듈 **공유** → STEP 1 **금지** · Adapter **A**(harness mock) Ask |
+| **status** | **WAIT_DIRECTOR** |
+
+---
+
 ## FULL-BT-FUT-DIAG-2 — reject 원문 확보 [2026-08-29]
 
 | 항목 | 내용 |
@@ -26,10 +60,16 @@
 | **레인** | **LANE_FULLBT** |
 | **선행** | DIAG-1 **Claude OK** |
 | **코드** | **없음** (조회만) |
-| **로컬** | full_bt_diag **없음** · gate_reject **0** · ops `fullbt_candidate_reject` **0** |
-| **VPS** | 이 PC **미접속** · 원문 **미조회** (“VPS 0건” 단정 안 함) |
-| **status** | **WAIT_DIRECTOR** (VPS SELECT 붙여넣기) |
-| **금지** | 재실행 · 해석 · CAT-D/B 분기 · DEPTH-2 |
+| **VPS full_bt_diag** | **3건** · step=**2** · detail=`🛑 둠스데이 DEFCON — 신규 LONG 차단 (no flatten)` · BTC/ETH/SOL |
+| **VPS ops reject** | **0건** (DIAG-1 이전 파일럿) |
+| **로컬** | full_bt_diag 없음 · reject 0 |
+| **status** | **WAIT_CLAUDE_HANDOFF** (디렉터: 격리 DEFCON 우회→데이터 축적) |
+| **금지** | Handoff 전 CAT-D 구현 · 전체런 · DEPTH-2 |
+
+**Claude OK: 2026-08-29** · 판정=**구조적→CAT-D** · 우연(B안) **기각** · ops/≤3 재파일럿 **불필요**(당시) · 열린질문=**paper/N 경계 미확인**
+
+### 디렉터 후속 지시 [2026-08-29]
+데이터 축적 우선 → FULL-BT **격리**에서 paper DEFCON **우회/격리** + ≤3 staging 재파일럿 Handoff 요청 (OUTBOX). 프로덕션·실전 상시 해제 금지. 🔴 Critical 승인 문구 있는 Handoff 전 Cursor 구현 금지.
 
 ---
 

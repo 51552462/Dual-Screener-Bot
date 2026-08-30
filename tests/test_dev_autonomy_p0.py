@@ -7,11 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from dev_autonomy.adapters import FakeClaudeVerifier, FakeCursorExecutor
 from dev_autonomy.orchestrator import P0Orchestrator
-from dev_autonomy.paths import REPO_ROOT, TRACK_SSOT, resolve_track_ssot
+from dev_autonomy.paths import REPO_ROOT, resolve_track_ssot
 from dev_autonomy.safety_guard import (
     check_path_safety,
     check_text_commands,
@@ -35,12 +33,13 @@ def test_resolve_track_a_current_state_blocked_without_cross_track_conflict():
     assert state.human_required or state.vps_or_deploy_hint
 
 
-def test_resolve_track_b_deploy_blocked():
+def test_resolve_track_b_vps_action_blocked():
     state = resolve_state(Track.B)
-    assert state.subphase_id == "FULL-BT-FUT-DIAG-2"
-    assert state.status_canonical == "WAIT_DIRECTOR"
+    assert state.subphase_id == "FULL-BT-FUT-DEFCON-1"
+    assert state.status_canonical == "WAIT_CURSOR_VPS"
     assert state.blocked
     assert state.human_required
+    assert state.vps_or_deploy_hint
 
 
 def test_resolve_track_b_uses_active_lane_files():
