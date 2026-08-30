@@ -1,0 +1,16 @@
+[Unit]
+Description=Quant development autonomy schedule (%i)
+
+[Timer]
+# Korea time is explicit, independent of the VPS local timezone.
+OnCalendar=Mon..Fri *-*-* *:00:00 Asia/Seoul
+OnCalendar=Mon..Fri *-*-* *:30:00 Asia/Seoul
+OnCalendar=Sat,Sun *-*-* 10:15:00 Asia/Seoul
+Persistent=true
+AccuracySec=2min
+RandomizedDelaySec=90
+Unit=quant-dev-autonomy@%i.service
+
+[Install]
+WantedBy=timers.target
+

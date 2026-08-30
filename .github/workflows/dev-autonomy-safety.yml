@@ -6,6 +6,10 @@ on:
       - ".cursor/cli.json"
       - ".github/workflows/dev-autonomy-safety.yml"
       - "dev_autonomy/**"
+      - "deploy/*dev_autonomy*"
+      - "deploy/entrypoints/run_dev_autonomy_service.sh"
+      - "deploy/systemd/quant-dev-autonomy@.*"
+      - "docs/VPS_DEV_AUTONOMY_DEPLOY.md"
       - "dual_north_star_ledger.py"
       - "bitget/*.sqlite*"
       - "tests/test_dev_autonomy*.py"
@@ -16,6 +20,10 @@ on:
       - ".cursor/cli.json"
       - ".github/workflows/dev-autonomy-safety.yml"
       - "dev_autonomy/**"
+      - "deploy/*dev_autonomy*"
+      - "deploy/entrypoints/run_dev_autonomy_service.sh"
+      - "deploy/systemd/quant-dev-autonomy@.*"
+      - "docs/VPS_DEV_AUTONOMY_DEPLOY.md"
       - "dual_north_star_ledger.py"
       - "bitget/*.sqlite*"
       - "tests/test_dev_autonomy*.py"
@@ -54,6 +62,7 @@ jobs:
           tests/test_dev_autonomy_p0_adversarial.py
           tests/test_dev_autonomy_p0_safety_hardening.py
           tests/test_dev_autonomy_control_plane.py
+          tests/test_dev_autonomy_deploy.py
           tests/test_dev_autonomy_weekday_runner.py
           tests/test_ns_book_count_01.py
           -q --tb=short

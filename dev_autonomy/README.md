@@ -76,3 +76,8 @@ remain mandatory.
 `dev_autonomy/weekday_runner.cron.example` is a schedule template. Copy it to
 the VPS only after replacing paths and verifying the dry-run. Repeated runs do
 not resend unchanged reports because the queue is deduplicated by report ID.
+
+For the supported two-VPS systemd installation, follow
+`docs/VPS_DEV_AUTONOMY_DEPLOY.md`. The installer keeps timers disabled until
+the non-root Claude/Cursor browser logins are complete, performs a dry-run,
+and uses separate `stock` and `bitget` runtime queues.
