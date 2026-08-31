@@ -1,0 +1,30 @@
+[Unit]
+Description=Quant isolated Cursor draft-PR worker (%i)
+Documentation=file://@@INSTALL_ROOT@@/docs/VPS_CURSOR_PR_WORKER.md
+After=network-online.target quant-dev-autonomy@%i.service
+Wants=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=2
+
+[Service]
+Type=oneshot
+User=@@RUN_USER@@
+Group=@@RUN_USER@@
+WorkingDirectory=@@INSTALL_ROOT@@
+Environment=HOME=@@USER_HOME@@
+Environment=PATH=@@USER_HOME@@/.local/bin:@@USER_HOME@@/.cursor/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-@@INSTALL_ROOT@@/.env
+EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
+ExecStart=/bin/bash @@INSTALL_ROOT@@/deploy/entrypoints/run_dev_pr_worker_service.sh %i
+TimeoutStartSec=45min
+Nice=15
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+LockPersonality=true
+RestrictSUIDSGID=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal

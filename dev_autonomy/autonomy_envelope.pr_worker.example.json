@@ -1,5 +1,5 @@
 {
-  "envelope_id": "WEEK-2026-08-31",
+  "envelope_id": "WEEK-REPLACE-ME",
   "valid_from": "2026-08-31T00:00:00+09:00",
   "valid_until": "2026-09-06T23:59:59+09:00",
   "allowed_tracks": ["A", "B", "IV"],
@@ -9,7 +9,7 @@
   "allow_deploy": false,
   "allow_live": false,
   "allow_merge": false,
-  "allow_cursor_write": false,
-  "allow_branch_push": false,
-  "allow_draft_pr": false
+  "allow_cursor_write": true,
+  "allow_branch_push": true,
+  "allow_draft_pr": true
 }

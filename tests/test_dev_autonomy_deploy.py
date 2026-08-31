@@ -16,6 +16,10 @@ SCRIPTS = (
     "deploy/auth_dev_autonomy_ai.sh",
     "deploy/audit_dev_autonomy.sh",
     "deploy/entrypoints/run_dev_autonomy_service.sh",
+    "deploy/install_dev_pr_worker.sh",
+    "deploy/auth_dev_pr_worker_github.sh",
+    "deploy/audit_dev_pr_worker.sh",
+    "deploy/entrypoints/run_dev_pr_worker_service.sh",
 )
 
 
@@ -48,6 +52,23 @@ def test_timer_has_explicit_korea_weekday_and_weekend_schedule():
     assert "Sat,Sun" in timer
     assert "Asia/Seoul" in timer
     assert "Unit=quant-dev-autonomy@%i.service" in timer
+
+
+def test_pr_worker_unit_is_non_root_and_draft_pr_only():
+    unit = (REPO_ROOT / "deploy/systemd/quant-dev-pr-worker@.service.in").read_text(encoding="utf-8")
+    timer = (REPO_ROOT / "deploy/systemd/quant-dev-pr-worker@.timer").read_text(encoding="utf-8")
+    entrypoint = (REPO_ROOT / "deploy/entrypoints/run_dev_pr_worker_service.sh").read_text(encoding="utf-8")
+    installer = (REPO_ROOT / "deploy/install_dev_pr_worker.sh").read_text(encoding="utf-8")
+
+    assert "User=@@RUN_USER@@" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "run_dev_pr_worker_service.sh %i" in unit
+    assert "Mon..Fri" in timer and "Sat,Sun" in timer and "Asia/Seoul" in timer
+    assert "--publish-draft-pr" in entrypoint
+    assert "--notify-telegram" in entrypoint
+    assert "--enable-timer" in installer
+    assert "gh auth status" in installer
+    assert "merge" not in entrypoint.lower()
 
 
 def _base_env(tmp_path) -> dict[str, str]:

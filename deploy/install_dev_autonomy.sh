@@ -86,7 +86,11 @@ if [[ -z "${USER_HOME}" || "${INSTALL_ROOT}${USER_HOME}" == *"&"* || "${INSTALL_
 fi
 
 install -d -m 0700 -o "${RUN_USER}" -g "${RUN_USER}" "/var/lib/quant-dev-autonomy/${ROLE}"
-install -d -m 0700 -o root -g root /etc/quant-dev-autonomy
+install -d -m 0750 -o root -g "${RUN_USER}" /etc/quant-dev-autonomy
+if [[ -f /etc/quant-dev-autonomy/envelope.json ]]; then
+  chown root:"${RUN_USER}" /etc/quant-dev-autonomy/envelope.json
+  chmod 0640 /etc/quant-dev-autonomy/envelope.json
+fi
 chmod 600 "${INSTALL_ROOT}/.env" 2>/dev/null || true
 chmod 600 "${INSTALL_ROOT}/bitget/.env" 2>/dev/null || true
 chmod 0755 "${INSTALL_ROOT}/deploy/entrypoints/run_dev_autonomy_service.sh"

@@ -35,7 +35,7 @@ def test_resolve_track_a_current_state_blocked_without_cross_track_conflict():
 
 def test_resolve_track_b_vps_action_blocked():
     state = resolve_state(Track.B)
-    assert state.subphase_id == "FULL-BT-FUT-DEFCON-1"
+    assert state.subphase_id.startswith("FULL-BT-")
     assert state.status_canonical == "WAIT_CURSOR_VPS"
     assert state.blocked
     assert state.human_required

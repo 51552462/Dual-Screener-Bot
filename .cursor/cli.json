@@ -2,6 +2,7 @@
   "permissions": {
     "deny": [
       "Shell(git)",
+      "Shell(gh)",
       "Shell(ssh)",
       "Shell(scp)",
       "Shell(sftp)",
@@ -15,6 +16,8 @@
       "Read(**/*.key)",
       "Read(**/*.pem)",
       "Write(.cursor/**)",
+      "Write(.git)",
+      "Write(.git/**)",
       "Write(.github/**)",
       "Write(deploy/**)",
       "Write(**/.env*)",

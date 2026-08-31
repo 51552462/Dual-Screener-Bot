@@ -1,0 +1,15 @@
+[Unit]
+Description=Quant isolated Cursor draft-PR schedule (%i)
+
+[Timer]
+# Run after the :00/:30 control-plane cycles; Korea time is explicit.
+OnCalendar=Mon..Fri *-*-* *:05:00 Asia/Seoul
+OnCalendar=Mon..Fri *-*-* *:35:00 Asia/Seoul
+OnCalendar=Sat,Sun *-*-* 10:20:00 Asia/Seoul
+Persistent=true
+AccuracySec=2min
+RandomizedDelaySec=90
+Unit=quant-dev-pr-worker@%i.service
+
+[Install]
+WantedBy=timers.target

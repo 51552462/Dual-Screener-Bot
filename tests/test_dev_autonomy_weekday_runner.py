@@ -44,6 +44,8 @@ def test_job_packet_never_grants_execution_authority():
     assert packet["provider"] == "cursor"
     assert packet["execution_authorized"] is False
     assert not any(packet["hard_limits"][key] for key in ("allow_live", "allow_deploy", "allow_merge", "allow_ssh"))
+    assert packet["pr_policy"]["draft_pr_only"] is True
+    assert packet["pr_policy"]["auto_merge"] is False
 
 
 def test_weekday_cycle_deduplicates_jobs_claude_and_telegram(tmp_path, monkeypatch):
@@ -133,9 +135,12 @@ def test_cursor_project_policy_denies_external_and_policy_mutation():
     denied = set(policy["permissions"]["deny"])
     assert {
         "Shell(git)",
+        "Shell(gh)",
         "Shell(ssh)",
         "Read(.env*)",
         "Write(.cursor/**)",
+        "Write(.git)",
+        "Write(.git/**)",
         "Write(deploy/**)",
         "WebFetch(*)",
         "Mcp(*:*)",

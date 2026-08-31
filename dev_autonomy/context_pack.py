@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from dev_autonomy.handoff_scope import extract_allowed_paths
 from dev_autonomy.paths import resolve_track_ssot
 from dev_autonomy.types import ResolvedState, Track
 
@@ -67,6 +68,7 @@ def build_cursor_pack(state: ResolvedState) -> dict:
         ]
 
     tests = _infer_test_commands(handoff_section, state.subphase)
+    allowed_paths = extract_allowed_paths(handoff_section) or []
 
     return {
         "track": state.track.value,
@@ -74,6 +76,7 @@ def build_cursor_pack(state: ResolvedState) -> dict:
         "status": state.status_canonical,
         "next_action_excerpt": next_action,
         "handoff_section": handoff_section,
+        "allowed_paths": allowed_paths,
         "forbidden_paths": forbidden,
         "test_commands": tests,
         "rules": [
