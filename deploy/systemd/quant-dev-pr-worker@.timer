@@ -13,4 +13,3 @@ Unit=quant-dev-pr-worker@%i.service
 
 [Install]
 WantedBy=timers.target
-

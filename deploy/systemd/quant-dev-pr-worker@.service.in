@@ -28,4 +28,3 @@ RestrictSUIDSGID=true
 UMask=0077
 StandardOutput=journal
 StandardError=journal
-

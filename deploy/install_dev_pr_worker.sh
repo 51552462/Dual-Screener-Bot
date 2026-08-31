@@ -133,4 +133,3 @@ if [[ "${START_NOW}" -eq 1 ]]; then
 fi
 
 echo "[install] next: sudo bash ${INSTALL_ROOT}/deploy/audit_dev_pr_worker.sh ${ROLE}"
-

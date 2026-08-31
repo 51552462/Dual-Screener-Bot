@@ -21,4 +21,3 @@ fi
 
 gh auth setup-git
 gh auth status >/dev/null 2>&1 && echo "[OK] GitHub Git credentials verified"
-

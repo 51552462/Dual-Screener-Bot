@@ -6,10 +6,12 @@
 |------|-----------|--------|--------------|
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
-| **LANE_FULLBT** | FULL-BT-FUT-DEFCON-1 | **WAIT_CURSOR_VPS** | `lanes/LANE_FULLBT/*` |
+| **LANE_FULLBT** | FULL-BT-FUT-RUN-2 | **WAIT_CURSOR_VPS** | `lanes/LANE_FULLBT/*` |
 
 ---
 
 ## 디렉터 한 줄
 
-**FULLBT** — Claude OK 최종(2026-08-30). VPS: bypass=true · FUT≤3 staging 재파일럿 → 결과 OUTBOX.
+**FULLBT** — RUN-2 조건부 OK · **지금 VPS COUNT** → 실런(bypass off).  
+**FASTCHECK / HIST3FIX** — DONE.
+

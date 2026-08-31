@@ -37,6 +37,44 @@
 
 **Claude OK: 2026-08-30 (최종)** — 조건부 잔여 해소 · VPS `FULLBT_DEFCON_BYPASS_ENABLED=true` · FUT≤3 staging 재파일럿 1회 승인 · 전체런/프로덕션 write/LIVE 단정 금지 · 결과(bypass 건수·prod 유입 0) OUTBOX
 
+### VPS 재파일럿 실런 [2026-08-30]
+`pilot-fut-20260830T133727Z` · staging warmup OK · call=**164** · candidate=**3** · trade_count=**2** · step2_doomsday bottleneck=**0** · long_entered=**2**  
+로그 노이즈: `gates._load_bench_close` missing table (SPOT/FUT 1D) — exception=0·배치 완주  
+**SQL 확정**: `defcon_bypassed`=**3** · prod forward entry_date≥2026-08-30=**0**
+
+**Claude OK: 2026-08-30** · **SUB_DONE** · 6항목 충족 · VPS bypass **false** 즉시 복귀 지시 · `_load_bench_close` 비차단·별건 · IV L1 참고만
+
+### Ask — FULL-BT-FUT-RUN-1 [2026-08-30]
+디렉터: 백테 실런 원함. OUTBOX Ask → **WAIT_CLAUDE_HANDOFF**. 범위 초안: FUT≤3 staging · bypass 런한정→즉시 off · 기간 확장 · 코드 최소화 · 전체런/LIVE 단정 금지.
+
+## FULL-BT-FUT-RUN-1 — Handoff 수신 · VPS 대기 [2026-08-30]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** |
+| **코드** | **없음** (기존 pilot 스크립트 + staging market_db) |
+| **사전 규모** | 직전 staging COUNT=**300**/심볼 (2025-10-31~2026-08-28) · 수천바 아님 → 초대형 해당 없음 · 런 직전 VPS COUNT 재확인 |
+| **실행** | 이 PC SSH 불가 → 디렉터 VPS A→B→C (`lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md`) |
+| **status** | **WAIT_CURSOR_VPS** |
+| **금지** | depth 재fill · 심볼>3 · prod write · LIVE 단정 · bypass 상시 on |
+
+### VPS 실런 완료 [2026-08-30]
+`pilot-fut-20260830T142032Z` · call=**162** · candidate=**3** · trade_count=**4** · exception=**0** · step2=**0** · `defcon_bypassed`=**0** · prod today=**0** · return≈**-11.62%** · mdd≈**11.62%** · long_entered=**4** · bypass **false** 확인 · `_load_bench_close` 노이즈 비차단 · IV L1 참고만
+
+**Claude OK: 2026-08-30** · **SUB_DONE** · 6항목 통과 · 비차단: hit=3 vs trade=4(심볼 분포 후속 권장) · 런 이상 없음 · RUN-2는 디렉터 판단
+
+## FULL-BT-FUT-RUN-2 — A′ 구현 [2026-08-30]
+
+| 항목 | 내용 |
+|------|------|
+| **레인** | **LANE_FULLBT** |
+| **Adapter** | A′ — `full_bt/ohlcv_load.py` 격리 · `_load_ohlcv` 무변경 |
+| **가드** | `FullBtDataGapError` (first > start_date) |
+| **pilot** | `BITGET_FULL_BT_START_DATE` |
+| **테스트** | **43 passed** |
+| **status** | **WAIT_CLAUDE_OK** · 실런은 COUNT 후 · bypass **false** |
+| **금지** | 재fetch · 심볼>3 · bypass on · LIVE 단정 |
+
 ---
 
 ## FULL-BT-FUT-DEFCON-1 — STEP 0 경계 grep [2026-08-29]
