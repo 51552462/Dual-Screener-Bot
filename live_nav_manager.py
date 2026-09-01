@@ -16,11 +16,14 @@ scripts/calculate_historical_nav(소급 복원) / forward.ledger(청산 훅) 의
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from factory_data_paths import factory_data_dir
@@ -151,10 +154,23 @@ def save_treasury_state(state: Dict[str, Any]) -> bool:
                 if os.path.exists(tmp):
                     try:
                         os.remove(tmp)
-                    except OSError:
-                        pass
+                    except OSError as _tmp_rm_ex:
+                        logger.warning(
+                            "treasury tmp cleanup failed path=%s: %s: %s",
+                            tmp,
+                            type(_tmp_rm_ex).__name__,
+                            _tmp_rm_ex,
+                        )
         return True
-    except OSError:
+    except OSError as _save_ex:
+        # 호출부가 bool=False 를 무시하면 조용히 끝날 수 있음 — 여기서 ERROR 로 남긴다.
+        logger.error(
+            "treasury_state save failed path=%s: %s: %s",
+            path,
+            type(_save_ex).__name__,
+            _save_ex,
+            exc_info=True,
+        )
         return False
 
 

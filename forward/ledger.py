@@ -898,6 +898,8 @@ def track_daily_positions(market):
 
                 # [Live NAV 동기화] 청산 실현손익을 treasury_state.json NAV 에 즉시 복리 반영.
                 # net_pnl = NAV × 그 거래 켈리(sim_kelly_risk_pct) × (ret/100). 실패해도 장부는 계속.
+                # NAV-HOOK-SILENTFAIL-01 Ask: record_closure→apply_realized_pnl 은
+                # save_treasury_state() bool 반환값을 무시한다 (호출부 bool 체크는 본 스코프 밖).
                 try:
                     from live_nav_manager import is_inverse_trade_sig, record_closure, record_inverse_sleeve_closure
 
@@ -922,8 +924,37 @@ def track_daily_positions(market):
                             exit_date=exit_date,
                             sig_type=str(_sig),
                         )
-                except Exception:
-                    pass
+                except Exception as _nav_hook_ex:
+                    # 장부 CLOSED 는 유지 — NAV 동기화 실패만 관측 가능하게 남긴다 (raise 금지).
+                    logger.error(
+                        "Live NAV sync failed after close (market=%s trade_id=%s): %s: %s",
+                        market,
+                        r.get("id", "?") if hasattr(r, "get") else getattr(r, "id", "?"),
+                        type(_nav_hook_ex).__name__,
+                        _nav_hook_ex,
+                        exc_info=True,
+                    )
+                    try:
+                        from ops_logger import insert_ops_event
+
+                        insert_ops_event(
+                            component="forward.ledger",
+                            severity="ERROR",
+                            event="nav_hook.closure_sync_failed",
+                            payload={
+                                "market": str(market),
+                                "trade_id": (
+                                    r.get("id")
+                                    if hasattr(r, "get")
+                                    else getattr(r, "id", None)
+                                ),
+                                "exc_type": type(_nav_hook_ex).__name__,
+                                "exc_msg": str(_nav_hook_ex)[:500],
+                            },
+                        )
+                    except Exception:
+                        # ops_event 기록 실패도 청산 흐름을 막지 않음
+                        pass
 
                 # [초월적 진화 M3] 밴딧 베이지안 갱신 — 청산 1건마다 승/패로 Beta(α,β) 업데이트.
                 # 승격 템플릿의 sig_type 일 때만 동작(아니면 무 I/O).
