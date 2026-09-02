@@ -2,38 +2,28 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **OPS-LIQ-TG-01** (텔레그램 `[LIQ_BAND]` 패널) |
-| **status** | **`CLOSED`** / `SUB_DONE` · 신규 코드 구현 없음 |
-| **직전** | Claude OK · DoD 7항 일치 · 앵커 `SYNC-2026-08-20-C` |
-| **앵커** | `SYNC-2026-08-20-C` |
+| **sub-phase** | **NAV-REPLAY-BACKFILL-01** Step B |
+| **status** | **`CLOSED`** / `WAIT_CLAUDE_OK` · NAV 정정·LOCKDOWN 정상 · INCUBATOR skip 코드 로컬 반영 |
+| **직전** | Step A 확정값대로 VPS treasury 반영 확인 · governor sync |
+| **앵커** | `SYNC-2026-09-02-NAV-REPLAY-B` |
 
 ---
 
-## 디렉터 — 지금 할 일 (배포·관측)
+## 디렉터 — 지금 할 일
+
+1. Claude Pro: `docs/work_phases/CURSOR_TO_CLAUDE.md` 최상단 OUTBOX 검증 → OK면 다음 Handoff(또는 없음)를 파일에.
+2. 로컬 커밋·푸시 후 VPS 배포 (INCUBATOR skip 반영):
 
 ```bash
 cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo bash ./update_factory.sh
 ```
 
-→ 다음 **19:30** North Star 일보에서 `[LIQ_BAND]` 패널 육안 확인.
-
 ### 메모
 
-- Phase1 VERDICT**(B) 관측연장** 유지 · Phase2 자동 착수 없음
-- `PHASE2_CANDIDATE` 뜨면 → **새 Claude 세션**에서 OPS-LIQ-FORK-01 갈림길(A′/B/C) 재소집 (이번 OK ≠ Phase2 승인)
-- **update_factory**: health RED면 **자동 data-refresh 1회** 후 재검사 (수동 2줄 불필요). 로컬 커밋·푸시 후 VPS 반영
-- 신규 Alpha Handoff: **없음**
+- KR `BLOCK_NEW_ENTRIES_KR=True` (LOCKDOWN) = **의도된 정상** — 우회 금지
+- backlog **`KR-LOCKDOWN-LADDER-01`**: Track A 축소 재개 사다리 — **디렉터 승인 전 미착수**
+- 실매매 OFF · 페이퍼 MDD breach만 기록됨 (실자본 피해 없음)
 
 ### 금지
 
-- LIQUIDITY 임계·잡주 완화·자동 Phase2
-
----
-
-## North Star SSOT (고정)
-
-| 항목 | 값 |
-|------|-----|
-| **SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **LIQ_BAND 이력** | `factory_data_dir()/liq_band_history.json` (원장 비접촉) |
-| **로컬** | `*.LOCAL_DEV_DO_NOT_USE.json` — **사용 금지** |
+- HWM 리셋/덮어쓰기 · mdd 축소 · LOCKDOWN 완화 코드 · 회복 사다리 임의 설계

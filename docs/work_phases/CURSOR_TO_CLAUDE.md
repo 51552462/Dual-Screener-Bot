@@ -3,7 +3,41 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-08-20 · **OPS-LIQ-TG-01** Claude OK · CLOSED · 앵커 `SYNC-2026-08-20-C`
+> **갱신**: 2026-09-02 · **NAV-REPLAY-BACKFILL-01 Step B** · 앵커 `SYNC-2026-09-02-NAV-REPLAY-B`
+
+---
+
+## OUTBOX — NAV-REPLAY-BACKFILL-01 · Step B · 2026-09-02
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **NAV-REPLAY-BACKFILL-01** Step B |
+| **status** | **`CLOSED`** (구현 DoD) · **`WAIT_CLAUDE_OK`** |
+| **위험도** | 🔴 Critical |
+| **앵커** | `SYNC-2026-09-02-NAV-REPLAY-B` |
+| **디렉터 승인** | 2026-09-02 "가자" |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | 백업 존재 | ✅ `/var/lib/quant-factory/data/treasury_state.json.bak.20260902_111759_pre_replay` |
+| 2 | KR/US NAV·HWM(불변)·mdd | ✅ KR ₩268,649,767.97 / HWM ₩301,165,743.83 / mdd 10.7967% · US $288,737.60 / HWM $300,000 / mdd 3.88% |
+| 3 | `BLOCK_NEW_ENTRIES_KR` | ✅ **True** (LOCKDOWN · current_dd 10.80% · exhaustion 107.97%) · US False |
+| 4 | breach 05/06 기록 | ✅ |
+| 5 | INCUBATOR skip 별도 diff | ✅ `forward/ledger.py` (`INCUBATOR in sig_type` → record_closure skip) |
+
+### 비고
+
+- Step B NAV 수치는 VPS에 **이미 반영된 상태**(11:17 KST)를 검증·확정. **재적용 금지**(이중 반영 위험). n_closed KR 162→204(+42), US 126→139(+13). HWM pre/post 동일.
+- `overwrite_market_state` 미사용 · LOCKDOWN 우회 없음 · governor sync 재확인 완료.
+- backlog 등록만: **`KR-LOCKDOWN-LADDER-01`** (승인 전 미착수).
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 NAV-REPLAY-BACKFILL-01 Step B 검증. OK면 CLAUDE_TO_CURSOR.md에 다음(또는 없음). 채팅 말고 파일에.
+```
 
 ---
 

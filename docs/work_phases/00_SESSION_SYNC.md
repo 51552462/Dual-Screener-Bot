@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-08-23 · **앵커 ID**: `SYNC-2026-08-23-F`
+> **갱신**: 2026-09-02 · **앵커 ID**: `SYNC-2026-09-02-NAV-REPLAY-B`
 
 ---
 
@@ -40,23 +40,23 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-08-28-BG-B0-DONE` |
-| **마지막 갱신** | 2026-08-28 — **B0-SAMPLE-CONTRACT DONE** · R2 관측 |
-| **활성 트랙** | **BG** — FASTCHECK DONE(관측) + HIST 별도 |
-| **진행 중 sub-phase** | FASTCHECK **관측만** · HIST=`LANE_HIST3FIX` |
-| **직전 완료** | B0-SAMPLE-CONTRACT Claude OK · §7 |
-| **다음** | 페이스 경고/FAIL(b) 시 Claude · HIST는 HIST 창 |
+| **앵커 ID** | `SYNC-2026-09-02-NAV-REPLAY-B` |
+| **마지막 갱신** | 2026-09-02 — **NAV-REPLAY-BACKFILL-01 Step B CLOSED** · KR LOCKDOWN |
+| **활성 트랙** | **KR/US** — NAV replay 정정 · governor LOCKDOWN |
+| **진행 중 sub-phase** | 없음 (Step B DoD 충족 · Claude 검증 대기) |
+| **직전 완료** | NAV-REPLAY-BACKFILL-01 Step B (NAV/HWM/mdd 정정 · INCUBATOR skip) |
+| **다음** | Claude OK · VPS `update_factory`로 ledger INCUBATOR skip 배포 · backlog `KR-LOCKDOWN-LADDER-01`는 승인 전 미착수 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` · Bitget: coin VPS 별도 |
-| **Handoff SSOT** | Bitget: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` |
+| **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | HIST-3-FIX 커밋 대기 |
+| **git main** | INCUBATOR skip + 문서 커밋 대기 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[BG·LANE_FASTCHECK] B0-SAMPLE-CONTRACT **DONE** · R2 관측 · 표본 부족은 과제 유지
-[BG·LANE_HIST3FIX] 별도 창만
-[금지] 게이트 풀기 · 레인 혼합 · FASTCHECK=검증완료 서술
+[KR/US] NAV-REPLAY-BACKFILL-01 Step B **CLOSED** · KR BLOCK_NEW_ENTRIES=True (정상)
+[backlog] KR-LOCKDOWN-LADDER-01 — 디렉터 승인 전 미착수
+[금지] HWM 덮어쓰기 · mdd 캡핑 · LOCKDOWN 우회 · 회복 사다리 임의 설계
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
