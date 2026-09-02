@@ -907,15 +907,10 @@ def track_daily_positions(market):
                     if _kelly and _kelly > 1.0:
                         _kelly = _kelly / 100.0
                     _sig = row_scalar(r, 'sig_type', '')
-                    _is_inv = is_inverse_trade_sig(_sig)
-                    if not _is_inv:
-                        record_closure(
-                            market,
-                            final_ret_pct=float(ret),
-                            kelly_pct=(_kelly if _kelly and _kelly > 0 else None),
-                            exit_date=exit_date,
-                        )
-                    else:
+                    # NAV-REPLAY-BACKFILL-01: INCUBATOR 섀도우는 Live NAV 비반영 (record_closure skip)
+                    if "INCUBATOR" in str(_sig):
+                        pass
+                    elif is_inverse_trade_sig(_sig):
                         _inv = float(row_scalar(r, 'invest_amount', 0.0) or row_scalar(r, 'sim_kelly_invest', 0.0) or 0.0)
                         record_inverse_sleeve_closure(
                             market,
@@ -923,6 +918,13 @@ def track_daily_positions(market):
                             invest_amount=_inv,
                             exit_date=exit_date,
                             sig_type=str(_sig),
+                        )
+                    else:
+                        record_closure(
+                            market,
+                            final_ret_pct=float(ret),
+                            kelly_pct=(_kelly if _kelly and _kelly > 0 else None),
+                            exit_date=exit_date,
                         )
                 except Exception as _nav_hook_ex:
                     # 장부 CLOSED 는 유지 — NAV 동기화 실패만 관측 가능하게 남긴다 (raise 금지).
