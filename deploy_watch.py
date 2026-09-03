@@ -77,9 +77,10 @@ def _connect_market_db(db_path: Optional[str] = None) -> Optional[sqlite3.Connec
     path = db_path
     if not path:
         try:
-            from market_db_paths import market_db_read_path
+            # F-GATE-REGISTRY-PATH-01: F-GATE/F-RETIRE 관측은 메인 DB (스냅샷 아님).
+            from market_db_paths import MARKET_DATA_DB_PATH
 
-            path = market_db_read_path()
+            path = MARKET_DATA_DB_PATH
         except Exception:
             return None
     if not path or not os.path.isfile(path):

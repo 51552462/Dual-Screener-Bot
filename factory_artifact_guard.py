@@ -130,19 +130,22 @@ def ensure_factory_artifacts(
         )
         return result
 
-    db_path = market_db_read_path()
-    result["db"] = db_path
+    # CSV 등 무거운 읽기는 스냅샷 허용. MetaGovernor/registry 쓰기는 메인만.
+    read_db = market_db_read_path()
+    result["db"] = read_db
+    registry_db = MARKET_DATA_DB_PATH if os.path.isfile(MARKET_DATA_DB_PATH) else read_db
 
-    if not db_path or not os.path.isfile(db_path):
+    if not read_db or not os.path.isfile(read_db):
         if os.path.isfile(MARKET_DATA_DB_PATH):
-            db_path = MARKET_DATA_DB_PATH
-            result["db"] = db_path
+            read_db = MARKET_DATA_DB_PATH
+            registry_db = MARKET_DATA_DB_PATH
+            result["db"] = read_db
             result["db_fallback"] = "main"
         else:
             result["error"] = "no_db"
             result["csv"] = "failed"
             result["meta"] = "failed"
-            logger.error("factory_artifact_guard: market DB missing (%s)", db_path)
+            logger.error("factory_artifact_guard: market DB missing (%s)", read_db)
             return result
 
     csv_p = flow_csv_path()
@@ -150,7 +153,7 @@ def ensure_factory_artifacts(
 
     if force_csv or _csv_needs_rebuild(csv_p):
         try:
-            n = rebuild_flow_csv_from_sqlite(db_path, csv_p)
+            n = rebuild_flow_csv_from_sqlite(read_db, csv_p)
             result["csv"] = "rebuilt" if n > 0 else "failed"
             if n <= 0:
                 logger.warning("factory_artifact_guard: CSV rebuild returned 0 rows")
@@ -162,9 +165,11 @@ def ensure_factory_artifacts(
 
     if force_meta or _meta_needs_rebuild(meta_p):
         try:
-            status = _run_meta_governor_cycle(db_path)
+            # F-GATE-REGISTRY-PATH-01: forward_db_path = 메인 DB (스냅샷 증발 방지)
+            status = _run_meta_governor_cycle(registry_db)
             result["meta"] = "rebuilt"
             result["meta_status"] = status
+            result["registry_db"] = registry_db
         except Exception as e:
             result["meta"] = "failed"
             logger.exception("factory_artifact_guard: MetaGovernor cycle failed: %s", e)
@@ -180,7 +185,8 @@ def ensure_meta_governor_state(*, force: bool = False) -> Dict[str, Any]:
     MetaGovernor JSON/SQLite 없음·NEVER·UNKNOWN·stale 시 regime 선행 + governor 자가 치유.
     리포트 [1/9]·[8/9]·ai_overseer 직전 호출용.
     """
-    db_path = market_db_read_path()
+    # F-GATE-REGISTRY-PATH-01: registry upsert 대상은 항상 메인 DB.
+    db_path = MARKET_DATA_DB_PATH if os.path.isfile(MARKET_DATA_DB_PATH) else market_db_read_path()
     if not db_path or not os.path.isfile(db_path):
         return {"meta": "failed", "error": "no_db", "db": db_path}
 
@@ -206,6 +212,7 @@ def ensure_meta_governor_state(*, force: bool = False) -> Dict[str, Any]:
         status = _run_meta_governor_cycle(db_path)
         out["meta"] = "rebuilt"
         out["meta_status"] = status
+        out["registry_db"] = db_path
         return out
     except Exception as e:
         logger.exception("ensure_meta_governor_state failed: %s", e)

@@ -54,9 +54,10 @@ CREATE INDEX IF NOT EXISTS idx_strategy_quality_daily_sid
 
 
 def _db_path() -> str:
-    from market_db_paths import market_db_read_path
+    # F-GATE-REGISTRY-PATH-01: registry는 메인 DB SSOT만 (스냅샷은 refresh 시 증발).
+    from market_db_paths import MARKET_DATA_DB_PATH
 
-    return market_db_read_path()
+    return MARKET_DATA_DB_PATH
 
 
 def _kst_today() -> str:

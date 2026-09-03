@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-02 · **앵커 ID**: `SYNC-2026-09-02-NAV-REPLAY-B`
+> **갱신**: 2026-09-03 · **앵커 ID**: `SYNC-2026-09-03-F-GATE-PATH`
 
 ---
 
@@ -40,23 +40,24 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-02-NAV-REPLAY-B` |
-| **마지막 갱신** | 2026-09-02 — **NAV-REPLAY-BACKFILL-01 Step B CLOSED** · KR LOCKDOWN |
-| **활성 트랙** | **KR/US** — NAV replay 정정 · governor LOCKDOWN |
-| **진행 중 sub-phase** | 없음 (Step B DoD 충족 · Claude 검증 대기) |
-| **직전 완료** | NAV-REPLAY-BACKFILL-01 Step B (NAV/HWM/mdd 정정 · INCUBATOR skip) |
-| **다음** | Claude OK · VPS `update_factory`로 ledger INCUBATOR skip 배포 · backlog `KR-LOCKDOWN-LADDER-01`는 승인 전 미착수 |
-| **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` · Bitget: coin VPS 별도 |
+| **앵커 ID** | `SYNC-2026-09-03-F-GATE-PATH` |
+| **마지막 갱신** | 2026-09-03 — **F-GATE-REGISTRY-PATH-01** 메인 DB registry 실효 |
+| **활성 트랙** | **KR/US** — F-GATE 경로 수정 |
+| **진행 중 sub-phase** | 없음 (구현·VPS 검증 완료 · Claude OK 대기) |
+| **직전 완료** | F-GATE-REGISTRY-PATH-01 (스냅샷→MAIN 경로 · n=8 · deploy_watch PASS) |
+| **다음** | 커밋·푸시 · Claude OK · `update_factory` |
+| **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | INCUBATOR skip + 문서 커밋 대기 |
+| **git main** | F-GATE-REGISTRY-PATH-01 커밋 대기 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[KR/US] NAV-REPLAY-BACKFILL-01 Step B **CLOSED** · KR BLOCK_NEW_ENTRIES=True (정상)
-[backlog] KR-LOCKDOWN-LADDER-01 — 디렉터 승인 전 미착수
-[금지] HWM 덮어쓰기 · mdd 캡핑 · LOCKDOWN 우회 · 회복 사다리 임의 설계
+[KR/US] F-GATE-REGISTRY-PATH-01 구현·VPS 실효 · Claude OK 대기
+[KR/US] NAV-REPLAY Step B CLOSED · KR LOCKDOWN 유지
+[backlog] KR-LOCKDOWN-LADDER-01 — 승인 전 미착수
+[금지] registry 스냅샷 쓰기 · 승격로직 변경 · LOCKDOWN 우회
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

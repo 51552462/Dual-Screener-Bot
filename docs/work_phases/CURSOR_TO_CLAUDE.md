@@ -3,7 +3,37 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-02 · **NAV-REPLAY-BACKFILL-01 Step B** · 앵커 `SYNC-2026-09-02-NAV-REPLAY-B`
+> **갱신**: 2026-09-03 · **F-GATE-REGISTRY-PATH-01** · 앵커 `SYNC-2026-09-03-F-GATE-PATH`
+
+---
+
+## OUTBOX — F-GATE-REGISTRY-PATH-01 · 2026-09-03
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **F-GATE-REGISTRY-PATH-01** |
+| **status** | **`WAIT_CLAUDE_OK`** |
+| **위험도** | 🔴 Critical (경로만 · 판정 로직 0) |
+| **앵커** | `SYNC-2026-09-03-F-GATE-PATH` |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | 메인 DB `strategy_registry` + 행 | ✅ n=8 (LIVE 3 · CANDIDATE 5) |
+| 2 | deploy_watch `strategy_registry_missing` 소멸 | ✅ `f_gate_01` PASS `cooled_retired=0` |
+| 3 | COOLED/RETIRED 진입 차단 | ✅ 실데이터 COOLED/RETIRED=0 · 프로브 `registry_state_block` True (DB 미변조) |
+| 4 | F-RETIRE-02 회귀 없음 | ✅ PASS |
+
+### 파일
+
+- `strategy_registry_store.py` · `deploy_watch.py` · `factory_artifact_guard.py`
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 F-GATE-REGISTRY-PATH-01 검증. OK면 파일에 다음(또는 없음).
+```
 
 ---
 
