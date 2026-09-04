@@ -105,6 +105,16 @@ def row_scalar(row: pd.Series, col: str, default: float = 0.0) -> float:
     return safe_float_cast(val, default)
 
 
+def row_str(row: pd.Series, col: str, default: str = '') -> str:
+    """iterrows() 행에서 단일 컬럼 → str. 숫자 전용 row_scalar와 분리."""
+    if col not in row.index:
+        return default
+    val = row[col]
+    if isinstance(val, pd.Series):
+        val = val.iloc[0] if len(val) else default
+    return str(val) if val is not None and val == val else default
+
+
 def series_mean(df: Optional[pd.DataFrame], col: str, default: float = 0.0) -> float:
     """df[col]이 DataFrame이어도 안전한 평균."""
     s = col_series(df, col)

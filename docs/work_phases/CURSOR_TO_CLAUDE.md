@@ -3,7 +3,56 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-03 · **F-GATE-REGISTRY-PATH-01** · 앵커 `SYNC-2026-09-03-F-GATE-PATH`
+> **갱신**: 2026-09-04 · **NAV-HOOK-SILENTFAIL-02** · 앵커 `SYNC-2026-09-04-NAV-HOOK-02`
+
+---
+
+## OUTBOX — NAV-HOOK-SILENTFAIL-02 · 2026-09-04
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **NAV-HOOK-SILENTFAIL-02** |
+| **status** | **Claude 부분 OK 랜딩** (`CLAUDE_TO_CURSOR.md` INBOX) · DoD #3 대기 · Step B 미승인 |
+| **위험도** | 🔴 Critical (NAV 훅 재발 · 디렉터 승인 2026-09-03 Option A) |
+| **앵커** | `SYNC-2026-09-04-NAV-HOOK-02` |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | `row_str()` + ledger 문자열 5곳 교체 | ✅ |
+| 2 | ops_event 이중 실패 `logger.debug` | ✅ |
+| 3 | 배포 후 신규 청산 1건 NAV 갱신 실측 | ⏳ 9/4 이후 CLOSED 0 · treasury mtime Sep 2 11:17 · `row_str` smoke OK |
+| 4 | 9/1~9/3 Step A dry-run (쓰기 없음) | ✅ 아래 · **Step B 금지** |
+
+### 변경 파일
+
+- `reports/forward_report_scalar.py` — `row_str` 신설 (`row_scalar` 불변)
+- `forward/ledger.py` — 5곳 `row_str` + ops_event `except Exception as e` + debug
+
+### Step A dry-run 숫자 (Claude 선검증용)
+
+정책: 시작점=현 `treasury_state` 동결 · INCUBATOR/인버스 제외 · `overwrite_market_state` 미사용 · HWM 덮어쓰기 금지 · **쓰기 0**
+
+| 시장 | PRE nav | POST(sim) | Δ nav | n_closed | mdd(sim) | HWM |
+|------|---------|-----------|-------|----------|----------|-----|
+| KR | 268,649,767.97 | 267,987,799.56 | −661,968.41 | 204→212 (+8) | 10.80→**11.04%** | 불변 301,165,743.83 |
+| US | 288,737.60 | 288,126.49 | −611.11 | 139→143 (+4) | 3.88→3.96% | 불변 300,000 |
+
+- KR: window 8행 전부 STANDARD 적용
+- US: window 21행 · applied 4 · INCUBATOR skip 17 (Handoff “US 1건+” → 실측 STANDARD **4**)
+- Step B 채택 시 KR sim MDD **11.04%** → LOCKDOWN 유지/심화 가능 (기존 원칙 동일)
+
+### 비고
+
+- VPS scp 반영 · **origin 미푸시** → `update_factory` 전 커밋·푸시 필수
+- Step B는 Claude OK·디렉터 승인 후 **별도 세션**만
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 NAV-HOOK-SILENTFAIL-02 검증(특히 Step A 숫자). OK면 파일에 다음. Step B는 별도 세션. 채팅 말고 파일에.
+```
 
 ---
 

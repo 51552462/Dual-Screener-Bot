@@ -6,6 +6,7 @@ from reports.forward_report_scalar import (
     ohlcv_last_floats,
     prepare_forward_trades_df,
     row_scalar,
+    row_str,
     safe_float_cast,
 )
 from network_timeout import fdr_data_reader, yf_download
@@ -906,7 +907,7 @@ def track_daily_positions(market):
                     _kelly = row_scalar(r, 'sim_kelly_risk_pct', 0.0)
                     if _kelly and _kelly > 1.0:
                         _kelly = _kelly / 100.0
-                    _sig = row_scalar(r, 'sig_type', '')
+                    _sig = row_str(r, 'sig_type')
                     # NAV-REPLAY-BACKFILL-01: INCUBATOR 섀도우는 Live NAV 비반영 (record_closure skip)
                     if "INCUBATOR" in str(_sig):
                         pass
@@ -954,8 +955,9 @@ def track_daily_positions(market):
                                 "exc_msg": str(_nav_hook_ex)[:500],
                             },
                         )
-                    except Exception:
+                    except Exception as e:
                         # ops_event 기록 실패도 청산 흐름을 막지 않음
+                        logger.debug("ops_event write also failed: %s", e)
                         pass
 
                 # [초월적 진화 M3] 밴딧 베이지안 갱신 — 청산 1건마다 승/패로 Beta(α,β) 업데이트.
@@ -963,7 +965,7 @@ def track_daily_positions(market):
                 try:
                     from template_bandit import update_bandit_for_closure
                     update_bandit_for_closure(
-                        row_scalar(r, 'sig_type', ''),
+                        row_str(r, 'sig_type'),
                         won=(float(ret) > 0),
                         reward=float(ret),
                         market=market,
@@ -977,7 +979,7 @@ def track_daily_positions(market):
 
                     _re_ev = process_warm_start_live_closure(
                         market=market,
-                        sig_type=str(row_scalar(r, 'sig_type', '')),
+                        sig_type=str(row_str(r, 'sig_type')),
                         final_ret_pct=float(ret),
                         sim_kelly_invest=float(
                             row_scalar(r, 'sim_kelly_invest', 0.0) or 0.0
@@ -985,7 +987,7 @@ def track_daily_positions(market):
                         invest_amount=float(
                             row_scalar(r, 'invest_amount', 0.0) or 0.0
                         ),
-                        exit_date=str(row_scalar(r, 'exit_date', '') or ''),
+                        exit_date=str(row_str(r, 'exit_date') or ''),
                         sys_config=sys_config,
                     )
                     _re_ev_act = str(_re_ev.get("action") or "")
@@ -1009,7 +1011,7 @@ def track_daily_positions(market):
 
                     _re_strike = process_live_closure_strike(
                         market=market,
-                        sig_type=str(row_scalar(r, 'sig_type', '')),
+                        sig_type=str(row_str(r, 'sig_type')),
                         final_ret_pct=float(ret),
                         sim_kelly_invest=float(
                             row_scalar(r, 'sim_kelly_invest', 0.0) or 0.0

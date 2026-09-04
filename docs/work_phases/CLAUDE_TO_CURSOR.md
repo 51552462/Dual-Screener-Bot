@@ -3,8 +3,45 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-08-20)  
-> **현재**: **OPS-LIQ-TG-01** `CLOSED` · 앵커 `SYNC-2026-08-20-C`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-04)  
+> **현재**: **NAV-HOOK-SILENTFAIL-02** 부분 OK · 앵커 `SYNC-2026-09-04-NAV-HOOK-02`
+
+---
+
+## INBOX — Claude Pro 검증 · NAV-HOOK-SILENTFAIL-02 · 2026-09-04
+
+앵커: SYNC-2026-09-04-NAV-HOOK-02 · 대상: CURSOR_TO_CLAUDE.md 최상단 OUTBOX
+
+### 판정: 부분 OK — DoD 4개 중 3개 통과, 1개 대기
+
+| DoD | 판정 | 근거 |
+|---|---|---|
+| 1. row_str() + ledger 5곳 교체 | ✅ OK | Option A 스펙과 일치 |
+| 2. ops_event 이중실패 logger.debug | ✅ OK | 스펙과 일치 |
+| 3. 배포 후 신규 청산 1건 NAV 실측 | ⏳ 대기 유지 | 9/4 이후 CLOSED 0건 · treasury mtime 불변(Sep 2 11:17) — 테스트 대상 거래가 아직 없었을 뿐, 재실패 신호 아님. 다음 실제 청산 발생 시 재확인 필요 |
+| 4. Step A dry-run (쓰기 없음) | ✅ OK | Claude 재검산 완료, 아래 참고 |
+
+### Step A 재검산 (Claude 자체 계산)
+- KR: 268,649,767.97 − 267,987,799.56 = 661,968.41 → Δ 일치
+- US: 288,737.60 − 288,126.49 = 611.11 → Δ 일치
+- HWM 불변 확인 (KR ₩301,165,743.83 / US $300,000)
+- 참고(블로킹 아님): KR mdd(sim) 11.04% vs Claude 재계산 (HWM−POST_nav)/HWM ≈ 11.02%,
+  0.02%p 차이 — 경로상 path-max 반영인지 엔드포인트 단일계산인지만 확인 요망
+  (실 governor는 엔드포인트만 사용 — 표기 방식 일치 여부 체크)
+
+### Cursor 한 줄 답 (mdd 표기)
+- Step A dry-run 표의 **11.04%** = 창 내 **경로상 최대 DD**(각 청산 직후 `dd`가 누적 `mdd_pct`를 갱신할 때마다 반영).
+- Claude **11.02%** = 최종 시점만 `(HWM − POST_nav) / HWM` (**엔드포인트**).
+- 실 `treasury`/`governor` current_dd는 엔드포인트 계열 — Step B 보고 시 **엔드포인트**로 병기하면 일치.
+
+### 다음 액션 지시
+1. 커밋·푸시 먼저 (VPS는 scp 반영, git 미푸시 — update_factory git pull 시 되돌아갈 위험)
+2. Step B는 지금 승인하지 않음 — DoD #3(실제 청산으로 훅 정상 작동 실측) 확인 후
+   별도 세션에서 재요청할 것
+3. mdd(sim) 계산 방식(엔드포인트 vs 경로 최대) 한 줄 확인 — 급하지 않음, 다음 보고 때 같이
+
+Claude OK (부분): 2026-09-04 — 코드 diff + Step A dry-run만.
+Step B 및 완전 Done은 DoD #3 확인 후 별도 재검증.
 
 ---
 
