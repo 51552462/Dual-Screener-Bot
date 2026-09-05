@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-04 · **앵커 ID**: `SYNC-2026-09-04-NAV-HOOK-02`
+> **갱신**: 2026-09-05 · **앵커 ID**: `SYNC-2026-09-05-NORTHSTAR-AMEND`
 
 ---
 
@@ -40,25 +40,24 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-04-NAV-HOOK-02` |
-| **마지막 갱신** | 2026-09-04 — NAV-HOOK-SILENTFAIL-02 **Claude 부분 OK** · DoD #3 대기 |
-| **활성 트랙** | **KR/US** — NAV 훅 재발 수정 |
-| **진행 중 sub-phase** | NAV-HOOK-SILENTFAIL-02 (부분 OK · 실청산 1건 관측 대기) |
-| **직전 완료** | 코드+Step A Claude 부분 OK · F-GATE-REGISTRY-PATH-01 (origin `4f05deb`) |
-| **다음** | 커밋·푸시 · `update_factory` · DoD #3(실청산 NAV) → 그다음 Step B 별도 세션 |
+| **앵커 ID** | `SYNC-2026-09-05-NORTHSTAR-AMEND` |
+| **마지막 갱신** | 2026-09-05 — **TRACKA-NORTHSTAR-AMEND-01** 1년차 체크포인트 20~30% |
+| **활성 트랙** | **KR/US** — North Star 헌법 개정 |
+| **진행 중 sub-phase** | TRACKA-NORTHSTAR-AMEND-01 (Claude OK · 배포·digest 육안 잔여) |
+| **직전 완료** | TRACKA-NORTHSTAR-AMEND-01 Claude OK 2026-09-05 |
+| **다음** | 커밋·푸시 · `update_factory` · digest 두 줄 육안 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | NAV-HOOK-SILENTFAIL-02 커밋·푸시 진행 |
+| **git main** | TRACKA-NORTHSTAR-AMEND-01 푸시 진행 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[KR/US] NAV-HOOK-SILENTFAIL-02 · Claude 부분 OK · DoD #3(실청산) 대기 · Step B 금지
-[KR/US] F-GATE-REGISTRY-PATH-01 · origin 반영됨 · Claude OK 잔여 가능
-[KR/US] NAV-REPLAY Step B CLOSED · 9/1~9/3 백필은 DoD #3 후 별도 세션
-[backlog] KR-LOCKDOWN-LADDER-01 — 승인 전 미착수
-[금지] Step B · HWM overwrite · row_scalar 계약 변경 · LOCKDOWN 우회
+[KR/US] TRACKA-NORTHSTAR-AMEND-01 · Claude OK · 배포·digest 육안
+[KR/US] NAV-HOOK-SILENTFAIL-02 · Claude 부분 OK · DoD #3 대기 · Step B 금지
+[IV] V-2-WFBLOCK-01 · READY+Go 대기
+[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · NAV Step B
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

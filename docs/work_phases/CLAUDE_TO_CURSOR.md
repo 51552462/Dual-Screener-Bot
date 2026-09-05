@@ -3,8 +3,31 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-04)  
-> **현재**: **NAV-HOOK-SILENTFAIL-02** 부분 OK · 앵커 `SYNC-2026-09-04-NAV-HOOK-02`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-05)  
+> **현재**: **TRACKA-NORTHSTAR-AMEND-01** Claude OK · 앵커 `SYNC-2026-09-05-NORTHSTAR-AMEND`
+
+---
+
+## INBOX — Claude Pro 검증 · TRACKA-NORTHSTAR-AMEND-01 · 2026-09-05
+
+앵커: SYNC-2026-09-05-NORTHSTAR-AMEND · 대상: CURSOR_TO_CLAUDE.md 최상단 OUTBOX
+
+### 판정: 완전 OK — DoD 5/5 통과
+
+| DoD | 판정 |
+|---|---|
+| 1. 00_마스터_로드맵.md §0 전면 개정 | ✅ |
+| 2. 나머지 7개 파일 각주만(숫자 재작성 없음) | ✅ |
+| 3. checkpoint 20/30 신규 + vision 40/70 불변 | ✅ |
+| 4. 텔레그램 두 줄(단위테스트 확인, 실배포 육안은 잔여) | ✅ |
+| 5. MDD 3곳 무변경(governor·config_kv·RP-1) | ✅ |
+
+Claude OK: 2026-09-05 — TRACKA-NORTHSTAR-AMEND-01, 완전 승인.
+
+### 다음 액션 지시
+1. 커밋·푸시 → update_factory 배포
+2. 배포 후 다음 North Star digest에서 "1년차 체크포인트 20~30% / 장기 비전 40~70%" 두 줄 육안 확인 (05_진행로그 잔여 항목 마감)
+3. NAV-HOOK-SILENTFAIL-02는 별도 줄기 유지 — DoD #3(실청산 NAV 실측) 계속 대기, Step B 여전히 미승인
 
 ---
 

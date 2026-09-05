@@ -23,6 +23,13 @@ class TestDualNorthStarLedger(unittest.TestCase):
     def test_pace_and_composite(self, mock_path) -> None:
         mock_path.return_value = self._ledger
         self.assertEqual(ledger._pace_score(20, 40), 50.0)
+        self.assertEqual(ledger.TRACK_A["cagr_target_lo"], 40.0)
+        self.assertEqual(ledger.TRACK_A["cagr_target_hi"], 70.0)
+        self.assertEqual(ledger.TRACK_A["cagr_year1_checkpoint_lo"], 20.0)
+        self.assertEqual(ledger.TRACK_A["cagr_year1_checkpoint_hi"], 30.0)
+        self.assertEqual(
+            ledger._pace_score(10, ledger.TRACK_A["cagr_year1_checkpoint_lo"]), 50.0
+        )
         self.assertEqual(ledger._mdd_safety_score(2.5, 5.0), 50.0)
         self.assertEqual(ledger._composite_score(50, 50, measure_only=False), 50.0)
 
@@ -134,6 +141,30 @@ class TestDualNorthStarLedger(unittest.TestCase):
         out = send_north_star_digest(persist=False)
         self.assertTrue(out.get("sent"))
         mock_send.assert_called_once()
+
+    def test_track_a_html_shows_year1_and_vision(self) -> None:
+        from dual_north_star_telegram import format_track_a_equity_section_html
+
+        html = format_track_a_equity_section_html(
+            {
+                "tracks": {
+                    "A": {
+                        **ledger.TRACK_A,
+                        "aggregate": {
+                            "max_mdd_pct": 3.0,
+                            "return_pace_score": 10.0,
+                            "composite_score": 40.0,
+                        },
+                    }
+                },
+                "period_returns": {"A": {"total_pct": -2.0}},
+                "ledger": {"A": {"gate": "G0", "gate_label": ""}},
+                "meta": {},
+            }
+        )
+        self.assertIn("1년차 체크포인트: 20.0~30.0% (판정 기준)", html)
+        self.assertIn("장기 비전: 40.0~70.0% (참고)", html)
+        self.assertNotIn("연복리 40.0~70.0%", html)
 
 
 if __name__ == "__main__":

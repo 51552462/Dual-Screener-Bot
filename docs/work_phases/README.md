@@ -17,6 +17,9 @@
 | **`docs/independent_verification/`** | Claude Pro + Cursor + 디렉터 | **독립 검증 SSOT** — 자기채점 방지·IV 체크리스트·V-* 로드맵 |
 | **`00_마스터_로드맵.md`** | Claude Pro + Cursor | **헌법 (MDD 10%)** |
 
+> **각주 (NORTHSTAR-AMEND-01, 2026-09-05)**: 1년차 판정 체크포인트는 20~30%.
+> 40~70%는 장기 비전. 상세는 `00_마스터_로드맵.md §0` 참조.
+
 ### Desktop `클로드 프로/` 와의 관계
 
 | Desktop 파일 | 레포 통합본 |

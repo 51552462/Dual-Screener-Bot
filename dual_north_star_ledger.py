@@ -25,13 +25,17 @@ except Exception:  # pragma: no cover
 LEDGER_FILENAME = "dual_north_star_ledger.json"
 SCHEMA = "dual_north_star_ledger.v1"
 
-# --- North Star targets (SSOT: bitget/docs/work_phases/00_마스터_로드맵.md §0.4) ---
+# --- North Star targets (SSOT: docs/work_phases/00_마스터_로드맵.md §0 · NORTHSTAR-AMEND-01) ---
 TRACK_A = {
     "track_id": "A",
     "label": "주식 KR+US",
     "mdd_cap_pct": 10.0,
+    # 장기 비전 (vision_lo/hi) — 값 불변
     "cagr_target_lo": 40.0,
     "cagr_target_hi": 70.0,
+    # 1년차 판정 체크포인트 — 목표달성률 분모
+    "cagr_year1_checkpoint_lo": 20.0,
+    "cagr_year1_checkpoint_hi": 30.0,
     "phase": "A",
     "phase_label": "운영",
 }
@@ -421,7 +425,9 @@ def _read_stock_track() -> Dict[str, Any]:
     if markets:
         avg_return = sum(markets[m]["return_pct"] for m in markets) / len(markets)
 
-    return_pace = _pace_score(avg_return, meta["cagr_target_lo"])
+    return_pace = _pace_score(
+        avg_return, meta.get("cagr_year1_checkpoint_lo", meta["cagr_target_lo"])
+    )
     mdd_safety = _mdd_safety_score(max_mdd, meta["mdd_cap_pct"])
     composite = _composite_score(return_pace, mdd_safety, measure_only=False)
     book = _forward_book_counts_a()

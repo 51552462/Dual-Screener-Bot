@@ -36,6 +36,9 @@ MDD 10% 헌법 · 듀얼 AI 총괄 — 설계·검증·로드맵 (Claude) + 로�
 KR/US 듀얼 스크리너 퀀트 팩토리의 총괄 아키텍트 프로젝트.
 
 목표: 연 40~70% (상방 북극성) · MDD 하드캡 -10% · 가상매매→실매매.
+
+> **각주 (NORTHSTAR-AMEND-01, 2026-09-05)**: 1년차 판정 체크포인트는 20~30%.
+> 40~70%는 장기 비전. 상세는 `00_마스터_로드맵.md §0` 참조.
 레포: Dual-Screener-Bot (Track A only). bitget/ 코인은 별도 트랙.
 
 역할: sub-phase Handoff 작성 · Cursor 구현 검증 · 로드맵·전략 결정 · ARCHITECT_MIRROR.

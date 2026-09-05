@@ -30,6 +30,9 @@ RP-1 Alpha Proof가 v2.3.3 baseline으로 확정됐다. 이제 "다음에 무엇
 
 ### 배경
 - 목표 헌법: CAGR 40~70% · MDD ≤10% (00_마스터_로드맵)
+
+> **각주 (NORTHSTAR-AMEND-01, 2026-09-05)**: 1년차 판정 체크포인트는 20~30%.
+> 40~70%는 장기 비전. 상세는 `00_마스터_로드맵.md §0` 참조.
 - RP-1: KR200+US200 · 15구간(상승5·횡보5·하락5) · lookahead v1 (오늘 뇌 템플릿)
 - 측정: daily_equal_weight + Phase A tier replay + A-3 쿼터 + ACTION_BY_REGIME kelly_cap
 - 결과 JSON: rp1_20260811.json (schema v2.3.3)

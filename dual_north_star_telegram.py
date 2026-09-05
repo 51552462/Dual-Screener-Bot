@@ -543,6 +543,8 @@ def format_track_a_equity_section_html(snap: Dict[str, Any]) -> str:
     mdd_cap = ta.get("mdd_cap_pct", "?")
     cagr_lo = ta.get("cagr_target_lo", "?")
     cagr_hi = ta.get("cagr_target_hi", "?")
+    y1_lo = ta.get("cagr_year1_checkpoint_lo", 20)
+    y1_hi = ta.get("cagr_year1_checkpoint_hi", 30)
     composite = float(agg.get("composite_score", 0) or 0)
     goal_pct = float(agg.get("return_pace_score", 0) or 0)
     mdd = float(agg.get("max_mdd_pct", 0) or 0)
@@ -560,7 +562,9 @@ def format_track_a_equity_section_html(snap: Dict[str, Any]) -> str:
     parts.extend(
         [
             f"<b>{_esc(ta.get('label', '주식 KR+US'))}</b> · {_esc(ta.get('phase_label', ''))}",
-            f"목표 MDD ≤{mdd_cap}% · 연복리 {cagr_lo}~{cagr_hi}%",
+            f"목표 MDD ≤{mdd_cap}%",
+            f"1년차 체크포인트: {y1_lo}~{y1_hi}% (판정 기준)",
+            f"장기 비전: {cagr_lo}~{cagr_hi}% (참고)",
             f"현재 MDD {mdd:.2f}% · 누적 {_fmt_pct(total, signed=True)}",
             f"목표달성률 {goal_pct:.0f}% · 게이트용 종합 {_bar(composite)} {composite:.0f}점",
             f"일 {_fmt_pct(pr.get('day_pct'))} · 주 {_fmt_pct(pr.get('week_pct'))} · "

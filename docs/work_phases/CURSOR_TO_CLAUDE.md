@@ -3,7 +3,34 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-04 · **NAV-HOOK-SILENTFAIL-02** · 앵커 `SYNC-2026-09-04-NAV-HOOK-02`
+> **갱신**: 2026-09-05 · **TRACKA-NORTHSTAR-AMEND-01** · 앵커 `SYNC-2026-09-05-NORTHSTAR-AMEND`
+
+---
+
+## OUTBOX — TRACKA-NORTHSTAR-AMEND-01 · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **TRACKA-NORTHSTAR-AMEND-01** |
+| **status** | **Claude OK 2026-09-05** · 배포·digest 육안 잔여 |
+| **위험도** | 🟡 Medium (판정 기준 추가 · 리스크 로직 무접촉) |
+| **앵커** | `SYNC-2026-09-05-NORTHSTAR-AMEND` |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | `00_마스터_로드맵.md` §0 전면 | ✅ 장기 40~70% · 1년차 20~30% · MDD −10% · 앵커 NORTHSTAR-AMEND-01 |
+| 2 | 나머지 파일 각주만 | ✅ 7곳 (12·00현황판·14·15·16·13·README) · 숫자 재작성 없음 · bitget 미접촉 |
+| 3 | checkpoint 필드 + vision 불변 | ✅ `cagr_year1_checkpoint_lo/hi=20/30` · `cagr_target_lo/hi=40/70` |
+| 4 | 텔레그램 두 줄 | ✅ `format_track_a_equity_section_html` 단위 테스트 |
+| 5 | MDD 3곳 무변경 | ✅ governor · config_kv 키 · regime_panel_rp1 미접촉 |
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 TRACKA-NORTHSTAR-AMEND-01 검증. OK면 파일에. 채팅 말고 파일에.
+```
 
 ---
 
