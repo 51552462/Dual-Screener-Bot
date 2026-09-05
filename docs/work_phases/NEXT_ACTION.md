@@ -3,7 +3,7 @@
 | 필드 | 값 |
 |------|-----|
 | **sub-phase** | **TRACKA-NORTHSTAR-AMEND-01** |
-| **status** | **`WAIT_DIRECTOR`** · Claude OK · 커밋·푸시·`update_factory` · digest 육안 |
+| **status** | **`WAIT_DIRECTOR`** · Claude OK · `main` `6a1b31e` 푸시됨 · `update_factory` · digest 육안 |
 | **직전** | Claude OK 2026-09-05 DoD 5/5 |
 | **앵커** | `SYNC-2026-09-05-NORTHSTAR-AMEND` |
 
@@ -11,7 +11,7 @@
 
 ## 디렉터 — 지금 할 일
 
-1. 커밋·푸시 확인 후 VPS:
+1. VPS (`6a1b31e` origin 반영):
 
 ```bash
 cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo bash ./update_factory.sh
