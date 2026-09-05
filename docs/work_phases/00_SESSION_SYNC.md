@@ -41,22 +41,22 @@
 | 필드 | 값 |
 |------|-----|
 | **앵커 ID** | `SYNC-2026-09-05-BUGFIX-OK` |
-| **마지막 갱신** | 2026-09-05 — BUGFIX Claude OK · 배포·entry_regime 실측 잔여 |
+| **마지막 갱신** | 2026-09-05 — BUGFIX Claude OK · `98bd22e` `update_factory` 완료 · entry_regime 실측 잔여 |
 | **활성 트랙** | **KR/US** |
 | **진행 중 sub-phase** | TRACK-A-BUGFIX-BATCH-01 (항목2 실진입 관측) |
 | **직전 완료** | 항목1·3·4 CLOSED · NAV-HOOK CLOSED |
-| **다음** | 커밋·푸시·`update_factory` · US 신규 진입 `entry_regime` 확인 · V-2는 9/6+ |
+| **다음** | US(또는 신규) 진입 1건 `entry_regime` ≠ UNKNOWN · V-2는 9/6+ |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | AMEND-01 코드는 `46056fc` 계열 푸시됨 · 본 세션은 문서만 |
+| **git main** | `98bd22e` (BUGFIX) VPS HEAD 일치 · AMEND `46056fc` 계열 포함 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] TRACK-A-BUGFIX-BATCH-01 · Claude OK · 배포 후 entry_regime 실측
+[KR/US] TRACK-A-BUGFIX-BATCH-01 · Claude OK · VPS `98bd22e` 배포됨 · entry_regime 실측 잔여
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
 [IV] V-2-WFBLOCK-01 · READY+Go 대기 (9/6+)

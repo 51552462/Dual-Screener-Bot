@@ -3,7 +3,18 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-05 · **TRACK-A-BUGFIX-BATCH-01 Claude OK** · 앵커 `SYNC-2026-09-05-BUGFIX-OK`
+> **갱신**: 2026-09-05 · **TRACK-A-BUGFIX-BATCH-01 Claude OK** · VPS `98bd22e` 배포됨 · 앵커 `SYNC-2026-09-05-BUGFIX-OK`
+
+---
+
+## OUTBOX — TRACK-A-BUGFIX-BATCH-01 · 배포 완료 · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **status** | Claude OK · 항목1·3·4 CLOSED · **VPS HEAD `98bd22e`** · 항목2 실측 잔여 |
+| **deploy** | `sudo bash ./update_factory.sh` 완료 (`[7/7]` · services active) |
+| **invest_ccy** | 미추가 (선택·불필요 — 라벨만으로 역할 구분) |
+| **잔여** | 신규 진입 1건 `entry_regime` ≠ UNKNOWN (KR LOCKDOWN → US 우선) |
 
 ---
 
