@@ -2,24 +2,24 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **TRACKA-NORTHSTAR-AMEND-01** |
-| **status** | **`WAIT_DIRECTOR`** · Claude OK · `main` `6a1b31e` 푸시됨 · `update_factory` · digest 육안 |
-| **직전** | Claude OK 2026-09-05 DoD 5/5 |
-| **앵커** | `SYNC-2026-09-05-NORTHSTAR-AMEND` |
+| **sub-phase** | **TRACK-A-BUGFIX-BATCH-01** |
+| **status** | **`WAIT_DIRECTOR`** · Claude OK · 배포 후 US 진입 `entry_regime` 실측 |
+| **직전** | 항목1·3·4 CLOSED · 항목2 코드 OK |
+| **앵커** | `SYNC-2026-09-05-BUGFIX-OK` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. VPS (`6a1b31e` origin 반영):
+1. VPS (푸시 확인 후):
 
 ```bash
 cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo bash ./update_factory.sh
 ```
 
-2. 다음 North Star digest에서 「1년차 체크포인트 20~30%」「장기 비전 40~70%」 두 줄 육안
-3. NAV-HOOK-SILENTFAIL-02 DoD #3 · Step B — **별줄기** (미승인)
+2. 이후 신규 진입 1건(US 우선)에서 `entry_regime` ≠ UNKNOWN 이면 항목2 CLOSED
+3. V-2: **9/6+** `--iv-observation --dry-run`
 
 ### 금지
 
-- MDD 캡 변경 · 40~70% 삭제 · NAV Step B
+- LOCKDOWN 우회 · `sim_kelly_invest` 값 변경 · `invest_amount` 환율 곱 · Phase 2

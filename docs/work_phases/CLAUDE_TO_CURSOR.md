@@ -4,7 +4,164 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-05)  
-> **현재**: **TRACKA-NORTHSTAR-AMEND-01** Claude OK · 앵커 `SYNC-2026-09-05-NORTHSTAR-AMEND`
+> **현재**: **TRACK-A-BUGFIX-BATCH-01** Claude OK · 항목2 실진입 관측 잔여 · 앵커 `SYNC-2026-09-05-BUGFIX-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · TRACK-A-BUGFIX-BATCH-01 · 2026-09-05
+
+앵커: SYNC-2026-09-05-BUGFIX-IMPL · 대상: CURSOR_TO_CLAUDE.md 최상단 OUTBOX
+
+### 판정: 항목1·4 완전 OK · 항목2 코드 OK(실측 대기) · 항목3 제안 c 채택
+
+| 항목 | 판정 |
+|---|---|
+| 1. 익절/손절 부호 분기, exit_type 불변 | ✅ OK |
+| 2. entry_regime 실값 대입 | ✅ 코드 OK — 실제 신규 진입 1건 관측은 배포 후 별도 확인 (NAV DoD#3와 동일 패턴) |
+| 3. 통화 라벨 방향 | ✅ **c 채택** — 값 불변, sim_kelly_invest(KRW·SSOT)/invest_amount(현지통화·표시용) 역할만 명시. b(SSOT 변경)는 원래 금지 방향과 일치해서 기각 정당. 필요시 additive invest_ccy 컬럼 추가는 Cursor 재량 |
+| 4. NAV-HOOK 회귀 없음 | ✅ OK |
+
+Claude OK: 2026-09-05 — 항목1·3·4 완전 CLOSED. 항목2는 코드 완료, 배포 후 실진입 1건 관측 대기.
+
+### 다음 액션
+1. 커밋·푸시 → update_factory 배포
+2. 배포 후 신규 진입 1건에서 entry_regime이 실값(UNKNOWN 아님)으로 찍히는지 확인 → 확인되면 항목2도 완전 CLOSED
+3. invest_ccy 컬럼 추가 여부는 Cursor 재량 판단(선택사항, 필수 아님)
+4. 05_진행로그.md · 00_전체현황판.md · 00_SESSION_SYNC §3 갱신
+
+### 잔여 확인 (급하지 않음)
+- V-2-WFBLOCK-01은 여전히 9/6+ 자연 도달 대기, 별도 조치 불필요
+
+---
+
+## INBOX — Claude Pro 최종 검증 · NAV-HOOK-SILENTFAIL-02 Step B 반영 · 2026-09-05
+
+앵커: SYNC-2026-09-05-NAV-STEPB · 대상: CURSOR_TO_CLAUDE.md 최상단 Step B 반영 결과
+
+### 판정: 완전 OK
+
+- 백업 존재 확인
+- HWM 양쪽 불변 확인
+- KR last_exit 2026-09-04 유지 확인 (Critical 지시사항 정확히 지켜짐 — 되돌림 없음)
+- n_closed·nav 전부 dry-run과 정확히 일치
+- governor 재확인: KR LOCKDOWN 유지(dd 11.05%) · US NORMAL 유지
+
+Claude OK: 2026-09-05 — NAV-HOOK-SILENTFAIL-02 전 항목(코드 수정 + Step B 백필) CLOSED.
+
+### 다음
+1. 05_진행로그.md · 00_전체현황판.md · 00_SESSION_SYNC §3 갱신 (CLOSED 반영)
+2. 다음 세션은 TRACK-A-BUGFIX-BATCH-01 구현 (별도 Cursor 창)
+3. V-2-WFBLOCK-01은 9/6+ readiness 재확인 후
+
+---
+
+## INBOX — Claude Pro 승인 · NAV-HOOK-SILENTFAIL-02 Step B · 2026-09-05
+
+앵커: SYNC-2026-09-05-NAV-STEPB · 대상: CURSOR_TO_CLAUDE.md 최상단 Step B dry-run 표
+
+### 판정: 숫자 재검산 일치 — Step B 승인
+
+- KR Δ −661,691.71 · US Δ −611.11 · HWM 불변 · INCUBATOR 17건 스킵 — 전부 확인
+- KR 8/8 · US 4건 적용 확인
+
+Claude 승인: 2026-09-05 — Step B(9/1~9/3 백필) 실제 반영 진행 가능.
+
+### 실행 시 반드시 지킬 것 (Critical)
+1. last_exit_date는 **9/4(현재 실측값)를 유지** — dry-run 창의 9/3으로 되돌리지 말 것
+   (Cursor가 스스로 짚어준 리스크, 실행 시 재확인)
+2. n_closed는 현재값(KR 205 · US 139)에서 이번 백필분(+8 · +4)만 증분
+3. HWM 절대 건드리지 않기 (기존 원칙 동일)
+4. 실행 전 treasury_state.json 백업 1부 (타임스탬프 파일명)
+5. 반영 후 KR band/LOCKDOWN 상태 재확인해서 보고 (더 깊어질 뿐 band 자체는 안 바뀔 것으로 예상 — 확인만)
+
+### 세션 종료 시 필수
+05_진행로그.md · 00_전체현황판.md 갱신 · 디렉터 3줄 요약
+
+---
+
+## INBOX — Claude Pro Handoff · TRACK-A-BUGFIX-BATCH-01 · 2026-09-05 (재발행)
+
+앵커: SYNC-2026-09-05-BUGFIX-REISSUE
+비고: 이전 채팅 전달분이 파일 미등록 확인됨(Ops RO #4) — 정식 재발행
+
+════════════════════════════════════
+[sub-phase] TRACK-A-BUGFIX-BATCH-01
+위험도: 🟡 Medium (재무 계산 무영향, 표시·로직 정확도만)
+════════════════════════════════════
+
+## 목표
+원인이 확정된 독립 버그 3개 정리. NAV/승격/게이트 로직 무접촉.
+
+## 항목 1 — "하이브리드 추세 이탈 익절" 오라벨
+- 위치: forward/ledger.py, is_tech_exit 조건 (HYBRID 청산 경로)
+- 문제: final_ret 부호 무관, 라벨 "익절" 고정 출력
+- 수정: 부호별 분기("...익절"/"...손절" 또는 중립 "...청산")
+- exit_type 값(HYBRID_TECH 등) 변경 금지, exit_reason 문구만
+
+## 항목 2 — entry_regime UNKNOWN 배선
+- 위치: forward/shared.py, cur_regime 변수
+- 문제: "UNKNOWN" 초기화 후 진입 INSERT 전 실제 Meta 국면 갱신 할당 없음
+  (실측: US bad_regime 51/185≈27.6% — deploy_watch reality_audit로 재확인됨)
+- 수정: 기존 국면 판별 함수 재사용해서 cur_regime에 실제 값 대입
+
+## 항목 3 — US invest_amount/sim_kelly_invest 통화 라벨링 불일치
+- 위치: forward/shared.py, try_add_virtual_position, 3212–3250행
+- 문제: 같은 행에서 sim_kelly_invest=KRW환산, invest_amount=USD 그대로 — 통화 불일치
+- sim_kelly_invest(SSOT, replay 공식 근거) 값 절대 변경 금지
+- 수정 방향은 Cursor가 제안 먼저 (a/b/c 중 택1 또는 대안), Claude 확인 후 구현
+
+## 하지 않을 일
+- NAV/승격/LOCKDOWN/F-GATE 로직 무접촉
+- sim_kelly_invest 값 변경 금지
+- Phase 2 관련 코드 무접촉
+
+## 완료 기준 (DoD)
+1. 항목1: 손실 케이스 "손절"류 라벨 확인, 익절 케이스 회귀 없음
+2. 항목2: 신규 진입 1건 이상 entry_regime 실값 기록 확인
+3. 항목3: 수정 방향 제안만 우선 제시
+4. NAV-HOOK-SILENTFAIL-02 배포에 회귀 없음 확인
+
+## 세션 종료 시 필수
+05_진행로그.md · 00_전체현황판.md 갱신 · 디렉터 3줄 요약
+
+---
+
+## INBOX — Claude Pro 검증 · NAV-HOOK-SILENTFAIL-02 DoD#3 · 2026-09-05
+
+앵커: SYNC-2026-09-05-AMEND-CLOSED · 대상: CURSOR_TO_CLAUDE.md 최상단 Ops RO 6항 #5
+
+### 판정: DoD#3 OK — 실측 후보로 완전 확정
+
+근거:
+- treasury mtime Sep2(정체) → 2026-09-04 18:48 실제 갱신 확인
+- KR n_closed 204→205(+1), last_exit_date=2026-09-04 — id=381(CLOSED_LOSS·비INCUBATOR) 1건과 정확히 일치
+- US 9/4~9/5 CLOSED 4건 전부 INCUBATOR → n_closed 139 불변은 스킵 정책과 일치, 새 이상 아님
+
+Claude OK: 2026-09-05 — NAV-HOOK-SILENTFAIL-02 DoD 4/4 전체 충족(코드 수정 자체는 완전 검증 완료).
+
+### 남은 것 — Step B(9/1~9/3 히스토리 백필)는 별도 결정
+- DoD#3이 "앞으로 잘 작동한다"를 증명한 것이지, "버그 활성 기간(9/1~9/3) 중 놓친
+  KR 8건 + 관련 US건"이 자동으로 채워진 게 아님 — 그건 여전히 미반영 상태
+- Step B는 여전히 미승인 · 별도 세션에서, NAV-REPLAY-BACKFILL-01 때와 동일하게
+  Step A(dry-run) → Claude 확인 → Step B(실제 반영) 순서로 진행
+
+### 별건 확인 — TRACK-A-BUGFIX-BATCH-01 미등록 확인됨
+Ops RO 6항 #4에서 "착수 전 · 레포/05/Handoff에 ID 없음"으로 확인됨.
+이전에 채팅으로만 전달된 Handoff가 정식 등록이 안 된 것으로 보임 — 재발행 필요.
+
+---
+
+## INBOX — Claude Pro 최종 확인 · TRACKA-NORTHSTAR-AMEND-01 · 2026-09-05
+
+디렉터 텔레그램 육안 확인 완료 (2026-09-05 19:30 일간 digest):
+- "1년차 체크포인트: 20.0~30.0% (판정 기준)" 확인
+- "장기 비전: 40.0~70.0% (참고)" 확인
+
+Cursor 증거(syslog 19:30:01 · 원장 mtime 19:30 · VPS HEAD 46056fc ·
+동일 포맷터 HTML 추출) + 디렉터 텔레그램 육안 = 이중 확인 완료.
+
+TRACKA-NORTHSTAR-AMEND-01 — 전 항목 CLOSED. 05_진행로그·00_전체현황판·
+00_SESSION_SYNC §3 갱신 바람.
 
 ---
 

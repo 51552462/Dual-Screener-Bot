@@ -3,7 +3,141 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-05 · **TRACKA-NORTHSTAR-AMEND-01** · 앵커 `SYNC-2026-09-05-NORTHSTAR-AMEND`
+> **갱신**: 2026-09-05 · **TRACK-A-BUGFIX-BATCH-01 Claude OK** · 앵커 `SYNC-2026-09-05-BUGFIX-OK`
+
+---
+
+## OUTBOX — TRACK-A-BUGFIX-BATCH-01 · 항목1·2 구현 · 항목3 제안 · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **TRACK-A-BUGFIX-BATCH-01** |
+| **status** | **Claude OK 2026-09-05** · 항목1·3·4 CLOSED · 항목2 실측 잔여 |
+| **위험도** | 🟡 Medium |
+| **앵커** | `SYNC-2026-09-05-BUGFIX-OK` |
+
+### DoD
+
+| # | 기준 | 결과 |
+|---|------|------|
+| 1 | 손실 손절 라벨 · 익절 회귀 없음 · exit_type 불변 | ✅ `hybrid_tech_exit_reason` · 최종 `ret`로 재라벨 · `HYBRID_TECH` 유지 |
+| 2 | 신규 진입 `entry_regime` 실값 | ✅ INSERT 전 `resolve_entry_regime` (`resolve_meta_regime_key`). 실진입 1건은 배포 후 관측 |
+| 3 | 통화 라벨 방향만 | ✅ **c 채택** (값 불변 · `invest_ccy` 미추가) |
+| 4 | NAV-HOOK 회귀 없음 | ✅ `row_str` 5곳 · `record_closure` 무접촉 |
+
+### 항목3 제안 (구현 금지 · Claude 택1)
+
+두 필드는 통화만 다른 게 아니라 **공식도 다름**: `sim_kelly_invest` = 켈리×KRW환산(`calc_ep`), `invest_amount` = 고정 2%×현지 `ep`.
+
+| 안 | 내용 | NAV/replay | 권장 |
+|----|------|------------|------|
+| **a** | US `invest_amount`에 `exch_rate` 곱해 KRW로 맞춤 | `sim_kelly_invest` 불변. `invest_amount` 숫자 변경 | △ |
+| **b** | `sim_kelly_invest`를 USD로 | **금지** (Handoff) | ❌ |
+| **c** | **값 불변.** SSOT: `sim_kelly_invest`=KRW(replay). `invest_amount`=시장 현지통화(US=USD). 리포트 라벨만. 필요 시 additive `invest_ccy` | 재무 계산 0 | **권장** |
+
+**채택: c** — replay/NAV가 `sim_kelly_invest`를 쓰므로 숫자를 맞추려다 표시 필드를 건드리는 게 더 위험하다.
+
+### 파일
+
+- `forward/ledger.py` — `hybrid_tech_exit_reason`
+- `forward/shared.py` — `resolve_entry_regime` + INSERT 전 대입
+- `tests/test_track_a_bugfix_batch_01.py` — 6 passed
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 BUGFIX 항목1·2 검증. 항목3은 c 채택 여부만 파일에. 채팅 말고 파일에.
+```
+
+---
+
+## OUTBOX — NAV-HOOK-SILENTFAIL-02 Step B 반영 · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **CLOSED** · Claude OK 2026-09-05 (코드+Step B) |
+| **백업** | `/var/lib/quant-factory/data/treasury_state.json.bak.20260905_223321_pre_nav_hook_stepb` |
+| **overwrite_market_state** | 미사용 |
+
+| 검사 | KR | US |
+|------|----|----|
+| HWM | **불변** ₩301,165,743.83 | **불변** $300,000 |
+| last_exit | **2026-09-04 유지** | 2026-09-03 (8/28→전진) |
+| n_closed | 205→**213** (+8) | 139→**143** (+4) |
+| nav | ₩267,875,780.66 | $288,126.49 |
+| governor | LOCKDOWN · block=True · current_dd 11.05% | NORMAL · block=False · 3.96% |
+
+밴드: KR LOCKDOWN **유지**(낙폭만 심화). US NORMAL 유지.
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 Step B. HWM·last_exit 9/4·백업 확인. OK면 파일에.
+```
+
+---
+
+## OUTBOX — NAV Step B dry-run 재계산 (쓰기 0) · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **mode** | 읽기 전용 · treasury **미기록** |
+| **창** | exit 2026-09-01..2026-09-03 · INCUBATOR/인버스 제외 |
+| **시작점** | 현 VPS treasury (KR n=205 · 이미 id=381 포함) |
+
+| 시장 | PRE nav | POST(sim) | Δ nav | n | HWM |
+|------|---------|-----------|-------|---|-----|
+| KR | ₩268,537,472.37 | ₩267,875,780.66 | **−661,691.71** | 205→213 (+8) | 불변 |
+| US | $288,737.60 | $288,126.49 | **−611.11** | 139→143 (+4) | 불변 |
+
+- KR 8/8 적용 · US 4 적용 · INCUBATOR skip 17
+- path-max MDD: KR **11.08%** · US **3.96%**
+- **Step B 주의**: sim `last_exit=2026-09-03`은 창 끝. Live `last_exit=2026-09-04`를 **되돌리지 말 것**.
+- BUGFIX-BATCH-01 Handoff는 `CLAUDE_TO_CURSOR.md` 최상단 **재발행 완료**. 구현은 다음 세션.
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 Step B dry-run 표. OK면 Step B 승인 여부만 파일에. BUGFIX는 다음 Cursor 창.
+```
+
+---
+
+## OUTBOX — NAV-HOOK-SILENTFAIL-02 DoD#3 Claude OK · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | **NAV-HOOK-SILENTFAIL-02** |
+| **status** | **Claude OK 2026-09-05 · DoD 4/4** · Step B **미승인** |
+| **앵커** | `SYNC-2026-09-05-NAV-DOD3` |
+
+- 코드 수정 검증 완료. 9/1~9/3 히스토리 백필은 별세션(dry-run → Claude → 반영).
+- `TRACK-A-BUGFIX-BATCH-01` = 채팅-only Handoff · **재발행 대기** · 착수 금지.
+
+---
+
+## OUTBOX — Ops RO 6항 · 2026-09-05
+
+| 항목 | 내용 |
+|------|------|
+| **mode** | 읽기 전용 · 코드 0 |
+| **status** | **Claude OK 2026-09-05** · DoD #3 확정 · 당시 후보는 실측으로 승격 |
+| **앵커** | `SYNC-2026-09-05-AMEND-CLOSED` |
+
+| # | 질문 | 결과 |
+|---|------|------|
+| 1 | AMEND-01 | **CLOSED** — 디렉터 텔레그램 육안 + Cursor 교차증거. INBOX 최상단 반영. |
+| 2 | RECALL_FORK 목표하향 | **CLOSED** — AMEND-01로 해결. mega_trend·관측연장은 미결정. |
+| 3 | reality_audit WARN bad_et KR=1/US=5 | **직접 원인 아님.** 19:35 JSON: KR n=214 bad_et=1 (0.47%) · US n=185 bad_et=5 (2.7%). WARN는 **US `bad_regime=51/185≈27.6%`** (`entry_regime` 공란/UNKNOWN ≥20%). 익절 `exit_type` 라벨 묶음과는 별개. |
+| 4 | TRACK-A-BUGFIX-BATCH-01 | **착수 전.** 레포·05·Handoff에 ID 없음. CAT-E-BARS-01은 조사만(구현 의도적 없음). |
+| 5 | NAV DoD #3 | **Claude OK 2026-09-05.** treasury mtime 2026-09-04 18:48. KR Live id=381 → n_closed 204→205 · last_exit_date=2026-09-04. US INCUBATOR 스킵 정상. Step B 별도. |
+| 6 | LIQ_BAND 5일 과반 | **급한 조치 없음.** backlog `OPS-LIQ-PHASE2-01` 등록. Phase2 자동 착수 없음. |
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 Ops RO 6항. AMEND CLOSED·목표하향 다리 닫음 확인. NAV DoD #3 실측 후보 OK 여부만 파일에.
+```
 
 ---
 
@@ -12,7 +146,7 @@
 | 항목 | 내용 |
 |------|------|
 | **sub-phase** | **TRACKA-NORTHSTAR-AMEND-01** |
-| **status** | **Claude OK 2026-09-05** · 배포·digest 육안 잔여 |
+| **status** | **CLOSED 2026-09-05** · 디렉터 텔레그램 육안 + Cursor 교차증거 |
 | **위험도** | 🟡 Medium (판정 기준 추가 · 리스크 로직 무접촉) |
 | **앵커** | `SYNC-2026-09-05-NORTHSTAR-AMEND` |
 

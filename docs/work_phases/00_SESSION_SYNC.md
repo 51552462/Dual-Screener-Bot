@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-05 · **앵커 ID**: `SYNC-2026-09-05-NORTHSTAR-AMEND`
+> **갱신**: 2026-09-05 · **앵커 ID**: `SYNC-2026-09-05-BUGFIX-OK`
 
 ---
 
@@ -40,24 +40,27 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-05-NORTHSTAR-AMEND` |
-| **마지막 갱신** | 2026-09-05 — **TRACKA-NORTHSTAR-AMEND-01** 1년차 체크포인트 20~30% |
-| **활성 트랙** | **KR/US** — North Star 헌법 개정 |
-| **진행 중 sub-phase** | TRACKA-NORTHSTAR-AMEND-01 (Claude OK · 배포·digest 육안 잔여) |
-| **직전 완료** | TRACKA-NORTHSTAR-AMEND-01 Claude OK 2026-09-05 |
-| **다음** | 커밋·푸시 · `update_factory` · digest 두 줄 육안 |
+| **앵커 ID** | `SYNC-2026-09-05-BUGFIX-OK` |
+| **마지막 갱신** | 2026-09-05 — BUGFIX Claude OK · 배포·entry_regime 실측 잔여 |
+| **활성 트랙** | **KR/US** |
+| **진행 중 sub-phase** | TRACK-A-BUGFIX-BATCH-01 (항목2 실진입 관측) |
+| **직전 완료** | 항목1·3·4 CLOSED · NAV-HOOK CLOSED |
+| **다음** | 커밋·푸시·`update_factory` · US 신규 진입 `entry_regime` 확인 · V-2는 9/6+ |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | TRACKA-NORTHSTAR-AMEND-01 푸시 진행 |
+| **git main** | AMEND-01 코드는 `46056fc` 계열 푸시됨 · 본 세션은 문서만 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
-[KR/US] TRACKA-NORTHSTAR-AMEND-01 · Claude OK · 배포·digest 육안
-[KR/US] NAV-HOOK-SILENTFAIL-02 · Claude 부분 OK · DoD #3 대기 · Step B 금지
-[IV] V-2-WFBLOCK-01 · READY+Go 대기
-[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · NAV Step B
+[KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
+[KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
+[KR/US] TRACK-A-BUGFIX-BATCH-01 · Claude OK · 배포 후 entry_regime 실측
+[KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
+[KR/US] OPS-LIQ-PHASE2-01 · backlog
+[IV] V-2-WFBLOCK-01 · READY+Go 대기 (9/6+)
+[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

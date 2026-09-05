@@ -20,6 +20,19 @@ CB_RELEASE_LOSS_RATIO = -0.02
 CB_COOLDOWN_TRADING_DAYS = 3
 
 
+def hybrid_tech_exit_reason(final_ret_pct: float) -> str:
+    """HYBRID_TECH exit_reason only — exit_type stays HYBRID_TECH."""
+    try:
+        ret = float(final_ret_pct)
+    except (TypeError, ValueError):
+        ret = 0.0
+    if ret > 0:
+        return "하이브리드 추세 이탈 익절"
+    if ret < 0:
+        return "하이브리드 추세 이탈 손절"
+    return "하이브리드 추세 이탈 청산"
+
+
 def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_seed):
     """
     [유체 방어 #1] 전역 서킷 브레이커 트립 + 자율 해제(Sticky-ON 고착 방지).
@@ -785,8 +798,12 @@ def track_daily_positions(market):
                     elif l <= sl_price: # 💡 c <= sl_price 가 아니라 장중 저가 l 로 변경
                         do_exit, exit_rsn, actual_exit_type = True, f"ATR {opt_sl_atr}배 장중 방어 손절", "HYBRID_ATR"
                         actual_exit_price = sl_price
-                    elif is_tech_exit: 
-                        do_exit, exit_rsn, actual_exit_type = True, "하이브리드 추세 이탈 익절", "HYBRID_TECH"
+                    elif is_tech_exit:
+                        do_exit, exit_rsn, actual_exit_type = (
+                            True,
+                            hybrid_tech_exit_reason(current_ret_pct),
+                            "HYBRID_TECH",
+                        )
 
             # 3순위: 장기 거래정지/좀비 종목 강제 청소 (유통기한 2배 초과 시 원금 회수 가정)
             if not do_exit and new_bars >= opt_time_stop_effective * 2:
@@ -801,6 +818,8 @@ def track_daily_positions(market):
                 # [M1] 부분익절된 포지션은 '부분 실현분 + 잔여 러너 실현분'을 비대칭 합산.
                 if _scaled_done > 1e-6 and actual_exit_type != "STAT_MFE_FULL" and _xdyn is not None:
                     ret = round(_xdyn.blend_final_return(_realized_partial, _scaled_done, ret), 2)
+                if actual_exit_type == "HYBRID_TECH":
+                    exit_rsn = hybrid_tech_exit_reason(ret)
                 mfe = round(((new_max - ep) / ep) * 100, 2)
 
                 # ⚡ [Ch.3 오버드라이브 텔레메트리] exit_reason + flow_tags SSOT

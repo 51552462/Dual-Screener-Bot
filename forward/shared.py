@@ -1693,6 +1693,23 @@ def apply_bear_underdog_shadow_sig_type_tag(
     return f"{sig_type}{_BEAR_UNDERDOG_SHADOW_SUFFIX}"
 
 
+def resolve_entry_regime(sys_config: Optional[Mapping[str, Any]] = None) -> str:
+    """INSERT 전 entry_regime — Meta 국면 SSOT 재사용 (UNKNOWN 폴백만)."""
+    try:
+        from bear_defense_booster_guard import resolve_meta_regime_key
+
+        rk = str(resolve_meta_regime_key(sys_config) or "").strip().upper()
+        if rk and rk != "UNKNOWN":
+            return rk
+    except Exception:
+        pass
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    fallback = str(
+        cfg.get("CURRENT_REGIME_KEY") or cfg.get("META_REGIME_KEY") or "UNKNOWN"
+    ).strip().upper()
+    return fallback or "UNKNOWN"
+
+
 def try_add_virtual_position(
     market,
     code,
@@ -2288,6 +2305,7 @@ def try_add_virtual_position(
 
     try:
         sys_config = load_system_config()
+        cur_regime = resolve_entry_regime(sys_config)
         table_name = f"{market}_{code_str}"
         idx_table = 'US_SPY' if market == 'US' else 'KR_KOSDAQ_IDX'
         
