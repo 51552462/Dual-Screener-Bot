@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-05 · **앵커 ID**: `SYNC-2026-09-05-BUGFIX-OK`
+> **갱신**: 2026-09-07 · **앵커 ID**: `SYNC-2026-09-07-LADDER-HOLD`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-05-BUGFIX-OK` |
-| **마지막 갱신** | 2026-09-05 — BUGFIX Claude OK · `98bd22e` `update_factory` 완료 · entry_regime 실측 잔여 |
+| **앵커 ID** | `SYNC-2026-09-07-LADDER-HOLD` |
+| **마지막 갱신** | 2026-09-07 — `KR-LOCKDOWN-LADDER-01` 재정의(회복 후 히스테리시스/N일) · **착수 보류** |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | TRACK-A-BUGFIX-BATCH-01 (항목2 실진입 관측) |
-| **직전 완료** | 항목1·3·4 CLOSED · NAV-HOOK CLOSED |
-| **다음** | US(또는 신규) 진입 1건 `entry_regime` ≠ UNKNOWN · V-2는 9/6+ |
+| **진행 중 sub-phase** | 없음 (idle) |
+| **직전 완료** | TRACK-A-BUGFIX-BATCH-01 CLOSED |
+| **다음** | V-2-WFBLOCK-01 Handoff 대기 · LADDER는 Critical 승인 전 금지 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -56,8 +56,9 @@
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] TRACK-A-BUGFIX-BATCH-01 · Claude OK · VPS `98bd22e` 배포됨 · entry_regime 실측 잔여
+[KR/US] TRACK-A-BUGFIX-BATCH-01 · CLOSED (1·2·3·4 · 항목2 프로브 BULL)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
+[KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
 [IV] V-2-WFBLOCK-01 · READY+Go 대기 (9/6+)
 [금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회

@@ -2,17 +2,20 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **TRACK-A-BUGFIX-BATCH-01** |
-| **status** | **`WAIT_DIRECTOR`** · Claude OK · `98bd22e` 배포됨 · US 진입 `entry_regime` 실측 |
-| **직전** | 항목1·3·4 CLOSED · 항목2 코드 OK |
-| **앵커** | `SYNC-2026-09-05-BUGFIX-OK` |
+| **sub-phase** | 없음 (idle) |
+| **status** | **`WAIT_CLAUDE_HANDOFF`** · BUGFIX **CLOSED** · LADDER **HOLD** |
+| **직전** | `KR-LOCKDOWN-LADDER-01` 재정의 (착수 없음) |
+| **앵커** | `SYNC-2026-09-07-LADDER-HOLD` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. 배포됨 (`98bd22e` · `update_factory` 완료). 이후 신규 진입 1건(US 우선)에서 `entry_regime` ≠ UNKNOWN 이면 항목2 CLOSED
+구현 없음. V-2는 Handoff 후에만.
+
+`KR-LOCKDOWN-LADDER-01` = **회복 후 히스테리시스/N일** · 🔴 · F-GATE 이상 · **Critical 승인 전 착수 금지**.
 
 ### 금지
 
-- LOCKDOWN 우회 · `sim_kelly_invest` 값 변경 · `invest_amount` 환율 곱 · Phase 2
+- LOCKDOWN 중 부분 진입 · MDD 캡 변경 · Bitget 탐험예산 미러
+- Phase 2 자동 착수 · V-2 Handoff 없이 Go

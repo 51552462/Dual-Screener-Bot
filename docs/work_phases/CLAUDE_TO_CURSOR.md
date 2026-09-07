@@ -3,8 +3,19 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-05)  
-> **현재**: **TRACK-A-BUGFIX-BATCH-01** Claude OK · 항목2 실진입 관측 잔여 · 앵커 `SYNC-2026-09-05-BUGFIX-OK`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-07)  
+> **현재**: **idle** · BUGFIX CLOSED · `KR-LOCKDOWN-LADDER-01` HOLD · 앵커 `SYNC-2026-09-07-LADDER-HOLD`
+
+---
+
+## INBOX — Claude Pro 최종 검증 · TRACK-A-BUGFIX-BATCH-01 항목2 · 2026-09-05
+
+프로브 결과 확인:
+- try_add_calls_resolve_entry_regime=True · insert_row_uses_cur_regime=True
+- 결과값=BULL (UNKNOWN 아님) · is_real_regime=True · db_write=False(쓰기 없음, 요청대로)
+
+Claude OK: 2026-09-05 — 항목2 배선 검증 완료.
+TRACK-A-BUGFIX-BATCH-01 전체(1·2·3·4) CLOSED.
 
 ---
 

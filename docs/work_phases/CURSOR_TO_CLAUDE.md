@@ -3,7 +3,30 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-05 · **TRACK-A-BUGFIX-BATCH-01 Claude OK** · VPS `98bd22e` 배포됨 · 앵커 `SYNC-2026-09-05-BUGFIX-OK`
+> **갱신**: 2026-09-07 · **LADDER HOLD** · 앵커 `SYNC-2026-09-07-LADDER-HOLD`
+
+---
+
+## OUTBOX — KR-LOCKDOWN-LADDER-01 재정의 · 착수 보류 · 2026-09-07
+
+| 항목 | 내용 |
+|------|------|
+| **ID** | `KR-LOCKDOWN-LADDER-01` |
+| **정의** | 소진율이 LOCKDOWN에서 **내려온 뒤** 히스테리시스 + N일 관찰. LOCKDOWN **중** 축소 재개 아님 |
+| **위험** | 🔴 방어층 · F-GATE 이상 |
+| **금지** | MDD 10% 변경 · 층1·2·3 우회/통합 · Bitget `exploration_budget` 복사 |
+| **status** | **HOLD** · 디렉터 Critical 승인 + Handoff 전 코드 0건 |
+
+---
+
+## OUTBOX — TRACK-A-BUGFIX-BATCH-01 · 항목2 프로브 · 전체 CLOSED · 2026-09-07
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **CLOSED** (1·2·3·4) |
+| **항목2** | VPS 프로브: `resolve_entry_regime=BULL` · wiring True · `db_write=False` |
+| **Claude OK** | 항목2 배선 검증 완료 (INBOX 2026-09-05 문구 · 프로브 2026-09-07) |
+| **다음** | idle · V-2 Handoff 대기 |
 
 ---
 
