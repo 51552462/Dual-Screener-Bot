@@ -3,8 +3,23 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-07)  
-> **현재**: **idle** · BUGFIX CLOSED · `KR-LOCKDOWN-LADDER-01` HOLD · 앵커 `SYNC-2026-09-07-LADDER-HOLD`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-08)  
+> **현재**: **FAMILY-SLEEVE-DEMOTE-01 Step B** · `WAIT_CLAUDE_OK` · 앵커 `SYNC-2026-09-08-SLEEVE-B`
+
+---
+
+## INBOX — Claude Pro Handoff · FAMILY-SLEEVE-DEMOTE-01 · 2026-09-08
+
+[sub-phase] FAMILY-SLEEVE-DEMOTE-01  
+[위험] 🔴 Critical (자본배분)  
+[디렉터 승인] 2026-09-08 원조 스캐너 주력에서 내리기  
+[Step] **A 미리보기만** → Claude 확인 후 Step B. 곧바로 쓰기 금지.
+
+목표: S1·S4·STANDARD·RANK_A Kelly를 데스매치 병합 **이후** 0.25 override. 스캔/INSERT 유지.  
+F-GATE·capital_mult·cron·MDD·LOCKDOWN 무접촉.  
+STANDBY 0을 0.25로 올리는 것 포함. RANK_B/C/D 등 명시 제외.
+
+전문은 디렉터 채팅 Handoff와 동일.
 
 ---
 

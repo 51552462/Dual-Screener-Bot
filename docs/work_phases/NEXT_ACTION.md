@@ -2,20 +2,17 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | 없음 (idle) |
-| **status** | **`WAIT_CLAUDE_HANDOFF`** · BUGFIX **CLOSED** · LADDER **HOLD** |
-| **직전** | `KR-LOCKDOWN-LADDER-01` 재정의 (착수 없음) |
-| **앵커** | `SYNC-2026-09-07-LADDER-HOLD` |
+| **sub-phase** | **FAMILY-SLEEVE-DEMOTE-01** |
+| **status** | **`WAIT_CLAUDE_OK`** · Step B 코드 완료 |
+| **직전** | 12키 0.25 · Treasury 게이트 동일 SSOT |
+| **앵커** | `SYNC-2026-09-08-SLEEVE-B` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-구현 없음. V-2는 Handoff 후에만.
-
-`KR-LOCKDOWN-LADDER-01` = **회복 후 히스테리시스/N일** · 🔴 · F-GATE 이상 · **Critical 승인 전 착수 금지**.
+`CURSOR_TO_CLAUDE.md` Step B OUTBOX 검증. OK면 커밋·푸시·`update_factory`.
 
 ### 금지
 
-- LOCKDOWN 중 부분 진입 · MDD 캡 변경 · Bitget 탐험예산 미러
-- Phase 2 자동 착수 · V-2 Handoff 없이 Go
+- MDD/LOCKDOWN/F-GATE/cron · `🌱`/RANK_B/C/D 배수 변경

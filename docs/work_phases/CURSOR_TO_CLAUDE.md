@@ -3,7 +3,82 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-07 · **LADDER HOLD** · 앵커 `SYNC-2026-09-07-LADDER-HOLD`
+> **갱신**: 2026-09-08 · **FAMILY-SLEEVE-DEMOTE-01 Step B** · 앵커 `SYNC-2026-09-08-SLEEVE-B`
+
+---
+
+## OUTBOX — FAMILY-SLEEVE-DEMOTE-01 · Step B · 2026-09-08
+
+| 항목 | 내용 |
+|------|------|
+| **status** | Step B 구현 · **WAIT_CLAUDE_OK** |
+| **SSOT** | `family_sleeve_demote.py` → Kelly merge + `resolve_group_treasury_mult` **동일 참조** (`apply_family_sleeve_group_mult`) |
+| **DoD 8** | 따로 관리 **아님**. 한 frozenset. |
+| **데스매치** | 맵 미수정. 읽기 override → 다음 데스매치가 0을 써도 0.25 |
+| **테스트** | 31 passed (`test_family_sleeve_demote_01` + treasury + A-2) |
+| **비접촉** | F-GATE · capital_mult · cron · MDD · LOCKDOWN |
+| **백업** | VPS JSON 미변경(코드 레이어). 엔진 백업은 배포 시 `update_factory` [1/7] |
+
+### 프로브 (로컬, 맵=0)
+
+12키 `resolve_group_treasury_mult`=0.25 · `evaluate_meta_group_entry_gate` `block_entry=False`.  
+이전 0이었던 4키(US S1 · B(일반) · `💎` · US_RANK_A) 진입 차단 해제.
+
+### 디렉터 → Claude
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md Step B 검증. OK면 CLAUDE_TO_CURSOR에 사인. 채팅 말고 파일에.
+```
+
+---
+
+## OUTBOX — FAMILY-SLEEVE-DEMOTE-01 · Step A 미리보기 · 2026-09-08
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **WAIT_CLAUDE_OK** · DB/코드 쓰기 **0** |
+| **메타** | `META_DEATHMATCH_ALLOC_MARKET=US` · AS_OF `2026-09-08 06:51` |
+
+**엔지니어 (구현 전 Ask):** `extract_core_group_name`은 **첫 `[…]`만** 제거한다. `[STANDARD] 🔥 [눌림] S1…`의 그룹 키는 `🔥`이다. Handoff대로 `apply_meta_kelly_merge`만 고치면, 지금 맵이 **0.0**인 라벨은 Treasury `mult<=0` 게이트에서 **INSERT가 막힌 채**라 0.25로 못 올라간다. Step B에서 `resolve_group_treasury_mult`에 **같은 0.25**를 둘지 Claude 결정 필요.
+
+매칭 초안(확정 아님): S6/S2/S5/S7·INCUBATOR·INVERSE·RANK_B/C/D·DANTE를 **먼저 제외**. `[STANDARD]` 접두만으로 데모션 금지. `RANK_A`는 `RANK_A_`/`US_RANK_A_` 토큰만 (`RANK_AB` 없음).
+
+### 명확 데모션 (core 키 = Kelly 맵 키)
+
+| core_group_name | 현재 MULT | 근거 |
+|-----------------|-----------|------|
+| `[STANDARD] B (일반)` | **0.0** | STANDARD_B |
+| `[SUPERNOVA_COSINE] RANK_A_장기매집` | 1.0 | RANK_A |
+| `[SUPERNOVA_COSINE] US_RANK_A_장기매집` | **0.0** | RANK_A |
+| `🔥 S1 (5선 관통 / 448 완전정배열)` | 1.0 | S1 |
+| `🔥 S1 (대세 추세 돌파 - 소형/테마주)` | 1.0 | S1 |
+| `🔥 S1 (대세 추세 돌파 - 우량/중견주)` | 1.0 | S1 |
+| `🔥 US S1 (5선 관통 / 448 완전정배열)` | **0.0** | S1 |
+| `🔥 S4 (역배열 바닥 탈출 - 우량/중견주)` | 1.0 | S4 |
+| `🔥 S4 (역배열 바닥 탈출 - 초소형 텐배거)` | 1.0 | S4 |
+
+Step B 후 위 키는 전부 **0.25**. 0.0→0.25가 Handoff 의도.
+
+### 명확 제외 (샘플 · 변경 없음)
+
+RANK_B/C/D · US_RANK_B/C/D (`US_RANK_B` 현재 **1.35**, `US_RANK_D` **1.25** 유지) · US_MEME_슈팅 1.25 · GP_MUT 1.0 · Dante inverse 1.0 · `P (신규)` 1.0 · INCUBATOR\* (이름에 STANDARD 있어도 INCUBATOR 우선 제외)
+
+### 분류 애매 — Claude가 포함/제외 결정 (Cursor 임의 결정 안 함)
+
+`extract` 키가 **이모지 한 글자**라, 코어만 보면 패밀리가 안 보인다. Kelly/게이트는 이 키를 쓴다.
+
+| core 키 | 현재 MULT | 원문 sig (대표) | 질문 |
+|---------|-----------|-----------------|------|
+| `🔥` | 1.0 | `[STANDARD] 🔥 [눌림] S1 (448 대세 추세)…` n≈41 | 눌림 **S1**. 키 `🔥`에 0.25를 칠지, raw에 S1 있을 때만 칠지? |
+| `👑` | 1.0 | `[STANDARD] 👑 [1티어] 🔥 US S1…` n=2 | 원문은 US S1. 키는 `👑`. |
+| `💎` | **0.0** | `[STANDARD] 💎 [로또] 🔥 US S1…` n=5 | 원문은 US S1. 지금 데스매치 0. |
+| `🌱` | 1.0 | `[STANDARD] 🌱 [눌림] **S6** (바닥턴)…` n=10 | **S6 = 명시 제외**. `[STANDARD]` 접두만으로 데모션하면 오분류. Cursor 권고는 **제외**이나 확정은 Claude. |
+
+### 디렉터 → Claude 한 줄
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md Step A 분류·애매 4키·Treasury 0게이트 Adapter. OK면 Step B Go. 채팅 말고 파일에.
+```
 
 ---
 

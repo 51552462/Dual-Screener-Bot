@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-07 · **앵커 ID**: `SYNC-2026-09-07-LADDER-HOLD`
+> **갱신**: 2026-09-08 · **앵커 ID**: `SYNC-2026-09-08-SLEEVE-B`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-07-LADDER-HOLD` |
-| **마지막 갱신** | 2026-09-07 — `KR-LOCKDOWN-LADDER-01` 재정의(회복 후 히스테리시스/N일) · **착수 보류** |
+| **앵커 ID** | `SYNC-2026-09-08-SLEEVE-B` |
+| **마지막 갱신** | 2026-09-08 — FAMILY-SLEEVE-DEMOTE-01 **Step B** 코드 · Claude OK 대기 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | 없음 (idle) |
-| **직전 완료** | TRACK-A-BUGFIX-BATCH-01 CLOSED |
-| **다음** | V-2-WFBLOCK-01 Handoff 대기 · LADDER는 Critical 승인 전 금지 |
+| **진행 중 sub-phase** | FAMILY-SLEEVE-DEMOTE-01 Step B |
+| **직전 완료** | Step A 분류 |
+| **다음** | Claude OK → 커밋/푸시/`update_factory` |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -56,7 +56,7 @@
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] TRACK-A-BUGFIX-BATCH-01 · CLOSED (1·2·3·4 · 항목2 프로브 BULL)
+[KR/US] FAMILY-SLEEVE-DEMOTE-01 · Step B 구현 · WAIT_CLAUDE_OK
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog

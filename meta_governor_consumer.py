@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Any, Dict, Optional, Tuple
 
+from family_sleeve_demote import apply_family_sleeve_group_mult
 from meta_governor import load_meta_governor_state, meta_state_path
 from performance_budget_governor import resolve_config_float
 from toxic_antipattern_core import any_toxic_rule_matches
@@ -358,11 +359,16 @@ def apply_meta_kelly_merge(
             logger.warning("META_NS_KELLY_MULT[%s] invalid, skip", ns_prefix)
 
     grp_map = meta.get("META_GROUP_KELLY_MULT")
-    if core_group_name and isinstance(grp_map, dict) and core_group_name in grp_map:
-        try:
-            out *= float(grp_map[core_group_name])
-        except (TypeError, ValueError):
-            logger.warning("META_GROUP_KELLY_MULT[%s] invalid, skip", core_group_name)
+    if core_group_name:
+        group_mult = 1.0
+        if isinstance(grp_map, dict) and core_group_name in grp_map:
+            try:
+                group_mult = float(grp_map[core_group_name])
+            except (TypeError, ValueError):
+                logger.warning("META_GROUP_KELLY_MULT[%s] invalid, skip", core_group_name)
+                group_mult = 1.0
+        group_mult = apply_family_sleeve_group_mult(core_group_name, group_mult)
+        out *= group_mult
     # ===========================================================================
     # 👑 [진화적 자본 배분 (Darwinian Capital Allocation)]
     # 기계가 예견한 국면(Regime)과, 해당 돌연변이의 '생존 유전자'가 일치하면 자본을 쏟아붓고, 

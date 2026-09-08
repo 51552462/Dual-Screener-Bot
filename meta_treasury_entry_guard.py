@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pytz
 
+from family_sleeve_demote import (
+    apply_family_sleeve_group_mult,
+    is_family_sleeve_demote_key,
+)
+
 
 def _cfg_bool(cfg: Optional[Dict[str, Any]], key: str, default: bool) -> bool:
     if not isinstance(cfg, dict):
@@ -153,29 +158,33 @@ def resolve_group_treasury_mult(
             grp_map = raw
 
     if gk in grp_map:
-        return _safe_mult(grp_map[gk], 1.0), "META_GROUP_KELLY_MULT"
-
-    health = meta.get("META_STRATEGY_HEALTH") if isinstance(meta, Mapping) else None
-    if isinstance(health, dict):
-        mkt = str(market or "").upper()
-        best: Optional[float] = None
-        for key, hv in health.items():
-            if key == "__meta__" or not isinstance(hv, dict):
-                continue
-            _, _, tail = str(key).rpartition("|")
-            gk_key = tail or str(key)
-            if gk_key != gk:
-                continue
-            if mkt:
-                mk = str(hv.get("market") or key.split("|")[0] or "").upper()
-                if mk and mk != mkt:
+        raw_mult, source = _safe_mult(grp_map[gk], 1.0), "META_GROUP_KELLY_MULT"
+    else:
+        raw_mult, source = 1.0, "default"
+        health = meta.get("META_STRATEGY_HEALTH") if isinstance(meta, Mapping) else None
+        if isinstance(health, dict):
+            mkt = str(market or "").upper()
+            best: Optional[float] = None
+            for key, hv in health.items():
+                if key == "__meta__" or not isinstance(hv, dict):
                     continue
-            m = _safe_mult(hv.get("mult"), 1.0)
-            best = m if best is None else min(best, m)
-        if best is not None:
-            return best, "META_STRATEGY_HEALTH"
+                _, _, tail = str(key).rpartition("|")
+                gk_key = tail or str(key)
+                if gk_key != gk:
+                    continue
+                if mkt:
+                    mk = str(hv.get("market") or key.split("|")[0] or "").upper()
+                    if mk and mk != mkt:
+                        continue
+                m = _safe_mult(hv.get("mult"), 1.0)
+                best = m if best is None else min(best, m)
+            if best is not None:
+                raw_mult, source = best, "META_STRATEGY_HEALTH"
 
-    return 1.0, "default"
+    sleeved = apply_family_sleeve_group_mult(gk, raw_mult)
+    if is_family_sleeve_demote_key(gk):
+        return sleeved, "FAMILY_SLEEVE_DEMOTE"
+    return sleeved, source
 
 
 def summarize_treasury_health(meta: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
