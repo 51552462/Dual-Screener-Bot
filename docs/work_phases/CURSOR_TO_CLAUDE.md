@@ -3,7 +3,78 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-08 · **FAMILY-SLEEVE-DEMOTE-01 Step B** · 앵커 `SYNC-2026-09-08-SLEEVE-B`
+> **갱신**: 2026-09-09 · **DIRECTOR-WATCHDOG-01 구현** · 앵커 `SYNC-2026-09-09-WATCHDOG`
+
+---
+
+## OUTBOX — DIRECTOR-WATCHDOG-01 · 구현 · 2026-09-09
+
+| 항목 | 내용 |
+|------|------|
+| **status** | Claude OK · **19:30 육안 전** (CLOSED 보류) |
+| **패널** | `🔭 [디렉터 워치독]` · 제목 아래 · `[쉬운판]` 앞 · daily만 |
+| **파일** | `reports/director_watchdog.py` · `dual_north_star_telegram.py` 훅 · `tests/test_director_watchdog.py` |
+| **데모션** | `apply_family_sleeve_group_mult` effective (맵 1.0/0이어도 0.25=🟢) |
+| **V-2** | `iv_observation_latest.json` 읽기만 (`assess_v2_readiness` 호출 없음) |
+| **30** | 표시 문자열만. 조건문 없음 |
+| **테스트** | watchdog+obs+liq+ledger **40 passed** |
+| **비접촉** | Kelly · LOCKDOWN · F-GATE · 데모션 테이블 · bitget · 원장 쓰기 |
+
+### 디렉터 → Claude
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md DIRECTOR-WATCHDOG-01 검증. OK면 CLAUDE_TO_CURSOR에 사인. 채팅 말고 파일에.
+```
+
+---
+
+## OUTBOX — 디렉터 워치독 스코프 · 읽기전용 · 2026-09-09
+
+목표: 19:30 `📊 주식 북극성 · 일간` 맨 위 6줄 워치독. **미착수.** Claude Handoff 대기.
+
+삽입: `format_north_star_digest_html` — 제목 다음, `[쉬운판]` 앞. 패턴=`reports/liq_band_panel.py` (additive, ledger 무접촉).
+
+| # | 값 | 이미 있나 | 합칠 때 |
+|---|-----|-----------|---------|
+| 1 band | `evaluate_performance_budget` → snap `tracks.A.markets.*.budget_band` | digest에 이미 표시 | 어제 대비는 ledger `history.daily` 직전 snap 비교. LOCKDOWN 유지=🟢 (상태 자체가 🔴 아님) |
+| 2 NAV훅 | `ops_events.sqlite` event=`nav_hook.closure_sync_failed` | 쓰기만 있음 | 24h COUNT 신규 쿼리. DB=`factory_data_dir()/ops_events.sqlite` (market_data 아님) |
+| 3 데모션 | `apply_family_sleeve_group_mult` 12키 | 진입 경로만 | **raw `META_GROUP_KELLY_MULT` 금지.** 맵이 1.0/0이어도 override면 0.25=🟢. 🔴=effective≠0.25 |
+| 4 V-2 | `assess_v2_readiness` + `iv_observation_latest.json` | 20:10 IV 리포트 | digest에서 전체 IV 재계산 비권장. JSON 재사용. 28일 상수 기존 |
+| 5 RANK_B/D n | `forward/deep_dive.py` 그룹 `tot` | **아침 장부 리포트**에만 | 북극성 snap에는 없음. COUNT 재사용. **목표 30은 코드에 없음** (신규 임계 — Handoff 핀 필요, 아니면 n만 표시 🟡) |
+| 6 S5국면 | `resolve_defense_arm_weight` / `s5_arm_active` + 시장 국면 | S5 CLI·진입 게이트 | BEAR/HIGH_VOL 아니면 ⚪ 측정대기. 게이트 켠다고 자본 로직 변경 금지 |
+
+범위: 신규 모듈 1 + telegram 훅 1 + 테스트 1 ≈ **LIQ_BAND급**. FAMILY-SLEEVE보다 작음. 🔴 Critical 해당 없음(리포트 전용).
+
+리스크: OBS_HOLD `<pre>` 때문에 4096는 기존 이슈. 워치독 8줄은 미미. Kelly/LOCKDOWN/F-GATE 무접촉 유지.
+
+---
+
+## OUTBOX — 문서 · Phase B 보류 조건 · 2026-09-09
+
+디렉터 승인 2026-09-09. **코드 없음.**
+
+- Phase B: 「12주 내 미착수(~10월 말)」폐기 → **재검토 조건 = V-2(독립검증 게이트) 가동 시점**
+- 사유: RP-1 증명 전제 실패 · FAMILY-SLEEVE-DEMOTE-01로 사람판단+안전장치 실측
+- SSOT: `00_마스터_로드맵.md` §2.1 · `00_전체현황판.md` Phase 표
+- 감시(액션 아님): 다음 데스매치 사이클 `US_RANK_B` 1.35x · `US_RANK_D` 1.25x 유지 여부 (`05_진행로그` 정기 확인)
+
+---
+
+## OUTBOX — FAMILY-SLEEVE-DEMOTE-01 · 효과 실측 · 2026-09-09
+
+[확인] FAMILY-SLEEVE-DEMOTE-01 효과 실측 — 2026-09-09 리포트에서 확인.
+US "🔥 US S1" 계열 3건 손절 + 신규 진입 1건 관측, 국면별 수익귀속에
+"BULL" 신규 등장(3건, 평균 -1.9%) — 데모션 이후 사이즈 축소 반영으로 판단.
+DoD#4(다음 데스매치 후 0.25 유지)는 여전히 별도 확인 필요.
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 배포+효과 실측 **확인** · DoD#4 잔여 |
+| **US S1 손절 3** | Natera · Revolution Medicines · Royal Gold · `[STANDARD] 🔥 US S1` · BULL 기여 −1.0%(평균 −1.9%) |
+| **신규** | `🔥 US S1` 1종 보유 · $20,000,000 기준선(축소 관측) |
+| **KR** | LOCKDOWN 유지 |
+| **US NAV/MDD** | $288,126→$287,803 · 3.9%→4.07% (캡 10%와 여유) |
+| **다음** | S5 재분류 결과 대기 · 자원 집중 미착수 · Phase B는 V-2 가동 시 재검토 |
 
 ---
 

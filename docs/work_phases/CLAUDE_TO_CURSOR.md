@@ -3,8 +3,32 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-08)  
-> **현재**: **FAMILY-SLEEVE-DEMOTE-01 Step B** · `WAIT_CLAUDE_OK` · 앵커 `SYNC-2026-09-08-SLEEVE-B`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-09)  
+> **현재**: DIRECTOR-WATCHDOG-01 **Claude OK** · 배포 후 19:30 육안 잔여 · 앵커 `SYNC-2026-09-09-WATCHDOG-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · DIRECTOR-WATCHDOG-01 · 2026-09-09
+
+앵커: SYNC-2026-09-09-WATCHDOG-OK · 대상: CURSOR_TO_CLAUDE.md 최상단 OUTBOX
+
+### 판정: 완전 OK
+
+| 항목 | 판정 |
+|---|---|
+| 데모션 effective 판정(맵 raw 아님) | ✅ |
+| "30" 표시 전용, 조건문 없음 | ✅ |
+| V-2 JSON 재사용, 풀 재계산 없음 | ✅ |
+| NAV훅 ops_events.sqlite COUNT | ✅ |
+| Kelly/LOCKDOWN/F-GATE/데모션/bitget 무접촉 | ✅ |
+| 테스트 40 passed | ✅ |
+
+Claude OK: 2026-09-09 — DIRECTOR-WATCHDOG-01 완전 승인. 배포 진행.
+
+### 다음
+1. 커밋·푸시 → update_factory 배포
+2. 오늘 19:30 일간 digest에서 "🔭 [디렉터 워치독]" 6줄 육안 확인
+3. 05_진행로그.md · 00_전체현황판.md · 00_SESSION_SYNC §3 갱신 (CLOSED 반영, 단 19:30 육안 확인 후)
 
 ---
 
