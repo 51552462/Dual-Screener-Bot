@@ -43,13 +43,13 @@
 | **앵커 ID** | `SYNC-2026-09-10-WFBLOCK-OK` |
 | **마지막 갱신** | 2026-09-10 — V-2-WFBLOCK-01 **Claude OK · CLOSED** · 배포 + 1주 오탐 추적 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | (없음 · V-2 CLOSED) · 추적: 1주 오탐 · FAMILY-SLEEVE DoD#4 |
+| **진행 중 sub-phase** | (없음 · V-2 CLOSED) · 추적: 1주 오탐 · FAMILY-SLEEVE DoD#4 · 워치독 19:30 육안 |
 | **직전 완료** | V-2-WFBLOCK-01 Claude OK 2026-09-10 |
-| **다음** | VPS `update_factory` · `[IV_OBS]` V-2 심판 ON 육안 · 1주 오탐 관측 |
+| **다음** | VPS `update_factory` · `[IV_OBS]` V-2 심판 ON · 1주 오탐 관측 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | V-2-WFBLOCK-01 로컬 구현 (푸시 전) · 슬리브 `3ff4f2e` 포함 |
+| **git main** | merge `96adf02` (워치독) + V-2-WFBLOCK-01 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
@@ -57,7 +57,10 @@
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
 [KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
-[KR/US] FAMILY-SLEEVE-DEMOTE-01 · Claude OK · DoD#4 실측 대기 · origin `3ff4f2e`
+[KR/US] DIRECTOR-WATCHDOG-01 · Claude OK · CLOSED는 19:30 육안 후
+[KR/US] FAMILY-SLEEVE-DEMOTE-01 · 효과 실측 2026-09-09 · DoD#4(데스매치 0.25) 잔여
+[KR/US] Phase B · 보류 · 재검토 = V-2 가동 (12주/~10월 말 폐기, 2026-09-09)
+[감시] US_RANK_B 1.35x · US_RANK_D 1.25x — 다음 데스매치 사이클 유지 여부 (액션 아님)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog

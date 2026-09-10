@@ -646,6 +646,16 @@ def format_north_star_digest_html(snap: Dict[str, Any]) -> str:
         "",
     ]
 
+    # DIRECTOR-WATCHDOG-01 — title 다음, [쉬운판] 앞 (표시 전용)
+    try:
+        from reports.director_watchdog import format_director_watchdog_section_from_snap
+
+        wd_html = format_director_watchdog_section_from_snap(snap)
+    except Exception:
+        wd_html = ""
+    if wd_html:
+        parts.extend([wd_html, "", "━━━━━━━━━━━━━━━━", ""])
+
     dash_html = format_goal_dashboard_html(snap)
     if dash_html:
         parts.extend([dash_html, "", "━━━━━━━━━━━━━━━━", ""])
@@ -712,6 +722,14 @@ def send_north_star_digest(
                     )
         except Exception:
             snap["liq_band"] = None
+        try:
+            from reports.director_watchdog import build_director_watchdog_payload
+
+            snap["director_watchdog"] = build_director_watchdog_payload(
+                snap, load_history=True
+            )
+        except Exception:
+            snap["director_watchdog"] = None
     html_msg = format_north_star_digest_html(snap)
     result: Dict[str, Any] = {
         "snap": snap,
