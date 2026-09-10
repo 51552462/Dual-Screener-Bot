@@ -23,6 +23,9 @@ if [[ -f "${ROOT}/.env" ]]; then
   set +a
 fi
 
+# V-2-WFBLOCK-01 — WF WARN 후보 LIVE 승격 차단. 롤백: .env 에 =0
+export WALK_FORWARD_PROMOTION_BLOCK_ENABLED="${WALK_FORWARD_PROMOTION_BLOCK_ENABLED:-1}"
+
 # .env 의 TZ=Asia/Seoul 이 US cron TZ 를 망가뜨리는 것 방지 (로그 시각·STAMP SSOT)
 if [[ -n "${_FACTORY_TZ_FROM_CALLER}" ]]; then
   export TZ="${_FACTORY_TZ_FROM_CALLER}"
@@ -79,6 +82,7 @@ Environment:
   FACTORY_FORCE_SCAN_OUTSIDE_SESSION=1  same as flag above
   TZ                default Asia/Seoul (US staggered cron uses America/New_York in cron.d)
   DEPLOY_WATCH_PHASE  post_f_gate_01 | post_f_retire_02 | post_bear_underdog_01 (BEAR-UNDERDOG 배포 후)
+  WALK_FORWARD_PROMOTION_BLOCK_ENABLED  default 1 (V-2 LIVE block). rollback: 0 in .env
 EOF
 }
 

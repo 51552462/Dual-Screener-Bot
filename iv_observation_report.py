@@ -3,7 +3,7 @@ V-1/V-2 — Independent Verification 관측 리포트 (텔레그램 + Cursor 붙
 
 - 결과: factory_data_dir()/iv_observation_latest.json
 - 주간(또는 수동) 실행 — 디렉터가 Cursor에 ---CURSOR--- 블록만 붙여넣으면 됨
-- V-2 BLOCK 기본 OFF — readiness=READY 일 때만 디렉터가 활성화 검토
+- V-2 심판: env ON 이면 readiness=BLOCK_ALREADY_ON (작동 중). OFF일 때만 READY 판정.
 """
 from __future__ import annotations
 
@@ -304,7 +304,7 @@ def build_cursor_prompt(report: Dict[str, Any]) -> str:
         f"pain_repro={bear.get('pain_cluster_reproducing', False)}"
     )
     return (
-        "Track A — IV 관측 리포트 리뷰. 구현·V-2 BLOCK 활성화는 readiness=READY 일 때만.\n\n"
+        "Track A — IV 관측 리포트 리뷰. V-2 심판(WF LIVE block)은 block ON이면 작동 중.\n\n"
         f"1) docs/independent_verification/ 또는 factory data `iv_observation_latest.json` 기준\n"
         f"2) V-1 경과: {obs.get('days_elapsed')}/{obs.get('min_days')}일 "
         f"(시작 {obs.get('v1_started_at')})\n"
@@ -313,7 +313,7 @@ def build_cursor_prompt(report: Dict[str, Any]) -> str:
         f"4) reality_audit: {r.get('reality_audit', {}).get('status')} · "
         f"BG shadow fail rate: {r.get('bitget_shadow', {}).get('oos_fail_rate', 'N/A')}\n"
         f"5) BEAR_UNDERDOG L2: {bear_line}\n"
-        f"6) V-2 BLOCK 스위치: {'ON' if v2.get('block_enabled') else 'OFF (기본)'} · "
+        f"6) V-2 심판: {'ON(작동 중)' if v2.get('block_enabled') else 'OFF'} · "
         f"readiness: {v2.get('readiness')}\n\n"
         "출력: 디렉터용 3줄 요약 + (READY면) V-2 활성화 체크리스트만. "
         "BEAR hard gate는 pain L2 n≥30 전까지 보류."
@@ -327,7 +327,16 @@ def format_iv_observation_telegram(report: Dict[str, Any]) -> str:
     bear = report.get("bear_underdog") or {}
     bear_met = bear.get("metrics") if isinstance(bear.get("metrics"), dict) else {}
     readiness = str(v2.get("readiness") or "UNKNOWN")
-    emoji = "🟢" if readiness == "READY" else ("🔴" if readiness == "NOT_READY" else "🟡")
+    block_on = bool(v2.get("block_enabled"))
+    v2_panel = "ON(작동 중)" if block_on else "OFF"
+    if readiness == "BLOCK_ALREADY_ON" or block_on:
+        emoji = "🟢"
+    elif readiness == "READY":
+        emoji = "🟢"
+    elif readiness == "NOT_READY":
+        emoji = "🔴"
+    else:
+        emoji = "🟡"
 
     fp_txt = (
         f"{float(fp['false_positive_rate']) * 100:.1f}%"
@@ -341,15 +350,17 @@ def format_iv_observation_telegram(report: Dict[str, Any]) -> str:
         f"· wf_warn <b>{report.get('krus_wf', {}).get('wf_warn_count', 0)}</b> · "
         f"오탐추정 <b>{fp_txt}</b>",
         f"· reality_audit <code>{report.get('reality_audit', {}).get('status')}</code> · "
-        f"V-2 BLOCK <code>{'ON' if v2.get('block_enabled') else 'OFF'}</code>",
+        f"V-2 심판 <code>{v2_panel}</code>",
         f"· BEAR_UD shadow <b>{bear_met.get('shadow_tag_rows', 0)}</b> · "
         f"mae <b>{bear_met.get('shadow_closed_mae', 0)}/{bear_met.get('shadow_closed', 0)}</b>",
         f"· <b>readiness={readiness}</b>",
     ]
-    if readiness == "READY":
+    if readiness == "BLOCK_ALREADY_ON" or block_on:
+        lines.append("· ✅ V-2 심판 ON(작동 중) — 1주 오탐 관측")
+    elif readiness == "READY":
         lines.append("· ✅ 4주 관측 충족 — 디렉터 V-2 활성화 검토 가능")
     elif readiness == "NOT_READY":
-        lines.append(f"· ⏳ V-2 BLOCK 활성화 보류 ({MIN_OBSERVATION_DAYS}일·오탐률 기준)")
+        lines.append(f"· ⏳ V-2 심판 활성화 보류 ({MIN_OBSERVATION_DAYS}일·오탐률 기준)")
     lines.append("---CURSOR---")
     lines.append(report.get("cursor_prompt") or "")
     return "\n".join(lines)
@@ -444,7 +455,7 @@ def run_iv_observation_report(
 
     should_send = force_telegram
     if not should_send:
-        if readiness in ("READY", "NOT_READY") and readiness != prev_readiness:
+        if readiness in ("READY", "NOT_READY", "BLOCK_ALREADY_ON") and readiness != prev_readiness:
             should_send = True
         if str(reality.get("status")) in ("WARN", "BREAK"):
             should_send = True

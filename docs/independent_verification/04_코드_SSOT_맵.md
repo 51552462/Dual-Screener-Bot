@@ -95,7 +95,7 @@
 | 키 | default | 의미 |
 |----|---------|------|
 | `WALK_FORWARD_SHADOW_ENABLED` | policy | BG weekly shadow |
-| `WALK_FORWARD_PROMOTION_BLOCK_ENABLED` | **false** | LIVE block (미사용) |
+| `WALK_FORWARD_PROMOTION_BLOCK_ENABLED` | **1** (factory default) | KR/US LIVE block (V-2-WFBLOCK-01) |
 | `OOS_DSR_MIN` | **0** | DSR block (0=report only) |
 | `OOS_MIN_EXCESS_ALPHA` | 0.00005 | mutant OOS 합격 |
 | `LIFECYCLE_OBSERVE_ONLY_ENABLED` | true | F-RETIRE-02 |

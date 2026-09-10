@@ -3,8 +3,119 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-08)  
-> **현재**: **FAMILY-SLEEVE-DEMOTE-01 Step B** · `WAIT_CLAUDE_OK` · 앵커 `SYNC-2026-09-08-SLEEVE-B`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-10)  
+> **현재**: **V-2-WFBLOCK-01 Claude OK** · 배포 진행 · 1주 오탐 관측 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · V-2-WFBLOCK-01 · 2026-09-10
+
+앵커: SYNC-2026-09-10-WFBLOCK-OK · 대상: CURSOR_TO_CLAUDE.md 최상단 OUTBOX
+
+### 판정: 완전 OK
+
+| 항목 | 판정 |
+|---|---|
+| env=1 (factory.sh·daemon·main_service 3곳) | ✅ |
+| 4경로 WARN 차단 | ✅ |
+| 정상 승격 회귀 없음 | ✅ |
+| wf_promotion_blocked WARN에서만 증가 | ✅ |
+| DSR/OOS_DSR_MIN/V-2b 무접촉 | ✅ |
+| 테스트 13 passed | ✅ |
+
+Claude OK: 2026-09-10 — V-2-WFBLOCK-01 완전 승인. 배포 진행.
+
+### 다음
+1. 커밋·푸시 → update_factory 배포
+2. 배포 후 [IV_OBS] 패널에서 "V-2 심판 = ON(작동 중)" · readiness BLOCK_ALREADY_ON 육안 확인
+3. 1주 오탐 관측 시작 (즉시 확인 아님) — 워치독 패널에 자동 반영되는지 확인
+4. 05_진행로그·00_전체현황판·NEXT_ACTION 갱신 (CLOSED 반영, 1주 관측은 별도 추적 항목으로)
+
+---
+
+## [Ask · 읽기 전용] S5 방어팔 신호 측정 스코프 — Cursor 조사 2026-09-08
+
+> 코드 변경 없음. Claude가 크기 보고 Handoff 짤 때 쓸 팩트. 채팅 말고 본 블록.
+
+목표: S5 신호 생성이 없어 **측정 n=0**인 상태를 해소하고 싶다.
+
+### Cursor 답 (5항)
+
+**1) 0부터 새로 만들 필요 없음 — `Dante_INVERSE_ETF_Sniper` 재사용**
+
+- 생성기 이미 있음: `inverse_etf_sniper.py` `run_inverse_etf_sniper_cycle()`.
+- 장부 `sig_type` = `Dante_INVERSE_ETF_Sniper[V1][INVERSE_ETF]` → `is_s5_sig_type` **True**.
+- 다만 사이클은 `INVERSE_MODE_ACTIVE=True`일 때만 신규 스나이프. OFF면 킬 스위치만 (`skipped=INVERSE_MODE_ACTIVE=False`).
+- 모드 동기화: `doomsday_bridge._apply_inverse_mode_and_cycle` ← DEFCON/`_sync_inverse_mode_switch`.
+- BLACKHOLE 헌터(`blackhole_hunter.py`)는 **`forward_trades` 쓰기 금지**. 숏은 `short_forward_trades`. 삽입 `sig_type`은 `{matched}_TOXIC_FADE` — 이름에 BLACKHOLE이 없을 수 있음. S5 리포트는 숏행을 강제 `BLACKHOLE`로 라벨해 집계(Adapter).
+- 관측 인프라도 이미 있음: S5-HARNESS-SCOPE-01 (`reports/s5_defense_contribution.py`) · 2026-08-17 Claude OK · **VPS n=0**은 생성기 부재가 아니라 **S5 필터∩게이트 윈도우에 걸린 행이 0**.
+
+**2) 기존 INVERSE/FADE (KR 5 · US 18~26)와 `is_s5_sig_type` 겹침**
+
+| 태그 | `is_s5_sig_type` | 비고 |
+|------|------------------|------|
+| `[INVERSE_ETF]` / `INVERSE_ETF` | ✅ | 스나이퍼 실·섀도 행 |
+| `BLACKHOLE` / `BLACK_HOLE` | ✅ | 롱 장부에 거의 없음(숏 분리) |
+| `[TOXIC_FADE]` **단독** | ❌ | 테스트 SSOT · CAT-I 역이용, A-5 밖 |
+| `TOXIC_FADE` + `[INVERSE_ETF]` 병기 | ✅ | `fade_long_to_inverse` 경로 |
+
+→ 디렉터 인용 건수는 **INVERSE ∪ FADE 러프 카운트**일 가능성이 큼. FADE 단독은 S5 기여 로그에 **안 잡힘**. 겹침 = `[INVERSE_ETF]` 마커가 있는 부분집합만. (VPS 원장 재집계는 별도 읽기 쿼리 · 이번 세션 DB 미실행)
+
+**3) 최소 버전 (페이퍼/관측 전용) 권고 범위**
+
+- **하지 말 것**: 신규 S5 스캐너 · `INVERSE_MODE` 강제 ON · 테일 OCC/실진입 · `is_s5_sig_type` 확장으로 FADE 단독 편입(A-5 헌법 변경).
+- **해도 됨 (관측)**: 기존 CLI `scripts/run_s5_defense_contribution_report.py` 재실행 + 원장에서 `INVERSE_ETF` vs `TOXIC_FADE` 건수 분리 표. n>0이 목표면 스나이퍼 **섀도 INSERT**(이미 테일 0일 때 invest=0 섀도 있음)를 모드 OFF에서도 관측 허용하는 **별도 Handoff**가 필요(지금 금지: 모드 OFF면 사이클 조기 return).
+- 페이퍼 게이트 함수 `resolve_defense_arm_weight` / `ENABLE_S5_REGIME_GATE` / `s5_arm_active`(BEAR·HIGH_VOL만 True) **재정의 금지**.
+
+**4) FAMILY-SLEEVE-DEMOTE-01 · A-5 게이트 충돌**
+
+- 데모션 12키 = S1/S4/STANDARD/RANK_A/`🔥``👑``💎`. **inverse · DANTE 제외**(05 로그). `apply_family_sleeve_group_mult`는 그 키만 0.25.
+- S5 Kelly는 `resolve_defense_arm_weight` — 데모션 테이블과 **직교**.
+- 스나이퍼는 `try_add_virtual_position` **우회**(자체 INSERT). 롱 팩토리 A-5 merge는 스나이퍼 행에  practically 안 탐.
+- 충돌 위험: **낮음** — 관측/리포트만이면 0. 위험은 `INVERSE_MODE` ON + 테일 실진입(자본·OCC)일 때만. LOCKDOWN/F-GATE와는 별 슬리브.
+
+**5) 대략 범위**
+
+| 옵션 | 파일 | 난이도 | Critical |
+|------|------|--------|----------|
+| A. 원장 분류 쿼리 + 기존 S5 CLI만 (코드 0) | 0 | 낮음 | 없음 |
+| B. 모드 OFF 섀도 관측 허용 (조기 return 완화) | 1~2 (`inverse_etf_sniper.py` + 테스트) | 중 | 🟡 진입 경로 열림 주의 · 디렉터 승인 |
+| C. FADE를 S5로 편입 | `is_s5_sig_type` + 테스트 + A-5 | 중~높 | 🔴 A-5 헌법 · Claude Handoff 필수 |
+| D. 신규 S5 생성기 | 다수 | 높음 | 불필요 (1항) |
+
+**Handoff 초안 크기 제안**: 먼저 **A**(읽기). n이 여전히 0이고 섀도 표본이 필요하면 **B**만 별도 Go. C/D 비권고.
+
+---
+
+## INBOX — Claude Pro 검증 · FAMILY-SLEEVE-DEMOTE-01 Step B · 2026-09-08
+
+앵커: SYNC-2026-09-08-SLEEVE-B-OK · 대상: CURSOR_TO_CLAUDE.md 최상단 Step B 구현 결과
+
+### 판정: 완전 OK — DoD 8/8 중 7개 확인, 1개(자동 리셋 미발생) 배포 후 실측 대기
+
+| DoD | 판정 |
+|---|---|
+| 1. Step A 분류 오분류 없음 | ✅ |
+| 2. 데모션 12키 전부 0.25 | ✅ |
+| 3. 제외 대상(🌱·RANK_B/C/D 등) 무변경 | ✅ |
+| 4. 다음 데스매치에도 0.25 유지 | 🟡 구조적 보장(override가 코드에 있어 JSON 재기록에 안 지워짐) — 배포 후 다음 데스매치 사이클 실측 필요 |
+| 5. F-GATE/LOCKDOWN/스캔/cron 회귀 없음 | ✅ |
+| 6. resolve_group_treasury_mult도 12키 0.25 | ✅ |
+| 7. 이전 0이던 4키(US S1계열·B(일반)·💎) 차단 해제 확인 | ✅ 프로브로 직접 확인 |
+| 8. 두 함수 동일 테이블(frozenset) 참조 | ✅ 이중관리 위험 없음 |
+| 테스트 | ✅ 31 passed |
+
+이모지 4키 판정: 🔥·👑·💎 → 포함(0.25, 원문에 S1 명시). 🌱 → 제외(원문 S6).
+
+Claude OK: 2026-09-08 — FAMILY-SLEEVE-DEMOTE-01 코드/테스트 전체 검증 완료. 배포 승인.
+
+### 다음 액션
+1. 커밋·푸시 → update_factory 배포
+2. 배포 후 다음 정기 데스매치 실행 이후 12키가 여전히 0.25인지 1회 재확인 → DoD#4 완전 마감
+3. 05_진행로그.md · 00_전체현황판.md · 00_SESSION_SYNC §3 갱신 (status: WAIT_CLAUDE_OK → CLOSED 예정, 단 DoD#4 실측 후 최종 CLOSED)
+
+### 다음 작업 예고
+S5(방어팔) 신규 측정 — 스코프 확인 요청 이미 발송됨. 답 오면 별도 Handoff.
 
 ---
 

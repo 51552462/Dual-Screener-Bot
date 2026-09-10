@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-08 · **앵커 ID**: `SYNC-2026-09-08-SLEEVE-B`
+> **갱신**: 2026-09-10 · **앵커 ID**: `SYNC-2026-09-10-WFBLOCK-OK`
 
 ---
 
@@ -40,27 +40,28 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-08-SLEEVE-B` |
-| **마지막 갱신** | 2026-09-08 — FAMILY-SLEEVE-DEMOTE-01 **Step B** 코드 · Claude OK 대기 |
+| **앵커 ID** | `SYNC-2026-09-10-WFBLOCK-OK` |
+| **마지막 갱신** | 2026-09-10 — V-2-WFBLOCK-01 **Claude OK · CLOSED** · 배포 + 1주 오탐 추적 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | FAMILY-SLEEVE-DEMOTE-01 Step B |
-| **직전 완료** | Step A 분류 |
-| **다음** | Claude OK → 커밋/푸시/`update_factory` |
+| **진행 중 sub-phase** | (없음 · V-2 CLOSED) · 추적: 1주 오탐 · FAMILY-SLEEVE DoD#4 |
+| **직전 완료** | V-2-WFBLOCK-01 Claude OK 2026-09-10 |
+| **다음** | VPS `update_factory` · `[IV_OBS]` V-2 심판 ON 육안 · 1주 오탐 관측 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | `98bd22e` (BUGFIX) VPS HEAD 일치 · AMEND `46056fc` 계열 포함 |
+| **git main** | V-2-WFBLOCK-01 로컬 구현 (푸시 전) · 슬리브 `3ff4f2e` 포함 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] FAMILY-SLEEVE-DEMOTE-01 · Step B 구현 · WAIT_CLAUDE_OK
+[KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
+[KR/US] FAMILY-SLEEVE-DEMOTE-01 · Claude OK · DoD#4 실측 대기 · origin `3ff4f2e`
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
-[IV] V-2-WFBLOCK-01 · READY+Go 대기 (9/6+)
+[IV] V-2-DSR-01 / V-2B-SNAPSHOT-01 · backlog (이번 세션 금지)
 [금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회
 ```
 

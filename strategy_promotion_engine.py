@@ -181,7 +181,8 @@ def wf_warn_telegram_enabled() -> bool:
 
 def walk_forward_promotion_block_enabled() -> bool:
     """
-    V-2 scaffold — CANDIDATE→LIVE WF/OOS 차단. **기본 OFF** (4주 관측 후 디렉터 활성화).
+    V-2 — CANDIDATE→LIVE WF/OOS 차단.
+    프로세스 env 미설정 시 False (테스트). 팩토리 엔트리포인트 기본값은 1.
     """
     env = os.environ.get("WALK_FORWARD_PROMOTION_BLOCK_ENABLED")
     if env is not None and str(env).strip():

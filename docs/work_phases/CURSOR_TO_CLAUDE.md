@@ -3,7 +3,54 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-08 · **FAMILY-SLEEVE-DEMOTE-01 Step B** · 앵커 `SYNC-2026-09-08-SLEEVE-B`
+> **갱신**: 2026-09-10 · **V-2-WFBLOCK-01 Claude OK** · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
+
+---
+
+## OUTBOX — V-2-WFBLOCK-01 · env ON · 2026-09-10
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **Claude OK 2026-09-10** · CLOSED (코드) · 1주 오탐 관측은 별도 추적 |
+| **앵커** | `SYNC-2026-09-10-WFBLOCK-OK` |
+| **목표** | `WALK_FORWARD_PROMOTION_BLOCK_ENABLED=1` — WF WARN 후보 CANDIDATE→LIVE 실제 차단 |
+| **env** | `factory.sh` / `run_factory_daemon.sh` / `run_main_service.sh` 에서 `.env` 뒤 기본 **1**. 파이썬 기본 False(테스트). 롤백 `.env=0` |
+| **4경로** | live_hard_gate · fast-track · re-evolution 부활 · COOLED 복귀 — WARN 시 스킵 + `wf_promotion_blocked`≥1 |
+| **오탐** | WARN 없는 CANDIDATE는 env=1에서도 LIVE |
+| **패널** | `[IV_OBS]` **V-2 심판** `ON(작동 중)` · readiness `BLOCK_ALREADY_ON` |
+| **비접촉** | DSR 호출 0 · V-2b · `OOS_DSR_MIN` · Bitget B-3 live block |
+| **테스트** | `pytest tests/test_v2_scaffold_iv_observation.py` **13 passed** |
+| **DoD#5** | 배포 후 **1주 오탐 관측** 등록 (`06` · `NEXT_ACTION`) — 즉시 확인 아님 |
+
+### 스펙 일치 확인 요청
+
+- [ ] env=1이 크론(factory.sh)과 데몬 엔트리포인트에 적용되는가
+- [ ] 4경로 WARN 차단 · 정상 승격 회귀 없음
+- [ ] `wf_promotion_blocked` WARN에서만 증가
+- [ ] DSR/V-2b/`OOS_DSR_MIN` 미변경
+- [ ] 워치독 V-2 심판 READY→ON(작동 중)
+
+### 디렉터 → Claude
+
+```text
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 V-2-WFBLOCK-01 검증. OK면 CLAUDE_TO_CURSOR에 사인. 채팅 말고 파일에.
+```
+
+---
+
+## OUTBOX — [Ask] S5 방어팔 측정 스코프 (읽기 전용) · 2026-09-08
+
+코드 0. 상세 5항 답은 **`CLAUDE_TO_CURSOR.md` 최상단 Ask 블록과 동일**.
+
+한 줄: **신규 생성기 불필요** (`Dante_INVERSE_ETF_Sniper` 재사용). FADE 단독은 S5 아님. 최소=기존 CLI+원장 분류(옵션 A). 데모션 12키와 직교. C/D(FADE 편입·신규 스캐너) 비권고.
+
+Claude: 위 Ask 채택 범위(A vs B)만 파일에. Handoff는 디렉터가 크기 보고 작성.
+
+### 디렉터 → Claude
+
+```text
+docs/work_phases/CLAUDE_TO_CURSOR.md 최상단 (1) FAMILY-SLEEVE OK 랜딩 확인 (2) S5 스코프 Ask 5항. 채팅 말고 파일에. S5는 관측만, 구현 Handoff는 별도.
+```
 
 ---
 
@@ -11,7 +58,9 @@
 
 | 항목 | 내용 |
 |------|------|
-| **status** | Step B 구현 · **WAIT_CLAUDE_OK** |
+| **status** | **Claude OK 2026-09-08** · DoD#4(다음 데스매치 0.25 실측)만 대기 · 최종 CLOSED는 그 후 |
+| **origin** | `3ff4f2e` (이미 origin/main 일치 · 추가 커밋 없음) |
+| **배포** | 디렉터 VPS `update_factory` |
 | **SSOT** | `family_sleeve_demote.py` → Kelly merge + `resolve_group_treasury_mult` **동일 참조** (`apply_family_sleeve_group_mult`) |
 | **DoD 8** | 따로 관리 **아님**. 한 frozenset. |
 | **데스매치** | 맵 미수정. 읽기 override → 다음 데스매치가 0을 써도 0.25 |

@@ -5,6 +5,25 @@
 
 ---
 
+## OUTBOX — V-2-WFBLOCK-01 (2026-09-10)
+
+### sub-phase
+**V-2-WFBLOCK-01** — WF WARN LIVE 승격 실제 차단 (env 기본 1)
+
+### 변경 요약
+1. `factory.sh` · `run_factory_daemon.sh` · `run_main_service.sh`: `.env` 뒤 `WALK_FORWARD_PROMOTION_BLOCK_ENABLED` 기본 **1**
+2. `[IV_OBS]` 패널 **V-2 심판** → `ON(작동 중)` · readiness `BLOCK_ALREADY_ON`
+3. 테스트: 4경로 WARN 차단 + 정상 CANDIDATE 승격 + `wf_promotion_blocked` 증가
+4. DSR/`OOS_DSR_MIN`/V-2b **미변경**
+
+### 테스트
+`pytest tests/test_v2_scaffold_iv_observation.py` — **13 passed**
+
+### Claude OK 대기
+- status: **Claude OK 2026-09-10** · 상세는 `docs/work_phases/CLAUDE_TO_CURSOR.md`
+
+---
+
 ## OUTBOX — V-1 Reality Audit + WF WARN meta (2026-08-09)
 
 ### sub-phase
