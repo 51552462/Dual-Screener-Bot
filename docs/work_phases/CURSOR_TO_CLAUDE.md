@@ -3,7 +3,28 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-10 · **V-2-WFBLOCK-01 Claude OK** · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
+> **갱신**: 2026-09-11 · **MAE-ATR-REPLAY-01** · 앵커 `SYNC-2026-09-11-MAE-ATR-REPLAY`
+
+---
+
+## OUTBOX — MAE-ATR-REPLAY-01 · 읽기전용 리플레이 · 2026-09-11
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **WAIT_CLAUDE_OK** · 실전 사다리 미변경 |
+| **파일** | `scripts/mae_atr_replay_01.py` |
+| **DB** | VPS `market_data.sqlite` `mode=ro` |
+| **표본** | STAT_MAE 246 → 리플레이 229 · skip 17 (테이블 없음) |
+| **규칙** | MAE/MFE 없음 · TIME(10·종가<3%) → 2×`entry_atr` 지정가 → TECH 종가 → bars≥20 좀비 0% |
+| **전체** | 실제 −3.50 · 가상 평균 −3.19 · **p50 −3.96** · 승률 14.8% · 가상>실제 99 / < 130 |
+| **즉시반대** | n=28 · 가상 평균 **−3.93** (실제 대비 −0.43) · p50 −3.82 |
+| **한번유리** | n=201 · 가상 평균 −3.09 · **p50 −3.96** |
+| **이상치** | KR `001210` +245% (2봉 TECH). 제외 시 전체 평균 **−4.28** |
+| **가상 exit** | TECH 189 · ATR 26 · TIME 10 · ZOMBIE 1 · CENSOR 3 |
+| **비접촉** | ledger `do_exit` · config_kv · NAV · 승격 · TG |
+| **권고** | 실전 MAE 제거/ATR 우선은 **별 Handoff**. 이 표만으로는 Go 아님 (중앙값 악화 + 1건이 평균을 듦) |
+
+디렉터 → Claude: 위 표 스펙 일치만 확인. 실전 청산 변경 spec은 아직 쓰지 말 것.
 
 ---
 

@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-10-WFBLOCK-OK` |
-| **마지막 갱신** | 2026-09-10 — V-2-WFBLOCK-01 **Claude OK · CLOSED** · 배포 + 1주 오탐 추적 |
+| **앵커 ID** | `SYNC-2026-09-11-MAE-ATR-REPLAY` |
+| **마지막 갱신** | 2026-09-11 — MAE-ATR-REPLAY-01 구현 · **WAIT_CLAUDE_OK** (실전 사다리 변경 아님) |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | (없음 · V-2 CLOSED) · 추적: 1주 오탐 · FAMILY-SLEEVE DoD#4 · 워치독 19:30 육안 |
+| **진행 중 sub-phase** | MAE-ATR-REPLAY-01 · 검증 대기 |
 | **직전 완료** | V-2-WFBLOCK-01 Claude OK 2026-09-10 |
-| **다음** | VPS `update_factory` · `[IV_OBS]` V-2 심판 ON · 1주 오탐 관측 |
+| **다음** | Claude가 리플레이 표 검증 · 실전 MAE/ATR 반영은 **별 Handoff** |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -56,6 +56,7 @@
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
+[KR/US] MAE-ATR-REPLAY-01 · 구현 · WAIT_CLAUDE_OK · 실전 청산 변경 금지
 [KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
 [KR/US] DIRECTOR-WATCHDOG-01 · Claude OK · CLOSED는 19:30 육안 후
 [KR/US] FAMILY-SLEEVE-DEMOTE-01 · 효과 실측 2026-09-09 · DoD#4(데스매치 0.25) 잔여

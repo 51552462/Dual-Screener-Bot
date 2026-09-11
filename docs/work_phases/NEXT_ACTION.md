@@ -2,40 +2,22 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **V-2-WFBLOCK-01** |
-| **status** | **CLOSED** · Claude OK 2026-09-10 · 1주 오탐은 추적만 |
-| **직전** | 코드/테스트 완전 승인 · origin과 머지 후 배포 |
-| **앵커** | `SYNC-2026-09-10-WFBLOCK-OK` |
+| **sub-phase** | **MAE-ATR-REPLAY-01** |
+| **status** | **WAIT_CLAUDE_OK** |
+| **직전** | 읽기 전용 일봉 리플레이 스크립트 + VPS 표 |
+| **앵커** | `SYNC-2026-09-11-MAE-ATR-REPLAY` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. **배포** (푸시 완료 후)
-
-```bash
-cd /home/ubuntu/dante_bots/Dual-Screener-Bot && sudo bash ./update_factory.sh
-```
-
-2. 오늘 저녁 `[IV_OBS]` 육안: **V-2 심판 = ON(작동 중)** · readiness `BLOCK_ALREADY_ON`
-3. **1주 오탐 관측** (즉시 확인 아님) — 정상 후보가 잘못 막히는지. 워치독이 추적.
-4. (병행) 19:30 `📊 주식 북극성 · 일간` 맨 위 `🔭 [디렉터 워치독]` 6줄 — DIRECTOR-WATCHDOG-01 CLOSED는 그 후.
-
-### 롤백
-
-```bash
-# VPS .env
-WALK_FORWARD_PROMOTION_BLOCK_ENABLED=0
-```
-
-### 병행 (이번 스코프 아님)
-
-- FAMILY-SLEEVE DoD#4: 다음 데스매치 후 12키 0.25
-- DSR / V-2b **금지** (V-2-DSR-01 · V-2B-SNAPSHOT-01 backlog)
+1. `docs/work_phases/CURSOR_TO_CLAUDE.md` 최상단 OUTBOX 검증. OK면 `CLAUDE_TO_CURSOR.md`에 다음 Handoff. 채팅 말고 파일에.
+2. **실전 `STAT_MAE` / ATR 우선순위 변경은 아직 금지** — 이번 결과는 섀도우 표만.
+3. (병행 추적) V-2 1주 오탐 · 워치독 19:30 육안 — 이번 스코프 아님.
 
 ### 금지
 
-- MDD/LOCKDOWN/F-GATE 변경
-- `evaluate_ledger_deflated_sharpe` 배선 · `OOS_DSR_MIN` 변경
-- 승격 완화(조이는 방향만)
-- Phase 2 자동 착수 · SLEEVE 12키 숫자 임의 변경
+- `forward/ledger.py` 청산 사다리 변경
+- config_kv `DYNAMIC_MAE_SL` 채우기
+- NAV/승격/텔레그램
+- 평균 +0.31%p만 보고 “ATR이 낫다” 단정 (p50·이상치 반대)
