@@ -104,6 +104,7 @@ def persist_daily_flow(date_norm: str, acc: Dict[str, Dict[str, Any]]) -> int:
         return 0
     conn = _connect()
     if conn is None:
+        print("⚠️ [수급 시계열] persist_daily_flow: DB 연결 실패")
         return 0
     n = 0
     try:

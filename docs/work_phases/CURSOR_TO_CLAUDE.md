@@ -3,7 +3,54 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-11 · **MAE-ATR-REPLAY-01** · 앵커 `SYNC-2026-09-11-MAE-ATR-REPLAY`
+> **갱신**: 2026-09-12 · **SMARTMONEY-PERSIST-FIX-01 Claude OK** · 앵커 `SYNC-2026-09-12-SMARTMONEY-OK`
+
+---
+
+## OUTBOX — SMARTMONEY-PERSIST-FIX-01 · Claude OK 랜딩 · 2026-09-12
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **Claude OK 2026-09-12** · 코드 CLOSED 예정 · **DoD#1 월 16:10 실측 잔여** |
+| **배포** | 커밋·푸시 후 디렉터 `update_factory` |
+| **잔여** | `kr_investor_flow` 0→N · 네이버 맵 대조 · CLOSED는 실측 후 |
+| **backlog** | `SMARTMONEY-RADAR-SQLITE-01` (JSON vs sqlite 덮어쓰기, 급하지 않음) |
+
+---
+
+## OUTBOX — SMARTMONEY-PERSIST-FIX-01 · 구현 · 2026-09-12
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **Claude OK 2026-09-12** (아래 랜딩) |
+| **파일** | `smart_money_tracker.py` `_persist_investor_flow_timeseries` · `kr_flow_factor.py` DB연결 실패 로그 1줄 · `tests/test_smartmoney_persist_fix_01.py` |
+| **동작** | 스캔 `flow_map`을 최근 영업일 `YYYY-MM-DD`로 upsert. pykrx 재조회 **삭제**. source=`naver_fallback`/`pykrx_leaderboard` |
+| **로그** | 0행 시 원인 print (map 공백 / 모듈 / persist=0 / 예외) |
+| **테스트** | `pytest tests/test_smartmoney_persist_fix_01.py` **5 passed** |
+| **비접촉** | `get_flow_score` lookback=5 · 컷오프 · PyKRX 로그인 · NAV/승격/TG |
+| **DoD 잔여** | 배포 후 **다음 평일 16:10** `kr_investor_flow` 0→N · 라다 회귀 · bonus 당분간 0이 정상 |
+
+### JSON 덮어쓰기 — 원인만 (미수정)
+
+라다는 `smart_money_tracker.save_config`가 **`system_config.json`만** 통째 저장. 운영 SSOT는 `config_manager.save_system_config` → **`system_config.sqlite` `DELETE FROM config_kv` 후 전체 INSERT**. 트래커는 sqlite에 RADAR를 안 씀. 이후 `--daily-kr`(18:45) 등이 sqlite 스냅샷(RADAR 없음)으로 저장하면 JSON에서 키가 사라짐. 수정은 별 Handoff (sqlite `update_config` 병합).
+
+디렉터 → Claude: 스펙 일치만 확인. OK면 커밋·푸시 → `update_factory`. 월 16:10 후 행수 확인.
+
+---
+
+## OUTBOX — MAE-ATR-REPLAY-01 · Claude 실전 반려 랜딩 · 2026-09-12
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **CLOSED · 실전 반려** (조사 스크립트는 보존, 배선 없음) |
+| **Claude** | `CLAUDE_TO_CURSOR.md` INBOX · 앵커 `SYNC-2026-09-10-MAE-ATR-REJECT` |
+| **판정** | STAT_MAE → ATR **교체 안 함** · Handoff 없음 |
+| **근거** | 평균 +0.31%p = KR 001210 이상치 · 제외 시 −4.28 · p50 −3.96 vs −3.50 · 가상<실제 130 > 가상>실제 99 · 즉시반대 −3.93 |
+| **청산 3가설** | 익절 절단 · 손절 타이밍 · ATR 반영 — **전부 기각** |
+| **다음** | 진입 신호 품질 검토 **권고만** · **별도 승인 전 착수 금지** |
+| **비접촉** | `forward/ledger.py` · `DYNAMIC_MAE_SL` · NAV · 승격 · TG |
+
+디렉터 → 다음 창: 진입 신호 세션은 새 Handoff + 승인 후에만. 오늘은 청산 소거 종료.
 
 ---
 
@@ -11,7 +58,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| **status** | **WAIT_CLAUDE_OK** · 실전 사다리 미변경 |
+| **status** | **Claude 실전 반려 2026-09-12** (아래 랜딩 블록) · 당시 표는 유지 |
 | **파일** | `scripts/mae_atr_replay_01.py` |
 | **DB** | VPS `market_data.sqlite` `mode=ro` |
 | **표본** | STAT_MAE 246 → 리플레이 229 · skip 17 (테이블 없음) |
@@ -22,9 +69,9 @@
 | **이상치** | KR `001210` +245% (2봉 TECH). 제외 시 전체 평균 **−4.28** |
 | **가상 exit** | TECH 189 · ATR 26 · TIME 10 · ZOMBIE 1 · CENSOR 3 |
 | **비접촉** | ledger `do_exit` · config_kv · NAV · 승격 · TG |
-| **권고** | 실전 MAE 제거/ATR 우선은 **별 Handoff**. 이 표만으로는 Go 아님 (중앙값 악화 + 1건이 평균을 듦) |
+| **권고** | (당시) 이 표만으로는 Go 아님. **이후 Claude 실전 반려로 확정.** |
 
-디렉터 → Claude: 위 표 스펙 일치만 확인. 실전 청산 변경 spec은 아직 쓰지 말 것.
+(역사 기록) 당시 디렉터 지시: 스펙 일치만 확인 · 실전 spec 금지 — **2026-09-12 반려로 해소.**
 
 ---
 

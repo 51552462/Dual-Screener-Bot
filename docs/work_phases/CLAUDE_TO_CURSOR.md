@@ -3,8 +3,79 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · **Claude는 본 파일 + OUTBOX/CURSOR_TO_CLAUDE만 쓰기**  
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
-> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-10)  
-> **현재**: **V-2-WFBLOCK-01 Claude OK** · 배포 진행 · 1주 오탐 관측 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
+> **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
+> **현재**: **SMARTMONEY-PERSIST-FIX-01 Claude OK** · 배포 진행 · DoD#1 월 16:10 실측 잔여 · 앵커 `SYNC-2026-09-12-SMARTMONEY-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · SMARTMONEY-PERSIST-FIX-01 · 2026-09-12
+
+앵커: SYNC-2026-09-12-SMARTMONEY-OK · 대상: CURSOR_TO_CLAUDE.md 최상단 OUTBOX
+
+### 판정: 완전 OK
+
+| 항목 | 판정 |
+|---|---|
+| flow_map(네이버) → 당일 upsert | ✅ |
+| PyKRX 실패해도 네이버 결과 저장 | ✅ |
+| 0행 시 원인 로그 | ✅ |
+| get_flow_score/lookback5/컷오프/PyKRX로그인 무접촉 | ✅ |
+| 테스트 5 passed | ✅ |
+| JSON 덮어쓰기 원인 규명(수정 아님, 정확) | ✅ |
+
+Claude OK: 2026-09-12 — 완전 승인. 배포 진행.
+
+### 다음
+1. 커밋·푸시 → update_factory 배포
+2. 다음 평일(월요일) 16:10 이후 kr_investor_flow 행수 0→N 확인
+3. 값이 그날 네이버 스캔 맵과 일치하는지 대조
+4. 05_진행로그·00_전체현황판·NEXT_ACTION 갱신 (DoD#1 확인 후 CLOSED)
+
+### 참고 — JSON 덮어쓰기 별도 항목 등록
+트래커=JSON 전용 저장 vs 운영 SSOT=sqlite 전체 DELETE+INSERT 구조적 불일치.
+수정은 별 Handoff (backlog 등록, 이번 스코프 아님, 급하지 않음).
+
+---
+
+## INBOX — 디렉터 Handoff · SMARTMONEY-PERSIST-FIX-01 · 2026-09-12
+
+앵커: SYNC-2026-09-12-SMARTMONEY-PERSIST · 🟡 Medium · 진입 로직 무접촉
+
+### 목표
+`persist_investor_flow_timeseries`가 스캔 `flow_map`(네이버 폴백 포함)을 `kr_investor_flow`에 당일 upsert.
+PyKRX 로그인 복구 · lookback 20 · `get_flow_score`/컷오프 **금지**.
+
+### Spec
+1. 스캔 `flow_map`을 persist가 받아 최근 영업일 날짜로 1줄씩 upsert
+2. PyKRX 실패해도 네이버 결과 있으면 저장
+3. 0행이면 원인 로그 (침묵 금지)
+4. `SMART_MONEY_RADAR` JSON 덮어쓰기 = **원인만** (수정 별도)
+
+### DoD
+1. 다음 평일 16:10 후 `kr_investor_flow` 0→N행
+2. 값이 그날 네이버 스캔 맵과 대응
+3. 라다 JSON 산출 회귀 없음
+4. `get_flow_score`/`flow_bonus` 로직 불변 (5일 쌓이기 전 bonus=0이 정상)
+
+---
+
+## INBOX — Claude Pro 검증 · MAE-ATR-REPLAY-01 · 2026-09-10
+
+앵커: SYNC-2026-09-10-MAE-ATR-REJECT
+
+### 판정: 실전 반영 반려 — 근거 불충분
+
+- 평균 개선(+0.31%p)은 단일 이상치(KR 001210 +245%) 의존, 제외 시 −4.28(악화)
+- 중앙값(-3.96 vs -3.50) 기준 더 나쁨
+- 가상<실제 130건 > 가상>실제 99건 — 손해 케이스가 더 많음
+- 즉시반대(MFE≤0.05%) 그룹은 평균도 확실히 악화(-3.93)
+
+Claude 판단: STAT_MAE → ATR 교체 진행 안 함. Handoff 발행하지 않음.
+`scripts/mae_atr_replay_01.py`는 보존(참고용), 실전 미배선 유지.
+
+### 결론 — 청산 로직 3종(익절/손절타이밍/ATR) 전부 기각됨
+진짜 문제는 청산이 아니라 진입 신호 자체의 엣지 부족 쪽에 무게가 실림.
+다음 세션은 진입 신호 품질 검토로 전환 권고 (별도 승인 필요).
 
 ---
 

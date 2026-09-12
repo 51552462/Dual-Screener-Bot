@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-10 · **앵커 ID**: `SYNC-2026-09-10-WFBLOCK-OK`
+> **갱신**: 2026-09-12 · **앵커 ID**: `SYNC-2026-09-12-SMARTMONEY-OK`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-11-MAE-ATR-REPLAY` |
-| **마지막 갱신** | 2026-09-11 — MAE-ATR-REPLAY-01 구현 · **WAIT_CLAUDE_OK** (실전 사다리 변경 아님) |
+| **앵커 ID** | `SYNC-2026-09-12-SMARTMONEY-OK` |
+| **마지막 갱신** | 2026-09-12 — SMARTMONEY-PERSIST-FIX-01 **Claude OK** · 배포 · DoD#1 월 16:10 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | MAE-ATR-REPLAY-01 · 검증 대기 |
-| **직전 완료** | V-2-WFBLOCK-01 Claude OK 2026-09-10 |
-| **다음** | Claude가 리플레이 표 검증 · 실전 MAE/ATR 반영은 **별 Handoff** |
+| **진행 중 sub-phase** | SMARTMONEY-PERSIST-FIX-01 · 배포 후 실측 대기 (CLOSED 아님) |
+| **직전 완료** | SMARTMONEY-PERSIST-FIX-01 Claude OK 2026-09-12 (코드) |
+| **다음** | `update_factory` → 월 16:10 `kr_investor_flow` 0→N |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -56,7 +56,9 @@
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] MAE-ATR-REPLAY-01 · 구현 · WAIT_CLAUDE_OK · 실전 청산 변경 금지
+[KR/US] SMARTMONEY-PERSIST-FIX-01 · Claude OK · 배포 · DoD#1 월 16:10 (CLOSED 아님)
+[KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog · JSON vs sqlite 덮어쓰기 · 급하지 않음
+[KR/US] MAE-ATR-REPLAY-01 · CLOSED · 실전 반려 (스크립트 보존·미배선) · 청산 3가설 기각
 [KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
 [KR/US] DIRECTOR-WATCHDOG-01 · Claude OK · CLOSED는 19:30 육안 후
 [KR/US] FAMILY-SLEEVE-DEMOTE-01 · 효과 실측 2026-09-09 · DoD#4(데스매치 0.25) 잔여

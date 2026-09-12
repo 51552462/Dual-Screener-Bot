@@ -479,35 +479,61 @@ def _try_pykrx_daily_smart_vwap(code: str, from_ymd: str, to_ymd: str) -> Option
     return num / den
 
 
-def _persist_investor_flow_timeseries(trade_dates: List[str]) -> None:
-    """[P0-1] 단일거래일 외인+기관 순매수 리더보드를 일별 시계열(kr_investor_flow)로 영속화.
+def _trade_date_iso(ymd: str) -> str:
+    s = str(ymd or "").strip()
+    if len(s) >= 8 and s[4] != "-":
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return s[:10]
 
-    최근 5영업일 중 미적재분만 백필 → 5일 누적 모멘텀/다이버전스 팩터가 콜드스타트 없이
-    가동된다. 전부 방어적(pykrx 부재/실패 시 조용히 스킵, 기존 라다 산출에 무영향).
+
+def _persist_investor_flow_timeseries(
+    trade_dates: List[str],
+    flow_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    *,
+    source: str = "",
+) -> int:
+    """스캔이 만든 flow_map(네이버 폴백 또는 pykrx)을 최근 영업일 1일치로 upsert.
+
+    SMARTMONEY-PERSIST-FIX-01: pykrx 재조회를 하지 않는다. pykrx가 실패해도
+    네이버 flow_map이 있으면 저장한다. 0행이면 원인을 로그로 남긴다.
     """
+    src = str(source or "unknown")
     if not trade_dates:
-        return
+        print(f"⚠️ [수급 시계열] 적재 0행 — 영업일 목록 없음 (source={src})")
+        return 0
+    acc = flow_map if isinstance(flow_map, dict) else {}
+    n_in = len(acc)
+    if n_in <= 0:
+        print(
+            f"⚠️ [수급 시계열] 적재 0행 — flow_map 비어 있음 "
+            f"(source={src}, pykrx 실패 시 네이버 폴백도 비었음)"
+        )
+        return 0
     try:
-        from kr_flow_factor import existing_flow_dates, persist_daily_flow
+        from kr_flow_factor import persist_daily_flow
     except Exception as ex:
-        print(f"⚠️ [수급 시계열] 모듈 로드 실패 — 적재 스킵: {ex}")
-        return
+        print(f"⚠️ [수급 시계열] 모듈 로드 실패 — 적재 0행: {ex}")
+        return 0
+    d_norm = _trade_date_iso(trade_dates[-1])
+    if not d_norm:
+        print(f"⚠️ [수급 시계열] 적재 0행 — 날짜 파싱 실패 (source={src} last={trade_dates[-1]!r})")
+        return 0
     try:
-        have = existing_flow_dates()
-        recent = trade_dates[-5:]
-        total = 0
-        for d in recent:
-            d_norm = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
-            if d_norm in have:
-                continue
-            acc, ok = _try_pykrx_flow_leaderboard(d, d, per_market_head=200)
-            if not ok or not acc:
-                continue
-            total += persist_daily_flow(d_norm, acc)
-        if total:
-            print(f"🗄️ [수급 시계열] kr_investor_flow 적재/갱신: {total}행 (최근 {len(recent)}영업일 백필)")
+        total = int(persist_daily_flow(d_norm, acc) or 0)
     except Exception as ex:
-        print(f"⚠️ [수급 시계열] 적재 스킵(비치명적): {ex}")
+        print(f"⚠️ [수급 시계열] persist 예외 — 적재 0행 (source={src} date={d_norm}): {ex}")
+        return 0
+    if total <= 0:
+        print(
+            f"⚠️ [수급 시계열] persist_daily_flow=0 — DB경로/연결 실패 가능 "
+            f"(source={src} date={d_norm} flow_map_n={n_in})"
+        )
+        return 0
+    print(
+        f"🗄️ [수급 시계열] kr_investor_flow upsert {total}행 "
+        f"(date={d_norm} source={src} flow_map_n={n_in})"
+    )
+    return total
 
 
 def run_smart_money_tracker():
@@ -637,9 +663,10 @@ def run_smart_money_tracker():
             "SMART_MONEY_RADAR 를 no_smart_money_today 로 명시 초기화했습니다."
         )
 
-    # [P0-1] 라다 JSON 산출과 독립적으로, 외인+기관 순매수를 일별 시계열로 영속화한다.
-    # (진입 관문 try_add_virtual_position 의 '수급 모멘텀/다이버전스' 가산 팩터 소비원)
-    _persist_investor_flow_timeseries(trade_dates)
+    # [P0-1 / SMARTMONEY-PERSIST-FIX-01] 스캔 flow_map(네이버 폴백 포함)을 당일 upsert.
+    # pykrx 재조회 없음 — 실패해도 네이버 결과가 있으면 저장. 진입 가산(get_flow_score) 무접촉.
+    _flow_src = "pykrx_leaderboard" if used_krx_leader else "naver_fallback"
+    _persist_investor_flow_timeseries(trade_dates, flow_map, source=_flow_src)
 
     # [Mega-Trend Unlock] 내부1진단→내부1킬→내부2킬→외부3→점화
     try:
