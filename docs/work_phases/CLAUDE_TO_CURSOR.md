@@ -4,7 +4,37 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: **SMARTMONEY-PERSIST-FIX-01 Claude OK** · 배포 진행 · DoD#1 월 16:10 실측 잔여 · 앵커 `SYNC-2026-09-12-SMARTMONEY-OK`
+> **현재**: RADAR-SQLITE-01 **범위만 확정**(코드 금지) · B-4 **~09-17** · SMARTMONEY DoD#1 월 16:10 · 앵커 `SYNC-2026-09-12-RADAR-SCOPE`
+
+---
+
+## INBOX — 디렉터 · SMARTMONEY-RADAR-SQLITE-01 범위 확정 · 2026-09-12
+
+앵커: SYNC-2026-09-12-RADAR-SCOPE
+
+### 범위 (다음 정식 스코프 때)
+- KR·US 라다(picks) JSON→sqlite **병합 저장** (공통 원인)
+- 위성 문구: 픽 0건 vs 적재 실패 구분 (`updated_at`만으로는 임시 구별)
+- **급하지 않음** · 지금 코드 금지
+- **비범위**: `kr_investor_flow`(PERSIST-FIX-01)
+
+---
+
+## INBOX — 디렉터 결정 · Phase B 재검토 2단계 · 2026-09-12
+
+앵커: SYNC-2026-09-12-PHASEB-SCOPE2
+
+### 판정
+- Phase B 전체(B-1/B-2 유전자풀) 재개: **보류 유지** — DSR 선행 필요
+- B-4(S5 승격배선)만: **조건부 착수 가능**
+  - 조건① V-2 WF-BLOCK **1주 오탐 관측 종료**(예상 ~2026-09-17; 2026-09-10 ON)
+  - 조건② Handoff 문구에 **「LIVE 승격 ≠ DSR 통계 검증」** 명시 필수
+- B-3(데스매치 킬): DSR 무관하나 🔴 Critical — 별도 승인 시 재논의
+- V-2-DSR-01: B-1/B-2 재개 **전 반드시 선행**
+
+### 다음 액션 (지금 착수 아님)
+9/17 이후, **B-4 단독** 스코프로 정식 Handoff 재요청 예정.
+그 전까지 이 항목 **backlog 유지**, **코드 착수 금지**.
 
 ---
 

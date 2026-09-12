@@ -3,7 +3,36 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-12 · **SMARTMONEY-PERSIST-FIX-01 Claude OK** · 앵커 `SYNC-2026-09-12-SMARTMONEY-OK`
+> **갱신**: 2026-09-12 · RADAR-SQLITE-01 **범위 확정** · 앵커 `SYNC-2026-09-12-RADAR-SCOPE`
+
+---
+
+## OUTBOX — SMARTMONEY-RADAR-SQLITE-01 · 범위 확정 · 코드 0 · 2026-09-12
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **backlog** · **지금 착수 아님** · 급하지 않음 |
+| **공통 원인** | KR·US 라다(`SMART_MONEY_RADAR` / `_US`) picks를 JSON에만 씀. 리포트 sqlite에 병합 저장 없음 |
+| **표시** | 「데이터 없음」= 픽 0건과 적재 실패를 구분 못 함. `updated_at` 유무로만 구별 |
+| **비범위** | `kr_investor_flow` persist(PERSIST-FIX-01) · PyKRX · lookback · `get_flow_score` |
+| **다음 Handoff** | sqlite 병합 저장 + 0픽 vs 키없음 문구 분리. 통째 DELETE+INSERT로 다른 키 지우지 말 것 |
+
+디렉터 → Claude: 구현 Handoff 지금 내지 말 것. 다음에 스코프 잡을 때 이 표 참고.
+
+---
+
+## OUTBOX — PHASEB-SCOPE-02 · B-4 큐 등록 · 코드 0 · 2026-09-12
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **CLOSED (문서)** · **코드 미착수** |
+| **판정** | B-1/B-2 보류(DSR 선행) · B-4만 조건부 · B-3은 별 Critical |
+| **조건** | ① WF-BLOCK 1주 오탐 종료(~09-17) ② Handoff에 **LIVE ≠ DSR 검증** |
+| **다음** | 09-17 이후 B-4 **단독** Handoff 재요청. 그 전 `WAIT_CURSOR_IMPL` 아님 |
+| **비접촉** | 승격 엔진 · GP · 데스매치 · DSR 호출 0 유지 |
+| **병렬** | SMARTMONEY-PERSIST-FIX-01 DoD#1 월 16:10 실측 잔여 (CLOSED 아님) |
+
+디렉터 → Claude: 스펙 구현 요청 아님. 9/17 후 B-4 Handoff 쓸 때 조건②를 본문에 넣을 것.
 
 ---
 

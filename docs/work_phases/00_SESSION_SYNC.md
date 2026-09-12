@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-12 · **앵커 ID**: `SYNC-2026-09-12-SMARTMONEY-OK`
+> **갱신**: 2026-09-12 · **앵커 ID**: `SYNC-2026-09-12-RADAR-SCOPE`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-12-SMARTMONEY-OK` |
-| **마지막 갱신** | 2026-09-12 — SMARTMONEY-PERSIST-FIX-01 **Claude OK** · 배포 · DoD#1 월 16:10 |
+| **앵커 ID** | `SYNC-2026-09-12-RADAR-SCOPE` |
+| **마지막 갱신** | 2026-09-12 — SMARTMONEY-RADAR-SQLITE-01 **범위 확정**(코드 0) |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | SMARTMONEY-PERSIST-FIX-01 · 배포 후 실측 대기 (CLOSED 아님) |
-| **직전 완료** | SMARTMONEY-PERSIST-FIX-01 Claude OK 2026-09-12 (코드) |
-| **다음** | `update_factory` → 월 16:10 `kr_investor_flow` 0→N |
+| **진행 중 sub-phase** | SMARTMONEY-PERSIST-FIX-01 · DoD#1 월 16:10 · B-4 **대기열** · RADAR sqlite **backlog** |
+| **직전 완료** | RADAR-SCOPE 문서 (코드 0) · PHASEB-SCOPE-02 |
+| **다음** | 월 16:10 수급 행수 · **09-17 이후** B-4 · RADAR sqlite는 **급하지 않음** |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -57,12 +57,12 @@
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
 [KR/US] SMARTMONEY-PERSIST-FIX-01 · Claude OK · 배포 · DoD#1 월 16:10 (CLOSED 아님)
-[KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog · JSON vs sqlite 덮어쓰기 · 급하지 않음
+[KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog **범위확정** · KR/US 라다 JSON→sqlite 병합 · 표시 0픽/적재실패 미구분 · 급하지 않음 · 지금 코드 금지
 [KR/US] MAE-ATR-REPLAY-01 · CLOSED · 실전 반려 (스크립트 보존·미배선) · 청산 3가설 기각
-[KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 · 앵커 `SYNC-2026-09-10-WFBLOCK-OK`
+[KR/US] PHASEB-SCOPE-02 · CLOSED(문서) · B-4 큐(~09-17) · B-1/B-2 보류(DSR) · B-3 별도
+[KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 (~09-17)
 [KR/US] DIRECTOR-WATCHDOG-01 · Claude OK · CLOSED는 19:30 육안 후
 [KR/US] FAMILY-SLEEVE-DEMOTE-01 · 효과 실측 2026-09-09 · DoD#4(데스매치 0.25) 잔여
-[KR/US] Phase B · 보류 · 재검토 = V-2 가동 (12주/~10월 말 폐기, 2026-09-09)
 [감시] US_RANK_B 1.35x · US_RANK_D 1.25x — 다음 데스매치 사이클 유지 여부 (액션 아님)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
