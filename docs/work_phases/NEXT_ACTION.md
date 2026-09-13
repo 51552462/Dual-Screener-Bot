@@ -2,25 +2,22 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **PHASEB-SCOPE-02** (문서 큐) · 병렬 **SMARTMONEY-PERSIST-FIX-01** (실측) |
-| **status** | **WAIT_DIRECTOR** — B-4 **코드 착수 금지** · 수급 DoD#1 월 16:10 |
-| **직전** | RADAR-SQLITE-01 범위 확정(코드 0) · B-4는 ~09-17 후 |
-| **앵커** | `SYNC-2026-09-12-RADAR-SCOPE` |
+| **sub-phase** | **SMARTMONEY-PERSIST-FIX-01** (실측) |
+| **status** | **WAIT_DIRECTOR** — 월 16:10 DoD#1 · 리플레이 **만들지 않음** |
+| **직전** | 라이브 리플레이 HOLD (수급 신호 전 무가치) |
+| **앵커** | `SYNC-2026-09-12-REPLAY-HOLD` |
 
 ---
 
 ## 디렉터 — 지금 할 일
 
-1. **월요일 16:10 이후** `kr_investor_flow` 행수 0→N · 로그 `🗄️ [수급 시계열]` · 네이버 맵 대조 (SMARTMONEY DoD#1). 미배포면 먼저 `update_factory`.
-2. **~2026-09-17** V-2 WF-BLOCK 1주 오탐 관측 종료 확인 후, Claude에 **B-4 단독** Handoff 재요청.
-3. Handoff에 넣을 문구: **LIVE 승격 ≠ DSR 통계 검증**.
-4. **참고만** — `SMARTMONEY-RADAR-SQLITE-01` 범위는 확정됨. 급하지 않음. 다음 정식 스코프 때 아래 OUTBOX 참고.
+1. **2026-09-14(월) 16:10 이후** `kr_investor_flow` 행수 0→N · 로그 `🗄️ [수급 시계열]` · 네이버 맵 대조. 미배포면 먼저 `update_factory`.
+2. 수급이 **신호(행·값·스캔 맵 정합)**를 보이면, 그때 「라이브 코드 + 과거 가격 **수급 포함** 리플레이」를 **검토**(Handoff). 지금 하니스 금지.
+3. B-4는 그대로 ~09-17 후. RADAR-SQLITE는 급하지 않음.
 
 ### 금지
 
-- 지금 Phase B / B-4 / B-1 / B-2 / B-3 코드
-- WF-BLOCK 1주 끝나기 전 승격 엔진 수정
-- DSR 없이 B-1/B-2 재개 선언
+- 라이브 리플레이 하니스 / RP-1 대체 런 / `ledger`·`shared` as-of 개조
+- 수급 신호 전에 리플레이 착수
 - DoD#1 전 SMARTMONEY CLOSED
-- PyKRX 로그인 · lookback 20 · `get_flow_score` · bitget
-- `SMARTMONEY-RADAR-SQLITE-01` **지금** 코드 (급하지 않음)
+- Phase B / B-4 지금 코드 · bitget

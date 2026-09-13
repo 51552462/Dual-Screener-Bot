@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-12 · **앵커 ID**: `SYNC-2026-09-12-RADAR-SCOPE`
+> **갱신**: 2026-09-12 · **앵커 ID**: `SYNC-2026-09-12-REPLAY-HOLD`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-12-RADAR-SCOPE` |
-| **마지막 갱신** | 2026-09-12 — SMARTMONEY-RADAR-SQLITE-01 **범위 확정**(코드 0) |
+| **앵커 ID** | `SYNC-2026-09-12-REPLAY-HOLD` |
+| **마지막 갱신** | 2026-09-12 — 라이브 리플레이 **만들지 않음** · 월 수급 실측 후만 재검토 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | SMARTMONEY-PERSIST-FIX-01 · DoD#1 월 16:10 · B-4 **대기열** · RADAR sqlite **backlog** |
-| **직전 완료** | RADAR-SCOPE 문서 (코드 0) · PHASEB-SCOPE-02 |
-| **다음** | 월 16:10 수급 행수 · **09-17 이후** B-4 · RADAR sqlite는 **급하지 않음** |
+| **진행 중 sub-phase** | SMARTMONEY-PERSIST-FIX-01 · DoD#1 **2026-09-14 16:10** |
+| **직전 완료** | LIVE-REPLAY-HOLD 문서 (코드 0) |
+| **다음** | 월 수급 0→N · 신호 보이면 그때 **수급 포함 리플레이** 검토 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -56,7 +56,8 @@
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] SMARTMONEY-PERSIST-FIX-01 · Claude OK · 배포 · DoD#1 월 16:10 (CLOSED 아님)
+[KR/US] SMARTMONEY-PERSIST-FIX-01 · Claude OK · 배포 · DoD#1 **2026-09-14 16:10** (CLOSED 아님)
+[KR/US] LIVE-REPLAY-HOLD · **지금 만들지 않음** · 월 수급 신호 후에만 「수급 포함 리플레이」재검토
 [KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog **범위확정** · KR/US 라다 JSON→sqlite 병합 · 표시 0픽/적재실패 미구분 · 급하지 않음 · 지금 코드 금지
 [KR/US] MAE-ATR-REPLAY-01 · CLOSED · 실전 반려 (스크립트 보존·미배선) · 청산 3가설 기각
 [KR/US] PHASEB-SCOPE-02 · CLOSED(문서) · B-4 큐(~09-17) · B-1/B-2 보류(DSR) · B-3 별도
@@ -68,7 +69,7 @@
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
 [IV] V-2-DSR-01 / V-2B-SNAPSHOT-01 · backlog (이번 세션 금지)
-[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회
+[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회 · **라이브 리플레이 하니스 지금 착수**
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
