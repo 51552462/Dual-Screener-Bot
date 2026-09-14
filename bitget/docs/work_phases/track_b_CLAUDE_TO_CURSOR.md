@@ -1,3 +1,19 @@
+# CLAUDE → CURSOR · [CAT-L] L-3b-fix stale 1800s (전문 CLAUDE_TO_CURSOR 상단)
+
+---
+
+# CLAUDE → CURSOR · [CAT-L] 디렉터 1번 승인 확정 (2026-09-14 23:13 KST)
+# 전문: `CLAUDE_TO_CURSOR.md` 최상단. L-3a 이미 적용 · L-3b A안 · 전체 큐 보류.
+
+---
+
+# CLAUDE → CURSOR · [CAT-L] L-3a/L-3b/L-4 — CAT-L-FENCE-01
+# (prepend · 2026-09-14) 전문: `CLAUDE_TO_CURSOR.md` 상단
+
+> Track B 미러. 구현 spec SSOT = `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` 최상단.
+
+---
+
 # CLAUDE → CURSOR · POST_DEPLOY_OBS-DNA-UX-01
 
 > **작성**: Claude Pro (Architect) · 2026-08-20

@@ -1,3 +1,70 @@
+# CLAUDE → CURSOR · [CAT-L] L-3b-fix 큐 워커 stale 임계 (A안 · 2026-09-15)
+# 워치독 로직 미변경. env 1개. 09-15 15:07 UTC 슬롯에서 Done 판정.
+
+실측(cron 시절 로그, 시작~끝 명확한 최근 4일):
+09-09 744s · 09-10 737s · 09-11 735s · 09-12 734s ≈ **12.3분**
+1회차 하한: 15:07:03~15:20:59 = 13분+ (킬로 미완료)
+×2 ≈ 25분. Handoff 여유 예시(15분→1800~2000)에 맞춰 **1800초**. 50분 상한 미초과.
+워치독이 읽는 값임 → .env + watchdog drop-in (queue-worker drop-in만으로는 cron/systemd watchdog에 안 먹음).
+
+---
+
+# CLAUDE → CURSOR · [CAT-L] 디렉터 1번 승인 확정 · L-3a 진행 / L-3b A안 / L-3 보류
+# (prepend · 2026-09-14 23:13 KST)
+
+> **판정**: 1번(정원 4곳) **승인** · 2번 **A안**(ema5_r2만 enqueue) · 3번(전체 큐) **나중에**
+> **구현 상태**: L-3a drop-in + L-3b crontab **이미 서버 적용**(09-14 00:39 KST). 재적용·Max 축소 금지.
+> **queue-worker**: 실측 Max=2G 있었음 → 「없으면 896M」분기 미해당. High=1.5G / Max=2G 유지.
+> **L-4**: 이번 확정본 범위 밖(이미 코드만 있음 · 서버 pull 별도).
+> **전문 스펙**: 바로 아래 CAT-L-FENCE-01 블록.
+
+---
+
+# CLAUDE → CURSOR · [CAT-L] L-3a/L-3b/L-4 메모리 울타리 커버리지
+# (prepend · 덮어쓰지 말 것 · 2026-09-14)
+
+> **레인**: 해당 없음 (Track B 공용 인프라)
+> **작성**: 디렉터 확정 spec (진단 실측 09-14) · Cursor 구현
+> **CAT**: CAT-L · 🟡 Medium · gate/live/`ENABLE_REAL_EXECUTION` 비접촉
+> **sub-phase**: **CAT-L-FENCE-01**
+> **L-1/L-2 에스컬레이션**: **취소** (이번 건 무관 · 서버에 이미 설치 실측)
+
+## 원인 (고정)
+
+factory `MemoryMax=1.5G`는 있었음. cron.service 밑 스캔 자식은 cgroup 밖.
+09-07 08:44 UTC `global_oom` · RSS~897MB · `task_memcg=/system.slice/cron.service`.
+4GB→8GB 증설로 안 고쳐짐. 디스크/L-1 가설 기각.
+
+## Cursor 엔지니어 각주 (구현 반영)
+
+- queue-worker **실측 MemoryMax=2G 이미 있음** → Handoff 「없으면 896M」분기. Max **유지**, `MemoryHigh=1.5G`만 추가 (factory Max 임의 축소 금지와 동일).
+- L-3b crontab 플래그는 기존 어댑터 `bitget.sh --enqueue --scan-futures-ema5-r2` (대시 없는 `scan_futures_ema5_r2` 신규 파서 없음).
+- 생성기 전면 `--use-queue`(b-3) 켜지 않음. canary 1플래그만.
+
+## L-3a — 상시 서비스 메모리 울타리
+
+SSOT: `bitget/deploy/systemd/*.service.in` + 서버 drop-in (HIST_10 §2.4, 신규 스크립트 없음)
+
+| unit | 적용 |
+|------|------|
+| factory | MemoryHigh=1.2G · MemoryMax=1.5G 유지 |
+| ws | MemoryHigh=200M / MemoryMax=256M |
+| async | MemoryHigh=100M / MemoryMax=128M |
+| queue-worker | MemoryHigh=1.5G / MemoryMax=**2G 유지** |
+
+완료: 4유닛 `systemctl show -p MemoryMax -p MemoryHigh -p MemoryCurrent` **원문**.
+
+## L-3b — canary 큐 편입
+
+crontab **해당 1줄만**. 다른 scan_* 는 범위 밖.
+24–48h 관찰: queue-worker claim→done · dmesg killed 0 · MemoryCurrent 피크.
+
+## L-4 — digest 울타리/크론 (read-only)
+
+`post_deploy_obs_digest_bg.py` · `scan_last_cgroup_by_mode` · `fenced_units_memory_snapshot` · 실패 시 null+unavailable.
+
+---
+
 # CLAUDE → CURSOR · [LANE_FULLBT] FULL-BT-FUT-DEPTH-1 Claude OK + staging FULL-BT Go
 # (prepend 보관 · 덮어쓰기 금지 · 2026-08-29)
 

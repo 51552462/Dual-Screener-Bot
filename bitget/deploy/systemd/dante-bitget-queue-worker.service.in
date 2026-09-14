@@ -15,6 +15,7 @@ EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
 ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_queue_worker.sh
 Restart=always
 RestartSec=5
+MemoryHigh=1.5G
 MemoryMax=2G
 CPUQuota=150%
 StandardOutput=journal

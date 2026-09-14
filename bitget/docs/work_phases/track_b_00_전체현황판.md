@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **LANE_FASTCHECK DONE** (B0-SAMPLE-CONTRACT) · R2 관측 · HIST 별도 | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-08-28 | §7 Claude OK · 표본 부족은 관측 과제 유지 |
+| **다음 Handoff** | **없음** · L-3b 2회 관찰 후 전체 큐 Ask | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-09-14 | L-3a Claude OK · L-3b WAIT_OBS |
 
 ---
 
@@ -40,8 +40,8 @@
 | 상품화 G3 | G0 | `06` + C-2 + MDD 4주 (NS-1 R4) | 🔴 3 |
 | paper 신호 신뢰 | C-1 **Claude OK** · C-1b 집계 구현 | `06` skip률 관측 (`skip_rate_pct` v1 null) | 🟡 2 |
 | paper PnL 현실 | funding 미차감 | **C-2 defer** (close PnL 오염) | 🔴 3 |
-| 서버 디스크/백업 | L-1/L-2 코드 OK | **서버 설치 미확인** (I-GMM 배포 ≠ L 설치) | ① 디렉터 |
-| 4GB RAM | MemoryMax 가이드만 | drop-in **미설치 가능** | ① 디렉터 |
+| 서버 디스크/백업 | L-1/L-2 **서버 설치 확인** 2026-09-14 | df 38% · logrotate+backup.timer 실측 | ① 디렉터 |
+| 4GB RAM | L-3a **Claude OK** (drop-in 실측 2건) | L-3b canary 2회(15:07 UTC) 관찰 | ① Cursor 캡처 |
 | cutover | `pipeline_ssot_env=0` FAIL | env 점검 | ① 디렉터 |
 | 실전 | OFF | exit·parity·P2-5 | 🔴 금지 |
 
@@ -49,7 +49,7 @@
 
 | Layer | 내용 | paper 중 |
 |-------|------|----------|
-| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · L 설치❓ |
+| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · L **캡처 없음** · **CAT-L WAIT_DIRECTOR** |
 | **2** | **C-1** → **D-1~D-3** · P0-6 / P1-7 설계 | D 트랙 ✅ · **POST_DEPLOY_OBS** · overseer❓ |
 | **3** | MDD 5% · B-2 live · B-3 block · B-4b · **C-2/C-3** · 실전 | `06` / Go-No-Go **후** |
 

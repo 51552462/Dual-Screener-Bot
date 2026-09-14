@@ -13,6 +13,8 @@ EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
 ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_async.sh
 Restart=on-failure
 RestartSec=5
+MemoryHigh=100M
+MemoryMax=128M
 StandardOutput=journal
 StandardError=journal
 

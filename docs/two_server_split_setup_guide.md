@@ -4,7 +4,7 @@
 > | 서버 | IP | 역할 |
 > |------|-----|------|
 > | `Ubuntu-4GB-Bot` | 52.78.29.151 | **주식 (KR/US)** |
-> | `Ubuntu-4GB-Bot-2` | 15.165.236.69 | **코인 (Bitget)** |
+> | `Ubuntu-4GB-Bot-2` | **43.202.40.136** (Stop/Start 후 변경 · 구 15.165.236.69) | **코인 (Bitget)** |
 
 공통: Lightsail 서울, Ubuntu 22.04, 4GB / 2 vCPU / 80GB SSD.
 
@@ -131,7 +131,7 @@ python3 -c "from bitget.infra.data_paths import bitget_data_dir; print(bitget_da
 
 ---
 
-## 4. 서버 B — `Ubuntu-4GB-Bot-2` (15.165.236.69) 코인 전용
+## 4. 서버 B — `Ubuntu-4GB-Bot-2` (43.202.40.136) 코인 전용
 
 ### 4.1 SSH 키 (구 서버 → 신 서버 rsync용)
 

@@ -34,6 +34,9 @@ DEFAULT_INSTALL_ROOT = "/home/ubuntu/dante_bots/Dual-Screener-Bot"
 CRON_USER = "ubuntu"
 logger = get_logger("bitget.deploy.generate_bitget_crontab")
 
+# L-3b canary only — not full b-3. Other scan_* stay inline until a separate Ask.
+QUEUE_CANARY_FLAGS = frozenset({"--scan-futures-ema5-r2"})
+
 
 def _cron_line(minute: int, hour: int, dow: str, command: str, install_root: str) -> str:
     return f"{minute} {hour} * * {dow}  {CRON_USER}  cd {install_root} && {command}"
@@ -43,7 +46,8 @@ def _scan_command(
     bitget_flag: str, *, tz: str, install_root: str, use_queue: bool = False
 ) -> str:
     bg = f"{install_root}/bitget/deploy/bitget.sh"
-    if use_queue:
+    enqueue = bool(use_queue) or bitget_flag in QUEUE_CANARY_FLAGS
+    if enqueue:
         # cron→큐 어댑터: 즉시 enqueue 후 종료. queue worker 가 순차 실행한다.
         return f"TZ={tz} {bg} --enqueue {bitget_flag}"
     return f"TZ={tz} {bg} {bitget_flag}"
@@ -65,7 +69,10 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
             "\n# QUEUE MODE: scans are enqueued (--enqueue) and run by the single "
             "dante-bitget-queue-worker; conflicts wait (PENDING) instead of skipping."
             if use_queue
-            else ""
+            else (
+                "\n# L-3b canary: --scan-futures-ema5-r2 is --enqueue only "
+                "(other scan_* stay inline; full b-3 is a separate Ask)."
+            )
         ),
         "# install: sudo INSTALL_ROOT=... bash bitget/deploy/install_bitget_cron.sh",
         "#",

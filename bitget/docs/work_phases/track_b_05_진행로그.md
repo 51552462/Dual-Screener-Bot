@@ -19,6 +19,42 @@
 
 ---
 
+## CAT-L-FENCE-01 — L-3a/L-3b/L-4 [2026-09-14]
+
+### L-3a Cursor 구현 ✅ · 서버 적용 확인 ✅(원문 캡처 2건) · **Claude OK 2026-09-14**
+
+- 캡처1 적용 직후 09-13 15:39 UTC · 캡처2 재확인 09-14 14:13 UTC (그 사이 restart 없음, 값 불변)
+- factory High=1288490188 / Max=1610612736 · ws 209715200 / 268435456 · async 104857600 / 134217728 · queue-worker 1610612736 / 2147483648
+- queue-worker Max=2G **실측 유지** (Handoff 「없으면 896M」는 실측 전 추정치 · 실측이 이김)
+- 롤백 불필요 · 위험도 🟢 Low (L-3a 확정)
+- 에스컬레이션(동일 이슈 3회): **해제** — 이번 건 L-1/L-2와 무관 확인
+
+### L-3b-fix stale 임계 [2026-09-14 15:35 UTC] · 로직 미변경
+
+- 실측 ema5_r2 **734–744s (09-09~12)** · 확정 **BITGET_QUEUE_WORKER_STALE_SEC=1800**
+- **Claude 계산 검증 2026-09-15 00:41 KST:** 744×2=1488, 1800은 실측 최대 대비 ~2.4배 · 46분 상한 미초과 · **적절**. 09-05~08 2h 제외 OK. watchdog drop-in 경로 OK.
+- **잔여 = 내일 슬롯 4종만:** start→done 이어짐 · watchdog restart 0 · dmesg killed 0 · MemoryCurrent 중간 샘플. 전부면 L-3b Done + 전체전환 논의.
+- 09-05~08 락 미해제는 **지금 막지 않음** (L-3b 판정 무관)
+- crontab `--enqueue --scan-futures-ema5-r2` 유지 · 전체 큐 보류
+- run1 미완료(watchdog 600s 킬)는 기록. Done은 **09-15 15:07 UTC 4종**만
+
+---
+
+## CAT-L · 서버 과부하 원인진단 [2026-09-14] · 코드 없음 · **후속 CAT-L-FENCE-01**
+
+- **레인**: 해당 없음 (Track B **공용 인프라**)
+- **SSH**: `ubuntu@43.202.40.136` (Stop/Start 후 IP 변경 · 구 15.165.236.69) · host `ip-172-26-7-213` · boot 약 10분(실측 시각)
+- **오늘 이벤트**: 직전 부트 08-17 15:26 UTC → **09-13 14:56 UTC 정상 poweroff** (커널 패닉 아님 · Lightsail Stop). 그 직전 24h 저널에 OOM/`No space` 없음
+- **디스크 (이번 크래시 원인 아님)**: root **38%** (29G/78G, 49G free) · `bitget/logs` **108K** · 14일+ `.log` **0개** · journal **457M** · data **20G** (charts **17G**)
+- **L-1/L-2는 서버에 켜져 있었음** (미설치 가설 기각): `/etc/logrotate.d/bitget-dante` (Aug 2) · `dante-bitget-journal-vacuum.timer` enabled/active · `dante-bitget-backup.timer` enabled/active
+- **메모리 실측 now**: 3.7G 중 used 685M · available 2.8G · swap 0 · factory `MemoryMax=1610612736`(1.5G 템플릿) · `MemoryHigh=infinity` · **drop-in 디렉터리 없음**
+- **OOM 확정 증거 (직전 부트, 09-07 08:44 UTC)**: `global_oom` · 죽은 프로세스 python pid 640081 RSS≈897M · **`task_memcg=/system.slice/cron.service`** (factory MemoryMax 바깥)
+- **지금 이중 경로**: auto_pilot 1개(factory cgroup) + `scan_futures_ema5_r2` 1개(**cron.service** cgroup, 리부트 직후 CPU≈75%) · tmux 없음 · cron 스캔은 **inline** (`--enqueue` 없음) · b-2/b-3 미전환 확정
+- **ws/async `MemoryMax=infinity`** · queue-worker 2G · dashboard/heatmap inactive
+- **잔여**: [x] 6블록 실측 [ ] MemoryMax drop-in + cron 스캔 cgroup/큐 Handoff [ ] CAT-L 종료=캡처 규칙 Ask [ ] Layer2 digest 필드 (Handoff 후)
+
+---
+
 ## FULL-BT-FUT-DEFCON-1 — Adapter A 구현 [2026-08-29]
 
 | 항목 | 내용 |

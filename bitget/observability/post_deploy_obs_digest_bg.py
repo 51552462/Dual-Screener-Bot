@@ -246,6 +246,183 @@ def _server_ops_probes() -> Dict[str, Any]:
     }
 
 
+_FENCE_UNITS = (
+    "dante-bitget-factory",
+    "dante-bitget-ws",
+    "dante-bitget-async",
+    "dante-bitget-queue-worker",
+)
+_CANARY_MODE = "scan_futures_ema5_r2"
+
+
+def _classify_cgroup(raw: str) -> Optional[str]:
+    s = raw or ""
+    if "dante-bitget-queue-worker" in s:
+        return "queue-worker"
+    if "cron.service" in s:
+        return "cron.service"
+    if "dante-bitget-factory" in s:
+        return "factory"
+    if not s.strip():
+        return None
+    return "other"
+
+
+def _parse_systemctl_show(text: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for line in (text or "").splitlines():
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        out[key.strip()] = val.strip()
+    return out
+
+
+def _memory_snapshot_for_unit(unit: str) -> Dict[str, Any]:
+    st, detail = _probe_cmd(
+        [
+            "systemctl",
+            "show",
+            unit,
+            "-p",
+            "MemoryMax",
+            "-p",
+            "MemoryHigh",
+            "-p",
+            "MemoryCurrent",
+        ]
+    )
+    if st != "ok":
+        return {
+            "MemoryMax": None,
+            "MemoryHigh": None,
+            "MemoryCurrent": None,
+            "source": "unavailable",
+            "detail": detail,
+        }
+    parsed = _parse_systemctl_show(detail)
+    return {
+        "MemoryMax": parsed.get("MemoryMax"),
+        "MemoryHigh": parsed.get("MemoryHigh"),
+        "MemoryCurrent": parsed.get("MemoryCurrent"),
+        "source": "systemctl",
+        "detail": None,
+    }
+
+
+def _live_runner_cgroups() -> Dict[str, Dict[str, Any]]:
+    """Map runner --mode → cgroup class from /proc. Missing /proc → empty."""
+    found: Dict[str, Dict[str, Any]] = {}
+    proc_root = "/proc"
+    if not os.path.isdir(proc_root):
+        return found
+    try:
+        pids = os.listdir(proc_root)
+    except OSError:
+        return found
+    for name in pids:
+        if not name.isdigit():
+            continue
+        base = os.path.join(proc_root, name)
+        try:
+            with open(os.path.join(base, "cmdline"), "rb") as fh:
+                raw = fh.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if "bitget.pipelines.runner" not in raw and "bitget/pipelines/runner" not in raw:
+            continue
+        mode = None
+        parts = raw.split()
+        for i, tok in enumerate(parts):
+            if tok == "--mode" and i + 1 < len(parts):
+                mode = parts[i + 1].strip()
+                break
+        if not mode:
+            continue
+        cg = ""
+        try:
+            with open(os.path.join(base, "cgroup"), "r", encoding="utf-8") as fh:
+                cg = fh.read()
+        except OSError:
+            cg = ""
+        found[mode] = {
+            "cgroup": _classify_cgroup(cg),
+            "source": "live_proc",
+            "detail": cg.strip().splitlines()[-1] if cg.strip() else None,
+        }
+    return found
+
+
+def _last_queue_cgroup(mode: str) -> Dict[str, Any]:
+    try:
+        from bitget.infra.task_orchestrator import ENGINE_BITGET, queue_db_path_for_engine
+
+        path = queue_db_path_for_engine(ENGINE_BITGET)
+        if not path or not os.path.isfile(path):
+            return {
+                "cgroup": None,
+                "source": "unavailable",
+                "detail": "queue_db_missing",
+            }
+        import sqlite3
+
+        conn = sqlite3.connect(path, timeout=5)
+        try:
+            row = conn.execute(
+                "SELECT worker, status FROM task_queue WHERE mode=? "
+                "ORDER BY id DESC LIMIT 1",
+                (mode,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return {"cgroup": None, "source": "unavailable", "detail": "no_queue_row"}
+        worker = str(row[0] or "")
+        classified = _classify_cgroup(worker) if worker else "queue-worker"
+        if classified == "other" and worker:
+            classified = "queue-worker"
+        return {
+            "cgroup": classified,
+            "source": "task_queue",
+            "detail": f"status={row[1]} worker={worker[:80]}",
+        }
+    except Exception as ex:
+        return {"cgroup": None, "source": "unavailable", "detail": str(ex)[:200]}
+
+
+def collect_fence_snapshot() -> Dict[str, Any]:
+    """Read-only MemoryMax/cgroup probes. Never invent success."""
+    units: Dict[str, Any] = {}
+    try:
+        for unit in _FENCE_UNITS:
+            units[unit] = _memory_snapshot_for_unit(unit)
+    except Exception as ex:
+        units = {"error": str(ex)[:200]}
+
+    live = _live_runner_cgroups()
+    by_mode: Dict[str, Any] = {}
+    canary = live.get(_CANARY_MODE)
+    if canary:
+        by_mode[_CANARY_MODE] = canary
+    else:
+        by_mode[_CANARY_MODE] = _last_queue_cgroup(_CANARY_MODE)
+    for mode, rec in live.items():
+        if mode not in by_mode:
+            by_mode[mode] = rec
+
+    unfenced = [
+        m
+        for m, rec in by_mode.items()
+        if isinstance(rec, dict) and rec.get("cgroup") == "cron.service"
+    ]
+    return {
+        "fenced_units_memory_snapshot": units,
+        "scan_last_cgroup_by_mode": by_mode,
+        "unfenced_scan_modes": unfenced,
+        "canary_mode": _CANARY_MODE,
+    }
+
+
 def _traffic(ok: bool, warn: bool = False) -> str:
     if ok:
         return "🟢"
@@ -431,6 +608,73 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
     else:
         problem.append({"id": "tg", "title": "텔레그램 리포트봇", "plain": "토큰/채팅방 설정 확인 필요"})
 
+    fence = snap.get("fence") if isinstance(snap.get("fence"), dict) else {}
+    units = fence.get("fenced_units_memory_snapshot") if isinstance(fence, dict) else None
+    if not isinstance(units, dict) or not units or units.get("error"):
+        missing.append(
+            {
+                "id": "fence",
+                "title": "메모리 울타리",
+                "plain": "아직 확인 못 함 (systemctl unavailable)",
+            }
+        )
+    else:
+        inf = []
+        for uname in (
+            "dante-bitget-factory",
+            "dante-bitget-ws",
+            "dante-bitget-async",
+            "dante-bitget-queue-worker",
+        ):
+            rec = units.get(uname) or {}
+            mx = str(rec.get("MemoryMax") or "")
+            if rec.get("source") == "unavailable" or mx in ("", "infinity"):
+                inf.append(uname.replace("dante-bitget-", ""))
+        if inf:
+            problem.append(
+                {
+                    "id": "fence",
+                    "title": "메모리 울타리",
+                    "plain": "상한 없음/조회실패 · " + ",".join(inf),
+                }
+            )
+        else:
+            working.append(
+                {
+                    "id": "fence",
+                    "title": "메모리 울타리",
+                    "plain": "factory/ws/async/queue-worker 상한 켜짐",
+                }
+            )
+    unfenced = list(fence.get("unfenced_scan_modes") or []) if isinstance(fence, dict) else []
+    if unfenced:
+        problem.append(
+            {
+                "id": "fence_cron",
+                "title": "크론 울타리 밖 스캔",
+                "plain": "cron.service에서 도는 스캔: " + ",".join(unfenced),
+            }
+        )
+    elif isinstance(fence, dict) and fence.get("scan_last_cgroup_by_mode"):
+        canary = (fence.get("scan_last_cgroup_by_mode") or {}).get("scan_futures_ema5_r2") or {}
+        cg = canary.get("cgroup")
+        if cg == "queue-worker":
+            working.append(
+                {
+                    "id": "fence_cron",
+                    "title": "크론 울타리 밖 스캔",
+                    "plain": "canary(ema5_r2)는 큐 워커 울타리 안",
+                }
+            )
+        elif canary.get("source") == "unavailable":
+            missing.append(
+                {
+                    "id": "fence_cron",
+                    "title": "크론 울타리 밖 스캔",
+                    "plain": "canary 최근 cgroup 아직 없음 (unavailable)",
+                }
+            )
+
     # weekly 01b rows (optional)
     n01b = _count_recent_ops_event("gmm_dna_alpha_report_weekly", days=14)
     if n01b is None:
@@ -516,6 +760,8 @@ def build_kid_dashboard(snap: Dict[str, Any]) -> Dict[str, Any]:
         "r01b",
         "short_funnel",
         "predicted_sector",
+        "fence",
+        "fence_cron",
     }
     done_n = sum(1 for x in working if x["id"] in now_ids_ok)
     need_n = done_n + sum(1 for x in problem if x["id"] in now_ids_ok) + sum(
@@ -709,6 +955,26 @@ def compute_post_deploy_obs_digest(
         payload_ls = {"last_error": str(_ls_exc)[:160], "LONG": {}, "SHORT": {}}
 
     probes = _server_ops_probes() if include_server_probes else {}
+    if include_server_probes:
+        try:
+            fence = collect_fence_snapshot()
+        except Exception as _fence_exc:
+            fence = {
+                "fenced_units_memory_snapshot": None,
+                "scan_last_cgroup_by_mode": None,
+                "unfenced_scan_modes": [],
+                "canary_mode": _CANARY_MODE,
+                "source": "unavailable",
+                "detail": str(_fence_exc)[:200],
+            }
+    else:
+        fence = {
+            "fenced_units_memory_snapshot": None,
+            "scan_last_cgroup_by_mode": None,
+            "unfenced_scan_modes": [],
+            "canary_mode": _CANARY_MODE,
+            "source": "skipped",
+        }
     now_kst = datetime.now(_KST)
     payload = {
         "digest_id": "BITGET_POST_DEPLOY_OBS_DAILY",
@@ -717,6 +983,7 @@ def compute_post_deploy_obs_digest(
         "window_days": int(window_days),
         "checks": checks,
         "server_ops": probes,
+        "fence": fence,
         "gmm_report_slice": {
             "cos_eff_sample_count": cos_n,
             "cos_eff_zero_ratio": zero_ratio,
@@ -924,6 +1191,16 @@ def format_numbers_html(snap: Dict[str, Any]) -> str:
                     f"last_error={_esc(diag.get('last_error'))}"
                 ),
             ]
+        )
+    fence = snap.get("fence") if isinstance(snap.get("fence"), dict) else {}
+    if fence:
+        lines.append(
+            f"fence canary={_esc(fence.get('canary_mode'))} "
+            f"unfenced={_esc(fence.get('unfenced_scan_modes'))}"
+        )
+        lines.append(f"scan_last_cgroup_by_mode={_esc(fence.get('scan_last_cgroup_by_mode'))}")
+        lines.append(
+            f"fenced_units_memory_snapshot={_esc(fence.get('fenced_units_memory_snapshot'))}"
         )
     return "\n".join(lines)
 

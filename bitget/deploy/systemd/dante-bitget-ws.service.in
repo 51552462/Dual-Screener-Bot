@@ -13,6 +13,8 @@ EnvironmentFile=-@@INSTALL_ROOT@@/bitget/.env
 ExecStart=/bin/bash @@INSTALL_ROOT@@/bitget/deploy/entrypoints/run_bitget_ws.sh
 Restart=on-failure
 RestartSec=5
+MemoryHigh=200M
+MemoryMax=256M
 StandardOutput=journal
 StandardError=journal
 

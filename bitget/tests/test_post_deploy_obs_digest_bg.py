@@ -164,6 +164,67 @@ class TestPostDeployObsDigest:
         assert payload["checks"]["dna_rank"]["diagnosis"]["state"] == "DATA_WAIT_LOW_MFE"
 
 
+class TestFenceL4:
+    def test_classify_cgroup(self):
+        assert bg._classify_cgroup("0::/system.slice/cron.service") == "cron.service"
+        assert (
+            bg._classify_cgroup("0::/system.slice/dante-bitget-queue-worker.service")
+            == "queue-worker"
+        )
+        assert (
+            bg._classify_cgroup("0::/system.slice/dante-bitget-factory.service") == "factory"
+        )
+        assert bg._classify_cgroup("") is None
+
+    def test_kid_dashboard_unfenced_cron_is_problem(self):
+        snap = {
+            "checks": {
+                "forward_book": {"ok": True, "closed_total": 1, "open_total": 0},
+                "cos_eff": {"ok": True, "warn": False, "sample_count": 2},
+                "dna_rank": {"ok": True, "diagnosis": {"state": "RANK_OK", "plain": "ok"}},
+            },
+            "server_ops": {},
+            "fence": {
+                "fenced_units_memory_snapshot": {
+                    "dante-bitget-factory": {
+                        "MemoryMax": "1610612736",
+                        "MemoryHigh": "1288490188",
+                        "source": "systemctl",
+                    },
+                    "dante-bitget-ws": {
+                        "MemoryMax": "268435456",
+                        "MemoryHigh": "209715200",
+                        "source": "systemctl",
+                    },
+                    "dante-bitget-async": {
+                        "MemoryMax": "134217728",
+                        "MemoryHigh": "104857600",
+                        "source": "systemctl",
+                    },
+                    "dante-bitget-queue-worker": {
+                        "MemoryMax": "2147483648",
+                        "MemoryHigh": "1610612736",
+                        "source": "systemctl",
+                    },
+                },
+                "scan_last_cgroup_by_mode": {
+                    "scan_futures_ema5_r2": {
+                        "cgroup": "cron.service",
+                        "source": "live_proc",
+                    }
+                },
+                "unfenced_scan_modes": ["scan_futures_ema5_r2"],
+                "canary_mode": "scan_futures_ema5_r2",
+            },
+        }
+        dash = bg.build_kid_dashboard(snap)
+        ids = [x["id"] for x in dash["problem"]]
+        assert "fence_cron" in ids
+        html = bg.format_numbers_html({**snap, "overall_light": "🔴"})
+        assert "scan_last_cgroup_by_mode" in html
+        assert "cron.service" in html
+
+
 class TestDnaDiagnosisUx01:
     def test_rank_ok(self):
         cfg = {

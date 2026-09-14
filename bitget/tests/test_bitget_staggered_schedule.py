@@ -101,6 +101,20 @@ class TestBitgetStaggeredSchedule(unittest.TestCase):
             msg=proc.stderr or proc.stdout or "cron template drift",
         )
 
+    def test_l3b_canary_enqueue_only_ema5_r2(self):
+        import importlib.util
+
+        gen = _REPO / "bitget" / "deploy" / "generate_bitget_crontab.py"
+        spec = importlib.util.spec_from_file_location("gen_bitget_crontab", gen)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        text = mod.render_bitget_crontab("/home/ubuntu/dante_bots/Dual-Screener-Bot")
+        self.assertIn("bitget.sh --enqueue --scan-futures-ema5-r2", text)
+        self.assertNotIn("bitget.sh --enqueue --scan-spot-ema5-r2", text)
+        self.assertEqual(text.count("bitget.sh --enqueue "), 1)
+        self.assertIn("bitget.sh --scan-futures-ema5\n", text)
+
 
 if __name__ == "__main__":
     unittest.main()

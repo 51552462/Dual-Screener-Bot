@@ -1,9 +1,323 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-08-23  
-> **유형**: **UNIVERSE-BT-U0** 구현 완료 · **WAIT_CLAUDE_OK** (전문은 `CURSOR_TO_CLAUDE.md` 미러)
+> **갱신**: 2026-09-15 00:41 KST · **1800초 Claude 검증 OK** · 다음=09-15 15:07 UTC 4종
 
-> SSOT OUTBOX 상단: `CURSOR_TO_CLAUDE.md` — 본 파일은 누적 이력용. 최신 Ask/검증은 **CURSOR_TO_CLAUDE.md** 우선.
+---
+
+## OUTBOX — 1800초 계산 검증 접수 (코드/서버 변경 없음)
+
+Claude: 744×2=1488, 1800≈실측 최대×2.4 · 상한 미초과 · drop-in 경로 OK · 09-05~08 락 제외 OK.
+L-3b **아직 Done 아님.** 트리거: 내일 4종 전부 정상 → Done 선언 + 3번 전체전환 논의.
+락 미해제 후속은 지금 안 막음.
+
+---
+
+## OUTBOX — L-3b-fix 실측 + 적용 (로직 미변경)
+
+---
+
+## OUTBOX — L-3b-fix 실측 + 적용 (로직 미변경)
+
+**실측 (cron 시절 stamped log, 시작~끝 있는 최근 4일)**
+
+| 날짜 | 시작 | 끝 | 초 |
+|------|------|-----|-----|
+| 09-09 | 15:07:02 | 15:19:26 | 744 |
+| 09-10 | 15:07:03 | 15:19:20 | 737 |
+| 09-11 | 15:07:03 | 15:19:18 | 735 |
+| 09-12 | 15:07:02 | 15:19:16 | 734 |
+
+≈ **12.3분**. journalctl cron/factory grep는 비어 스탬프 로그 사용.
+1회차 하한 15:07:03–15:20:59 = 13분+ (미완료).
+09-05~08의 7200s는 lock-until-shutdown이라 **소요시간으로 안 씀**.
+
+**확정값:** 12.3분 × 2 ≈ 25분 → Handoff 여유 예시 따라 **BITGET_QUEUE_WORKER_STALE_SEC=1800** (50분 상한 안 넘김). 기본 600이 1회차 킬 원인과 일치(15분째 watchdog).
+
+**적용:** repo `.env` APPEND `=1800` · watchdog drop-in `queue-stale.conf` · `restart dante-bitget-queue-worker` → **active**.
+워치독은 cron/timer가 `.env`를 source — 다음 */5부터 1800 적용.
+
+**09-15 15:07 UTC 아직 남음.** 그때 start→done + MemoryCurrent 샘플 + watchdog restart 0 + OOM 0.
+
+---
+
+## OUTBOX — L-3b run1 완료 여부 (원문)
+
+---
+
+## OUTBOX — L-3b run1 완료 여부 (원문)
+
+캡처: 15:22–15:23 UTC. **done / FAILED / attempt=2/3 로그 없음.**
+
+```
+Sep 14 15:07:03 ... [INFO] queue exec start id=1 engine=BITGET mode=scan_futures_ema5_r2 prio=5 attempt=1/3
+Sep 14 15:20:59 ... [INFO] bitget_artifact_guard: ... healed: True
+Sep 14 15:22:17 ... Starting Bitget heartbeat watchdog
+Sep 14 15:22:18 ... sudo ubuntu : COMMAND=/usr/bin/systemctl restart dante-bitget-queue-worker
+Sep 14 15:22:18 ... Stopping Bitget task queue worker
+Sep 14 15:22:18 ... [WARNING] bitget lock signal 15 — releasing .../.bitget_runtime.lock
+Sep 14 15:23:05 ... Main process exited, code=exited, status=143
+Sep 14 15:23:05 ... Failed with result 'exit-code'
+Sep 14 15:23:05 ... Started Bitget task queue worker
+Sep 14 15:23:06 ... [INFO] queue worker started
+```
+
+`journalctl ... | grep id=1|scan_futures_ema5_r2` 해당분은 **start 한 줄뿐**. 재시작 후 재픽업 로그 없음.
+
+MemoryCurrent 샘플 (피크 확정 아님):
+- 15:12 UTC ~91MB (95539200)
+- 15:22 UTC ~133MB (139001856) ← 관측 최고
+- 15:23 UTC restart 후 ~91MB (95481856)
+
+1회차 판정: **끝까지 정상 종료 아님.** claim/start 성공 후 ~15분에 watchdog가 queue-worker를 restart → SIGTERM/143. 워커 코드의 완료 로그(`queue exec start` 짝) 없음.
+
+Ask: L-3b 관찰 중 watchdog(5분 크론)이 RUNNING 잡을 끊는 건지 확인. 코드 수정은 이번 세션 안 함. 09-15 2회차도 같은 패턴이면 Done 불가.
+
+---
+
+## OUTBOX — L-3b run1 (09-14 15:07 UTC 슬롯) · 원문
+
+---
+
+## OUTBOX — L-3b run1 (09-14 15:07 UTC 슬롯) · 원문
+
+캡처 시각: **2026-09-14 15:12:57 UTC** (슬롯 +6분). **1회만으로 됐다 금지.**
+
+로그 키워드는 `claim`이 아니라 **`queue exec start`**.
+
+```
+===== 1 journalctl =====
+Sep 14 15:07:03 ip-172-26-7-213 bash[1938]: [2026-09-15 00:07:03] [INFO] queue exec start id=1 engine=BITGET mode=scan_futures_ema5_r2 prio=5 attempt=1/3
+===== 2 dmesg =====
+NO_DMESG_KILLED
+===== 3 MemoryCurrent =====
+MemoryCurrent=95539200
+===== crontab =====
+7 15 * * *  .../bitget.sh --enqueue --scan-futures-ema5-r2
+```
+
+해석: enqueue→워커 픽업 **확인**. **done 아직 없음**(스캔 진행 중). OOM killed 0. Current≈91MB. run2=09-15 15:07 UTC 이후 동일 3종.
+
+---
+
+## OUTBOX — 2026-09-14 · L-3a Claude OK 접수 · L-3b 정정
+
+**L-3a:** Cursor 구현 ✅ · 서버 적용 확인 ✅(원문 2건) · **Claude OK 2026-09-14**. 05 기록함.
+**L-3b:** 적용됨. **Done 아님.** `NO_OOM_SINCE_APPLY`는 첫 슬롯 전이라 증거 아님.
+Done 기준: **09-14 및 09-15 15:07 UTC 이후** 3종 캡처 2회분. 1회만으로 됐다 금지.
+전체 큐 전환: 보류. 에스컬레이션 해제.
+
+3종 (슬롯 지난 뒤):
+```
+journalctl -u dante-bitget-queue-worker --since "2026-09-14 15:00 UTC" | grep -iE "claim|done|scan_futures_ema5_r2"
+dmesg -T --since "2026-09-13 15:39 UTC" | grep -i killed
+systemctl show dante-bitget-queue-worker -p MemoryCurrent
+```
+run2는 since를 09-15 15:00 UTC 로.
+
+---
+
+## 디렉터 → Claude Pro 붙여넣기 (이 블록만)
+
+```
+---CLAUDE---
+[CAT-L] L-3a/L-3b 서버 적용 결과 원문. 디렉터는 SSH 안 함. Cursor 캡처.
+
+요청: L-3a는 값 확인되면 바로 OK. L-3b는 "일단 적용됨"만 확인(24~48h Done 아님). 전체 큐 전환은 범위 밖.
+
+queue-worker: 적용 전 실측 MemoryMax=2G 있었음 → 「없으면 896M」미해당. High=1.5G / Max=2G 유지.
+
+## L-3a systemctl show 원문 (적용 직후 2026-09-13 15:39 UTC)
+
+===== SHOW factory =====
+MemoryCurrent=192512
+MemoryHigh=1288490188
+MemoryMax=1610612736
+===== SHOW ws =====
+MemoryCurrent=3289088
+MemoryHigh=209715200
+MemoryMax=268435456
+===== SHOW async =====
+MemoryCurrent=3121152
+MemoryHigh=104857600
+MemoryMax=134217728
+===== SHOW queue-worker =====
+MemoryCurrent=1867776
+MemoryHigh=1610612736
+MemoryMax=2147483648
+
+## L-3a 재캡처 (2026-09-14 14:13 UTC, restart 없음)
+
+factory      MemoryCurrent=124411904 MemoryHigh=1288490188 MemoryMax=1610612736  active
+ws           MemoryCurrent=26292224  MemoryHigh=209715200  MemoryMax=268435456   active
+async        MemoryCurrent=55189504  MemoryHigh=104857600  MemoryMax=134217728   active
+queue-worker MemoryCurrent=95465472  MemoryHigh=1610612736 MemoryMax=2147483648  active
+
+바이트 환산: factory High=1.2G Max=1.5G · ws High=200M Max=256M · async High=100M Max=128M · queue High=1.5G Max=2G
+
+## L-3b 적용 원문 (Done 아님)
+
+crontab:
+7 15 * * *  ubuntu  .../bitget.sh --enqueue --scan-futures-ema5-r2
+
+queue-worker: Started 2026-09-13 15:39:47 UTC · "queue worker started"
+적용 이후 커널: NO_OOM_SINCE_APPLY
+canary 슬롯 UTC 15:07 — 재캡처 시각 14:13 UTC 기준 첫 enqueue 미도래.
+24~48h 3종(claim→done / dmesg killed 0 / MemoryCurrent 피크)은 첫 슬롯 이후 재수집.
+
+금지: C-2 / MDD5% / live / ENABLE_REAL_EXECUTION
+---CLAUDE---
+```
+
+파일 SSOT: 본 파일 상단. 인덱스: `CURSOR_TO_CLAUDE.md`
+
+---
+
+> 아래는 이전 누적.
+
+---
+
+## OUTBOX — 2026-09-14 23:13 KST · 1번 승인 반영 (재적용 없음)
+
+디렉터 확정: L-3a 승인 · L-3b A안 · 전체 큐(L-3) 보류.
+서버에 **어제 이미 달아 둠**. 896M로 줄이지 않음. 서비스 restart 안 함.
+
+### L-3a 원문 재캡처 (now)
+
+```
+factory      MemoryCurrent=124411904 MemoryHigh=1288490188 MemoryMax=1610612736  active
+ws           MemoryCurrent=26292224  MemoryHigh=209715200  MemoryMax=268435456   active
+async        MemoryCurrent=55189504  MemoryHigh=104857600  MemoryMax=134217728   active
+queue-worker MemoryCurrent=95465472  MemoryHigh=1610612736 MemoryMax=2147483648  active
+```
+
+### L-3b
+
+crontab: `--enqueue --scan-futures-ema5-r2` 유지.
+적용 이후 OOM: `NO_OOM_SINCE_APPLY`.
+queue-worker 기동 로그 OK. **canary 슬롯 UTC 15:07은 오늘 14:13 UTC 기준 아직 미도래** → claim→done 완료 조건은 내일 이후.
+
+---
+
+> 아래는 이전 누적.
+
+---
+
+## OUTBOX — 2026-09-14 · CAT-L-FENCE-01 구현
+
+**Ask:** Handoff 스펙 일치 OK 여부. L-1/L-2 에스컬레이션 취소 수용.
+
+**엔지니어 분기:** queue-worker Max **2G 유지** + High=1.5G (「없으면 896M」는 해당 없음).
+
+### L-3a 원문 (`ubuntu@43.202.40.136`)
+
+```
+===== SHOW factory =====
+MemoryCurrent=192512
+MemoryHigh=1288490188
+MemoryMax=1610612736
+===== SHOW ws =====
+MemoryCurrent=3289088
+MemoryHigh=209715200
+MemoryMax=268435456
+===== SHOW async =====
+MemoryCurrent=3121152
+MemoryHigh=104857600
+MemoryMax=134217728
+===== SHOW queue-worker =====
+MemoryCurrent=1867776
+MemoryHigh=1610612736
+MemoryMax=2147483648
+```
+
+(재시작 직후 Current는 작음. 피크는 L-3b 관찰.)
+
+### L-3b
+
+서버 crontab 1줄:
+`bitget.sh --enqueue --scan-futures-ema5-r2` (UTC 15:07)
+다른 scan_* 는 inline 유지.
+**24–48h 잔여:** queue-worker claim→done · `dmesg -T | grep -i killed` 0 · queue MemoryCurrent 피크.
+
+### L-4
+
+`post_deploy_obs_digest_bg.py`: `scan_last_cgroup_by_mode` · `fenced_units_memory_snapshot` · 실패 null+unavailable.
+테스트: `test_post_deploy_obs_digest_bg.py` + `test_bitget_staggered_schedule.py` **24 passed**.
+**서버 git pull 전엔 일일 텔레그램에 필드 없음.**
+
+**금지 준수:** gates / live / C-2 / MDD5% / ENABLE_REAL_EXECUTION / daily_audit 비접촉.
+
+---
+
+> 아래는 이전 누적.
+
+---
+
+## OUTBOX — 2026-09-14 · CAT-L 진단 확정 (코드 없음)
+
+**SSH:** `ubuntu@43.202.40.136` (Stop/Start 후 IP 변경). host `ip-172-26-7-213`.
+
+**오늘 죽음:** 커널 패닉/디스크 풀 아님. 직전 부트 08-17~09-13 14:56 UTC **정상 poweroff**(Lightsail Stop). 그날 저널 OOM/`No space` 없음.
+
+**원인 하나로 좁힘 (재발 구멍):** factory `MemoryMax=1.5G`는 유닛 템플릿에 있음. 그러나 **cron 스캔은 `cron.service` cgroup**이라 그 상한이 안 먹음. 09-07 08:44 UTC `global_oom`이 cron python(RSS≈897M)을 죽임. 지금(리부트 직후)도 auto_pilot(factory) + `scan_futures_ema5_r2`(cron) 동시. crontab 스캔은 **inline**, `--enqueue` 없음.
+
+**기각:** L-1/L-2 미설치 — logrotate `bitget-dante` Aug 2 존재 · journal-vacuum/backup.timer enabled+active · logs 108K · df 38%.
+
+**drop-in:** `dante-bitget-factory.service.d` **없음**. ws/async `MemoryMax=infinity`.
+
+### 요청 Handoff (구현은 그 후)
+
+1. HIST_10 §2.4 MemoryHigh+MemoryMax drop-in (factory + ws + async) + `systemctl show` 원문 캡처를 종료 조건으로
+2. cron 스캔을 factory cgroup 또는 `--enqueue`/큐 워커로 넣는 최소 경로 (b-2 canary vs 전면 b-3 — 디렉터 선택)
+3. Layer2 digest 3필드 — L-1/L-2는 이미 켜져 있으니 **MemoryMax+cron cgroup**이 🔴 칸이 되게
+
+Layer3 증설(8GB/160GB): 디스크 38%라 급하지 않음. RAM 4G는 cron 겹침이 남으면 여전히 위험 → 디렉터 판단.
+
+C-2/MDD5%/live/`ENABLE_REAL_EXECUTION` 금지. 거래 경로 비접촉.
+
+### Ask 디렉터 (절대규칙 12, 유지)
+
+CAT-L 종료 = 서버 명령 **원문 캡처** 필수. 이번이 그 예시.
+
+---
+
+> 아래는 이전 누적.
+
+---
+
+## OUTBOX — 2026-09-14 · CAT-L 크래시 진단 (코드 없음)
+
+**한 줄:** 서버가 왜 죽었는지 지금 확인 중. 로그/메모리 안전장치는 설계는 됐는데 서버에 켜졌는지 확인이 빠졌던 게 유력 원인.
+
+**로컬에서 한 일:** SSOT 대조만. `ssh ubuntu@15.165.236.69` **Connection timed out**. 6블록 원문 **없음**. restart 안 함.
+
+**기록 대조 (체크박스 아님):**
+- L-1/L-2: 08-02 Claude OK · `05` 잔여 = 08-17 서버 install 미확인 (08-28까지 체크 안 닫힘)
+- MemoryMax drop-in: `00` **미설치 가능** (유닛 템플릿 `factory`는 `MemoryMax=1.5G` — **실측 show 없음**)
+- HIST_13 2026-07-04: 로그 무제한 = 1년 방치 시 가장 확실한 서버 파괴 요인
+- digest 08-17~19: L-1 ok / L-2 timer later active / overseer running **한 번** — 설치 스크립트 캡처 아님. L-2 `python: command not found`. 08-19 digest overseer `exit=1` 불일치
+- cron→큐 b-2/b-3: `infra_next_steps_a_b_plan.md` 운영자 전환 대기 (기본 off) — **후보 2, 미확정**
+
+**금지 준수:** 거래 경로 미수정 · 원인 없이 restart 안 함 · Layer2 digest 필드 선코딩 안 함.
+
+### Ask 1 — 디렉터 (절대규칙 12)
+
+CAT-L은 앞으로 Cursor「구현 완료」만으로 `05` 종료하지 말고, **서버 명령 원문 캡처가 붙어야 종료**로 인정할지 **지금 확정**해 주세요.
+
+### Ask 2 — Claude (6블록 온 뒤에만 Handoff)
+
+지금은 Handoff 확정 금지. 원문 오면 원인 1개로 좁혀 `CLAUDE_TO_CURSOR.md` prepend:
+- Layer1: 기존 `install_bitget_logrotate.sh` / `install_bitget_backup.sh` / HIST_10 §2.4 drop-in **설치 + is-enabled/is-active 원문**
+- Layer2: digest read-only 3필드 (`logrotate_installed` / `backup_timer_active` / `memorymax_configured`) — 거래 비접촉
+- Layer3 증설(8GB/160GB): 디렉터 비용 판단 · Claude/Cursor 임의 결정 금지
+
+C-2 / MDD5% / live / `ENABLE_REAL_EXECUTION` 금지.
+
+---
+
+> 아래는 이전 누적 이력.
+
+> **갱신(이전)**: 2026-08-23  
+> **유형**: **UNIVERSE-BT-U0** 구현 완료 · **WAIT_CLAUDE_OK** (전문은 `CURSOR_TO_CLAUDE.md` 미러)
 
 ---
 
