@@ -3,7 +3,493 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-12 · 라이브 리플레이 **HOLD** · 앵커 `SYNC-2026-09-12-REPLAY-HOLD`
+> **갱신**: 2026-09-19 · FO-01 A **Claude OK** · 배포 · 앵커 `SYNC-2026-09-19-GATE-FO-A-OK`
+
+---
+
+## OUTBOX — SWALLOW-GATE-FO-01 A · Claude OK · 배포 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **Claude OK: 2026-09-19** |
+| **배포** | 커밋·푸시 → `sudo bash ./update_factory.sh` |
+| **관측** | `entry_gate.meta_global_fail_open` ERROR + payload code |
+| **다음** | ERROR 확인 **즉시** `SWALLOW-GATE-FO-02` Handoff. 구현 선착수 금지 |
+
+---
+
+## OUTBOX — SWALLOW-GATE-FO-01 A · 로그만 착수 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터 Go (채팅 spec = NAV-HOOK-SILENTFAIL-01 패턴). INBOX 파일은 코사인 RO 잔존 — **이번 spec은 채팅 Go** |
+| **status** | A **구현 완료** · Claude OK 대기 · **진짜 막힘 = B 후** |
+| **금지 준수** | 2641 지연 import **미삭제** · fail-open 유지 · KILL/DEFENSE/LOCKDOWN 무접촉 |
+
+### diff
+
+- `forward/shared.py`: `logger = logging.getLogger(__name__)` · `_observe_entry_gate_fail_open` · 1825/1848 except에서 print 유지 후 ERROR + `ops_event`
+- payload: market, **code**, name, trade_source, sig_type, exc_type, exc_msg
+- event: `entry_gate.meta_global_fail_open` / `entry_gate.toxic_fade_fail_open`
+- `tests/test_entry_gate_fail_open_observe_a.py` · unittest **4** (본 2 + scope 회귀 2) OK
+
+다음 배포 후 확인: factory log `entry gate fail-open event=entry_gate.meta_global_fail_open` + ops `forward.shared` / 위 event. code가 찍혀야 함.
+
+### 백로그 B (미루지 않음 · 지금 착수 금지)
+
+**SWALLOW-GATE-FO-02**: `try_add` 2641–2644 `from meta_governor_consumer import load_meta_state_resolved` 삭제, 모듈 상단 import만. 테스트에 해당 이름 지연 import 금지. **A 배포 후 발동 ERROR 확인되면 바로 다음 세션 Handoff.** fail-open except는 B에서도 당장 안 뒤집음(별 논의).
+
+큐: EOD 776 은 B 다음 또는 병렬 창. 이번 창 아님.
+
+디렉터 → Claude: A spec 일치 검증. OK면 배포 후 로그 확인 → **즉시 FO-02 Handoff**.
+
+---
+
+## OUTBOX — SWALLOW-GATE-FO-01 · 게이트 fail-open 1825/1848 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터 Go. 1순위=게이트 fail-open. **코드 0** (로그 제안만) |
+| **status** | RO 완료 · **WAIT_CLAUDE_HANDOFF** (로그 전용, NAV-HOOK-SILENTFAIL-01 패턴) |
+| **다음 큐** | 2) ledger 776 EOD · 3) CB/좀비 · 4) 켈리 탄성 |
+
+### 결론 한 줄
+
+1825는 “가끔 예외”가 아니다. **매 진입마다** `UnboundLocalError: load_meta_state_resolved` 로 조기 게이트가 스킵된다. VPS 7/25 조사창이 아니라 **8/25–9/18 `factory_*.log` 1965건, 예외 문구 100% 동일**. 9cbc169가 `load_system_config` 만 고치고 **같은 함수 안의 `load_meta_state_resolved` 지연 import(2641행)는 남긴 결과**다.
+
+1848(톡식) 스킵 로그는 **0**. 지금 발동 증거 없음. 그래도 구조는 fail-open.
+
+통과된 “막혔어야 할 거래” 목록은 **재구성 불가**: skip print에 market/code가 없고, 조기 게이트는 `blocked_trade_history`에 한 번도 안 남김.
+
+### 1) 과거 흔적 (grep)
+
+| 문자열 | 7–9월 factory log | 의미 |
+|--------|-------------------|------|
+| `[MetaGovernor/Treasury 게이트] 스킵(중립 진행)` | **1965** (75파일) | **1825 발동 CONFIRMED** |
+| 그중 UnboundLocal `load_meta_state_resolved` | **1965/1965** | 다른 예외 없음 |
+| 기간 | 첫 `20260825` KR 단테 · 끝 `20260918` US ema5 r2 | 8월 882 / 9월 1083 |
+| `[톡식 역배팅] 브릿지 스킵` | **0** | 1848 미발동 |
+| `[톡식 역배팅] 롱 거부` / toxic_fade LIVE·SHADOW | **0** | 톡식 매치 자체 휴면 |
+| `[성과예산 거버너] 게이트 스킵` | **0** | LOCKDOWN fail-open print는 안 탐 |
+| `MDD 예산 90%` 차단 메시지 | **737** | 1800 **앞** LOCKDOWN은 정상 차단 |
+| `[Treasury 그룹 게이트] 스킵` | **0** | 2915 fail-open print 없음 |
+| ops_events gate/toxic | **0** | 구조화 카운터 없음 |
+| `blocked_trade_history` | TREASURY_GROUP_ZERO **914** · TOXIC_ANTI_PATTERN 2 | **KILL_SWITCH / TREASURY_DEFENSE / TOXIC_FADE_TARGET = 0** |
+
+그룹 게이트(2890, F-GATE/COOLED/mult=0)는 2641 지연 import **이후**라 이름이 바인딩되어 작동한다. 조기 게이트(KILL/DEFENSE/source)만 죽었다.
+
+KR 거름망·장세션 게이트는 예외 시 **차단(fail-closed)**. 대비가 됨.
+
+### 2) 로그 전용 패치 크기 (이번 로직 변경 없음)
+
+`forward/shared.py`에 logger가 **없다**. NAV 훅과 같이:
+
+- `import logging` + `logger = logging.getLogger("forward.shared")` (파일 상단 2줄)
+- 1825 except: 기존 `print` 유지 + `logger.error(..., exc_info=True)` + `insert_ops_event(component="forward.shared", event="entry_gate.meta_global_fail_open", payload={market, code, trade_source, exc_type, exc_msg})`
+- 1848 동일, event=`entry_gate.toxic_fade_fail_open`
+- **return/계속 진행은 그대로** (fail-open 유지)
+
+예상 diff: **~25–40줄**. 테스트 1개면 print/ops_event 호출 mock이면 충분. Critical 게이트 **방향 전환 아님**.
+
+같은 Handoff에 1800·2915를 넣어도 헬퍼 1개로 끝. 필수는 1825/1848.
+
+### 3) 이 게이트가 판정하는 것 (1825 ≠ 톡식 태그)
+
+**1825 `evaluate_meta_global_entry_gate`** — 종목/그룹명 없음. `trade_source` + meta 플래그:
+
+| code | 막으려는 것 |
+|------|-------------|
+| `KILL_SWITCH` | MetaGovernor 킬스위치 |
+| `TREASURY_DEFENSE` | `META_TREASURY_MODE=DEFENSE` (zeroed 그룹 수 포함) — **소진율 직접 계산 아님** |
+| `BLOCK_TRADE_SOURCE` | 국면 `block_trade_sources`에 이 source |
+| `ALLOW_TRADE_SOURCE_DENY` | allow 화이트리스트 밖 |
+
+Treasury **그룹 소진/F-GATE/COOLED** 는 여기가 아니라 **2890 `evaluate_meta_group_entry_gate`** (mult≤0 + registry state). 그 쪽은 지금 914건 차단 중.
+
+**1848 톡식** — `TOXIC_FADE_TARGETS` 키가 `sig_type`에 있으면 롱 거부 + 섹터 인버스 페이드 (`fade_long_to_inverse`). 내부는 이미 삼키고 dict 반환 → 매치만 되면 롱은 **막힘**. 1848 fail-open은 **매치 판정 자체가 예외일 때**만 롱이 통과.
+
+### 4) 위험 가늠
+
+- 1825가 죽어 있는 동안 KILL_SWITCH·DEFENSE·source 차단은 **한 번도 실행되지 않음** (blocked 0이 그 증거).
+- LOCKDOWN(성과예산)과 그룹 Treasury 0은 **별 레이어라 살아 있음**. 조기 게이트가 죽어도 전부 무력은 아님. 그래도 디렉터 말대로 “위험 판정 실패 → 통과”가 **매일 1965회** 찍힌 것은 맞다.
+- 어떤 OPEN이 KILL/DEFENSE였으면 막혔을지는 **당시 meta 플래그 시계열이 이 로그에 없음**. 추정 금지.
+
+### 5) Handoff 스코프 제안 (구현은 Claude 후)
+
+**A (지금 요청, 로그만)** 1825/1848 logger.error + ops_event. fail-open 유지.
+
+**B (별도, 작지만 로직)** 2641–2644 지연 `import load_meta_state_resolved` 삭제, 모듈 상단 import만. `tests/test_try_add_load_system_config_scope.py`에 같은 이름 금지 추가. **9cbc169 사촌.** 이게 조기 게이트를 다시 돌게 함. fail-open except는 남음.
+
+A만 하면 1965가 **ERROR로 매일 보일 뿐** 게이트는 계속 죽음. B 없이 A만 배포해도 관측은 됨.
+
+디렉터 → Claude: OUTBOX 검증 후 A Handoff (원하면 B를 같은 세션에 한 줄로). 채팅 말고 파일.
+
+---
+
+## OUTBOX — SWALLOW-CENSUS-01 · 실패 삼킴 전수(목록만) · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터: 기다리기 폐기 · 아침 leftover 11곳 + grep · **코드 0** |
+| **방법** | AST(`except Exception`/`bare` → pass/continue/return-empty) + 행 읽기 + VPS `factory_*.log` 202608–202609 (902파일) |
+| **범위** | Track A. `bitget/` 제외. 착수/수정 **없음** |
+
+### 0) 한 줄
+
+습관은 **퍼져 있다**. `forward/ledger.py` 31 · `forward/shared.py` 88 · `system_auto_pilot.py` 42 · `supernova_hunter.py` 42(침묵형) · S1 `us_5ema` 소수. 그중 **자본 경로 fail-open**이 아침 leftover보다 크다. 로그가 있는 것만 VPS에서 발동을 증명할 수 있다 — **pass-only는 발동 여부 자체가 안 남는다** (오늘의 3연과 같은 구멍).
+
+### 1) 아침 leftover 11곳 — 행 번호는 밀림. 현재 매핑
+
+아침 925–926 NAV는 이미 `logger.error`+ops_event로 바뀜. **나머지 10+`live_nav` 239**.
+
+| 아침 행 | 지금 | 무엇을 삼키나 | 자본? | VPS 발동 (8–9월) | 지금 조용히 망가뜨리나 |
+|---------|------|---------------|-------|-------------------|------------------------|
+| 63 | **51** | CB `load_system_config` 실패 → **return** (트립 평가 자체 스킵) | **P0 진입차단** | 카운터 없음 · 미확인 | load 실패면 **CB가 영원히 OFF** |
+| (같은 블록) | **66** | CB ON 저장 실패 → return (텔레그램도 안 감) | **P0** | 없음 | 손실 −5%여도 **KV에 ON 안 박힘** |
+| 99 | **103** | CB OFF 저장 실패 → return | P1 고착 | 없음 | Sticky-ON이면 진입 영구차단(반대 방향) |
+| 220 | **234** | fluid anchor `save_system_config` 실패 | P2 세션 | 없음 | 휴장 앵커 미저장 · 당일 track은 진행 |
+| 349 | **363** | 거래정지 좀비 강제청산 UPDATE · **bare except: pass** | **P0 청산** | 없음 | 30일+ 정지 종목이 **OPEN에 남을 수 있음** |
+| 466 | **480** | climax `runner_defense_loss_pct` 로드 실패 → 기본 −1.5 | P2 청산파라미터 | 없음 | 설정 무시하고 기본 임계 |
+| 705 | **719** | 러너 유예 태그 UPDATE 실패 | 리포트/태그 | 없음 | 청산 유예는 유지 · 태그만 유실 |
+| 762 | **776** | **BEAR EOD 강제청산** 전체 try · **pass · 로그 0** | **P0 청산** | **증명 불가** | 예외 나면 오버나이트 탈출 **안 탐** |
+| 841 | **861** | overdrive 청산 태그 빌드 실패 | 리포트 | 없음 | 청산 자체는 진행 |
+| 971 | **977** | NAV 훅 **이후** ops_event 기록 실패 (`debug`+pass) | 관측 | NAV 본문은 아래 | 훅 실패가 ops에 안 남음 |
+| 1078 | **1078** | 종목 1행 track 예외 → skip (`logger.warning`) | **P0 청산/갱신** | **0건** (8–9월) | 지금은 안 터지는 것으로 보임. 터지면 **그날 그 포지션 청산·MFE 스킵** |
+| — | `live_nav` **239** | `kelly_elasticity_overlay` 실패 → **pass** (켈리 그대로) | **P0 사이징** | 없음 | 탄성 오버레이 **영구 미적용**처럼 보임 |
+| (덤) | `live_nav` **207** | config 로드 실패 → `cfg={}` → DEFAULT 켈리 | **P0 사이징** | 없음 | 메타 배수 무시 |
+
+**이미 판 1곳 (참고)**: NAV 훅 **949** — 지금은 로그. VPS `Live NAV sync failed` **24건**(8–9월). 장부는 닫히고 NAV만 어긋남. **고친 게 아니라 보이게만 함.**
+
+CB 텔레그램 77/113 `pass` = 알림만. 자본 아님.
+
+### 2) grep/AST 목록 — 자본 vs 리포트
+
+스키마 `ALTER TABLE` bare except (`shared.py` 706–776 근처, ~20곳) = **마이그레이션 · 위험 낮음**. 아래는 그것 제외.
+
+#### P0 · 자본(진입/청산/사이징/승격) · 다음 조사 우선
+
+| ID | 파일:행 | 패턴 | 삼키는 것 | 실패 시 동작 | 발동 증거 |
+|----|---------|------|-----------|--------------|-----------|
+| C-01 | `hunter` **2889** | catch-all → `DATA_FAIL` | 아무 Exception (NA ambiguous 포함) | 퍼널이 **데이터 부족처럼** | **CONFIRMED** `process_live_ticker failed` **368,845** |
+| C-02 | `hunter` **1360** | 빈 config 계속 | `load_config` 실패 | 컷오프/플래그 기본값 스캔 | 8–9월 해당 워닝 **0** (지금은 load 성공) |
+| C-03 | `hunter` **1897–1899** | except continue | US yf 선로드 실패 | 종목 패널 누락 → 이후 DATA | 카운터 없음. DATA 폭과 정합 |
+| C-04 | `shared` **1825** | print 후 **진입 계속** | MetaGovernor/Treasury 게이트 예외 | **게이트 스킵 = fail-open** | 로그 문자열은 있으나 이번 카운트 안 함 |
+| C-05 | `shared` **1848** | print 후 **롱 진행** | 톡식 페이드 브릿지 예외 | 역배팅 스킵 = fail-open 롱 | 미집계 |
+| C-06 | `shared` **2736** | pass | Thompson Kelly 샘플 | 켈리 배수 미적용(1.0) | 없음 |
+| C-07 | `shared` **2747** | pass | `allow_prebuy_advantage_boost` | `_prebuy_adv_ok` **초기 True 유지** → 가산 **fail-open** | 없음 |
+| C-08 | `ledger` **776** | pass | EOD 강제청산 | 위 leftover | 없음 |
+| C-09 | `ledger` **51/66/363** | return/pass | CB·좀비청산 | 위 leftover | 없음 |
+| C-10 | `live_nav` **239/207** | pass/`{}` | 탄성 켈리·config | 위 leftover | 없음 |
+| C-11 | `auto_pilot` **700** | pass | `apply_meta_weight_bounds_clamp` | S1/S4 비중 **클램프 없이 저장** | 없음 |
+| C-12 | `us_5ema` **129** | bare return `[]` | FDR 유니버스 | S1 스캔 **0종목** | 비면 포착 0으로 보임 |
+
+#### P1 · 자본 간접 (가산 실패=축소 쪽으로 기울 수 있음)
+
+| 파일:행 | 삼킴 | 실패 시 |
+|---------|------|---------|
+| `shared` **1704** | `resolve_entry_regime` | `UNKNOWN` 폴백 |
+| `shared` **1761** | 섹터 normalize | 맵 기본 경로 |
+| `shared` **2712** | 확신도 자본폭격 | 중립 1.0x (print 있음) |
+| `shared` **2761** | 메가트렌드 언락 | 2배 가산 생략 (fail-closed 가산) |
+| `shared` **2809** | genesis 켈리 부스트 | 가산 생략 |
+| `ledger` **125–143** | 피라미드 import/NAV/노출 | 불타기 안 함 (가산 생략) |
+| `ledger` **733** | pyramid hook | **warning 있음** · 8–9월 **0** |
+
+#### P2 · 로그·리포트·텔레그램·하트비트 (자본 직접 연결 낮음)
+
+- `auto_pilot` 169 Gemini ops, 2091 ratchet RL inner pass, 리포트 skip 다수
+- `ledger` 77/113 텔레그램, 719/861 태그, 977 ops
+- `us_5ema` 116 리포트 빈문자, 594 차트 None, 828 heartbeat pass
+- `factory_pipelines` 다수 print+continue (파이프 관측)
+- `shared` 706–776 ALTER, 95/670 import 가드
+- 레거시 `nulusa`/`master`/`nulrim`/`kr.py` 등 아카이브 스캐너 — **팩토리 US S1 경로 아니면 당장 자본 아님**
+
+`hunter` 침묵형 42곳 중 다수는 헬퍼 `return None` (DNA/템플릿 로드). **2889·1360·선로드 continue**가 스캔 자본.
+
+### 3) VPS에서 “실제로 발동”이 증명된 것만
+
+| 문자열 | 8–9월 건수 | 의미 |
+|--------|------------|------|
+| `process_live_ticker failed` | **368,845** | C-01 **매일 대규모** (코사인과 동일 사건) |
+| `Live NAV sync failed` | **24** | NAV 훅 **아직 실패 중** (관측만) |
+| `scanner continues with empty config` | **0** | C-02 최근 미발동 |
+| `track_daily_positions skip` | **0** | 1078 최근 미발동 |
+| `pyramid hook skip` | **0** | |
+| fluid fallback 문구 | **0** | |
+
+**pass-only (776, 363, 51, 239, 2736, 2747, 700 …) = 발동해도 로그 0.** 발동 여부를 알려면 다음 조사에서 카운터를 넣는 Handoff가 필요 — 오늘 코드는 안 넣음.
+
+### 4) 다음 파는 순서 (권고 · 한 세션에 하나)
+
+1. **C-04/C-05** Meta/Treasury·톡식 게이트 fail-open — NAV/F-GATE와 같은 계급 (막혀야 할 진입이 통과)
+2. **C-08** EOD 776 — 하락장 오버나이트 방어가 예외에 먹힘
+3. **C-09** CB 51/66 — 트립이 저장 실패로 증발
+4. **C-10** 켈리 탄성 239
+5. **C-07** 선취매 가드 fail-open True
+6. **C-01**은 원인 확정됨 → `FUNNEL-DEAD-01` / `US-COSINE-NA-RO` Handoff로 묶기
+7. leftover 중 태그·텔레그램은 맨 뒤
+
+디렉터 → Claude: 목록 검증. **첫 Handoff는 위 1번 또는 2번만.** 전 파일 rewrite 금지.
+
+---
+
+## OUTBOX — 디렉터 확정 · 예외 삼킴 패턴 (NAV / F-GATE / 코사인) · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터 채팅 확정 + 검토자료 §5-1 (`Downloads/TrackA_구조재정렬_검토자료_20260908 (3).md`는 **참고**. 실행 SSOT는 본 폴더) |
+| **SILENT-A/B** | 원인 **확정**. 컷오프 0.50 **무죄**. S1은 영향권 밖 |
+| **오늘 코드** | **0**. NA 처리 조사는 **다음 Cursor 창** (`US-COSINE-NA-RO`) |
+| **§5 RANK_B** | n=7·+0.10%는 **7/22 이전 잔재**. NA 조사 나온 뒤 재검토. 지금 승격/폐기 금지 |
+
+### 확정 표
+
+| 층 | 확정 |
+|----|------|
+| 7/23~8/3 크래시 | 스코프 버그 실재. `9332f4d`는 실패 시 **빈 설정으로 계속** — 고친 게 아니라 조용히 넘어가게 함 |
+| 7/22~현재 | `boolean value of NA is ambiguous` → 라벨 `DATA_FAIL`. 매일 ~80% 위장 탈락. `fetch_failed=0` |
+| 잔여 ~20% | LIQ에서 거의 전량. 코사인 매칭 재료 자체가 안 들어옴 |
+| S1 | sqlite·500봉·$3·$5M. SUPERNOVA yf 2mo와 **비공유** |
+| 컷오프 0.50 | 안 건드림 |
+
+### 같은 습관 3건 (우연 반복 아님)
+
+| | 조용히 죽음 | 겉모습 |
+|--|--|--|
+| NAV 훅 | 6주 실패 | 예외 삼킴 |
+| F-GATE | 꺼져 있음 | 정상인 줄 |
+| US 코사인 | ~2개월 퍼널 0 | DATA 필터가 일한 것처럼 |
+
+다음 수정 Handoff는 **예외 삼킴이 또 있는지**를 먼저 의심. 빈 config 폴백·캐치올 `DATA_FAIL` 재사용 금지 방향으로 스코프.
+
+### 다음 창 (Go 승인 · 오늘 미실행)
+
+**US-COSINE-NA-RO**: NA 5239건 처리 방식(위장 vs 진짜 데이터 없음 vs Close 2D). 구현·컷오프 금지. 끝나면 §5 자원집중(RANK_B) 재검토.
+
+디렉터 → Claude: 확정 OUTBOX. NA 창은 `NEXT_ACTION` `WAIT_CURSOR_IMPL`.
+
+---
+
+## OUTBOX — US-COSINE-SILENT-B · DATA/LIQ 100% 원인 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터 채팅 Go (INBOX 파일 미갱신). 직전 A는 WAIT_CLAUDE_OK였으나 **조사 Go로 후속 RO 착수** |
+| **status** | 원인 확인 · **코드 0** |
+| **백로그** | `US-COSINE-FUNNEL-DEAD-01` 🔴 최우선 발견 (구현 Handoff 전 코드 금지) |
+
+### 1) 크래시 위치 · 복구가 고친 것 / 우회한 것
+
+| | |
+|--|--|
+| **에러** | `UnboundLocalError: local variable 'load_system_config' referenced before assignment` |
+| **어디** | `execute_supernova_live_scan` **함수 스코프**. 본문에서 `from config_manager import load_system_config` 를 지연 import 하면, 그 이름 전체가 지역 변수가 되어 **스캔 끝단(≈3000s)** 에서 터짐 |
+| **도입** | 2026-07-23 전후 hunter 패치 구간 (`464d1b0` 등). VPS US primary **7/23~8/3 FAIL** |
+| **스캔 수정** | `9332f4d` (2026-07-31) `_load_supernova_scan_config()` 로 격리. 현재는 모듈 `load_config()`=`load_system_config()` **sqlite 동일 SSOT** |
+| **우회 성격** | 실패 시 **빈 config로 스캔 계속** (`scanner continues with empty config`). 크래시는 안 남. **NA 예외 5239건은 7/22에도 이미 있었음** — 그걸 고친 커밋이 아님 |
+| **사촌** | `try_add_virtual_position` 동일 패턴 → KR 등재 FAIL **2026-08-24**. 수정 `9cbc169`. 테스트 `tests/test_try_add_load_system_config_scope.py` |
+
+복구 전후 **컷오프/LIQ 달러 플로어 config 키는 원래 없었음.** `DYNAMIC_SUPERNOVA_CUTOFF`·`DNA_SUPERNOVA_US_MULTI` 스냅샷 7/22=8/5=9/18 모두 부재. `_min_vol` / `$300k` ADV는 **2026-05-28 이후 코드 상수 불변**.
+
+### 2) S1은 왜 살았나 — **필터 비공유 · 데이터 경로 비공유**
+
+US S1 = `legacy_archive.scanners.us_5ema` (`factory_pipelines._step_us_ema5_scan`). SUPERNOVA funnel DATA/LIQ **안 탐**.
+
+| | SUPERNOVA (죽은 쪽) | US S1 (산 쪽) |
+|--|--|--|
+| 시세 | `yf.download` period **2mo** 선로드 | sqlite `fetch_market_data_batch` |
+| 봉 요건 | `<20` → DATA (또는 예외를 DATA로 위장) | **≥500봉**만 분석 |
+| 가격 | `< $0.50` → LIQ | `MIN_PRICE_USD = **$3**` (시그널 조건) |
+| 유동성 | 5일 평균 거래량 vs `max(2000, 300000/px)` | 당일 `price*vol ≥ **$5,000,000**` (`moneyOk`) |
+| 퍼널 | `ScanFunnelTracker` DATA/LIQ | 조용히 `continue` · 별도 tracker |
+
+같은 유니버스 리스트를 보더라도 **같은 필터가 아니다.** 7/23 SUPERNOVA 크래시 당일 S1은 **OK · 포착 87**. 9/18도 **포착 14** (분석 5268/6567).
+
+### 3) DATA 84%는 8/5에 갑자기 생긴 임계가 아니다
+
+`process_live_ticker` 맨 바깥 `except Exception: funnel.drop("DATA_FAIL")` — **시세 없음이 아님.** `fetch_failed`는 7/22·9/18 모두 **0**.
+
+| 날 | 예외 로그 | 메시지 | 최종합격 |
+|----|-----------|--------|----------|
+| **7/22** (cosine 마지막) | **5239** | 전부 `boolean value of NA is ambiguous` | **167** |
+| 7/23 | 5241 + UnboundLocal 1 | 동일 NA + STEP FAIL | 크래시 |
+| 8/5 | 5467 | NA 5293 + **inhomogeneous shape 174** | **0** |
+| 9/18 | 5414 | NA 5235 + shape 179 | **0** |
+
+7/22에도 유니버스 ~80%가 이미 이 예외로 빠졌다. 나머지가 ~1200종. 그중 **167이 DNA 합격**. 9/18 스냅샷 LIQ 1153은 그 잔여 풀과 같은 크기인데, 이제 **전원 LIQ 탈락 + DNA 0**. 8/5부터 추가된 `inhomogeneous shape`(≈3%)는 크래시 복구/5D 벡터 구간과 겹침.
+
+**정상 시기 대비:** DATA「84%」자체는 크래시 이전부터 엔진의 만성 yfinance Close 2D/NA 버그(라벨만 DATA). **비정상인 것은 잔여 ~16%에서 167→0.**
+
+### 4) 두 사건 재정리 (A를 정정)
+
+| 기간 | 무엇 |
+|------|------|
+| 7/23~8/3 | 진짜 프로세스 FAIL (스코프 버그) |
+| 8/5~ | 프로세스는 OK. 퍼널 100%는 **새 LIQ 임계가 아니라** (상수 불변) + **예외를 DATA로 숨김** + **잔여 종목 DNA 0**. 크래시 수정은 스캔을 끝내게 했을 뿐, NA 5239건·합격 절벽을 고치지 않음 |
+
+NAV 훅과 같은 종류: **에러가 안 뜨게 된 채 핵심 경로가 죽음.**
+
+### 다음 (구현 아님)
+
+Handoff 후보만: (a) NA ambiguous를 DATA가 아니라 원인별 카운트 (b) Close 1D squeeze — S1은 이미 squeeze (c) 잔여 1153의 LIQ가 볼륨 0인지 `$300k`인지 표본. **컷오프 0.50 손대지 말 것.**
+
+디렉터 → Claude: B OUTBOX 검증. 구현은 별 Handoff (`US-COSINE-FUNNEL-DEAD-01`).
+
+---
+
+## OUTBOX — US-COSINE-SILENT-A · 최고 cosine vs 0.50 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 조사 완료 · **코드 0** · 컷오프·B/C **안 함** |
+| **앵커** | `SYNC-2026-09-19-COSINE-RO` (Go=`COSINE-GO`) |
+| **1차 판단** | **0.45~0.49 임계 후보 기각.** 완화해도 안 채워질 층. 「0.1대 시장 이탈」은 **실패 cosine이 장부에 없어 단정 불가** |
+| **진짜 층** | (1) **7/23~8/3** US 스캔 **크래시** `UnboundLocalError: load_system_config` (2) **8/5~** 스캔은 끝나지만 **DNA_FAIL=0** — 코사인 게이트에 도달하지 않음 (DATA+LIQ가 유니버스 소진) |
+
+### 해석 핀 (Handoff)
+
+| 가설 | 판정 |
+|------|------|
+| 매일 최고점이 0.45~0.49 → 약간 조정 후보 | **기각.** 그런 분포 **미관측**. 마지막 합격일(7/22) 등재 스케일러 점수 **59~100** (컷오프 표기 **0.5**) |
+| 최고점이 0.1~0.2 → 시장이 템플릿과 멀어짐 | **미측정.** `scan_funnel_drop_event`에 DNA_FAIL+`final_score` **0행**. 8/10 이후 DNA 단계 생존 0 |
+| 컷오프가 조여져서 침묵 | **기각.** `config_kv`에 `DYNAMIC_SUPERNOVA_CUTOFF` **키 없음** (코드 기본 0.50). 스냅샷 78개 전부 동일(키 부재). 7/22 로그 `cutoff=0.5` |
+
+### US SUPERNOVA 일별 합격 (primary 10:00 로그 + 퍼널 스냅샷)
+
+```
+합격수 (로그 최종합격)     스캔 상태
+7/20  165 ████████████████  OK · 등재 12 · scaler max 102.8 min 63.2
+7/22  167 ████████████████  OK · 등재 12 · scaler max 100.1 min 59.4  ← 마지막 SUPERNOVA_COSINE 체결
+7/23–8/03  n/a              FAIL · UnboundLocalError load_system_config (US 연속)
+8/05–9/18   0               OK · 등재 0 · DNA_FAIL 카운트 0
+```
+
+```mermaid
+xychart-beta
+    title US SUPERNOVA 최종합격 (로그, 크래시일은 생략)
+    x-axis ["7/20","7/22","8/5","8/18","9/1","9/18"]
+    y-axis "survivors" 0 --> 180
+    line [165, 167, 0, 0, 0, 0]
+```
+
+갭이 **서서히 벌어지지 않음**. 7/22 고원 → 크래시 공백 → 복구 후 **평탄한 0**.
+
+### 8/10 이후 퍼널 (DNA가 막힌 게 아님)
+
+| 시장 | 일수 | DATA_FAIL 평균 | LIQUIDITY 평균 | DNA_FAIL>0 일 | surv>0 일 |
+|------|------|----------------|----------------|---------------|-----------|
+| US | 33 | **83.6%** | 16.4% | **0** | **0** |
+| KR | 26 | 49.9% | 50.1% | **0** | **5** (9/9·10·14·17·18 각 surv=1) |
+
+9/18 US 예: uni 6570 · DATA 5414 · LIQ 1153 · SKIP 3 · DNA 0 · surv 0. 선로드는 **6570/6570 완료**. 완료 로그 `DATA_FAIL(fetch_failed)=0` vs 스냅샷 DATA=5414 — **카운터 불일치**. 해석은 스냅샷 단계합(유니버스 소진)을 따름.
+
+`entry_cos_score`(장부 0~0.15)는 **알파 코사인**이지 초신성 `best_sim`이 아님. 이 질문의 분포로 쓰지 말 것.
+
+### 컷오프 이력
+
+- 현재: 키 부재 → hunter 기본 **0.50**
+- 7/2~9/19 `config_snapshots/`: 값 변경 **0회**
+- elastic `eff_cos_cutoff` 일별 실측: DNA_FAIL 행 없음 → **미관측**
+
+### KR 곁다리 — US-only 아님
+
+- 같은 주 **`load_system_config` UnboundLocalError** 로 KR도 7/24~8/4 다수 FAIL
+- 복구 후 KR 합격도 0이 기본. 9월만 **가끔 1** (US는 0 유지)
+- KR `SUPERNOVA_COSINE` 체결 마지막 **7/23** (15건). 이후 RANK cosine 침묵은 **엔진 공통 절벽** + US가 더 깊게 0
+
+### 엔지니어 (구현 아님)
+
+일별 최고 `best_sim`을 다시 재려면 DNA 단계에 닿는 스캔 + `DNA_FAIL.final_score` persist가 실제로 쌓여야 함. 지금은 그 시계열이 **없음**. 컷오프 완화 Handoff는 이 증거와 안 맞음.
+
+B(인큐베이터 승격)·C(RANK 폐기)는 이번 OUTBOX 범위 밖.
+
+디렉터 → Claude: OUTBOX 검증. 컷오프 숫자 변경 없이 다음 갈림길만.
+
+---
+
+## OUTBOX — US-COSINE-SILENT-A Go 수신 · 오늘 조사 미실행 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **Go** | 파일 `CLAUDE_TO_CURSOR.md` · `SYNC-2026-09-19-COSINE-GO` |
+| **오늘** | 세션 종료 · VPS 분포 쿼리 **안 함** (디렉터: 다음 세션) |
+| **다음 창** | 최고 cosine vs 0.50 · 갭 추세 · 컷오프 이력 · KR 곁다리 · 표/그래프 |
+| **금지** | 컷오프 변경 · B/C 실행 |
+
+디렉터 → 다음 Cursor: `NEXT_ACTION.md` status `WAIT_CURSOR_IMPL`. 채팅에 장문 재부착 불필요.
+
+---
+
+## OUTBOX — n=30 폐기 수신 · A 스코프 랜딩 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | `CLAUDE_TO_CURSOR.md` INBOX `SYNC-2026-09-19-COSINE-SILENT` |
+| **폐기** | RANK_B n=30 대기. +0.10%는 **7/22 이전 7건** — 현재 엔진 증거가 아님 |
+| **다음** | **A** RO: 왜 US SUPERNOVA surv=0인지 (시장 vs `DYNAMIC_SUPERNOVA_CUTOFF`/템플릿). 조정·B·C **별도** |
+| **지금** | **코드 0**. 디렉터 Go 후 다음 창 |
+| **엔지니어** | A는 **점수 분포 vs 컷오프**가 본문. 완화해서 n 채우기는 A가 아님 |
+
+디렉터 → Claude: INBOX 파일에 있음. 다음 세션 A Go만 채팅/파일 한 줄.
+
+---
+
+## OUTBOX — US_RANK_B 침묵 · n=30 비현실 · 2026-09-19
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **확인만** · **코드 0** · 착수 아님 |
+| **착시** | 워치독 n=7 = **전생 CLOSED**. 「9/9 이후 10일 0」은 창 착시. 마지막 RANK_B **2026-07-20**. 8·9월 0 |
+| **게이트** | RANK_B **1.35** · `block_entry=False` · Kelly **0.05**=사이즈 · SIDEWAYS는 RANK_B 진입 차단 아님 |
+| **스캔** | US SUPERNOVA 퍼널 **동작** (9/18 uni 6570 **surv 0**). 스캔 크래시 아님 |
+| **진짜 구멍** | US `[SUPERNOVA_COSINE]` **2026-07-22 이후 0**. 이후 supernova 체결은 **INCUBATOR spinoff**. S1은 계속 진입 |
+| **n=30** | **비현실** (현재 0/월). 재평가 전제를 샘플 적립에서 **퍼널/템플릿/컷오프**로 옮겨야 함 |
+| **비범위** | 컷오프 변경 · cosine 템플릿 · LIVE · 사이징 이중장부 · 워치독 구현 |
+
+디렉터 → Claude: n=30 대기 계획을 접을지 결정. 구현 Handoff는 그 결정 후에만. 채팅 말고 `CLAUDE_TO_CURSOR`.
+
+---
+
+## OUTBOX — SMARTMONEY DoD#1 PASS · WATCHDOG-FLOW 스코프 · 2026-09-15
+
+| 항목 | 내용 |
+|------|------|
+| **persist** | **CLOSED**. VPS 70행 · 9/14·15 각 35 · `naver_fallback` · flow_map=upsert |
+| **가산** | 5일 강제 0 **아님**. 1~2일로 bonus>0 |
+| **픽 0** | 라다 필터. persist 실패 아님 |
+
+### DIRECTOR-WATCHDOG-FLOW-01 (미착수)
+
+엔지니어: NAV 훅 24h COUNT와 같은 **읽기 COUNT 한 줄**. `items`에 7번째. persist/가산 공식 손대지 말 것.
+
+| | |
+|--|--|
+| **줄** | `🟢/🔴 수급 데이터 적재 — 최근7일 N행 (날짜 D개)` |
+| **🔴** | 최근 7일 `COUNT(*)` = 0 (테이블 없음 포함) |
+| **🟢** | N>0 |
+| **DB** | `MARKET_DATA_DB_PATH` `kr_investor_flow` |
+| **비범위** | picks 0 · PyKRX · ETF 필터 · Kelly |
+| **테스트** | 0행 🔴 / 70행 🟢 단위 1개 |
+
+디렉터 → Claude: persist는 OK로 닫아도 됨. 워치독 7번째 줄만 Handoff. 채팅 말고 `CLAUDE_TO_CURSOR`.
+
+---
+
+## OUTBOX — FAMILY-SLEEVE 정책 B · A/B군 분리 · 사이징 백로그 · 2026-09-13
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **문서만** · **코드 0** |
+| **정직** | 12키 한 테이블 = 축소+차단해제가 섞임. 「0.0→0.25가 Handoff 의도」가 Step B에 이미 있음 |
+| **A군 (살림)** | US S1 · `💎` · B(일반) · US_RANK_A. 주간 US 손실 12건 = US S1 |
+| **B군 (축소)** | KR S1×3 · S4×2 · KR RANK_A · `🔥` · `👑` |
+| **정책** | **B** — A군 0.25 관찰 유지. 0 재차단 안 함 |
+| **DoD#4** | 9/12 데스매치 후 effective 0.25. US S1 overlay 0.0 (1.0 아님) |
+| **두 계좌** | 장부 12건 **−$69,568**. Live NAV 약 **−$1,600 (−0.5%p)**. 리포트 −$69,990 ≠ $30만 출금 |
+| **백로그** | `SIZING-DUAL-LEDGER-01` 🔴 · 2천만 시드+1주+1350 ≠ NAV $30만 · 실전 전 필수 · **지금 착수 금지** |
+| **다음 실무** | 월 16:10 수급 DoD#1 |
+
+디렉터 → Claude: 구현 Handoff 지금 내지 말 것. A/B군을 이후 스펙에서 한 테이블로 다시 묶지 말 것.
 
 ---
 

@@ -12,9 +12,12 @@ from datetime import datetime, timedelta
 import pytz
 import sqlite3
 import json
+import logging
 from typing import Any, Mapping, Optional
 from low_ram_sqlite_pragmas import apply_busy_timeout
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 import telegram_env
@@ -1710,6 +1713,49 @@ def resolve_entry_regime(sys_config: Optional[Mapping[str, Any]] = None) -> str:
     return fallback or "UNKNOWN"
 
 
+def _observe_entry_gate_fail_open(
+    event: str,
+    exc: BaseException,
+    *,
+    market: object,
+    code: object,
+    name: object,
+    trade_source: object,
+    sig_type: object = "",
+) -> None:
+    """SWALLOW-GATE-FO-01: fail-open 은 유지하고 발동만 관측 (NAV-HOOK-SILENTFAIL-01 패턴)."""
+    logger.error(
+        "entry gate fail-open event=%s market=%s code=%s name=%s source=%s: %s: %s",
+        event,
+        market,
+        code,
+        name,
+        trade_source,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
+    try:
+        from ops_logger import insert_ops_event
+
+        insert_ops_event(
+            component="forward.shared",
+            severity="ERROR",
+            event=str(event),
+            payload={
+                "market": str(market),
+                "code": str(code),
+                "name": str(name)[:200],
+                "trade_source": str(trade_source),
+                "sig_type": str(sig_type)[:300],
+                "exc_type": type(exc).__name__,
+                "exc_msg": str(exc)[:500],
+            },
+        )
+    except Exception as _ops_ex:
+        logger.debug("ops_event write also failed: %s", _ops_ex)
+
+
 def try_add_virtual_position(
     market,
     code,
@@ -1824,6 +1870,15 @@ def try_add_virtual_position(
             return False, f"🏛️ [{_code}] {_reason}"
     except Exception as _mg_ex:
         print(f"⚠️ [MetaGovernor/Treasury 게이트] 스킵(중립 진행): {_mg_ex}")
+        _observe_entry_gate_fail_open(
+            "entry_gate.meta_global_fail_open",
+            _mg_ex,
+            market=market,
+            code=code_str,
+            name=name,
+            trade_source=trade_source,
+            sig_type=sig_type,
+        )
 
     # 🔻 [톡식 알파 역배팅]
     #   - 기존 5-Factor 앙상블·NAV 산출과 독립(테일 펀드 KV 만 사용). 모든 단계 방어적.
@@ -1847,6 +1902,15 @@ def try_add_virtual_position(
             )
     except Exception as _fade_ex:
         print(f"⚠️ [톡식 역배팅] 브릿지 스킵(롱 진행): {_fade_ex}")
+        _observe_entry_gate_fail_open(
+            "entry_gate.toxic_fade_fail_open",
+            _fade_ex,
+            market=market,
+            code=code_str,
+            name=name,
+            trade_source=trade_source,
+            sig_type=sig_type,
+        )
 
     # 🛰️ [통합 방어막] 둠스데이 / 오답노트(bbox) / 스마트머니 교차검증 (모든 검색기 공통 관문)
     _sp_perf = pre_sys_config.get("SHADOW_PERFORMANCE")

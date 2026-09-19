@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-12 · **앵커 ID**: `SYNC-2026-09-12-REPLAY-HOLD`
+> **갱신**: 2026-09-19 · **앵커 ID**: `SYNC-2026-09-19-GATE-FO-A-OK`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-12-REPLAY-HOLD` |
-| **마지막 갱신** | 2026-09-12 — 라이브 리플레이 **만들지 않음** · 월 수급 실측 후만 재검토 |
+| **앵커 ID** | `SYNC-2026-09-19-GATE-FO-A-OK` |
+| **마지막 갱신** | 2026-09-19 — FO-01 A **Claude OK** · 배포 · 다음=FO-02 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | SMARTMONEY-PERSIST-FIX-01 · DoD#1 **2026-09-14 16:10** |
-| **직전 완료** | LIVE-REPLAY-HOLD 문서 (코드 0) |
-| **다음** | 월 수급 0→N · 신호 보이면 그때 **수급 포함 리플레이** 검토 |
+| **진행 중 sub-phase** | SWALLOW-GATE-FO-01 A 관측 · FO-02 **WAIT_CLAUDE_HANDOFF**(ERROR 확인 후) |
+| **직전 완료** | A 로그 구현 Claude OK |
+| **다음** | 배포 후 `entry_gate.meta_global_fail_open` ERROR 확인 → **즉시 FO-02 Handoff** |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -56,20 +56,32 @@
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] SMARTMONEY-PERSIST-FIX-01 · Claude OK · 배포 · DoD#1 **2026-09-14 16:10** (CLOSED 아님)
+[KR/US] SMARTMONEY-PERSIST-FIX-01 · **CLOSED** · DoD#1 PASS (네이버 35×2일) · 가산 1~2일도 동작
+[KR/US] DIRECTOR-WATCHDOG-FLOW-01 · 스코프 · 최근7일 kr_investor_flow COUNT · 0=🔴 · **Handoff 전 코드 금지**
 [KR/US] LIVE-REPLAY-HOLD · **지금 만들지 않음** · 월 수급 신호 후에만 「수급 포함 리플레이」재검토
 [KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog **범위확정** · KR/US 라다 JSON→sqlite 병합 · 표시 0픽/적재실패 미구분 · 급하지 않음 · 지금 코드 금지
 [KR/US] MAE-ATR-REPLAY-01 · CLOSED · 실전 반려 (스크립트 보존·미배선) · 청산 3가설 기각
 [KR/US] PHASEB-SCOPE-02 · CLOSED(문서) · B-4 큐(~09-17) · B-1/B-2 보류(DSR) · B-3 별도
 [KR/US] V-2-WFBLOCK-01 · Claude OK · CLOSED · 1주 오탐 추적 (~09-17)
 [KR/US] DIRECTOR-WATCHDOG-01 · Claude OK · CLOSED는 19:30 육안 후
-[KR/US] FAMILY-SLEEVE-DEMOTE-01 · 효과 실측 2026-09-09 · DoD#4(데스매치 0.25) 잔여
+[KR/US] FAMILY-SLEEVE-DEMOTE-01 · **정책 B** · A군=차단해제 관찰 0.25 · B군=축소 0.25 · DoD#4 실측 OK(9/12 데스매치 후 effective 0.25) · 코드 0
+[KR/US] SIZING-DUAL-LEDGER-01 · backlog 🔴 · 2천만 시드≠NAV $30만 · **실전 전 필수** · 지금 착수 금지
+[KR/US] US-COSINE-FUNNEL-DEAD-01 · backlog **최우선 발견** 🔴 · 8/5~ SUPERNOVA DATA/LIQ 위장+잔여 0합격 · S1은 별도 경로 · **Handoff 전 코드 금지**
+[확인] US-RANK-B-STALL-RO · **CLOSED** · n=30 대기 **폐기** · 워치독 n=7=전생 · 마지막 RANK_B 7/20 · cosine 7/22
+[KR/US] US-COSINE-SILENT-A · 확정 · 0.45 임계 기각
+[KR/US] US-COSINE-SILENT-B · **확정** · NA→DATA 위장 · 빈 config 폴백 · S1 비공유
+[KR/US] SWALLOW-CENSUS-01 · **RO 목록 완료**
+[KR/US] SWALLOW-GATE-FO-01 A · **Claude OK 2026-09-19** · 배포·ERROR 관측
+[KR/US] SWALLOW-GATE-FO-02 · **최우선 다음** · 2641 지연 import 삭제 · ERROR 확인 **즉시** Handoff · 지금 코드 금지
+[큐] swallow 2) ledger 776 EOD · 3) CB/좀비 · 4) 켈리 탄성
+[KR/US] US-COSINE-NA-RO · **큐** · NA 5239 처리 방식 RO · 구현 금지
+[패턴] 예외 삼킴: 전수 목록 OUTBOX · pass-only는 발동 증명 불가
 [감시] US_RANK_B 1.35x · US_RANK_D 1.25x — 다음 데스매치 사이클 유지 여부 (액션 아님)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
 [IV] V-2-DSR-01 / V-2B-SNAPSHOT-01 · backlog (이번 세션 금지)
-[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회 · **라이브 리플레이 하니스 지금 착수**
+[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회 · 라이브 리플레이 지금 · **사이징 공식 오늘 개조** · A군 US S1을 임의로 0 재차단(정책 B 번복은 Handoff)
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.
