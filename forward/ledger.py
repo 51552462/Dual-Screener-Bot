@@ -59,6 +59,79 @@ def _observe_eod_fluid_except_swallowed(
 
 
 
+def _observe_cb_swallowed(
+    event: str,
+    exc: BaseException,
+    *,
+    market: object,
+    trigger_pct: object = None,
+) -> None:
+    """SWALLOW-LEFTOVER-BATCH-A-01: CB load/save 실패는 유지하고 발동만 관측."""
+    logger.error(
+        "cb swallow event=%s market=%s trigger_pct=%s: %s: %s",
+        event,
+        market,
+        trigger_pct,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
+    try:
+        from ops_logger import insert_ops_event
+
+        payload = {
+            "market": str(market),
+            "exc_type": type(exc).__name__,
+            "exc_msg": str(exc)[:500],
+        }
+        if trigger_pct is not None:
+            payload["trigger_pct"] = trigger_pct
+        insert_ops_event(
+            component="forward.ledger",
+            severity="ERROR",
+            event=event,
+            payload=payload,
+        )
+    except Exception as _ops_ex:
+        logger.debug("ops_event write also failed: %s", _ops_ex)
+
+
+def _observe_zombie_liquidation_swallowed(
+    exc: BaseException,
+    *,
+    market: object,
+    code: object,
+    days_held: object = None,
+) -> None:
+    """SWALLOW-LEFTOVER-BATCH-A-01: 무캔들 좀비 except 는 유지하고 발동만 관측."""
+    logger.error(
+        "zombie liquidation swallowed market=%s code=%s days_held=%s: %s: %s",
+        market,
+        code,
+        days_held,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
+    try:
+        from ops_logger import insert_ops_event
+
+        insert_ops_event(
+            component="forward.ledger",
+            severity="ERROR",
+            event="zombie.liquidation_swallowed",
+            payload={
+                "market": str(market),
+                "code": str(code),
+                "days_held": days_held,
+                "exc_type": type(exc).__name__,
+                "exc_msg": str(exc)[:500],
+            },
+        )
+    except Exception as _ops_ex:
+        logger.debug("ops_event write also failed: %s", _ops_ex)
+
+
 def hybrid_tech_exit_reason(final_ret_pct: float) -> str:
     """HYBRID_TECH exit_reason only — exit_type stays HYBRID_TECH."""
     try:
@@ -87,7 +160,8 @@ def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_se
 
     try:
         cfg = load_system_config()
-    except Exception:
+    except Exception as _cb_ex:
+        _observe_cb_swallowed("cb.load_swallowed", _cb_ex, market=market)
         return
     state = str(cfg.get("GLOBAL_CIRCUIT_BREAKER", "OFF")).upper()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -102,7 +176,13 @@ def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_se
             cfg["GLOBAL_CIRCUIT_BREAKER_LAST_LOSS_RATIO"] = round(float(loss_ratio), 6)
             try:
                 save_system_config(cfg)
-            except Exception:
+            except Exception as _cb_ex:
+                _observe_cb_swallowed(
+                    "cb.on_save_swallowed",
+                    _cb_ex,
+                    market=market,
+                    trigger_pct=round(float(loss_ratio) * 100.0, 6),
+                )
                 return
             try:
                 send_telegram_msg(
@@ -139,7 +219,8 @@ def _update_global_circuit_breaker(market, loss_ratio, open_loss_amount, base_se
         cfg["GLOBAL_CIRCUIT_BREAKER_RELEASE_REASON"] = reason
         try:
             save_system_config(cfg)
-        except Exception:
+        except Exception as _cb_ex:
+            _observe_cb_swallowed("cb.off_save_swallowed", _cb_ex, market=market)
             return
         try:
             send_telegram_msg(
@@ -399,11 +480,20 @@ def track_daily_positions(market):
                 
             if df.empty or len(df) < 20: 
                 # 💡 [픽스 2] 거래정지 좀비 종목 무한 누적 방지 (30일 경과 시 강제 사형)
+                _zombie_days_held = None
                 try:
                     entry_dt = datetime.strptime(r['entry_date'][:10], '%Y-%m-%d')
-                    if (datetime.now() - entry_dt).days > 30:
+                    _zombie_days_held = (datetime.now() - entry_dt).days
+                    if _zombie_days_held > 30:
                         conn.execute("UPDATE forward_trades SET status='CLOSED_LOSS', final_ret=-15.0, exit_reason='장기 거래정지/상폐 강제청산' WHERE id=?", (r['id'],))
-                except: pass
+                except Exception as _z_ex:
+                    _observe_zombie_liquidation_swallowed(
+                        _z_ex,
+                        market=market,
+                        code=code,
+                        days_held=_zombie_days_held,
+                    )
+                    pass
                 continue
                 
             c, o, h, l, v = ohlcv_last_floats(df)

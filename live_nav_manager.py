@@ -25,6 +25,42 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _observe_kelly_swallowed(
+    event: str,
+    exc: BaseException,
+    *,
+    market: object,
+    code: object = None,
+) -> None:
+    """SWALLOW-LEFTOVER-BATCH-A-01: 켈리 폴백/오버레이 실패는 유지하고 발동만 관측."""
+    logger.error(
+        "kelly swallow event=%s market=%s code=%s: %s: %s",
+        event,
+        market,
+        code,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
+    try:
+        from ops_logger import insert_ops_event
+
+        insert_ops_event(
+            component="live_nav_manager",
+            severity="ERROR",
+            event=event,
+            payload={
+                "market": str(market),
+                "code": "" if code is None else str(code),
+                "exc_type": type(exc).__name__,
+                "exc_msg": str(exc)[:500],
+            },
+        )
+    except Exception as _ops_ex:
+        logger.debug("ops_event write also failed: %s", _ops_ex)
+
+
 try:
     from factory_data_paths import factory_data_dir
 except Exception:  # pragma: no cover - 경로 모듈 부재 시 홈 폴백
@@ -204,7 +240,12 @@ def resolve_effective_kelly(
             from config_manager import load_system_config
 
             cfg = load_system_config()
-        except Exception:
+        except Exception as _cfg_ex:
+            _observe_kelly_swallowed(
+                "kelly.config_load_fallback",
+                _cfg_ex,
+                market=market,
+            )
             cfg = {}
     try:
         base = float(cfg.get("DYNAMIC_KELLY_RISK", DEFAULT_EFFECTIVE_KELLY) or DEFAULT_EFFECTIVE_KELLY)
@@ -236,7 +277,13 @@ def resolve_effective_kelly(
             market=market,
         )
         eff, _ = apply_elasticity_to_effective_kelly(eff, _ov)
-    except Exception:
+    except Exception as _ov_ex:
+        _observe_kelly_swallowed(
+            "kelly.elasticity_overlay_swallowed",
+            _ov_ex,
+            market=market,
+            code=None,
+        )
         pass
     return float(eff)
 

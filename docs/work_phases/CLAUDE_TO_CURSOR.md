@@ -4,7 +4,37 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: EOD-FLUID-STOP-FO-01(A) **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-EOD-FO-A-OK`
+> **현재**: SWALLOW-LEFTOVER-BATCH-A-01 **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-LEFTOVER-A-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · SWALLOW-LEFTOVER-BATCH-A-01 · 2026-09-20
+
+앵커: SYNC-2026-09-20-LEFTOVER-A-OK
+
+### 판정: 완전 OK
+
+- 6개 event 전부 diff 확인, return/pass/폴백 로직 무변경
+- 트립·30일·−15%·NAV-DD 오버레이 무접촉 확인
+- 강제 성공 처리 없음 확인
+- 테스트 14 OK
+
+Claude OK: 2026-09-20 — 완전 승인. 배포 진행.
+
+### 다음
+1. 커밋·푸시 → update_factory 배포
+2. 다음 CB 트립 상황·30일+ 정지 종목 발생 시 로그 관찰 (즉시 확인 아님, 등록만)
+3. 05_진행로그·00_전체현황판·00_SESSION_SYNC §3 갱신
+4. 오늘 leftover 전수조사(11곳) 완전 종결 처리
+
+---
+
+## INBOX — Claude Pro Handoff · SWALLOW-LEFTOVER-BATCH-A-01 · 2026-09-20
+
+sub-phase: **SWALLOW-LEFTOVER-BATCH-A-01** · 🟡 Medium (관측 전용, 5+1곳)
+디렉터 승인: 2026-09-20 — leftover 나머지 전부 A(로그만) 일괄.
+
+목표: CB·좀비·켈리에 logger.error+ops_event만. 로직 무접촉.
 
 ---
 

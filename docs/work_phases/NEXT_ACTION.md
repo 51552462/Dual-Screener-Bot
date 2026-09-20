@@ -2,29 +2,26 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **EOD-FLUID-STOP-FO-01(A)** |
-| **status** | **Claude OK: 2026-09-20** · 배포 · 관측 |
-| **직전** | 776 ERROR+ops · `_xdyn is None` warning |
-| **앵커** | `SYNC-2026-09-20-EOD-FO-A-OK` |
+| **sub-phase** | **SWALLOW-LEFTOVER-BATCH-A-01** |
+| **status** | **Claude OK: 2026-09-20** · 배포 · leftover 11곳 종결 |
+| **직전** | CB 3 + 좀비 + 켈리 2 관측 |
+| **앵커** | `SYNC-2026-09-20-LEFTOVER-A-OK` |
 
 ---
 
-## 지금
+## 지금 (관찰만)
 
-배포 후 다음 BEAR/HIGH_VOL에서 관찰:
-- 정상 `EOD_FLUID_STOP`
-- `eod_fluid.except_swallowed` ERROR
-- `eod fluid xdyn unavailable` warning
+- CB 트립·30일+ 정지·켈리 폴백/오버레이: `cb.*` / `zombie.liquidation_swallowed` / `kelly.*`
+- EOD: `EOD_FLUID_STOP` / `eod_fluid.except_swallowed` / `eod fluid xdyn unavailable`
 
-## leftover (착수는 디렉터 결정)
+즉시 확인 아님. 로그가 뜨면 그때 본다.
 
-- 3순위: ledger 51/66/363 (CB·좀비)
-- 4순위: live_nav 239 (켈리 탄성)
-- `EOD-DEFENSE-GAP-01` — DEFENSE 리스트 추가 여부 미결정
-- `TOXIC-FADE-FO-CHECK`
+## backlog
+
+- `EOD-DEFENSE-GAP-01`
+- `TOXIC-FADE-FO-CHECK` (FO-01 로그 있음)
 
 ## 금지
 
-- EOD 국면·시간 변경
-- DEFENSE 지금 추가
+- CB 강제 ON/OFF · 좀비 30일/−15% · NAV-DD 재점등
 - bitget

@@ -3,7 +3,78 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-20 · EOD-FLUID-STOP-FO-01(A) **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-EOD-FO-A-OK`
+> **갱신**: 2026-09-21 · SWALLOW-LEFTOVER-BATCH-A-01 **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-LEFTOVER-A-OK`
+
+---
+
+## OUTBOX — SWALLOW-LEFTOVER-BATCH-A-01 배포 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **Claude OK: 2026-09-20** · 커밋·푸시·`update_factory` |
+| **종결** | leftover 전수 11곳: 게이트 B · EOD A · CB/좀비/켈리 5+1 A |
+| **관찰** | CB 트립·30일+ 정지·켈리 폴백/오버레이 event (즉시 확인 아님) |
+
+---
+
+## OUTBOX — SWALLOW-LEFTOVER-BATCH-A-01 구현 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 구현 · **WAIT_CLAUDE_OK** |
+| **diff** | `_observe_cb_swallowed` · `_observe_zombie_liquidation_swallowed` · `_observe_kelly_swallowed` |
+| **event** | `cb.load_swallowed` / `cb.on_save_swallowed` / `cb.off_save_swallowed` / `zombie.liquidation_swallowed` / `kelly.config_load_fallback` / `kelly.elasticity_overlay_swallowed` |
+| **무접촉** | 트립·30일·−15%·`ENABLE_KELLY_NAV_DD_OVERLAY` · 강제 ON/OFF 없음 |
+| **테스트** | `tests/test_swallow_leftover_batch_a.py` + 게이트/EOD 회귀 **14 OK** |
+| **종결** | 오늘 leftover 전수 경로: 게이트 B · EOD A · 이번 5+1 A (Claude OK 전 Done 아님) |
+
+디렉터 → Claude: spec 검증. OK면 커밋·배포.
+
+---
+
+## OUTBOX — SWALLOW-CB-ZOMBIE-KELLY-RO · 코드 0 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터 RO 2묶음. **착수 아님** |
+| **행번호** | CB load **90** / save-ON **105** / 좀비 **406**. 켈리 config폴백 **207** / overlay **239** |
+| **결론** | 네 곳 모두 **FO-02형 원인 코드 확정 아님**. pass/return이라 8/25–9/19 발동 **증명 불가(0)**. 다음 Handoff는 **A(로그)** 권고 |
+
+### 묶음 1 — CB + 좀비
+
+**51→90 load 실패 `return`**: 그날 트립·해제 평가 자체 스킵. KV는 그대로. 이미 OFF면 OFF 유지(신규 차단 안 켜짐). 이미 ON이면 ON 유지(해제도 안 됨).
+
+**66→105 ON 저장 실패 `return`**: 메모리만 ON, KV는 OFF. 텔레그램도 안 감. **다음 `try_add`는 다시 OFF로 읽음** → −5%여도 차단이 안 박힘. (OFF 저장 실패 142행은 반대로 Sticky-ON.)
+
+**363→406 좀비**: OHLCV 없음/20봉 미만 **그리고** 진입 후 달력 30일+ 일 때만 `CLOSED_LOSS` −15% (`장기 거래정지/상폐 강제청산`). `except: pass`면 UPDATE 실패·날짜파싱 실패 시 **OPEN 유지**. 커밋은 루프 끝 1147. **별경로** 866 `ZOMBIE_FORCE_CLOSE`(봉 있음, 타임스탑×2)는 except 대상 아님.
+
+**로그 8/25–9/19** (factory_*.log window 487): CIRCUIT/서킷/장기거래정지/ZOMBIE **0**. pass라 예외 발동은 원리상 grep 불가.
+
+**실측**: KV `GLOBAL_CIRCUIT_BREAKER="OFF"`, trigger 키 **전부 없음**(한 번도 성공 트립 저장이 안 보임). OPEN 4(US, 최장 10일). **OPEN age>30 = 0**. 좀비 청산 전 기간 **1건**: NDAQ 7/2→7/30 `ZOMBIE_FORCE_CLOSE` +7.8% — **866 경로**, 조사창 밖. **406 −15% 상폐 문구 0건**.
+
+**원인**: 지연 import/UnboundLocal **아님**. EOD와 같이 **불확정**(발동 미증명).
+
+**스코프**: 90/105/406 모두 **A(로그)**. B 금지(트리거·저장 실패 시 강제 ON 같은 fail-closed는 Critical). 142 OFF저장은 같이 로그만.
+
+### 묶음 2 — 켈리 탄성
+
+**정상 시**: `f = clamp(DYNAMIC_KELLY × META_GLOBAL) × elasticity_mult`(0~1). `live_notional = NAV × f`. NAV-DD는 start 1%→full 5%에서 ×0.15까지. 당일클러치도 곱. **실제 진입 수량**은 `try_add`의 `kelly_risk_pct × elasticity` (`shared.py` 3157, 실패 시 print `Kelly 탄력성] 스킵`). **239는 진입 사이징 SSOT가 아님**(리포트/`live_notional`/NAV 훅 f).
+
+**207**: config 로드 실패 → `cfg={}` → base=`DEFAULT_EFFECTIVE_KELLY` 0.02, 메타배수 1.0. KV에 `DYNAMIC_KELLY_RISK`도 없음 → **성공 로드와 숫자가 같음**. 단, 빈 cfg면 NAV오버레이 플래그 기본 True라 **이론상만** 239가 살면 DD 축이 켜질 수 있음. 발동 미증명.
+
+**239**: 오버레이 import/평가 실패 → 탄성 **미적용**, 기본 켈리만. 로그 없음.
+
+**로그 8/25–9/19**: `[Kelly 탄력성]` / 스킵 print **0**. 진입 116건 중 `#Kelly탄력성`/`#NAV드로다운`/`#당일클러치` **0**.
+
+**실측**: `ENABLE_KELLY_NAV_DD_OVERLAY=false` (**A-1 일원화 SSOT**, 현황판). KR MDD 11.08%여도 NAV축 축소는 **의도적으로 꺼짐**. 클러치 태그는 창 안 0 → 진입 사이즈는 탄성 없이 기본 켈리(+변동성타게팅 등 다른 태그).
+
+**원인**: FO-02 아님. 239/207 발동 **불확정**. NAV축 미적용은 **설정 False**로 확정(삼킴과 별개).
+
+**스코프**: 207·239 **A(로그)**. 진입 경로 스킵 print는 이미 있음. NAV-DD를 다시 켤지는 leftover 아님(A-1 정책).
+
+### 추천 한 줄
+
+게이트=B 완료, EOD=A 배포됨. leftover 3·4는 **전부 A**. 위험도 게이트보다 낮음. 착수는 디렉터 결정.
 
 ---
 
