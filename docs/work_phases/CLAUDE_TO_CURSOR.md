@@ -4,7 +4,49 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: SWALLOW-GATE-FO-01 **A Claude OK · 배포** · 다음=FO-02(ERROR 확인 직후) · 앵커 `SYNC-2026-09-19-GATE-FO-A-OK`
+> **현재**: SWALLOW-GATE-FO-02 **Claude OK · 배포** · 다음=EOD 776 · 톡식 백로그 · 앵커 `SYNC-2026-09-20-GATE-FO-02-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · SWALLOW-GATE-FO-02 · 2026-09-19
+
+앵커: SYNC-2026-09-19-GATE-FO-02-OK
+
+### 판정: 완전 OK
+
+- 지연 import 이름 제거 확인, resolve_trading_kelly_base 유지 확인
+- 재도입 금지 assert + KILL_SWITCH 스모크 테스트 추가 확인
+- FO-01 로그·fail-open 로직 무접촉 확인
+- 톡식(1848) 별개 원인 확인됨 — 이번 수정으로 해결 안 됨(정상, 스코프 밖)
+
+Claude OK: 2026-09-19 — 완전 승인. 배포 진행.
+
+### 다음
+1. 커밋·푸시 → update_factory 배포
+2. 배포 후 며칠간 entry_gate.meta_global_fail_open ERROR가
+   실제로 멈추는지 확인 (성공 증거)
+3. 배포 후 정상 진입 흐름 회귀 없음 확인
+4. 톡식(entry_gate.toxic_fade_fail_open) 원인은 별도 백로그
+   (TOXIC-FADE-FO-CHECK, 급하지 않음 — 발동 0건이나 확인 안 된 상태)
+5. 05_진행로그·00_전체현황판 갱신
+
+---
+
+## INBOX — Claude Pro Handoff · SWALLOW-GATE-FO-02 · 2026-09-20
+
+앵커: SYNC-2026-09-20-GATE-FO-02  
+sub-phase: **SWALLOW-GATE-FO-02** · 🔴 Critical (조기 안전 게이트 복구)  
+디렉터 승인: 2026-09-19 — A 확인 없이 즉시 진행(원인 코드로 확정됨)
+
+### 목표 (한 줄)
+지연 import에서 `load_meta_state_resolved` 이름만 빼서 1807이 상단 import를 쓰게 한다.
+
+### Spec
+1) 2704 부근 튜플에서 `load_meta_state_resolved` 제거 (`resolve_trading_kelly_base` 유지)
+2) `test_try_add_load_system_config_scope.py` 재도입 금지 assert
+
+### 하지 않을 것
+fail-open 방향 전환 · LOCKDOWN/장세션/그룹소진 무접촉 · FO-01 A logger 무접촉 · 2915 이후 호출 무접촉
 
 ---
 

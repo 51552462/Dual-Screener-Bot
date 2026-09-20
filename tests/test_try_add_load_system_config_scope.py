@@ -33,11 +33,25 @@ class TestTryAddLoadSystemConfigScope(unittest.TestCase):
                         "the name for the whole function",
                     )
                     self.assertNotEqual(alias.asname, "load_system_config")
+                    self.assertNotEqual(
+                        alias.name,
+                        "load_meta_state_resolved",
+                        "nested import of load_meta_state_resolved rebinds "
+                        "the name for the whole function",
+                    )
+                    self.assertNotEqual(alias.asname, "load_meta_state_resolved")
             if isinstance(node, ast.Name) and node.id == "load_system_config":
                 self.assertIsInstance(
                     node.ctx,
                     ast.Load,
                     "load_system_config must not be assigned inside "
+                    "try_add_virtual_position",
+                )
+            if isinstance(node, ast.Name) and node.id == "load_meta_state_resolved":
+                self.assertIsInstance(
+                    node.ctx,
+                    ast.Load,
+                    "load_meta_state_resolved must not be assigned inside "
                     "try_add_virtual_position",
                 )
 
@@ -65,6 +79,41 @@ class TestTryAddLoadSystemConfigScope(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("서킷 브레이커", msg)
+
+    def test_early_meta_gate_evaluates_without_unboundlocal(self) -> None:
+        """FO-02: 조기 게이트가 UnboundLocal 없이 evaluate 를 호출한다."""
+        with patch.object(
+            shared,
+            "load_system_config",
+            return_value={"GLOBAL_CIRCUIT_BREAKER": "OFF"},
+        ), patch(
+            "market_session_gate.is_market_open",
+            return_value=(True, "open"),
+        ), patch.object(shared, "init_forward_db"), patch(
+            "performance_budget_governor.is_block_new_entries",
+            return_value=False,
+        ), patch(
+            "meta_treasury_entry_guard.evaluate_meta_global_entry_gate",
+            return_value={
+                "block_entry": True,
+                "code": "KILL_SWITCH",
+                "reason": "test kill",
+            },
+        ) as ev:
+            ok, msg = shared.try_add_virtual_position(
+                market="US",
+                code="AAPL",
+                name="Apple",
+                sig_type="[TEST] scope",
+                score=80.0,
+                ep=100.0,
+                facts={},
+                sector="Tech",
+                trade_source="SUPERNOVA",
+            )
+        ev.assert_called_once()
+        self.assertFalse(ok)
+        self.assertIn("KILL_SWITCH", msg)
 
 
 if __name__ == "__main__":

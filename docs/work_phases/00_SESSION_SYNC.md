@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-19 · **앵커 ID**: `SYNC-2026-09-19-GATE-FO-A-OK`
+> **갱신**: 2026-09-20 · **앵커 ID**: `SYNC-2026-09-20-GATE-FO-02-OK`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-19-GATE-FO-A-OK` |
-| **마지막 갱신** | 2026-09-19 — FO-01 A **Claude OK** · 배포 · 다음=FO-02 |
+| **앵커 ID** | `SYNC-2026-09-20-GATE-FO-02-OK` |
+| **마지막 갱신** | 2026-09-20 — FO-02 **Claude OK** · 배포 · 다음 leftover=EOD 776 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | SWALLOW-GATE-FO-01 A 관측 · FO-02 **WAIT_CLAUDE_HANDOFF**(ERROR 확인 후) |
-| **직전 완료** | A 로그 구현 Claude OK |
-| **다음** | 배포 후 `entry_gate.meta_global_fail_open` ERROR 확인 → **즉시 FO-02 Handoff** |
+| **진행 중 sub-phase** | FO-02 배포·ERROR 소멸 관측 · leftover **776** 조사 착수 |
+| **직전 완료** | FO-02 구현 Claude OK |
+| **다음** | `meta_global_fail_open` UnboundLocal 소멸 확인 · EOD 776 RO |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -71,8 +71,10 @@
 [KR/US] US-COSINE-SILENT-A · 확정 · 0.45 임계 기각
 [KR/US] US-COSINE-SILENT-B · **확정** · NA→DATA 위장 · 빈 config 폴백 · S1 비공유
 [KR/US] SWALLOW-CENSUS-01 · **RO 목록 완료**
-[KR/US] SWALLOW-GATE-FO-01 A · **Claude OK 2026-09-19** · 배포·ERROR 관측
-[KR/US] SWALLOW-GATE-FO-02 · **최우선 다음** · 2641 지연 import 삭제 · ERROR 확인 **즉시** Handoff · 지금 코드 금지
+[KR/US] SWALLOW-GATE-FO-01 A · **Claude OK 2026-09-19** · 배포 `5ff319d`
+[KR/US] SWALLOW-GATE-FO-02 · **Claude OK 2026-09-19** · 배포 · ERROR 소멸 관측
+[KR/US] TOXIC-FADE-FO-CHECK · **backlog** · 1848 별 try · 발동 0 · 급하지 않음
+[큐 leftover] 2) ledger 776 EOD · 3) CB 51/66/363 · 4) live_nav 239 · 5–7 선취매/Thompson/클램프
 [큐] swallow 2) ledger 776 EOD · 3) CB/좀비 · 4) 켈리 탄성
 [KR/US] US-COSINE-NA-RO · **큐** · NA 5239 처리 방식 RO · 구현 금지
 [패턴] 예외 삼킴: 전수 목록 OUTBOX · pass-only는 발동 증명 불가

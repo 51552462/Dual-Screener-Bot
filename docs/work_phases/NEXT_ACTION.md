@@ -2,28 +2,29 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **SWALLOW-GATE-FO-01 A** 배포됨 · 다음 **FO-02** |
-| **status** | **WAIT_CLAUDE_HANDOFF** — ERROR 보이면 **즉시** FO-02 (지연 import 삭제) |
-| **직전** | Claude OK: 2026-09-19. 로그만. 게이트는 아직 뚫림 |
-| **앵커** | `SYNC-2026-09-19-GATE-FO-A-OK` |
+| **sub-phase** | **SWALLOW-GATE-FO-02** 배포 · leftover **EOD 776** |
+| **status** | FO-02 **Claude OK** · 배포 후 ERROR 소멸 관측 · 776 RO 진행 |
+| **직전** | 조기 게이트 복구. 톡식=`TOXIC-FADE-FO-CHECK` |
+| **앵커** | `SYNC-2026-09-20-GATE-FO-02-OK` |
 
 ---
 
-## 지금 (관측)
+## 관측 (FO-02 성공 증거)
 
-배포 후 factory/ops에서:
+`entry_gate.meta_global_fail_open` 이 UnboundLocal로 **안 찍히면** 게이트가 다시 돈 것.
 
-- `entry gate fail-open event=entry_gate.meta_global_fail_open`
-- ops `forward.shared` · payload **code**
+정상 진입(게이트 통과) 회귀 없음도 같이 본다.
 
-8/25부터 매일이었으니 배포 당일 스캔부터 보일 수 있음.
+## leftover 큐
 
-## 다음 세션 최우선 (미루지 않음)
-
-ERROR 1건이라도 확인 → Claude에 **SWALLOW-GATE-FO-02** Handoff 요청 (2641 `load_meta_state_resolved` 지연 import 삭제). **FO-02 구현은 Handoff 전 금지.**
+1. **지금** `ledger.py` 776 EOD 청산 삼킴 (RO → 발동 흔적 → Handoff)
+2. CB 51/66/363
+3. live_nav 239
+4. 선취매 가드 · Thompson · S1/S4 클램프
+5. `TOXIC-FADE-FO-CHECK` (급하지 않음)
 
 ## 금지
 
-- FO-02를 지금 코드로 선구현
-- fail-open 방향 전환
-- EOD 776 / 컷오프 / bitget
+- 톡식을 지금 구현
+- fail-open 추가 뒤집기
+- 컷오프 / bitget

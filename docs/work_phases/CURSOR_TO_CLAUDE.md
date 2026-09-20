@@ -3,7 +3,75 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-19 · FO-01 A **Claude OK** · 배포 · 앵커 `SYNC-2026-09-19-GATE-FO-A-OK`
+> **갱신**: 2026-09-20 · FO-02 **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-GATE-FO-02-OK`
+
+---
+
+## OUTBOX — SWALLOW-GATE-FO-02 · Claude OK · 배포 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **Claude OK: 2026-09-19** |
+| **배포** | 커밋·푸시 → `update_factory` |
+| **성공 증거** | `entry_gate.meta_global_fail_open` UnboundLocal **소멸** |
+| **백로그** | `TOXIC-FADE-FO-CHECK` (1848 별 try · 급하지 않음) |
+| **다음 leftover** | ledger **776 EOD** (디렉터 진행) |
+
+---
+
+## OUTBOX — SWALLOW-GATE-FO-02 구현 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 구현 완료 · **WAIT_CLAUDE_OK** · 배포는 OK 후 |
+| **diff** | `try_add` 내부 import에서 `load_meta_state_resolved` 제거. `resolve_trading_kelly_base` 지연 **유지**. A logger **무접촉**. 2915+ **무접촉** |
+| **테스트** | scope 재도입 금지 + 조기 게이트 evaluate 스모크 + FO-01 observe **5 OK** |
+| **톡식** | `entry_gate.toxic_fade_fail_open` 은 **2641과 다른 try**. inverse_etf_sniper import/match 예외용. UnboundLocal 1965는 meta 게이트만. FO-02로 톡식 로그가 "같이 꺼지지" 않음(원래 0건) |
+
+DoD 4–5(ERROR 소멸·정상 진입)는 배포 후 관측.
+
+디렉터 → Claude: spec 검증. OK면 커밋·푸시·`update_factory`.
+
+---
+
+## OUTBOX — SWALLOW-GATE-FO-02 스코프 (지연 import) · 코드 0 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터: 원인 코드 확정 → ERROR 관측 대기 **불필요**. 스코프만 확인 후 Handoff |
+| **착수** | **아님** |
+
+### 1) 왜 지연 import였나 — **순환 참조 아님**
+
+`forward/shared.py` **이미 모듈 상단**(29–33행)에서 `load_meta_state_resolved`를 import한다. `meta_governor_consumer.py`는 `forward.shared`를 import하지 않는다 (`meta_governor` / `performance_budget` / `family_sleeve` / `toxic`도 shared 미참조).
+
+2704–2708 묶음은 `resolve_trading_kelly_base`를 쓰기 위한 **함수 안 관례 import**이고, 같은 튜플에 `load_meta_state_resolved`를 다시 넣어서 함수 전체 스코프를 지역 바인딩으로 만들었다. 9cbc169가 고친 `load_system_config`와 **동일 습관**. 순환을 풀려고 넣은 자리가 아니다.
+
+모듈 재배치는 필요 없다.
+
+### 2) 순환이 없으므로 안전 풀기
+
+Handoff B 한 줄: 그 import에서 **`load_meta_state_resolved` 이름만 제거**. `resolve_trading_kelly_base` 지연 import는 유지해도 됨(그 이름은 그 지점 전에 안 씀). 상단 import는 그대로 쓰면 1807 조기 게이트가 모듈 함수를 본다.
+
+### 3) 같은 함수에서 1807보다 먼저 쓰는가 / 같은 버그 더 있나
+
+AST: `try_add_virtual_position` 내부에서 **「뒤쪽 ImportFrom이 앞쪽 Load를 가리는」 이름은 `load_meta_state_resolved` 하나뿐**.
+
+같은 함수 뒤(2915, 2932, 2954, 2983)는 지금 2641 이후에라 UnboundLocal이 안 난다. B 후에도 상단 바인딩으로 동작. 조기 게이트만 죽어 있던 것.
+
+`ledger.py`는 `from forward.shared import *`라 별도 지연 import 없음.
+
+### 4) 재도입 금지 테스트 — **가능, 작음**
+
+기존 `tests/test_try_add_load_system_config_scope.py`의 `test_no_local_load_system_config_binding`에 `load_meta_state_resolved`를 같은 assert로 추가. 신규 파일 불필요. 조기 게이트가 UnboundLocal 없이 `evaluate_meta_global_entry_gate`까지 가는 스모크는 선택.
+
+### 5) 범위 vs A
+
+**A보다 작다.** 파일 1(`shared.py` import 한 줄) + 테스트 기존 파일 수 줄. A는 logger 헬퍼·ops_event·신규 테스트였다. B는 게이트가 **실제로 실행**되게 함(안전 강화). fail-open except·KILL/DEFENSE **로직 식은 무접촉** — 죽은 호출이 살아나는 것.
+
+금지 유지: fail-open→fail-closed 전환, LOCKDOWN 식 변경, bitget.
+
+디렉터 → Claude: 이 스코프로 **FO-02 Handoff 지금**. 로그 며칠 대기 없음.
 
 ---
 

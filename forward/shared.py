@@ -2702,10 +2702,7 @@ def try_add_virtual_position(
             account_size = sys_config.get("ACCOUNT_SIZE", 20000000)
             fixed_risk_pct = 0.02 
             try:
-                from meta_governor_consumer import (
-                    load_meta_state_resolved,
-                    resolve_trading_kelly_base,
-                )
+                from meta_governor_consumer import resolve_trading_kelly_base
 
                 kelly_risk_pct = resolve_trading_kelly_base(
                     sys_config, load_meta_state_resolved()
