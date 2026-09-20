@@ -20,6 +20,45 @@ CB_RELEASE_LOSS_RATIO = -0.02
 CB_COOLDOWN_TRADING_DAYS = 3
 
 
+def _observe_eod_fluid_except_swallowed(
+    exc: BaseException,
+    *,
+    market: object,
+    code: object,
+    regime: object,
+    trade_id: object = None,
+) -> None:
+    """EOD-FLUID-STOP-FO-01(A): EOD except 는 유지하고 발동만 관측."""
+    logger.error(
+        "eod fluid except swallowed market=%s code=%s regime=%s: %s: %s",
+        market,
+        code,
+        regime,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
+    try:
+        from ops_logger import insert_ops_event
+
+        insert_ops_event(
+            component="forward.ledger",
+            severity="ERROR",
+            event="eod_fluid.except_swallowed",
+            payload={
+                "market": str(market),
+                "code": str(code),
+                "regime": str(regime),
+                "trade_id": trade_id,
+                "exc_type": type(exc).__name__,
+                "exc_msg": str(exc)[:500],
+            },
+        )
+    except Exception as _ops_ex:
+        logger.debug("ops_event write also failed: %s", _ops_ex)
+
+
+
 def hybrid_tech_exit_reason(final_ret_pct: float) -> str:
     """HYBRID_TECH exit_reason only — exit_type stays HYBRID_TECH."""
     try:
@@ -286,9 +325,13 @@ def track_daily_positions(market):
         _ratchet_state = _xdyn.load_ratchet_state(
             sys_config
         )
-    except Exception:
+    except Exception as _xdyn_ex:
         _xdyn = None
         _ratchet_state = {}
+        _xdyn_import_err = _xdyn_ex
+    else:
+        _xdyn_import_err = None
+    _eod_xdyn_none_warned = False
 
     # 이미 로딩한 RL 상태에서 Hit-and-Run 지수를 한 번만 추출한다.
     #
@@ -756,6 +799,14 @@ def track_daily_positions(market):
             # 👑 [초월적 방어 배선] 하락장 오버나이트 리스크 제로화 (EOD 강제 청산)
             # =================================================================
             # 1.5순위: 하락장이 감지된 상태에서 장 마감(EOD) 지정 시간에 도달하면 무조건 시장가 탈출
+            if _xdyn is None and not _eod_xdyn_none_warned:
+                _eod_xdyn_none_warned = True
+                logger.warning(
+                    "eod fluid xdyn unavailable market=%s: %s: %s",
+                    market,
+                    type(_xdyn_import_err).__name__ if _xdyn_import_err is not None else "NoneType",
+                    _xdyn_import_err,
+                )
             if not do_exit and _xdyn is not None and not _is_observe_only:
                 try:
                     # 현재 해당 시장(KR/US)의 현지 시간 추출
@@ -774,6 +825,13 @@ def track_daily_positions(market):
                             )
                             actual_exit_price = c  # 현재가/종가로 강제 청산
                 except Exception as _eod_ex:
+                    _observe_eod_fluid_except_swallowed(
+                        _eod_ex,
+                        market=market,
+                        code=code,
+                        regime=_meta_regime,
+                        trade_id=r.get("id") if hasattr(r, "get") else None,
+                    )
                     pass
 
             # 2순위: 한계점 내부에서 움직일 경우, 국면 모드에 따른 추세/시간 청산

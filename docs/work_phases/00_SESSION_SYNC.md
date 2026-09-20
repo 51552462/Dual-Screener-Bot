@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-20 · **앵커 ID**: `SYNC-2026-09-20-GATE-FO-02-OK`
+> **갱신**: 2026-09-20 · **앵커 ID**: `SYNC-2026-09-20-EOD-FO-A-OK`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-20-GATE-FO-02-OK` |
-| **마지막 갱신** | 2026-09-20 — FO-02 **Claude OK** · 배포 · 다음 leftover=EOD 776 |
+| **앵커 ID** | `SYNC-2026-09-20-EOD-FO-A-OK` |
+| **마지막 갱신** | 2026-09-20 — EOD A Claude OK · 배포 · BEAR 로그 관찰 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | FO-02 배포·ERROR 소멸 관측 · leftover **776** 조사 착수 |
-| **직전 완료** | FO-02 구현 Claude OK |
-| **다음** | `meta_global_fail_open` UnboundLocal 소멸 확인 · EOD 776 RO |
+| **진행 중 sub-phase** | EOD-FLUID-STOP-FO-01(A) · **Claude OK · 관측** |
+| **직전 완료** | 776 로그 A 승인. 트리거 무접촉 |
+| **다음** | leftover 3·4순위는 디렉터 결정. DEFENSE는 backlog |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -74,7 +74,8 @@
 [KR/US] SWALLOW-GATE-FO-01 A · **Claude OK 2026-09-19** · 배포 `5ff319d`
 [KR/US] SWALLOW-GATE-FO-02 · **Claude OK 2026-09-19** · 배포 · ERROR 소멸 관측
 [KR/US] TOXIC-FADE-FO-CHECK · **backlog** · 1848 별 try · 발동 0 · 급하지 않음
-[큐 leftover] 2) ledger 776 EOD · 3) CB 51/66/363 · 4) live_nav 239 · 5–7 선취매/Thompson/클램프
+[KR/US] EOD-FLUID-STOP-FO-01(A) · **Claude OK 2026-09-20** · 배포 · BEAR 로그 관찰
+[KR/US] EOD-DEFENSE-GAP-01 · **backlog** · DEFENSE 시간함수엔 있고 ledger 리스트엔 없음 · 결정 전 코드 금지
 [큐] swallow 2) ledger 776 EOD · 3) CB/좀비 · 4) 켈리 탄성
 [KR/US] US-COSINE-NA-RO · **큐** · NA 5239 처리 방식 RO · 구현 금지
 [패턴] 예외 삼킴: 전수 목록 OUTBOX · pass-only는 발동 증명 불가

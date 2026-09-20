@@ -3,7 +3,95 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-20 · FO-02 **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-GATE-FO-02-OK`
+> **갱신**: 2026-09-20 · EOD-FLUID-STOP-FO-01(A) **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-EOD-FO-A-OK`
+
+---
+
+## OUTBOX — EOD-FLUID-STOP-FO-01(A) 배포 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **status** | **Claude OK: 2026-09-20** · 커밋·푸시·`update_factory` |
+| **관찰** | BEAR/HIGH_VOL 시 `EOD_FLUID_STOP` / `eod_fluid.except_swallowed` / `eod fluid xdyn unavailable` |
+| **다음 큐** | 3) CB·좀비 51/66/363 · 4) live_nav 239 · 착수는 디렉터 결정 |
+
+---
+
+## OUTBOX — EOD-FLUID-STOP-FO-01(A) 구현 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 구현 · **WAIT_CLAUDE_OK** |
+| **diff** | `_observe_eod_fluid_except_swallowed` · 776 ERROR+ops · `_xdyn is None` warning 1회/track |
+| **무접촉** | 국면 리스트·컷오프·강제청산 방향 · DEFENSE 미추가 |
+| **백로그** | `EOD-DEFENSE-GAP-01` (관찰만) |
+| **테스트** | `tests/test_eod_fluid_stop_observe_a.py` + 게이트 회귀 **7 OK** |
+
+디렉터 → Claude: spec 검증. OK면 커밋·배포.
+
+---
+
+## OUTBOX — SWALLOW-EOD-776-RO · ledger 776 except · 코드 0 · 2026-09-20
+
+| 항목 | 내용 |
+|------|------|
+| **수신** | 디렉터 RO Go. **착수 아님** |
+| **결론** | FO-02형 **원인 코드 확정 아님**. except는 `pass`라 발동 grep 불가. 지연 import 아님. **다음 Handoff = A(로그)만** |
+
+### 1) 이 코드가 하는 일
+
+`track_daily_positions` **종목 루프** 안, 다른 청산보다 앞(1.5순위). **전 계좌 일괄이 아니라 OPEN 1행씩.**
+
+진입 조건 (모두):
+- `do_exit` 아직 False
+- `_xdyn is not None` (`exit_dynamics` import 성공)
+- OBSERVE_ONLY 아님
+- `_meta_regime` ∈ `BEAR`, `BEAR_PANIC`, `BEAR_ACCEL`, `BEAR_GRIND`, `HIGH_VOL`
+- 시장 로컬시각 `now >= resolve_eod_exit_time(국면)`  
+  (PANIC 14:00 · BEAR/ACCEL 14:30 · GRIND/HIGH_VOL 15:15 · 그 외 15:20이지만 **리스트 밖이면 강제청산 안 함**)
+
+맞으면 `do_exit` + `EOD_FLUID_STOP` + 종가 `c`. **장 마감 전 현금화**가 의도. daily-kr **18:45 KST** / daily-us **06:45 KST**면 컷오프 이후라 BEAR면 남은 OPEN은 그날 트랙에서 거의 다 걸림.
+
+`DEFENSE`는 `resolve_eod_exit_time`엔 15:15이나 ledger 리스트에 **없음** → EOD 안 탐.
+
+별 침묵: 285–290 import 실패 시 `_xdyn=None` → **776 except에도 안 들어감**. EOD 전체 스킵. 로그 없음.
+
+### 2) 8/25–9/19 factory 로그 — except 발동?
+
+| grep | 건수 |
+|------|------|
+| `EOD_FLUID_STOP` / `오버나이트 갭하락` | **0** |
+| `track_daily_positions skip` | **0** |
+
+**except 발동 흔적 0.** `pass`라 원래 안 남음. 성공 경로 문자열도 이 창에 0.
+
+### 3) 밤새 OPEN 역추적
+
+`forward_trades` 전체 `EOD_FLUID_STOP` **1건**: KR 우리금융 `2026-08-05` 청산, 국면 **HIGH_VOL** 15:15. **조사창 밖.**
+
+8/25–9/19 청산 타입에 EOD **없음**. KR 25건은 STAT_MAE 15 + HYBRID_TECH 10. KR 멀티데이 홀드 9 · US 12. US 현재 OPEN 4 (AAPL 9/10 BULL, NTRA/VRSN/WABC SIDEWAYS) — **EOD 스위치 대상 국면 아님**.
+
+META 로그 샘플은 BULL/SIDEWAYS. BEAR/HIGH_VOL 라인 **0**. 창 안에서 EOD가 안 뜬 것은 **except 때문이라고 단정 불가** (스위치가 꺼져 있었을 가능성 큼).
+
+except가 삼켜서 밤새 간 포지션을 **행 단위로 복원 불가**.
+
+### 4) 왜 실패? 지연 import?
+
+**아님.** 이 try 안에 지연 `load_*` 없음. `resolve_eod_exit_time`은 문자열 분기만. 던질 일은 거의 없음. 776은 **예외가 나면 EOD만 건너뛰고** 아래 STAT/TECH 청산은 계속 (EOD만 fail-open).
+
+FO-02처럼 “매일 UnboundLocal 1965”로 확정할 코드 버그 **없음**.
+
+### 5) 스코프 — A만 (B 확정 수정 없음)
+
+NAV/FO-01 패턴:
+- `except`에서 `logger.error(..., exc_info=True)` + `insert_ops_event` event=`eod_fluid.except_swallowed` payload market/code/id/exc
+- `pass` 유지 (아래 청산 로직 계속)
+- 선택: `_xdyn is None`일 때 track당 1회 warning (`eod_fluid.xdyn_unavailable`)
+- fail-open→강제청산 뒤집기 금지 · LOCKDOWN 무접촉
+
+톡식과 같이 “0건이 진짜 0인지”를 보이게 하는 다리. 원인 확정 후 로직 변경은 별 Handoff.
+
+디렉터 → Claude: A Handoff 가능. 776을 FO-02처럼 지금 고치라는 스코프 **아님**.
 
 ---
 

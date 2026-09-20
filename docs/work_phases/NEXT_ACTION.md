@@ -2,29 +2,29 @@
 
 | 필드 | 값 |
 |------|-----|
-| **sub-phase** | **SWALLOW-GATE-FO-02** 배포 · leftover **EOD 776** |
-| **status** | FO-02 **Claude OK** · 배포 후 ERROR 소멸 관측 · 776 RO 진행 |
-| **직전** | 조기 게이트 복구. 톡식=`TOXIC-FADE-FO-CHECK` |
-| **앵커** | `SYNC-2026-09-20-GATE-FO-02-OK` |
+| **sub-phase** | **EOD-FLUID-STOP-FO-01(A)** |
+| **status** | **Claude OK: 2026-09-20** · 배포 · 관측 |
+| **직전** | 776 ERROR+ops · `_xdyn is None` warning |
+| **앵커** | `SYNC-2026-09-20-EOD-FO-A-OK` |
 
 ---
 
-## 관측 (FO-02 성공 증거)
+## 지금
 
-`entry_gate.meta_global_fail_open` 이 UnboundLocal로 **안 찍히면** 게이트가 다시 돈 것.
+배포 후 다음 BEAR/HIGH_VOL에서 관찰:
+- 정상 `EOD_FLUID_STOP`
+- `eod_fluid.except_swallowed` ERROR
+- `eod fluid xdyn unavailable` warning
 
-정상 진입(게이트 통과) 회귀 없음도 같이 본다.
+## leftover (착수는 디렉터 결정)
 
-## leftover 큐
-
-1. **지금** `ledger.py` 776 EOD 청산 삼킴 (RO → 발동 흔적 → Handoff)
-2. CB 51/66/363
-3. live_nav 239
-4. 선취매 가드 · Thompson · S1/S4 클램프
-5. `TOXIC-FADE-FO-CHECK` (급하지 않음)
+- 3순위: ledger 51/66/363 (CB·좀비)
+- 4순위: live_nav 239 (켈리 탄성)
+- `EOD-DEFENSE-GAP-01` — DEFENSE 리스트 추가 여부 미결정
+- `TOXIC-FADE-FO-CHECK`
 
 ## 금지
 
-- 톡식을 지금 구현
-- fail-open 추가 뒤집기
-- 컷오프 / bitget
+- EOD 국면·시간 변경
+- DEFENSE 지금 추가
+- bitget
