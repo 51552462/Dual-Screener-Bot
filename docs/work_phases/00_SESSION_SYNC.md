@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-21 · **앵커 ID**: `SYNC-2026-09-21-STALL-THAW-OK`
+> **갱신**: 2026-09-21 · **앵커 ID**: `SYNC-2026-09-21-STALL-THAW-ARMED`
 
 ---
 
@@ -40,16 +40,16 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-21-STALL-THAW-OK` |
-| **마지막 갱신** | 2026-09-21 — KR-LOCKDOWN-STALL-THAW-01 **Claude OK** · 커밋·배포 (ARMED=0) |
+| **앵커 ID** | `SYNC-2026-09-21-STALL-THAW-ARMED` |
+| **마지막 갱신** | 2026-09-21 — VPS `OPEN 0` · `ARMED False` → **`ARMED now True`**. 관측만 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | KR-LOCKDOWN-STALL-THAW-01 · **Claude OK · 배포** · 무장은 별도 |
-| **직전 완료** | STALL-THAW 장치 설치 승인 |
-| **다음** | `update_factory` · **ARMED=1 금지** (디렉터 별도 결정) |
+| **진행 중 sub-phase** | KR-LOCKDOWN-STALL-THAW-01 **ARMED** · 1슬롯 대기 (코드 금지) |
+| **직전 완료** | 디렉터 VPS 무장 스크립트 성공 |
+| **다음** | 신호 1건 또는 「무장·신호 없음」. 청산 시 consumed + ARMED=0. 성공=재평가 재가동 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | merge `96adf02` (워치독) + V-2-WFBLOCK-01 |
+| **git main** | `de57746` stall-thaw · origin/main 동기 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
@@ -78,11 +78,11 @@
 [KR/US] EOD-DEFENSE-GAP-01 · **backlog** · DEFENSE 시간함수엔 있고 ledger 리스트엔 없음 · 결정 전 코드 금지
 [KR/US] SWALLOW-LEFTOVER-BATCH-A-01 · **Claude OK 2026-09-20** · 배포 · 관측 등록
 [KR/US] SWALLOW-CENSUS leftover 11곳 · **종결** · 게이트 B · EOD A · leftover A
-[KR/US] US-COSINE-NA-RO · **큐** · NA 5239 처리 방식 RO · 구현 금지
+[KR/US] US-COSINE-NA-RO · **RO 2026-09-21** · skip≠부활 · 구현 금지 · 우선순위 대기
 [패턴] 예외 삼킴: 전수 목록 OUTBOX · pass-only는 발동 증명 불가
 [감시] US_RANK_B 1.35x · US_RANK_D 1.25x — 다음 데스매치 사이클 유지 여부 (액션 아님)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
-[KR/US] KR-LOCKDOWN-STALL-THAW-01 · **Claude OK 2026-09-21** · 장치 설치 · 무장 별도
+[KR/US] KR-LOCKDOWN-STALL-THAW-01 · **VPS ARMED=1** (2026-09-21 OPEN=0) · 관측 · 한국 재오픈 아님
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴) · STALL-THAW와 혼동 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
 [IV] V-2-DSR-01 / V-2B-SNAPSHOT-01 · backlog (이번 세션 금지)

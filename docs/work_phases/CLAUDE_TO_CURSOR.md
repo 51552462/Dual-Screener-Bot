@@ -4,7 +4,31 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: KR-LOCKDOWN-STALL-THAW-01 **Claude OK · 커밋·배포** · 앵커 `SYNC-2026-09-21-STALL-THAW-OK`
+> **현재**: KR-LOCKDOWN-STALL-THAW-01 **VPS ARMED=1** · 앵커 `SYNC-2026-09-21-STALL-THAW-ARMED` · 관측 (코드 금지)
+
+---
+
+## INBOX — Claude Pro 실행 지시 · KR-LOCKDOWN-STALL-THAW-01 무장 · 2026-09-21
+
+앵커: SYNC-2026-09-21-STALL-THAW-ARM
+디렉터 결정: 2026-09-21 — 지금 즉시 무장한다. "무기한 검증 대기"는 하지 않는다.
+
+### 실행 전 확인 (배포 완료 확인)
+1) STALL-THAW-01 배포가 실제로 VPS에 반영됐는지 (커밋 해시 확인)
+2) 지금 KR OPEN이 정말 0인지 재확인 (무장 조건)
+3) 현재 KR_LOCKDOWN_THAW_ARMED가 0(기본값)인지 확인
+
+### 실행
+KR_LOCKDOWN_THAW_ARMED=1 로 설정.
+
+### 실행 후 관찰 (자동, 개입 불필요)
+1) KR 스캔이 신호를 잡으면, 1건만 극소 사이즈로 진입
+2) band는 계속 LOCKDOWN으로 표시(정상)
+3) 그 1건이 청산되면 ops_event kr_lockdown.stall_thaw_consumed + ARMED 자동 0
+4) 며칠 내 신호 없으면 "무장은 됐는데 아직 신호가 없다" 보고
+
+### 재확인
+성공 판정 기준은 "이 1건 이후 재평가가 다시 정상 작동하는가"이지, "MDD가 9% 밑으로 갔는가"가 아니다.
 
 ---
 

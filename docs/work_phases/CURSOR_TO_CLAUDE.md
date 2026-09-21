@@ -3,7 +3,96 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-21 · KR-LOCKDOWN-STALL-THAW-01 **Claude OK · 커밋·배포** · 앵커 `SYNC-2026-09-21-STALL-THAW-OK`
+> **갱신**: 2026-09-21 · NA last-close 섀도우 카운트 · 앵커 `SYNC-2026-09-21-STALL-THAW-ARMED`
+
+---
+
+## OUTBOX — US-COSINE-NA-RO 섀도우 카운트 · 라이브 0 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **스크립트** | `scripts/diag_us_cosine_na_shadow.py` (enroll 없음 · hunter 미호출) |
+| **유니버스** | FDR/cache **6567** · 패널 **6487** |
+| **SSOT 카운트** | **티커별 chart 2mo** (spark 배치는 last-NA를 거의 못 잡음 → 폐기) |
+
+### 카운트 (마지막 유한 Close로 살리는 경우만) — chart
+
+| 시점 | NA_LAST_CLOSE | 그중 LIQ | 그중 코사인 도달 | 컷오프 통과 |
+|------|---------------|----------|------------------|-------------|
+| latest | 2 | 1 | 1 | 1 |
+| 9/04 | 2 | 1 | 1 | 1 |
+| 9/08 | **13** | 3 | 3 | 2 |
+| 9/09 | 6 | 2 | 2 | 2 |
+| 9/10 | 5 | 2 | 2 | 2 |
+| 9/11 | 3 | 2 | 2 | 2 |
+| 9/14 | 10 | 1 | 1 | 1 |
+| 9/15 | 3 | 1 | 1 | 1 |
+| 9/16 | 3 | 1 | 1 | 1 |
+| 9/17 | 2 | 1 | 1 | 1 |
+| 9/18 | 2 | 1 | 1 | 1 |
+
+**판정 유지:** last-finite-close는 5239를 안 살린다. 하루 최대 NA_LAST_CLOSE **13**, 코사인 도달 **3**. 라이브 코드 변경 없음.
+
+---
+
+## OUTBOX — US-COSINE-NA-RO + TOP_ONLY 재확인 · 코드 0 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 확인·스코프만. **착수 아님** |
+| **병렬** | STALL-THAW VPS ARMED=1 관측은 유지 |
+
+### 건 1 · NA 5239
+
+1) **왜 NA**  
+US SUPERNOVA는 FDR NASDAQ/NYSE/AMEX **전 상장 리스트**(캐시 CSV, 상폐 전용 필터 없음) + `yf.download` **2mo** 청크. sqlite S1 경로와 비공유. `fetch_failed=0`이면서 DATA가 ~80%인 이유: 빈 다운로드가 아니라 **이미 넣은 df에서 `if`가 `pd.NA`를 만남**. 전형은 `process_live_ticker` Close/Volume 마지막 값(당일 빈 봉·정지·상폐 잔존·yf 결측). 종목군 확정은 티커별 dump 없이 로컬 단정 불가 — 패턴은 yf 결측+유니버스가 넓음이지, DATA 필터가 일한 게 아님.
+
+2) **건너뛰고 계속 → 코사인까지 몇 건**  
+그 5239를 **평가 없이 skip**하면 코사인 추가 **0**. NA인 종목은 그대로 평가 불가. 7/22에도 NA 5239 + 합격 **167** — 167은 예외를 안 탄 잔여. 8/5~ 잔여 ~16%(~1153)는 이미 NA가 아니라 **LIQ 전량**. NA 라벨만 고치면 합격 0은 안 풀림. 마지막 **유한 Close**로 살리면 5239 중 일부가 LIQ 문 앞에 서고, 그다음 `$0.50`·5일 ADV vs `$300k` — 그때 몇 건이 코사인인지는 VPS 섀도우 카운트 전 **미지**. 상한 스케치만 7/22의 DNA 167.
+
+3) **어디·크기**  
+위장 본체: `supernova_hunter.py` `process_live_ticker` 바깥 `except` **2888–2898** — 아무 예외나 `funnel.drop("DATA_FAIL")`. 비교 지점: **2029–2053** (`c[-1]`, `current_close < 0.5`, `np.mean(v[-5:])`). `flatten_yf_download_df`는 이미 있음(2D 방어) — NA 마지막 봉은 별개. **FO-02 한 줄이 아님.** 정직한 라벨+카운터 ≈ 소. last-finite-close ≈ 소~중. 유니버스 상폐 정리·잔여 LIQ는 **별 Handoff**(FUNNEL-DEAD). 컷오프 0.50 손대지 말 것.
+
+4) **검증**  
+며칠 섀도우: enroll 금지. 티커당 `NA_LAST_CLOSE` / `FINITE_CLOSE` / `LIQ` / `DNA` 카운트만. `DATA_FAIL`과 `fetch_failed`를 섞지 말 것.
+
+### 건 2 · TOP_ONLY
+
+1) **미결선 유지.** `new_entry_tier_filter`는 밴드 dict·`evaluate` 결과·`PERFORMANCE_BUDGET_STATE_{mkt}` 안에만 있음. `try_add`는 안 읽음. 전 레포 py 소비 **0**. 그사이 우연히 고친 커밋 없음.
+
+2) **US가 DEFENSE(70%)에 들어가면 실제로 조여지는 것**  
+`KELLY_THROTTLE_MULT_US=0.2` · `POSITION_QUOTA_MULT_US=0.35` → `max_open = floor(국면base×0.35)` (0이면 0, 아니면 최소 1) · `block_new_entries=False`. `DEFENSE_ARM_ACTIVE_US=True`는 **S5 켈리 게이트**만 (`resolve_defense_arm_weight`). **TOP_ONLY는 무효과.** 지금 57%면 밴드는 아직 **CAUTION**(켈리 0.5·쿼터 0.6·arm on·티어 ALL).
+
+3) **연결 스코프 (착수 아님)**  
+코드량은 작다 — `try_add`에 STATE/전용 KV 가드 1곳 + 테스트. 큰 쪽은 **TOP 정의**(RANK_A? S1? 점수?). 정책 합의 없으면 배선해도 의미 없음. US DEFENSE **직전 필수 아님** — 없어도 사이즈·슬롯은 이미 조여짐. “최상위만”을 지키려면 DEFENSE 전에 Handoff 1개.
+
+디렉터 → 우선순위만. 구현은 CLAUDE_TO_CURSOR Handoff 후.
+
+---
+
+## OUTBOX — KR-LOCKDOWN-STALL-THAW-01 VPS 무장 완료 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **증거** | 디렉터 스크린샷. `OPEN 0 ARMED False` → `ARMED now True` |
+| **의미** | 1슬롯 ε-캡만. band=LOCKDOWN 유지가 정상. 한국 재오픈 아님 |
+| **코드** | 추가 구현 없음. 관측 |
+| **다음 보고** | 진입 1건 또는 며칠 통과 0. 청산 시 `kr_lockdown.stall_thaw_consumed` + ARMED=0 · 승/패·f·ΔNAV |
+| **성공 금지** | MDD 9% 밑으로 판정하지 말 것 |
+
+---
+
+## OUTBOX — KR-LOCKDOWN-STALL-THAW-01 무장 지시 랜딩 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **디렉터** | 2026-09-21 즉시 무장. 무기한 검증 대기 안 함. 한국 재오픈이 아님 — 교착 1발 |
+| **의미 확인** | 신호 1건·ε-캡·청산 시 ARMED=0·성공=재평가 재가동(LOCKDOWN 유지 가능=정상) |
+| **origin** | **푸시 완료** `0c12593..de57746` → `main` |
+| **ARMED** | **아직 0.** 이 노트북에서 `set_config_value` 하지 않음 |
+| **막힌 항** | VPS HEAD=`de57746` · KR OPEN=0 · KV ARMED=0 — SSH 이 세션 없음 |
+| **다음** | 디렉터 VPS `sudo bash ./update_factory.sh` 후 `NEXT_ACTION` Python (OPEN≠0이면 켜지 말 것) |
+| **성공 금지** | MDD 9% 밑으로 성공 판정하지 말 것 |
 
 ---
 
