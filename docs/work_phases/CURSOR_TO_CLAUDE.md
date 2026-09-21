@@ -3,7 +3,115 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-21 · SWALLOW-LEFTOVER-BATCH-A-01 **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-LEFTOVER-A-OK`
+> **갱신**: 2026-09-21 · KR-LOCKDOWN-STALL-THAW-01 **Claude OK · 커밋·배포** · 앵커 `SYNC-2026-09-21-STALL-THAW-OK`
+
+---
+
+## OUTBOX — KR-LOCKDOWN-STALL-THAW-01 Claude OK · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **판정** | **Claude OK: 2026-09-21** |
+| **의미** | 장치 설치. **지금 KR을 여는 승인 아님** |
+| **배포** | ARMED=0 유지. `update_factory` 후 자동 무장 금지 |
+
+---
+
+## OUTBOX — KR-LOCKDOWN-STALL-THAW-01 구현 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **status** | 구현 완료 · **WAIT_CLAUDE_OK** · 착수 승인(Critical Go) 반영 |
+| **앵커** | `SYNC-2026-09-21-STALL-THAW-HANDOFF` 스펙 그대로 |
+| **본체** | `evaluate_performance_budget("KR")` — LOCKDOWN+ARMED+OPEN=0 일 때만 층1·2·3 **출력** 덮어씀. `band=LOCKDOWN` 유지 |
+| **합성 Kelly** | `kelly_throttle_mult_true`(KR=0)로 `KELLY_THROTTLE_MULT` 기록. thaw f는 `KELLY_THROTTLE_MULT_KR`만 |
+| **소비** | `forward/ledger.py` 청산 후 `consume_kr_lockdown_thaw_slot` → ARMED=0 · event `kr_lockdown.stall_thaw_consumed` |
+| **키** | `KR_LOCKDOWN_THAW_ARMED` 기본 없음=OFF. ε `KR_LOCKDOWN_THAW_EPS_HWM_PCT` 기본 0.05. Rmax 15 |
+| **shared.py** | **diff 0** |
+| **테스트** | `tests/test_kr_lockdown_stall_thaw_01.py` + A-1-R1/A-2/A-3 **37 passed** |
+
+디렉터 → Claude: spec 검증. OK면 커밋·배포. 기본 ARMED=0이라 배포만으로 슬롯이 열리지 않음.
+
+---
+
+## OUTBOX — KR-LOCKDOWN-STALL-THAW-01 Handoff 초안 · 코드 0 · 2026-09-21
+
+| 항목 | 내용 |
+|------|------|
+| **ID** | **KR-LOCKDOWN-STALL-THAW-01** (신규 · **LADDER-01과 별개**) |
+| **status** | 설계 확정 · **WAIT_CLAUDE_HANDOFF** · **착수(코드) 아님** |
+| **방향** | **B** 디렉터 1회 무장 슬롯. **A**(N일 자동 감지)는 2순위 · **이번 스코프 아님** |
+| **위험** | 🔴 Critical · F-GATE 이상 · LOCKDOWN 평가 예외 (층 삭제/통합 아님) |
+| **디렉터** | 「사람 개입으로 조심스럽게 재개, 사다리 설계부터」승인 = **이 설계 문서화까지**. 프로브안 폐기. 구현 Go는 **Claude Handoff + Critical 문구 후** |
+
+### 문제 (LADDER와 다름)
+
+OPEN=0 ∧ 신규 0이면 `record_closure`가 없어 NAV가 안 움직임 → 소진율<90%가 **시작 불가**. LADDER-01은 **풀린 뒤** 히스테리시스. 본 ID는 **재평가 루프를 다시 돌리는 1슬롯**.
+
+### 확정 원칙 (8항)
+
+1. 기본 OFF. 자동 트리거 없음. 디렉터가 켤 때만.
+2. `KR_LOCKDOWN_THAW_ARMED=1` · **KR 전용** · **1슬롯**.
+3. 그 슬롯 **청산 완료** 즉시 ARMED=0. 재무장=디렉터가 다시 1.
+4. `try_add`에 구멍 3개가 아니라 **`evaluate_performance_budget("KR")` 한곳**에서 층1·2·3 **출력만** 슬롯용으로 덮어씀. `is_block_new_entries` / Kelly / quota **함수 시그니처·층 구조 불변**.
+5. 손실 한도 ε-캡. ε는 디렉터 후정. 코드 기본 제안 **HWM의 0.05%p**. `|R|_max` 기본 15%(좀비). `f = (ε/100)×HWM / (NAV×|R|_max/100)`.
+6. 성공 = 소진 후 **거버너가 다시 진짜 밴드 판단**. 9% 미만 실패 → LOCKDOWN 유지 = **정상**.
+7. US · A군 · MDD 캡 숫자 · 층 삭제/통합 · Bitget **무접촉**.
+8. 즉시 OFF = `KR_LOCKDOWN_THAW_ARMED=0` (킬스위치 = 무장 키).
+
+### 구현 스케치 (Handoff에 박을 것 · 코드 아님)
+
+- `band` 문자열은 **LOCKDOWN 유지** (보고서가 “풀렸다”고 착각 금지). notes에 `stall_thaw_slot`.
+- 덮어쓸 KR 출력만: `block_new_entries=False`, `KELLY_THROTTLE_MULT_KR=f_ε` (캡 기존 max kelly), `POSITION_QUOTA_MULT_KR` → `resolve_max_open_positions`가 **정확히 1**.
+- **`KELLY_THROTTLE_MULT`(합성 min)는 진짜 KR 밴드값(0) 유지** — thaw f를 합성에 넣으면 US 레거시가 풀릴 수 있음.
+- US `BLOCK_*_US` / `KELLY_*_US` / `POSITION_QUOTA_MULT_US` **쓰기 금지**.
+- 안전 게이트(자동 트리거 아님): ARMED여도 KR OPEN≥1 이면 **thaw 출력 안 함**(잔여 포지션 오무장 방지).
+- 청산 훅: KR 청산 1건 + ARMED=1 → `set_config_value(ARMED, 0)` + ops_event `kr_lockdown.stall_thaw_consumed`. INCUBATOR NAV skip과 **무관**(해동 슬롯은 Live 장부 행).
+- `forward/shared.py` **diff 0이 목표**. 기존 층1·2·3 소비 경로 재사용.
+- 워치독/RP-1 **이번 스코프 밖** (패널이 LOCKDOWN인데 block=false일 수 있음 → Handoff에 관측 메모만).
+
+### 파일 목록
+
+| 파일 | 역할 | 이번? |
+|------|------|--------|
+| `performance_budget_governor.py` | **본체** evaluate + sync 합성키 분리 | ✅ |
+| `forward/ledger.py` | KR 청산 시 ARMED=0 (소비) | ✅ 최소 훅 |
+| `tests/test_kr_lockdown_stall_thaw_01.py` | 신규 | ✅ |
+| `tests/test_a1_r1_lockdown_mult_read.py` | LOCKDOWN 0 회귀 | ✅ 실행만 |
+| `tests/test_a2_kelly_throttle.py` | block/US 분리 회귀 | ✅ 실행만 |
+| `tests/test_performance_budget_regime_quota_a3.py` | quota 0→1 회귀 | ✅ 실행만 |
+| `config_manager.py` | 키 스키마 없으면 **변경 금지**(set_config_value만) | ❌ 예상 |
+| `forward/shared.py` | 구멍 금지 | ❌ |
+| `meta_governor_consumer.py` | 층2 소비 불변 | ❌ |
+| `family_sleeve_demote.py` / F-GATE / bitget | | ❌ |
+| `live_nav_manager.py` | NAV 공식 불변 | ❌ |
+| `reports/director_watchdog.py` | | ❌ (후속) |
+| `regime_panel_rp1.py` | | ❌ (후속) |
+
+### 테스트 계획 (Handoff DoD)
+
+1. ARMED=0 · KR 소진≥90% → 기존과 동일 (block True, kelly 0, max_open 0).
+2. ARMED=1 · KR OPEN=0 · 소진≥90% → KR block False, max_open=1, 0&lt;f_ε≤ε식, **band 이름 LOCKDOWN**.
+3. 같은 상태에서 **US 키·US block 불변**. 합성 `KELLY_THROTTLE_MULT==0`.
+4. ARMED=1 · KR OPEN≥1(잔여) → thaw **미적용** (LOCKDOWN 유지).
+5. 청산 훅 시뮬: ARMED 1→0. 재 evaluate는 진짜 LOCKDOWN.
+6. ε 미설정 시 기본 0.05%p 식. f가 `MAX_EFFECTIVE_KELLY`를 넘지 않음.
+7. 층 함수 `is_block_new_entries` / `resolve_kelly_throttle_mult` / `resolve_max_open_positions` **삭제·시그니처 변경 없음** (소스 스모크).
+8. `forward/shared.py` git diff empty (구현 세션 DoD).
+
+### 금지 (Handoff에 복사)
+
+MDD 캡 10 변경 · 층 1·2·3 삭제/통합 · US S1/A군 재차단 · Bitget · N일 자동 발동 · NAV/HWM 리베이스 · 손실 NAV 미반영 · LADDER-01 범위로  impl · 성공=9% 미만 단정.
+
+### 디렉터 → Claude Pro 붙여넣기
+
+```text
+역할: Claude Pro Architect. 구현 코드 작성 금지.
+sub-phase: KR-LOCKDOWN-STALL-THAW-01 (LADDER-01과 별개).
+docs/work_phases/CURSOR_TO_CLAUDE.md 최상단 OUTBOX 설계 초안을 CAT-HANDOFF로 CLAUDE_TO_CURSOR.md에 써라.
+방향 B만. 자동 감지 A 금지. 🔴 Critical 승인 문구 필수.
+착수 코드는 Cursor Handoff 수신 후. 채팅 말고 파일에.
+```
 
 ---
 

@@ -4,7 +4,33 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: SWALLOW-LEFTOVER-BATCH-A-01 **Claude OK · 배포** · 앵커 `SYNC-2026-09-20-LEFTOVER-A-OK`
+> **현재**: KR-LOCKDOWN-STALL-THAW-01 **Claude OK · 커밋·배포** · 앵커 `SYNC-2026-09-21-STALL-THAW-OK`
+
+---
+
+## INBOX — Claude Pro 검증 · KR-LOCKDOWN-STALL-THAW-01 · 2026-09-21
+
+앵커: SYNC-2026-09-21-STALL-THAW-OK
+
+### 판정: 완전 OK
+
+- evaluate_performance_budget("KR") 한곳 예외, band=LOCKDOWN 유지 확인
+- 합성 KELLY_THROTTLE_MULT는 kelly_throttle_mult_true(0) 사용 — US 누수 차단 확인
+- OPEN≥1 미적용, 청산 시 ledger 훅으로 ARMED 자동 복귀 확인
+- ε=0.05%p, Rmax=15%, 층 시그니처 무변경 확인
+- forward/shared.py diff 0 확인 — "한곳" 구조 검증 완료
+- 기본 ARMED=0(배포만으로 안 열림) 확인
+- 테스트 37 passed (신규+회귀 A-1-R1/A-2/A-3)
+
+Claude OK: 2026-09-21 — 완전 승인. 커밋·배포 진행.
+
+### 배포 후 절대 하지 말 것
+- 배포 직후 자동으로 ARMED=1 설정 금지 — 디렉터가 별도로, 명시적으로 결정할 때만 무장
+
+### 다음
+1. 커밋·푸시 → update_factory 배포 (ARMED=0 상태로)
+2. 무장 여부는 디렉터가 별도로 결정 — 지금 이 승인은 "장치 설치"이지 "지금 켜라"가 아님
+3. 05_진행로그·00_전체현황판·00_SESSION_SYNC §3 갱신
 
 ---
 

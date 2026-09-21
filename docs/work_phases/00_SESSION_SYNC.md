@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-21 · **앵커 ID**: `SYNC-2026-09-20-LEFTOVER-A-OK`
+> **갱신**: 2026-09-21 · **앵커 ID**: `SYNC-2026-09-21-STALL-THAW-OK`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-20-LEFTOVER-A-OK` |
-| **마지막 갱신** | 2026-09-21 — leftover A Claude OK · 배포 · 전수 11곳 종결 |
+| **앵커 ID** | `SYNC-2026-09-21-STALL-THAW-OK` |
+| **마지막 갱신** | 2026-09-21 — KR-LOCKDOWN-STALL-THAW-01 **Claude OK** · 커밋·배포 (ARMED=0) |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | SWALLOW-LEFTOVER-BATCH-A-01 · **Claude OK · 관측** |
-| **직전 완료** | leftover 전수 11곳 처리. 트리거 무접촉 |
-| **다음** | CB 트립·30일+ 정지·켈리 event 관찰 (즉시 확인 아님) |
+| **진행 중 sub-phase** | KR-LOCKDOWN-STALL-THAW-01 · **Claude OK · 배포** · 무장은 별도 |
+| **직전 완료** | STALL-THAW 장치 설치 승인 |
+| **다음** | `update_factory` · **ARMED=1 금지** (디렉터 별도 결정) |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -82,10 +82,11 @@
 [패턴] 예외 삼킴: 전수 목록 OUTBOX · pass-only는 발동 증명 불가
 [감시] US_RANK_B 1.35x · US_RANK_D 1.25x — 다음 데스매치 사이클 유지 여부 (액션 아님)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)
-[KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴 · F-GATE 이상) · Critical 승인 전 금지
+[KR/US] KR-LOCKDOWN-STALL-THAW-01 · **Claude OK 2026-09-21** · 장치 설치 · 무장 별도
+[KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴) · STALL-THAW와 혼동 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
 [IV] V-2-DSR-01 / V-2B-SNAPSHOT-01 · backlog (이번 세션 금지)
-[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · LOCKDOWN 우회 · 라이브 리플레이 지금 · **사이징 공식 오늘 개조** · A군 US S1을 임의로 0 재차단(정책 B 번복은 Handoff)
+[금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · **LOCKDOWN 무단 우회**(STALL-THAW는 Handoff+Critical만) · 라이브 리플레이 지금 · **사이징 공식 오늘 개조** · A군 US S1을 임의로 0 재차단(정책 B 번복은 Handoff)
 ```
 
 **다른 창에서 다른 sub-phase를 열었다면** → 그 창 닫기 전에 §3 이 표만이라도 갱신하거나, 디렉터에게 「앵커 갱신 필요」라고 남긴다.

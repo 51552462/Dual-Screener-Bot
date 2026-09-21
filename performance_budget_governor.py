@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import sqlite3
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -29,6 +31,12 @@ CONFIG_KEY_PREFIX = "PERFORMANCE_BUDGET"
 CONFIG_KEY_POSITION_QUOTA_REGIME_MAP = "POSITION_QUOTA_REGIME_MAP"
 DEFAULT_MDD_CAP_PCT = 10.0
 DEFAULT_BASE_MAX_OPEN = 20
+CONFIG_KEY_KR_LOCKDOWN_THAW_ARMED = "KR_LOCKDOWN_THAW_ARMED"
+CONFIG_KEY_KR_LOCKDOWN_THAW_EPS = "KR_LOCKDOWN_THAW_EPS_HWM_PCT"
+CONFIG_KEY_KR_LOCKDOWN_THAW_RMAX = "KR_LOCKDOWN_THAW_RMAX_PCT"
+DEFAULT_KR_LOCKDOWN_THAW_EPS_HWM_PCT = 0.05
+DEFAULT_KR_LOCKDOWN_THAW_RMAX_PCT = 15.0
+MAX_THAW_KELLY_MULT = 0.50
 
 # A-3 SSOT: 국면별 base max OPEN (POSITION_QUOTA_MULT와 곱연산 — min 아님)
 DEFAULT_POSITION_QUOTA_REGIME_MAP: Dict[str, int] = {
@@ -119,8 +127,146 @@ def _neutral_result(market: str, *, reason: str) -> Dict[str, Any]:
         "new_entry_tier_filter": "ALL",
         "block_new_entries": False,
         "notes": reason,
+        "kelly_throttle_mult_true": 1.0,
+        "stall_thaw_active": False,
         "evaluated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def is_kr_lockdown_thaw_armed(sys_config: Optional[Mapping[str, Any]]) -> bool:
+    """KR_LOCKDOWN_THAW_ARMED — 기본 0/없음 = OFF. 1/true/on 만 무장."""
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if CONFIG_KEY_KR_LOCKDOWN_THAW_ARMED not in cfg:
+        return False
+    v = cfg.get(CONFIG_KEY_KR_LOCKDOWN_THAW_ARMED)
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return int(v) == 1
+    if isinstance(v, str):
+        return v.strip().upper() in ("1", "TRUE", "YES", "ON")
+    return False
+
+
+def resolve_kr_thaw_eps_hwm_pct(sys_config: Optional[Mapping[str, Any]] = None) -> float:
+    v = resolve_config_float(
+        sys_config if isinstance(sys_config, dict) else {},
+        CONFIG_KEY_KR_LOCKDOWN_THAW_EPS,
+        default=DEFAULT_KR_LOCKDOWN_THAW_EPS_HWM_PCT,
+    )
+    return v if v > 0 else DEFAULT_KR_LOCKDOWN_THAW_EPS_HWM_PCT
+
+
+def resolve_kr_thaw_rmax_pct(sys_config: Optional[Mapping[str, Any]] = None) -> float:
+    v = resolve_config_float(
+        sys_config if isinstance(sys_config, dict) else {},
+        CONFIG_KEY_KR_LOCKDOWN_THAW_RMAX,
+        default=DEFAULT_KR_LOCKDOWN_THAW_RMAX_PCT,
+    )
+    return v if v > 0 else DEFAULT_KR_LOCKDOWN_THAW_RMAX_PCT
+
+
+def compute_kr_thaw_kelly_mult(nav: float, hwm: float, sys_config: Optional[Mapping[str, Any]] = None) -> float:
+    """f = (ε/100)×HWM / (NAV×|R|_max/100). ε 기본 0.05%p of HWM."""
+    if nav <= 0 or hwm <= 0:
+        return 0.0
+    eps = resolve_kr_thaw_eps_hwm_pct(sys_config)
+    rmax = resolve_kr_thaw_rmax_pct(sys_config)
+    f = (eps / 100.0) * hwm / (nav * (rmax / 100.0))
+    if not math.isfinite(f) or f <= 0:
+        return 0.0
+    return min(MAX_THAW_KELLY_MULT, f)
+
+
+def count_kr_open_positions(sys_config: Optional[Mapping[str, Any]] = None) -> int:
+    """
+    KR OPEN 수. 테스트는 KR_LOCKDOWN_THAW_OPEN_COUNT 주입.
+    조회 실패는 -1 (thaw 거부).
+    """
+    cfg = sys_config if isinstance(sys_config, dict) else {}
+    if "KR_LOCKDOWN_THAW_OPEN_COUNT" in cfg:
+        try:
+            return int(cfg.get("KR_LOCKDOWN_THAW_OPEN_COUNT"))
+        except (TypeError, ValueError):
+            return -1
+    try:
+        from market_db_paths import MARKET_DATA_DB_PATH
+
+        if not os.path.isfile(MARKET_DATA_DB_PATH):
+            return -1
+        conn = sqlite3.connect(f"file:{MARKET_DATA_DB_PATH}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM forward_trades WHERE market=? AND status='OPEN'",
+                ("KR",),
+            ).fetchone()
+            return int(row[0] or 0) if row else 0
+        finally:
+            conn.close()
+    except Exception:
+        return -1
+
+
+def _maybe_apply_kr_stall_thaw(
+    out: Dict[str, Any],
+    cfg: Mapping[str, Any],
+    *,
+    nav: float,
+    hwm: float,
+) -> None:
+    """LOCKDOWN + ARMED + KR OPEN=0 일 때만 층1·2·3 출력을 1슬롯용으로 덮어쓴다. band 이름은 LOCKDOWN 유지."""
+    if out.get("market") != "KR":
+        return
+    if out.get("band") != "LOCKDOWN":
+        return
+    if not is_kr_lockdown_thaw_armed(cfg):
+        return
+    open_n = count_kr_open_positions(cfg)
+    if open_n != 0:
+        return
+    f_eps = compute_kr_thaw_kelly_mult(nav, hwm, cfg)
+    if f_eps <= 0:
+        return
+    base = resolve_regime_base_max_open(cfg, "KR")
+    if base <= 0:
+        base = DEFAULT_BASE_MAX_OPEN
+    quota_mult = 1.0 / float(base)
+    out["block_new_entries"] = False
+    out["kelly_throttle_mult"] = round(f_eps, 8)
+    out["position_quota_mult"] = quota_mult
+    out["stall_thaw_active"] = True
+    out["notes"] = f"{out.get('notes', '')} | stall_thaw_slot f={f_eps:.6f} max_open=1"
+
+
+def consume_kr_lockdown_thaw_slot(*, market: str) -> bool:
+    """KR 청산 1건 후 무장 해제. True면 이번에 0으로 내렸다."""
+    if normalize_market(market) != "KR":
+        return False
+    try:
+        from config_manager import load_system_config
+
+        cfg = load_system_config()
+        if not is_kr_lockdown_thaw_armed(cfg):
+            return False
+        set_config_value(CONFIG_KEY_KR_LOCKDOWN_THAW_ARMED, 0)
+        if isinstance(cfg, dict):
+            cfg[CONFIG_KEY_KR_LOCKDOWN_THAW_ARMED] = 0
+        try:
+            from ops_logger import insert_ops_event
+
+            insert_ops_event(
+                component="performance_budget_governor",
+                severity="INFO",
+                event="kr_lockdown.stall_thaw_consumed",
+                payload={"market": "KR"},
+            )
+        except Exception:
+            pass
+        logger.info("KR lockdown stall-thaw slot consumed — ARMED=0")
+        return True
+    except Exception as exc:
+        logger.error("KR stall-thaw consume failed: %s", exc, exc_info=True)
+        return False
 
 
 def evaluate_performance_budget(
@@ -153,8 +299,8 @@ def evaluate_performance_budget(
     exhaustion_pct = max(0.0, current_dd_pct / mdd_cap_pct * 100.0)
 
     band = _band_for_exhaustion(exhaustion_pct)
-
-    return {
+    true_kelly = float(band["kelly_throttle_mult"])
+    out = {
         "market": mkt,
         "nav": nav,
         "hwm": hwm,
@@ -162,14 +308,18 @@ def evaluate_performance_budget(
         "mdd_cap_pct": mdd_cap_pct,
         "exhaustion_pct": round(exhaustion_pct, 2),
         "band": band["band"],
-        "kelly_throttle_mult": band["kelly_throttle_mult"],
+        "kelly_throttle_mult": true_kelly,
         "position_quota_mult": band["position_quota_mult"],
         "defense_arm_active": band["defense_arm_active"],
         "new_entry_tier_filter": band["new_entry_tier_filter"],
         "block_new_entries": band["block_new_entries"],
         "notes": band["notes"],
+        "kelly_throttle_mult_true": true_kelly,
+        "stall_thaw_active": False,
         "evaluated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+    _maybe_apply_kr_stall_thaw(out, cfg, nav=nav, hwm=hwm)
+    return out
 
 
 def sync_performance_budget_to_config_kv(
@@ -212,9 +362,8 @@ def sync_performance_budget_to_config_kv(
         set_config_value(
             f"{CONFIG_KEY_PREFIX}_BLOCK_NEW_ENTRIES_{mkt}", ev["block_new_entries"]
         )
-        combined_kelly_mult = min(
-            combined_kelly_mult, float(ev["kelly_throttle_mult"])
-        )
+        combined_src = ev.get("kelly_throttle_mult_true", ev["kelly_throttle_mult"])
+        combined_kelly_mult = min(combined_kelly_mult, float(combined_src))
 
     set_config_value("KELLY_THROTTLE_MULT", round(combined_kelly_mult, 4))
     results["combined_kelly_throttle_mult"] = round(combined_kelly_mult, 4)

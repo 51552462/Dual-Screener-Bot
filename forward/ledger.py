@@ -1127,6 +1127,14 @@ def track_daily_positions(market):
                         logger.debug("ops_event write also failed: %s", e)
                         pass
 
+                # KR-LOCKDOWN-STALL-THAW-01: 슬롯 청산 → ARMED=0 (층 구멍 아님)
+                try:
+                    from performance_budget_governor import consume_kr_lockdown_thaw_slot
+
+                    consume_kr_lockdown_thaw_slot(market=str(market))
+                except Exception as _thaw_ex:
+                    logger.debug("stall-thaw consume skip: %s", _thaw_ex)
+
                 # [초월적 진화 M3] 밴딧 베이지안 갱신 — 청산 1건마다 승/패로 Beta(α,β) 업데이트.
                 # 승격 템플릿의 sig_type 일 때만 동작(아니면 무 I/O).
                 try:
