@@ -5,6 +5,7 @@ UX(4칸 쉬운판)만 참조. 문구·목표·마일스톤은 Track B SSOT만:
   MDD 5% · B0 측정 / B1~B2 연 12~25% · spot/futures · paper
 주식 OBS_HOLD(갈림길 n/20 · mega_trend) · KR/US 장부 · 연 40~70% — 사용 금지.
 원장 쓰기는 factory 19:30 cron 전용.
+CAT-N 가드: A-LIFECAP-01 (`job_lifetime_cap`) 은 이 원장/스냅샷을 읽거나 쓰지 않는다.
 """
 from __future__ import annotations
 

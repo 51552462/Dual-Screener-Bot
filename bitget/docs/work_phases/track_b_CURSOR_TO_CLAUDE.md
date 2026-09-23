@@ -1,6 +1,44 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-15 00:41 KST · **1800초 Claude 검증 OK** · 다음=09-15 15:07 UTC 4종
+> **갱신**: 2026-09-23 · **A-LIFECAP-01 SHADOW_DEPLOYED · WAIT_48H_OBS** (Claude OK shadow)
+
+---
+
+## OUTBOX — A-LIFECAP-01 Claude OK shadow · 사후 확인 2줄 · 2026-09-23
+
+**Claude OK: 2026-09-23** (shadow 배포 승인 · ENFORCE=true는 별도 Handoff)
+
+- flock: SIGKILL이면 프로세스 종료 시 fd가 닫혀 Linux flock은 OS가 해제. 코드에 unlock 없음. **7테스트에 flock 케이스 없음.**
+- 5핵심 매핑: `test_a_age_under_cap_survives` · `test_b_age_over_cap_shadow_log_only` · `test_c_enforce_sigterm_then_sigkill` · `test_d_same_mode_reentry_two_skips`+`test_d_stale_over_cap_skip_not_kill` · `test_e_record_job_failure_on_enforce_sweep` (+ `test_job_lifetime_cap_sec_heavy_vs_ops`)
+
+status=`SHADOW_DEPLOYED · WAIT_48H_OBS`. 48h 후 Cursor에 WOULD_KILL 원문 조회.
+
+---
+
+## OUTBOX — A-LIFECAP-01 1단계 shadow 구현 · Claude 검증 요청 · 2026-09-23
+
+---
+
+## OUTBOX — A-LIFECAP-01 1단계 shadow 구현 · Claude 검증 요청 · 2026-09-23
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | A-LIFECAP-01 |
+| **status** | `WAIT_CLAUDE_OK` |
+| **ENFORCE** | **false** (WOULD_KILL 로그만) |
+| **ENABLED** | true · 롤백=`BITGET_JOB_LIFECAP_ENABLED=false` |
+| **코드** | `bitget/infra/job_lifetime_cap.py` · `runtime.dispatch` skip only · `watchdog.main` sweep |
+| **테스트** | `bitget/tests/test_job_lifetime_cap.py` 7 passed |
+
+### 엔지니어 1줄
+동일 mode 재진입은 skip만. kill은 watchdog sweep 한 경로. Mission 3 `record_job_failure` 재사용. 배포 후 48h WOULD_KILL 오탐 없으면 ENFORCE Handoff.
+
+### 배포 후 Claude가 볼 로그
+`journalctl`/`watchdog` 로그 키워드 `LIFECAP WOULD_KILL` — 정상 장기 작업이면 cap 재조정, 아니면 ENFORCE=true.
+
+---
+
+## OUTBOX — 1800초 계산 검증 접수 (코드/서버 변경 없음)
 
 ---
 

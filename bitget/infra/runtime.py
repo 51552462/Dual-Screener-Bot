@@ -525,17 +525,19 @@ def format_bitget_run_telegram(report: BitgetRunReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _record_ops_heartbeat(mode: str, report: BitgetRunReport) -> None:
+def _record_ops_heartbeat(
+    mode: str, report: BitgetRunReport, *, duration_sec: Optional[float] = None
+) -> None:
     try:
         from bitget.infra import ops_logger
 
-        ops_logger.record_heartbeat(
-            f"bitget.{mode}",
-            extra={
-                "status": report.status_label,
-                "critical_ok": report.all_critical_ok,
-            },
-        )
+        extra = {
+            "status": report.status_label,
+            "critical_ok": report.all_critical_ok,
+        }
+        if duration_sec is not None:
+            extra["duration_sec"] = round(float(duration_sec), 3)
+        ops_logger.record_heartbeat(f"bitget.{mode}", **extra)
     except Exception:
         pass
 
@@ -602,6 +604,39 @@ def dispatch_bitget_mode(
         except Exception:
             pass
 
+    # A-LIFECAP-01: same-mode skip only (never kill here).
+    t_dispatch = time.monotonic()
+    lifecap_registered = False
+    try:
+        from bitget.infra.job_lifetime_cap import (
+            is_same_mode_alive,
+            job_lifetime_cap_sec,
+            lifecap_enabled,
+            log_job_duration,
+            register_job_start,
+            unregister_job,
+        )
+
+        if lifecap_enabled():
+            alive, age_sec = is_same_mode_alive(mode)
+            cap_sec = job_lifetime_cap_sec(mode)
+            if alive:
+                if age_sec < cap_sec:
+                    skip_detail = f"SKIPPED_STILL_RUNNING age={age_sec} cap={cap_sec}"
+                else:
+                    skip_detail = f"SKIPPED_STALE_OVER_CAP age={age_sec} cap={cap_sec}"
+                report.skipped_session = True
+                report.skipped_session_detail = skip_detail
+                report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+                logger.info("bitget lifecap skip (%s): %s", mode, skip_detail)
+                _record_ops_heartbeat(mode, report, duration_sec=time.monotonic() - t_dispatch)
+                log_job_duration(mode, time.monotonic() - t_dispatch, skip_detail.split()[0])
+                return report
+            register_job_start(mode, os.getpid())
+            lifecap_registered = True
+    except Exception:
+        logger.debug("lifecap dispatch gate skipped", exc_info=True)
+
     effective_lock = resolve_lock_timeout_sec(mode, explicit=lock_timeout_sec)
 
     try:
@@ -639,8 +674,17 @@ def dispatch_bitget_mode(
         report.steps.append(
             StepResult(name="dispatch_outer", ok=False, critical=True, error=str(e))
         )
+    finally:
+        if lifecap_registered:
+            try:
+                from bitget.infra.job_lifetime_cap import unregister_job
+
+                unregister_job(mode, os.getpid())
+            except Exception:
+                pass
 
     report.finished_at = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+    duration_sec = time.monotonic() - t_dispatch
 
     # Mission 3: 스캔 결과를 서킷 브레이커에 반영 (OK→close, FAIL→누적/OPEN).
     if is_scan_mode:
@@ -656,6 +700,12 @@ def dispatch_bitget_mode(
                     logger.error("bitget scan circuit tripped → %s", cb_label)
         except Exception:
             pass
+    try:
+        from bitget.infra.job_lifetime_cap import log_job_duration
+
+        log_job_duration(mode, duration_sec, report.status_label)
+    except Exception:
+        pass
 
     quiet = False
     if report.status_label == "SKIPPED_LOCK":
@@ -678,7 +728,7 @@ def dispatch_bitget_mode(
             quiet = report.status_label in ("SKIPPED_SESSION", "SKIPPED_LOCK")
     if send_fn and not skip_telegram and report.status_label not in ("OK",) and not quiet:
         send_fn(format_bitget_run_telegram(report))
-    _record_ops_heartbeat(mode, report)
+    _record_ops_heartbeat(mode, report, duration_sec=duration_sec)
     return report
 
 

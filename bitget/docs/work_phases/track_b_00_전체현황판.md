@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **없음** · L-3b 2회 관찰 후 전체 큐 Ask | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-09-14 | L-3a Claude OK · L-3b WAIT_OBS |
+| **다음 Handoff** | **A-LIFECAP-01 WAIT_CLAUDE_OK** (shadow) · L-3b 계속 관측 | C-2/MDD5%/live 🔴 defer |
+| 마지막 갱신 | 2026-09-23 | A-LIFECAP-01 Claude OK shadow · WAIT_48H_OBS · ENFORCE=false |
 
 ---
 

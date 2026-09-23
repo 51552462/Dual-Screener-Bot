@@ -142,6 +142,14 @@ def ops_events_db_path() -> str:
     return os.path.join(bitget_data_dir(), "bitget_ops_events.sqlite")
 
 
+def job_lifetime_db_path() -> str:
+    """A-LIFECAP-01 job start registry — not the task_orchestrator queue."""
+    env = (os.environ.get("BITGET_JOB_LIFECAP_DB_PATH") or "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    return os.path.join(bitget_data_dir(), "bitget_job_lifetime.sqlite")
+
+
 def task_queue_db_path() -> str:
     """코인(Bitget) 팩토리 작업 큐 — 주식 큐와 물리 분리 (`bitget_task_queue.sqlite`)."""
     env = (os.environ.get("BITGET_TASK_QUEUE_DB_PATH") or "").strip()

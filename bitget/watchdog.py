@@ -835,6 +835,14 @@ def main() -> int:
     components = _resolve_watchdog_components()
     db = _ops_db_path()
 
+    # A-LIFECAP-01: job-age sweep on existing 5min tick (no new timer).
+    try:
+        from bitget.infra.job_lifetime_cap import sweep_expired_jobs
+
+        sweep_expired_jobs()
+    except Exception as e:  # noqa: BLE001
+        log_exception(logger, "lifecap sweep error: %s", e)
+
     # Plane 2: queue backlog + worker survival (independent of factory HB)
     try:
         _monitor_queue_safety(state_dir, cooldown, miss_threshold=miss_threshold)

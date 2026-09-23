@@ -19,6 +19,24 @@
 
 ---
 
+## A-LIFECAP-01 — 스캔 작업 수명 캡 [2026-09-23] · **SHADOW_DEPLOYED · WAIT_48H_OBS**
+
+**Claude OK: 2026-09-23** (shadow 배포 승인 · ENFORCE=true는 별도 Handoff 필요)
+
+- **1단계 shadow**: `BITGET_JOB_LIFECAP_ENFORCE=false` (kill 없음 · WOULD_KILL 로그만)
+- **ENABLED**=true · HEAVY=5400s (`scan_`/`daily_audit`/`weekly_evolution`) · OPS=1800s · grace=60s
+- dispatch: 동일 mode alive면 skip only (`SKIPPED_STILL_RUNNING` / `SKIPPED_STALE_OVER_CAP`) · **kill 금지**
+- watchdog 기존 5분 tick에 `sweep_expired_jobs()` 추가 · ENFORCE=true 일 때만 SIGTERM→grace→SIGKILL + `record_job_failure()` (Mission 3)
+- registry: `bitget_job_lifetime.sqlite` (task 큐와 분리)
+- duration: `ops_events` event=`job.duration` + heartbeat extra
+- 테스트: `bitget/tests/test_job_lifetime_cap.py` **7 passed**
+  - 5핵심: `test_a_age_under_cap_survives` / `test_b_age_over_cap_shadow_log_only` / `test_c_enforce_sigterm_then_sigkill` / `test_d_same_mode_reentry_two_skips`+`test_d_stale_over_cap_skip_not_kill` / `test_e_record_job_failure_on_enforce_sweep` · 추가=`test_job_lifetime_cap_sec_heavy_vs_ops`
+- flock: SIGKILL 시 프로세스 fd 종료로 OS가 flock 해제. **명시 unlock 없음. 7테스트에 flock 케이스는 없음** (사후 확인, 배포 차단 아님)
+- **잔여**: 배포 후 48h · heavy 2사이클 · `LIFECAP WOULD_KILL` 오탐 0 → OUTBOX 원문 → ENFORCE Handoff
+- 비접촉: crontab 재설치 · C-2/MDD5%/live · CAT-N 원장
+
+---
+
 ## CAT-L-FENCE-01 — L-3a/L-3b/L-4 [2026-09-14]
 
 ### L-3a Cursor 구현 ✅ · 서버 적용 확인 ✅(원문 캡처 2건) · **Claude OK 2026-09-14**
