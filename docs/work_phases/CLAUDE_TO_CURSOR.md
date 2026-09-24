@@ -4,7 +4,26 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: KR-LOCKDOWN-STALL-THAW-01 **VPS ARMED=1** · 앵커 `SYNC-2026-09-21-STALL-THAW-ARMED` · 관측 (코드 금지)
+> **현재**: WATCHDOG-FUNNEL-VISIBILITY-01 **Claude OK 2026-09-24** · 앵커 `SYNC-2026-09-24-WD-FUNNEL-OK` · 다음=`US-COSINE-AXIS-01` · thaw 관측
+
+---
+
+## INBOX — Claude Pro 검증 · WATCHDOG-FUNNEL-VISIBILITY-01 + REGIME-KEYS-RO · 2026-09-24
+
+앵커: SYNC-2026-09-24-WD-FUNNEL-OK
+
+### WATCHDOG-FUNNEL-VISIBILITY-01: 완전 OK
+- 3줄 추가 확인, try_add/국면/사이징/컷오프 무접촉 확인, 테스트 13 OK
+Claude OK: 2026-09-24 — 배포 진행.
+
+### REGIME-KEYS-RO: 판단 승인
+- 통합 비권고 결론 승인. KR/US 분리는 유지(의도), CURRENT 다중 writer 문제만
+  "정합성 표시" 추가로 대응 — 이번엔 코드 착수 안 함 (🟡 작음, 급하지 않음)
+- 다음에 열 때는 "4키 나란히 표시" + "앙상블이 CURRENT 덮어쓰기 금지"
+  둘 중 하나만 작게
+
+### 다음 최우선 (변동 없음)
+US-COSINE-AXIS-01 — 축 표준화 → 컷 재캘리브레이션 → $30k LIQ, 한 Handoff로
 
 ---
 

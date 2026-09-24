@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-21 · **앵커 ID**: `SYNC-2026-09-21-STALL-THAW-ARMED`
+> **갱신**: 2026-09-24 · **앵커 ID**: `SYNC-2026-09-24-WD-FUNNEL-OK`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-21-STALL-THAW-ARMED` |
-| **마지막 갱신** | 2026-09-21 — VPS `OPEN 0` · `ARMED False` → **`ARMED now True`**. 관측만 |
+| **앵커 ID** | `SYNC-2026-09-24-WD-FUNNEL-OK` |
+| **마지막 갱신** | 2026-09-24 — 워치독 Claude OK · 국면 통합 금지 승인. 디렉터 배포. AXIS는 **다음 세션**. STALL-THAW ARMED 관측 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | KR-LOCKDOWN-STALL-THAW-01 **ARMED** · 1슬롯 대기 (코드 금지) |
-| **직전 완료** | 디렉터 VPS 무장 스크립트 성공 |
-| **다음** | 신호 1건 또는 「무장·신호 없음」. 청산 시 consumed + ARMED=0. 성공=재평가 재가동 |
+| **진행 중 sub-phase** | KR-LOCKDOWN-STALL-THAW-01 **ARMED** 관측 · 워치독 **배포** |
+| **직전 완료** | WATCHDOG-FUNNEL-VISIBILITY-01 **Claude OK** · REGIME-KEYS-RO 판단 승인 |
+| **다음** | VPS `update_factory` → 다음 창 **`US-COSINE-AXIS-01`**. 국면 코드 이번 없음 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -57,7 +57,7 @@
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
 [KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
 [KR/US] SMARTMONEY-PERSIST-FIX-01 · **CLOSED** · DoD#1 PASS (네이버 35×2일) · 가산 1~2일도 동작
-[KR/US] DIRECTOR-WATCHDOG-FLOW-01 · 스코프 · 최근7일 kr_investor_flow COUNT · 0=🔴 · **Handoff 전 코드 금지**
+[KR/US] DIRECTOR-WATCHDOG-FLOW-01 · **WATCHDOG-FUNNEL-VISIBILITY-01에 흡수**(최신일·행수) · 7일 COUNT 스코프는 대체됨
 [KR/US] LIVE-REPLAY-HOLD · **지금 만들지 않음** · 월 수급 신호 후에만 「수급 포함 리플레이」재검토
 [KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog **범위확정** · KR/US 라다 JSON→sqlite 병합 · 표시 0픽/적재실패 미구분 · 급하지 않음 · 지금 코드 금지
 [KR/US] MAE-ATR-REPLAY-01 · CLOSED · 실전 반려 (스크립트 보존·미배선) · 청산 3가설 기각
@@ -78,7 +78,14 @@
 [KR/US] EOD-DEFENSE-GAP-01 · **backlog** · DEFENSE 시간함수엔 있고 ledger 리스트엔 없음 · 결정 전 코드 금지
 [KR/US] SWALLOW-LEFTOVER-BATCH-A-01 · **Claude OK 2026-09-20** · 배포 · 관측 등록
 [KR/US] SWALLOW-CENSUS leftover 11곳 · **종결** · 게이트 B · EOD A · leftover A
-[KR/US] US-COSINE-NA-RO · **RO 2026-09-21** · skip≠부활 · 구현 금지 · 우선순위 대기
+[KR/US] WATCHDOG-FUNNEL-VISIBILITY-01 · **Claude OK 2026-09-24** · 배포 · 표시 3줄
+[KR/US] REGIME-KEYS-RO · **판단 승인** · 통합 금지 · 나중에 4키 표시 XOR CURRENT 덮어쓰기 금지 · 지금 코드 없음
+[KR/US] US-COSINE-AXIS-01 · **다음 세션 최우선** · 축 표준화→컷 재캘리브→`$30k`
+[KR/US] US-COSINE-CUTOFF-RO · **RO 2026-09-24 CLOSED** · tb 노름 지배 · 99%→z 36% · 7/22 재해석
+[KR/US] US-LIQ-FLOOR30K-SHADOW · **RO 2026-09-24** · 스펙 `$30k` no-2000 · 단독 라이브 **금지**(컷과 한 Handoff)
+[KR/US] US-LIQ-FLOOR-RO · **RO 2026-09-23** · `$300k`=5/28 스캐너 보정 · 사이징 미연동 · 낮출지 디렉터 · 코드 금지
+[KR/US] US-COSINE-LIQ-RO · **RO 2026-09-23** · 1153 LIQ = 페니+얇은 ADV 실측 · NA 위장 아님 · 코드 금지
+[KR/US] US-COSINE-REGIME-RO · **RO 2026-09-23** · 템플릿-국면 불일치 **미증명** · 코사인 층 미도달 · 코드 금지
 [패턴] 예외 삼킴: 전수 목록 OUTBOX · pass-only는 발동 증명 불가
 [감시] US_RANK_B 1.35x · US_RANK_D 1.25x — 다음 데스매치 사이클 유지 여부 (액션 아님)
 [KR/US] NAV-HOOK-SILENTFAIL-02 · CLOSED (코드+Step B)

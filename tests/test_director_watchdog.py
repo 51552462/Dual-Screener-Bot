@@ -18,8 +18,11 @@ from reports.director_watchdog import (
     format_director_watchdog_section_from_snap,
     inspect_demote_effective,
     leaderboard_core_group,
+    load_kr_investor_flow_watch,
     previous_budget_bands_from_history,
     read_iv_observation_latest,
+    smart_money_radar_watch_line,
+    supernova_funnel_watch_line,
 )
 from dual_north_star_telegram import format_north_star_digest_html
 
@@ -117,7 +120,45 @@ def _payload(**over):
         rank_counts=over.get("rank_counts", {"US_RANK_B": 7, "US_RANK_D": 3}),
         regimes=over.get("regimes", {"KR": "SIDEWAYS", "US": "BULL"}),
         group_map=over.get("group_map", {k: 1.0 for k in FAMILY_SLEEVE_DEMOTE_KEYS}),
-        sys_config=over.get("sys_config", {"ENABLE_WEIGHT_S5_MERGE": True}),
+        sys_config=over.get(
+            "sys_config",
+            {
+                "ENABLE_WEIGHT_S5_MERGE": True,
+                "SMART_MONEY_RADAR": {
+                    "updated_at": "2026-09-09 10:00",
+                    "status": "no_smart_money_today",
+                    "picks": {},
+                },
+                "SMART_MONEY_RADAR_US": {
+                    "updated_at": "2026-09-09 10:00",
+                    "status": "ok",
+                    "picks": {"AAPL": {}},
+                },
+            },
+        ),
+        funnel_rows=over.get(
+            "funnel_rows",
+            {
+                "US_today": {
+                    "universe": 6500,
+                    "survivors": 0,
+                    "data_pct": 80.0,
+                    "liq_pct": 16.0,
+                    "dna_n": 0,
+                },
+                "KR_today": {
+                    "universe": 2000,
+                    "survivors": 1,
+                    "data_pct": 50.0,
+                    "liq_pct": 40.0,
+                    "dna_n": 0,
+                },
+            },
+        ),
+        flow_line=over.get(
+            "flow_line",
+            {"light": "🟢", "title": "수급시계열", "text": "최신 2026-09-09 · 100행"},
+        ),
     )
 
 
@@ -237,8 +278,8 @@ class DirectorWatchdogTests(unittest.TestCase):
         self.assertGreater(i_ta, i_ez)
         self.assertGreater(i_obs, i_ta)
         wd = format_director_watchdog_section_from_snap(snap)
-        self.assertLessEqual(len(wd), 900)
-        self.assertLessEqual(wd.count("\n") + 1, 8)
+        self.assertLessEqual(len(wd), 1800)
+        self.assertLessEqual(wd.count("\n") + 1, 12)
         weekly = _snap(cadence="weekly")
         self.assertEqual(format_director_watchdog_section_from_snap(weekly), "")
         self.assertNotIn("[디렉터 워치독]", format_north_star_digest_html(weekly))
@@ -247,6 +288,83 @@ class DirectorWatchdogTests(unittest.TestCase):
         src = inspect.getsource(build_director_watchdog_payload)
         self.assertNotIn("n >= 30", src)
         self.assertNotIn("n>=30", src)
+        self.assertNotIn("try_add", src)
+
+    def test_funnel_flow_radar_display_only(self) -> None:
+        html = _payload()["html"]
+        self.assertIn("초신성 퍼널", html)
+        self.assertIn("수급시계열", html)
+        self.assertIn("라다", html)
+        self.assertIn("픽0(필터)", html)
+        self.assertIn("surv 0", html)
+        dead = _payload(
+            funnel_rows={
+                "US_today": {
+                    "universe": 6500,
+                    "survivors": 0,
+                    "data_pct": 80.0,
+                    "liq_pct": 16.0,
+                    "dna_n": 0,
+                },
+                "KR_today": {
+                    "universe": 2000,
+                    "survivors": 0,
+                    "data_pct": 50.0,
+                    "liq_pct": 40.0,
+                    "dna_n": 0,
+                },
+            }
+        )
+        self.assertIn("🟡 초신성 퍼널", dead["html"])
+        missing = supernova_funnel_watch_line({})
+        self.assertEqual(missing["light"], "🔴")
+        spike = supernova_funnel_watch_line(
+            {
+                "US_today": {
+                    "universe": 100,
+                    "survivors": 1,
+                    "data_pct": 90.0,
+                    "liq_pct": 5.0,
+                    "dna_n": 0,
+                },
+                "US_yday": {
+                    "universe": 100,
+                    "survivors": 1,
+                    "data_pct": 50.0,
+                    "liq_pct": 5.0,
+                    "dna_n": 0,
+                },
+                "KR_today": {
+                    "universe": 100,
+                    "survivors": 1,
+                    "data_pct": 10.0,
+                    "liq_pct": 10.0,
+                    "dna_n": 0,
+                },
+            }
+        )
+        self.assertEqual(spike["light"], "🔴")
+
+    def test_flow_and_radar_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "m.sqlite")
+            conn = sqlite3.connect(db)
+            conn.execute(
+                "CREATE TABLE kr_investor_flow (date TEXT, code TEXT, name TEXT, "
+                "foreign_inst_krw REAL, foreign_inst_vol REAL, PRIMARY KEY(date,code))"
+            )
+            conn.execute(
+                "INSERT INTO kr_investor_flow VALUES ('2026-09-09','005930','s',1,1)"
+            )
+            conn.commit()
+            conn.close()
+            line = load_kr_investor_flow_watch(db_path=db, date_kst="2026-09-09")
+            self.assertEqual(line["light"], "🟢")
+            self.assertIn("2026-09-09", line["text"])
+            self.assertIn("1행", line["text"])
+        rad = smart_money_radar_watch_line({})
+        self.assertEqual(rad["light"], "🔴")
+        self.assertIn("미갱신", rad["text"])
 
 
 if __name__ == "__main__":
