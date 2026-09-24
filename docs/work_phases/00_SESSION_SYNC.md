@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-24 · **앵커 ID**: `SYNC-2026-09-24-WD-FUNNEL-OK`
+> **갱신**: 2026-09-24 · **앵커 ID**: `SYNC-2026-09-24-NA-BOOL-RO`
 
 ---
 
@@ -40,12 +40,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-24-WD-FUNNEL-OK` |
-| **마지막 갱신** | 2026-09-24 — 워치독 Claude OK · 국면 통합 금지 승인. 디렉터 배포. AXIS는 **다음 세션**. STALL-THAW ARMED 관측 |
+| **앵커 ID** | `SYNC-2026-09-24-NA-BOOL-RO` |
+| **마지막 갱신** | 2026-09-24 — NA→DATA 앞문 RO. AXIS 2단계 숫자는 있음. 라이브 AXIS 보류. thaw ARMED |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | KR-LOCKDOWN-STALL-THAW-01 **ARMED** 관측 · 워치독 **배포** |
-| **직전 완료** | WATCHDOG-FUNNEL-VISIBILITY-01 **Claude OK** · REGIME-KEYS-RO 판단 승인 |
-| **다음** | VPS `update_factory` → 다음 창 **`US-COSINE-AXIS-01`**. 국면 코드 이번 없음 |
+| **진행 중 sub-phase** | US-COSINE-NA-BOOL-RO **WAIT_CLAUDE_HANDOFF** · AXIS-01 라이브 대기 · KR-LOCKDOWN-STALL-THAW-01 **ARMED** |
+| **직전 완료** | AXIS 2단계 섀도우(chart) + NA 연산 위치 RO |
+| **다음** | NA coerce Handoff 먼저. AXIS 라이브는 그 다음 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -80,7 +80,8 @@
 [KR/US] SWALLOW-CENSUS leftover 11곳 · **종결** · 게이트 B · EOD A · leftover A
 [KR/US] WATCHDOG-FUNNEL-VISIBILITY-01 · **Claude OK 2026-09-24** · 배포 · 표시 3줄
 [KR/US] REGIME-KEYS-RO · **판단 승인** · 통합 금지 · 나중에 4키 표시 XOR CURRENT 덮어쓰기 금지 · 지금 코드 없음
-[KR/US] US-COSINE-AXIS-01 · **다음 세션 최우선** · 축 표준화→컷 재캘리브→`$30k`
+[KR/US] US-COSINE-NA-BOOL-RO · **RO 2026-09-24** · 2037/2051 `if pd.NA` · AXIS 라이브 보류 · 코드 0
+[KR/US] US-COSINE-AXIS-01 · **2단계 섀도우 완료** · 라이브는 NA 앞문 다음 · 헌터 미변경
 [KR/US] US-COSINE-CUTOFF-RO · **RO 2026-09-24 CLOSED** · tb 노름 지배 · 99%→z 36% · 7/22 재해석
 [KR/US] US-LIQ-FLOOR30K-SHADOW · **RO 2026-09-24** · 스펙 `$30k` no-2000 · 단독 라이브 **금지**(컷과 한 Handoff)
 [KR/US] US-LIQ-FLOOR-RO · **RO 2026-09-23** · `$300k`=5/28 스캐너 보정 · 사이징 미연동 · 낮출지 디렉터 · 코드 금지

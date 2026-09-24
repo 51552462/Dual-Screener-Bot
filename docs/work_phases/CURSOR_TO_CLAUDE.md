@@ -3,7 +3,130 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-24 · Claude OK 워치독 · 앵커 `SYNC-2026-09-24-WD-FUNNEL-OK`
+> **갱신**: 2026-09-24 · US-COSINE-NA-BOOL-RO · 앵커 `SYNC-2026-09-24-NA-BOOL-RO`
+
+---
+
+## OUTBOX — NA→DATA 위장, AXIS 라이브 전 RO · 코드 0 · 2026-09-24
+
+착수 아님. AXIS 2단계 숫자는 유지. 헌터 미변경.
+
+### 1) 예외가 나는 연산 (메시지와 일치하는 것만)
+
+VPS 로그 문구는 **`boolean value of NA is ambiguous`**. pandas 2.3.3에서 이 문자열은 **시리즈 불린 인덱싱이 아니다** (`The truth value of a Series is ambiguous`는 다른 문장).
+
+스칼라 `pd.NA`를 파이썬 `if`에 넣을 때다.
+
+| 위치 | 코드 | `pd.NA`면 | `np.nan`이면 |
+|------|------|-----------|--------------|
+| **`supernova_hunter.py` 2037** | `if market=="US" and current_close < 0.5` (`current_close = df["Close"].values[-1]`) | **이 문구로 raise** | raise 없음 (비교 False) |
+| **같은 함수 2051** | `if np.mean(v[-5:]) < _min_vol` | object 배열에 `pd.NA` 섞이면 **같은 문구** | raise 없음 |
+| `scan_resilience.safe_supernova_dna_features` `if v_ma20[-1] > 0` | 같은 문구 가능 | **이미 try로 삼킴** → `None` → 폴백. 바깥 DATA 5239의 주범 아님 |
+| `evaluate_alpha_formula` | 내부 except → `None` | 바깥으로 안 나감 | |
+
+로컬 재현: object/`Float64` last=`pd.NA` → 2037과 동일 TypeError. `flatten_yf_download_df`는 2D만 평탄화하고 **`pd.to_numeric` 없음** — Close가 object면 `<NA>`가 그대로 `.values[-1]`로 간다.
+
+`.isna()`/`.fillna()`/먼저 `pd.to_numeric(..., errors="coerce")` 하면 **예외는 안 난다**. 다만 `nan < 0.5`는 False라 **LIQ를 건너뛰고 쓰레기 DNA로 계속**할 수 있다. 예외만 없애는 것과 **평가 가능하게 만드는 것**은 다르다. 후자는 마지막 NA 봉을 버리고 직전 유한 봉을 쓰거나, OHLCV를 float로 맞춘 뒤 `dropna(subset=["Close"])`.
+
+### 2) last-finite 1~3건 vs 근본 수정 — 아직 몇 종인지는 **yf 경로에서 미측정**
+
+chart 섀도우(NA-RO 09-21): last Close NA **최대 13**, 코사인 **1~3**. 그건 **Yahoo chart**.
+
+라이브 5239는 **`yf.download` 2mo** + flatten. 오늘 이 PC는 yf curl 77로 패널 **0**이라 5239를 로컬에서 다시 못 셈. AXIS 섀도우도 chart라 라이브 DATA 80%를 안 통과한다.
+
+그래서: last-finite를 chart로 잰 1~3을 「근본 수정도 1~3」으로 읽으면 안 된다. VPS에서 5239가 전부 이 `if pd.NA`라면, **numeric coerce + 마지막 NA 봉 제거**는 그 5239를 LIQ 문 앞까지 세울 수 있다(상한=그 날 DATA_FAIL). 그중 몇이 `$30k`·상위10%를 통과하는지는 **VPS yf 섀도우 전 미지**. 167 복원 단정 금지.
+
+라벨만 정직하게 (`DATA_FAIL` → `NA_BOOL`) 바꾸면 코사인 **+0**.
+
+### 3) AXIS와 파일
+
+| | 파일 | 함수 |
+|--|------|------|
+| 1겹 NA | `supernova_hunter.py` 2029–2053 · 캐치올 2888–2898 · (권고) `yf_download_flatten.py` coerce | `process_live_ticker` 입구 |
+| 2·3겹 AXIS | **같은** `process_live_ticker` 뒤쪽 (LIQ 달러 · 3D 코사인) + 미기록 `COSINE_AXIS_STATS` | 점수·문턱 |
+
+완전 별 파일이 아니다. **한 함수의 앞문 vs 뒷문.** 한 Handoff로 묶으면 AXIS가 또 깨끗한 chart로만 검증된 채 배포될 위험이 있다.
+
+**권고: Handoff를 둘로. 먼저 NA coerce/라벨(라이브 yf 섀도우로 DATA 80%가 실제로 줄는지). 그다음 AXIS 라이브.** 순서를 뒤집으면 축·컷·`$30k`는 살아도 체감 0에 가깝다.
+
+---
+
+## OUTBOX — US-COSINE-AXIS-01 2단계 섀도우 · WAIT_CLAUDE_OK · 2026-09-24
+
+라이브 `supernova_hunter` / KV **무변경**. `--stage 2`. JSON `scripts/diag_cosine_axis_liq30k_p10_shadow_last.json`.
+
+### 방법
+- 축: 전 5거래일 μ/σ (평가일 제외), RANK 3D, 템플릿 동일 z.
+- 컷: **시장·일별 z-코사인 90퍼센타일(상위 10%)만**. 5%/20% 미실행.
+- LIQ: US `$30k`·주수 하한 없음. KR은 원 가격에 `30000/px`면 하한≈0이라 **`$30k×1350` KRW ADV**·5만주 없음.
+- 표본 300, 평가 2026-09-17~23. 차트 거래량. elastic/synergy **미적용**.
+
+### 하루 통과 (표본 300)
+
+| 시장 | 라이브 `$300k`/5만주 + raw≥0.50 | 축+p10+$30k | 배수 |
+|------|--------------------------------|-------------|------|
+| US | 214 /일 (5일 합 1070) | **26.8 /일** (26,26,26,26,30 · 합 134) | **0.13×** |
+| KR | 64.2 /일 (합 321) | **25.8 /일** (25~26 · 합 129) | **0.40×** |
+
+라이브 0.50은 US에서 LIQ합격의 ~99%를 통과시켜 병목이 아니다. `$30k`는 LIQ 풀만 키운다(US ~215→256, KR ~135→252). 상위10%를 겹치면 **건수는 라이브 0.50보다 줄어든다.**
+
+1단계(라이브 LIQ + 상위10% ≈ US 22 / KR 14) 대비는 풀이 커져 US ~27, KR ~26.
+
+전 유니버스 단순 비례(US 6568/300, KR 2476/300)는 LIQ가 비선형이라 보고용 아님.
+
+### 캐비어트 (라이브 반영 시)
+- **elastic** (`ElasticThreshold.apply_pair`) 미적용 → 실제 합격은 이 숫자보다 줄어들 수 있음.
+- **synergy** (`cos_cutoff_mult`) 미적용 → 동일.
+- MULTI 24D 경로 제외. `COSINE_AXIS_STATS` 미기록.
+
+라이브 스위치는 **이번 아님**. 별 Handoff.
+
+---
+
+## OUTBOX — US-COSINE-AXIS-01 1단계 섀도우 · WAIT_CLAUDE_OK · 2026-09-24
+
+라이브 `supernova_hunter` / `$30k` / 컷 KV **무변경**. 스크립트 `scripts/diag_cosine_axis_rolling_shadow.py`. JSON `scripts/diag_cosine_axis_rolling_shadow_last.json`.
+
+### 방법
+- 전 5거래일 μ/σ (평가일 **제외**). RANK 3D만. 템플릿 동일 z.
+- 표본 300 (US 유니버스 6568 · KR 2476). 차트 거래량 복구. 라이브 LIQ (`$300k`/5만주).
+- 평가 5일: 2026-09-17~23.
+
+### 컷 후보 (z-코사인 퍼센타일, 5일 풀)
+
+| 시장 | LIQ합격 pooled | raw≥0.50 | z≥0.50 | 상위20%컷 | 상위10% | 상위5% |
+|------|-----------------|----------|--------|-----------|---------|--------|
+| US | 1080 | 1070 (99%) | 455 (42%) | 0.987 → 216건 | 0.999 → 108 | 0.9997 → 54 |
+| KR | 677 | 321 (47%) | 196 (29%) | 0.716 → 136 | 0.850 → 68 | 0.939 → 34 |
+
+US는 z 해도 상위 컷이 ~0.99에 붙음(bbe/tb 꼬리 σ 큼). KR은 퍼센타일이 벌어짐. **고정 0.50을 z공간에 그대로 쓰지 말 것.** 라이브 다음이면 시장별 퍼센타일(권고 상위10% 또는 20%).
+
+일별 US 라이브 컷이면 약 22건(표본300·상위10%) / KR 약 14건. 전 유니버스 환산은 표본비~5~8배이나 LIQ가 비선형.
+
+### μσ 저장 (설계만)
+`config_kv COSINE_AXIS_STATS` = `{KR|US: {mu[3], sd[3], n, as_of, window_sessions}}`. 스캔 종료 시 LIQ합격 DNA로 기록, **다음날** 3D 코사인 전 읽기. 이번 스크립트는 set_config 없음.
+
+### 곁가지
+- elastic: `apply_pair`가 컷을 늘림/줄임. 섀도우 미적용.
+- synergy: `cos_cutoff_mult`가 컷에 곱함. 미적용.
+- MULTI: 24D 가능. 이번 RANK 3D만.
+
+### KR 영향
+같은 헌터. z+상위10%면 이 표본에서 합격이 raw 0.50 대비 대략 절반 이하. LOCKDOWN 실경로는 미접촉.
+
+---
+
+## OUTBOX — US-COSINE-AXIS-01 설계 스코프 · 코드 0 · 2026-09-24
+
+착수 아님. Handoff 전 질문 8개. **권고: 라이브는 축+컷만. `$30k`는 섀도우 확정 후 별 단계.**
+
+전문은 채팅. 요약:
+- 라이브 3D는 원시 cpv/tb/bbe. 코사인만 L2. 축 정규화 없음. tb가 노름 지배.
+- 템플릿과 종목은 **같은 μ/σ**. 종목만 z면 비교 무의미.
+- 당일 횡단면 z는 헌터가 종목별 1패스라 **라이브에 안 맞음**. 라이브는 **전일/롤링 μσ**가 맞음.
+- 7/22 167로 컷을 맞추지 말 것(코사인 선별 아님).
+- 유니버스 DNA 창고 없음. 섀도우는 어제처럼 Yahoo+`safe_supernova_dna_features`.
+- KR과 같은 `supernova_hunter.py` — US 게이트 없으면 KR도 움직임.
 
 ---
 

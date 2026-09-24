@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | VPS `cd /home/ubuntu/dante_bots/Dual-Screener-Bot` → `sudo bash ./update_factory.sh` (origin `f0dca66`). 육안=오늘 **19:30** 북극성 3줄 |
-| **sub-phase** | WATCHDOG-FUNNEL-VISIBILITY-01 **Claude OK** · thaw **관측** |
-| **status** | **배포** (워치독) · thaw=`KR_LOCKDOWN_THAW_ARMED=1` |
-| **다음 세션 최우선** | **`US-COSINE-AXIS-01`** (축→컷→`$30k`, 한 Handoff) |
-| **앵커** | `SYNC-2026-09-24-WD-FUNNEL-OK` |
+| **지금 디렉터** | NA 앞문 먼저 vs AXIS 묶을지 Claude Handoff. AXIS 2단계는 숫자만 확정 |
+| **sub-phase** | **US-COSINE-NA-BOOL-RO** (AXIS 라이브 보류) |
+| **status** | **WAIT_CLAUDE_HANDOFF** · thaw 관측 유지 |
+| **다음** | 구현 금지. NA coerce 섀도우 Handoff(yf 경로)가 AXIS 라이브보다 앞 |
+| **앵커** | `SYNC-2026-09-24-NA-BOOL-RO` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---
@@ -35,7 +35,7 @@
 
 - **WATCHDOG-FUNNEL-VISIBILITY-01**: **Claude OK: 2026-09-24**. 배포 후 19:30 3줄 육안.
 - **REGIME-KEYS-RO**: 판단 승인. 통합 금지. 4키 표시 vs CURRENT 덮어쓰기 금지는 나중에 **하나만**.
-- **다음 세션 `US-COSINE-AXIS-01`**: 축 → 컷 → `$30k`. 한 Handoff.
+- **다음 세션**: AXIS 라이브 반영은 **2단계 숫자 본 뒤 별 Handoff**. 이번 헌터 0.
 - **실전 전**: `SIZING-DUAL-LEDGER-01` (3장부). 대기: TOP_ONLY · S5 불일치 · 라다 sqlite.
 - **US-COSINE-CUTOFF-RO CLOSED**: 99%는 tb 노름. z-score 36%. 7/22 양립 재해석.
 - **TOP_ONLY**: 미결선. 대기.

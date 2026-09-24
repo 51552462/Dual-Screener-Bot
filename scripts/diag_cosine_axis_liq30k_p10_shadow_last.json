@@ -1,0 +1,285 @@
+{
+  "stage": 2,
+  "side_notes": {
+    "elastic": "Live ElasticThreshold.apply_pair stretches DYNAMIC_SUPERNOVA_CUTOFF before compare (starvation relief, vol tighten, META regime penalty). This shadow does not apply elastic. Live pass counts can be lower.",
+    "synergy": "per_ticker_scan_adjustments multiplies eff_cos_cutoff (rotation/spillover can drop cutoff, min clip). Not applied here. Live pass counts can be lower than this shadow.",
+    "multi": "DNA_SUPERNOVA_{M}_MULTI may be 24-d (20 shape + cpv/tb/bbe/rs). Handoff locks RANK 3D only; MULTI 5D path excluded.",
+    "liq": "stage1=live floors. stage2 US=$30k no share min; KR=$30k×1350 KRW ADV no 5만주. Hunter/KV untouched.",
+    "cut": "stage2 cut = daily 90th percentile of z-cosine among prop-LIQ (top 10%). 5%/20% not run.",
+    "stats_store": "Live later: config_kv 'COSINE_AXIS_STATS' per market mu/sd/n/as_of/window_sessions. Write end-of-scan, read next session. Not written by this script."
+  },
+  "markets": {
+    "US": {
+      "market": "US",
+      "stage": 2,
+      "panel": 285,
+      "roll_sessions": 5,
+      "eval_sessions": 5,
+      "kr_liq_note": "US prop = mean(vol)<30000/px, no 2000-share min.",
+      "combo_pass_pooled": 134,
+      "live_raw050_pooled": 1070,
+      "mean_combo_per_day": 26.8,
+      "mean_live050_per_day": 214.0,
+      "fold_pooled": 0.125,
+      "days": [
+        {
+          "date": "2026-09-17",
+          "hist_n": 1260,
+          "eval_n_live": 215,
+          "eval_n_prop": 255,
+          "mu": [
+            -0.10185293713386594,
+            74.51551404384705,
+            32.70202338804035
+          ],
+          "sd": [
+            0.5054761068728144,
+            121.04092392428277,
+            222.99672684141302
+          ],
+          "live_raw_ge_050": 214,
+          "p90_z": 0.9988329694533085,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.121,
+          "n_liq_pass_live": 215,
+          "n_liq_pass_prop": 255,
+          "n_liq_fail_both": 26,
+          "n_dna_fail": 4
+        },
+        {
+          "date": "2026-09-18",
+          "hist_n": 1262,
+          "eval_n_live": 217,
+          "eval_n_prop": 257,
+          "mu": [
+            -0.11093194542486859,
+            75.47530438793434,
+            35.82987345932739
+          ],
+          "sd": [
+            0.5096136441445038,
+            123.63833475250405,
+            245.29219504337973
+          ],
+          "live_raw_ge_050": 216,
+          "p90_z": 0.9976048192132202,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.12,
+          "n_liq_pass_live": 217,
+          "n_liq_pass_prop": 257,
+          "n_liq_fail_both": 25,
+          "n_dna_fail": 3
+        },
+        {
+          "date": "2026-09-21",
+          "hist_n": 1268,
+          "eval_n_live": 213,
+          "eval_n_prop": 255,
+          "mu": [
+            -0.10772307501750134,
+            84.34168598043024,
+            36.277123986546314
+          ],
+          "sd": [
+            0.5109224047119335,
+            131.6584460619434,
+            234.75309966417842
+          ],
+          "live_raw_ge_050": 211,
+          "p90_z": 0.9991712741202324,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.123,
+          "n_liq_pass_live": 213,
+          "n_liq_pass_prop": 255,
+          "n_liq_fail_both": 27,
+          "n_dna_fail": 3
+        },
+        {
+          "date": "2026-09-22",
+          "hist_n": 1270,
+          "eval_n_live": 216,
+          "eval_n_prop": 256,
+          "mu": [
+            -0.1344994297827184,
+            83.95651264169483,
+            36.61191371569291
+          ],
+          "sd": [
+            0.5088851113060038,
+            128.4958682681827,
+            235.39863221706185
+          ],
+          "live_raw_ge_050": 214,
+          "p90_z": 0.9992311672356126,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.121,
+          "n_liq_pass_live": 216,
+          "n_liq_pass_prop": 256,
+          "n_liq_fail_both": 26,
+          "n_dna_fail": 3
+        },
+        {
+          "date": "2026-09-23",
+          "hist_n": 1275,
+          "eval_n_live": 219,
+          "eval_n_prop": 258,
+          "mu": [
+            -0.11624456709102732,
+            78.52398382875803,
+            34.19069543460754
+          ],
+          "sd": [
+            0.5084883626817709,
+            127.86484826964542,
+            223.37350398027675
+          ],
+          "live_raw_ge_050": 215,
+          "p90_z": 0.996591594690865,
+          "combo_axis_p10_liq30k": 30,
+          "fold_vs_live": 0.14,
+          "n_liq_pass_live": 219,
+          "n_liq_pass_prop": 258,
+          "n_liq_fail_both": 24,
+          "n_dna_fail": 3
+        }
+      ],
+      "stats_key": "COSINE_AXIS_STATS"
+    },
+    "KR": {
+      "market": "KR",
+      "stage": 2,
+      "panel": 296,
+      "roll_sessions": 5,
+      "eval_sessions": 5,
+      "kr_liq_note": "KR prop = $30k×1350 KRW ADV, no 50k-share min. Literal 30000/px on KRW would be ~zero floor.",
+      "combo_pass_pooled": 129,
+      "live_raw050_pooled": 321,
+      "mean_combo_per_day": 25.8,
+      "mean_live050_per_day": 64.2,
+      "fold_pooled": 0.402,
+      "days": [
+        {
+          "date": "2026-09-17",
+          "hist_n": 1266,
+          "eval_n_live": 130,
+          "eval_n_prop": 248,
+          "mu": [
+            -0.017769736313916366,
+            44.02630078698589,
+            8.625767551806987
+          ],
+          "sd": [
+            0.47371201049796097,
+            70.31322525824982,
+            13.085564625750834
+          ],
+          "live_raw_ge_050": 73,
+          "p90_z": 0.8833402827085987,
+          "combo_axis_p10_liq30k": 25,
+          "fold_vs_live": 0.342,
+          "n_liq_pass_live": 130,
+          "n_liq_pass_prop": 248,
+          "n_liq_fail_both": 47,
+          "n_dna_fail": 1
+        },
+        {
+          "date": "2026-09-18",
+          "hist_n": 1258,
+          "eval_n_live": 135,
+          "eval_n_prop": 254,
+          "mu": [
+            -0.024000926544289352,
+            42.785342362818,
+            8.609684964148531
+          ],
+          "sd": [
+            0.4770144612118251,
+            65.21185947353977,
+            13.555511589675271
+          ],
+          "live_raw_ge_050": 65,
+          "p90_z": 0.8061410042454032,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.4,
+          "n_liq_pass_live": 135,
+          "n_liq_pass_prop": 254,
+          "n_liq_fail_both": 41,
+          "n_dna_fail": 1
+        },
+        {
+          "date": "2026-09-21",
+          "hist_n": 1259,
+          "eval_n_live": 132,
+          "eval_n_prop": 254,
+          "mu": [
+            -0.07770792624680724,
+            53.67682444088238,
+            9.400480407521531
+          ],
+          "sd": [
+            0.4796277415010372,
+            89.81276017968422,
+            14.56912111019617
+          ],
+          "live_raw_ge_050": 59,
+          "p90_z": 0.8427546668717257,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.441,
+          "n_liq_pass_live": 132,
+          "n_liq_pass_prop": 254,
+          "n_liq_fail_both": 42,
+          "n_dna_fail": 0
+        },
+        {
+          "date": "2026-09-22",
+          "hist_n": 1258,
+          "eval_n_live": 139,
+          "eval_n_prop": 255,
+          "mu": [
+            -0.10450561977727414,
+            58.366630861243564,
+            9.587650242826442
+          ],
+          "sd": [
+            0.4815855370464855,
+            99.13738780515499,
+            16.77227206950404
+          ],
+          "live_raw_ge_050": 59,
+          "p90_z": 0.889404844078691,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.441,
+          "n_liq_pass_live": 139,
+          "n_liq_pass_prop": 255,
+          "n_liq_fail_both": 41,
+          "n_dna_fail": 0
+        },
+        {
+          "date": "2026-09-23",
+          "hist_n": 1262,
+          "eval_n_live": 141,
+          "eval_n_prop": 251,
+          "mu": [
+            -0.13723245573511664,
+            62.458783003045454,
+            10.069985289638726
+          ],
+          "sd": [
+            0.48779619436713356,
+            100.14635364175494,
+            18.507884488347198
+          ],
+          "live_raw_ge_050": 65,
+          "p90_z": 0.9026422039895644,
+          "combo_axis_p10_liq30k": 26,
+          "fold_vs_live": 0.4,
+          "n_liq_pass_live": 141,
+          "n_liq_pass_prop": 251,
+          "n_liq_fail_both": 45,
+          "n_dna_fail": 0
+        }
+      ],
+      "stats_key": "COSINE_AXIS_STATS"
+    }
+  }
+}
