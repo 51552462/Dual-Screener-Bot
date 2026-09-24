@@ -49,7 +49,7 @@
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | `de57746` stall-thaw · origin/main 동기 |
+| **git main** | `f0dca66` 워치독 퍼널 3줄 · origin/main 푸시됨 · **VPS update_factory는 이 PC SSH 키 없음** |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 

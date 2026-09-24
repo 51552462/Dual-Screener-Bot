@@ -2,7 +2,7 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | 워치독 **커밋·푸시** → VPS `sudo bash ./update_factory.sh` (`18_디렉터_VPS_원클릭.md`) |
+| **지금 디렉터** | VPS `cd /home/ubuntu/dante_bots/Dual-Screener-Bot` → `sudo bash ./update_factory.sh` (origin `f0dca66`). 육안=오늘 **19:30** 북극성 3줄 |
 | **sub-phase** | WATCHDOG-FUNNEL-VISIBILITY-01 **Claude OK** · thaw **관측** |
 | **status** | **배포** (워치독) · thaw=`KR_LOCKDOWN_THAW_ARMED=1` |
 | **다음 세션 최우선** | **`US-COSINE-AXIS-01`** (축→컷→`$30k`, 한 Handoff) |
