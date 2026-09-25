@@ -515,6 +515,10 @@ def liquidate_mega_trend_sector_positions(
             skipped += 1
             continue
 
+        if "MEGA_TREND_ALPHA" in str(sig or ""):
+            skipped += 1
+            continue
+
         cfg = climax_config(sector=sec)
 
         try:

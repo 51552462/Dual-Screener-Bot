@@ -682,6 +682,12 @@ def run_smart_money_tracker():
         refresh_mega_trend_toxic_graveyard_kill(cfg_mt, save_config_fn=save_config)
         refresh_mega_trend_climax_kill(cfg_mt, save_config_fn=save_config)
         refresh_mega_trend_ignition(cfg_mt, save_config_fn=save_config)
+        try:
+            from mega_trend_alpha_shadow import sync_mega_trend_alpha_shadow
+
+            sync_mega_trend_alpha_shadow(cfg_mt)
+        except Exception as _alpha_ex:
+            print(f"⚠️ [Mega-Trend Alpha 섀도우] 스킵(비치명적): {_alpha_ex}")
     except Exception as ex:
         print(f"⚠️ [Mega-Trend Unlock] 스킵(비치명적): {ex}")
 

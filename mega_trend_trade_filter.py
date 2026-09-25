@@ -16,6 +16,9 @@ MEGA_TREND_SIG_MARKERS = (
 
 def is_mega_trend_sig_type(sig_type: object) -> bool:
     sig_s = str(sig_type or "")
+    # RP-1 독립 섀도우 — 언락 부스터 체결로 집계하지 않음
+    if "MEGA_TREND_ALPHA" in sig_s:
+        return False
     return any(marker in sig_s for marker in MEGA_TREND_SIG_MARKERS)
 
 

@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-25 · **앵커 ID**: `SYNC-2026-09-25-EXIT-TYPE-OK`
+> **갱신**: 2026-09-25 · **앵커 ID**: `SYNC-2026-09-25-MT-ALPHA-SHADOW`
 
 ---
 
@@ -40,23 +40,23 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-25-EXIT-TYPE-OK` |
-| **마지막 갱신** | 2026-09-25 — EXIT-TYPE-LABEL-01 **Claude OK**. 라벨 단독 커밋·푸시 |
+| **앵커 ID** | `SYNC-2026-09-25-MT-ALPHA-SHADOW` |
+| **마지막 갱신** | 2026-09-25 — MEGATREND Claude OK 커밋 · EXIT-TYPE VPS 810b89e 배포 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | EXIT-TYPE-LABEL-01 **배포** (`update_factory`) |
-| **직전 완료** | EXIT-TYPE-LABEL-01 Claude OK |
-| **다음** | VPS `sudo bash ./update_factory.sh`. AXIS/워치독 미커밋 잔여는 별건 |
+| **진행 중 sub-phase** | 없음 (WAIT_CLAUDE_HANDOFF) |
+| **직전 완료** | persist·mega RO Claude OK · 06 재발 행 디렉터 문구 |
+| **다음** | 구현 없음. EXIT-TYPE VPS **배포완료(810b89e)**. mega 단독 커밋 후 2차 update_factory |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | EXIT-TYPE-LABEL-01 푸시 후 해시 |
+| **git main** | EXIT-TYPE VPS **배포완료(810b89e)** |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
-[KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend·관측연장 미결정
-[KR/US] SMARTMONEY-PERSIST-FIX-01 · **CLOSED** · DoD#1 PASS (네이버 35×2일) · 가산 1~2일도 동작
+[KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend=RP-1대체 스코프 섀도우 WATCH · 발동게이트=AXIS RANK_B/D n>=20 AND PF>0.5
+[KR/US] SMARTMONEY-PERSIST-FIX-01 · **CLOSED+재발** · 09-15 DoD#1 PASS → 09-18 재사망 · 06 기록
 [KR/US] DIRECTOR-WATCHDOG-FLOW-01 · **WATCHDOG-FUNNEL-VISIBILITY-01에 흡수**(최신일·행수) · 7일 COUNT 스코프는 대체됨
 [KR/US] LIVE-REPLAY-HOLD · **지금 만들지 않음** · 월 수급 신호 후에만 「수급 포함 리플레이」재검토
 [KR/US] SMARTMONEY-RADAR-SQLITE-01 · backlog **범위확정** · KR/US 라다 JSON→sqlite 병합 · 표시 0픽/적재실패 미구분 · 급하지 않음 · 지금 코드 금지
@@ -69,7 +69,14 @@
 [KR/US] US-COSINE-FUNNEL-DEAD-01 · **CLOSED** · 정상 선별 복구(AXIS 라이브). 침묵 완전 해소 아님. NA/미완봉은 NA-FIX 별 항목
 [KR/US] US-COSINE-NA-FIX-01 · 안전장치 유지 · 미완봉→전일 대체 없음
 [KR/US] US-COSINE-AXIS-01 · **Claude OK 2026-09-25** · 배포 · 워치독 관찰
-[KR/US] EXIT-TYPE-LABEL-01 · **Claude OK 2026-09-25** · 단독 배포 · 백필 없음
+[KR/US] SMARTMONEY-CORR-CHECK-01 · **RO 판단보류** · WAIT_CLAUDE_OK
+[KR/US] MEGATREND-SCOPE-RO-01 · **RO 견적** · WAIT_CLAUDE_OK
+[KR/US] SMARTMONEY-PERSIST-CRON-RECHECK-01 · **Claude OK 2026-09-25** · CLOSED(조회)
+[KR/US] SMARTMONEY-NAVER-HTTP-RO · **backlog** · (a)구조변경 vs (b)차단/레이트리밋 · 급하지 않음
+[KR/US] MEGATREND-LIVE-IMPACT-AUDIT-01 · **Claude OK 2026-09-25** · 무의미 · 감시만(재점화 시 재감사)
+[KR/US] MEGATREND-SCOPE-DEFINE-01 · **Claude OK 2026-09-25** · RP-1 섀도우 WATCH
+[KR/US] CORRKELLY-US-PF-RO · **backlog** · n=114 WR1.75%/PF0.008 · US n=88 WR0% · 급하지 않음
+[KR/US] EXIT-TYPE-LABEL-01 · **Claude OK 2026-09-25** · **배포완료(810b89e)**
 [KR/US] REALITY-AUDIT-BADEXIT-01 · **RO CLOSED** · 다음=EXIT-TYPE-LABEL-01
 [KR/US] WATCHDOG-AXIS-OBS-TG-01 · **로컬 표시 배관** · 미커밋 · 게이트 없음
 [KR/US] ELASTIC-SCOUT-GUARD-TEST · **backlog** · `test_non_scout_never_gated` 실패 원인(급하지 않음, AXIS 무관)

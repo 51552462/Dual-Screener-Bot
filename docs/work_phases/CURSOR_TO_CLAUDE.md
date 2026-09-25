@@ -3,7 +3,220 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-25 · EXIT-TYPE-LABEL-01 **Claude OK** · 앵커 `SYNC-2026-09-25-EXIT-TYPE-OK`
+> **갱신**: 2026-09-25 · MEGATREND Claude OK 커밋 · EXIT-TYPE VPS **배포완료(810b89e)**
+
+---
+
+## OUTBOX — Claude OK 랜딩 + EXIT-TYPE 배포 실측 · 2026-09-25
+
+**EXIT-TYPE-LABEL-01:** VPS `sudo bash ./update_factory.sh` 실행함. `[2/7] git pull` Fast-forward `789552a..810b89e`. 별도 조회 `git log -1` = `810b89e Label zombie-heal...`. 코드 반영 확인. (health RED 자동 data_refresh는 병행 중일 수 있음 — 배포 pull은 완료.)
+
+**MEGATREND-SCOPE-DEFINE-01:** Claude OK. 단독 커밋(워치독/AXIS 미포함). 2차 `update_factory`는 푸시 후.
+
+FWD-OBS-HOLD SSOT: mega_trend=RP-1대체 스코프 섀도우 **WATCH**, 발동게이트=AXIS RANK_B/D n≥20 AND PF>0.5.
+
+현황판 표기: `배포대기` vs `배포완료(해시)`.
+
+---
+
+## OUTBOX — MEGATREND-SCOPE-DEFINE-01 · 섀도우 구현 · 2026-09-25
+
+sub-phase: **MEGATREND-SCOPE-DEFINE-01**. 역할=**RP-1 대체**(언락 부스터 아님). AXIS·S1/S4/코사인 무접촉.
+
+### 설계
+
+- 점화(`MEGA_TREND_SECTOR.active`) → `forward_trades` 섀도우 OPEN.
+- 클라이맥스 킬 플래그 → 청산. `record_closure(..., final_ret_pct=0)` → **NAV/HWM/MDD 불변**.
+- 태그 `[OBSERVE_ONLY] MEGA_TREND_ALPHA`. `apply_shadow_entry_zero_notional`은 0 notional만 재사용(RE_EVOL 태그 미부착).
+- `mega_trend_alpha_live_fire_allowed()→False`. 실발동= AXIS 이후 RANK_B/D 신규 CLOSED n≥20 AND PF>0.5 후 **별도 Handoff**.
+- 언락 집계·climax 자본청산에서 ALPHA 제외.
+
+### 파일
+
+`mega_trend_alpha_shadow.py` (신규) · `smart_money_tracker.py` (점화 후 sync) · `mega_trend_trade_filter.py` · `mega_trend_climax.py` (스킵) · `tests/test_mega_trend_alpha_shadow_01.py`
+
+### DoD
+
+- synthetic 진입·청산 1건 · `exit_type=MEGA_TREND_ALPHA_SHADOW` · notional 0 · NAV 불변.
+- mega_trend 키워드 테스트 **126 passed**.
+- 전체 `tests/` 는 `test_mutant_oos_regime_specialization` IndentationError + 기존 실패(autonomy/scout 등)로 완주 불가. 이번 diff와 무관한 실패로 보임.
+- **미커밋** — AXIS/워치독/EXIT-TYPE와 분리. Claude OK 후 단독 커밋.
+
+---
+
+## OUTBOX — 06 누락 정정 + EXIT-TYPE 배포 실측 · 2026-09-25
+
+지적 맞음. 06은 워크스페이스에 행이 있었으나 **미커밋**이라 GitHub/다른 사본에는 안 보였을 수 있음. 지금 디렉터 지정 두 줄을 `docs/work_phases/06_검증체크리스트_및_실패기록.md` 효과표 72행·실패표 84행에 **그대로** 넣음.
+
+**EXIT-TYPE-LABEL-01 `update_factory`: 실행되지 않음.** VPS `git log -1` = `789552a` (AXIS cosine). 객체 `810b89e` **없음** = pull 안 됨. 「단독 배포」는 묶지 말라는 **방식**이었고, **완료 기록이 아님**.
+
+---
+
+## OUTBOX — Claude OK 랜딩 · PERSIST-RECHECK + MEGA-AUDIT · 2026-09-25
+
+디렉터 중계 Claude OK 확인. 코드 0 유지.
+
+- persist RECHECK **CLOSED(조회)**. 후속 `SMARTMONEY-NAVER-HTTP-RO` backlog: HTTP 성공+0종 = (a)구조 vs (b)차단. 우선순위 낮음.
+- mega audit **CLOSED(조회)**. 무의미 유지. 섹터 재점화 시만 재감사.
+- `CORRKELLY-US-PF-RO` backlog, 급하지 않음.
+- `06_검증체크리스트_및_실패기록.md`에 FIX-01 **3일 만에 재사망** 행 추가.
+
+다음 Handoff 없으면 구현 없음.
+
+---
+
+## OUTBOX — SMARTMONEY-PERSIST-CRON-RECHECK-01 · RO · 2026-09-25
+
+VPS. 코드 0. `ENABLE_MEGA_TREND_UNLOCK` 미변경.
+
+### 원인 1개
+
+**네이버 순매수 iframe 폴백이 9/18부터 0종.** 크론은 돌고 persist 함수도 호출된다. flow_map이 비어 `적재 0행`으로 정상 스킵.
+
+### Q1 크론
+
+**돈다.** `/etc/cron.d/dual-screener-factory-kr` `10 16 * * 1-5 factory.sh --smart-money`. 로그 `factory_smart_money_refresh_YYYYMMDD_161001.log` 평일 연속(19·20 주말 없음). RADAR `updated_at=2026-09-25 16:10` `no_smart_money_today`.
+
+### Q2 네이버 폴백
+
+**막힘.** 9/17: 네이버 33종 upsert 33행. 9/18~25: `네이버 … 0종` + `flow_map 비어 있음 (source=naver_fallback)`. HTTP `요청 실패` 로그는 없음(200인데 파서 0블록으로 추정). pykrx 1차는 **상시 실패**(9/17에도 `KRX_ID/KRX_PW 없음` + `Expecting value: line 1 column 1`). 폴백이 유일한 급수원이었고 그게 끊김.
+
+7일 합산이 **전부** 0인 점은 당일 휴장만으로는 설명 안 됨(9/14~17 페이지도 같이 파싱 실패).
+
+### Q3 로그를 못 봤는가
+
+**파일에는 매일 있음.** `⚠️ [수급 시계열] 적재 0행`. 텔레그램/워치독 승격 **없음**. 위성 `satellite_smart_money_1610.log`에도 동일 경고 반복(오토파일럿 1610 중복 기동).
+
+### Q4 KR LOCKDOWN 연동?
+
+**아님.** persist는 라다 저장 후 무조건 호출. `block_new_entries` 게이트 없음. LOCKDOWN은 신규진입만.
+
+### 재가동
+
+**설정/크론 재시작만으로는 불가.** 필요한 것: (a) 네이버 iframe 파서 재적응 **코드**, 또는 (b) 동작하는 **KRX_ID/KRX_PW**(자격=설정)로 pykrx 1차 소생. (b)가 통하면 코드 없이 1차만으로 우회 가능하나 현재 pykrx JSON도 빈 몸통이라 자격만으로 충분한지는 미검증.
+
+---
+
+## OUTBOX — MEGATREND-LIVE-IMPACT-AUDIT-01 · RO · 2026-09-25
+
+스코프: 조회만. unlock 플래그 **미변경**. `.env`에 `ENABLE_MEGA_TREND_UNLOCK` 키 없음 → 코드 기본 **1**.
+
+### 발동 빈도
+
+| 항목 | 값 |
+|------|-----|
+| `MEGA_TREND_SECTOR.active` | **false** (`deactivated_at=2026-07-23 16:11:07`) |
+| 9월 16:10 점화 로그 | 매일 `점화 없음 (checked=0)` |
+| 오늘 스냅샷 | `sectors=[]` · turnover `no_market_data` · `rotation_advantage_active=false` |
+| `#MegaTrend언락` / 기타 MegaTrend 태그 진입(7/1~) | **0** |
+| CorrKelly 면죄(`kelly_mult=1.0` bypass) 실측 | **0건** |
+
+면죄 자격은 `is_mega_trend_sector` → 블록 `active` 필수. 플래그 ON이어도 섹터 소등이면 발동 0.
+
+### 비교표 (상관 스크리닝만, `entry>=2026-08-24`, `final_ret`)
+
+| 군 | n closed | 승률 | PF |
+|----|----------|------|-----|
+| CorrKelly 전체 | 114 | 1.75% | 0.008 |
+| ㄴ KR | 26 | 7.69% | 0.027 |
+| ㄴ US | 88 | 0% | 0 |
+| `#CorrKelly분산*` | 110 | 1.82% | 0.008 |
+| `#CorrKelly페널티(x0.5)` | 4 (US 9/17·21·24) | 0% | 0 |
+| `#CorrKelly합동` | 0 | — | — |
+| 면죄 발동 (`#MegaTrend언락`) | **0** | — | — |
+
+발동군 vs 비발동군 비교 **불가**(발동 공집합). 비발동 페널티 4건은 전부 손절. 분산 태그는 사이즈 클램프가 아님.
+
+### 켈리 배수 (설계, 이번 기간 실측 0)
+
+`apply_mega_trend_correlation_forgiveness` → `kelly_mult=1.0`. 페널티 기본 `KR_CORR_KELLY_MULT=0.5`. 면죄 = **페널티 해제(0.5→1.0, 2배 복원)**. 1.0 초과 부스트 아님.
+
+### 1차 판정
+
+**무의미 (너무 드묾 / 실제 0).** unlock 스위치는 켜져 있었으나 점화 블록이 7/23 이후 꺼져 검시기간 사이즈에 기여·역기여 없음.
+
+---
+
+## OUTBOX — SMARTMONEY-CORR-CHECK-01 · RO · 2026-09-25
+
+VPS `market_data.sqlite`. 코드 0.
+
+### 판정: **판단보류 (표본 부족)**
+
+가산 vs 비가산 승률·PF를 나눌 **체결이 0건**. 상관 있음/없음 판정 불가.
+
+### Q1 시계열
+
+| | 값 |
+|--|--|
+| 행 | **140** |
+| 종목 | **81** distinct |
+| 일자 | **4일** 2026-09-14~**09-17** |
+| 일별 | 14일 35 · 15일 35 · 16일 37 · 17일 33 |
+
+9/15 CLOSED 이후 10일 축적 가설은 **기각**. 9/18~9/25 **0행** — persist 크론이 4일 후 멈춘 상태.
+
+### Q2 거래군
+
+- KR 마지막 진입 **2026-09-02** (LOCKDOWN). `entry>=09-14` **0**.
+- `flow_bonus>0` 전 시장 **0**. sig `#수급모멘텀/#수급다이버전스` **0**.
+- 가산 받은 CLOSED n=0 / 안 받은(같은 창) n=0.
+
+계수 `KR_FLOW_BONUS_MAX` 기본 10, `bonus = max * max(mom_norm*0.6, divergence)`, 상한 10점.
+
+### Q3 튜닝 감
+
+해당 없음 (체결 0).
+
+### Q4
+
+**부족**이 결론. 수급 표는 쌓이되 거래와 안 만남. 상관 스크리닝은 KR 재진입(thaw 통과 등) **이후**. persist 정체는 별 관측(크론) 이슈.
+
+---
+
+## OUTBOX — MEGATREND-SCOPE-RO-01 · RO · 2026-09-25
+
+코드 0. `docs/claude_project/CAT-P_MegaTrend_ReEvolution.md` 대조.
+
+### 판정 견적: **뼈대 있음 · 킬체인 몇 주 / 신규 알파 슬리브면 수개월**
+
+### Q1 파일
+
+CAT-P 메가 8 + 재진화 7 **전부 레포에 존재**. 로직 있음(테스트·라인). 예외: `mega_trend_trade_filter.py` **40줄** 태그 헬퍼.
+
+| 파일 | 줄 |
+|------|-----|
+| mega_trend_ignition | 484 |
+| mega_trend_climax | 704 |
+| mega_trend_internal_monitor | 287 |
+| mega_trend_internal_kill | 201 |
+| mega_trend_kill_rl | 1555 |
+| mega_trend_toxic_kill | 611 |
+| mega_trend_trade_filter | 40 |
+| reports/mega_trend_kill_report_section | 524 |
+| re_evolution_* 7종 | 242~668 |
+| scripts/validate_mega_trend_kill_live.py | 448 |
+
+### Q2 배선
+
+`supernova_hunter.py` **직접 import 0**. 완전 헌터 내부 스캔은 아님.
+
+이미 배선: `smart_money_tracker` 일일 잡 말미 ignition/climax/internal/toxic refresh → `MEGA_TREND_SECTOR`. `portfolio_risk_overlay` 상관 용서·unlock. `forward/shared.py` try_add `is_mega_trend_rotation_advantage` + CorrKelly forgiveness. `factory_pipelines` / `system_auto_pilot` kill RL evolve. 기본 `ENABLE_MEGA_TREND_UNLOCK=1`.
+
+재진화 strike는 registry LIVE→OBSERVING (테스트·`apply_shadow_entry_zero_notional`). CAT-H 유전자풀과 **문서상 분리**, 레지스트리와는 접점.
+
+### Q3 Phase B 동결
+
+현황판 Phase B 핵심산출물 = 유전자풀·마찰·데스매치·S5. **CAT-P 미기재**. 설계문서는 CAT-H와 병합 금지. **별도 트랙이 맞음.** OBS-HOLD의 mega_trend 금지는 「RP-1 근처놓침 대체 알파 신규」쪽. 이미 있는 킬체인을 Phase B 동결 목록에 넣진 않음.
+
+### Q4 NAV·장부·헌터
+
+- **킬체인 완성/역할절단**: 헌터 본문 필수 아님. overlay·config·리포트·smart_money 말미.
+- **북극성 갈림길 A = 새 전략태그 슬리브**: 새 스캐너/sig 필요 → 헌터 또는 별 팩토리. NAV 훅은 기존 `record_closure` 재사용 가능하나 **새 전략은 수개월**.
+
+권고: 갈림길 A를 고르면 「없는 모듈을 새로」가 아니라 **기존 킬체인 역할(RP-1 대체 vs 섹터 unlock)을 Handoff로 자르는 것**이 몇 주 축. 새 supernova급 알파로 키우면 수개월.
+
+용어집·backlog **미등록은 사실**. 이번 RO는 등록하지 않음(디렉터 결정).
 
 ---
 

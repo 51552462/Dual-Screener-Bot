@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | VPS `sudo bash ./update_factory.sh` (라벨 단독 푸시 후) |
-| **sub-phase** | **EXIT-TYPE-LABEL-01** |
-| **status** | **Claude OK** · 배포 |
-| **다음** | 1주 `reality_audit` bad_et 신규 heal/kill 재발 없음. `EXIT-TYPE-LABEL-02-RO` 지금 코드 금지 |
-| **앵커** | `SYNC-2026-09-25-EXIT-TYPE-OK` |
+| **지금 디렉터** | EXIT-TYPE **배포완료(810b89e)**. MEGATREND 단독 커밋 푸시 후 2차 `update_factory` |
+| **sub-phase** | **MEGATREND-SCOPE-DEFINE-01** |
+| **status** | **WAIT_CLAUDE_HANDOFF** |
+| **다음** | 다음 Alpha Handoff 대기. 실발동 게이트 열지 말 것 |
+| **앵커** | `SYNC-2026-09-25-MT-ALPHA-SHADOW` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---
