@@ -38,6 +38,8 @@ from config_manager import (
 # 식별자 / 유니버스 (롱 팩토리 로직 미사용 — 스나이퍼 전용 상수)
 # ---------------------------------------------------------------------------
 INVERSE_SIG_MARKER = "[INVERSE_ETF]"
+# V-Recovery 킬 — ledger HYBRID_*/STAT_* 와 같은 SCREAMING_SNAKE
+EXIT_TYPE_INVERSE_RECOVERY_KILL = "INVERSE_RECOVERY_KILL"
 INVERSE_HARD_CAP_PCT = 0.30  # 레거시 정적 폴백 — resolve_dynamic_inverse_cap_pct 실패 시만
 
 # [Daily Floor] 평일 자동 보충 목표/바닥(국고 대비). 토요일 적립 목표(TAIL_FUND_ACCRUAL_PCT)와 동일 수준.
@@ -428,6 +430,7 @@ def _close_inverse_row_at_market(
     row: sqlite3.Row,
     exit_price: float,
     exit_reason: str,
+    exit_type: str | None = None,
 ) -> float:
     """
     단일 인버스 OPEN 행을 시장가 청산 처리. 반환: 테일로 돌려줄 회수 금액(원금+손익 근사).
@@ -449,14 +452,35 @@ def _close_inverse_row_at_market(
     prev_low = float(row["min_low"] or entry_price or exit_price)
     new_high = max(prev_high, exit_price)
     new_low = min(prev_low, exit_price)
-    conn.execute(
-        """
-        UPDATE forward_trades
-        SET status = ?, exit_date = ?, exit_reason = ?, final_ret = ?, max_high = ?, min_low = ?
-        WHERE id = ?
-        """,
-        (status, today_str, exit_reason, round(final_ret, 4), new_high, new_low, rid),
-    )
+    et = str(exit_type or "").strip()
+    if et:
+        conn.execute(
+            """
+            UPDATE forward_trades
+            SET status = ?, exit_date = ?, exit_reason = ?, exit_type = ?,
+                final_ret = ?, max_high = ?, min_low = ?
+            WHERE id = ?
+            """,
+            (
+                status,
+                today_str,
+                exit_reason,
+                et,
+                round(final_ret, 4),
+                new_high,
+                new_low,
+                rid,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE forward_trades
+            SET status = ?, exit_date = ?, exit_reason = ?, final_ret = ?, max_high = ?, min_low = ?
+            WHERE id = ?
+            """,
+            (status, today_str, exit_reason, round(final_ret, 4), new_high, new_low, rid),
+        )
     try:
         from live_nav_manager import record_inverse_sleeve_closure
 
@@ -545,6 +569,7 @@ def enforce_v_recovery_kill_switch(
                 row,
                 px,
                 "V_RECOVERY_KILL_SWITCH",
+                exit_type=EXIT_TYPE_INVERSE_RECOVERY_KILL,
             )
             release_tail_amount(mkt, recovered)
             n += 1

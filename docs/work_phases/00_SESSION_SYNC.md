@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-25 · **앵커 ID**: `SYNC-2026-09-25-AXIS-LIVE-OK`
+> **갱신**: 2026-09-25 · **앵커 ID**: `SYNC-2026-09-25-EXIT-TYPE-OK`
 
 ---
 
@@ -40,16 +40,16 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-25-AXIS-LIVE-OK` |
-| **마지막 갱신** | 2026-09-25 — AXIS-01 **Claude OK**. 커밋·푸시·update_factory. thaw ARMED |
+| **앵커 ID** | `SYNC-2026-09-25-EXIT-TYPE-OK` |
+| **마지막 갱신** | 2026-09-25 — EXIT-TYPE-LABEL-01 **Claude OK**. 라벨 단독 커밋·푸시 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | US-COSINE-AXIS-01 **배포·워치독 관찰** · KR-LOCKDOWN-STALL-THAW-01 **ARMED** |
-| **직전 완료** | AXIS 라이브 Claude OK |
-| **다음** | 워치독 surv 자릿수(US~27 KR~26). 컷≠등재. scout 테스트 백로그 |
+| **진행 중 sub-phase** | EXIT-TYPE-LABEL-01 **배포** (`update_factory`) |
+| **직전 완료** | EXIT-TYPE-LABEL-01 Claude OK |
+| **다음** | VPS `sudo bash ./update_factory.sh`. AXIS/워치독 미커밋 잔여는 별건 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | AXIS+NA-FIX 푸시 후 해시 · VPS `update_factory` |
+| **git main** | EXIT-TYPE-LABEL-01 푸시 후 해시 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
@@ -69,6 +69,9 @@
 [KR/US] US-COSINE-FUNNEL-DEAD-01 · **CLOSED** · 정상 선별 복구(AXIS 라이브). 침묵 완전 해소 아님. NA/미완봉은 NA-FIX 별 항목
 [KR/US] US-COSINE-NA-FIX-01 · 안전장치 유지 · 미완봉→전일 대체 없음
 [KR/US] US-COSINE-AXIS-01 · **Claude OK 2026-09-25** · 배포 · 워치독 관찰
+[KR/US] EXIT-TYPE-LABEL-01 · **Claude OK 2026-09-25** · 단독 배포 · 백필 없음
+[KR/US] REALITY-AUDIT-BADEXIT-01 · **RO CLOSED** · 다음=EXIT-TYPE-LABEL-01
+[KR/US] WATCHDOG-AXIS-OBS-TG-01 · **로컬 표시 배관** · 미커밋 · 게이트 없음
 [KR/US] ELASTIC-SCOUT-GUARD-TEST · **backlog** · `test_non_scout_never_gated` 실패 원인(급하지 않음, AXIS 무관)
 [확인] US-RANK-B-STALL-RO · **CLOSED** · n=30 대기 **폐기** · 워치독 n=7=전생 · 마지막 RANK_B 7/20 · cosine 7/22
 [KR/US] US-COSINE-SILENT-A · 확정 · 0.45 임계 기각

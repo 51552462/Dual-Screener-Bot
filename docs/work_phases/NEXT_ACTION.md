@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | VPS `sudo bash ./update_factory.sh` (이 PC에서 안 되면 VPS에서). 다음날 워치독 surv |
-| **sub-phase** | **US-COSINE-AXIS-01** |
-| **status** | **Claude OK** · 배포·관측 |
-| **다음** | 구현 금지. surv 자릿수·forward 등재. scout 테스트는 백로그 |
-| **앵커** | `SYNC-2026-09-25-AXIS-LIVE-OK` |
+| **지금 디렉터** | VPS `sudo bash ./update_factory.sh` (라벨 단독 푸시 후) |
+| **sub-phase** | **EXIT-TYPE-LABEL-01** |
+| **status** | **Claude OK** · 배포 |
+| **다음** | 1주 `reality_audit` bad_et 신규 heal/kill 재발 없음. `EXIT-TYPE-LABEL-02-RO` 지금 코드 금지 |
+| **앵커** | `SYNC-2026-09-25-EXIT-TYPE-OK` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---

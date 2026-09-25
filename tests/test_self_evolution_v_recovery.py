@@ -187,7 +187,7 @@ def _mk_inverse_db() -> sqlite3.Connection:
             entry_date TEXT, market TEXT, code TEXT, name TEXT,
             sig_type TEXT, entry_price REAL, invest_amount REAL,
             max_high REAL, min_low REAL, status TEXT,
-            exit_date TEXT, exit_reason TEXT, final_ret REAL
+            exit_date TEXT, exit_reason TEXT, exit_type TEXT, final_ret REAL
         )
         """
     )
@@ -241,9 +241,12 @@ def test_enforce_v_recovery_closes_and_resets_rl(tmp_path, monkeypatch):
     assert out["closed"] == 1
     assert out["reason"] == "meta_bear_to_bull"
 
-    row = conn.execute("SELECT status, exit_reason FROM forward_trades WHERE id=1").fetchone()
+    row = conn.execute(
+        "SELECT status, exit_reason, exit_type FROM forward_trades WHERE id=1"
+    ).fetchone()
     assert row["status"] in ("CLOSED_WIN", "CLOSED_LOSS")
     assert row["exit_reason"] == "V_RECOVERY_KILL_SWITCH"
+    assert row["exit_type"] == "INVERSE_RECOVERY_KILL"
     assert released and released[0][0] == "US"
     assert lnm.get_inverse_sleeve_rl_stats("US")["n_closed"] == 0
 

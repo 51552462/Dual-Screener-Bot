@@ -3,7 +3,116 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-25 · US-COSINE-AXIS-01 Claude OK · 앵커 `SYNC-2026-09-25-AXIS-LIVE-OK`
+> **갱신**: 2026-09-25 · EXIT-TYPE-LABEL-01 **Claude OK** · 앵커 `SYNC-2026-09-25-EXIT-TYPE-OK`
+
+---
+
+## Claude OK — EXIT-TYPE-LABEL-01 (2026-09-25)
+
+스펙 일치 확인: ZOMBIE_HEAL/INVERSE_RECOVERY_KILL 기입, 손익·게이트·과거 8건 무접촉, AXIS/워치독과 분리 — 전부 확인됨.
+
+전체 회귀 (`tests/`, mutant collect 파일 제외): **1180 passed**, **25 failed** (기존 이슈 · 이번 라벨 테스트 아님). collect error 1건(`test_mutant_oos_regime_specialization` — `mutant_oos_validator.py` IndentationError, 이번 diff 무관). `test_factory_runtime_lock`는 Windows `os.unlink` KeyboardInterrupt로 파일 단위 제외(5 collect).
+
+조건이었던「전체 회귀 N개 passed」확인됨. 라벨 커밋 푸시 → `update_factory`. 06에 1주 재확인 등록. `EXIT-TYPE-LABEL-02-RO`는 현황판 backlog · 지금 코드 금지.
+
+---
+
+## OUTBOX — EXIT-TYPE-LABEL-01 · 구현 · 2026-09-25
+
+sub-phase: **EXIT-TYPE-LABEL-01**. 손익·게이트·exit_reason 무접촉. 과거 8건 **백필 안 함**(CLOSED·ret 확정).
+
+### 이름
+- 치유: `ZOMBIE_HEAL` — ledger `ZOMBIE_FORCE_CLOSE`(정지/좀비종목)와 구분
+- V-Recovery: `INVERSE_RECOVERY_KILL`
+
+### Diff
+- `forward/shared.py` — `CLOSED_ZOMBIE` UPDATE에 `exit_type` (`exit_type` 컬럼 있을 때만)
+- `inverse_etf_sniper.py` — `_close_inverse_row_at_market(..., exit_type=)` · V-Recovery만 기입. `KILL_SWITCH_INVERSE_MODE_OFF`는 기존처럼 미기입
+- `tests/test_exit_type_label_01.py` — synthetic 2건
+- `tests/test_self_evolution_v_recovery.py` — 스키마+assert만
+
+### 잔여 (다음 Handoff)
+- `CLOSED_AUTO` 치유 · 인버스 MODE_OFF 킬 — 이번 WARN 8건과 무관
+
+### 테스트
+`pytest tests/test_exit_type_label_01.py` **2 passed**. V-Recovery enforce 테스트도 라벨 확인. `test_reset_hedge_rl_clears_sleeve_log` fail은 NAV 슬리브 로그(이번 SET과 무관).
+
+배포: Claude OK 후 커밋 **단독** → `update_factory`. AXIS/워치독/NA-FIX와 묶지 말 것. 1주 `reality_audit` bad_et 신규 증가 없음.
+
+---
+
+## OUTBOX — REALITY-AUDIT-BADEXIT-01 · RO · 코드 0 · 2026-09-25
+
+VPS `deploy_watch_latest.json` (WARN) 와 `market_data.sqlite` 실측. 수정 없음.
+
+**WARN 트리거**: US `bad_regime` 51/243 = 21.0% ≥ 20% (`deploy_watch.py` 665행). KR 32/214 = 15%는 단독 WARN 아님. `bad_et` 1/7은 10% 미만 → 이번 WARN의 주원인이 아님.
+
+### Q1 bad_exit_type 규칙 — **무해**
+
+화이트리스트(`exit_reason` 미포함)가 **아님**. `exit_type IS NULL OR trim='' OR UPPER='UNKNOWN'` 만 카운트. `exit_reason` 공란은 `null_exit_reason`으로 따로 세고, 이번 표본은 0.
+
+정상 청산은 `forward/ledger.py`가 `STAT_MAE`/`HYBRID_*` 등을 씀. 자가치유·인버스 킬은 `exit_type`을 안 건드림 → 스키마 기본값 `UNKNOWN`이 남음.
+
+### Q2 US 7 = heal 7 — **무해**(동일 레코드)
+
+overlap=7. 전부 `CLOSED_ZOMBIE` · `exit_reason=강제청산(기간만료·데이터누락)` · `final_ret=0` · `exit_type=UNKNOWN`.
+
+| id | code | entry | exit | entry_regime | bars |
+|----|------|-------|------|--------------|------|
+| 355 | EPD | 08-26 | 08-27 | UNKNOWN | 1 |
+| 375 | MU | 08-31 | 09-01 | UNKNOWN | 1 |
+| 388 | IHS | 09-01 | 09-02 | UNKNOWN | 1 |
+| 398 | ZCSH | 09-02 | 09-03 | UNKNOWN | 1 |
+| 404 | PVLA | 09-04 | 09-05 | UNKNOWN | 1 |
+| 410 | PVLA | 09-07 | 09-08 | BULL | 0 |
+| 453 | SLAB | 09-18 | 09-19 | SIDEWAYS | 1 |
+
+KR 1건은 heal **아님**: id=297 `CLOSED_LOSS` KODEX 200선물인버스2X · `exit_reason=V_RECOVERY_KILL_SWITCH` · `exit_type=UNKNOWN` · `final_ret=-5` · 07-22→07-23. `inverse_etf_sniper._close_inverse_row_at_market`이 status/reason/ret만 UPDATE.
+
+### Q3 bad_regime vs 4갈래 — **데이터특이**(원인 다름)
+
+`bad_regime` = `entry_regime` 공란/UNKNOWN. 4갈래(META/CURRENT/앙상블/S5arm)는 **살아 있는 config 키 불일치**. 장부 UNKNOWN은 **과거 INSERT 공란**.
+
+- KR UNKNOWN 32: entry 2026-08-24~09-02
+- US UNKNOWN 51: entry 2026-08-24~09-04 (일별 2~8건)
+- 그 이후 CLOSED는 BEAR/BULL/SIDEWAYS 실값. TRACKA 항목2 배선 이후 신규와 분리됨.
+
+항목2와는 같은 가족(라벨 공란)이나 REGIME-KEYS-RO의 4키 동시표기와 **같은 원인 아님**.
+
+### Q4 KR MDD 10.80→11.08 — **데이터특이**(가설 부분 기각) + 설계는 **무해**
+
+LOCKDOWN은 `block_new_entries`만 (`try_add` 게이트). 기존 OPEN 청산 루프는 그대로. 설계 가설의 전반은 맞음.
+
+**숫자**: 9/2 확정 NAV 268,649,767.97 / HWM 301,165,743.83 / mdd **10.7967%**. 현 treasury **11.0775%** (NAV 267,875,780.66). 북극성 daily:
+
+| 날짜 | NAV | mdd% |
+|------|-----|------|
+| 09-02~03 | 268,649,768 | 10.7967 |
+| 09-04~05 | 268,537,472 | 10.834 |
+| 09-06~24 | 267,875,781 | **11.0775** 동결 |
+
+KR 09-03~09-24 청산은 **2건뿐**: S-Oil 08-28→09-03 +1.34%(WIN, invest 145k) · E1 09-01→09-04 −2.09%(LOSS, invest 99k). 09-24 이후 청산 0. 지금 KR OPEN **0**. 09-02 당일 청산 5건(대한항공/SDI MAE −3.5, HS +1.63, 유니퀘스트 −3.5, 실리콘투 −1.19)은 10.80 확정 **당일** 북.
+
+09-04→09-06 NAV Δ ≈ −66.2만 ≈ NAV-HOOK Step A dry-run(−661,968 → sim 11.04%). 즉 11.08은 **9/24까지 기존 포가 매일 손실 청산된 결과가 아니라**, 9/4 소폭 + 9/6 훅/반영 후 **동결**.
+
+### 다음 Handoff (이번 범위 밖)
+
+- 치유 UPDATE에 `exit_type=ZOMBIE_FORCE_CLOSE`(또는 전용 라벨) · 인버스 킬도 동일
+- 과거 UNKNOWN `entry_regime` backfill은 선택(표시/감사만, 거버넌스 4키와 분리)
+
+---
+
+## OUTBOX — WATCHDOG-AXIS-OBS-TG-01 표시 배관 · 2026-09-25
+
+디렉터 요청: AXIS 관측(surv 자릿수·등재 vs 컷·KR thaw ARMED)을 텔레그램으로 받게.
+
+표시 전용. `performance_budget_governor`·헌터 게이트 무접촉. 워치독 줄 수 유지(기존 초신성 퍼널·안전장치에 접음).
+
+- 퍼널: `surv n≈~27`/`≠~27`(US 27 KR 26, 10–99 같은 자리=≈) + `등재 n`
+- 안전장치: KR `thaw ARMED`/`thaw 꺼짐`
+- 테스트 14 passed. **미커밋** — VPS 19:30에 나오려면 커밋·푸시·`update_factory` 필요.
+
+US 당일 surv는 금요일 23:00 KST 스캔 전 19:30에는 여전히 `US 스캔없음`일 수 있음.
 
 ---
 

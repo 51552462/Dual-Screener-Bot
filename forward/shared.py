@@ -902,6 +902,8 @@ _EXIT_REASON_INTERNAL = frozenset(
 )
 _EXIT_REASON_ZOMBIE_DB = "강제청산(기간만료·데이터누락)"
 _EXIT_REASON_FACT_CLOSE_DB = "강제청산(청산팩트정리)"
+# 자가치유 CLOSED_ZOMBIE — ledger ZOMBIE_FORCE_CLOSE(정지/좀비종목)와 구분
+EXIT_TYPE_ZOMBIE_HEAL = "ZOMBIE_HEAL"
 
 
 def _format_exit_reason_display(reason: object) -> str:
@@ -1064,15 +1066,27 @@ def _reporter_cleanup_zombie_forward_trades() -> int:
         exit_day = datetime.now().strftime("%Y-%m-%d")
         if ids:
             reason = _EXIT_REASON_ZOMBIE_DB
-            conn.executemany(
-                """
-                UPDATE forward_trades
-                SET status='CLOSED_ZOMBIE', exit_date=?, exit_reason=?,
-                    final_ret=COALESCE(final_ret, 0.0)
-                WHERE id=?
-                """,
-                [(exit_day, reason, i) for i in ids],
-            )
+            if "exit_type" in colnames:
+                conn.executemany(
+                    """
+                    UPDATE forward_trades
+                    SET status='CLOSED_ZOMBIE', exit_date=?, exit_reason=?,
+                        exit_type=?,
+                        final_ret=COALESCE(final_ret, 0.0)
+                    WHERE id=?
+                    """,
+                    [(exit_day, reason, EXIT_TYPE_ZOMBIE_HEAL, i) for i in ids],
+                )
+            else:
+                conn.executemany(
+                    """
+                    UPDATE forward_trades
+                    SET status='CLOSED_ZOMBIE', exit_date=?, exit_reason=?,
+                        final_ret=COALESCE(final_ret, 0.0)
+                    WHERE id=?
+                    """,
+                    [(exit_day, reason, i) for i in ids],
+                )
             total += len(ids)
 
         # 청산 팩트가 있는데 status 만 살아 있는 행 → 소프트 클린 (DELETE 금지)
