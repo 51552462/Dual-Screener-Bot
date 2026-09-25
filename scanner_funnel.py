@@ -67,6 +67,7 @@ def _near_miss_sort_key(row: _NearMissCandidate) -> Tuple[int, float]:
 SUPERNOVA_LIVE_FUNNEL: Tuple[Tuple[str, str], ...] = (
     ("SKIP_POSITION", "보유·당일스캔 제외"),
     ("DATA_FAIL", "데이터 수신·20봉"),
+    ("EVAL_UNAVAILABLE", "평가 불가(종가·거래량 NA)"),
     ("LIQUIDITY", "유동성(가격·거래량)"),
     ("TOXIC_ML_TREE", "ML 독성트리"),
     ("DNA_FAIL", "DNA 미통과"),

@@ -4,7 +4,64 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: WATCHDOG-FUNNEL-VISIBILITY-01 **Claude OK 2026-09-24** · 앵커 `SYNC-2026-09-24-WD-FUNNEL-OK` · 다음=`US-COSINE-AXIS-01` · thaw 관측
+> **현재**: US-COSINE-AXIS-01 **Claude OK 2026-09-25** · 배포 진행 · thaw 관측
+
+---
+
+## INBOX — Claude Pro 검증 · US-COSINE-AXIS-01 라이브 · 2026-09-25
+
+앵커: SYNC-2026-09-25-AXIS-LIVE-OK
+
+### 판정: 완전 OK (배포 승인)
+
+- 축/컷/LIQ 3종 diff 스펙 일치 확인
+- μσ 저장·부트스트랩 확인
+- NA-FIX 유지, 미완봉 대체 없음 확인
+- KR·US 동일 헌터 영향, LOCKDOWN/STALL-THAW 무접촉 확인
+- 테스트 43 passed. **1건 실패(test_elastic_scout_guard)는 이번 diff와
+  무관하다는 설명 수용, 단 별도 백로그로 원인 확인 필요(배포는 진행)**
+
+Claude OK: 2026-09-25 — 완전 승인. 커밋·푸시 → update_factory 진행.
+
+### 배포 후
+1. 다음날 워치독 퍼널 surv가 US~27 / KR~26과 자릿수 같은지 확인 —
+   다르면 즉시 보고
+2. 컷 통과 ≠ 최종 등재. forward_trades 실제 진입까지 이어지는지도 확인
+3. 05_진행로그·00_전체현황판·00_SESSION_SYNC §3 갱신
+4. 별도 백로그: test_elastic_scout_guard 실패 원인 확인(급하지 않음)
+
+---
+
+## INBOX — Claude Pro Handoff · US-COSINE-AXIS-01 최종 라이브 · 2026-09-25
+
+sub-phase: **US-COSINE-AXIS-01** · 🔴 Critical (KR·US 동시)
+디렉터 승인: 2026-09-25 — 축 + 컷 10% + $30k LIQ 라이브.
+
+RANK 3D만. 전일/N일 μσ. 템플릿 동일 z. MULTI 24D·elastic 로직·LOCKDOWN·미완봉 대체 없음.
+μσ = config_kv COSINE_AXIS_STATS. NA-FIX는 안전장치 유지.
+
+---
+
+## INBOX — Claude Pro Handoff · US-COSINE-NA-FIX-01 · 2026-09-25
+
+sub-phase: **US-COSINE-NA-FIX-01** · 🔴 Critical (AXIS-01보다 선행)
+디렉터: 채팅 확정 Handoff. 판단 종료. 구현·섀도우만. 2단계 라이브는 별도.
+
+### 목표
+2037/2051 `pd.NA`를 if에 넣어 예외. 예외만 없애지 말고 NA를 명시 스킵해서 쓰레기 DNA가 코사인에 안 들어가게.
+
+### Spec
+1) `current_close` NA/nan → 평가 불가 건너뛰기 (LIQ 통과 누수 금지)
+2) Volume[-5:] NA 섞임 → dropna 평균. 5일 중 3일 이상 NA면 평가 불가
+3) 평가 불가 vs 정상 LIQ를 로그·워치독 DATA%/EVAL%/LIQ%/DNA_FAIL로 구분
+4) NA를 0·임의값으로 채워 통과 금지
+
+### 안전 검증
+1단계: VPS 실제 `yf.download` 패널 섀도우 카운트만 (라이브 반영 아님)
+2단계: 1단계 보고 후 별도 승인
+
+### 하지 않을 것
+AXIS-01 묶음 · `$30k`/컷오프 재설정
 
 ---
 

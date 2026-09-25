@@ -25,6 +25,20 @@ warnings.filterwarnings('ignore')
 import auto_forward_tester as aft
 import shadow_tracking
 from yf_download_flatten import flatten_yf_download_df
+from scan_liq_front_gate import classify_liq_front_window
+from cosine_axis_stats import (
+    WINDOW_SESSIONS,
+    append_market_day,
+    apply_z,
+    best_rank3_cosine,
+    fit_slot_mu_sd,
+    load_axis_blob,
+    percentile_p90,
+    save_axis_blob,
+    session_as_of,
+    stats_ready,
+    z_templates_3d,
+)
 from market_db_paths import market_db_read_path
 from scanner_funnel import ScanFunnelTracker, format_supernova_scan_report
 from system_config_atomic import CONFIG_DIR, CONFIG_PATH, load_config, update_config
@@ -1908,6 +1922,170 @@ def execute_supernova_live_scan(
             len(tickers),
         )
 
+    kr_data_dict = {}
+    from scan_resilience import (
+        fallback_dna_features,
+        safe_supernova_dna_features,
+    )
+
+    tz_scan = (
+        pytz.timezone("Asia/Seoul")
+        if market == "KR"
+        else pytz.timezone("America/New_York")
+    )
+    now_mkt_scan = datetime.now(tz_scan)
+    axis_as_of = session_as_of(market)
+    axis_blob = load_axis_blob()
+    axis_lock = threading.Lock()
+    axis_today_rows = []
+    axis_z_scores = []
+
+    def _ticker_ohlcv(code):
+        if market == "KR":
+            hit = kr_data_dict.get(code)
+            if hit is not None:
+                return hit, False
+            try:
+                df = fdr.DataReader(
+                    code,
+                    (datetime.now() - timedelta(days=40)).strftime(
+                        "%Y-%m-%d"
+                    ),
+                )
+            except Exception:
+                return None, True
+            if df is not None and not getattr(df, "empty", True):
+                kr_data_dict[code] = df
+            return df, False
+        return us_data_dict.get(code), False
+
+    def _bootstrap_axis_from_panel(panel):
+        if not panel:
+            return
+        dates = sorted(
+            {
+                pd.Timestamp(idx).strftime("%Y-%m-%d")
+                for df in panel.values()
+                if df is not None and not getattr(df, "empty", True)
+                for idx in df.index
+            }
+        )
+        if len(dates) < 2:
+            return
+        use_dates = dates[-(WINDOW_SESSIONS + 1) : -1]
+        days_out = []
+        for day in use_dates:
+            ts = pd.Timestamp(day)
+            packed = []
+            for df in panel.values():
+                try:
+                    work = df.loc[pd.to_datetime(df.index) <= ts]
+                except Exception:
+                    continue
+                if work is None or len(work) < 20:
+                    continue
+                if "Close" not in work.columns or "Volume" not in work.columns:
+                    continue
+                c = work["Close"].values
+                v = work["Volume"].values
+                gate, _why = classify_liq_front_window(
+                    market=market,
+                    close_last=c[-1],
+                    vol_tail=v[-5:] if len(v) >= 5 else v,
+                )
+                if gate != "PASS":
+                    continue
+                dna = safe_supernova_dna_features(
+                    work, market=market, now_mkt=now_mkt_scan
+                )
+                if not isinstance(dna, dict):
+                    continue
+                try:
+                    packed.append(
+                        [
+                            float(dna["cpv"]),
+                            float(dna["tb"]),
+                            float(dna["bbe"]),
+                        ]
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if packed:
+                days_out.append({"as_of": day, "rows": packed})
+        if days_out:
+            axis_blob[str(market).upper()]["days"] = days_out[-WINDOW_SESSIONS:]
+
+    slot_mk = str(market).upper()
+    if market == "US" and not stats_ready(axis_blob.get(slot_mk) or {}):
+        _bootstrap_axis_from_panel(us_data_dict)
+
+    axis_mu, axis_sd, axis_n = fit_slot_mu_sd(axis_blob.get(slot_mk) or {})
+    axis_ready = bool(axis_n >= 30)
+    axis_z_tpl = (
+        z_templates_3d(ideal_templates, axis_mu, axis_sd)
+        if axis_ready
+        else {}
+    )
+
+    def _axis_probe_one(code):
+        df, fetch_fail = _ticker_ohlcv(code)
+        if fetch_fail or df is None or getattr(df, "empty", True) or len(df) < 20:
+            return None
+        if "Close" not in df.columns or "Volume" not in df.columns:
+            return None
+        c = df["Close"].values
+        v = df["Volume"].values
+        gate, _why = classify_liq_front_window(
+            market=market,
+            close_last=c[-1],
+            vol_tail=v[-5:] if len(v) >= 5 else v,
+        )
+        if gate != "PASS":
+            return None
+        dna = safe_supernova_dna_features(
+            df, market=market, now_mkt=now_mkt_scan
+        )
+        if dna is None:
+            dna = fallback_dna_features(df)
+        if not isinstance(dna, dict):
+            return None
+        try:
+            raw_3 = np.array(
+                [float(dna["cpv"]), float(dna["tb"]), float(dna["bbe"])],
+                dtype=float,
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not axis_ready:
+            return None
+        z_sim = best_rank3_cosine(apply_z(raw_3, axis_mu, axis_sd), axis_z_tpl)
+        return raw_3, z_sim
+
+    if axis_ready:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as _ax_ex:
+            for item in _ax_ex.map(_axis_probe_one, tickers):
+                if item is None:
+                    continue
+                raw_3, z_sim = item
+                axis_today_rows.append(raw_3.tolist())
+                axis_z_scores.append(float(z_sim))
+        axis_p90 = percentile_p90(axis_z_scores)
+    else:
+        axis_p90 = None
+
+    logger.info(
+        "[%s] COSINE_AXIS ready=%s n=%s p90=%s scores=%s",
+        market,
+        axis_ready,
+        axis_n,
+        axis_p90,
+        len(axis_z_scores),
+    )
+    print(
+        f"   ↳ [{market} AXIS] ready={axis_ready} hist_n={axis_n} "
+        f"p90={axis_p90} probe={len(axis_z_scores)}"
+    )
+
     # 개별 종목 연산 Worker
     _doomsday_halt_lock = threading.Lock()
     _doomsday_halt_notified = [False]
@@ -1983,19 +2161,13 @@ def execute_supernova_live_scan(
 
         try:
             if market == "KR":
-                try:
-                    df = fdr.DataReader(
-                        code,
-                        (
-                            datetime.now() - timedelta(days=40)
-                        ).strftime("%Y-%m-%d"),
-                    )
-                except Exception:
+                df, _kr_fetch_fail = _ticker_ohlcv(code)
+                if _kr_fetch_fail:
                     funnel.add_fetch_failed(1)
                     funnel.drop("DATA_FAIL")
                     return None
             else:
-                df = us_data_dict.get(code)
+                df, _ = _ticker_ohlcv(code)
 
                 if df is None or getattr(df, "empty", True):
                     funnel.add_fetch_failed(1)
@@ -2029,35 +2201,29 @@ def execute_supernova_live_scan(
             c = df["Close"].values
             v = df["Volume"].values
             current_close = c[-1]
-
-            if market == "KR" and current_close < 1000:
-                funnel.drop("LIQUIDITY", code=code)
-                return None
-
-            if market == "US" and current_close < 0.5:
-                funnel.drop("LIQUIDITY", code=code)
-                return None
-
-            _min_vol = 50_000.0
-
-            if market == "US":
-                _us_dollar_floor = 300_000.0
-                _min_vol = max(
-                    2_000.0,
-                    _us_dollar_floor
-                    / max(float(current_close), 0.01),
-                )
-
-            if np.mean(v[-5:]) < _min_vol:
-                funnel.drop("LIQUIDITY", code=code)
-                return None
-
-            tz_market = (
-                pytz.timezone("Asia/Seoul")
-                if market == "KR"
-                else pytz.timezone("America/New_York")
+            _vol_tail = v[-5:] if len(v) >= 5 else v
+            _liq_reason, _liq_why = classify_liq_front_window(
+                market=market,
+                close_last=current_close,
+                vol_tail=_vol_tail,
             )
-            now_mkt = datetime.now(tz_market)
+            if _liq_reason == "EVAL_UNAVAILABLE":
+                logger.info(
+                    "[EVAL_UNAVAILABLE] market=%s code=%s why=%s "
+                    "(not LIQUIDITY)",
+                    market,
+                    code,
+                    _liq_why,
+                )
+                funnel.drop("EVAL_UNAVAILABLE", code=code)
+                return None
+            if _liq_reason == "LIQUIDITY":
+                funnel.drop("LIQUIDITY", code=code)
+                return None
+            current_close = float(current_close)
+
+            tz_market = tz_scan
+            now_mkt = now_mkt_scan
 
             from scan_resilience import (
                 fallback_dna_features,
@@ -2085,6 +2251,9 @@ def execute_supernova_live_scan(
             cpv = float(_dna["cpv"])
             tb = float(_dna["tb"])
             bbe = float(_dna["bbe"])
+            if not axis_ready:
+                with axis_lock:
+                    axis_today_rows.append([cpv, tb, bbe])
             current_close = float(
                 _dna.get("current_close", current_close)
             )
@@ -2243,18 +2412,31 @@ def execute_supernova_live_scan(
                     ]
                 )
             )
+            raw_3 = np.array([cpv, tb, bbe], dtype=float)
+            z_name = (
+                apply_z(raw_3, axis_mu, axis_sd) if axis_ready else None
+            )
 
             for t_name, base_vec in ideal_templates.items():
+                t_cut = ideal_template_cutoffs.get(
+                    t_name,
+                    eff_cos_cutoff,
+                )
                 if len(base_vec) == len(current_vec_5d):
                     sim = get_similarity(
                         current_vec_5d,
                         base_vec,
                     )
                 elif len(base_vec) == 3:
-                    sim = get_similarity(
-                        np.array([cpv, tb, bbe]),
-                        base_vec,
-                    )
+                    if axis_ready and z_name is not None:
+                        z_t = axis_z_tpl.get(t_name)
+                        if z_t is None:
+                            z_t = apply_z(base_vec, axis_mu, axis_sd)
+                        sim = get_similarity(z_name, z_t)
+                        t_cut = axis_p90
+                    else:
+                        sim = 0.0
+                        t_cut = None
                 else:
                     sim = 0.0
 
@@ -2262,12 +2444,7 @@ def execute_supernova_live_scan(
                     best_sim = sim
                     best_pattern_name = t_name
 
-                t_cut = ideal_template_cutoffs.get(
-                    t_name,
-                    eff_cos_cutoff,
-                )
-
-                if sim >= t_cut:
+                if t_cut is not None and sim >= t_cut:
                     is_pass_cosine = True
 
                     if (
@@ -2924,6 +3101,29 @@ def execute_supernova_live_scan(
                 continue
 
             valid_targets.append(result)
+
+    try:
+        axis_blob = append_market_day(
+            axis_blob,
+            market=market,
+            as_of=axis_as_of,
+            rows=axis_today_rows,
+            p90_z=axis_p90,
+        )
+        save_axis_blob(axis_blob)
+        logger.info(
+            "[%s] COSINE_AXIS_STATS wrote n=%s as_of=%s p90=%s",
+            market,
+            axis_blob.get(str(market).upper(), {}).get("n"),
+            axis_as_of,
+            axis_p90,
+        )
+    except Exception as _axis_w_ex:
+        logger.warning(
+            "[%s] COSINE_AXIS_STATS write skip: %s",
+            market,
+            _axis_w_ex,
+        )
 
     # 발굴된 종목을 메인 스레드에서 순차 기록
     _doomsday_tg_sent = False

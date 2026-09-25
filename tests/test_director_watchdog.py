@@ -143,6 +143,7 @@ def _payload(**over):
                     "universe": 6500,
                     "survivors": 0,
                     "data_pct": 80.0,
+                    "eval_pct": 0.0,
                     "liq_pct": 16.0,
                     "dna_n": 0,
                 },
@@ -150,6 +151,7 @@ def _payload(**over):
                     "universe": 2000,
                     "survivors": 1,
                     "data_pct": 50.0,
+                    "eval_pct": 0.0,
                     "liq_pct": 40.0,
                     "dna_n": 0,
                 },
@@ -297,12 +299,14 @@ class DirectorWatchdogTests(unittest.TestCase):
         self.assertIn("라다", html)
         self.assertIn("픽0(필터)", html)
         self.assertIn("surv 0", html)
+        self.assertIn("EVAL 0%", html)
         dead = _payload(
             funnel_rows={
                 "US_today": {
                     "universe": 6500,
                     "survivors": 0,
                     "data_pct": 80.0,
+                    "eval_pct": 12.0,
                     "liq_pct": 16.0,
                     "dna_n": 0,
                 },
@@ -310,11 +314,13 @@ class DirectorWatchdogTests(unittest.TestCase):
                     "universe": 2000,
                     "survivors": 0,
                     "data_pct": 50.0,
+                    "eval_pct": 5.0,
                     "liq_pct": 40.0,
                     "dna_n": 0,
                 },
             }
         )
+        self.assertIn("EVAL 12%", dead["html"])
         self.assertIn("🟡 초신성 퍼널", dead["html"])
         missing = supernova_funnel_watch_line({})
         self.assertEqual(missing["light"], "🔴")

@@ -308,6 +308,9 @@ def load_supernova_funnel_rows(
                         "universe": uni,
                         "survivors": surv,
                         "data_pct": _drop_pct(drops, "DATA_FAIL", uni),
+                        "eval_pct": _drop_pct(
+                            drops, "EVAL_UNAVAILABLE", uni
+                        ),
                         "liq_pct": _drop_pct(drops, "LIQUIDITY", uni),
                         "dna_n": int(float(drops.get("DNA_FAIL") or 0)),
                     }
@@ -338,13 +341,17 @@ def supernova_funnel_watch_line(
         if int(today.get("survivors") or 0) > 0:
             any_surv = True
         d = float(today.get("data_pct") or 0)
+        ev = float(today.get("eval_pct") or 0)
         lq = float(today.get("liq_pct") or 0)
         parts.append(
-            f"{mk} DATA {d:.0f}% LIQ {lq:.0f}% DNA {int(today.get('dna_n') or 0)} "
+            f"{mk} DATA {d:.0f}% EVAL {ev:.0f}% LIQ {lq:.0f}% "
+            f"DNA {int(today.get('dna_n') or 0)} "
             f"surv {int(today.get('survivors') or 0)}"
         )
         if isinstance(yday, dict):
             if abs(d - float(yday.get("data_pct") or 0)) >= _FUNNEL_SPIKE_PP:
+                spike = True
+            if abs(ev - float(yday.get("eval_pct") or 0)) >= _FUNNEL_SPIKE_PP:
                 spike = True
             if abs(lq - float(yday.get("liq_pct") or 0)) >= _FUNNEL_SPIKE_PP:
                 spike = True

@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-24 · **앵커 ID**: `SYNC-2026-09-24-NA-BOOL-RO`
+> **갱신**: 2026-09-25 · **앵커 ID**: `SYNC-2026-09-25-AXIS-LIVE-OK`
 
 ---
 
@@ -40,16 +40,16 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-24-NA-BOOL-RO` |
-| **마지막 갱신** | 2026-09-24 — NA→DATA 앞문 RO. AXIS 2단계 숫자는 있음. 라이브 AXIS 보류. thaw ARMED |
+| **앵커 ID** | `SYNC-2026-09-25-AXIS-LIVE-OK` |
+| **마지막 갱신** | 2026-09-25 — AXIS-01 **Claude OK**. 커밋·푸시·update_factory. thaw ARMED |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | US-COSINE-NA-BOOL-RO **WAIT_CLAUDE_HANDOFF** · AXIS-01 라이브 대기 · KR-LOCKDOWN-STALL-THAW-01 **ARMED** |
-| **직전 완료** | AXIS 2단계 섀도우(chart) + NA 연산 위치 RO |
-| **다음** | NA coerce Handoff 먼저. AXIS 라이브는 그 다음 |
+| **진행 중 sub-phase** | US-COSINE-AXIS-01 **배포·워치독 관찰** · KR-LOCKDOWN-STALL-THAW-01 **ARMED** |
+| **직전 완료** | AXIS 라이브 Claude OK |
+| **다음** | 워치독 surv 자릿수(US~27 KR~26). 컷≠등재. scout 테스트 백로그 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | `f0dca66` 워치독 퍼널 3줄 · origin/main 푸시됨 · **VPS update_factory는 이 PC SSH 키 없음** |
+| **git main** | AXIS+NA-FIX 푸시 후 해시 · VPS `update_factory` |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
@@ -66,7 +66,10 @@
 [KR/US] DIRECTOR-WATCHDOG-01 · Claude OK · CLOSED는 19:30 육안 후
 [KR/US] FAMILY-SLEEVE-DEMOTE-01 · **정책 B** · A군=차단해제 관찰 0.25 · B군=축소 0.25 · DoD#4 실측 OK(9/12 데스매치 후 effective 0.25) · 코드 0
 [KR/US] SIZING-DUAL-LEDGER-01 · backlog 🔴 · 2천만 시드≠NAV $30만 · **실전 전 필수** · 지금 착수 금지
-[KR/US] US-COSINE-FUNNEL-DEAD-01 · backlog **최우선 발견** 🔴 · 8/5~ SUPERNOVA DATA/LIQ 위장+잔여 0합격 · S1은 별도 경로 · **Handoff 전 코드 금지**
+[KR/US] US-COSINE-FUNNEL-DEAD-01 · **CLOSED** · 정상 선별 복구(AXIS 라이브). 침묵 완전 해소 아님. NA/미완봉은 NA-FIX 별 항목
+[KR/US] US-COSINE-NA-FIX-01 · 안전장치 유지 · 미완봉→전일 대체 없음
+[KR/US] US-COSINE-AXIS-01 · **Claude OK 2026-09-25** · 배포 · 워치독 관찰
+[KR/US] ELASTIC-SCOUT-GUARD-TEST · **backlog** · `test_non_scout_never_gated` 실패 원인(급하지 않음, AXIS 무관)
 [확인] US-RANK-B-STALL-RO · **CLOSED** · n=30 대기 **폐기** · 워치독 n=7=전생 · 마지막 RANK_B 7/20 · cosine 7/22
 [KR/US] US-COSINE-SILENT-A · 확정 · 0.45 임계 기각
 [KR/US] US-COSINE-SILENT-B · **확정** · NA→DATA 위장 · 빈 config 폴백 · S1 비공유
@@ -80,8 +83,7 @@
 [KR/US] SWALLOW-CENSUS leftover 11곳 · **종결** · 게이트 B · EOD A · leftover A
 [KR/US] WATCHDOG-FUNNEL-VISIBILITY-01 · **Claude OK 2026-09-24** · 배포 · 표시 3줄
 [KR/US] REGIME-KEYS-RO · **판단 승인** · 통합 금지 · 나중에 4키 표시 XOR CURRENT 덮어쓰기 금지 · 지금 코드 없음
-[KR/US] US-COSINE-NA-BOOL-RO · **RO 2026-09-24** · 2037/2051 `if pd.NA` · AXIS 라이브 보류 · 코드 0
-[KR/US] US-COSINE-AXIS-01 · **2단계 섀도우 완료** · 라이브는 NA 앞문 다음 · 헌터 미변경
+[KR/US] US-COSINE-NA-BOOL-RO · RO 흡수 · NA-FIX-01로 이관
 [KR/US] US-COSINE-CUTOFF-RO · **RO 2026-09-24 CLOSED** · tb 노름 지배 · 99%→z 36% · 7/22 재해석
 [KR/US] US-LIQ-FLOOR30K-SHADOW · **RO 2026-09-24** · 스펙 `$30k` no-2000 · 단독 라이브 **금지**(컷과 한 Handoff)
 [KR/US] US-LIQ-FLOOR-RO · **RO 2026-09-23** · `$300k`=5/28 스캐너 보정 · 사이징 미연동 · 낮출지 디렉터 · 코드 금지

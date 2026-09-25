@@ -3,7 +3,66 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-24 · US-COSINE-NA-BOOL-RO · 앵커 `SYNC-2026-09-24-NA-BOOL-RO`
+> **갱신**: 2026-09-25 · US-COSINE-AXIS-01 Claude OK · 앵커 `SYNC-2026-09-25-AXIS-LIVE-OK`
+
+---
+
+## OUTBOX — US-COSINE-AXIS-01 Claude OK · 배포 · 2026-09-25
+
+**Claude OK: 2026-09-25.** 커밋·푸시·update_factory. 워치독 surv 자릿수·forward 등재는 배포 후.
+백로그: `test_elastic_scout_guard.py::test_non_scout_never_gated` (AXIS 무관, 급하지 않음).
+
+sub-phase: **US-COSINE-AXIS-01**. KR·US 헌터 공유.
+
+### Diff 3종
+1. **축**: RANK 3D만 z=(x-μ)/σ. μσ는 전 세션 DNA 링(최대 5일). 템플릿도 동일 z. MULTI 24D는 기존 raw 코사인.
+2. **컷**: 당일 RANK z-코사인 90퍼센타일(`p90`). 고정 0.50 폐기(3D만). elastic·synergy는 MULTI/기본 `eff_cos_cutoff` 경로 그대로.
+3. **LIQ**: US `$30k` ADV, `mean(vol)<30000/px`, 주수 2000 없음. KR `$30k×1350` KRW ADV. 페니 $0.50·KR 1000원·0봉 유지. NA-FIX `EVAL_UNAVAILABLE` 유지(미완봉을 전일로 안 바꿈).
+
+### μσ
+`config_kv COSINE_AXIS_STATS` 시장별 `mu/sd/n/as_of/window/p90_z/days`. 스캔 끝 write. US 첫 배포는 2mo 패널로 5세션 부트스트랩(hist n≥30). KR은 당일 적재 후 다음날부터 3D 컷.
+
+### 테스트
+AXIS+NA-FIX+워치독+LOCKDOWN **43 passed**. `test_elastic_scout_guard.py::test_non_scout_never_gated` 1건 실패는 이번 diff와 무관(스카우트 가드, 헌터 AXIS 이전에도 동일 가능).
+
+### 배포 후 관찰 (DoD 4·5)
+워치독 DNA/surv가 섀도우 US~27 / KR~26과 자릿수 다르면 즉시 보고. 컷 통과 ≠ forward 등재. NA/미완봉은 별 항목 유지.
+
+### FUNNEL-DEAD
+**CLOSED = 정상 선별 기능 복구**. 침묵 완전 해소 아님.
+
+---
+
+## OUTBOX — US-COSINE-NA-FIX-01 1단계 · 구현+yf 섀도우 · 라이브 미배포 · 2026-09-25
+
+sub-phase: **US-COSINE-NA-FIX-01**. AXIS·`$30k`·컷 무접촉. `update_factory` **하지 말 것**.
+
+### 구현 (로컬 코드, 미배포)
+- `scan_liq_front_gate.classify_liq_front_window`: 종가 NA/nan → `EVAL_UNAVAILABLE`. Volume[-5:] 유한값만 평균, NA≥3/5 → `EVAL_UNAVAILABLE`. 페니·ADV는 기존 `$300k`/2000주 **그대로** `LIQUIDITY`.
+- `supernova_hunter.process_live_ticker` 2037/2051 `if pd.NA` 제거. 0 채움 없음.
+- 워치독: `DATA% EVAL% LIQ% DNA surv` (평가불가 ≠ LIQ).
+- 테스트: `tests/test_scan_liq_front_gate.py` + watchdog 회귀 **26 passed**.
+
+### VPS 섀도우 (진짜 `yf.download` 2mo · chart 아님 · 2026-09-25 01:23Z)
+유니버스 6571 · 패널 6571.
+
+| 지표 | 건수 |
+|------|------|
+| 구경로 TypeError(`if pd.NA`) | **0** |
+| 구경로 last=nan인데 LIQ 통과 누수 | **5831** (NVDA/AAPL/MSFT 포함) |
+| 신경로 평가불가 close_na | **5832** |
+| 신경로 평가불가 vol_na | **39** |
+| 신경로 정상 LIQ 탈락 | 239 |
+| 신경로 LIQ 문 통과(평가 가능) | 461 |
+| **평가불가→평가가능 전환** | **0** |
+| last-finite-close(직전 유한봉 있음, 비교용) | **5752** |
+| 쓰레기 누수 차단 | **5831** |
+
+**해석:** 오늘 패널 last Close는 Yahoo **미완 봉 `nan`** (AAPL last5 = 336…337, **nan**). `pd.NA` if 예외가 아니라 `nan<0.5`가 False라 예전에 DNA로 새던 길. 스펙대로 last nan은 종목 스킵이라 **전환 0**. last-finite는 chart 1~3이 아니라 **yf 5752**. 0으로 채운 통과 0.
+
+**시각 캐비어트:** US 마감 후 스캔이면 last가 유한일 수 있음. 이 5832를 워치독 DATA 5239와 동일시 금지.
+
+2단계(라이브 반영)는 이 숫자 보고 **별 Handoff**. trailing 미완봉을 버리고 유한 last를 쓸지는 Claude 결정.
 
 ---
 
