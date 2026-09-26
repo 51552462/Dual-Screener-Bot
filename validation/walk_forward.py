@@ -253,15 +253,18 @@ def evaluate_ledger_deflated_sharpe(
     strategy_col: str = "sig_type",
     derive_strategy: bool = True,
     min_trades_per_strategy: int = 10,
+    target_key: Optional[str] = None,
 ) -> Dict[str, object]:
-    """청산 원장 → 전략들을 '시도(trials)'로 보고 최고 전략의 DSR 산출.
+    """청산 원장 → 전략들을 '시도(trials)'로 보고 대상(기본=최고 SR)의 DSR 산출.
 
-    final_ret(%) → 소수 수익률. 전략 분해 후 표본 충분한 전략들만 trials 로 사용.
-    반환: deflated_sharpe_from_trials 결과 + {strategies:[{key,n,sharpe}]}.
+    n_trials = 표본이 충분한 전략 그룹 수(피처 스크린 횟수·mutant 챔피언 수와 다름).
+    final_ret(%) → 소수 수익률. target_key 가 그룹에 없으면 target_missing=True.
+    반환: deflated_sharpe_from_trials 결과 + {strategies, target_missing}.
     """
     base = {
         "dsr": 0.0, "sr_star": 0.0, "psr0": 0.0, "observed_sr": 0.0,
         "n_trials": 0, "n_samples": 0, "target_index": -1, "strategies": [],
+        "target_missing": False,
     }
     try:
         import pandas as pd  # 지연 임포트
@@ -300,10 +303,24 @@ def evaluate_ledger_deflated_sharpe(
             continue
         trial_returns.append(r.tolist())
         meta.append({"key": str(key), "n": int(r.size), "sharpe": round(sharpe_ratio(r), 4)})
+    ranked = sorted(meta, key=lambda x: x["sharpe"], reverse=True)
     if len(trial_returns) < 2:
+        base["n_trials"] = len(trial_returns)
+        base["strategies"] = ranked
+        if target_key is not None:
+            base["target_missing"] = str(target_key) not in {m["key"] for m in meta}
         return base
-    res = deflated_sharpe_from_trials(trial_returns)
-    res["strategies"] = sorted(meta, key=lambda x: x["sharpe"], reverse=True)
+    target_index = None
+    target_missing = False
+    if target_key is not None:
+        keys = [str(m["key"]) for m in meta]
+        if str(target_key) in keys:
+            target_index = keys.index(str(target_key))
+        else:
+            target_missing = True
+    res = deflated_sharpe_from_trials(trial_returns, target_index=target_index)
+    res["strategies"] = ranked
+    res["target_missing"] = target_missing
     return res
 
 

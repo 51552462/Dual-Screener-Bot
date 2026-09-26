@@ -408,6 +408,173 @@ def notify_wf_warn_telegram(warned_groups: List[str]) -> bool:
         return False
 
 
+# DSR-MINIMAL-01 — 전략선택 관측 (LIVE 하드블록 아님).
+# n_trials SSOT: 같은 market 의 CLOSED forward_trades 에서
+# `_sig_to_group_key(sig_type)` 가 같고 청산 ≥ min_trades(기본 10) 인 그룹 수.
+# mutant 챔피언 수·BH-FDR 피처 수와 혼용 금지. OOS_DSR_MIN 은 변경하지 않음.
+PROMOTION_DSR_GATE_OBSERVE = "OBSERVE"
+PROMOTION_DSR_GATE_WARN = "WARN"
+PROMOTION_DSR_MIN_TRADES = 10
+
+
+def dsr_observe_tag_enabled() -> bool:
+    env = os.environ.get("PROMOTION_DSR_OBSERVE_ENABLED")
+    if env is not None:
+        return str(env).strip().lower() in ("1", "true", "yes", "on")
+    return True
+
+
+def promotion_dsr_warn_min() -> float:
+    raw = os.environ.get("PROMOTION_DSR_WARN_MIN", "0.95")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.95
+
+
+def promotion_dsr_gate(
+    *,
+    n_trials: int,
+    dsr: float,
+    target_missing: bool,
+) -> str:
+    """WARN = 대상 전략이 n_trials 보정 후에도 DSR 미달. 그 외 OBSERVE. LIVE 미차단."""
+    if int(n_trials) < 2 or target_missing:
+        return PROMOTION_DSR_GATE_OBSERVE
+    if float(dsr) < float(promotion_dsr_warn_min()):
+        return PROMOTION_DSR_GATE_WARN
+    return PROMOTION_DSR_GATE_OBSERVE
+
+
+def load_closed_trades_for_dsr(
+    market: str,
+    db_path: Optional[str] = None,
+) -> Optional[Any]:
+    """CLOSED 원장 → pandas. 실패 시 None."""
+    path = db_path or os.environ.get("MARKET_DB_PATH")
+    if not path or not os.path.isfile(path):
+        return None
+    mkt = str(market or "KR").upper()
+    try:
+        import pandas as pd
+    except Exception:
+        return None
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            df = pd.read_sql_query(
+                """
+                SELECT sig_type, final_ret
+                FROM forward_trades
+                WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+                  AND UPPER(COALESCE(market, '')) = ?
+                """,
+                conn,
+                params=(mkt,),
+            )
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError) as ex:
+        logger.warning("load_closed_trades_for_dsr %s: %s", mkt, ex)
+        return None
+    if df is None or getattr(df, "empty", True):
+        return df
+    df = df.copy()
+    df["group_key"] = df["sig_type"].map(_sig_to_group_key)
+    return df
+
+
+def compute_promotion_dsr_observation(
+    market: str,
+    group_key: str,
+    *,
+    forward_db_path: Optional[str] = None,
+    closed_df: Optional[Any] = None,
+) -> Dict[str, Any]:
+    from validation.walk_forward import evaluate_ledger_deflated_sharpe
+
+    gk = str(group_key or "").strip()
+    df = closed_df
+    if df is None:
+        df = load_closed_trades_for_dsr(market, forward_db_path)
+    ev = evaluate_ledger_deflated_sharpe(
+        df,
+        ret_col="final_ret",
+        strategy_col="group_key",
+        derive_strategy=False,
+        min_trades_per_strategy=PROMOTION_DSR_MIN_TRADES,
+        target_key=gk or None,
+    )
+    n_trials = int(ev.get("n_trials") or 0)
+    dsr = float(ev.get("dsr") or 0.0)
+    missing = bool(ev.get("target_missing"))
+    gate = promotion_dsr_gate(
+        n_trials=n_trials, dsr=dsr, target_missing=missing
+    )
+    return {
+        "dsr": dsr,
+        "dsr_n_trials": n_trials,
+        "dsr_n_samples": int(ev.get("n_samples") or 0),
+        "dsr_observed_sr": float(ev.get("observed_sr") or 0.0),
+        "dsr_sr_star": float(ev.get("sr_star") or 0.0),
+        "dsr_gate": gate,
+        "dsr_warn": gate == PROMOTION_DSR_GATE_WARN,
+        "dsr_target_missing": missing,
+        "dsr_n_trials_ssot": "closed_forward_group_key_min10",
+    }
+
+
+def apply_registry_meta_dsr_observe(
+    row: Dict[str, Any],
+    *,
+    forward_db_path: Optional[str] = None,
+    closed_df: Optional[Any] = None,
+) -> str:
+    """registry row meta DSR 관측 — 승격 판정 비접촉. 반환 gate."""
+    meta = row.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    obs = compute_promotion_dsr_observation(
+        str(row.get("market") or "KR"),
+        str(row.get("group_key") or row.get("display_name") or ""),
+        forward_db_path=forward_db_path,
+        closed_df=closed_df,
+    )
+    meta.update(obs)
+    row["meta"] = meta
+    return str(obs.get("dsr_gate") or PROMOTION_DSR_GATE_OBSERVE)
+
+
+def stamp_registry_dsr_observe_meta(
+    rows: List[Dict[str, Any]],
+    *,
+    forward_db_path: Optional[str] = None,
+) -> List[str]:
+    """전 레지스트리 DSR OBSERVE/WARN 태깅. LIVE 승격은 건드리지 않음."""
+    warned: List[str] = []
+    if not dsr_observe_tag_enabled():
+        for row in rows:
+            meta = row.get("meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["dsr_warn"] = False
+            meta["dsr_gate"] = PROMOTION_DSR_GATE_OBSERVE
+            row["meta"] = meta
+        return warned
+    cache: Dict[str, Any] = {}
+    for row in rows:
+        mkt = str(row.get("market") or "KR").upper()
+        if mkt not in cache:
+            cache[mkt] = load_closed_trades_for_dsr(mkt, forward_db_path)
+        gate = apply_registry_meta_dsr_observe(
+            row, forward_db_path=forward_db_path, closed_df=cache[mkt]
+        )
+        if gate == PROMOTION_DSR_GATE_WARN:
+            gk = str(row.get("group_key") or "").strip()
+            warned.append(f"{mkt}|{gk}" if gk else mkt)
+    return warned
+
+
 _FAST_TRACK_PREFIXES = ("INCUBATOR_", "ACE_", "MUTANT_", "PLAYBOOK_", "HIDDEN_THEME_")
 
 
@@ -871,6 +1038,23 @@ def run_registry_lifecycle(
         stats["wf_warn_telegram_sent"] = notify_wf_warn_telegram(wf_warned)
     else:
         stats["wf_warn_telegram_sent"] = False
+
+    dsr_warned = stamp_registry_dsr_observe_meta(
+        out, forward_db_path=forward_db_path
+    )
+    stats["dsr_warn_count"] = len(dsr_warned)
+    stats["dsr_observe_count"] = sum(
+        1
+        for r in out
+        if str((r.get("meta") or {}).get("dsr_gate") or "")
+        == PROMOTION_DSR_GATE_OBSERVE
+    )
+    if dsr_warned:
+        stats["dsr_warn_groups"] = dsr_warned
+    n_trials_seen = [
+        int((r.get("meta") or {}).get("dsr_n_trials") or 0) for r in out
+    ]
+    stats["dsr_n_trials"] = max(n_trials_seen) if n_trials_seen else 0
 
     upsert_registry_rows(out, forward_db_path)
 
