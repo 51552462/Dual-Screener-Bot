@@ -3,7 +3,154 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-26 · CAT-H-REPAIR-01 **Claude OK(조건부)·전체회귀 대기** · 수급 HOLD
+> **갱신**: 2026-09-26 · ENTRY-ATR DoD4 + DOCS-SYNC-01 · 수급 HOLD
+
+---
+
+## OUTBOX — DOCS-SYNC-01 · 2026-09-26
+
+코드 0. 목표 CAGR/MDD **미변경**. 결론 재해석 없음.
+
+| 파일 | 맞춤 |
+|------|------|
+| `09_디렉터_쉬운요약.md` | 09-26 한눈에: LOCKDOWN · SCORING-VALIDITY=NONE · entry_atr만 · CAT-H 조건부 · CorrKelly (c) · 수급 HOLD |
+| `independent_verification/03_시장별_현황_매트릭스.md` | IV-06 주1 SCORE-PREDICTIVE-POWER-RO-01(2026-09-25). IV-08 KR/US ⚠️ = DSR-MINIMAL **로컬만** · VPS 미배포 · BG ❌ |
+| `11_협업_효율_점검.md` | 9월 세션 로그 압축 |
+| `12_듀얼북극성_진행장부_및_상품화.md` | 문서 점수칸 없음. VPS JSON **mtime 2026-09-26 19:30 KST** → 파이프는 살아 있음 |
+
+자기대조: §3과 모순 없음 (DSR을 배포완료로 쓰지 않음). Bitget 실적 숫자는 Track B 창 대기.
+
+---
+
+## OUTBOX — ENTRY-ATR-OVERLAY-01 · DoD4 회귀 · 2026-09-26
+
+**Claude OK(조건부) 충족.** 사이징/Kelly 골라 돌림 (전체 1180 아님).
+
+- **111 passed** — kelly chain S5 · CorrKelly ch3 · A1 R2/R4 · A2 throttle · try_add config · forward book/identity/imports · family sleeve · schema guard · entry_atr 12
+- **2 failed, 이번 diff와 무관** (파일 미수정):
+  - `test_kelly_elasticity_ch4.py::test_below_start_neutral` — 기본 `KELLY_NAV_DD_START_PCT`가 1.0이라 1.96% DD에서 active
+  - `test_dynamic_hedge_cap.py::test_resolve_panic_from_config` — panic 캡 0.15 vs 기대 0.50
+- `try_add` 경로: `kelly_risk_pct = _kelly_before_atr_obs` 유지
+
+커밋·push · `update_factory` 진행.
+
+---
+
+## OUTBOX — ENTRY-ATR-OVERLAY-01 · Phase 1 OBSERVE · 2026-09-26
+
+🔴 Kelly 관련. **실제 사이징 0변경.** KR 미적용. CorrKelly와 미결합.
+
+### 엔지니어 브리핑
+
+사이징 체인 끝(shares 직전)에서 관측만 찍고 `kelly_risk_pct`를 관측 전 값으로 고정. deathmatch shadow와 같은 패턴. 퍼센타일은 US `entry_atr` 히스토리 경험분포(n≥20). 후보 3안은 기록만.
+
+### 구현
+
+| 파일 | 역할 |
+|------|------|
+| `entry_atr_overlay.py` | 가상 축소 · wipeout 플래그 · identity |
+| `forward/shared.py` | ALTER+INSERT 5컬럼 · `try_add` 훅 |
+| `tests/test_entry_atr_overlay_01.py` | 12 passed |
+
+### 후보안 (미채택)
+
+| 안 | 퍼센타일 | 가상 배수 |
+|----|----------|-----------|
+| A | ≥ p90 | 0.50 |
+| B | ≥ p80 | 0.70 |
+| C | ≥ p70 | 0.85 |
+
+`would_be_kelly_mult` = 발동한 안 중 **min**(가장 센 축소). 미발동이면 1.0.
+
+### 컬럼 identity
+
+- `actual_kelly_mult` = `applied_kelly_mult` = **1.0** (다르면 버그).
+- `would_be_kelly_mult`는 높을 ATR에서 1.0보다 작을 수 있음 — 그게 관측 목적.
+- Handoff 문구 “would_be == actual 아니면 버그”는 **적용배수** 의미로 해석. 코드는 관측 후 `kelly_risk_pct = _kelly_before_atr_obs`.
+
+### 창 매칭
+
+`entry_atr_wipeout_window=1` ⇔ US AND `entry_date ≥ 2026-08-24`. DoD#3(포함/제외 효과비교)는 2~4주 누적 후.
+
+### 하지 않은 것
+
+- 실 Kelly·shares 변경 (Phase 2 별도 Handoff+Claude OK)
+- CorrKelly 필터 합치기
+- KR 배선
+- 커밋/푸시 없음 (요청 없음)
+- Track B Bitget 실적·09/11/IV_03/12 문서갱신 — **이 창 sub-phase 아님** (디렉터 병렬)
+
+### DoD
+
+| # | 상태 |
+|---|------|
+| 1 컬럼 기록 · actual 불변 | 코드+단위테스트 |
+| 2 2~4주 누적 | **배포 후** |
+| 3 전패구간 포함/제외 | 플래그 배선됨 · 비교는 누적 후 |
+| 4 사이징 체인 diff 0 | `kelly_risk_pct` 원복 + 테스트. 전수 `try_add` 시뮬은 미실행 |
+
+---
+
+## OUTBOX — CORRKELLY-US-PF-RO · 2026-09-26
+
+코드 0. **DoD 판정: (c) 판단보류.** 회피필터 **미등록**. 수정 Handoff **없음**.
+
+### 1) 태그가 붙는 조건 (원문)
+
+`try_add` → `apply_entry_correlation_kelly_overlay` (`forward/shared.py` ~3088).  
+`ENABLE_CORRELATION_KELLY_SIZING` 기본 ON. 임계 `KR_CORR_CAP_THRESHOLD` **기본 0.7**(US도 이 키). 페널티배수 `KR_CORR_KELLY_MULT` 기본 0.5.
+
+`format_correlation_kelly_sig_tag` / fallback (`portfolio_risk_overlay.py` 1286–1420):
+
+| 태그 | 조건 | Kelly |
+|------|------|-------|
+| `#CorrKelly페널티(x0.5)` | `action=penalty` (집중 `max_corr≥0.7` 또는 수렴+단측 tail). BULL이면 `port_tail` 면제 | ×0.5 |
+| `#CorrKelly합동공격(x1)` | 수렴 + 양쪽 tail 아님 | ×1 |
+| `#CorrKelly분산(ρx.xx)` | **`action=standard` + 분산 + 비neutral + max_corr>0** (즉 **0.7 미만의 관측 ρ**) | ×1 |
+| 태그 없음 | 피어 없음·데이터부족(neutral)·면죄·오버레이 스킵 | — |
+
+**분산 태그는 “고상관이면 하지마”가 아니다.** 북에 상대가 있고 ρ가 잡혀 있으나 한도 아래일 때 찍히는 **텔레메트리**.
+
+### 2) 분포 (VPS `forward_trades` 2026-09-26)
+
+패널 = CLOSED · OBSERVE/인버스 제외.
+
+| | US | KR |
+|--|----|----|
+| 태그 n (CLOSED) | **94** (감사 당시 88은 구스냅샷) | **26** |
+| 종류 | 분산 90 · 페널티 4 · 합동 0 | 분산 26 · 페널티 0 |
+| 기간 | **2026-08-24~09-25 · 25일** (GP_MUT 3일창 아님) | **08-24~09-02 · 7일** (이후 KR LOCKDOWN) |
+| 종목 편중 | NTRA 4가 최대. 다종목 | 26종 각 1 |
+| 분산 ρ | min 0.02 max **0.67** mean **0.26** (<0.7 설계와 일치) | — |
+| 페널티 4 | 9/17·21·24 US 전패. n=4 | — |
+
+### 3) BH-FDR (눈대중 WR 금지)
+
+**창을 안 맞추면** US 태그 WR 1.1% vs 비태그 13.4% · Fisher p=5.2e-4 **q=0.002** — 가짜 신호.  
+비태그에 **8/24 이전**(오버레이 전) 장이 섞임.
+
+**8/24 이후만:** US 태그 94 vs 비태그 **26**. WR 1.1% vs **0%**. Fisher **p=1** q=1. MW 수익 p=0.82. KR post Fisher/MW 모두 q>0.5.
+
+오버레이 이후 US 북 전체가 사실상 전패. 태그 유무로 가를 승이 없음.
+
+US 태그 부분집합 Spearman+BH (참고, 태그 효과가 아님): `v_energy` +0.51 q≈1e-7 · `entry_atr` −0.26 q=0.024. SCORE-COMPONENT와 **같은 재료**. `dyn_tb`/`dyn_rs` ns.
+
+### 4) 버그 흔적
+
+- 부호 반전 **없음**. 분산 ρ가 전부 0.7 미만.
+- US에 `KR_CORR_*` 키를 쓰는 것은 이름 혼동이지 반전 버그 아님.
+- **오해 가능점:** 분산 태그를 페널티/회피로 읽으면 WR 0%를 “신호”로 착각함 (이번 감사 함정).
+- 페널티 n=4는 확정 불가 (GP_MUT n=7과 동일 함정).
+
+### 5) DoD
+
+| | |
+|--|--|
+| 판정 | **(c) 판단보류** |
+| (a) | **아님** — entry_atr급 회피필터 **등록하지 않음** |
+| (b) | 수정 Handoff **불필요**. 태그 의미 문서화만 |
+| (c) 더 필요 | 오버레이 이후 US **승리 n≥10** 또는 시계열 있는 OPEN 피어 수와 조인. 그 전 배선 금지 |
+| KR | 태그 26·창 짧음. 맞춘 창에서 비태그와 차이 **없음** |
 
 ---
 

@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-26 · **앵커 ID**: `SYNC-2026-09-26-CATH-REPAIR`
+> **갱신**: 2026-09-26 · **앵커 ID**: `SYNC-2026-09-26-DOCS-SYNC-01`
 
 ### 상시 HOLD (Cursor·Claude 세션 응답 **마지막 줄**, 해제 전까지)
 
@@ -44,12 +44,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-26-CATH-REPAIR` |
-| **마지막 갱신** | 2026-09-26 — CAT-H-REPAIR-01 **Claude OK(조건부)·전체회귀 대기** · CLOSED 아님 · 수급 HOLD |
+| **앵커 ID** | `SYNC-2026-09-26-DOCS-SYNC-01` |
+| **마지막 갱신** | 2026-09-26 — ENTRY-ATR **Claude OK(조건부)+DoD4** · DOCS-SYNC-01 · 수급 HOLD |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | CAT-H-REPAIR-01 (조건부 OK · 전체회귀 대기) |
-| **직전 완료** | CATH-HTC-LIVE-RO-01 (조사) |
-| **다음** | Claude OK → 커밋·배포 정합 |
+| **진행 중 sub-phase** | 없음 (ENTRY-ATR 배포 후 관측 · DOCS-SYNC 문서만) |
+| **직전 완료** | ENTRY-ATR-OVERLAY-01 Phase1 · DOCS-SYNC-01 |
+| **다음** | 2~4주 entry_atr 관측. Phase 2 금지. Bitget 실적은 코인 창 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -95,7 +95,10 @@
 [KR/US] KRX-OPENAPI-SMOKETEST-01 · **RO** · OpenAPI에 투자자별 실적 **없음** · 키≠KRX_ID/PW · WAIT_CLAUDE_OK
 [KR/US] KRX-MARKETPLACE-PRICING-RO-01 · **RO** · 유료상품 심사·파일 · **후순위** · WAIT_CLAUDE_OK
 [KR/US] SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · **HOLD** · 네이버SSO≠pykrx · 탈퇴 후 재가입 대기 · 스모크 미완
-[KR/US] CORRKELLY-US-PF-RO · **backlog** · n=114 WR1.75%/PF0.008 · US n=88 WR0% · 급하지 않음
+[KR/US] CORRKELLY-US-PF-RO · **Claude OK: 2026-09-26 (c)판단보류** · 창맞추면 WR갭 소멸 · 회피필터 등록 안 함
+[KR/US] ENTRY-ATR-OVERLAY-01 · **Claude OK(조건부): 2026-09-26** · DoD4 111 pass · 2 fail은 무관 pre-exist · 배포
+[KR/US] DOCS-SYNC-01 · **문서만 2026-09-26** · 09·IV_03·11·12 날짜 맞춤
+[KR/US] US-8월24후-전패구간-RO · **backlog** · 급하지 않음 · 다음 라운드 후보
 [KR/US] EXIT-TYPE-LABEL-01 · **Claude OK 2026-09-25** · **배포완료(810b89e)**
 [KR/US] REALITY-AUDIT-BADEXIT-01 · **RO CLOSED** · 다음=EXIT-TYPE-LABEL-01
 [KR/US] WATCHDOG-AXIS-OBS-TG-01 · **로컬 표시 배관** · 미커밋 · 게이트 없음

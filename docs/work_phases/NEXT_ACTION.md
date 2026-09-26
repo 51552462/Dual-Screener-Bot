@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | 커밋 완료 확인 후 평소대로. CAT-H는 **Claude OK(조건부)·전체회귀 대기**. 수급 HOLD |
-| **sub-phase** | CAT-H-REPAIR-01 |
-| **status** | **WAIT_CLAUDE_OK** (조건부 OK · CLOSED 아님 · 전체회귀 대기) |
-| **다음** | 전체 `test_*` 회귀 결과 후 CLOSED 여부. 커밋 전에는 원클릭 금지였음 |
-| **앵커** | `SYNC-2026-09-26-CATH-REPAIR` |
+| **지금 디렉터** | ENTRY-ATR 배포 후 2~4주 관측. Bitget 실적·B0는 **코인 창** 캡처. 수급 HOLD |
+| **sub-phase** | ENTRY-ATR 관측 / DOCS-SYNC 완료 |
+| **status** | **WAIT_CLAUDE_OK** (DOCS-SYNC 검증) · ENTRY-ATR는 조건부 OK로 배포 |
+| **다음** | Phase 2 Kelly 실배선 금지. 전패구간 창분할은 누적 후 |
+| **앵커** | `SYNC-2026-09-26-DOCS-SYNC-01` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---

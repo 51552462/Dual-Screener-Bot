@@ -789,6 +789,38 @@ def init_forward_db(db_path: str | None = None):
             pass
     # 👆👆 [추가 끝] 👆👆
 
+    # ENTRY-ATR-OVERLAY-01 Phase 1 — observe-only (Kelly 불변)
+    try:
+        cursor.execute(
+            "ALTER TABLE forward_trades ADD COLUMN would_be_kelly_mult REAL DEFAULT 1.0"
+        )
+    except Exception:
+        pass
+    try:
+        cursor.execute(
+            "ALTER TABLE forward_trades ADD COLUMN actual_kelly_mult REAL DEFAULT 1.0"
+        )
+    except Exception:
+        pass
+    try:
+        cursor.execute(
+            "ALTER TABLE forward_trades ADD COLUMN entry_atr_pct REAL"
+        )
+    except Exception:
+        pass
+    try:
+        cursor.execute(
+            "ALTER TABLE forward_trades ADD COLUMN entry_atr_wipeout_window INTEGER DEFAULT 0"
+        )
+    except Exception:
+        pass
+    try:
+        cursor.execute(
+            "ALTER TABLE forward_trades ADD COLUMN entry_atr_plan_json TEXT DEFAULT '{}'"
+        )
+    except Exception:
+        pass
+
     try:
         import shadow_tracking
 
@@ -843,6 +875,11 @@ _FORWARD_TRADE_INSERT_COLS: tuple[str, ...] = (
     "short_net",
     "fund_net",
     "dart_net",
+    "would_be_kelly_mult",
+    "actual_kelly_mult",
+    "entry_atr_pct",
+    "entry_atr_wipeout_window",
+    "entry_atr_plan_json",
 )
 
 
@@ -2165,6 +2202,13 @@ def try_add_virtual_position(
 
     tz = pytz.timezone('Asia/Seoul') if market == 'KR' else pytz.timezone('America/New_York')
     today_str = datetime.now(tz).strftime('%Y-%m-%d')
+    _atr_obs = {
+        "would_be_kelly_mult": 1.0,
+        "actual_kelly_mult": 1.0,
+        "entry_atr_pct": None,
+        "entry_atr_wipeout_window": 0,
+        "entry_atr_plan_json": "{}",
+    }
 
     # 1) 동일 종목 OPEN — 챔피언 수렴 Correlation Kelly 게이트 [1~3번]
     cursor.execute(
@@ -3306,7 +3350,37 @@ def try_add_virtual_position(
                 exch_rate = 1350.0 if market == 'US' else 1.0
                 calc_ep = ep * exch_rate
                 calc_risk_dist = risk_distance * exch_rate
-                
+
+                _kelly_before_atr_obs = float(kelly_risk_pct)
+                try:
+                    from entry_atr_overlay import identity_ok, observe_entry_atr_kelly
+
+                    _atr_obs = observe_entry_atr_kelly(
+                        market=market,
+                        entry_atr=float(entry_atr),
+                        entry_date=today_str,
+                        cursor=cursor,
+                    )
+                    if not identity_ok(_atr_obs, _kelly_before_atr_obs, float(kelly_risk_pct)):
+                        print("⚠️ ENTRY-ATR overlay identity 위반 — 관측 스탬프 폐기, Kelly 유지")
+                        _atr_obs = {
+                            "would_be_kelly_mult": 1.0,
+                            "actual_kelly_mult": 1.0,
+                            "entry_atr_pct": None,
+                            "entry_atr_wipeout_window": 0,
+                            "entry_atr_plan_json": "{}",
+                        }
+                except Exception as _atr_obs_ex:
+                    print(f"⚠️ ENTRY-ATR overlay 스킵: {_atr_obs_ex}")
+                    _atr_obs = {
+                        "would_be_kelly_mult": 1.0,
+                        "actual_kelly_mult": 1.0,
+                        "entry_atr_pct": None,
+                        "entry_atr_wipeout_window": 0,
+                        "entry_atr_plan_json": "{}",
+                    }
+                kelly_risk_pct = _kelly_before_atr_obs
+
                 raw_shares = max(1, int((group_current_seed * kelly_risk_pct) / calc_risk_dist))
                 raw_invest = raw_shares * calc_ep
                 
@@ -3444,6 +3518,11 @@ def try_add_virtual_position(
         "short_net": round(short_net_val, 4),
         "fund_net": round(fund_net_val, 4),
         "dart_net": round(dart_net_val, 4),
+        "would_be_kelly_mult": float(_atr_obs.get("would_be_kelly_mult") or 1.0),
+        "actual_kelly_mult": float(_atr_obs.get("actual_kelly_mult") or 1.0),
+        "entry_atr_pct": _atr_obs.get("entry_atr_pct"),
+        "entry_atr_wipeout_window": int(_atr_obs.get("entry_atr_wipeout_window") or 0),
+        "entry_atr_plan_json": str(_atr_obs.get("entry_atr_plan_json") or "{}"),
     }
     try:
         _insert_forward_trade_row(cursor, insert_row)
