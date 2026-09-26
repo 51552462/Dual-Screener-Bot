@@ -26,8 +26,8 @@ import pandas as pd
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 SYNTHETIC_DB_PATH = os.path.join(_THIS_DIR, "synthetic_market.sqlite")
 
-NUM_TRADING_DAYS = 1000
-NUM_PARALLEL_UNIVERSES = 100
+NUM_TRADING_DAYS = int(os.environ.get("SYNTHETIC_N_DAYS", "1000") or "1000")
+NUM_PARALLEL_UNIVERSES = int(os.environ.get("SYNTHETIC_N_UNIVERSES", "100") or "100")
 TICKER_PREFIX = "SYN_"
 RNG = np.random.default_rng()
 
@@ -68,6 +68,8 @@ REGIMES: Tuple[Regime, ...] = (
     # ===========================================================================
     Regime("BLACK_SWAN",-0.02500,  0.0800, 0.450, -0.150,   0.090,   5.00),
 )
+
+REGIME_INDEX: Dict[str, int] = {r.name: i for i, r in enumerate(REGIMES)}
 
 # 행: from-state, 열: to-state. SIDEWAYS 가 끈적(sticky)하고 BLACK_SWAN 은 짧게 머문다.
 #                 →SIDE   →BULL   →BEAR   →SWAN
@@ -138,6 +140,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS synthetic_meta (key TEXT PRIMARY KEY, value TEXT)"
     )
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(synthetic_ohlcv)")]
+    if "regime" not in cols:
+        conn.execute("ALTER TABLE synthetic_ohlcv ADD COLUMN regime TEXT")
     conn.commit()
 
 

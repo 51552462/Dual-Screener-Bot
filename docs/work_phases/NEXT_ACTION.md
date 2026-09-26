@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | EXIT-TYPE **배포완료(810b89e)**. MEGATREND 단독 커밋 푸시 후 2차 `update_factory` |
-| **sub-phase** | **MEGATREND-SCOPE-DEFINE-01** |
-| **status** | **WAIT_CLAUDE_HANDOFF** |
-| **다음** | 다음 Alpha Handoff 대기. 실발동 게이트 열지 말 것 |
-| **앵커** | `SYNC-2026-09-25-MT-ALPHA-SHADOW` |
+| **지금 디렉터** | 커밋 완료 확인 후 평소대로. CAT-H는 **Claude OK(조건부)·전체회귀 대기**. 수급 HOLD |
+| **sub-phase** | CAT-H-REPAIR-01 |
+| **status** | **WAIT_CLAUDE_OK** (조건부 OK · CLOSED 아님 · 전체회귀 대기) |
+| **다음** | 전체 `test_*` 회귀 결과 후 CLOSED 여부. 커밋 전에는 원클릭 금지였음 |
+| **앵커** | `SYNC-2026-09-26-CATH-REPAIR` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---

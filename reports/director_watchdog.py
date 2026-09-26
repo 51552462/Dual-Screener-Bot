@@ -1,7 +1,8 @@
 """DIRECTOR-WATCHDOG-01 — 북극성 일간 맨 위 확인 패널 (표시 전용).
 
 Kelly / LOCKDOWN / F-GATE / 데모션 테이블 / S5 게이트 / IV 재계산 / 퍼널 상수 무접촉.
-표시 전용 (기존 6줄 + 퍼널·수급·라다 3줄).
+표시 전용 (기존 6줄 + 퍼널·수급·라다 3줄 + CAT-H 생존 1줄).
+AXIS surv 자릿수·등재·KR thaw는 기존 줄에만 덧붙임 (줄 수 유지).
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Mapping, Optional
 
@@ -24,6 +26,59 @@ _S5_GATE_REGIMES = frozenset({"BEAR", "HIGH_VOL"})
 _S5_PROBE_SIG = "Dante[INVERSE_ETF]"
 _CORE_TAG_RE = re.compile(r"\[.*?\]")
 _FUNNEL_SPIKE_PP = 25.0  # 표시 색만. try_add 무관.
+# AXIS-01 섀도우 일평균 surv (표시 비교만. 게이트 아님)
+AXIS_SHADOW_SURV = {"US": 27, "KR": 26}
+_CAT_H_JSON = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "validated_live_mutants.json",
+)
+CAT_H_STALE_SEC = 8 * 24 * 3600
+
+
+def load_cath_h_watch_line(*, json_path: Optional[str] = None) -> Dict[str, str]:
+    """마지막 승격시각 · JSON mtime · 에러플래그. 게이트 무접촉."""
+    title = "CAT-H 생존"
+    path = json_path or os.environ.get("CAT_H_VALIDATED_JSON") or _CAT_H_JSON
+    if not os.path.isfile(path):
+        return {"light": "🔴", "title": title, "text": "promoted 없음 · json 없음 · err=MISSING"}
+    try:
+        mtime = os.path.getmtime(path)
+        mtxt = datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%d")
+        with open(path, encoding="utf-8") as f:
+            blob = json.load(f)
+    except Exception:
+        return {"light": "🔴", "title": title, "text": "promoted 없음 · json 읽기실패 · err=ERR"}
+    if not isinstance(blob, dict):
+        blob = {}
+    last_p = blob.get("last_promoted_at")
+    if last_p is None or str(last_p).strip() in ("", "None"):
+        ptxt = "없음"
+    else:
+        ptxt = str(last_p)[:10]
+    ok = blob.get("pipeline_ok")
+    err = blob.get("pipeline_error") or blob.get("error")
+    gate = str(blob.get("gate_result") or "")
+    stale = (time.time() - mtime) > CAT_H_STALE_SEC
+    if stale:
+        flag = "STALE"
+        broken = True
+    elif ok is False or err:
+        flag = "ERR"
+        broken = True
+    elif gate == "ok_zero":
+        flag = "OK(0)"
+        broken = False
+    elif gate == "promoted":
+        flag = "OK"
+        broken = False
+    else:
+        broken = False
+        flag = "OK(0)" if ok is not False else "ERR"
+    return {
+        "light": "🔴" if broken else "🟢",
+        "title": title,
+        "text": f"promoted {ptxt} · json {mtxt} · err={flag}",
+    }
 
 
 def _esc(v: Any) -> str:
@@ -251,6 +306,51 @@ def _parse_drops(raw: Any) -> Dict[str, Any]:
         return {}
 
 
+def _surv_vs_shadow_tag(n: int, ref: int) -> str:
+    """같은 십의 자리(10~99)면 ≈. 0이나 한 자리/백 단위면 ≠. 게이트 아님."""
+    n = int(n or 0)
+    ref = int(ref or 0)
+    if n <= 0:
+        return f"≠~{ref}"
+    if 10 <= n <= 99 and 10 <= ref <= 99:
+        return f"≈~{ref}"
+    return f"≠~{ref}"
+
+
+def _count_supernova_enrolled(
+    conn: sqlite3.Connection, *, market: str, day: str
+) -> int:
+    names = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "forward_trades" not in names:
+        return 0
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(forward_trades)")
+    }
+    if "entry_date" not in cols:
+        return 0
+    src = ""
+    if "trade_source" in cols:
+        src = " OR UPPER(IFNULL(trade_source,'')) LIKE '%SUPERNOVA%'"
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM forward_trades
+        WHERE UPPER(IFNULL(market,'')) = ?
+          AND SUBSTR(IFNULL(entry_date,''), 1, 10) = ?
+          AND (
+                UPPER(IFNULL(sig_type,'')) LIKE '%SUPERNOVA%'
+                {src}
+          )
+        """,
+        (str(market).upper(), str(day)[:10]),
+    ).fetchone()
+    return int((row[0] if row else 0) or 0)
+
+
 def load_supernova_funnel_rows(
     *,
     db_path: Optional[str] = None,
@@ -303,7 +403,7 @@ def load_supernova_funnel_rows(
                     uni = int(row[1] or 0)
                     surv = int(row[2] or 0)
                     drops = _parse_drops(row[3])
-                    out[f"{mk}_{label}"] = {
+                    rec: Dict[str, Any] = {
                         "ts": row[0],
                         "universe": uni,
                         "survivors": surv,
@@ -314,6 +414,11 @@ def load_supernova_funnel_rows(
                         "liq_pct": _drop_pct(drops, "LIQUIDITY", uni),
                         "dna_n": int(float(drops.get("DNA_FAIL") or 0)),
                     }
+                    if label == "today":
+                        rec["enrolled"] = _count_supernova_enrolled(
+                            conn, market=mk, day=d0
+                        )
+                    out[f"{mk}_{label}"] = rec
         finally:
             conn.close()
     except sqlite3.Error:
@@ -328,6 +433,7 @@ def supernova_funnel_watch_line(
     parts: list[str] = []
     missing = False
     spike = False
+    digit_off = False
     any_surv = False
     any_scan = False
     for mk in ("US", "KR"):
@@ -338,15 +444,21 @@ def supernova_funnel_watch_line(
             missing = True
             continue
         any_scan = True
-        if int(today.get("survivors") or 0) > 0:
+        surv = int(today.get("survivors") or 0)
+        if surv > 0:
             any_surv = True
         d = float(today.get("data_pct") or 0)
         ev = float(today.get("eval_pct") or 0)
         lq = float(today.get("liq_pct") or 0)
+        ref = int(AXIS_SHADOW_SURV.get(mk) or 0)
+        vs = _surv_vs_shadow_tag(surv, ref)
+        if vs.startswith("≠"):
+            digit_off = True
+        enr = int(today.get("enrolled") or 0)
         parts.append(
             f"{mk} DATA {d:.0f}% EVAL {ev:.0f}% LIQ {lq:.0f}% "
             f"DNA {int(today.get('dna_n') or 0)} "
-            f"surv {int(today.get('survivors') or 0)}"
+            f"surv {surv}{vs} 등재 {enr}"
         )
         if isinstance(yday, dict):
             if abs(d - float(yday.get("data_pct") or 0)) >= _FUNNEL_SPIKE_PP:
@@ -355,7 +467,7 @@ def supernova_funnel_watch_line(
                 spike = True
             if abs(lq - float(yday.get("liq_pct") or 0)) >= _FUNNEL_SPIKE_PP:
                 spike = True
-    if missing or spike:
+    if missing or spike or digit_off:
         light = "🔴"
     elif any_surv:
         light = "🟢"
@@ -450,6 +562,18 @@ def smart_money_radar_watch_line(
     return {"light": light, "title": "라다", "text": text}
 
 
+def _kr_thaw_watch_tag(sys_config: Optional[Mapping[str, Any]]) -> str:
+    """표시 전용. KR_LOCKDOWN_THAW_ARMED 게이트 변경 없음."""
+    try:
+        from performance_budget_governor import is_kr_lockdown_thaw_armed
+
+        if is_kr_lockdown_thaw_armed(sys_config):
+            return " thaw ARMED"
+        return " thaw 꺼짐"
+    except Exception:
+        return ""
+
+
 def _load_regimes(sys_config: Optional[Mapping[str, Any]]) -> Dict[str, str]:
     from performance_budget_governor import resolve_market_regime_key
 
@@ -480,6 +604,7 @@ def build_director_watchdog_payload(
     radar_line: Optional[Mapping[str, str]] = None,
     funnel_db_path: Optional[str] = None,
     flow_db_path: Optional[str] = None,
+    cath_h_line: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     bands = _fill_bands_from_governor(_current_bands_from_snap(snap))
     prev: Dict[str, str] = dict(previous_bands) if isinstance(previous_bands, Mapping) else {}
@@ -566,6 +691,10 @@ def build_director_watchdog_payload(
             cfg = load_system_config()
         except Exception:
             cfg = {}
+    if band_bits:
+        band_bits[0] = band_bits[0] + _kr_thaw_watch_tag(cfg)
+        if "thaw ARMED" in band_bits[0] and band_light == "🟢":
+            band_light = "🟡"
     rk = dict(regimes) if isinstance(regimes, Mapping) else _load_regimes(cfg)
     s5 = _s5_line(rk, cfg)
 
@@ -583,6 +712,8 @@ def build_director_watchdog_payload(
         )
     if radar_line is None:
         radar_line = smart_money_radar_watch_line(cfg)
+    if cath_h_line is None:
+        cath_h_line = load_cath_h_watch_line()
 
     items = [
         {"light": band_light, "title": "안전장치", "text": " · ".join(band_bits)},
@@ -594,6 +725,7 @@ def build_director_watchdog_payload(
         funnel_item,
         dict(flow_line),
         dict(radar_line),
+        dict(cath_h_line),
     ]
     payload = {
         "kind": "director_watchdog",

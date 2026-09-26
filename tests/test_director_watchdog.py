@@ -161,6 +161,14 @@ def _payload(**over):
             "flow_line",
             {"light": "🟢", "title": "수급시계열", "text": "최신 2026-09-09 · 100행"},
         ),
+        cath_h_line=over.get(
+            "cath_h_line",
+            {
+                "light": "🟢",
+                "title": "CAT-H 생존",
+                "text": "promoted 없음 · json 2026-09-26 · err=OK(0)",
+            },
+        ),
     )
 
 
@@ -281,7 +289,7 @@ class DirectorWatchdogTests(unittest.TestCase):
         self.assertGreater(i_obs, i_ta)
         wd = format_director_watchdog_section_from_snap(snap)
         self.assertLessEqual(len(wd), 1800)
-        self.assertLessEqual(wd.count("\n") + 1, 12)
+        self.assertLessEqual(wd.count("\n") + 1, 13)
         weekly = _snap(cadence="weekly")
         self.assertEqual(format_director_watchdog_section_from_snap(weekly), "")
         self.assertNotIn("[디렉터 워치독]", format_north_star_digest_html(weekly))
@@ -298,8 +306,10 @@ class DirectorWatchdogTests(unittest.TestCase):
         self.assertIn("수급시계열", html)
         self.assertIn("라다", html)
         self.assertIn("픽0(필터)", html)
-        self.assertIn("surv 0", html)
+        self.assertIn("surv 0≠~27 등재 0", html)
         self.assertIn("EVAL 0%", html)
+        self.assertIn("thaw 꺼짐", html)
+        self.assertIn("CAT-H 생존", html)
         dead = _payload(
             funnel_rows={
                 "US_today": {
@@ -321,7 +331,8 @@ class DirectorWatchdogTests(unittest.TestCase):
             }
         )
         self.assertIn("EVAL 12%", dead["html"])
-        self.assertIn("🟡 초신성 퍼널", dead["html"])
+        self.assertIn("🔴 초신성 퍼널", dead["html"])
+        self.assertIn("≠~27", dead["html"])
         missing = supernova_funnel_watch_line({})
         self.assertEqual(missing["light"], "🔴")
         spike = supernova_funnel_watch_line(
@@ -350,6 +361,82 @@ class DirectorWatchdogTests(unittest.TestCase):
             }
         )
         self.assertEqual(spike["light"], "🔴")
+
+    def test_axis_obs_tags_and_enroll(self) -> None:
+        ok = supernova_funnel_watch_line(
+            {
+                "US_today": {
+                    "universe": 6500,
+                    "survivors": 27,
+                    "data_pct": 80.0,
+                    "eval_pct": 0.0,
+                    "liq_pct": 16.0,
+                    "dna_n": 0,
+                    "enrolled": 5,
+                },
+                "KR_today": {
+                    "universe": 2000,
+                    "survivors": 26,
+                    "data_pct": 50.0,
+                    "eval_pct": 5.0,
+                    "liq_pct": 40.0,
+                    "dna_n": 0,
+                    "enrolled": 3,
+                },
+            }
+        )
+        self.assertEqual(ok["light"], "🟢")
+        self.assertIn("surv 27≈~27 등재 5", ok["text"])
+        self.assertIn("surv 26≈~26 등재 3", ok["text"])
+        armed = _payload(
+            sys_config={
+                "ENABLE_WEIGHT_S5_MERGE": True,
+                "KR_LOCKDOWN_THAW_ARMED": 1,
+                "SMART_MONEY_RADAR": {
+                    "updated_at": "2026-09-09 10:00",
+                    "status": "no_smart_money_today",
+                    "picks": {},
+                },
+                "SMART_MONEY_RADAR_US": {
+                    "updated_at": "2026-09-09 10:00",
+                    "status": "ok",
+                    "picks": {"AAPL": {}},
+                },
+            }
+        )
+        self.assertIn("thaw ARMED", armed["html"])
+        self.assertIn("🟡 안전장치", armed["html"])
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "f.sqlite")
+            conn = sqlite3.connect(db)
+            conn.execute(
+                "CREATE TABLE scan_funnel_snapshot ("
+                "id INTEGER PRIMARY KEY, ts TEXT, market TEXT, scanner TEXT, "
+                "universe_size INTEGER, survivors INTEGER, drops_json TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO scan_funnel_snapshot "
+                "(ts, market, scanner, universe_size, survivors, drops_json) "
+                "VALUES ('2026-09-25T12:00','US','SUPERNOVA',6500,27,"
+                "'{\"DATA_FAIL\":0,\"EVAL_UNAVAILABLE\":0,\"LIQUIDITY\":0,\"DNA_FAIL\":0}')"
+            )
+            conn.execute(
+                "CREATE TABLE forward_trades ("
+                "id INTEGER PRIMARY KEY, entry_date TEXT, market TEXT, "
+                "code TEXT, sig_type TEXT, trade_source TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO forward_trades "
+                "(entry_date, market, code, sig_type, trade_source) "
+                "VALUES ('2026-09-25','US','AAA','[SUPERNOVA] x','SUPERNOVA')"
+            )
+            conn.commit()
+            conn.close()
+            from reports.director_watchdog import load_supernova_funnel_rows
+
+            rows = load_supernova_funnel_rows(db_path=db, date_kst="2026-09-25")
+            self.assertEqual(rows["US_today"]["enrolled"], 1)
+            self.assertEqual(rows["US_today"]["survivors"], 27)
 
     def test_flow_and_radar_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as td:

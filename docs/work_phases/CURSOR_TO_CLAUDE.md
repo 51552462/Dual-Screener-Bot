@@ -3,7 +3,651 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-25 · MEGATREND Claude OK 커밋 · EXIT-TYPE VPS **배포완료(810b89e)**
+> **갱신**: 2026-09-26 · CAT-H-REPAIR-01 **Claude OK(조건부)·전체회귀 대기** · 수급 HOLD
+
+---
+
+## OUTBOX — CAT-H-REPAIR-01 · Claude OK(조건부) · 2026-09-26
+
+CLOSED 아님. 전체 회귀 대기. 커밋·푸시 승인됨.
+
+---
+
+## OUTBOX — CAT-H-REPAIR-01 · 구현 · 2026-09-26
+
+**Claude OK 대기.** 자본·APPROVE_PENDING on · 랭킹/OOS 임계 · GP_MUT_0009 재평가 **안 함**. auto_merge 이번 스모크에서 호출 안 함.
+
+### 고친 것
+1. `REGIME_INDEX` = `REGIMES` 이름→인덱스. `HIGH_VOL`은 맵에 없어 플래시 스킵(기존 주석과 동일).
+2. 구 `synthetic_ohlcv`에 `regime` 컬럼 없으면 ALTER.
+3. `mutant_oos_validator.py` L604 들여쓰기. JSON에 `pipeline_ok` / `gate_result=ok_zero|promoted|error` / `last_promoted_at`.
+4. 워치독 1줄 `CAT-H 생존` — promoted일 · json일 · `OK(0)|OK|ERR|STALE`(8일).
+
+### DoD
+| # | 결과 |
+|---|------|
+| 1 5단계 | 로컬·VPS 스모크(3×80·pop30) 에러 없음. VPS 합성 DB는 이후 **100×1000 복구** |
+| 2 JSON | VPS `validated_at=2026-09-26T09:06:37Z` · `gate=ok_zero` · `pipeline_ok=True` · promo=0 |
+| 3 테스트 | `test_cath_h_repair_01` + `test_director_watchdog` **19 passed** (로컬·VPS). 전체 suite 미실행 |
+| 4 워치독 | 패널 1줄 추가. 줄 상한 테스트 13 |
+
+VPS는 scp 반영(커밋·`update_factory` 아직). 다음 토 데몬은 기본 1000 pop.
+
+파일: `synthetic_data_generator.py` · `mutant_oos_validator.py` · `reports/director_watchdog.py` · `tests/test_cath_h_repair_01.py` · `tests/test_director_watchdog.py`
+
+---
+
+## OUTBOX — CATH-HTC-LIVE-RO-01 · VPS 실측 · 2026-09-26
+
+코드 0. KRX persist 비범위.
+
+### 한 줄
+
+주말 슬롯은 **돌아가고 있다**. 그러나 합성 실험실은 **NameError로 매주 죽고**, OOS는 **IndentationError로 최근 주 실패**, 자동승격 **0**, 지금 `INCUBATOR_TEMPLATES`에 **GP_MUT_ 0개**.
+
+### 사실 (VPS 2026-09-26)
+
+| 항목 | 실측 |
+|------|------|
+| 데몬 | `system_auto_pilot.py --daemon` 기동 중 (당일 11:56 KST 재시작 관측) |
+| 크론 | HTC 00~03시 **없음**. 토 10:00 `--run-autonomous-analysis-only`만 |
+| 오늘 위성 mtime | `synthetic_lab_sat0000` 00:00 · `incubator_sat0200` 02:00 · `mutant_oos_sat0300` 03:00 · pending 03:10 · immune 03:20 |
+| 합성 | `REGIME_INDEX` **NameError** (`synthetic_data_generator.py` ~217). 로컬도 동일 |
+| 인큐베이터 | 「평가 1000개 · 상위 10」로그는 **매주 찍힘**(SIDEWAYS). 합성 실패와 무관하게 돌아 보임(스테일 큐브 가능) |
+| OOS | 과거 주: 합격 **0**. 이후 주: `mutant_oos_validator.py:604` **IndentationError**. `validated_live_mutants.json` mtime **2026-08-01** · `promoted_n=0` · `all_results=10` · excess>0 **0** |
+| 설정 | `system_config.json` `INCUBATOR_TEMPLATES` **빈 dict** · `AUTO_PROMOTE` 키 없음 · PENDING 없음 |
+| 장부 GP_MUT | `sig_type` LIKE GP_MUT **7건** 전부 **2026-07-20~23** · `GP_MUT_GP_0009` · CLOSED 6패+1소승 · **현재 OPEN/LIVE 0** |
+| DSR-MINIMAL | VPS `git log -1` **`b7b8913`**. `strategy_promotion_engine`에 DSR 관측 **없음** = **미배포** |
+| BH-FDR 재검증 | GP_MUT 7건에 **안 함**(이번 RO 범위 밖) |
+
+### 진단 교정 (첨부 문서 vs SSOT)
+
+- WAIT_CLAUDE_OK RO들을 종합정리에서 CLOSED로 부르면 **안 됨**. 현황판 유지.
+- **9/24~25 MDD 재초과는 실패표에 넣을 두 번째 캡 이벤트가 아님.** 11.08%는 **2026-09-05 Step B**. 06에 그 한 줄만 보강. ASG 공식 판정은 여전히 없음 · #3은 침범 사실상 Fail.
+- Track B 이번 세션 **미조사**(의도).
+
+### 디렉터 큐 (구현 말고 확인)
+
+1. CAT-H 수리 Handoff: `REGIME_INDEX` + OOS 604 들여쓰기(로컬도 깨짐).
+2. DSR: Claude OK 후에만 `update_factory`.
+3. CORRKELLY-US-PF-RO · entry_atr: 이번 세션 미착수.
+4. 문서 낙후(09/IV_03/12/11): 급하지 않음.
+
+Claude: 회신 **마지막 줄** HOLD.
+
+---
+
+## OUTBOX — SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · HOLD · 2026-09-26
+
+작업 **일시중지**. persist 없음.
+
+탈퇴 후 재가입: 공개 약관에 **N일 대기 명시 없음**. 개인정보 보유는 「탈퇴 시 또는 최종 로그인 5년」. 「회원정보 없음·초기화」는 본인인증(CI) 처리 잔여일 수 있음. **1~2 영업일 후 재시도**가 합리적. 계속 막히면 1577-0088 / 02-3774-9000.
+
+탈퇴 전이었다면 SNS 가입은 마이페이지에서 비밀번호만 설정하면 됐을 수 있음(가입완료 문구). 이미 탈퇴면 해당 경로 불가.
+
+Claude: 디렉터 회신 **마지막 줄**에 `00_SESSION_SYNC` 상단 HOLD를 붙일 것.
+
+---
+
+## OUTBOX — SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · 네이버SSO · 2026-09-26
+
+persist 없음.
+
+### 원인 1개 (확정)
+
+**`.env`에 넣은 값이 네이버 연동 계정이다.** pykrx는 `data.krx.co.kr` 폼에 `mbrId`/`pw`를 POST한다 (`MDCCOMS001D1.cmd`). 네이버 OAuth 세션은 그 폼을 통과하지 못한다. 그래서 키는 SET인데 `자격 증명을 확인하세요` + JSON empty.
+
+필요: KRX **일반 로그인**(거래소가 발급한 ID/PW). 브라우저에서 네이버 버튼이 아니라 아이디·비밀번호 칸으로 들어가는 그 값.
+
+네이버 비밀번호는 팩토리 `.env`에 두지 말 것.
+
+---
+
+## OUTBOX — SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · 재스모크 FAIL · 2026-09-26
+
+persist **미착수**. 키 값·로그인 ID는 OUTBOX에 안 적음.
+
+### 원인 1개
+
+**환경변수는 있는데 data.krx.co.kr 로그인이 거부됨.**  
+`KRX_ID`/`KRX_PW` = SET. pykrx: `로그인 실패: 자격 증명을 확인하세요.` 이어서 `Expecting value: line 1 column 1` · n_rows=0.
+
+이전 실패(키 없음)와 다름. JSON 빔은 **로그인 실패의 결과**.
+
+### 스모크
+
+probe 20260925 KOSPI 외국인 순매수 · **FAIL**(n=0).
+
+2단계 전환 조건 미달. 브라우저로 같은 ID/PW가 data.krx.co.kr에 로그인되는지, `.env`에 공백·따옴표·오타가 없는지 확인 후 재요청.
+
+---
+
+## OUTBOX — SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · 1단계 FAIL · 2026-09-26
+
+2단계 persist **미착수**. LOCKDOWN/AXIS/mega_trend/DSR 무접촉.
+
+### 원인 1개
+
+**팩토리 `.env`에 `KRX_ID`/`KRX_PW`가 없다.**  
+경로: `/home/ubuntu/dante_bots/Dual-Screener-Bot/.env`  
+`grep ^KRX` 매칭 **0줄**. 스모크 프로세스도 `KRX_ID ABSENT` / `KRX_PW ABSENT`.
+
+### 스모크 (VPS venv, 20260925 KOSPI 외국인 순매수)
+
+| | |
+|--|--|
+| n_rows | **0** |
+| empty | True |
+| pykrx 메시지 | `KRX 로그인 실패: KRX_ID 또는 KRX_PW 환경 변수가 설정되지 않았습니다.` |
+| JSON 빔 | 로그인 전 단계 — 자격 없어서 본문 없음 |
+
+로그인 성공 후 JSON 빔은 **아직 해당 없음**.
+
+### DoD
+
+1단계 **미달**. 2단계 전환 안 함.
+
+디렉터: 같은 파일에 `KRX_ID=` / `KRX_PW=` 넣은 뒤 스모크 재요청. OpenAPI 키와 혼동하지 말 것.
+
+---
+
+## OUTBOX — KRX-MARKETPLACE-PRICING-RO-01 · RO · 2026-09-26
+
+코드 0. 공개 페이지 + 구입안내. **가격표는 로그인 뒤에 있어 원 단위 미확인.**
+
+### DoD
+
+**가격 과함/절차 김 → 후순위.**  
+싸고 즉시 쓰는 4번째 길이 아님.
+
+### 확인된 것
+
+| 항목 | 내용 |
+|------|------|
+| 상품 문구 | 주식 「투자자별 거래실적」= 투자자 유형별 **1분·10분·일별** (유료 목록) |
+| 전달 | 이메일/웹 **파일 다운로드**. REST OpenAPI **아님** |
+| 절차 | 회원가입→상품/기간 선택→결제→**이용목적 심사 후** 수령. 즉시 불가 |
+| 할인 | 학술 50%. 입금자=주문자 |
+| 문의 | 데이터사업부 02-3774-8904 |
+| 상세/가격 | `datasale` 상세는 **로그인 필수** (비로그인 시 로그인 페이지) |
+| 6~9월 소급 | 구입 흐름이 **기간 선택**이라 파일 구매는 가능 추정. 심사 후. API 소급 아님 |
+| 무료와 혼동 금지 | 통계 「투자자별 거래실적」MDCSTAT022=시장합계. 「개별종목」MDCSTAT023=종목 일별(pykrx가 긁는 쪽). 유료 SKU와 다름 |
+| 분배상품 | 「종목별투자자별」UDP/TCP/FTP — 기관 전용망. 더 후순위 |
+
+### 형태
+
+1분/10분 덤프는 공장 persist(일별 상위 랭킹)와 안 맞음. 일별만 사도 심사가 김. OpenAPI 키로 이 상품을 못 켬.
+
+---
+
+## OUTBOX — KRX-OPENAPI-SMOKETEST-01 · RO · 2026-09-26
+
+persist **0**. 키 값은 로그에 안 남김.
+
+### DoD
+
+**이 API엔 해당 데이터 없음, KRX_ID/PW는 별도로 필요.**  
+4번째 빠른 길(OpenAPI로 수급 완전 대체)은 **아님**.
+
+### 키가 다른가
+
+| | OpenAPI `KRX_OPENAPI_KEY` / `AUTH_KEY` | pykrx `KRX_ID`/`KRX_PW` |
+|--|----------------------------------------|-------------------------|
+| 대상 | `openapi.krx.co.kr` · `data-dbg.krx.co.kr/svc/apis` | `data.krx.co.kr` 정보데이터시스템 로그인 |
+| 수급 | **카탈로그에 없음** | `get_market_net_purchases_of_equities` 등 (스크래핑) |
+
+같은 물건이 아님.
+
+### Q1 투자자별 API
+
+공식 서비스 목록 31개: 지수·일별매매(OHLCV)·종목기본·ETF/파생/채권/ESG. **「투자자별 거래실적」 없음.**  
+주식 일별매매 컬럼: `BAS_DD, ISU_CD, ISU_NM, MKT_NM, SECT_TP_NM, TDD_*PRC, ACC_TRDVOL/VAL, MKTCAP, LIST_SHRS`. 외국인·기관·순매수 컬럼 없음.  
+유료 Data Marketplace의 「투자자별 거래실적」은 **별 판매 상품**. 무료 OpenAPI 키가 아님.  
+MDCSTAT022는 시장 합계 웹화면(pykrx가 긁는 쪽)이지 OpenAPI가 아님.
+
+### Q2 스모크
+
+로컬 `.env` **KRX_OPENAPI_KEY ABSENT**. 공개 샘플키로만 호출.
+
+| 호출 | 결과 |
+|------|------|
+| sample `sto/stk_bydd_trd.json` `basDd=20200414` | HTTP 200, OutBlock n=10, investor_cols=false |
+| sample `sto/inv_bydd_trd.json` (존재하지 않는 경로) | HTTP 404 `API referenced by the path does not exist` |
+
+실키 1회(최근 영업일 전종목)는 키가 워크스페이스에 없어 **미실행**. 키가 있어도 **수급 엔드포인트 자체가 없음**.
+
+### Q3 2026-06~09 커버리지
+
+수급 기준으로는 해당 없음. 일별매매는 문서상 2010-01-04~ (전일, 익일 08시 갱신) — 가격 유니버스용이지 스마트머니용 아님.
+
+### Q4 대체?
+
+**완전 대체 불가.** pykrx·네이버 스크래핑을 수급에서 없애지 못함. OpenAPI는 가격/상장정보 **보완**만. 수급 소생은 여전히 (b) KRX_ID/PW+pykrx 또는 SPA 파싱.
+
+---
+
+## OUTBOX — DSR-MINIMAL-01 · 구현 · 2026-09-26
+
+LIVE 하드블록 **없음**. WF와 같이 사이클 끝 meta 태깅만. `try_skip_live_promotion` 미호출.
+
+### n_trials SSOT
+
+같은 `market` 의 CLOSED `forward_trades`에서 `_sig_to_group_key(sig_type)` 가 같고 청산 수 ≥ 10 인 **그룹 개수**.  
+피처 스크린 횟수·mutant 챔피언 수와 **혼용 금지**. `OOS_DSR_MIN` **그대로 0**.
+
+### 게이트
+
+| `dsr_gate` | 조건 |
+|------------|------|
+| OBSERVE | `n_trials<2` 또는 대상 그룹 표본 부족 또는 DSR ≥ `PROMOTION_DSR_WARN_MIN`(기본 0.95) |
+| WARN | `n_trials≥2` 이고 대상 그룹 DSR < 임계 |
+
+### 파일
+
+- `validation/walk_forward.py` — `target_key` · `n_trials` 1개여도 기록
+- `strategy_promotion_engine.py` — stamp + `stats.dsr_warn_count` / `dsr_n_trials`
+- `tests/test_dsr_minimal_promotion.py` — 다전략 OBSERVE/WARN + CANDIDATE→LIVE 유지
+
+env: `PROMOTION_DSR_OBSERVE_ENABLED` · `PROMOTION_DSR_WARN_MIN`.
+
+---
+
+## OUTBOX — SMARTMONEY-SOURCE-REVIVE-01 · 1단계 · 2026-09-26
+
+코드 persist **0**. 2단계는 디렉터 답변 후.
+
+### drop-in HTML 대체 URL: 없음
+
+| URL | HTTP | 내용 |
+|-----|------|------|
+| `sise_deal_rank_iframe.naver` / `.nhn` | **410** | 페이지 종료 |
+| `sise_deal.naver` · `sise_foreign.naver` · `sise_investor.naver` | **404** | 없음 |
+| `investorDealTrendDay/Time.naver` | **410** | 종료 |
+| `sise_deal_rank.naver` / `.nhn` | **200** | Next.js 셸(Npay). `code=` 0. 구 랭킹 테이블 아님 |
+| `m.finance.naver.com/...` | DNS 실패 | |
+| `m.stock.naver.com/api/explore/marketStat` | 404 | |
+
+### SPA 후계(파싱 신규 = 1~2주 규모)
+
+PC 200: `https://finance.naver.com/market/stock/kr/trend/foreigner` · `.../foreignHold` · `.../trend/program`  
+첫 응답은 같은 Next 셸. 랭킹 JSON 엔드포인트는 **이번 스캔에서 확정 못 함**.
+
+### 2단계 분기 (디렉터)
+
+1. **KRX_ID/PW 있음** → pykrx 스모크 1회 → 통과 시 persist 우회(1~2일)
+2. **없음 + drop-in 없음** → SPA UI 파싱은 **Critical 승인** 후에만 (1~2주)
+
+---
+
+## OUTBOX — MACRO-SPLIT-DIRECTION-RO-01 · RO · 2026-09-26
+
+동일 asof 조인, EXCL. **착시(부호 반대)는 아님. US가 0에 가까워 통합 q만 살아 보인 것.**
+
+| | n | US10Y ρ | FX ρ |
+|--|---|---------|------|
+| 통합 | 375 | **+0.136** p=0.008 | **−0.159** p=0.002 |
+| KR | 209 | **+0.077** p=0.27 | **−0.074** p=0.28 |
+| US | 166 | **+0.009** p=0.91 | **−0.024** p=0.76 |
+
+KR은 통합과 **같은 부호**, 크기는 약 절반(검정력 부족과 일치). US는 **0**. 부호 반전 없음.
+
+**DoD: 방향 일치(WATCH) — KR만.** US≈0. 통합 알파는 폐기. KR n이 더 쌓이면 US10Y/FX 재검정 가치 있음. 지금은 Phase 1 재료 확정 금지.
+
+---
+
+## OUTBOX — SMARTMONEY-NAVER-FIX-SCOPE-RO-01 · RO · 2026-09-26
+
+### (a) vs (b)
+
+** (a) 확정.** `sise_deal_rank_iframe.naver` **HTTP 410**, 본문 제목 **페이지 종료 안내**, `code=` 0개. 오늘·20260917 둘 다 410.  
+**(b) 기각** — 429/캡차/403이 아님. 파서만 고치면 같은 URL은 안 살아남.
+
+### pykrx / KRX_ID
+
+팩토리 `venv`에 pykrx **있음**. `.env` **KRX_ID/PW ABSENT**. 호출 로그 `KRX 로그인 실패` + `Expecting value: line 1 column 1` + empty.  
+**지금 자격으로 1차 소생 불가.** 자격 넣으면 빈 JSON이 사라지는지는 여전히 미검증(별 1회 스모크).
+
+### 과거 데이터 · 9/2 전 소급
+
+| | |
+|--|--|
+| `kr_investor_flow` | 140행, **2026-09-14~17**만 (9/18~ 0) |
+| KR CLOSED 제외 entry<9/2 | **207건** |
+| 그중 asof(flow.date < entry) | **0** |
+
+LOCKDOWN 전 체결을 **현재 DB 수급으로 소급검정 불가**. 코드를 공유하는 종목 96은 9/14 이후 랭킹에 이름이 있는 것뿐(룩어헤드). 재생은 대체 소스(신 네이버 URL 또는 KRX)로 **일자별 백필**이 필요.
+
+### 견적
+
+| 경로 | 규모 |
+|------|------|
+| 네이버 **대체 URL** 찾아 파서 교체 + persist 회귀 | **며칠** |
+| 대체 페이지 없고 UI 전면 개편 | **1~2주** |
+| KRX 자격 투입 + pykrx 스모크가 통하면 persist 우회 | **1~2일**(자격=디렉터) + 빈 JSON이면 별도 |
+| 9/2 전 소급 검정 | 소스 소생 **후** 백필. 지금 140행으로는 **불가** |
+
+Phase 0 최우선은 맞음. 이번 세션 파서 미구현.
+
+---
+
+## Claude OK 랜딩 — MACRO-JOIN · DSR-SCOPE · 2026-09-26
+
+asof 동의. DSR=전략선택 도구(피처 BH 대체 아님). 최소 며칠 병행 승인, **이 세션 미구현**. LIVE 하드 보류. 수급을 Phase 0 최우선으로 격상.
+
+---
+
+## OUTBOX — MACRO-JOIN-SCOPE-RO-01 · 2026-09-26
+
+**1단계 통과 → 2단계 실행.** 장부 ALTER 없음. 조인 키=`macro_daily.date` asof **진입일 미만 마지막 일자**(주말=직전 거래일). lag 중앙값 **1일**.
+
+### 1단계
+
+| | |
+|--|--|
+| 파일 | `/var/lib/quant-factory/data/alt_data.sqlite` (16KB) |
+| 테이블 | `macro_daily` only |
+| 컬럼 | `vix_index` `us_10y_yield` `usd_krw` 62/62 nonnull |
+| 기간 | **2026-07-02 ~ 09-25** (6월 공백). 62행 |
+| KR/US | **시장별 행 없음** (글로벌 캘린더) |
+
+### 2단계 BH (주판정 EXCL 375, 조인 448/468)
+
+| | VIX | US10Y | FX |
+|--|-----|-------|-----|
+| EXCL ρ / q | +0.012 / **0.81** | +0.136 / **0.012** | −0.159 / **0.006** |
+| KR 층화 q | 0.57 | 0.43 | 0.43 |
+| US 층화 q | 0.91 | 0.91 | 0.91 |
+| ALL(아티팩트 주의) | q=0.018 | q=4e-5 | q=5e-6 |
+
+### DoD
+
+**새 재료 후보 발견(q<0.05)** — EXCL 통합에서 US10Y·FX만. VIX 비신호.
+
+**보류 조건:** KR/US **각각**은 3항 전부 탈락. dyn_rs ALL과 같은 **혼합 교란** 가능. Phase 1 확정 재료로 쓰지 말 것. 6월 미커버.
+
+데이터 자체는 7~9월에 한해 조인 가능(부적합 전부는 아님).
+
+---
+
+## OUTBOX — DSR-SCOPE-RO-01 · RO · 2026-09-26
+
+코드 0. 문서·코드 대조.
+
+### 1) 지금 있는 것
+
+| 자산 | 상태 |
+|------|------|
+| `deflated_sharpe_ratio` / PSR / `deflated_sharpe_from_trials` | `validation/walk_forward.py` **수식 완성** |
+| `evaluate_ledger_deflated_sharpe` | 원장→시그널 그룹 trials, min 10건, 그룹≥2 | **정의만. 호출 0** |
+| mutant_oos `oos_dsr` | 배치 챔피언 OOS에 주석. `OOS_DSR_MIN` 기본 **0** → 게이트 OFF |
+| `strategy_promotion_engine` | **WF OOS 블록만**. DSR import 없음 |
+| V-2B snapshot | **미구현** |
+| 설계문서 | `docs/independent_verification/05_갭_및_로드맵.md` V-2-DSR-01 backlog · IV-08 호출 0 |
+
+스켈레톤이 아니라 **통계 함수는 완성**, **배선이 없음**.
+
+### 2) 켜려면 최소
+
+1. `n_trials` SSOT (시그널 그룹 vs mutant 챔피언 vs 피처 스크린 횟수 — 지금 셋이 다름)
+2. 승격 경로에 `evaluate_ledger_deflated_sharpe` 또는 동등 훅 (WF-BLOCK과 같은 OBSERVE→WARN 패턴 권장, LIVE 하드는 별 승인)
+3. 단위테스트 (현재 이 헬퍼 전용 테스트 검색 0)
+4. 🔴 Critical Handoff · 「LIVE 승격 ≠ DSR 검증」유지
+5. (풀) 시행 원장 + `OOS_DSR_MIN>0` + V-2B 스냅샷
+
+배치 검정 훅: mutant는 이미 DSR을 계산하나 기본 통과에 안 씀. 승격 엔진은 미연결.
+
+### 3) 지금 수동 BH-FDR과 다른 점
+
+| | 수동 BH (이번 매크로) | DSR |
+|--|----------------------|-----|
+| 대상 | 피처 vs `final_ret` 순위상관 다중검정 | **여러 전략 Sharpe**가 운으로 나온 최댓값인지 |
+| 시행 횟수 | 이번에 넣은 피처 개수 | trials=전략/챔피언 수 |
+| 자동화 | 스크립트 1회 | 승격 사이클마다 호출이 목표 |
+| 아티팩트 방지 | 층화·제외표본은 **안  automatize** | ALL vs EXCL·시장 층화는 DSR이 **대체 못 함** |
+
+DSR을 켜도 `v_energy`형 피처 아티팩트는 안 막힘. 그건 표본 정의 문제.
+
+### 견적
+
+| | 기간 | 스코프 |
+|--|------|--------|
+| **최소** | **며칠** (3–5) | 수식 재사용 + 승격 OBSERVE/WARN 훅 + n_trials 문서 + 테스트. `OOS_DSR_MIN=0` 유지 |
+| **풀** | **몇 주** | 시행 원장 · LIVE 하드 · mutant 게이트 ON · V-2B |
+
+이번 세션 승격 코드 미변경.
+
+디렉터 → Claude: 두 OUTBOX 검증.
+
+---
+
+## OUTBOX — MATERIAL-MAP-RO-01 · RO · 2026-09-26
+
+코드 로직 0. CLOSED n=468 · OBSERVE+인버스 제외 **395**(SCORE-FINAL과 동일 주판정). BH-FDR은 이번에 올린 후보 피처 집합 내부.
+
+### DoD 3단 (주판정=EXCL 395)
+
+| 항목 | 분류 | 근거 |
+|------|------|------|
+| VIX | **미존재** | 장부 컬럼 없음. `macro_daily`가 **market_data.sqlite에 없음**. 코드 SSOT는 `alt_data.sqlite` |
+| 온도점수 | **존재-비신호** | `news_data.daily_sentiment.sentiment_score`를 `entry_date` 조인. n=375 ρ=−0.098 p=0.057 **q=0.103** |
+| US10Y | **미존재** | VIX와 동일 |
+| FX(usd_krw) | **미존재** | VIX와 동일 |
+| 주도섹터 여부 | **존재-비신호** | `sector_daily_leader` 조인(리더일 57일). 종목섹터≈주도 ρ=+0.075 **q=0.199**. sig `주도주` 태그는 ALL만 q=0.027, EXCL q=0.199 → 아티팩트 패턴 |
+| 체류일수 | **존재-비신호** | 리더 연속일 n=395 ρ=+0.067 **q=0.199** |
+| 순환매 신뢰도 | **미존재** | `sector_rotation_prediction_log` **0행**. sig `순환매` 태그 nunique=1 |
+| 국면 BULL/BEAR/SIDEWAYS | **존재-유의** | 장부 `entry_regime`. SIDEWAYS 더미 ρ=+0.156 **q=0.0055**. 서열(BULL=1,SIDE=0,BEAR=−1) ρ=+0.172 **q=0.0052**. BEAR 더미 p=0.042 **q=0.095** → 비신호 |
+| 유효켈리 | **혼재** | `sim_kelly_risk_pct` nunique=1 → **존재-비신호**(상수). `sim_kelly_invest` ρ=+0.188 **q=0.0016** → **존재-유의**이나 **사이징 내생**(알파 재료로 쓰면 안 됨). `sim_kelly_profit` 상수 |
+| CAT-M LLM 수치 | **미존재** | 장부 컬럼 없음. `ops_events`에 overseer 이벤트만(비정형, 거래행 조인 없음) |
+
+### Phase 1 첫 재료?
+
+통계 q<0.05 EXCL: **국면 스탬프**(SIDEWAYS/서열)와 **투자금액**.  
+후자는 베팅 크기라 새 알파가 아님. 전자는 “BEAR 체결이 더 나쁨”의 재진술(이미 SCORE RO). **DNA 바깥의 새 연속 피처는 이번 맵에서 안 나옴.** 온도는 경계(p=0.057)이나 BH 탈락.
+
+매크로 시계열을 쓰려면 `alt_data.sqlite.macro_daily` 적재·조인이 **별 조사**(이번 market_data에는 테이블 없음).
+
+디렉터 → Claude: `CURSOR_TO_CLAUDE.md` 검증.
+
+---
+
+## OUTBOX — SCORE-FINAL-GAPS-RO-01 · RO · 2026-09-26
+
+코드 0. VPS CLOSED 재조회(표본이 462→**468**, 제외 389→**395**. 필터 동일).
+
+### Q1 `dyn_rs` "수익과 +"
+
+**462/468 ALL 기준에서만** BH 통과. 제외 표본에서는 유의미하지 않음.
+
+| 표본 | n | ρ | p | q_BH(5항) |
+|------|---|-----|---|-----------|
+| ALL | 468 | **+0.130** | 0.0049 | **0.008** |
+| OBSERVE+인버스 제외 | 395 | +0.050 | 0.322 | 0.672 |
+| 제외된 조각만 | 73 | +0.232 | 0.048 | 0.063 |
+
+**dyn_rs 최종: 기각(아티팩트).** 재조정 후보 아님. ALL 유의는 OBSERVE/인버스 혼입에 의존.
+
+### Q2 `cpv`란 / 이미 검정했는가
+
+AXIS `cpv` = 당일 봉 **(종가−시가)/(고가−저가)**. H=L이면 0.5. 거래량·ATR 아님.
+
+장부 컬럼 **`dyn_cpv`**. SCORE-COMPONENT-BREAKDOWN-RO-01 BH 대상에 **이미 포함**(다른 이름 아님, `dyn_cpv`). 미검정이 아니라서 “지금 새로 열 구멍”이 아님. 재조회:
+
+| 표본 | ρ | p | q_BH |
+|------|-----|---|------|
+| ALL 468 | +0.063 | 0.176 | 0.220 |
+| 제외 395 | −0.031 | 0.538 | 0.672 |
+
+**비신호.** 3축 매핑: cpv=`dyn_cpv`, tb=`dyn_tb`, bbe=`v_energy`. 제외 395에서 셋 다 q>0.67. (`v_energy` ALL q=0.0009는 OBS 조각 ρ=+0.47에 끌림.)
+
+### DoD
+
+| 항목 | 판정 |
+|------|------|
+| **AXIS-01** | **완전위험(3축 다 비신호)** — 「1/3 불확실(cpv 모름)」기각. cpv는 이미 봤고 없음 |
+| **dyn_rs** | **기각(아티팩트)** — 「재조정 후보」기각 |
+
+진입 본계약(제외 395)에서 BH 생존은 여전히 **`entry_atr` 역상관뿐**(리스크, 알파 아님).
+
+디렉터 → Claude: `CURSOR_TO_CLAUDE.md` 검증.
+
+---
+
+## OUTBOX — AXIS-RAWMATERIAL-OVERLAP-RO-01 · RO · 2026-09-26
+
+**DoD: B.** 재료 겹침(4개 중 2개) + z-score는 부호를 안 바꿈. AXIS-01도 같은 DNA 벽 위험. 기대치 하향. 코드 0.
+
+C 기각(방향 교정 없음). D 기각(경로 추적됨). A 기각(tb/bbe가 축 그 자체).
+
+### Q1 재료 겹침
+
+AXIS RANK 3축 입력은 `safe_supernova_dna_features`의 **`[cpv, tb, bbe]`만** (`cosine_axis_stats.apply_z` → `best_rank3_cosine`). MULTI 24D는 `z_templates_3d`가 길이≠3을 스킵.
+
+| 장부/질문 피처 | 3축 포함? | 축 |
+|----------------|-----------|-----|
+| `dyn_tb` | **예** | tb (index 1). 장부 `dyn_tb`=헌터 `tb` |
+| `v_energy` | **예** | bbe (index 2). 장부 `v_energy`=헌터 `bbe` |
+| `dyn_rs` | **아니오** | 21일 종가/벤치 비. RANK 3벡터에 없음 |
+| `entry_atr` | **아니오** | 장부 삽입 시 TR EWM14. DNA 3축·z와 무관 |
+
+`cpv`=(C-O)/(H-L). `tb`=추정일거래량/MA20 / max(cpv,0.01). `bbe`=(1/BB폭)×거래량배수 — **종가 20일 std 역수**, ATR(진폭)과 수식 다름.
+
+참고: 길이≠3 템플릿 코사인(`current_vec_5d`)에는 shape 20 + cpv/tb/bbe/**dyn_rs**가 **raw**로 붙음. 그 경로는 AXIS z 대상이 아님.
+
+### Q2 방향 (겹치는 tb·bbe만)
+
+```33:34:cosine_axis_stats.py
+def apply_z(vec: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> np.ndarray:
+    return (np.asarray(vec, dtype=float) - mu) / sd
+```
+
+σ 바닥 1e-9, 음수 분산 없음. 축마다 **단조증가**. 템플릿도 같은 μσ로 z. 코사인은 z공간 각도. 고tb 템플릿은 여전히 고tb를 선호. **부호 반전 없음.**
+
+따라서 `dyn_rs`가 점수에 −로 실리던 것, `entry_atr`이 +로 실리던 것은 **AXIS 3축이 고친 대상이 아님**(입력 자체가 없음). tb/bbe는 스케일만 맞춰 tb 노름 지배를 줄일 뿐, 경제 방향은 동일.
+
+### 우선순위 함의
+
+- AXIS 대기 = **tb 노름 교정** 관측 가치만. 새 알파·RS/ATR 독성 해소 기대는 하향(B).
+- 재설계(새 피처) 우선순위는 유지. AXIS가 그 대체가 아님.
+
+디렉터 → Claude: `CURSOR_TO_CLAUDE.md` 검증.
+
+---
+
+## OUTBOX — SCORE-COMPONENT-BREAKDOWN-RO-01 · RO · 2026-09-26
+
+**DoD 판정: 전 DNA/코사인 피처 무의미 → 새 피처 발굴(더 큰 작업).**  
+「현 total_score 계수만 며칠 재가중」은 기각. 코드 0. n=462 동일.
+
+### 1) 지금 `total_score`에 실제로 들어가는 것
+
+라이브 주경로(`supernova_hunter` → `try_add_virtual_position`)는 레거시 7항 가중합(RS×10+EMA×9+…)이 **아님**.
+
+| 층 | 내용 | 가중 |
+|----|------|------|
+| 본체 | 코사인 유사도 또는 ML박스 매칭 ×100 (SCOUT는 `best_metric×100`) | 거의 전부 |
+| 시너지 | `calculate_synergy_final_score` import는 모듈에 함수 없음 → except로 본체 유지. 컷오프 완화 보너스는 별경로 | 실점수 미반영에 가까움 |
+| 히든테마 | 매칭 시 배수, 국면 캡 | 간헐 |
+| 인버스 | `total_score=0` 고정 | n=23 |
+| 장부 `entry_cos_score` | `max_alpha_cos+bonus` **별컬럼**. total_score와 ρ≈0. 비영 21% | 합산 공식 아님 |
+| 레거시 `score_marcap`/`freq_count`/`marcap_eok` | 이 462건 **컬럼 비어 있음(n=0)** | 미사용 |
+| 수급 `flow_bonus` 등 | **전부 0** (nunique=1) | 점수 재료 검증 불가 |
+
+DNA 박스 사실값(`dyn_cpv`/`dyn_tb`/`v_energy`)은 합격 판정·템플릿 매칭에 쓰이고, 합산점수의 명시 가중합은 아님.
+
+### 2) 각 피처 vs `final_ret` Spearman + BH-FDR (q)
+
+테스트한 분산 있는 재료만. Holm도 병기.
+
+| 피처 | ALL ρ / p / q_BH | KR | US | 점수와의 ρ |
+|------|------------------|----|----|------------|
+| dyn_tb | −0.027 / 0.56 / 0.63 | ns | +0.159 p=0.012 **q=0.061** | ALL **+0.42** |
+| dyn_cpv | +0.058 / 0.22 / 0.27 | ns | ns | ALL −0.32 |
+| entry_cos_score | −0.073 / 0.12 / 0.20 | ns | ns | ≈0 |
+| v_energy | **+0.169 / 0.0003 / 0.001** | ns q=0.70 | **+0.298 q=1.7e-5** | ALL +0.41 |
+| dyn_rs | **+0.124 / 0.008 / 0.026** | ns | ns | ALL **−0.58** |
+| entry_atr | **−0.363 / ~0 / 0** | ns | p=0.033 **q=0.11** | ALL **+0.49** |
+| 수급 5컬럼 | 분산 0 | — | — | — |
+
+**OBSERVE+INVERSE 제외 n=389:** BH 생존 **entry_atr만**. v_energy·dyn_rs 탈락.  
+**KR 단독:** BH 히트 **0**.
+
+### 3) 유의미 피처가 가중에 죽는가
+
+- `dyn_rs`: 수익과 +인데 점수와 −0.58 → **고점수가 RS를 죽임**.
+- `entry_atr`: 수익과 −인데 점수와 +0.49 → **고점수가 변동성을 보상(독성)**.
+- `v_energy`: 부호는 점수·수익 같음. 다만 OBSERVE 제외 시 BH 탈락 → **가중 재조정으로 살릴 안정 알파 아님**.
+- DNA 본체(코사인/TB): TB는 점수에 +0.42로 실려 있으나 수익과 무관.
+
+### 4) 고점수 PF↓ = “이미 다 오른 것”인가
+
+**RS 평균회귀 가설은 기각.** 상위 30% 점수군 `dyn_rs` 평균 **0.0** vs 하위 **3.82**.  
+대신 고점수군 `dyn_tb` 더 높음(3.0 vs 1.2, 수익 무관) + **`entry_atr`이 점수에 실려 이후 수익을 깎음.** “다 오른 RS”가 아니라 **변동성·템플릿 매칭을 높은 점수로 주는 구조**.
+
+### 규모 (디렉터 Critical용)
+
+| 선택지 | 판정 |
+|--------|------|
+| 가중치만 며칠 | **기각** (합산이 그 가중합이 아님. DNA 재료 BH 실패) |
+| 전 피처 무의미·새 발굴 | **채택** — 알파 재료로서 cosine/TB/CPV/수급(미적재) |
+| 예외 | ATR **리스크 페널티**는 소규모 섀도우 가능하나 알파 재설계 대체 아님. 수급은 컬럼 0이라 아직 미검증 |
+
+엔지니어: 다음 Critical은 공식 계수 스윕이 아니라 **점수 정의 교체 + 새 재료**. 본 세션 코드 없음.
+
+디렉터 → Claude: `CURSOR_TO_CLAUDE.md` 검증.
+
+---
+
+## OUTBOX — SCORE-PREDICTIVE-POWER-RO-01 · RO · 2026-09-25
+
+**DoD 판정: 없음(사실상 랜덤).** 코드 0. VPS CLOSED n=462 (KR 214 · US 248).
+
+### 1) Spearman `total_score` vs `final_ret`
+
+| 군 | n | ρ | p |
+|----|---|-----|---|
+| KR | 214 | +0.100 | 0.146 |
+| US | 248 | +0.075 | 0.241 |
+| ALL | 462 | **−0.082** | **0.078** |
+
+α=0.05에서 모두 기각 실패. 통합은 부호가 음(고점수일수록 수익이 약간 더 나쁨). OBSERVE/INCUBATOR/ALPHA 제외 n=412: ALL ρ=−0.019 p=0.707.
+
+### 2) 상위 30% vs 하위 30% (점수 순위, k=round(n×0.3))
+
+| 군 | top WR / PF / mean | bot WR / PF / mean | Welch Δmean | Welch p |
+|----|--------------------|--------------------|-------------|--------|
+| KR | 9.4% / 0.086 / −2.50 | 7.8% / 0.174 / −2.48 | −0.02 | **0.972** |
+| US | 17.6% / 0.247 / −1.37 | 8.1% / 0.337 / −1.46 | +0.09 | **0.855** |
+| ALL | 10.1% / 0.114 / −2.28 | 5.0% / 0.216 / −1.74 | **−0.54** | **0.088** |
+
+승률만 보면 상위가 조금 높아 보이나 PF·평균수익은 하위가 낫거나 동등. 평균 차이는 유의하지 않음.
+
+### 3) 랜덤 진입(같은 CLOSED 집합에서 점수 무시)보다 나은가
+
+**아니오.** 점수 순위가 수익 순위를 설명하지 못함(Spearman p>0.05). 상위 30% 평균수익이 하위보다 유의하게 크지 않음(Welch p≥0.088; ALL은 상위가 더 나쁨). 전체 WR≪50%(이항 p≈0)는 **전략 자체가 손실**이지 스코어링 검증이 아님.
+
+한계: 미체결 후보 대비 랜덤은 장부에 없음.
+
+### 4) 국면
+
+n≥20만. **국면별로 다름으로 분류하지 않음.**
+
+| 슬라이스 | n | ρ | p | Welch p | 비고 |
+|----------|---|-----|---|---------|------|
+| ALL\|BEAR | 293 | +0.007 | 0.902 | 0.790 | |
+| KR\|BEAR | 177 | +0.166 | **0.027** | 0.597 | PF top 0.084 < bot 0.129. 다중검정·수익 비유의 |
+| US\|BEAR | 116 | +0.065 | 0.485 | 0.632 | |
+| ALL\|UNKNOWN | 83 | −0.136 | 0.222 | 0.260 | |
+| US\|SIDEWAYS | 41 | −0.117 | 0.467 | 0.285 | WR 0% |
+| US\|BULL | 22 | +0.027 | 0.904 | 0.691 | WR 0% |
+| ALL\|INVERSE_HEDGE | 23 | n/a | n/a | 0.984 | 점수 전부 0 |
+
+KR BEAR Spearman만 단변량 유의. 평균·PF는 예측력 없음. Bonferroni(~8 슬라이스)면 0.027도 탈락.
+
+### 엔지니어 한 줄
+
+딥다이브 점수대 WR 들쭉날쭉은 표본 소음과 일치. 다음이 재설계라면 새 서브전략 추가보다 **점수→기대수익 단절을 전제로** Claude Handoff가 맞음. 본 세션 코드 없음.
+
+디렉터 → Claude: `docs/work_phases/CURSOR_TO_CLAUDE.md` 검증. OK면 재설계 Handoff는 파일에만.
 
 ---
 

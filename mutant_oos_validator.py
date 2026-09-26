@@ -86,6 +86,47 @@ def _atomic_write_json(path: str, obj: Mapping[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _load_prev_validated() -> dict[str, Any]:
+    try:
+        with open(VALIDATED_JSON, encoding="utf-8") as f:
+            prev = json.load(f)
+        return prev if isinstance(prev, dict) else {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _stamp_pipeline_fields(
+    payload: dict[str, Any],
+    *,
+    ok: bool,
+    error: str | None,
+    prev: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """정상적 0(ok_zero) vs 고장난 0(error) 구분. last_promoted_at 은 이전 성공 승격을 보존."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    promoted = payload.get("promoted") if isinstance(payload.get("promoted"), list) else []
+    last_promo: Any = None
+    if promoted:
+        last_promo = now
+        for row in promoted:
+            if isinstance(row, dict) and row.get("validated_at"):
+                last_promo = str(row.get("validated_at"))
+                break
+    elif isinstance(prev, Mapping):
+        last_promo = prev.get("last_promoted_at")
+    payload["pipeline_ok"] = bool(ok)
+    payload["pipeline_error"] = error
+    payload["last_promoted_at"] = last_promo
+    if not ok:
+        payload["gate_result"] = "error"
+    elif promoted:
+        payload["gate_result"] = "promoted"
+    else:
+        payload["gate_result"] = "ok_zero"
+    payload.setdefault("validated_at", now)
+    return payload
+
+
 def _load_dotenv_optional() -> None:
     p = os.path.join(_THIS_DIR, ".env")
     if not os.path.isfile(p):
@@ -601,7 +642,7 @@ def _oos_forward_returns_at_signals(expr: str, ev: pd.DataFrame) -> Optional[np.
             sig = pd.eval(expr, local_dict=local_base, engine="python")
         except Exception:
             return None
-   sig = pd.Series(sig).fillna(False).astype(bool)
+        sig = pd.Series(sig).fillna(False).astype(bool)
     
     # ===========================================================================
     # 👑 [안티프래질 지옥훈련] 가상 변동성 쇼크 (Synthetic Whipsaw Shock)
@@ -885,6 +926,9 @@ def run_oos_validation(
         "promoted": promoted,
         "all_results": summaries,
     }
+    payload = _stamp_pipeline_fields(
+        payload, ok=True, error=None, prev=_load_prev_validated()
+    )
     _atomic_write_json(VALIDATED_JSON, payload)
     return payload
 
@@ -931,14 +975,18 @@ def main() -> None:
         out = run_oos_validation()
     except Exception as e:
         print(f"⚠️ OOS 검증 실패: {e}")
-        _atomic_write_json(
-            VALIDATED_JSON,
+        prev = _load_prev_validated()
+        fail = _stamp_pipeline_fields(
             {
-                "validated_at": datetime.now(timezone.utc).isoformat(),
+                "validated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "error": str(e),
                 "promoted": [],
             },
+            ok=False,
+            error=str(e),
+            prev=prev,
         )
+        _atomic_write_json(VALIDATED_JSON, fail)
         send_telegram_report(
             f"🛡️ [실전 OOS 검증 완료] 오류로 중단: {e}\n→ [최종 불합격/미실행]"
         )

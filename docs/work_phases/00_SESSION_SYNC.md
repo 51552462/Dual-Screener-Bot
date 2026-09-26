@@ -1,7 +1,11 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-25 · **앵커 ID**: `SYNC-2026-09-25-MT-ALPHA-SHADOW`
+> **갱신**: 2026-09-26 · **앵커 ID**: `SYNC-2026-09-26-CATH-REPAIR`
+
+### 상시 HOLD (Cursor·Claude 세션 응답 **마지막 줄**, 해제 전까지)
+
+`HOLD: KRX 일반 ID/PW(비네이버) 재가입되면 .env 후 SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 스모크.`
 
 ---
 
@@ -40,22 +44,22 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-25-MT-ALPHA-SHADOW` |
-| **마지막 갱신** | 2026-09-25 — MEGATREND Claude OK 커밋 · EXIT-TYPE VPS 810b89e 배포 |
+| **앵커 ID** | `SYNC-2026-09-26-CATH-REPAIR` |
+| **마지막 갱신** | 2026-09-26 — CAT-H-REPAIR-01 **Claude OK(조건부)·전체회귀 대기** · CLOSED 아님 · 수급 HOLD |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | 없음 (WAIT_CLAUDE_HANDOFF) |
-| **직전 완료** | persist·mega RO Claude OK · 06 재발 행 디렉터 문구 |
-| **다음** | 구현 없음. EXIT-TYPE VPS **배포완료(810b89e)**. mega 단독 커밋 후 2차 update_factory |
+| **진행 중 sub-phase** | CAT-H-REPAIR-01 (조건부 OK · 전체회귀 대기) |
+| **직전 완료** | CATH-HTC-LIVE-RO-01 (조사) |
+| **다음** | Claude OK → 커밋·배포 정합 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | EXIT-TYPE VPS **배포완료(810b89e)** |
+| **git main** | VPS HEAD **`b7b8913`** (MEGA_TREND) · EXIT-TYPE `810b89e`는 그 이전 |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
 ```
 [KR/US] TRACKA-NORTHSTAR-AMEND-01 · CLOSED
-[KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend=RP-1대체 스코프 섀도우 WATCH · 발동게이트=AXIS RANK_B/D n>=20 AND PF>0.5
+[KR/US] FWD-OBS-HOLD 목표하향 · AMEND-01로 CLOSED · mega_trend=RP-1대체 스코프 섀도우 WATCH · 발동게이트=AXIS RANK_B/D n>=20 AND PF>0.5 · **SCORING-VALIDITY=NONE(2026-09-25, VPS CLOSED n=462)**
 [KR/US] SMARTMONEY-PERSIST-FIX-01 · **CLOSED+재발** · 09-15 DoD#1 PASS → 09-18 재사망 · 06 기록
 [KR/US] DIRECTOR-WATCHDOG-FLOW-01 · **WATCHDOG-FUNNEL-VISIBILITY-01에 흡수**(최신일·행수) · 7일 COUNT 스코프는 대체됨
 [KR/US] LIVE-REPLAY-HOLD · **지금 만들지 않음** · 월 수급 신호 후에만 「수급 포함 리플레이」재검토
@@ -75,6 +79,22 @@
 [KR/US] SMARTMONEY-NAVER-HTTP-RO · **backlog** · (a)구조변경 vs (b)차단/레이트리밋 · 급하지 않음
 [KR/US] MEGATREND-LIVE-IMPACT-AUDIT-01 · **Claude OK 2026-09-25** · 무의미 · 감시만(재점화 시 재감사)
 [KR/US] MEGATREND-SCOPE-DEFINE-01 · **Claude OK 2026-09-25** · RP-1 섀도우 WATCH
+[KR/US] SCORE-PREDICTIVE-POWER-RO-01 · **Claude OK 2026-09-25** · 없음(사실상 랜덤) · SCORING-VALIDITY=NONE
+[KR/US] SCORE-COMPONENT-BREAKDOWN-RO-01 · **RO 판정=전 DNA피처 무의미(새 재료)** · WAIT_CLAUDE_OK · 코드 0
+[KR/US] AXIS-RAWMATERIAL-OVERLAP-RO-01 · **RO 판정=B** · tb/bbe 겹침 · z는 부호 안 바꿈 · WAIT_CLAUDE_OK
+[KR/US] SCORE-FINAL-GAPS-RO-01 · **RO** · AXIS=완전위험(3축 비신호) · dyn_rs=기각(아티팩트) · WAIT_CLAUDE_OK
+[KR/US] MATERIAL-MAP-RO-01 · **RO** · EXCL 유의=SIDEWAYS/국면서열·kelly_invest(내생) · 매크로 미존재 · WAIT_CLAUDE_OK
+[KR/US] MACRO-JOIN-SCOPE-RO-01 · **Claude OK 2026-09-26** · asof 동의 · 발견 미확정
+[KR/US] DSR-SCOPE-RO-01 · **Claude OK 2026-09-26** · 피처BH 대체 아님
+[KR/US] CAT-H-REPAIR-01 · **Claude OK(조건부)·전체회귀 대기** (2026-09-26) · CLOSED 아님
+[KR/US] CATH-HTC-LIVE-RO-01 · **RO 2026-09-26** · 토 슬롯은 기동 · 합성 NameError · OOS IndentationError · 승격 0 · GP_MUT 현재 0
+[KR/US] DSR-MINIMAL-01 · **구현(로컬)** · VPS HEAD **b7b8913에 없음** · 미배포 · WAIT_CLAUDE_OK
+[KR/US] MACRO-SPLIT-DIRECTION-RO-01 · **RO** · KR 방향일치 WATCH · US≈0 · WAIT_CLAUDE_OK
+[KR/US] SMARTMONEY-NAVER-FIX-SCOPE-RO-01 · **RO** · iframe **HTTP 410 종료** · 자격 없음 · 9/2전 asof 0 · WAIT_CLAUDE_OK
+[KR/US] SMARTMONEY-SOURCE-REVIVE-01 · **1단계 RO** · iframe 대체 HTML **없음** · SPA `/market/stock/kr/trend/foreigner` 등 200 · 2단계 대기
+[KR/US] KRX-OPENAPI-SMOKETEST-01 · **RO** · OpenAPI에 투자자별 실적 **없음** · 키≠KRX_ID/PW · WAIT_CLAUDE_OK
+[KR/US] KRX-MARKETPLACE-PRICING-RO-01 · **RO** · 유료상품 심사·파일 · **후순위** · WAIT_CLAUDE_OK
+[KR/US] SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · **HOLD** · 네이버SSO≠pykrx · 탈퇴 후 재가입 대기 · 스모크 미완
 [KR/US] CORRKELLY-US-PF-RO · **backlog** · n=114 WR1.75%/PF0.008 · US n=88 WR0% · 급하지 않음
 [KR/US] EXIT-TYPE-LABEL-01 · **Claude OK 2026-09-25** · **배포완료(810b89e)**
 [KR/US] REALITY-AUDIT-BADEXIT-01 · **RO CLOSED** · 다음=EXIT-TYPE-LABEL-01
@@ -105,7 +125,7 @@
 [KR/US] KR-LOCKDOWN-STALL-THAW-01 · **VPS ARMED=1** (2026-09-21 OPEN=0) · 관측 · 한국 재오픈 아님
 [KR/US] KR-LOCKDOWN-LADDER-01 · HOLD · 회복 후 히스테리시스/N일 (🔴) · STALL-THAW와 혼동 금지
 [KR/US] OPS-LIQ-PHASE2-01 · backlog
-[IV] V-2-DSR-01 / V-2B-SNAPSHOT-01 · backlog (이번 세션 금지)
+[IV] V-2-DSR-01 최소=OBSERVE/WARN · LIVE 하드·V-2B 여전히 backlog
 [금지] MDD 캡 변경 · 40~70% 삭제 · bitget 미러 · Phase2 자동착수 · **LOCKDOWN 무단 우회**(STALL-THAW는 Handoff+Critical만) · 라이브 리플레이 지금 · **사이징 공식 오늘 개조** · A군 US S1을 임의로 0 재차단(정책 B 번복은 Handoff)
 ```
 
@@ -195,6 +215,7 @@ deploy_watch cursor_action SSOT:
 - [ ] **`00_SESSION_SYNC.md` §3 스냅샷** 갱신  
 - [ ] `NEXT_ACTION.md` 디렉터 할 일 1장 갱신  
 - [ ] (구현 시) `CURSOR_TO_CLAUDE` OUTBOX 또는 (설계 시) `CLAUDE_TO_CURSOR` Handoff  
+- [ ] 디렉터 응답 **마지막 줄** = 본 파일 상단 HOLD (해제될 때까지)  
 
 ---
 
