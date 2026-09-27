@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-26 · **앵커 ID**: `SYNC-2026-09-26-DOCS-SYNC-01`
+> **갱신**: 2026-09-27 · **앵커 ID**: `SYNC-2026-09-27-IDLE`
 
 ### 상시 HOLD (Cursor·Claude 세션 응답 **마지막 줄**, 해제 전까지)
 
@@ -44,16 +44,16 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-26-DOCS-SYNC-01` |
-| **마지막 갱신** | 2026-09-26 — ENTRY-ATR **Claude OK(조건부)+DoD4** · DOCS-SYNC-01 · 수급 HOLD |
+| **앵커 ID** | `SYNC-2026-09-27-IDLE` |
+| **마지막 갱신** | 2026-09-27 — CAT-H-ERROR-SIGNATURE **CLOSED** · Track A **달력 대기** (10/3·10/11) |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | 없음 (ENTRY-ATR 배포 후 관측 · DOCS-SYNC 문서만) |
-| **직전 완료** | ENTRY-ATR-OVERLAY-01 Phase1 · DOCS-SYNC-01 |
-| **다음** | 2~4주 entry_atr 관측. Phase 2 금지. Bitget 실적은 코인 창 |
+| **진행 중 sub-phase** | 없음 |
+| **직전 완료** | CAT-H-ERROR-SIGNATURE-CHECK-01 · PHASE0-GOVERNANCE-04 · DSR-DEPLOY · KR-CANDLE |
+| **다음** | **10/3** CAT-H 관측. 새 구현 없음. Bitget은 코인 창 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
-| **git main** | VPS HEAD **`b7b8913`** (MEGA_TREND) · EXIT-TYPE `810b89e`는 그 이전 |
+| **git main** | VPS HEAD **`e6c1eef`** (DSR-MINIMAL) |
 
 ### 열린 작업 줄기 (꼬이지 않게)
 
@@ -86,18 +86,27 @@
 [KR/US] MATERIAL-MAP-RO-01 · **RO** · EXCL 유의=SIDEWAYS/국면서열·kelly_invest(내생) · 매크로 미존재 · WAIT_CLAUDE_OK
 [KR/US] MACRO-JOIN-SCOPE-RO-01 · **Claude OK 2026-09-26** · asof 동의 · 발견 미확정
 [KR/US] DSR-SCOPE-RO-01 · **Claude OK 2026-09-26** · 피처BH 대체 아님
-[KR/US] CAT-H-REPAIR-01 · **Claude OK(조건부)·전체회귀 대기** (2026-09-26) · CLOSED 아님
+[KR/US] CAT-H-REPAIR-01 · **수리·배포 CLOSED** · 전체 `test_*` 배경 백로그
 [KR/US] CATH-HTC-LIVE-RO-01 · **RO 2026-09-26** · 토 슬롯은 기동 · 합성 NameError · OOS IndentationError · 승격 0 · GP_MUT 현재 0
-[KR/US] DSR-MINIMAL-01 · **구현(로컬)** · VPS HEAD **b7b8913에 없음** · 미배포 · WAIT_CLAUDE_OK
+[KR/US] DSR-MINIMAL-01 · **배포 `e6c1eef` 2026-09-26** · OBSERVE/WARN · LIVE 하드 없음
+[KR/US] DSR-MINIMAL-DEPLOY-CHECK-01 · **CLOSED 2026-09-26** · `e6c1eef` · dsr_warn_count는 다음 meta_governor 사이클(지금 0 정상)
+[KR/US] KR-CANDLE-HEALTH-RED-RO · **CLOSED 2026-09-26** · KOSPI 9/24–25 결측 · SCORE오염 아님 · 급하지 않음
+[KR/US] PHASE0-GOVERNANCE-04 · **Claude OK: 2026-09-26** · 승격 4단계 SSOT `04_묶음D_작업지시서.md`
+[Bitget] CAT-L-FENCE-02 · **Phase 0 OUTBOX · WAIT_CLAUDE_OK** · Phase 1 금지 · 코인 창 SSOT=`bitget/docs/work_phases/`
+[KR/US] CAT-H-OBSERVATION-01 · **달력** · 게이트 false · 다음 장부 **10/3** · KR macro n **10/11**
+[KR/US] CAT-H-ERROR-SIGNATURE-CHECK-01 · **CLOSED 2026-09-27** · Claude OK: 2026-09-26 · 순수 타이밍 · Popen=확정
+[KR/US] PHASE0-MODEL-02 · **CLOSED(열지 않음)** · 코사인폐기 **코드 미착수**(완료 오해 금지)
 [KR/US] MACRO-SPLIT-DIRECTION-RO-01 · **RO** · KR 방향일치 WATCH · US≈0 · WAIT_CLAUDE_OK
 [KR/US] SMARTMONEY-NAVER-FIX-SCOPE-RO-01 · **RO** · iframe **HTTP 410 종료** · 자격 없음 · 9/2전 asof 0 · WAIT_CLAUDE_OK
 [KR/US] SMARTMONEY-SOURCE-REVIVE-01 · **1단계 RO** · iframe 대체 HTML **없음** · SPA `/market/stock/kr/trend/foreigner` 등 200 · 2단계 대기
 [KR/US] KRX-OPENAPI-SMOKETEST-01 · **RO** · OpenAPI에 투자자별 실적 **없음** · 키≠KRX_ID/PW · WAIT_CLAUDE_OK
 [KR/US] KRX-MARKETPLACE-PRICING-RO-01 · **RO** · 유료상품 심사·파일 · **후순위** · WAIT_CLAUDE_OK
 [KR/US] SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · **HOLD** · 네이버SSO≠pykrx · 탈퇴 후 재가입 대기 · 스모크 미완
-[KR/US] CORRKELLY-US-PF-RO · **Claude OK: 2026-09-26 (c)판단보류** · 창맞추면 WR갭 소멸 · 회피필터 등록 안 함
-[KR/US] ENTRY-ATR-OVERLAY-01 · **Claude OK(조건부): 2026-09-26** · DoD4 111 pass · 2 fail은 무관 pre-exist · 배포
-[KR/US] DOCS-SYNC-01 · **문서만 2026-09-26** · 09·IV_03·11·12 날짜 맞춤
+[KR/US] CORRKELLY-US-PF-RO · **CLOSED 2026-09-26** · Claude OK (c)판단보류 · 회피필터 미등록
+[KR/US] ENTRY-ATR-OVERLAY-01 · **CLOSED 2026-09-26** · Phase1 OBSERVE · `bc2a818` · Phase 2는 2~4주 후
+[KR/US] DOCS-SYNC-01 · **CLOSED 2026-09-26** · 09/11/IV_03 내용갱신 · 12는 규칙서(JSON이 실데이터)
+[KR/US] KR-CANDLE-HEALTH-RED-RO · **CLOSED 2026-09-26** · 급하지 않음 (위 RO와 동일)
+[KR/US] OPS-VPS-GIT-STATUS-MEMO · scp 전 `git status` · 미추적 파일이 pull 막음 · Handoff 아님
 [KR/US] US-8월24후-전패구간-RO · **backlog** · 급하지 않음 · 다음 라운드 후보
 [KR/US] EXIT-TYPE-LABEL-01 · **Claude OK 2026-09-25** · **배포완료(810b89e)**
 [KR/US] REALITY-AUDIT-BADEXIT-01 · **RO CLOSED** · 다음=EXIT-TYPE-LABEL-01

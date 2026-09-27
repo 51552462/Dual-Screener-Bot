@@ -1,12 +1,12 @@
-﻿# NEXT_ACTION
+# NEXT_ACTION
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | ENTRY-ATR 배포 후 2~4주 관측. Bitget 실적·B0는 **코인 창** 캡처. 수급 HOLD |
-| **sub-phase** | ENTRY-ATR 관측 / DOCS-SYNC 완료 |
-| **status** | **WAIT_CLAUDE_OK** (DOCS-SYNC 검증) · ENTRY-ATR는 조건부 OK로 배포 |
-| **다음** | Phase 2 Kelly 실배선 금지. 전패구간 창분할은 누적 후 |
-| **앵커** | `SYNC-2026-09-26-DOCS-SYNC-01` |
+| **지금 디렉터** | **달력 대기.** 새 Handoff 없음. 수급 HOLD |
+| **sub-phase** | 없음 (장부만: CAT-H-OBSERVATION-01) |
+| **status** | **WAIT_DIRECTOR** (구현 금지) |
+| **다음** | **10/3** CAT-H 5단계 · **10/11** KR EXCL n · entry_atr Phase 2는 10월 중순 후. B-4·CAT-H 전체 `test_*` 안 염 |
+| **앵커** | `SYNC-2026-09-27-IDLE` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---

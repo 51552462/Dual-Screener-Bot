@@ -3,7 +3,161 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-26 · ENTRY-ATR DoD4 + DOCS-SYNC-01 · 수급 HOLD
+> **갱신**: 2026-09-27 · IDLE 달력대기 · 수급 HOLD
+
+---
+
+## OUTBOX — CAT-H-ERROR-SIGNATURE-CHECK-01 · CLOSED · 2026-09-27
+
+**Claude OK: 2026-09-26.** 판정=순수 타이밍. 재조치 없음.
+
+확정 사실: 토요 HTC는 `_spawn_satellite_argv` **Popen**(매주 새 프로세스·디스크 읽기). 데몬 RAM 캐시 가설은 이 경로에 해당 없음.
+
+달력만 남음: **10/3** CAT-H · **10/11** KR EXCL n · entry_atr Phase 2는 10월 중순. B-4 안 염. CAT-H 전체 `test_*`는 배경.
+
+---
+## OUTBOX — CAT-H-ERROR-SIGNATURE-CHECK-01 · 2026-09-27
+
+코드 0. 판정: **타이밍**. 데몬 메모리 잔존 **아님**. 지금 재시작 **불필요**.
+
+### 1) 에러 서명
+
+위성 로그 마지막 traceback이 CAT-H-REPAIR-01과 **문자 그대로 동일**.
+
+- synthetic: `NameError: name 'REGIME_INDEX' is not defined` · `simulate_regime_switching_ohlcv` L217 listcomp (`File "<string>"` = `_spawn_python_exec`)
+- OOS: `mutant_oos_validator.py` L604 `IndentationError: unindent does not match any outer indentation level`
+
+새 예외 아님.
+
+### 2) 시계 (전부 KST 환산)
+
+| 이벤트 | 시각 |
+|--------|------|
+| 토 00:00 합성 위성 로그 mtime | **2026-09-26 00:00:21 KST** (`2026-09-25T15:00:21Z`) |
+| 토 03:00 OOS 위성 로그 mtime | **2026-09-26 03:00:19 KST** |
+| `90c2d90` CAT-H-REPAIR | **2026-09-26 18:15:40 +0900** |
+| 디스크 `.py` mtime (syn/OOS) | **2026-09-26 22:20:59 KST** (`13:20:59Z`) |
+| `dante-factory` / `--daemon` 기동 | **2026-09-27 00:01:33 KST** PID 2399283 |
+
+슬롯 ≪ 수리 커밋 ≪ 파일 반영 ≪ **현재 데몬**. 데몬이 수리보다 먼저 떠 있던 경우가 **아님**.
+
+### 3) 왜 NAV훅형 "옛 모듈 상주"가 아닌가
+
+토 HTC는 `system_auto_pilot._spawn_satellite_argv` → **새 `Popen`**. 합성은 `python -c`로 디스크 `import`, OOS는 `mutant_oos_validator.py` 스크립트 실행. 데몬 프로세스에 올라간 모듈을 그대로 돌리지 않음.
+
+지금 디스크: `REGIME_INDEX` 정의 있음 · OOS `ast.parse` **ok**. 해당 `__pycache__/*.pyc` **없음**(스테일 pyc 가설 약함).
+
+`update_factory.sh`는 `systemctl restart dante-factory.service` 포함. 현재 유닛이 그 데몬.
+
+### 4) DoD
+
+**타이밍** — 9/26 00–03은 수리 전 디스크. 10/3은 현 파일로 새 프로세스. 관측 일정 유지. KR macro 10/11 유지.
+
+---
+## OUTBOX — CAT-H-OBSERVATION-01 · 베이스라인 · 2026-09-27
+
+코드 0. 승인 게이트 **끄지 않음**(이미 OFF). 자동병합·배선 **안 함**. GP_MUT_GP_0009 재소환 **안 함**.
+
+### 🔴 [0] APPROVE_PENDING_MUTANTS_TO_INCUBATOR
+
+VPS `config_kv` **`false`**. `AUTO_PROMOTE_GP_MUTANTS` 키 없음. 관측기간(10/3·10/10·10/17·10/24) **OFF 유지**.
+
+### [2] 사이클 장부 — 2026-09-26 (관측 시작 전 토, 참고 베이스)
+
+자동 슬롯(토 00–03:20 KST) vs 당일 스모크 JSON은 **분리**.
+
+| 단계 | 위성 mtime | err |
+|------|------------|-----|
+| synthetic | `satellite_synthetic_lab_sat0000.log` 00:00 | **ERR** (`REGIME_INDEX` NameError — 수리 전 슬롯) |
+| incubator | `incubator_sat0200` 02:00 | **OK** (평가 1000·상위 10 · SIDEWAYS · 스테일 큐브 가능) |
+| OOS | `mutant_oos_sat0300` 03:00 | **ERR** (L604 IndentationError — 수리 전 슬롯) |
+| pending | `mutant_pending_bridge_sat0310` 03:10 | **OK(0)** 로그 `(0, 'promoted 비어 있음')` |
+| immune | `clustered_immune_vaccine_sat0320` 03:20 | **OK** (용량 15≤500) |
+
+`validated_live_mutants.json` (스모크, 09:06Z): `pipeline_ok=True` · `gate_result=ok_zero` · **promoted 0 · 이름 없음** · `last_promoted_at=None` · json age ~28h at 조회시각. **자동 주기는 아님.**
+
+VPS HEAD **`e6c1eef`**. CAT-H-REPAIR-01(`90c2d90`)는 ancestor → **첫 자동 수리 사이클 = 10/3**. 9/26 자동 ERR은 배포 전 잔여 로그.
+
+### PENDING_MUTANTS
+
+누적 **5건**. `updated_at=2026-07-19 04:05:59`. 이름 `GP_0529, GP_0262, GP_0092, GP_0749, GP_0009`. **9/26 자동병합 없음**(게이트 false + promoted 빈 배열). 이번 주 신규 적재 아님 → Phase 0-④ 1~2단계 **미적용**. `GP_0009`는 소표본 재소환 금지 대상과 이름만 겹침 — 승격 후보로 **보고하지 않음**.
+
+### KR macro EXCL n (병행, 숫자만)
+
+직전 RO 2026-09-26: **KR EXCL n=209** (US10Y ρ=+0.077 / FX ρ=−0.074). 이번 세션 재검정 **안 함**. 다음 체크 **2026-10-11** 전후.
+
+### DoD 메모 (4주 후)
+
+지금 promoted 0 = 자동경로 **고장난 0**(9/26 syn/OOS ERR) + 스모크 **정상적 0**(gate ok_zero). 10/3부터 자동 5단계가 OK(0)|ERR|STALE인지로 구분.
+
+**Claude:** 베이스라인 확인만. 다음 Cursor 입력 = 10/3 사이클 장부.
+
+---
+
+## OUTBOX — PHASE0-GOVERNANCE-04 · 2026-09-27
+
+코드 0. **Claude OK: 2026-09-26** (디렉터 승인 반영).
+
+SSOT: `docs/work_phases/04_묶음D_작업지시서.md` § Phase 0-④.  
+4단계: BH-FDR → 서브셋(dyn_rs) · 창매칭(CorrKelly) · n≥30(GP_MUT) → 섀도우 2~4주 → Critical은 디렉터만.
+
+Phase 0-② 모델링 판정은 **기록 안 함** (승인 대기).
+
+**CLOSED 반영:** DSR-MINIMAL-DEPLOY-CHECK-01 · KR-CANDLE-HEALTH-RED-RO  
+**메모:** `dsr_warn_count` 지금 0은 정상. 다음 meta_governor 사이클.
+
+---
+
+## OUTBOX — DSR-MINIMAL-DEPLOY-CHECK-01 · 2026-09-26
+
+**배포 전:** VPS/origin HEAD `bc2a818`에 DSR 코드 없음. 로컬 uncommitted만.
+
+**조치:** 단독 커밋 **`e6c1eef`** (`strategy_promotion_engine.py` · `validation/walk_forward.py` · `tests/test_dsr_minimal_promotion.py`). 테스트 13 passed. VPS `git pull` fast-forward 확인. `stamp_registry_dsr_observe_meta` 존재.
+
+**첫 태그 시각:** **없음.** `strategy_registry` upsert가 `meta.dsr_gate`를 저장하지 않음. 관측은 `run_registry_lifecycle` → `META_REGISTRY_CYCLE_STATS` (`dsr_warn_count`). 다음 meta_governor 사이클 전엔 발생 0이 정상.
+
+**참고:** `UPDATE_FACTORY_SKIP_DATA_HEAL=1 sudo`는 sudo가 env를 버려 heal이 또 돌아감. 코드 배포는 heal 전에 완료됨.
+
+---
+
+## OUTBOX — KR-CANDLE-HEALTH-RED-RO · 2026-09-26
+
+코드 0.
+
+### 1) RED가 보는 것
+
+`scripts/post_update_data_health.py` → `evaluate_staleness`.  
+RED = 청산 워터마크 영업일 lag≥2 **그리고** `KR_KOSPI_IDX` 최신일이 앵커 대비 비신선(lag>1). **개별 종목 누락봉 스캔 아님.**
+
+실측(9/26 배포 로그 + `KR_KOSPI_IDX` DESC):
+
+| 항 | 값 |
+|----|-----|
+| 청산 wm | 2026-09-04 · lag 15 (KR LOCKDOWN·이후 청산 0과 일치) |
+| 세션 앵커 | 2026-09-25 |
+| 시장캔들 | **2026-09-23** · 캔들 lag 2 |
+| US | YELLOW · 캔들 2026-09-25 신선 |
+
+### 2) 8/24부터인가
+
+아님. 지수 테이블은 9/8~9/23이 채워져 있고 **9/24·9/25만 비어 있음**(이번 주 목·금). 장기 정체가 아니라 최근 2세션.
+
+### 3) SCORE-PREDICTIVE (n=462, KR214/US248, ≤9/25) 오염?
+
+겹침은 달력상 있으나, KR 214건 청산은 워터마크상 **9/4 이전**. 이번 KOSPI 갭은 그 후. US 248은 캔들 신선. **「랜덤 점수 = 나쁜 KR 캔들 오염」으로 뒤집 근거 약함.** 급하지 않음 유지.
+
+KRX 로그인 실패는 수급 HOLD와 같은 줄기. 지수 09-23까지는 다른 경로로 들어온 상태.
+
+---
+
+## OUTBOX — IDLE-CLOSED · 2026-09-26
+
+코드 0. 새 Handoff 없음.
+
+**CLOSED**: ENTRY-ATR-OVERLAY-01 Phase 1 · DOCS-SYNC-01 · CORRKELLY-US-PF-RO  
+**백로그만**: KR-CANDLE-HEALTH-RED-RO (급하지 않음)  
+**다음 열림**: entry_atr Phase 2 = 2~4주 관측 누적 후 재요청  
+**디렉터**: Bitget 실적·B0는 코인 창.
 
 ---
 
