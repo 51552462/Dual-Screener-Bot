@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | **달력 대기.** 새 Handoff 없음. 수급 HOLD |
-| **sub-phase** | 없음 (장부만: CAT-H-OBSERVATION-01) |
-| **status** | **WAIT_DIRECTOR** (구현 금지) |
-| **다음** | **10/3** CAT-H 5단계 · **10/11** KR EXCL n · entry_atr Phase 2는 10월 중순 후. B-4·CAT-H 전체 `test_*` 안 염 |
-| **앵커** | `SYNC-2026-09-27-IDLE` |
+| **지금 디렉터** | `CURSOR_TO_CLAUDE.md` 수급 persist 스모크 검증 중계. 달력 10/3·10/11 유지 |
+| **sub-phase** | SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 |
+| **status** | **WAIT_CLAUDE_OK** |
+| **다음** | 9/24–25 표 지연은 관측. 게이트/B-4 안 염 |
+| **앵커** | `SYNC-2026-09-28-KRX` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---

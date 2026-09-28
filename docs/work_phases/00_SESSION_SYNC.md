@@ -1,11 +1,11 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-27 · **앵커 ID**: `SYNC-2026-09-27-IDLE`
+> **갱신**: 2026-09-28 · **앵커 ID**: `SYNC-2026-09-28-KRX`
 
 ### 상시 HOLD (Cursor·Claude 세션 응답 **마지막 줄**, 해제 전까지)
 
-`HOLD: KRX 일반 ID/PW(비네이버) 재가입되면 .env 후 SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 스모크.`
+수급 HOLD **해제**(2026-09-28). 마지막 줄 고정 문구 없음.
 
 ---
 
@@ -44,12 +44,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-27-IDLE` |
-| **마지막 갱신** | 2026-09-27 — CAT-H-ERROR-SIGNATURE **CLOSED** · Track A **달력 대기** (10/3·10/11) |
+| **앵커 ID** | `SYNC-2026-09-28-KRX` |
+| **마지막 갱신** | 2026-09-28 — KRX 일반 로그인 **통과** · `kr_investor_flow` 2026-09-23 **415행** · 9/24–25 표 0행 |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | 없음 |
-| **직전 완료** | CAT-H-ERROR-SIGNATURE-CHECK-01 · PHASE0-GOVERNANCE-04 · DSR-DEPLOY · KR-CANDLE |
-| **다음** | **10/3** CAT-H 관측. 새 구현 없음. Bitget은 코인 창 |
+| **진행 중 sub-phase** | SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 |
+| **직전 완료** | CAT-H-ERROR-SIGNATURE-CHECK-01 · 달력 대기(10/3) 유지 |
+| **다음** | Claude가 persist 스모크 검증. 10/3 CAT-H 장부. Bitget은 코인 창 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -101,7 +101,7 @@
 [KR/US] SMARTMONEY-SOURCE-REVIVE-01 · **1단계 RO** · iframe 대체 HTML **없음** · SPA `/market/stock/kr/trend/foreigner` 등 200 · 2단계 대기
 [KR/US] KRX-OPENAPI-SMOKETEST-01 · **RO** · OpenAPI에 투자자별 실적 **없음** · 키≠KRX_ID/PW · WAIT_CLAUDE_OK
 [KR/US] KRX-MARKETPLACE-PRICING-RO-01 · **RO** · 유료상품 심사·파일 · **후순위** · WAIT_CLAUDE_OK
-[KR/US] SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · **HOLD** · 네이버SSO≠pykrx · 탈퇴 후 재가입 대기 · 스모크 미완
+[KR/US] SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · **스모크 2026-09-28** · 로그인 OK · persist 415@2026-09-23 · 9/24–25 n=0 · WAIT_CLAUDE_OK
 [KR/US] CORRKELLY-US-PF-RO · **CLOSED 2026-09-26** · Claude OK (c)판단보류 · 회피필터 미등록
 [KR/US] ENTRY-ATR-OVERLAY-01 · **CLOSED 2026-09-26** · Phase1 OBSERVE · `bc2a818` · Phase 2는 2~4주 후
 [KR/US] DOCS-SYNC-01 · **CLOSED 2026-09-26** · 09/11/IV_03 내용갱신 · 12는 규칙서(JSON이 실데이터)

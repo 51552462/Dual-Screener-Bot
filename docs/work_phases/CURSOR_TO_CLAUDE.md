@@ -3,10 +3,44 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-27 · IDLE 달력대기 · 수급 HOLD
+> **갱신**: 2026-09-28 · SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 스모크
 
 ---
 
+## OUTBOX — SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · 스모크 · 2026-09-28
+
+코드 0. 자격 값·로그인 ID는 안 적음. pykrx가 stdout에 ID를 찍으니 **로그를 채팅에 붙이지 말 것**.
+
+### 자격
+
+VPS 팩토리 `.env`: `KRX_ID`/`KRX_PW` **SET**(따옴표 없음). 로컬 레포 `.env` 파일은 없음(스모크는 VPS만).
+
+pykrx 1.2.8: **`KRX 로그인 완료`**. 이전 `자격 증명을 확인하세요` / 환경변수 미설정과 **다름**. 일반 계정으로 통과한 것으로 봄.
+
+### 표
+
+| 일자 | KOSPI 외국인 순매수 n |
+|------|----------------------|
+| 20260925 | **0** Length mismatch (0열 vs 8열) |
+| 20260924 | **0** 동일 |
+| 20260923 | **897** |
+| 20260922 | **897** |
+
+월요 오전에 최신 1~2영업일 표가 아직 안 열린 패턴으로 보임(자격 실패 아님).
+
+### persist
+
+`_try_pykrx_flow_leaderboard(20260923)` OK **415종** → `kr_investor_flow` **415행** (`source=pykrx_smoke`).
+
+`dante-factory` 재시작 **2026-09-28 10:44:47 KST** — systemd `EnvironmentFile=.env`.
+
+### DoD
+
+1단계(로그인) **통과**. 2단계(당일 최신 표)는 9/24–25 아직 0. 우회 적재는 9/23로 수행.
+
+수급 HOLD **해제**. CAT-H 10/3 달력은 유지.
+
+---
 ## OUTBOX — CAT-H-ERROR-SIGNATURE-CHECK-01 · CLOSED · 2026-09-27
 
 **Claude OK: 2026-09-26.** 판정=순수 타이밍. 재조치 없음.

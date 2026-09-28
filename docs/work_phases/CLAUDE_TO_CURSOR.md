@@ -4,11 +4,12 @@
 > `Downloads/*` 복사본 merge 전까지 **본 경로 우선**.
 
 > **작성**: Claude Pro **만** (디렉터 채팅 중계 · Cursor 랜딩 2026-09-12)  
-> **현재**: **IDLE** · 2026-09-27 · 급한 Track A Handoff 없음 · 달력 10/3 CAT-H · 10/11 KR macro n
+> **현재**: 수급 persist 스모크 **WAIT_CLAUDE_OK** · 달력 10/3 CAT-H · 10/11 KR n
 
 ---
 
 CLOSED 반영: CAT-H-ERROR-SIGNATURE-CHECK-01 · DSR-MINIMAL · KR-CANDLE · CORRKELLY · ENTRY-ATR Phase1 · Phase 0 작업함 닫음(0-② 코드 미착수)  
+수급: 2026-09-28 로그인 OK · persist 415@9/23 · 9/24–25 표 0행  
 안 염: B-4(DSR LIVE 하드 전) · CAT-H 전체 test_*  
 다음 열림: 10/3 관측 장부 · entry_atr Phase 2 = 2~4주 후
 
