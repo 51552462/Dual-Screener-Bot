@@ -7,6 +7,32 @@
 
 ---
 
+## CAT-L-FENCE-02 Step 2 [2026-09-27] · **APPLIED · WAIT_CLAUDE_OK**
+
+- slice `bitget-cron-heavy.slice` Max=1610612736 High=1288490188. (a) 28줄 root+systemd-run. (b) enqueue 1줄·(c) ubuntu 유지
+- 프로브 sleep cgroup: `.../bitget-cron-heavy.slice/...` (cron.service 아님). 실스캔 완주 캡처는 16:01 UTC `scan_spot_ema5_r2`
+- 롤백: P0 스냅샷. 생성기 미동기화
+- 비접촉: CAT-A · C-2/MDD5%/live
+
+---
+
+## CAT-L-FENCE-02 Phase 1 Step 1 [2026-09-27] · **WAIT_CLAUDE_OK** · Step 2 미착수
+
+- Downloads Handoff prepend. cap=5400 시뮬 동시 **최악 3**. 13:55 UTC used 1.0Gi / avail 2.4Gi, 유휴 아님(nulrim-r2+dante-r2, cron.service)
+- slice/cron 미적용. 잔여: Claude 1.5G/1.2G vs 하향
+
+---
+
+## CAT-L-FENCE-02 Phase 0 [2026-09-27] · **WAIT_CLAUDE_OK** · Phase 1 미착수
+
+- 읽기전용. `/etc/cron.d/dual-screener-bitget` 원문 스냅샷: `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`
+- `crontab -l` ubuntu/root **없음**. 분류: (a) HEAVY 직행 28 · (b) enqueue 1 (`--scan-futures-ema5-r2`) · (c) OPS 9
+- 기존 RSS: 09-07 pid 640081 ≈897M · 09-25 pid 44321 `scan_futures_supernova` anon-rss≈80.7MB / total-vm≈2.1G · 09-14는 queue-worker 143 (RSS 없음)
+- CAT-A 비접촉 · cron 미수정 · C-2/MDD5%/live 비접촉
+- 잔여: Claude가 (a) 확인 후 Phase 1
+
+---
+
 ## 갱신 규칙
 
 | 누가 | 언제 | 무엇 |
@@ -16,6 +42,84 @@
 | **디렉터** | 2~4주 후 | `06` 효과 검증 표 |
 
 **Claude OK 없이 sub-phase Done 처리 금지.**
+
+---
+
+## FULL-BT-FUT-RUN-2 실런 [2026-09-27] · **WAIT_CLAUDE_OK**
+
+- start=2025-10-31 · run_id `pilot-fut-20260927T040953Z` · bypass unset · prod trades 11→11 · exception 0 · defcon_bypassed 0
+- HIST3FIX 비접촉. 갭#4 프로덕션 미적용
+- 상세: `lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md`
+
+---
+
+## A5-EVENTLOG-01 — A-1~A-5 ops_events 계측 [2026-09-26] · DEPLOYED · WAIT_2~4W_ACCUMULATION
+
+**Claude OK: 2026-09-26** — 스펙 일치 · 회귀 42 passed + 신규 6 passed · 게이트/threshold/EFFECTVERIFY 집계 비접촉 확인.
+A-3 `symbol=null` 편차 수용(재조회 금지 원칙 우선 — `resolve_max_leverage`에 symbol 인자 없음).
+
+- 이벤트 5종: `portfolio_mdd_tier_transition`(전이분만, 스팸방지 확인) · `tail_fund_debit` · `leverage_clamped` · `gross_notional_blocked` · `config_write_rejected`
+- 롤백: `A1A5_EVENT_LOG_ENABLED=false` (판정·logger는 그대로)
+- 배포 직후 0건 = 정상(kv 현재 TIER=NORMAL, 전이 나기 전까지 A-1 무적재)
+- 잔여: **2~4주 적재 후 A-EFFECTVERIFY-01 재실행** → `06` 3단계(유지/롤백/추가조정) 재판정
+- 비접촉: 게이트 로직 · threshold · 반환값 · C-2 · MDD5% · live
+
+---
+
+## A-EFFECTVERIFY-01 [2026-09-26] · **WAIT_CLAUDE_OK**
+
+- 읽기전용 집계 `a1_a5_effect_verify_bg.py` · fixture 3 passed
+- VPS 창 08-01~09-26: A-1~A-5 **전부 null / 로그 소스 없음** · 현재 kv TIER=NORMAL NAV_PEAK=100000
+- 게이트/threshold 미변경 · C-2/MDD5%/live 비접촉
+- `06` 변경 후 열에 숫자 이식, **판정 열은 Claude**
+
+---
+
+## MASTER 3·6 디렉터 확인 대행 [2026-09-26] · **실측 완료 · 플래그 미변경**
+
+- **3** SSH `3.36.90.195` OK (`up 4:20`). staging COUNT 302/302/302 · first 2025-10-31 · last 2026-08-30. bypass 키 없음. **실런 없음**
+- **6** `BITGET_PIPELINE_SSOT` ABSENT → `pipeline_ssot_env=0` FAIL (00과 동일). `BITGET_ASYNC_TELEGRAM=1`. pgrep `bitget.main`/`factory_launcher` 없음. factory+async **active**. `bitget.sh --cutover-check`는 로그 파일 비어 있는 채 지연(이번 미수정)
+- 비접촉: PIPELINE_SSOT=1 전환 · CAT-B 갭#4 · CAT-L · C-2
+
+---
+
+## MASTER 순서 1·2 문서 [2026-09-26] · **CLOSED** (문서 🟢 · `06` 비대상)
+
+**Claude OK: 2026-09-26** — Mirror 요지·체크리스트 문구 스펙 일치. 1·2 이걸로 닫음.
+
+---
+
+## A-LIFECAP-01 ENFORCE 전환 [2026-09-26] · **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM**
+
+**Claude OK: 2026-09-26** — ENFORCE=true 승인. 근거: 48h 4852줄 전량 4.1~31.3배 cap 초과(오탐 0), pid=44321 인과 확인(WOULD_KILL 이후 14h42m 뒤 실제 OOM kill). data_refresh cap 분류 확인 대기.
+
+- **전환**: 서버 `.env` `BITGET_JOB_LIFECAP_ENFORCE=true` + sqlite `set_config_value` · 코드 diff 없음
+- **data_refresh**: **의도적 OPS cap=1800** (실측 WOULD_KILL cap=1800) · 버그 아님 · 코드 미변경
+- **첫 tick 09:15:01 UTC**: `LIFECAP ENFORCE kill` **0건** · `job_starts=[]` (리부트 후 대상 없음) · 플래그는 sqlite=True / env=true
+- **48h 원문 판정 요약**: WOULD_KILL은 정상 12분 스캔 오탐이 아님. cron 좀비 age ≫ 5400s. shadow는 로그만 했고, 09-25 OOM 전에 14h+ 경고.
+- flock 8번째 테스트: 비블로킹 후속
+- observability: LIFECAP는 파일 로그 · journalctl 0 — **이번 미수정**, 다음 CAT-L 후보
+- 비접촉: crontab 재설치 · C-2 · MDD5% · live · CAT-N
+- 잔여: 첫 실킬 원문(다음 over-cap 스캔) · CAT-L 3회 재발은 별도 WAIT_DIRECTOR
+
+---
+
+## A-LIFECAP-01 + CAT-L 재기동 진단 [2026-09-26] · **WAIT_CLAUDE_OK**
+
+- SSH `ubuntu@3.36.90.195` (`ip-172-26-7-213`) · ENFORCE/kill 미접촉
+- 오늘 이벤트: 08:49 UTC **정상 poweroff**(Lightsail Stop). 디스크 45%. 커널 패닉 아님
+- 직전 부트 **09-25 14:42 UTC global_oom** · `task_memcg=/system.slice/cron.service` python pid=44321 (`scan_futures_supernova`) · cron 유닛 oom-kill 후에도 54314/58894/62167 잔존
+- LIFECAP 파일 로그 4852줄 WOULD_KILL · 첫 `[2026-09-25 00:00:10]` · age ≫ 5400s · **오탐 0 아님** · journalctl 키워드 0
+- 잔여: Claude ENFORCE Handoff 여부 · 전체 scan 큐 확대는 별도 Ask
+
+---
+
+## A-LIFECAP-01 — 48h 관측 시도 [2026-09-26] · **WAIT_DIRECTOR (SSH)**
+
+- 데스크톱에서 `git fetch`: `main` already `origin/main`. kill/ENFORCE 미접촉
+- SSOT IP `43.202.40.136` SSH timed out. 디렉터 IP `52.78.197.105` 재시도: TCP는 잡히다 **SSH handshake timeout** (`Connection established` → write timed out). 원문 미수집
+- **오탐 0 미판정** (조회 실패 ≠ 로그 0건)
+- 잔여: 현재 Bot-2 공인 IP → journalctl/watchdog `LIFECAP WOULD_KILL` 원문 → OUTBOX
 
 ---
 

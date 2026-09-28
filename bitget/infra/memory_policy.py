@@ -108,6 +108,10 @@ AI_PROPOSAL_APPROVAL_POLL_ENABLED: bool = True
 # D-3a weekly cost observability (read-only)
 COST_REPORT_ENABLED: bool = True
 COST_REPORT_WINDOW_DAYS: int = 7
+# CAT-F A-EFFECTVERIFY-01 — 읽기전용 집계 kill-switch (default on)
+A1A5_EFFECT_VERIFY_ENABLED: bool = True
+# CAT-F A5-EVENTLOG-01 — A-1~A-5 ops_events 계측 kill-switch (default on)
+A1A5_EVENT_LOG_ENABLED: bool = True
 # I-GMM-DNA-01b weekly DNA/Cos observability (read-only)
 GMM_DNA_ALPHA_REPORT_ENABLED: bool = True
 GMM_DNA_ALPHA_REPORT_WINDOW_DAYS: int = 7

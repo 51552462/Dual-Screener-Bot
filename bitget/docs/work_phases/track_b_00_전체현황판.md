@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **A-LIFECAP-01 WAIT_CLAUDE_OK** (shadow) · L-3b 계속 관측 | C-2/MDD5%/live 🔴 defer |
-| 마지막 갱신 | 2026-09-23 | A-LIFECAP-01 Claude OK shadow · WAIT_48H_OBS · ENFORCE=false |
+| **다음 Handoff** | **없음** (FENCE-02 Step 2 적용 검증) | A5-EVENTLOG 2~4주 · C-2/MDD5%/live 🔴 |
+| 마지막 갱신 | 2026-09-27 | FENCE-02 slice 1.5G/1.2G 적용 · 실스캔 cgroup 16:01 UTC |
 
 ---
 
@@ -41,15 +41,15 @@
 | paper 신호 신뢰 | C-1 **Claude OK** · C-1b 집계 구현 | `06` skip률 관측 (`skip_rate_pct` v1 null) | 🟡 2 |
 | paper PnL 현실 | funding 미차감 | **C-2 defer** (close PnL 오염) | 🔴 3 |
 | 서버 디스크/백업 | L-1/L-2 **서버 설치 확인** 2026-09-14 | df 38% · logrotate+backup.timer 실측 | ① 디렉터 |
-| 4GB RAM | L-3a **Claude OK** (drop-in 실측 2건) | L-3b canary 2회(15:07 UTC) 관찰 | ① Cursor 캡처 |
-| cutover | `pipeline_ssot_env=0` FAIL | env 점검 | ① 디렉터 |
+| 4GB RAM | L-3a OK · FENCE-02 **Phase 0** | cron 직행 26 scan + audit/weekly still `cron.service` | Claude Phase 1 |
+| cutover | **FAIL 유지** (`BITGET_PIPELINE_SSOT` 없음=0) 09-26 실측 | ASYNC=1 · main 없음 · factory active · **1로 안 올림** | Claude 4 참고 |
 | 실전 | OFF | exit·parity·P2-5 | 🔴 금지 |
 
 **병렬 Attribution (확정 운영 규칙)**
 
 | Layer | 내용 | paper 중 |
 |-------|------|----------|
-| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · L **캡처 없음** · **CAT-L WAIT_DIRECTOR** |
+| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · FENCE-02 Phase 0 · **WAIT_CLAUDE_OK** |
 | **2** | **C-1** → **D-1~D-3** · P0-6 / P1-7 설계 | D 트랙 ✅ · **POST_DEPLOY_OBS** · overseer❓ |
 | **3** | MDD 5% · B-2 live · B-3 block · B-4b · **C-2/C-3** · 실전 | `06` / Go-No-Go **후** |
 
@@ -122,14 +122,14 @@
 
 ## Phase 간 충돌/의존성 체크리스트
 
-- [ ] A-1 NAV MDD tier가 N execution_safety gate #4와 **동일 threshold** 인가
+- [x] A-1 NAV MDD tier = N execution_safety **gate 6**(`evaluate_portfolio_mdd_tier`)과 동일 함수 직접 공유 — 확인 완료. *(기존 문구 "gate #4"는 오기; CAT-N §3 확정 넘버링은 6. 2026-09-26 Claude 확인)*
 - [x] A-2 tail fund debit이 A-1 `evaluate_portfolio_mdd_tier` NAV/dd_pct를 **동일 SSOT로 재사용**하는가 (분열 여부 추적 — tail 쪽 완료)
 - [x] A-4 gross notional이 A-1 `evaluate_portfolio_mdd_gate` NAV/**nav_current**를 **동일 SSOT로 재사용**하는가 (gross gate 7 — A-4 완료)
 - [x] A-5 config write reject가 A-3 `MAX_LEVERAGE=5` 운영 clamp와 **독립**인가 (bound [1,10] ≠ ops cap 5)
 - [x] B-2 deathmatch alloc shadow 시 F Kelly chain **충돌 없음** (shadow on/off `sim_kelly_invest` 동일 · prod alloc off)
 - [x] B-3 walk-forward shadow 시 registry/config/INCUBATOR **불변** (weekly batch only · factory scan 미통합)
 - [x] B-4 lifecycle MAB budget **소비처 없음** — `MAB_EXPLORE_BUDGET_CURRENT` config log only · Kelly/shadow 불변
-- [ ] C-2 funding PnL이 D ledger close formula와 **일치**
+- [ ] C-2 funding PnL이 D ledger close formula와 일치 *(의도적 defer — B2 단계 전 착수 자체가 로드맵 §0.4 금지. "미확인 방치"가 아니라 "아직 손대면 안 됨"임을 명시. 착수 조건: B2 진입)*
 - [x] C-1 bad tick filter가 E exit trigger **오탐** 없음 (구현 ✅ · `06` 효과 대기)
 - [x] D-2 human gate가 K config write path **앞단**에 있는가 (구현 ✅ · Critical 승인 ✅ · poll 배선 ✅ · **서버 기동=디렉터**)
 - [x] D-3a cost report가 weekly_evolution에서 **read-only** ops만 쓰는가 (구현 ✅ · basis null · Claude OK 2026-08-04)
@@ -191,7 +191,8 @@
 | `PORTFOLIO_MDD_BLOCK_PCT` | BLOCK tier (ratio, default 0.20) | A-1 | config_kv |
 | `PORTFOLIO_MDD_HALT_PCT` | HALT tier (ratio, default 0.30) | A-1 | config_kv |
 | `PORTFOLIO_MDD_REDUCE_SIZE_MULT` | REDUCE Kelly mult (default 0.5) | A-1 | config_kv |
-| `PORTFOLIO_NAV_PEAK` | treasury NAV monotonic HWM (state) | A-1 | config_kv |
+| `A1A5_EFFECT_VERIFY_ENABLED` | A-1~A-5 효과검증 집계 kill-switch (default true) | A-EFFECTVERIFY-01 | config_kv / env / memory_policy |
+| `A1A5_EVENT_LOG_ENABLED` | A-1~A-5 ops_events 계측 (default true) | A5-EVENTLOG-01 | config_kv / env / memory_policy |
 | `PORTFOLIO_MDD_CURRENT_TIER` | NORMAL/REDUCE/BLOCK/HALT (state) | A-1 | config_kv |
 | `TAIL_FUND_CONSUMPTION_ENABLED` | tail fund drawdown debit 킬스위치 (default true) | A-2 | config_kv |
 | `evaluate_tail_fund_gate` | tail exhausted + BLOCK escalate (auxiliary) | A-2 | `tail_risk_gate.py` |

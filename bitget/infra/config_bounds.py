@@ -104,6 +104,21 @@ def validate_config_write_reject(key: str, value: Any) -> tuple[bool, Optional[s
     if num != num:
         return False, "nan"
     if num < lo or num > hi:
+        try:
+            from bitget.infra.a1_a5_event_log import emit_a1a5_event
+
+            emit_a1a5_event(
+                "config_write_rejected",
+                {
+                    "config_key": str(key),
+                    "attempted_value": value,
+                    "bound_min": lo,
+                    "bound_max": hi,
+                },
+                component="bitget.infra.config_bounds",
+            )
+        except Exception:
+            pass
         return False, f"out_of_range[{lo},{hi}]"
     return True, None
 

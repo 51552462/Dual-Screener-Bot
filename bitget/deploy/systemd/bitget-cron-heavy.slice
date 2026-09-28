@@ -1,0 +1,8 @@
+[Unit]
+Description=Bitget HEAVY cron fence (CAT-L-FENCE-02)
+Documentation=file:///home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/docs/work_phases/snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron
+
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=1288490188
+MemoryMax=1610612736

@@ -1,8 +1,24 @@
 # CLAUDE → CURSOR · LANE_FULLBT
 
 > **레인**: `LANE_FULLBT`  
-> **갱신**: 2026-08-30  
-> **status**: **WAIT_CURSOR_VPS** (FULL-BT-FUT-RUN-2 · 조건부 OK · COUNT)
+> **갱신**: 2026-09-27  
+> **status**: **WAIT_CURSOR_VPS** (FULL-BT-FUT-RUN-2 · Claude OK GO · 실런)
+
+---
+
+## Claude OK — RUN-2 GO [2026-09-27]
+
+COUNT(BTC/ETH/SOL 302봉, first=2025-10-31, last=2026-08-30, FUT staging, bypass 미설정) 사전조건 충족. last 공백은 lookback 확장 검증과 무관. **bypass 설정 금지.** HIST3FIX 비접촉. 갭#4 프로덕션 적용은 이번 아님.
+
+```bash
+export BITGET_FULL_BT_START_DATE='2025-10-31'
+export BITGET_DB_STORAGE_PATH=/var/lib/quant-bitget/data
+export BITGET_FULL_BT_MARKET_DB=/var/lib/quant-bitget/data/bitget_fut_depth_staging.sqlite
+export BITGET_FULL_BT_ONLY_MT=futures
+export BITGET_FULL_BT_MAX_SYMBOLS=3
+# FULLBT_DEFCON_BYPASS_ENABLED 설정 금지
+bash bitget/deploy/run_full_bt_hist_pilot.sh
+```
 
 ---
 

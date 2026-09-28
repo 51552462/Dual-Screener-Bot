@@ -260,6 +260,22 @@ def process_tail_fund_drawdown_on_snap(cfg: dict, mdd_snap: dict) -> dict[str, A
         _persist_tail_fund_balances(cfg)
 
     balance_after = tail_fund_total_usdt(cfg)
+    if debit > 0:
+        try:
+            from bitget.infra.a1_a5_event_log import emit_a1a5_event
+
+            emit_a1a5_event(
+                "tail_fund_debit",
+                {
+                    "debit_amount": debit,
+                    "tail_balance_before": balance_before,
+                    "tail_balance_after": balance_after,
+                    "trigger_tier": tier,
+                },
+                component="bitget.trading.tail_risk_gate",
+            )
+        except Exception:
+            pass
     gate = evaluate_tail_fund_gate(balance_after, tier)
     return {
         **gate,

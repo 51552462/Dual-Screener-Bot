@@ -60,11 +60,11 @@
 
 | 항목 | 변경일 | 변경 전 | 변경 후 (2~4주) | 판정 |
 |------|--------|---------|----------------|------|
-| A-1 NAV MDD tier | 2026-08-01 | _(paper 배포 전)_ | tier 전이 로그·NAV MDD | _(대기)_ |
-| A-2 tail fund debit | 2026-08-02 | _(paper 배포 전)_ | debit 이벤트·잔액 추이 | _(대기)_ |
-| A-3 leverage clamp | 2026-08-02 | _(paper 배포 전)_ | clamp 발생 빈도 | _(대기)_ |
-| A-4 gross notional block | 2026-08-02 | _(paper 배포 전)_ | 차단 이벤트·gross/NAV | _(대기)_ |
-| A-5 config reject | 2026-08-02 | _(paper 배포 전)_ | reject 로그·meta_sync | _(대기)_ |
+| A-1 NAV MDD tier | 2026-08-01 | _(paper 배포 전)_ | **null** · 소스 없음(ops_events에 tier 이벤트 0). 현재 kv `PORTFOLIO_MDD_CURRENT_TIER=NORMAL` · `NAV_PEAK=100000` (이력 아님) | _(대기 · Claude 3단계)_ |
+| A-2 tail fund debit | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 | _(대기 · Claude 3단계)_ |
+| A-3 leverage clamp | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 (클램프는 logger.info만, ops_events 미기록) | _(대기 · Claude 3단계)_ |
+| A-4 gross notional block | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 | _(대기 · Claude 3단계)_ |
+| A-5 config reject | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 (reject는 logger.warning, ops_events 미기록) | _(대기 · Claude 3단계)_ |
 
 **판정**: `유지` / `롤백` / `추가조정`
 

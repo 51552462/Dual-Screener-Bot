@@ -6,6 +6,58 @@
 
 ---
 
+## Mirror — 2026-09-26 · [CAT-F] · A5-EVENTLOG-01 구현 검증
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 맞게 반영된 점: 이벤트 5종·A-1 전이분만 insert(스팸방지)·kill-switch·게이트/threshold/EFFECTVERIFY 집계 비접촉·회귀 42+신규 6 — Handoff 스펙 100% 일치
+- 빠졌거나 불일치: A-3 `symbol=null` — 원 Handoff는 필드로 요청했으나 `resolve_max_leverage`에 symbol 인자 자체가 없어 재조회 금지 원칙과 충돌. Cursor가 원칙 우선으로 null 처리 — 타당하여 수용
+
+### 추가 제안 (Handoff 범위 밖, 지금 착수 금지)
+| # | 제안 | Layer | 우선순위 | 근거 |
+|---|------|-------|----------|------|
+| 1 | 호출부(caller)에 이미 있는 symbol 로컬변수를 `resolve_max_leverage`에 파라미터로 얹는 저비용 시그니처 확장 검토 — 새 조회 아님, 호출부 인자 전달만 | 🟢 2 | 낮음 | 지금 급하지 않음. A-3 이벤트 분석 시 심볼별 분해가 필요해지면 그때 별도 Handoff |
+| 2 | CAT-N_FastSafety.md에 "A-3 이벤트 symbol=null(설계상)" 한 줄 동기화 | 🟢 2(문서) | 낮음 | 다음 세션 혼동 방지 |
+
+### Cursor와 다른 의견 (있으면)
+- 없음. null 처리 판단에 동의.
+
+### 다음 Handoff 후보 재정렬
+1. (설계 아님) 2~4주 대기 — A5-EVENTLOG-01 적재
+2. 5 — LANE_FULLBT 실런 판단 + CAT-B 갭#4
+3. 7 — CAT-L cron cgroup 근본설계 (디렉터 승인 대기)
+4. 8 — cutover flag 승격 + 48h parallel (7과 묶기 가능)
+
+### 디렉터 한 줄
+> A-1~A-5 계측 켬. 이제부터 진짜로 쌓임 — 2~4주 뒤에 다시 보면 유지/롤백 답 나옴. 그동안은 5·7 중 하나 진행해도 됨.
+
+---
+
+## Mirror — 2026-09-26 · [CAT-A/CAT-L] · A-LIFECAP-01 ENFORCE_LIVE + CAT-L cron OOM 구조 진단
+
+### 로컬 구조 이해 (Cursor 스냅샷 대비)
+- 맞게 반영된 점: shadow→ENFORCE 전환 절차(48h 관측 완주 · 오탐 0 아님 인과 확인 · data_refresh OPS 분류 설계대로) · dispatch skip-only/watchdog kill 분리 · flock 사후확인 비차단 처리 — 스펙 취지 100% 부합
+- 빠졌거나 불일치: CAT-L 4GB MemoryMax 방어(L-3)가 systemd 유닛에만 걸리고, cron이 직접 띄운 heavy scan은 `cron.service` cgroup에 남아 그 상한 밖에 있음 — 이번 OOM 3회 재발의 근본 원인. A-LIFECAP-01은 이 구멍의 **증상 완화**(오래 도는 프로세스 사후 kill)이지 **원인 제거**(cgroup 경계 밖으로 못 나가게 막음)가 아님. 이 세션에서 CAT-L 배포 경로 설계는 하지 않음(CAT-A `never_with: CAT-L deploy paths 동시 설계` 준수)
+
+### 추가 제안 (Handoff 범위 밖, 지금 착수 금지)
+| # | 제안 | Layer | 우선순위 | 근거 |
+|---|------|-------|----------|------|
+| 1 | CAT-L 전용 세션에서 "cron 직행 scan_* → enqueue 경로 전환 또는 cron에 systemd-run/cgroup 적용" 설계 | 🟡 CAT-L | 최고 | 동일 이슈 3회 재발 = 에스컬레이션 기준 충족, WAIT_DIRECTOR 유지 |
+| 2 | LANE_FULLBT 상태 확정(디렉터 VPS 확인) 후 CAT-B 갭#4 적용 재개 | 🟡 CAT-B | 높음 | 한 달째 방치, 원인·파일럿 코드 이미 존재 |
+| 3 | 효과 검증 기록표(A-1~A-5) 실측 데이터 수집 미니 Handoff | 🔴 CAT-F 인접 | 최고 | 8주 경과, 3단계 판정 누락 |
+
+### Cursor와 다른 의견 (있으면)
+- 없음 — 이번은 진단 캐치업, Cursor 구현 세션 아님
+
+### 다음 Handoff 후보 재정렬
+1. A-1~A-5 효과검증 데이터 수집 (Cursor 미니 Handoff)
+2. LANE_FULLBT VPS 확인 (디렉터)
+3. CAT-L cron cgroup 경계 근본 설계 (디렉터 승인 후)
+
+### 디렉터 한 줄
+> LIFECAP은 증상 완화, cron cgroup 구멍은 따로 고쳐야 함. 순서: 효과검증 데이터 → LANE_FULLBT 확인 → CAT-L 근본설계.
+
+---
+
 ## Mirror — 2026-08-30 · [CAT-D] · FULL-BT-FUT-DEFCON-1 SUB_DONE
 
 ### 판정

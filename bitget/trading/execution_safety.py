@@ -283,8 +283,26 @@ def evaluate_portfolio_mdd_gate(cfg: dict) -> dict[str, Any]:
     result["nav_current"] = nav_current
     result["nav_peak"] = nav_peak
     persisted = _persist_portfolio_mdd_state(cfg, nav_peak, str(result["tier"]))
-    if persisted and str(result["tier"]) == "HALT" and prev_tier != "HALT":
-        _maybe_portfolio_halt_alert(str(result["tier"]), prev_tier, result)
+    to_tier = str(result["tier"])
+    if to_tier != prev_tier:
+        try:
+            from bitget.infra.a1_a5_event_log import emit_a1a5_event
+
+            emit_a1a5_event(
+                "portfolio_mdd_tier_transition",
+                {
+                    "from_tier": prev_tier,
+                    "to_tier": to_tier,
+                    "nav_current": result.get("nav_current"),
+                    "nav_peak": result.get("nav_peak"),
+                    "dd_pct": result.get("dd_pct"),
+                },
+                component="bitget.trading.execution_safety",
+            )
+        except Exception:
+            pass
+    if persisted and to_tier == "HALT" and prev_tier != "HALT":
+        _maybe_portfolio_halt_alert(to_tier, prev_tier, result)
     return result
 
 
@@ -602,6 +620,21 @@ def evaluate_gross_notional_gate(cfg: dict) -> GateResult:
     max_pct = float(snap.get("max_gross_notional_pct") or snap.get("gross_notional_max_pct") or 0.0)
     base_meta = dict(snap)
     if snap.get("blocked"):
+        try:
+            from bitget.infra.a1_a5_event_log import emit_a1a5_event
+
+            emit_a1a5_event(
+                "gross_notional_blocked",
+                {
+                    "gross_notional": snap.get("gross_notional"),
+                    "nav_current": snap.get("nav_current"),
+                    "gross_pct": gross_pct,
+                    "cap_pct": max_pct,
+                },
+                component="bitget.trading.execution_safety",
+            )
+        except Exception:
+            pass
         return GateResult(
             ExecutionGateOutcome.GROSS_BLOCKED,
             message=(
@@ -1055,6 +1088,23 @@ def resolve_max_leverage(requested: float, cfg: Optional[dict] = None) -> float:
                 req,
                 cap,
                 cap,
+            )
+        except Exception:
+            pass
+        try:
+            from bitget.evolution.market_key_normalize import normalize_market_key
+            from bitget.infra.a1_a5_event_log import emit_a1a5_event
+
+            emit_a1a5_event(
+                "leverage_clamped",
+                {
+                    "symbol": None,
+                    "market_type": normalize_market_key("futures"),
+                    "requested_leverage": req,
+                    "clamped_to": float(cap),
+                },
+                component="bitget.trading.execution_safety",
+                severity="INFO",
             )
         except Exception:
             pass

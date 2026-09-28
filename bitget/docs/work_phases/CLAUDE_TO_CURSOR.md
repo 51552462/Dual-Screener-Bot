@@ -1,3 +1,196 @@
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 2 (최종 확정 · 적용 승인)
+
+> **작성**: Claude Pro (Architect) · 2026-09-27
+> **선행**: Phase 0 완료(28/1/9) · Step 1 완료(3-way 최악 · 2-way 526MB)
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(읽기전용)
+> **구현**: Cursor only. 게이트/판정 로직 비접촉.
+
+슬라이스 MemoryHigh=1288490188 / MemoryMax=1610612736 **확정 유지**. 역할=가두기(slice 안 킬), 3-way 절대 안 넘김이 아님.
+
+대상: (a) 28줄만. (b)/(c) 비접촉. cron.d 전체 재작성 금지. 3-way 재관측 전 수치 임의 변경 금지.
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Step 2 — 최종)
+
+---
+
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Phase 1
+
+> **작성**: Claude Pro (Architect) · 2026-09-27
+> **선행**: Phase 0 완료 — `/etc/cron.d/dual-screener-bitget` 실측 (a)28줄 직행 · (b)1줄 enqueue · (c)9줄 OPS. 롤백 스냅샷: `bitget/docs/work_phases/snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`
+> **디렉터 승인**: 2026-09-27 (옵션 A, 이 Phase 1은 그 승인 범위 내 설계 보강 — 재승인 불요, 단 아래 "설계 변경 사유" 확인 요망)
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(읽기전용 참조만) · CAT-MAP §3(L은 deploy scripts만, A pipeline step order 비접촉)
+> **구현**: Cursor only. 게이트/판정 로직 비접촉. **Step 2는 Step 1 회신·Claude 확인 후.**
+
+---
+
+## 설계 변경 사유 (원 Phase 1 계획 대비)
+
+Phase 0 RSS: 09-25 OOM 희생자 anon-rss ≈80.7MB. 개별 `--scope`만으로는 다발 겹침 OOM 재발 가능. **보강**: 개별 scope + 공통 `bitget-cron-heavy.slice` 합산 상한. 수치 시작점 = L-3a factory (Max=1610612736 / High=1288490188). Step 1 실측 후 Claude가 1.5G/1.2G vs 하향 확정.
+
+## Step 1 — 확정 전 실측 (코드 변경 없음)
+
+1. (a) 28줄, 동일 5400s 윈도우 동시 실행 가능 개수
+2. (a) job 없을 때 `free -h` 1회
+3. OUTBOX 회신 → Step 2는 Claude 확정 후
+
+## Step 2 — 적용 (Step 1·Claude 확인 후)
+
+(a) 28줄만. slice + systemd-run --scope. (b)/(c) 비접촉. cron.d 전체 재작성 금지.
+
+## 금지
+CAT-A 로직 · (b)/(c) · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Phase 1)
+
+---
+
+# CLAUDE → CURSOR · CAT-L-FENCE-02
+
+> **작성**: Claude Pro (Architect) · 2026-09-27
+> **요청 출처**: cron OOM 3회 재발(09-07/09-14/09-25) — L-3 MemoryMax가 systemd 유닛에만 걸리고 cron 직행 scan은 `cron.service` cgroup에 남아 상한 밖
+> **디렉터 승인**: 2026-09-27 (옵션 A — systemd-run scope wrapper, 에스컬레이션 해소)
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(읽기전용 참조만), CAT-MAP §3(L은 deploy scripts만, A pipeline step order 비접촉)
+> **구현**: Cursor only. **Phase 0 결과를 Claude가 확인하기 전 Phase 1 착수 금지.**
+
+---
+
+## Phase 0 — 발견 (읽기전용, 아무것도 바꾸지 않음)
+
+1. 해당 서비스 계정 `crontab -l` 전체 원문을 OUTBOX에 그대로 기재
+2. 각 줄을 (a) HEAVY 직행 / (b) 이미 enqueue / (c) OPS·기타로 분류
+3. (a)의 기존 OOM RSS 기록 취합만 (신규 측정 금지)
+4. Claude가 (a) 목록 확인 후 Phase 1 진행 여부 회신
+
+## Phase 1 — wrapper (Phase 0 확인 후에만)
+
+(a)만. `systemd-run --scope -p MemoryMax=1610612736 -p MemoryHigh=1288490188 -p CPUQuota=80%` (factory L-3a 수치 재사용). (b)/(c) 금지.
+
+## 금지
+CAT-A 로직 · crontab 전체 재작성 · 주식 크론 · C-2/MDD5%/live
+
+## sub-phase ID
+`CAT-L-FENCE-02`
+
+---
+
+# CLAUDE → CURSOR · A5-EVENTLOG-01
+
+> **작성**: Claude Pro (Architect) · 2026-09-26
+> **요청 출처**: A-EFFECTVERIFY-01 결과 — A-1~A-5가 `logger`만 쓰고 `ops_events` 미기록 → 8주째 3단계 판정 불가
+> **디렉터 승인**: 2026-09-26 (Critical, 순수 로깅 추가 범위)
+> **CAT**: CAT-F/A 🔴 **Critical** (execution_safety.py, tail_risk_gate.py, config_bounds.py 접촉) · also_load: CAT-MAP, CAT-N(A-3 leverage 인접)
+> **구현**: Cursor only. 게이트 판정 로직·threshold·반환값 1바이트도 변경 금지. 변경 필요성 발견 시 즉시 중단 + `## Claude 수정 spec`로 Ask.
+
+---
+
+## 목적
+A-1~A-5는 tier 전이·debit·clamp·block·reject를 **판정은 하지만 이력을 안 남김**(logger만, 휘발). 그 결과 A-EFFECTVERIFY-01이 8주치 데이터를 못 뽑았다(전부 null). 이번 Handoff는 **이미 일어나고 있는 판정 결과를 ops_events에 추가로 기록**하는 것만 한다 — 판정 자체는 손대지 않는다.
+
+## 수정 범위 (엄수)
+
+| 허용 | 금지 |
+|---|---|
+| 각 파일에서 **기존 logger.info/warning 호출 직후 지점**에 `ops_events` insert 추가 | 게이트 조건문·threshold 비교식·반환값(bool/tier) 변경 |
+| 신규 kill-switch `A1A5_EVENT_LOG_ENABLED`(config_kv, default **true**) | 기존 `logger.*` 호출 제거 (그대로 유지, 이벤트는 **추가**) |
+| 신규 테스트 | C-2 · MDD5% · B-2 live · `ENABLE_REAL_EXECUTION` |
+| | A-EFFECTVERIFY-01(`a1_a5_effect_verify_bg.py`) 로직 변경 — 이번엔 손대지 않음, 데이터 쌓인 뒤 별도 재실행 |
+
+## Spec 1 — 이벤트 스키마 (5종, `ops_events` 공통 테이블)
+
+| sub | event 이름 | 발생 조건 | payload |
+|---|---|---|---|
+| A-1 | `portfolio_mdd_tier_transition` | tier 실제 변경 시 | from_tier, to_tier, nav_current, nav_peak, dd_pct |
+| A-2 | `tail_fund_debit` | 실제 debit | debit_amount, tail_balance_before, tail_balance_after, trigger_tier |
+| A-3 | `leverage_clamped` | requested>cap | symbol, market_type (normalize_market_key), requested_leverage, clamped_to |
+| A-4 | `gross_notional_blocked` | gate 7 block | gross_notional, nav_current, gross_pct, cap_pct |
+| A-5 | `config_write_rejected` | reject | config_key, attempted_value, bound_min, bound_max |
+
+## Spec 2 — A-1 전이 감지
+`PORTFOLIO_MDD_CURRENT_TIER`와 비교 후 변경 시에만. 새 상태 저장소 금지.
+
+## Spec 3 — kill-switch
+`A1A5_EVENT_LOG_ENABLED` default true. false면 insert만 skip.
+
+## SPOT/FUT
+A-3만 FUT (`normalize_market_key`). 나머지 비분기.
+
+## 테스트
+A-1 변경 1건 + 동일 tier 0건 · A-2 debit 1 · A-3 clamp 1/0 · A-4 block 1 · A-5 reject 1 · kill-switch false 전부 0 + 판정 불변 · 기존 A-1~A-5 회귀.
+
+## 금지
+게이트/threshold/반환값 · C-2 · MDD5% · live · EFFECTVERIFY 집계 변경 · logger 제거
+
+## 완료 정의
+코드+테스트 · 05/00/OUTBOX/NEXT_ACTION WAIT_CLAUDE_OK · 첫 발생 예상 시점 스냅샷
+
+## sub-phase ID
+`A5-EVENTLOG-01`
+
+---
+
+# CLAUDE → CURSOR · A-EFFECTVERIFY-01
+
+> **작성**: Claude Pro (Architect) · 2026-09-26
+> **요청 출처**: `06_검증체크리스트_및_실패기록.md` 「효과 검증 기록표」 A-1~A-5 8주째 "(대기)" 방치 확인
+> **CAT**: CAT-F 인접 / 묶음A (읽기전용) · 🟡 Medium — gate 로직 비접촉, 판정 근거자료 생성만
+> **구현**: Cursor only. gate/threshold 변경 필요성 발견 시 CLAUDE_TO_CURSOR 상단 `## Claude 수정 spec`로 별도 요청.
+
+---
+
+## 목적
+A-1~A-5(NAV MDD tier·tail fund·leverage clamp·gross notional·config reject)는 2026-08-01~02 배포, Claude OK(1단계) 완료. 8주 경과(2~4주 요건 충족)했으나 3단계(효과검증) 판정이 없어 "유지/롤백/추가조정"을 못 정한다. 이번 Handoff는 **판정 근거 숫자만 뽑는 읽기전용 집계**다. gate 로직·config 기본값은 전혀 안 건드린다.
+
+## 수정 범위 (엄수)
+
+| 허용 | 금지 |
+|---|---|
+| 신규 읽기전용 파일(예: `bitget/observability/a1_a5_effect_verify_bg.py`) | `execution_safety.py`, `tail_risk_gate.py`, `config_bounds.py` 본체 로직 |
+| `ops_events` / `config_kv` 상태 / `bitget_forward_trades` 읽기 | A-1~A-5 threshold·기본값 변경 |
+| 신규 테스트 | C-2 · MDD5% · B-2 live · `ENABLE_REAL_EXECUTION` |
+
+## Spec 1 — 지표 정의 (창: 2026-08-01/02 ~ 오늘, 8주)
+
+| sub | 지표 | 소스 우선순위 | 소스 없을 때 |
+|---|---|---|---|
+| A-1 | tier 전이(NORMAL→REDUCE/BLOCK/HALT) 횟수·시각·NAV, 창 내 관측 최대 NAV MDD % | `PORTFOLIO_MDD_CURRENT_TIER` 상태이력 → 없으면 ops_events tier 변경 로그 | "로그 소스 없음" 그대로 보고. **새 로깅 신설 금지** |
+| A-2 | tail fund debit 이벤트 횟수·총액 | `TAIL_FUND_CONSUMPTION_ENABLED` 관련 이벤트 | 상동 |
+| A-3 | leverage clamp 발생 횟수(`resolve_max_leverage`에서 requested>cap) | ops_events | 상동, FUT 전용 |
+| A-4 | gross notional block 횟수·발생 시 gross/NAV | ops_events | 상동 |
+| A-5 | config write reject 횟수·거절 키 목록 | `CONFIG_WRITE_VALIDATION_ENABLED` 관련 로그 | 상동 |
+
+**원칙(D-3a/C-1b 재사용)**: 소스 없으면 추정 금지 — null + 사유. "관측 불가" 자체가 유의미한 결과.
+
+## Spec 2 — 함수 시그니처 (제안)
+
+def collect_a1_a5_effect_snapshot(
+window_start: date, window_end: date, config: dict
+) -> A1A5EffectSnapshot # 5 sub 지표 + source_availability 플래그
+
+## Spec 3 — 출력
+`CURSOR_TO_CLAUDE.md` OUTBOX에 5-sub × {값|null, 소스, 비고} 표. `06` 「효과 검증 기록표」"변경 후(2~4주)" 열에 그대로 옮길 수 있는 형태.
+
+## SPOT/FUT
+A-1·A-2·A-4는 포트폴리오 전체(비분기). A-3은 FUT 전용(SPOT 레버리지 없음) — `normalize_market_key` 경유, market_type 하드코딩 금지.
+
+## 안전장치
+읽기전용, kill-switch 관례상 `A1A5_EFFECT_VERIFY_ENABLED`(config_kv, default true) 추가 권장.
+
+## 테스트
+fixture 3개: (1) 전이 0건 구간 (2) 전이 1건 이상(mock) (3) 로그 소스 없는 sub 최소 1개(null 처리)
+
+## 금지 (재확인)
+gate 로직/threshold 변경 · C-2 · MDD5% · B-2 live · `ENABLE_REAL_EXECUTION` · 소스 없는 지표에 새 로그 파이프라인 신설
+
+## 완료 정의
+코드+fixture all pass · `05`·`00`·`CURSOR_TO_CLAUDE`·`NEXT_ACTION`(→`WAIT_CLAUDE_OK`) 갱신 · 「로컬 구조 스냅샷」 포함
+
+## sub-phase ID
+`A-EFFECTVERIFY-01`
+
+---
+
 # CLAUDE → CURSOR · [CAT-L] L-3b-fix 큐 워커 stale 임계 (A안 · 2026-09-15)
 # 워치독 로직 미변경. env 1개. 09-15 15:07 UTC 슬롯에서 Done 판정.
 

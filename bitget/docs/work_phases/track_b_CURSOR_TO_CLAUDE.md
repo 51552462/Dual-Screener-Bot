@@ -1,6 +1,395 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-23 · **A-LIFECAP-01 SHADOW_DEPLOYED · WAIT_48H_OBS** (Claude OK shadow)
+> **갱신**: 2026-09-27 · **CAT-L-FENCE-02 Step 2 APPLIED · WAIT_CLAUDE_OK** (첫 (a) 실스캔 cgroup은 16:01 UTC 슬롯)
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 2 · 2026-09-27 · 적용됨
+
+**엔지니어:** ubuntu는 system slice에 `systemd-run --scope` 불가(polkit). (a) 28줄만 cron user=`root` + `systemd-run --uid=ubuntu --gid=ubuntu`. (b)/(c)는 `ubuntu` 유지. cron.d `%` 특수문자 때문에 `CPUQuota=80\%`. `generate_bitget_crontab.py` / `install_bitget_cron.sh` **미변경** — 재설치하면 wrapper 증발.
+
+**수치(확정 재사용):** slice+scope MemoryHigh=`1288490188` MemoryMax=`1610612736`. CPUQuota=80%.
+
+**롤백:** `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron` → `/etc/cron.d/dual-screener-bitget` + `sudo rm /etc/systemd/system/bitget-cron-heavy.slice && daemon-reload`. 라이브 적용본 사본: `snapshots/CAT-L-FENCE-02_cron_step2_LIVE_20260927.cron`. 유닛 SSOT: `bitget/deploy/systemd/bitget-cron-heavy.slice`.
+
+### 적용 원문 (2026-09-27 14:20:57 UTC)
+
+```
+wrapped_root systemd-run: 28
+enqueue ubuntu: 1
+7 15 * * *  ubuntu  ... --enqueue --scan-futures-ema5-r2
+systemctl show bitget-cron-heavy.slice
+MemoryHigh=1288490188
+MemoryMax=1610612736
+MemoryAccounting=yes
+```
+
+프로브(sleep 12, 동일 slice/상한, **스캔 아님**):
+
+```
+Running scope as unit: run-r01710840f00249399574498df140d17b.scope
+21123 ubuntu  0::/bitget.slice/bitget-cron.slice/bitget-cron-heavy.slice/run-r01710840f0024939  sleep 12
+```
+
+`cron.service` 아님. 부모 `bitget.slice/bitget-cron.slice`는 호스트 기존 계층.
+
+다음 (a) 실잡: **16:01 UTC** `--scan-spot-ema5-r2`. 적용 전 fork된 scan은 계속 `cron.service`일 수 있음. 서버에 16:01 캡처 watcher 기동(`/tmp/fence02_first_scan.cap`).
+
+**금지 준수:** CAT-A 0 · (b)/(c) 0 · C-2/MDD5%/live 0 · 수치 임의 변경 0.
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Phase 1 Step 1 · 2026-09-27 · 실측만 · cron/slice 미적용
+
+**엔지니어 1줄:** cap=5400이 **실제로 킬되면** (a) 동시 상한은 **3**이지 28이 아님. 지금 서버는 이미 2중첩이 `cron.service`에 살아 있음. 유휴 `free -h`는 이 시각에 못 찍음(요구 조건 미충족). slice 1.5G/1.2G 확정은 Claude. CAT-A 미변경.
+
+### 가정 (읽기전용)
+
+- `_HEAVY_PREFIXES` / `BITGET_JOB_HEAVY_CAP_SEC` **기본 5400**. Bot-2 `.env`에 해당 키 **grep 0줄** → 코드 기본값.
+- 겹침 모델: 각 (a) job이 시작 후 **90분 동안 살아 있다**고 가정 (ENFORCE 킬이 온전할 때). ENFORCE=false·좀비 pid면 이 상한은 **하한**이 아니라 붕괴(09-25 age ≫ 5400).
+
+### 1) 스케줄 겹침 (Phase 0 스냅샷 28줄, enqueue 제외)
+
+26 scan 간격: **min 51분 · max 108분**. 108분은 `14:13 scan-spot-dante-r2` → `16:01 scan-spot-ema5-r2` (그 사이 (b) `15:07 enqueue ema5-r2`는 (a) 아님). **25/26** 간격이 90분 미만 → 연속 두 scan은 cap 윈도우 안에서 겹침 가능.
+
+전 주 분 단위 시뮬 (Sun=0, weekly=`* * 1`=Mon 00:30):
+
+| 동시 개수 | 주당 분 | 비율 |
+|-----------|---------|------|
+| 0 | 126 | 1.3% |
+| 1 | 3314 | 32.9% |
+| 2 | 6134 | 60.9% |
+| 3 | 506 | 5.0% |
+| ≥4 | 0 | 0% |
+
+**최악 = 3** (4 없음). 예:
+
+- 매일 **02:40 UTC**: `scan-spot-nulrim`(01:47) + `daily-audit`(02:30) + `scan-futures-nulrim`(02:40)
+- 월요일 **00:30 UTC**: `scan-spot-ema5-r3`(전날 23:07) + `scan-spot-supernova`(00:02) + `weekly-evolution`(00:30)
+
+### 2) 메모리 — **유휴 아님** (원문 2026-09-27 **13:55:32 UTC**)
+
+요구: “(a) job이 하나도 안 돌 때”. **미충족.** 당시 (a) 2개:
+
+```
+               total        used        free      shared  buff/cache   available
+Mem:           3.7Gi       1.0Gi       379Mi       2.0Mi       2.4Gi       2.4Gi
+Swap:          4.0Gi       0.0Ki       4.0Gi
+MemTotal:        3928824 kB
+MemAvailable:    2552048 kB
+  19691 324560 kB RSS  0::/system.slice/cron.service  python ... --mode scan_futures_dante_r2
+  19196 214476 kB RSS  0::/system.slice/cron.service  python ... --mode scan_spot_nulrim_r2
+dante-bitget-factory MemoryCurrent=312455168 MemoryHigh=1288490188 MemoryMax=1610612736
+```
+
+스케줄 정합: `12:27` nulrim-r2 · `13:20` dante-r2 · 캡처 13:55 → 이론 동시 **2** (다음 (a) `14:13` spot-dante-r2면 3 가능). 두 scan RSS 합 ≈ **539MB**. 둘 다 **여전히 cron.service**.
+
+유휴 재측정 창(cap 준수 가정): 대략 **15:43–16:01 UTC** (dante-r2 계열 90분 종료 후 ema5-r2 전). 지금 대기하지 않음. 09-14 685M used / 2.8G avail은 참고만.
+
+### Claude Ask (Step 2 수치)
+
+- 관측 2중첩 RSS≈0.54G + factory Current≈0.31G, Available≈2.4G. **정상 런이면 1.5G/1.2G slice는 2~3중첩에 여유.**
+- 반례: 09-07 **한 프로세스 RSS≈897M** × 동시 2 = 1.8G > 제안 MemoryMax 1.5G → slice가 정상 겹침을 죽일 수 있음. 하향(1G/768M)은 그 폭주엔 더 빨리 죽임.
+- **권고는 Claude.** Cursor는 Step 2 미착수.
+
+**금지 준수:** cron.d 미수정 · slice 유닛 미설치 · (b)/(c) 비접촉 · CAT-A 0 · C-2/MDD5%/live 0.
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Phase 0 · 2026-09-27 · 읽기전용
+
+**엔지니어 1줄:** 라이브 스케줄은 `crontab -l`이 아니라 `/etc/cron.d/dual-screener-bitget`(ubuntu 필드). Phase 1은 그 파일의 (a) 줄만, cron.d 문법상 `user` 뒤에 wrapper를 붙이는 게 맞고 `--uid=`는 이미 ubuntu로 떨어진 뒤라 중복일 수 있음(Claude 확인 후). CAT-A 파일 미변경. crontab 미터치.
+
+**SSH:** `ubuntu@3.36.90.195` · host 조회 시각 2026-09-27 13:30 UTC · **Phase 1 미적용** (cron 파일 mtime 유지: Sep 23 10:11).
+
+### 1) 서비스 계정 crontab 원문
+
+```
+$ crontab -l
+no crontab for ubuntu
+
+$ sudo crontab -l
+no crontab for root
+```
+
+실제 실행 SSOT = `/etc/cron.d/dual-screener-bitget` (8135B, 73줄, 2026-09-23 10:11). 롤백 스냅샷: `bitget/docs/work_phases/snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`
+
+원문 전체:
+
+```
+# Dual-Screener-Bot — Bitget factory cron (→ /etc/cron.d/dual-screener-bitget)
+#
+# AUTO-GENERATED from bitget/bitget_scan_schedule.py — do not edit by hand.
+# Regenerate: python bitget/deploy/generate_bitget_crontab.py
+# 전용 코인 서버(Bot-2) 최적화: 3사이클 27슬롯, ~53분 간격 교차 배치.
+# SPOT/FUTURES are interleaved (never simultaneous). %5 minute constraint removed
+# (dedicated server — no KR/US stock collision risk).
+# Two-Track air-gap: cgroup·독립 락/큐로 병렬 가동. yield OFF (BITGET_YIELD_TO_FACTORY=0).
+# L-3b canary: --scan-futures-ema5-r2 is --enqueue only (other scan_* stay inline; full b-3 is a separate Ask).
+# install: sudo INSTALL_ROOT=... bash bitget/deploy/install_bitget_cron.sh
+#
+# user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
+
+SHELL=/bin/bash
+CRON_TZ=UTC
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# --- Ops (non-scan, 24/7) ---
+*/15 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --canary
+*/15 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --track-positions
+53 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --reconcile
+43 */4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --data-refresh
+5 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --db-backup
+30 2 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --daily-audit
+30 0 * * 1  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --weekly-evolution
+*/5 * * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --watchdog
+15 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --health
+50 23 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --monthly-grand
+0 11 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --post-deploy-obs-digest
+
+# --- SPOT staggered (24h, 14 slots, ~53min interval) ---
+2 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova
+47 1 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim
+33 3 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante
+20 5 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5
+7 7 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-master
+52 8 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-shadow
+40 10 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova-r2
+27 12 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim-r2
+13 14 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante-r2
+1 16 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5-r2
+47 17 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-supernova-r3
+33 19 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-nulrim-r3
+20 21 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-dante-r3
+7 23 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-spot-ema5-r3
+
+# --- FUTURES staggered (24h, 13 slots, ~53min interval) ---
+54 0 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova
+40 2 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim
+27 4 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante
+13 6 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-ema5
+1 8 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-shadow
+47 9 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova-r2
+33 11 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim-r2
+20 13 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante-r2
+7 15 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --enqueue --scan-futures-ema5-r2
+52 16 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-supernova-r3
+40 18 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-nulrim-r3
+27 20 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-dante-r3
+13 22 * * *  ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-futures-ema5-r3
+
+# --- Legacy monolithic scan (manual recovery only — do NOT cron) ---
+# ubuntu  cd /home/ubuntu/dante_bots/Dual-Screener-Bot && TZ=UTC /home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/bitget.sh --scan-all
+```
+
+(주석 일부 축약. 스냅샷 파일이 바이트 단위 원본.)
+
+인접 파일(이번 범위 아님, 미변경): `/etc/cron.d/dual-screener-north-star` (681B, Aug 3) · `dual-screener-bitget.off` (구버전).
+
+### 2) 분류 (`_HEAVY_PREFIXES = ("scan_", "daily_audit", "weekly_evolution")` 읽기전용)
+
+| 그룹 | UTC 스케줄 | 명령 플래그 | Phase 1 |
+|------|------------|-------------|---------|
+| **(a) HEAVY 직행** 28줄 | 아래 표 | `--scan-*` 26 + `--daily-audit` + `--weekly-evolution` | wrapper 후보 |
+| **(b) enqueue** 1줄 | `7 15 * * *` | `--enqueue --scan-futures-ema5-r2` | **손대지 않음** |
+| **(c) OPS/기타** 9줄 | 아래 | canary / track / reconcile / data-refresh / db-backup / watchdog / health / monthly-grand / post-deploy-obs-digest | **손대지 않음** |
+
+**(a) 26 scan 직행** (플래그 → LIFECAP mode는 `-`→`_`):
+
+| UTC | 플래그 | 기존 OOM RSS 기록 |
+|-----|--------|-------------------|
+| `54 0` | `--scan-futures-supernova` | **09-25 14:42 UTC** kernel: pid=44321 python `task_memcg=/system.slice/cron.service` · `anon-rss:80708kB` (~79M) · `total-vm:2162580kB` (~2.1G) · LIFECAP이 이 pid를 `scan_futures_supernova`로 표기. **09-07과 숫자 혼동 금지** |
+| 나머지 25 scan | `--scan-spot-*` 14 · `--scan-futures-*` 11 (ema5-r2 제외) | 모드별 RSS **개별 기록 없음**. 09-07은 cron python pid=640081 **RSS≈897M** (mode 미기재). 09-25 잔존 pid 54314/`scan_futures_supernova_r2`, 58894/`scan_spot_dante_r2`, 62167/`scan_spot_supernova_r3` — RSS 숫자 없음(LIFECAP age만) |
+| `30 2 * * *` | `--daily-audit` | OOM RSS 기록 없음 |
+| `30 0 * * 1` | `--weekly-evolution` | OOM RSS 기록 없음 |
+
+**(b)** `7 15 * * *` `--enqueue --scan-futures-ema5-r2` — L-3b canary. factory/queue-worker cgroup 전제. 09-14 15:22 UTC는 queue-worker **status=143 restart** 기록이지 cron scan RSS OOM이 아님.
+
+**(c)** `--canary` `*/15` · `--track-positions` `*/15` · `--reconcile` `53 *` · `--data-refresh` `43 */4` · `--db-backup` `5 0` · `--watchdog` `*/5` · `--health` `15 0` · `--monthly-grand` `50 23` · `--post-deploy-obs-digest` `0 11`. 주석 처리 `--scan-all`은 비활성.
+
+### 3) 기존 OOM 취합 (신규 측정 없음)
+
+| 날짜 | 출처 | 실측 |
+|------|------|------|
+| **09-07 08:44 UTC** | `track_b_05` / 진단 OUTBOX | `global_oom` · python **pid=640081 RSS≈897M** · `task_memcg=/system.slice/cron.service` · **mode 미기재** |
+| **09-14** | L-3b OUTBOX | **kernel RSS 없음**. 15:07 enqueue 시작 · 15:22 queue-worker 143. “3회 재발”의 14일은 이 관측/재시작과 겹침 — cron 직행 RSS로 쓰지 말 것 |
+| **09-25 14:42 UTC** | 09-26 진단 OUTBOX | `global_oom` · python **pid=44321** `scan_futures_supernova` · cron.service · **anon-rss≈80.7MB** · total-vm≈2.1GB · cron.service oom-kill · 잔존 54314/58894/62167 |
+
+### Ask Claude (Phase 1 전)
+
+1. (a) 28줄 전부 wrapper vs **scan_* 26만** (daily-audit/weekly-evolution 제외) — 스펙 문면은 접두 동일하니 28.
+2. cron.d 삽입 위치: `… ubuntu systemd-run --scope -p MemoryMax=1610612736 -p MemoryHigh=1288490188 -p CPUQuota=80% -- cd … bitget.sh --scan-…` (`--uid=ubuntu` 생략 vs 유지).
+3. 생성기 `generate_bitget_crontab.py` / `bitget.crontab.example` 동기화는 **이번 금지(전체 재설치 금지)** — 서버 줄만 최소 수정인지 확인.
+
+**Phase 1 미착수.** CAT-A 로직 0. 주식 cron 0. C-2/MDD5%/live/`ENABLE_REAL_EXECUTION` 0.
+
+---
+
+## OUTBOX — A5-EVENTLOG-01 · 2026-09-27
+
+게이트/threshold/반환값 미변경. EFFECTVERIFY 집계 미변경. 롤백=`A1A5_EVENT_LOG_ENABLED=false`.
+
+**스냅샷:** `a1_a5_event_log.py` + execution_safety(A-1 전이만 / A-3 logger 직후 / A-4 block 직전) + tail_risk_gate(debit>0) + config_bounds(out_of_range). logger 유지.
+
+**테스트:** `test_a5_eventlog.py` 6 + A-1~A-5 회귀 → **42 passed**.
+
+**첫 발생 0건이 정상:** A-1은 CURRENT_TIER가 바뀔 때만. A-2는 debit>0. A-3는 requested>cap(FUT, symbol=null 재조회 없음). A-4는 gate7 block. A-5는 reject write. 배포 직후 0건 ≠ 버그.
+
+---
+
+## OUTBOX — A-EFFECTVERIFY-01 · 2026-09-26
+
+**창:** 2026-08-01 ~ 2026-09-26 · Bot-2 ops 379M · tests **3 passed**  
+**롤백:** `A1A5_EFFECT_VERIFY_ENABLED=false`
+
+### 로컬 구조 스냅샷
+- 신규 `bitget/observability/a1_a5_effect_verify_bg.py`
+- `A1A5_EFFECT_VERIFY_ENABLED` default true · kv 시드 write 없음
+- A-3 `normalize_market_key` FUT만
+- 비접촉: execution_safety / tail_risk_gate / config_bounds / C-2 / MDD5% / live / 신규 로그 파이프라인
+
+### 5-sub (`06` 변경 후 열 이식용)
+
+| sub | 값 | 소스 | 비고 |
+|-----|----|------|------|
+| A-1 | **null** | 없음 | kv 현재 `TIER=NORMAL` `NAV_PEAK=100000` (이력 아님) |
+| A-2 | **null** | 없음 | tail debit ops 0 |
+| A-3 | **null** | 없음 | clamp는 logger.info만 |
+| A-4 | **null** | 없음 | gross block ops 0 |
+| A-5 | **null** | 없음 | reject는 logger.warning만 |
+
+3단계 판정은 Claude. MASTER 5·7·8 대기.
+
+---
+
+## OUTBOX — A-LIFECAP-01 ENFORCE 전환 미니 · 2026-09-26
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | A-LIFECAP-01 ENFORCE |
+| **코드 diff** | 없음 (`sweep_expired_jobs` 재사용) |
+| **config** | `BITGET_JOB_LIFECAP_ENFORCE=true` · 서버 `.env` append + `set_config_value` (전환 전 `.env` 키 없음 · sqlite None) |
+| **예제** | `bitget/deploy/bitget.env.example` ENFORCE=true |
+| **롤백** | `BITGET_JOB_LIFECAP_ENFORCE=false` |
+| **비접촉** | crontab 재설치 · C-2 · MDD5% · live · CAT-N 원장 · flock 8번째 테스트 미추가 |
+
+### data_refresh cap 분류 (1줄)
+
+**의도적 OPS.** `job_lifetime_cap.py` `_HEAVY_PREFIXES=("scan_","daily_audit","weekly_evolution")` — `data_refresh`는 미해당 → `BITGET_JOB_OPS_CAP_SEC=1800`. 실측: `LIFECAP WOULD_KILL mode=data_refresh pid=77122 age=9994 cap=1800 (ENFORCE=false)`. **버그 아님. 코드 정정 없음.**
+
+### 첫 watchdog tick 실킬 (09:15:01 UTC)
+
+유닛 저널:
+
+```
+Sep 26 09:15:01 systemd: Starting Bitget heartbeat watchdog
+Sep 26 09:15:02 bash: mode=watchdog log=.../bitget_watchdog_20260926_181501.log wall_utc=2026-09-26 09:15:01 UTC
+Sep 26 09:15:03 systemd: Finished ... Consumed 1.254s CPU time
+```
+
+해당 파일 `LIFECAP` 매칭 **0줄**. `LIFECAP ENFORCE kill` 전역 count **0**. `job_starts` **[]** (08:52 UTC 리부트 후 좀비 pid/레지스트리 비움).
+
+**실킬 0건은 플래그 실패가 아님.** 킬 대상 프로세스가 부팅 후 아직 없음. 다음 heavy 스캔이 cap=5400을 넘기면 그때 첫 `LIFECAP ENFORCE kill mode=… pid=… age=…`가 파일 로그에 남음 (journalctl 키워드는 이번 라운드 수정 대상 아님 → 다음 CAT-L 후보).
+
+status=`ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM`
+
+---
+
+## OUTBOX — 2026-09-26 · Bot-2 Stop/Start 진단 + A-LIFECAP-01 48h 원문
+
+**SSH:** `ubuntu@3.36.90.195` host `ip-172-26-7-213` · 조회 ~08:54 UTC · boot `up 2 min`.  
+**ENFORCE/kill:** 코드·`.env`·drop-in **미변경**. 워치독 로그에 `LIFECAP ENFORCE` 킬 라인 없음(샘플 파일 count 0). `.env`에 LIFECAP 키 없음 → 코드 기본(ENABLED 기본 true / ENFORCE 기본 false) + 로그 `(ENFORCE=false)`.
+
+### 오늘 “터짐”이 커널 패닉이 아님
+
+`last -x`: `shutdown system down` **Sat Sep 26 08:49–08:52 UTC**. prev boot 마지막 저널은 `Finished System Power Off` / `Shutting down`. **Lightsail Stop/Start(정상 poweroff)** 과 동일 패턴. 디스크 **45%** (`/` 35G/78G). `bitget/logs` 108K. 기각: 디스크 풀.
+
+### 직전 부트에서 실제 구멍 — 또 cron cgroup OOM
+
+prev boot 커널:
+
+```
+Sep 25 14:42:07 kernel: snapd invoked oom-killer
+Sep 25 14:42:07 kernel: oom-kill:... global_oom,task_memcg=/system.slice/cron.service,task=python,pid=44321
+Sep 25 14:42:07 kernel: Out of memory: Killed process 44321 (python) total-vm:2162580kB, anon-rss:80708kB
+Sep 25 14:40:18 systemd: cron.service: Failed with result 'oom-kill'.
+Sep 25 14:40:18 systemd: cron.service: Unit process 54314 (python) remains running after unit stopped.
+Sep 25 14:40:18 systemd: cron.service: Unit process 58894 (python) remains running after unit stopped.
+Sep 25 14:40:18 systemd: cron.service: Unit process 62167 (python) remains running after unit stopped.
+```
+
+(같은 시각 프로세스 표에 python 다수. LIFECAP이 `pid=44321`을 `scan_futures_supernova`로 찍음 — 아래 원문.)  
+**CAT-L과 같은 구멍:** factory `MemoryMax=1.5G`는 살아 있음(지금 High=1.2G Max=1.5G). **cron 직행 scan_* 는 여전히 cron.service cgroup**. L-3b canary만 enqueue (`7 15 * * * --enqueue --scan-futures-ema5-r2`). 나머지 inline.
+
+OOM 직후 cron 유닛은 죽었는데 **좀비 python은 남음** (54314 / 58894 / 62167). 그게 LIFECAP age 수십 시간으로 이어짐.
+
+### 지금(리부트 직후) 상태
+
+factory/ws/async/queue-worker/watchdog.timer/backup.timer/overseer **active**. queue-worker Max=2G. `BITGET_QUEUE_WORKER_STALE_SEC=1800` drop-in 유지. 주식 유닛 없음. RSS 상위: auto_pilot ~243MB, queue_worker ~154MB. data `charts` 21G + sqlite. 스냅샷 tmp 잔여 파일 있음(이번 원인 아님).
+
+### LIFECAP WOULD_KILL 원문 (48h 관측 본문)
+
+journalctl 키워드 0건(워치독이 파일 로그). 파일 **4852줄**. 첫/끝:
+
+```
+[2026-09-25 00:00:10] [WARNING] LIFECAP WOULD_KILL mode=scan_futures_supernova pid=44321 age=83142 cap=5400 (ENFORCE=false)
+[2026-09-25 00:00:10] [WARNING] LIFECAP WOULD_KILL mode=scan_spot_dante pid=46974 age=73610 cap=5400 (ENFORCE=false)
+[2026-09-25 00:00:10] [WARNING] LIFECAP WOULD_KILL mode=scan_futures_supernova_r2 pid=54314 age=51165 cap=5400 (ENFORCE=false)
+[2026-09-25 00:00:10] [WARNING] LIFECAP WOULD_KILL mode=scan_spot_dante_r2 pid=58894 age=35203 cap=5400 (ENFORCE=false)
+[2026-09-25 00:00:10] [WARNING] LIFECAP WOULD_KILL mode=scan_spot_supernova_r3 pid=62167 age=22306 cap=5400 (ENFORCE=false)
+...
+[2026-09-26 17:46:28] [WARNING] LIFECAP WOULD_KILL mode=scan_futures_supernova_r2 pid=54314 age=169142 cap=5400 (ENFORCE=false)
+[2026-09-26 17:46:28] [WARNING] LIFECAP WOULD_KILL mode=scan_spot_supernova_r3 pid=62167 age=140284 cap=5400 (ENFORCE=false)
+```
+
+(로그 시각은 KST 벽시계로 보임. 리부트 직전 17:46 KST ≈ 08:46 UTC.)
+
+mode별 줄 수(워치독 5분 tick 반복 포함):
+
+| count | mode |
+|------:|------|
+| 732 | scan_spot_supernova_r3 |
+| 732 | scan_futures_supernova_r2 |
+| 543 | scan_spot_dante_r3 |
+| 449 | scan_spot_dante_r2 |
+| 399 | scan_spot_supernova_r2 |
+| 331 | scan_futures_supernova |
+| 329 | scan_futures_dante_r3 |
+| 205 | scan_spot_nulrim_r2 |
+| 165 | scan_futures_dante_r2 |
+| 161 | scan_futures_ema5_r3 |
+| 151 | scan_spot_ema5_r3 |
+| 135 | scan_spot_dante |
+| 134 | scan_futures_ema5 |
+| 127 | scan_spot_master |
+| 81 | scan_futures_dante |
+| 64 | scan_spot_ema5_r2 |
+| 43 | data_refresh |
+| 38 | scan_spot_ema5 |
+| 16 | scan_spot_nulrim |
+| 13 | scan_futures_nulrim_r3 |
+| 4 | scan_futures_nulrim |
+
+**오탐 0 아님.** age가 cap=5400(1.5h)을 훨씬 넘음(최대 ~47h). 정상 12분 스캔이 아니라 **안 죽은 cron 스캔**. shadow는 설계대로 로그만. Cursor는 ENFORCE를 켜지 않음.
+
+status=`WAIT_CLAUDE_OK` (48h 원문 도착 · ENFORCE Handoff는 Claude). CAT-L 전체 enqueue는 별도 Ask.
+
+---
+
+## OUTBOX — A-LIFECAP-01 48h 관측 · 2026-09-26 · **WOULD_KILL 원문 없음 (미수집)**
+
+| 항목 | 내용 |
+|------|------|
+| **sub-phase** | A-LIFECAP-01 |
+| **요청** | LIFECAP 48h 관측 · `LIFECAP WOULD_KILL` mode·age·타임스탬프 원문 |
+| **ENFORCE / kill** | **켜지 않음** (코드·`.env`·drop-in 미변경) |
+| **git** | 데스크톱 `main` = `origin/main` (`b7b8913` 시점 fetch). 노트북 커밋은 이미 원격에 있음 |
+| **SSH 1** | `ubuntu@43.202.40.136` · timed out · ~08:36 UTC |
+| **SSH 2** | `ubuntu@52.78.197.105` (디렉터 제공) · ~08:44–08:46 UTC · OpenSSH debug: **Connection established** 후 `getpeername failed` / `write: Connection timed out` (배너·세션 없음) |
+| **원문** | **없음.** 오탐 0으로 쓰지 말 것 |
+| **status** | `WAIT_DIRECTOR` — 이 데스크톱에서 22/tcp 핸드셰이크가 안 끝남. Lightsail 방화벽(이 PC 공인 IP) 또는 인스턴스 sshd 확인 |
+
+디렉터: 노트북에서 같은 키로 `ssh ubuntu@52.78.197.105`가 되면, 그 세션에서 `journalctl --since "2026-09-23 00:00:00 UTC" \| grep "LIFECAP WOULD_KILL"` 붙여 주셔도 됩니다. Claude: ENFORCE Handoff **보류**.
 
 ---
 

@@ -92,7 +92,7 @@
 [KR/US] DSR-MINIMAL-DEPLOY-CHECK-01 · **CLOSED 2026-09-26** · `e6c1eef` · dsr_warn_count는 다음 meta_governor 사이클(지금 0 정상)
 [KR/US] KR-CANDLE-HEALTH-RED-RO · **CLOSED 2026-09-26** · KOSPI 9/24–25 결측 · SCORE오염 아님 · 급하지 않음
 [KR/US] PHASE0-GOVERNANCE-04 · **Claude OK: 2026-09-26** · 승격 4단계 SSOT `04_묶음D_작업지시서.md`
-[Bitget] CAT-L-FENCE-02 · **Phase 0 OUTBOX · WAIT_CLAUDE_OK** · Phase 1 금지 · 코인 창 SSOT=`bitget/docs/work_phases/`
+[Bitget] CAT-L-FENCE-02 · **Step 2 APPLIED · WAIT_CLAUDE_OK** · slice 1.5G/1.2G · 첫 실스캔 cgroup 16:01 UTC
 [KR/US] CAT-H-OBSERVATION-01 · **달력** · 게이트 false · 다음 장부 **10/3** · KR macro n **10/11**
 [KR/US] CAT-H-ERROR-SIGNATURE-CHECK-01 · **CLOSED 2026-09-27** · Claude OK: 2026-09-26 · 순수 타이밍 · Popen=확정
 [KR/US] PHASE0-MODEL-02 · **CLOSED(열지 않음)** · 코사인폐기 **코드 미착수**(완료 오해 금지)

@@ -63,7 +63,7 @@ OHLCV SQLite, WebSocket 실시간, data refresh, gap heal, symbol universe, CQRS
 | 1 | load_test symbol_count=0 (dev DB) | Track B |
 | 2 | integrity backup cron 미연결 | P0-5 |
 | 3 | bad tick filter 없음 | P1-6 (CAT-C link) |
-| 4 | SPOT/FUT **initial backfill lookback 비대칭** — VPS FUT_1D 과거 n≈90 vs SPOT≈300. **원인**: `mtf_data_updater` tail-only(limit, no since). **API**: Bitget swap 1D `since`+paginate로 90일 이전 **제공 확인**(2026-08-29 · LANE_FULLBT). **조치**: `bitget/data/ohlcv_history_backfill.py` 파일럿 Adapter(BTC/ETH/SOL) · 기본 refresh 비접촉. VPS 적용·Claude OK 대기 | LANE_FULLBT FULL-BT-FUT-DEPTH-1 |
+| 4 | SPOT/FUT initial backfill lookback 비대칭 — **staging 파일럿 검증 완료**(bitget_fut_depth_staging.sqlite, BTC/ETH/SOL FUT 302일 확보, 2025-10-31~2026-08-30, RUN-2 데이터로 사용 중). **원인**: mtf_data_updater tail-only(limit, no since) — 변경 없음. **잔여**: 프로덕션(`BITGET_DB_STORAGE_PATH`) 적용은 별도 미착수 — staging 성공이 production 적용을 대체하지 않음. 조치 시 새 Handoff 필요 | LANE_FULLBT FULL-BT-FUT-DEPTH-1 (staging) → 프로덕션 적용은 미정 |
 
 ---
 
