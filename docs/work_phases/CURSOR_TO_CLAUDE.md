@@ -3,7 +3,84 @@
 > ⛓ **세션 SSOT** → [`00_SESSION_SYNC.md`](00_SESSION_SYNC.md) · Cursor는 본 파일 + `05_진행로그` append  
 > `Downloads/*` 복사본은 merge 전까지 **본 경로 우선**.
 
-> **갱신**: 2026-09-28 · SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 스모크
+> **갱신**: 2026-09-29 · CHAMPION-INSIGHT-TAIL-FIX-01 + DASHBOARD-LABEL-01
+
+---
+
+## OUTBOX — CHAMPION-INSIGHT-TAIL-FIX-01 + DASHBOARD-LABEL-01 · WAIT_CLAUDE_OK · 2026-09-29
+
+계산·config·켈리 값 **무변경**. 텍스트만. pytest `tests/test_forward_dual_track.py` + `tests/test_forward_imports.py` **25 passed**.
+
+### B · `_champion_insight_tail`
+- `[시스템 비상]`/`Systemic Risk`/`켈리 0.2% 동결` 삭제 → `[관측 경고]` + `SCORING-VALIDITY=NONE` + **사이징 미변경** 명시.
+- NONE일 때 `[엣지 확인]`/`완벽히 동기화` 억제 → `[점수 참고]`.
+- 유효 켈리 0.08%는 **미인용**(잘못된 숫자 보고 방지). 조치 동사 `동결` 없음.
+- `SCORING_VALIDITY` kv는 **읽기만**. 없으면 NONE.
+
+### A · `[리스크 대시보드]`
+헤더: `청산건 복리 · 연율화 참고치 (Live NAV 아님)`. 샤프·소르티노·칼마·누적·CAGR·MDD에 같은 곡선 주석. `risk_adjusted_metrics` 식 무변경.
+
+### C · 미실행
+VPS SSH 없음. `FLOW_TAG_TOXIC_LAST_UPDATED`는 디렉터/VPS.
+
+### 텔레그램 DoD
+다음 딥다이브/일일 리스크 패널 1회에서 위 문구 육안. 이번 세션은 발송 안 함.
+
+---
+
+## OUTBOX — DASHBOARD-NUMBER-CONSISTENCY-RO-01 · 코드 0 · 2026-09-29
+
+착수 아님. 헌터·KV·리포트 문구 **무변경**. 이 클론 `git fetch` 후 `main`=`origin/main` **`002c612`** (2026-09-29 18:19 KST, Bitget CAT-L 문서). Track A 마지막 주식 커밋 조상=`1e38166`. 다른 PC는 SSH 없음 — 이 노트북만 확인.
+
+### 1) [리스크 대시보드] 식 vs Live NAV
+
+소스: `forward/deep_dive.py` `_risk_dashboard_html` → `reports/forward_report_scalar.py` `risk_adjusted_metrics` / `_equity_mdd`. CLOSED `final_ret`(%)만. 표본&lt;5 스킵.
+
+| 표시 | 식 (원문) |
+|------|-----------|
+| **누적** `total_return_pct` | 청산건을 **시간순으로 100% 재투자 복리**: `eq = cumprod(1 + final_ret/100)`, `total = eq[-1]-1` |
+| **CAGR** `cagr_pct` | `years = span_days/365` (첫 entry~마지막 exit). `cagr = (1+total)**(1/years)-1` (`total>-1`일 때만) |
+| **MDD** `mdd_pct` | 같은 복리 곡선 `dd=(eq-peak)/peak` 의 **최소(음수)×100**. −99.7%는 이 곡선이 거의 0에 붙을 때 |
+
+Live NAV(−10.71%): `live_nav_manager._apply_pnl_to_market_state` — **원 잔고** `nav += net_pnl`, `hwm=max(hwm,nav)`, `mdd_pct = max(기존, (hwm-nav)/hwm*100)` (**역대 최대** 낙폭, 거버너는 이 필드를 현재 DD로 안 씀).
+
+**다른 이유 (버그라기보다 정의가 다름):** 대시보드는 건당 %를 전액 복리로 이어 붙인다(동시보유·부분자본·현금 없음). NAV는 시드 대비 **달러/원 손익**. 손실 건이 많으면 복리 MDD는 −99%대까지 갈 수 있고, 장부 MDD는 ~10%에 남을 수 있다. Sharpe/Sortino도 거래빈도 `sqrt(n/years)` 연율화.
+
+RP-1 `regime_panel_rp1.compute_equity_metrics`도 거래% 순차복리이지만 **이 텔레그램 패널이 아님**.
+
+### 2) 라벨 제안만 (구현 별 Handoff)
+
+- 제목: `[리스크 대시보드] 위험조정 성과` → **`[리스크 대시보드] 청산건 복리 · 연율화 참고치 (Live NAV 아님)`**
+- 누적/CAGR/MDD 줄 접두: **`연율화 참고치`** · 각 숫자 옆 `(잔고 곡선 아님)`
+- 1줄 고정: `Live NAV MDD는 treasury/hwm 장부. 이 패널은 CLOSED final_ret 복리.`
+- 금지: CAGR를 북극성 달성으로 읽게 하는 문구. MDD −99%를 LOCKDOWN 근거로 쓰지 말 것.
+
+### 3) 「시스템 비상」 vs SCORING-VALIDITY=NONE
+
+생성: **고정 템플릿**. `forward_score_bucket_deep_dive.py` `_champion_insight_tail` (최우수 성적표 꼬리). `ai_overseer` / CAT-M 제안 JSON **해당 없음**. LLM 오버시어가 이 문장을 만들지 않음.
+
+조건: HIST(없으면 LIVE) 버킷 중 최우수 WR&lt;40 **또는** 최우수 PF&lt;1.0 → 시장 수급 붕괴 단정 + 「켈리 0.2% 동결」**지시 문구**. 같은 함수의 `[엣지 확인]` 분기는 「득점 모델이 시장과 완벽 동기화」.
+
+| | 충돌? |
+|--|--------|
+| **시스템 비상**(시장탓) vs NONE | **약한 충돌.** NONE은 합산점수 예측력 없음. 비상 문구는 점수버킷 WR/PF를 시장 붕괴로 읽음 — 버킷이 노이즈면 시장탓 단정 과함. |
+| **엣지 확인**(모델탓의 반대=모델예찬) vs NONE | **강한 충돌.** NONE과 정면. |
+| 켈리 0.2% 동결 문장 | **실행 아님.** config 미기록. 2026-08-19 OUTBOX와 동일: 리포트 문구 · 전면차단 아님. |
+
+### 4) 켈리동결 · 독성레지스트리 최초 발동 시각
+
+이 노트북 `system_config.sqlite`/`load_system_config`(키 42개)에 `FLOW_TAG_TOXIC_*` · `DYNAMIC_KELLY_RISK` · `KELLY_THROTTLE_MULT*` **없음**. `ops_events`에도 toxic/kelly 이벤트 없음. **시계 시각은 VPS kv에서만 확인 가능.**
+
+코드상:
+
+| 장치 | 실제 쓰기 | 시각 필드 |
+|------|-----------|-----------|
+| 「비상 켈리 0.2%」 | **안 씀** | 없음 |
+| 주말 `system_auto_pilot` PF≤0 → `DYNAMIC_KELLY_RISK=0.002` | 씀 (덮어쓰기) | kv **이력 테이블 없음** |
+| 거버너 LOCKDOWN `KELLY_THROTTLE_MULT_*=0` | 씀 | 이력 없음 |
+| `FLOW_TAG_TOXIC_REGISTRY` | `forward_flow_tag_deep_dive._persist_flow_tag_toxic_registry` | `registered_at`=**일자** · `FLOW_TAG_TOXIC_LAST_UPDATED`=persist 시각 `%Y-%m-%d %H:%M:%S` |
+
+코드 상륙: 독성 persist 흔적 `0b371fc` (2026-07-09). **최초 실발동 시각 ≠ 커밋일.** VPS에서 `FLOW_TAG_TOXIC_LAST_UPDATED`와 registry `min(registered_at)`를 읽으면 됨.
 
 ---
 

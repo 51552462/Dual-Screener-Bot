@@ -615,23 +615,43 @@ def format_dual_track_micro_dna_html(
     return out
 
 
+def _scoring_validity_is_none() -> bool:
+    """SSOT 기본 NONE. kv가 있으면 읽기만 한다(미기록)."""
+    try:
+        from config_manager import get_config_value
+
+        raw = get_config_value("SCORING_VALIDITY", "NONE")
+    except Exception:
+        raw = "NONE"
+    return str(raw or "NONE").strip().upper() in ("NONE", "", "NULL")
+
+
 def _champion_insight_tail(best_wr: BucketBlock, best_pf: BucketBlock) -> str:
     out = "💡 <b>[관제탑 딥다이브 통찰 및 시너지 지침]</b>\n"
+    scoring_none = _scoring_validity_is_none()
+    label = html.escape(best_wr.bucket_label, quote=False)
+    no_action = (
+        "사이징·config는 이 문장이 변경하지 않습니다."
+    )
     if best_wr.win_rate_pct < 40.0 or best_pf.profit_factor < 1.0:
         out += (
-            "🚨 <b>[시스템 비상]</b> 최우수 구간의 성적조차 승률 40% 미만이거나 손익비가 박살 난 상태입니다. "
-            "이는 특정 로직의 문제가 아닌 시장 전반의 수급 붕괴(Systemic Risk)를 의미합니다. "
-            "관제탑은 즉각 모든 로직의 켈리 비중을 최소치(0.2%)로 동결하고 보수적 관망을 지시합니다.\n"
+            "🚨 <b>[관측 경고]</b> 최우수 점수 구간의 승률이 40% 미만이거나 PF가 1 미만입니다. "
+            "합산점수는 <code>SCORING-VALIDITY=NONE</code>(예측력 미검증)이라 "
+            "시장 탓으로 단정하지 않습니다. 엣지 미검증 구간 — 원인 조사 중. "
+            f"{no_action}\n"
         )
     elif best_wr.win_rate_pct >= 50.0 and best_pf.profit_factor >= 1.5:
-        out += (
-            "🔥 <b>[엣지 확인]</b> 시스템의 득점 모델이 시장과 완벽히 동기화되어 통계적 우위(Edge)를 증명했습니다. "
-            f"내일은 <b>{html.escape(best_wr.bucket_label, quote=False)}</b>"
-        )
-        if best_wr.dominant_sector and best_wr.dominant_sector != "—":
-            out += f" · <b>{html.escape(best_wr.dominant_sector, quote=False)}</b> 테마 캐리 라인에 가중을 검토하십시오.\n"
+        if scoring_none:
+            out += (
+                "📋 <b>[점수 참고]</b> 최우수 구간은 "
+                f"<b>{label}</b>입니다. 점수는 참고용이며 엣지 검증 전"
+                f"(<code>SCORING-VALIDITY=NONE</code>)입니다. {no_action}\n"
+            )
         else:
-            out += " 구간 캐리 라인에 가중을 검토하십시오.\n"
+            out += (
+                "🔥 <b>[엣지 확인]</b> 최우수 구간 <b>"
+                f"{label}</b> — 점수는 참고용, 검증 전 단정 금지. {no_action}\n"
+            )
     else:
         out += (
             "⚖️ <b>[혼조세]</b> 최우수 구간의 성적이 압도적이지 않습니다. "

@@ -47,3 +47,21 @@ def test_deep_dive_public_report_entrypoints_bound():
     ):
         assert hasattr(mod, name), name
         assert callable(getattr(mod, name))
+
+
+def test_risk_dashboard_header_is_reference_label():
+    import pandas as pd
+
+    mod = importlib.import_module("forward.deep_dive")
+    df = pd.DataFrame(
+        {
+            "final_ret": [1.0, -0.5, 2.0, -1.0, 0.5],
+            "exit_date": ["2026-05-%02d" % (10 + i) for i in range(5)],
+            "entry_date": ["2026-05-%02d" % (8 + i) for i in range(5)],
+            "sim_kelly_invest": [1e6] * 5,
+        }
+    )
+    html = mod._risk_dashboard_html(df, "KR", "🇰🇷")
+    assert "Live NAV 아님" in html
+    assert "연율화 참고치" in html
+    assert "[리스크 대시보드] 위험조정 성과" not in html

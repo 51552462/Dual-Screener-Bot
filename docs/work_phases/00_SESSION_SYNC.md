@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-28 · **앵커 ID**: `SYNC-2026-09-28-KRX`
+> **갱신**: 2026-09-29 · **앵커 ID**: `SYNC-2026-09-29-CHAMPION-TAIL`
 
 ### 상시 HOLD (Cursor·Claude 세션 응답 **마지막 줄**, 해제 전까지)
 
@@ -44,12 +44,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-28-KRX` |
-| **마지막 갱신** | 2026-09-28 — KRX 일반 로그인 **통과** · `kr_investor_flow` 2026-09-23 **415행** · 9/24–25 표 0행 |
+| **앵커 ID** | `SYNC-2026-09-29-CHAMPION-TAIL` |
+| **마지막 갱신** | 2026-09-29 — 관제탑 허위동결 문구 정정 + 리스크 대시보드 라벨. kv 무변경. DASH RO CLOSED |
 | **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 |
-| **직전 완료** | CAT-H-ERROR-SIGNATURE-CHECK-01 · 달력 대기(10/3) 유지 |
-| **다음** | Claude가 persist 스모크 검증. 10/3 CAT-H 장부. Bitget은 코인 창 |
+| **진행 중 sub-phase** | CHAMPION-INSIGHT-TAIL-FIX-01 · DASHBOARD-LABEL-01 **WAIT_CLAUDE_OK** |
+| **직전 완료** | DASHBOARD-NUMBER-CONSISTENCY-RO-01 CLOSED (Claude OK 2026-09-26) |
+| **다음** | Claude 검증 후 배포. C(VPS 타임스탬프) 잔여 |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -92,7 +92,7 @@
 [KR/US] DSR-MINIMAL-DEPLOY-CHECK-01 · **CLOSED 2026-09-26** · `e6c1eef` · dsr_warn_count는 다음 meta_governor 사이클(지금 0 정상)
 [KR/US] KR-CANDLE-HEALTH-RED-RO · **CLOSED 2026-09-26** · KOSPI 9/24–25 결측 · SCORE오염 아님 · 급하지 않음
 [KR/US] PHASE0-GOVERNANCE-04 · **Claude OK: 2026-09-26** · 승격 4단계 SSOT `04_묶음D_작업지시서.md`
-[Bitget] CAT-L-FENCE-02 · **Step 2 APPLIED · WAIT_CLAUDE_OK** · slice 1.5G/1.2G · 첫 실스캔 cgroup 16:01 UTC
+[Bitget] CAT-L-FENCE-02 · **S1/S0/B 실측 · WAIT_CLAUDE_OK** · HEAD `1e38166` · GIT_CLEAN=no · live wrapper 0 · 설치기 안 돌림
 [KR/US] CAT-H-OBSERVATION-01 · **달력** · 게이트 false · 다음 장부 **10/3** · KR macro n **10/11**
 [KR/US] CAT-H-ERROR-SIGNATURE-CHECK-01 · **CLOSED 2026-09-27** · Claude OK: 2026-09-26 · 순수 타이밍 · Popen=확정
 [KR/US] PHASE0-MODEL-02 · **CLOSED(열지 않음)** · 코사인폐기 **코드 미착수**(완료 오해 금지)
@@ -101,6 +101,9 @@
 [KR/US] SMARTMONEY-SOURCE-REVIVE-01 · **1단계 RO** · iframe 대체 HTML **없음** · SPA `/market/stock/kr/trend/foreigner` 등 200 · 2단계 대기
 [KR/US] KRX-OPENAPI-SMOKETEST-01 · **RO** · OpenAPI에 투자자별 실적 **없음** · 키≠KRX_ID/PW · WAIT_CLAUDE_OK
 [KR/US] KRX-MARKETPLACE-PRICING-RO-01 · **RO** · 유료상품 심사·파일 · **후순위** · WAIT_CLAUDE_OK
+[KR/US] CHAMPION-INSIGHT-TAIL-FIX-01 · **WAIT_CLAUDE_OK 2026-09-29** · 허위 켈리동결 문구 정정 · config 0
+[KR/US] DASHBOARD-LABEL-01 · **WAIT_CLAUDE_OK 2026-09-29** · 연율화 참고치 라벨 · 계산 0
+[KR/US] DASHBOARD-NUMBER-CONSISTENCY-RO-01 · **CLOSED** · Claude OK: 2026-09-26
 [KR/US] SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 · **스모크 2026-09-28** · 로그인 OK · persist 415@2026-09-23 · 9/24–25 n=0 · WAIT_CLAUDE_OK
 [KR/US] CORRKELLY-US-PF-RO · **CLOSED 2026-09-26** · Claude OK (c)판단보류 · 회피필터 미등록
 [KR/US] ENTRY-ATR-OVERLAY-01 · **CLOSED 2026-09-26** · Phase1 OBSERVE · `bc2a818` · Phase 2는 2~4주 후

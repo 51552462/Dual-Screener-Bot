@@ -2,11 +2,11 @@
 
 | 필드 | 값 |
 |------|-----|
-| **지금 디렉터** | `CURSOR_TO_CLAUDE.md` 수급 persist 스모크 검증 중계. 달력 10/3·10/11 유지 |
-| **sub-phase** | SMARTMONEY-KRX-CREDENTIAL-PERSIST-01 |
+| **지금 디렉터** | CURSOR_TO_CLAUDE 문구/라벨 검증. 다음 텔레그램 1회 육안. C는 VPS |
+| **sub-phase** | **CHAMPION-INSIGHT-TAIL-FIX-01** · DASHBOARD-LABEL-01 |
 | **status** | **WAIT_CLAUDE_OK** |
-| **다음** | 9/24–25 표 지연은 관측. 게이트/B-4 안 염 |
-| **앵커** | `SYNC-2026-09-28-KRX` |
+| **다음** | Claude OK 후 배포. TOXIC-KELLY-TIMESTAMP-RO-01은 VPS. 게이트/B-4 안 염 |
+| **앵커** | `SYNC-2026-09-29-CHAMPION-TAIL` |
 | **성공 기준 (thaw)** | 재평가 루프 재가동. **MDD 9% 밑 ≠ 성공** |
 
 ---

@@ -145,3 +145,43 @@ def test_dual_track_format_includes_tracks():
     assert "과거 기준(Sim)" in html
     assert "19.0%" in html
     assert "DNA 대조" in html
+
+
+def _blk(*, wr: float, pf: float, label: str = "50점대") -> "BucketBlock":
+    from forward_score_bucket_deep_dive import BucketBlock
+
+    return BucketBlock(
+        bucket_label=label,
+        n_rows=10,
+        win_rate_pct=wr,
+        profit_factor=pf,
+        dominant_sector="반도체",
+        top_stocks_html="A",
+        exit_date_min="2026-05-01",
+        exit_date_max="2026-05-22",
+        key_drivers_html="A",
+        dna_compact_html="[CPV]",
+        dna_contrast_lines=(),
+    )
+
+
+def test_champion_insight_no_false_kelly_freeze():
+    from forward_score_bucket_deep_dive import _champion_insight_tail
+
+    html = _champion_insight_tail(_blk(wr=20.0, pf=0.5), _blk(wr=20.0, pf=0.5))
+    assert "동결" not in html
+    assert "0.2%" not in html
+    assert "Systemic Risk" not in html
+    assert "수급 붕괴" not in html
+    assert "관측 경고" in html
+    assert "SCORING-VALIDITY=NONE" in html
+
+
+def test_champion_insight_tones_down_edge_when_none():
+    from forward_score_bucket_deep_dive import _champion_insight_tail
+
+    html = _champion_insight_tail(_blk(wr=60.0, pf=2.0), _blk(wr=60.0, pf=2.0))
+    assert "완벽히 동기화" not in html
+    assert "엣지 확인" not in html
+    assert "점수 참고" in html
+    assert "SCORING-VALIDITY=NONE" in html
