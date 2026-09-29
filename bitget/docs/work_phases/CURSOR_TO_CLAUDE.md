@@ -7,7 +7,7 @@
 |------|------|-------------|
 | **CAT-A (공용)** | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | **A5-EVENTLOG-01 구현 OK · 서버 반영 확인 대기** | `track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용)** | **Step 4 A/B/C** · 커밋 `35f9da9` · D 재검증 후 E는 Claude | `track_b_CURSOR_TO_CLAUDE.md` |
+| **CAT-L (공용)** | **Step 4 A~D** · `35f9da9`/`002c612` · E는 Claude | `track_b_CURSOR_TO_CLAUDE.md` |
 | **LANE_FASTCHECK** | **DONE** (B0-SAMPLE-CONTRACT) | `lanes/LANE_FASTCHECK/CURSOR_TO_CLAUDE.md` |
 | **LANE_HIST3FIX** | **DONE** (HIST-3-FIX) | `lanes/LANE_HIST3FIX/CURSOR_TO_CLAUDE.md` |
 | **LANE_FULLBT** | **WAIT_CLAUDE_OK** (RUN-2 `pilot-fut-20260927T040953Z`) | `lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md` |

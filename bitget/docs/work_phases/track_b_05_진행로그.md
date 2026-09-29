@@ -15,6 +15,13 @@ Step 3 S0 서버 재검증(확인본) 결과: `S2_EMPTY_DIFF=yes`였으나 **생
 Step 4 착수: (A) dirty 10파일 진단(백업 후 읽기) (B) FENCE-02 코드 커밋+푸시 (C) S0 게이트에 WRAPPED_COUNT 검증 추가(diff 공집합만으로는 불충분함이 이번에 실증됨) (D) 서버 재검증 (E) 재설치+즉시 28줄 확인.
 디렉터 결정 대기: 임시 수동 재적용 여부(기본값=미적용, Step 4 정식 경로로 진행).
 
+**Step 4 진행 (같은 날)**
+- 4A: 서버 dirty 10파일 = mode-only 0줄, GREP_HITS=0 (펜스 코드 아님). 백업 `/tmp/fence02_dirty_backup/dirty_20260929091506.diff`
+- 4B: origin **`35f9da9`** + OUTBOX **`002c612`**. 테스트 6 passed
+- 4C: `--fence-check` 3분류. 둘 다 wrapper 0 → `FENCE_MISSING`
+- 4D: Bot-2 `1e38166`→`002c612` ff-only. `FENCE_STATUS=DRIFTED` WRAPPED=28 LIVE=0. **설치기 미실행**
+- 4E: Claude 허용 대기
+
 ## CAT-L-FENCE-02 S1→S0→B 서버 실측 [2026-09-29 08:01 UTC] · **WAIT_CLAUDE_OK** · 설치기 미실행
 
 - S1: `git pull --ff-only` **Already up to date** HEAD `1e38166`. 들어올 커밋 0.

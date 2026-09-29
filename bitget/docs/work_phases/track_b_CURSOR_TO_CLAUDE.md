@@ -26,6 +26,20 @@ CLI: `python bitget/deploy/generate_bitget_crontab.py --fence-check /etc/cron.d/
 
 **4E** 미실행. 수동 Step2 wrapper 재적용 **안 함**(기본값).
 
+**4D (2026-09-29, 설치기 0)**  
+BEFORE `1e38166` → `git pull --ff-only` **PULL_EXIT=0** → AFTER **`002c612`** (fence 본체는 `35f9da9`).  
+`--fence-check` 원문:
+```
+WRAPPED_COUNT=28
+LIVE_WRAPPED_COUNT=0
+EXPECTED_WRAPPED=28
+FENCE_STATUS=DRIFTED
+GEN_JOBS=38 LIVE_JOBS=38
+ENV_SAME=yes
+JOBS_SAME=no
+```
+라이브 `grep -c systemd-run` = **0**. 생성기=28 wrapped · 라이브=0 → 복원 이유 확인. **S3/4E는 Claude 허용 후.**
+
 ---
 
 ## OUTBOX — CAT-L-FENCE-02 S1/S0/B 서버 원문 · 2026-09-29 08:01 UTC
