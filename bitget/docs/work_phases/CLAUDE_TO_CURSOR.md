@@ -1,3 +1,65 @@
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 4E (설치 허용)
+
+> **작성**: Claude Pro (Architect) · 2026-09-29
+> **Claude 허용**: 2026-09-29 — Step 4A(dirty 무관 확인) · 4B(커밋 35f9da9, 푸시 1e38166..002c612) · 4C(게이트 3분류) · 4D(서버 pull 확인, WRAPPED_COUNT=28 vs LIVE=0, FENCE_STATUS=DRIFTED — 설치 전 상태로 정확) 전부 검증 완료.
+> **CAT**: CAT-L 🔴(현재 무방비 상태의 복구) · 신규 Ask 아님, 기승인(옵션 A, 2026-09-27) 범위 내 복구 실행
+> **구현**: Cursor + 서버 실행 주체. CAT-A 비접촉.
+
+---
+
+## Pre-flight (설치 직전, 순서 고정)
+
+1. **전체 테스트 재확인**: Step 3 A 원 스위트(`test_cat_l_fence02_crontab.py` `test_bitget_staggered_schedule.py` `test_cli_logging_bitget.py`, 21개) + Step 4C 신규(fence-check 3분류, 6개)를 **이번 커밋(002c612) 기준으로 한 번에 재실행**, 전부 pass 원문 OUTBOX 첨부. 하나라도 fail이면 설치 중단, 결과만 회신.
+2. **직전 상태 재확인**: `--fence-check` 1회 더 실행 → `WRAPPED_COUNT=28` · `LIVE_WRAPPED_COUNT=0` · `FENCE_STATUS=DRIFTED` 재확인(4D와 동일해야 함 — 그 사이 아무도 안 건드렸다는 뜻).
+
+## 설치 (Pre-flight 통과 후에만)
+
+**`install_bitget_cron.sh`만 직접 실행** — 이번은 좁은 긴급 복구이므로 `update_bitget.sh`(다른 배포 단계도 포함) 대신 설치기 단독 실행을 우선한다. `update_bitget.sh` 경유가 꼭 필요하면 그 사유를 먼저 회신.
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+sudo bash bitget/deploy/install_bitget_cron.sh
+sudo systemctl daemon-reload
+```
+
+## 설치 직후 즉시 확인 (지연 없이, 같은 세션)
+
+```bash
+grep -c systemd-run /etc/cron.d/dual-screener-bitget            # 28 기대
+python3 bitget/deploy/generate_bitget_crontab.py --fence-check  # FENCE_STATUS=FENCE_OK 기대
+systemctl show bitget-cron-heavy.slice -p ActiveState -p MemoryHigh -p MemoryMax
+```
+
+- 28 아니거나 `FENCE_OK`가 아니면 **즉시** `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`으로 원복 후 Claude에 보고, 원인 조사 전까지 재시도 금지.
+- 통과하면 OUTBOX에 위 세 출력 원문 첨부.
+
+## 후속 (이번 Step 완료 조건은 아님, 참고)
+- Step 3 B(실스캔 소급 캡처, cgroup·environ·로그 소유권·CPUQuota·LIFECAP)는 이번 설치로 대상이 다시 생기므로 다음 세션에서 재개.
+- 3-way 겹침 실측 2~3회 후 슬라이스 수치 재확정 — 여전히 대기.
+- FENCE-03(drift guard)은 이번 사고로 얻은 교훈(WRAPPED_COUNT류 이중 검증) 반영해 설계 갱신 후 별도 착수.
+
+## 롤백
+`snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron` → `/etc/cron.d/dual-screener-bitget` + `sudo rm /etc/systemd/system/bitget-cron-heavy.slice && daemon-reload`.
+
+## 완료 정의
+Pre-flight 전체 pass 원문 · 설치 · 즉시 확인 3항목 통과 · `05_진행로그.md`(기존 "REGRESSED" 절에 이어서 기록, 새 절 아님) · `00_전체현황판.md` · `CURSOR_TO_CLAUDE.md` · `NEXT_ACTION.md` 갱신.
+
+## 금지
+Pre-flight fail 시 설치 강행 · `update_bitget.sh` 임의 대체 없이 사유 없이 실행 · CAT-A 로직 변경 · 슬라이스 수치 변경 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Step 4E)
+
+---
+
+## 기록 (이 파일 내, 05_진행로그 이어쓰기용)
+
+```markdown
+Step 4E 허용: 2026-09-29 — 4A~4D 검증 완료(dirty 무관·커밋 35f9da9/002c612 pull 확인·게이트 3분류 정상·DRIFTED 정확). Pre-flight(21+6 테스트 재확인, 직전 상태 재확인) 통과 후 `install_bitget_cron.sh` 단독 실행, 즉시 28줄+FENCE_OK 확인이 완료 조건.
+```
+
+---
+
 # CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 4 (긴급 — 펜스 소실 복구)
 
 > **작성**: Claude Pro (Architect) · 2026-09-29

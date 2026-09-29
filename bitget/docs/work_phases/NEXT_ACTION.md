@@ -5,9 +5,9 @@
 | 레인 | sub-phase | status | 창이 쓸 파일 |
 |------|-----------|--------|--------------|
 | **CAT-A (공용)** | A-LIFECAP-01 | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용·레인 아님)** | CAT-L-FENCE-02 Step 4 | **WAIT_CLAUDE_OK** (A~D 완료 · E 설치는 Claude 후) | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
+| **CAT-L (공용·레인 아님)** | CAT-L-FENCE-02 Step 4E | **WAIT_CLAUDE_OK** (설치 반영 · FENCE_OK · grep -c 주석 오탐 기록) | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | A5-EVENTLOG-01 | **구현 OK · 서버 반영 확인 대기** (적재 시계는 반영 확인일부터) | `track_b_*` |
-| **CAT-L (에스컬레이션)** | FENCE-02 펜스 증발 | **WAIT_CLAUDE_OK** | live wrapper 0 · 스캔 cron.service |
+| **CAT-L (에스컬레이션)** | FENCE-02 펜스 복구 | **WAIT_CLAUDE_OK** | live wrapped jobs 28 · FENCE_OK |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
 | **LANE_FULLBT** | FULL-BT-FUT-RUN-2 | **WAIT_CLAUDE_OK** (RUN-2 실런 OUTBOX) | `lanes/LANE_FULLBT/*` |

@@ -1,6 +1,53 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-29 · **CAT-L-FENCE-02 Step 4 A/B/C** · 커밋 `35f9da9` · **E 설치 금지**
+> **갱신**: 2026-09-29 · **CAT-L-FENCE-02 Step 4E** · FENCE_OK (재설치) · WAIT_CLAUDE_OK
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 4E 설치 · 2026-09-29
+
+**Pre-flight tests (로컬, 3파일 한 번에)**  
+`pytest bitget/tests/test_cat_l_fence02_crontab.py bitget/tests/test_bitget_staggered_schedule.py bitget/tests/test_cli_logging_bitget.py -v`  
+**22 passed** in 4.16s · fail 0. collected 22 (fence 6 + staggered 12 + cli 4). Handoff의 「21+6」과 숫자만 다름 — 누락 fail 없음.
+
+**직전 재확인 (설치 직전, Bot-2 HEAD `002c612`)**
+```
+WRAPPED_COUNT=28
+LIVE_WRAPPED_COUNT=0
+EXPECTED_WRAPPED=28
+FENCE_STATUS=DRIFTED
+GEN_JOBS=38 LIVE_JOBS=38
+ENV_SAME=yes
+JOBS_SAME=no
+```
+
+**설치:** `sudo bash bitget/deploy/install_bitget_cron.sh` 단독. `update_bitget.sh` 0. `sudo systemctl daemon-reload` 수행.
+
+**1차 설치 직후 (오탐 롤백 전)**  
+`grep -c systemd-run` = **29** (헤더 주석 1줄에 `systemd-run` 포함).  
+python `--fence-check`: **FENCE_OK** · LIVE_WRAPPED_COUNT=**28** · JOBS_SAME=yes.  
+slice High=1288490188 Max=1610612736 Active=active.  
+검증 스크립트가 Handoff 문구 `grep -c == 28`을 리터럴로 적용해 **P0 원복 + slice 유닛 삭제**. 게이트(FENCE_OK)는 이미 통과였음.
+
+**재설치 (같은 세션, 즉시)**  
+설치기 재실행 → slice 재설치. 판정은 python `LIVE_WRAPPED_COUNT=28` + `FENCE_STATUS=FENCE_OK`만.
+```
+GREP_C_SYSTEMD_RUN=29
+NONCOMMENT_SYSTEMD_RUN=28
+WRAPPED_COUNT=28
+LIVE_WRAPPED_COUNT=28
+EXPECTED_WRAPPED=28
+FENCE_STATUS=FENCE_OK
+GEN_JOBS=38 LIVE_JOBS=38
+ENV_SAME=yes
+JOBS_SAME=yes
+MemoryHigh=1288490188
+MemoryMax=1610612736
+ActiveState=active
+=== 4E-RETRY VERIFY_OK ===
+```
+
+CAT-A 비접촉. 슬라이스 수치 변경 0.
 
 ---
 

@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | CAT-L-FENCE-02 **Step 4(긴급, 펜스 소실 복구)** — A 진단→B 커밋+푸시→C 게이트 수정→D 재검증→E 재설치 | A5-EVENTLOG 서버반영 미확인 · C-2/MDD5%/live 🔴 |
-| 마지막 갱신 | 2026-09-29 | Step 4 A~D · HEAD `002c612` · 라이브 wrapper 0 · E 대기 |
+| **다음 Handoff** | CAT-L-FENCE-02 **Step 4E Claude 검증** (FENCE_OK 설치됨 · Step 3 B 실스캔은 다음) | A5-EVENTLOG 서버반영 미확인 · C-2/MDD5%/live 🔴 |
+| 마지막 갱신 | 2026-09-29 | Step 4E 재설치 VERIFY_OK · 라이브 wrapped jobs 28 |
 
 ---
 

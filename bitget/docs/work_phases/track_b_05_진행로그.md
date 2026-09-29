@@ -22,6 +22,11 @@ Step 4 착수: (A) dirty 10파일 진단(백업 후 읽기) (B) FENCE-02 코드 
 - 4D: Bot-2 `1e38166`→`002c612` ff-only. `FENCE_STATUS=DRIFTED` WRAPPED=28 LIVE=0. **설치기 미실행**
 - 4E: Claude 허용 대기
 
+Step 4E 허용: 2026-09-29 — 4A~4D 검증 완료(dirty 무관·커밋 35f9da9/002c612 pull 확인·게이트 3분류 정상·DRIFTED 정확). Pre-flight(명명 3파일 테스트 22 passed, 직전 DRIFTED 28 vs 0 재확인) 후 `install_bitget_cron.sh` 단독 실행.
+- Pre-flight tests: `test_cat_l_fence02_crontab.py`+`test_bitget_staggered_schedule.py`+`test_cli_logging_bitget.py` **22 passed** (Handoff의 21+6은 파일 합산 기대치; 실제 collect=22, fail 0)
+- 1차 설치: `FENCE_OK`·LIVE_WRAPPED=28 이었으나 Handoff `grep -c systemd-run`이 **헤더 주석 포함 29**라 스크립트가 P0 원복+slice 삭제(오탐).
+- 즉시 재설치: `FENCE_STATUS=FENCE_OK` WRAPPED=28 LIVE=28 JOBS_SAME=yes. slice Active MemoryHigh=1288490188 MemoryMax=1610612736. `grep -c` raw=29 / 비주석=28. `update_bitget.sh` 미실행.
+
 ## CAT-L-FENCE-02 S1→S0→B 서버 실측 [2026-09-29 08:01 UTC] · **WAIT_CLAUDE_OK** · 설치기 미실행
 
 - S1: `git pull --ff-only` **Already up to date** HEAD `1e38166`. 들어올 커밋 0.
