@@ -65,6 +65,8 @@
 | A-3 leverage clamp | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 (클램프는 logger.info만, ops_events 미기록) | _(대기 · Claude 3단계)_ |
 | A-4 gross notional block | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 | _(대기 · Claude 3단계)_ |
 | A-5 config reject | 2026-08-02 | _(paper 배포 전)_ | **null** · 로그 소스 없음 (reject는 logger.warning, ops_events 미기록) | _(대기 · Claude 3단계)_ |
+| CAT-L-FENCE-02 cron 슬라이스 펜스 | 2026-09-27 | cron OOM 3회 재발(09-07 · 09-14 · 09-25) | (대기) — 판정 예정 **2026-10-13** (관측 시작=2026-09-29 FENCE_OK 고정 · 09-27~09-29 소실 구간 제외) · 지표: 글로벌 OOM 0건 / slice 내 kill 건수 / (a) 잡 미실행·실패 줄 수 / 3-way 시 slice MemoryCurrent 피크(상한 재확정 근거) | (대기) |
+| A5-EVENTLOG-01 A-1~A-5 ops_events 계측 | 2026-09-26 (구현) · 서버 반영 미확인 | A-1~A-5 8주 판정 근거 없음(A-EFFECTVERIFY-01 5개 sub 전부 null) | (대기) — 서버 반영 확인 후 판정일 확정(반영일+28일). 지표: 이벤트 5종 발생 건수. 0건이면 "조건 미발생"과 "계측 미작동"을 구분하는 점검 1회 | (대기) |
 
 **판정**: `유지` / `롤백` / `추가조정`
 

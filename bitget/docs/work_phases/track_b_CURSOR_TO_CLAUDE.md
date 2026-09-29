@@ -1,6 +1,29 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-29 · **CAT-L-FENCE-02 Step 4E** · FENCE_OK (재설치) · WAIT_CLAUDE_OK
+> **갱신**: 2026-09-29 · **CAT-L-FENCE-02 Step 3 B 재개** · WAIT_CLAUDE_OK · Step 4 종결 기록됨
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 3 B 재개 · 2026-09-29 11:29 UTC
+
+읽기전용. CAT-A 비접촉. 설치기 0. 판정 1차=`--fence-check`(LIVE 경로 명시 — Handoff의 `--fence-check` 무인자는 argparse상 파일 미지정).
+
+원문: `snapshots/CAT-L-FENCE-02_B_resume_20260929.md`
+
+| # | 결과 |
+|---|------|
+| 0 | `TIMEOUT_NO_ema5_r2` (09-27 Step 2 잔여 cap) |
+| 1 | **heavy.slice** `scan_spot_supernova_r2` pid 58790 etime 49:00 |
+| 2 | JOURNAL_CRON_OK · error/failed grep 공백 |
+| 3 | pgrep `--scan-` 공백 (러너 `--mode scan_*`) — 미해당/미스 |
+| 4 | bitget.log `ubuntu:ubuntu` 10:28 UTC |
+| 5 | scope CPUQuotaPerSecUSec=**800ms** · Slice=bitget-cron-heavy.slice · High/Max 확정값 |
+| 6 | heavy Current≈252420096 · High/Max 확정 · 부모 slice High/Max=infinity |
+| 7 | FENCE_OK · LIVE_WRAPPED_COUNT=28 · 비주석 grep=28 |
+| 8 | `*.log` LIFECAP 패턴 0건 — 로그 파일 한정, 미검출 |
+| 9 | JOURNAL_K_OK · **OOM_GREP_EMPTY** (since 2026-09-29 00:00) |
+
+Cursor 1~2단계: 실스캔이 slice에 들어갔고 게이트 FENCE_OK. **Done 처리 안 함** — Claude OK 대기. 3단계 판정일 06에 **2026-10-13** 반영.
 
 ---
 

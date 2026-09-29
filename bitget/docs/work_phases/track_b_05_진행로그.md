@@ -27,6 +27,28 @@ Step 4E 허용: 2026-09-29 — 4A~4D 검증 완료(dirty 무관·커밋 35f9da9/
 - 1차 설치: `FENCE_OK`·LIVE_WRAPPED=28 이었으나 Handoff `grep -c systemd-run`이 **헤더 주석 포함 29**라 스크립트가 P0 원복+slice 삭제(오탐).
 - 즉시 재설치: `FENCE_STATUS=FENCE_OK` WRAPPED=28 LIVE=28 JOBS_SAME=yes. slice Active MemoryHigh=1288490188 MemoryMax=1610612736. `grep -c` raw=29 / 비주석=28. `update_bitget.sh` 미실행.
 
+### Step 4 종결 — Claude OK [2026-09-29]
+
+4A(dirty 무관 확인)·4B(커밋 35f9da9, push 1e38166..002c612, 서버 pull 확인)·4C(게이트 3분류 FENCE_OK/FENCE_MISSING/DRIFTED)·4D(재검증 DRIFTED 정확)·4E(설치, 최종 `FENCE_STATUS=FENCE_OK`·`LIVE_WRAPPED_COUNT=28`·`JOBS_SAME=yes`·slice 값 정상) 전부 확인.
+
+**Step 4E 진행 중 1회 오작동**: Claude가 준 확인 명령(`grep -c systemd-run`)이 헤더 주석을 포함 카운트해 29로 나와, 이미 `FENCE_OK`였던 1차 설치를 불필요하게 원복(P0 스냅샷 복원+slice 삭제)시킴. Cursor가 즉시 재판정(python 게이트 기준)해 재설치, 같은 세션 내 복구. 근본 원인은 Claude의 확인 스크립트, 설치 로직 아님. **이후 모든 wrapper 개수 판정은 `--fence-check` 단일 기준으로 통일**, 셸 grep 쓸 경우 `grep -v '^\s*#' … | grep -c systemd-run`(주석 제외)만 사용.
+
+Pre-flight 테스트: 지정 3파일 22 passed, fail 0.
+
+### Step 3 B 재개 [2026-09-29 11:29 UTC] · 읽기전용 · WAIT_CLAUDE_OK
+
+원문: `snapshots/CAT-L-FENCE-02_B_resume_20260929.md`
+- 0: `/tmp/fence02_first_scan.cap` = `TIMEOUT_NO_ema5_r2` (Step 2 잔여, 이번 펜스 재설치 후 실스캔 아님)
+- 1: `scan_spot_supernova_r2` pid 58790 · cgroup=`.../bitget-cron-heavy.slice/run-rc106de74664b440aadbb8b1f9f` (**cron.service 아님**)
+- 2: JOURNAL_CRON_OK · since 오늘 cron error/failed grep 공백
+- 3: `pgrep -f -- '--scan-'` 0건 — 러너는 `--mode scan_*` (이전과 동일 미스). 실행 중 잡은 1번에서 확인
+- 4: `bitget.log` 2026-09-29 10:28 `ubuntu:ubuntu`
+- 5: scope Slice=`bitget-cron-heavy.slice` CPUQuotaPerSecUSec=800ms High/Max=확정값
+- 6: heavy High=1288490188 Max=1610612736 Current≈252MB Accounting=yes · 부모 bitget.slice / bitget-cron.slice High/Max=infinity
+- 7: `--fence-check` FENCE_OK LIVE_WRAPPED=28 · 보조 비주석 grep=28
+- 8: bitget `*.log` LIFECAP 문자열 0건 (로그 경로 한정)
+- 9: JOURNAL_K_OK · OOM_GREP_EMPTY (since 2026-09-29 00:00)
+
 ## CAT-L-FENCE-02 S1→S0→B 서버 실측 [2026-09-29 08:01 UTC] · **WAIT_CLAUDE_OK** · 설치기 미실행
 
 - S1: `git pull --ff-only` **Already up to date** HEAD `1e38166`. 들어올 커밋 0.

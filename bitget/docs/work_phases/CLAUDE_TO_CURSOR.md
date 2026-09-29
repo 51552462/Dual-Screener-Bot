@@ -1,3 +1,96 @@
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 3 B (재개) + Step 4 종결 기록
+
+> **작성**: Claude Pro (Architect) · 2026-09-29
+> **선행**: Step 4(펜스 소실→복구) Claude OK. 라이브 `FENCE_STATUS=FENCE_OK`, 28 wrapped, 코드는 origin(002c612)에 있고 서버가 그 커밋 기준. 원 Step 3 B(실스캔 캡처)는 SSH 불가로 미실행 상태였다가 이번에 대상(펜스)이 다시 유효해짐.
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(읽기전용)
+> **구현**: 서버 접속 가능한 주체(디렉터/Cursor). CAT-A 비접촉. 판정 원칙: **`--fence-check`(python 게이트)만 자동 판정 기준으로 사용, 셸 grep은 보조 참고만.**
+
+---
+
+## A. Step 4 종결 기록 (그대로 옮겨 적기)
+
+`05_진행로그.md`의 기존 "REGRESSED" 절 **바로 아래에 이어서** 추가(새 절 아님):
+
+```markdown
+### Step 4 종결 — Claude OK [2026-09-29]
+
+4A(dirty 무관 확인)·4B(커밋 35f9da9, push 1e38166..002c612, 서버 pull 확인)·4C(게이트 3분류 FENCE_OK/FENCE_MISSING/DRIFTED)·4D(재검증 DRIFTED 정확)·4E(설치, 최종 `FENCE_STATUS=FENCE_OK`·`LIVE_WRAPPED_COUNT=28`·`JOBS_SAME=yes`·slice 값 정상) 전부 확인.
+
+**Step 4E 진행 중 1회 오작동**: Claude가 준 확인 명령(`grep -c systemd-run`)이 헤더 주석을 포함 카운트해 29로 나와, 이미 `FENCE_OK`였던 1차 설치를 불필요하게 원복(P0 스냅샷 복원+slice 삭제)시킴. Cursor가 즉시 재판정(python 게이트 기준)해 재설치, 같은 세션 내 복구. 근본 원인은 Claude의 확인 스크립트, 설치 로직 아님. **이후 모든 wrapper 개수 판정은 `--fence-check` 단일 기준으로 통일**, 셸 grep 쓸 경우 `grep -v '^\s*#' … | grep -c systemd-run`(주석 제외)만 사용.
+
+Pre-flight 테스트: 지정 3파일 22 passed, fail 0.
+```
+
+## B. 3단계(효과 검증) 판정일 재설정
+
+`06_검증체크리스트_및_실패기록.md`의 `CAT-L-FENCE-02 cron 슬라이스 펜스` 행 판정일을 `2026-10-11` → **`2026-10-13`(2026-09-29부터 2주)**로 정정. 사유: 09-27~09-29 사이 펜스가 실제로 꺼져 있던 구간이 있었음이 확인됨(원인 불명 + Step 4E 왕복 포함) — 그 구간은 관측 자격 없음. 시작점을 origin에 코드가 고정되고 라이브가 `FENCE_OK`로 확인된 2026-09-29로 재설정.
+
+## C. Step 3 B — 실스캔 소급 캡처 (당초 스펙 유지, 판정 기준만 정정)
+
+대상은 지금 실행 중이거나 최근 완주한 (a) 스캔. `Handoff CAT-L-FENCE-02 Step 3`의 원 8항목 + 이전 잔여 Handoff의 9번(글로벌 OOM 소급) 그대로, 아래 **정정 1건**만 반영:
+
+> 원 8항목 중 "7. cron.d wrapper 줄(28 기대)" 판정은 `grep -c systemd-run`(원문 그대로) 대신 **`--fence-check`의 `LIVE_WRAPPED_COUNT`**를 1차 기준으로 쓰고, 보조로 `grep -v '^\s*#' /etc/cron.d/dual-screener-bitget | grep -c systemd-run`(주석 제외)를 병기.
+
+나머지 1~6·8~9 항목은 이전 Handoff(`CAT-L-FENCE-02_server_blocks_Claude.md`의 B 블록) 그대로 유효. 그 블록을 그대로 재실행:
+
+```bash
+bash <<'B' 2>&1 | tee /tmp/fence02_B.out
+# CAT-L-FENCE-02 · Step 3 B (재개, 2026-09-29) — 읽기전용
+set -u
+INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+SINCE='2026-09-29 00:00'
+date -u
+echo '--- 0. Step 2 첫 스캔 캡처(참고, TIMEOUT 가능성 있음) ---'
+cat /tmp/fence02_first_scan.cap 2>/dev/null || echo 'NO_FIRST_SCAN_CAP'
+echo '--- 1. 실행 중 스캔 cgroup ---'
+ps -eo pid,user,etime,cgroup:90,cmd | grep -E 'scan_|daily_audit|weekly_evolution|--scan-|systemd-run' | grep -v grep || echo 'NO_SCAN_RUNNING_NOW'
+echo '--- 6. slice / 부모 slice ---'
+systemctl show bitget-cron-heavy.slice -p ActiveState -p MemoryHigh -p MemoryMax -p MemoryCurrent -p MemoryAccounting
+systemctl show bitget.slice bitget-cron.slice -p MemoryHigh -p MemoryMax -p MemoryAccounting
+echo '--- 5. 실행 중 scope (CPUQuota) ---'
+for u in $(systemctl list-units --type=scope --no-legend | awk '/run-/{print $1}'); do
+  echo "[$u]"; systemctl show "$u" -p Slice -p CPUQuotaPerSecUSec -p MemoryHigh -p MemoryMax
+done
+echo '--- 3. environ ---'
+for p in $(pgrep -u ubuntu -f -- '--scan-' | head -3); do
+  echo "[pid=$p] $(ps -o user=,cgroup= -p "$p")"
+  tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -E '^(HOME|USER|LOGNAME|PATH|PWD)='
+done
+echo '--- 4. 로그 소유권 ---'
+TZ=UTC find "$INSTALL_ROOT" -name '*.log' -newermt "$SINCE" -printf '%TY-%Tm-%Td %TH:%TM %u:%g %p\n' 2>/dev/null | head -80
+echo '--- 2. cron / systemd-run ---'
+journalctl -u cron -n1 --no-pager >/dev/null 2>&1 && echo 'JOURNAL_CRON_OK' || echo 'JOURNAL_CRON_UNREADABLE'
+journalctl -u cron --utc --since "$SINCE" --no-pager 2>/dev/null | grep -Ei 'error|failed' | tail -40 || true
+echo '--- 9. 커널 OOM 소급 ---'
+journalctl -k -n1 --no-pager >/dev/null 2>&1 && echo 'JOURNAL_K_OK' || echo 'JOURNAL_K_UNREADABLE'
+journalctl -k --utc --since "$SINCE" --no-pager 2>/dev/null | grep -Ei 'out of memory|oom-kill|oom_reaper|killed process' || echo 'OOM_GREP_EMPTY'
+echo '--- 8. LIFECAP ---'
+grep -RniE 'lifecap skip|LIFECAP WOULD_KILL|LIFECAP ENFORCE' "$INSTALL_ROOT/bitget" --include='*.log' 2>/dev/null | tail -20 || true
+echo '--- 7. wrapper 개수 (1차 python 게이트, 2차 grep 보조) ---'
+python3 "$INSTALL_ROOT/bitget/deploy/generate_bitget_crontab.py" --fence-check
+grep -v '^\s*#' /etc/cron.d/dual-screener-bitget | grep -c systemd-run
+B
+```
+
+## 인접 CAT
+CAT-A 비접촉(8번 LIFECAP은 로그 확인만).
+
+## 완료 정의
+- B 9항목 캡처(미해당은 사유 명시)
+- A/B 기록 반영: `05_진행로그.md` · `06_검증체크리스트_및_실패기록.md`(판정일 2026-10-13) · `00_전체현황판.md` · `CURSOR_TO_CLAUDE.md` · `NEXT_ACTION.md`
+- 통과 시 CAT-L-FENCE-02 전체 SUB_DONE(1~2단계), 3단계는 2026-10-13
+
+## 롤백
+이 Step은 읽기전용 — 롤백 대상 없음.
+
+## 금지
+CAT-A 로직 변경 · 슬라이스 수치 변경(3-way 재관측 전 고정) · (b)/(c) 변경 · grep을 자동 판정 기준으로 사용 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Step 3 B, 재개)
+
+---
+
 # CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 4E (설치 허용)
 
 > **작성**: Claude Pro (Architect) · 2026-09-29
