@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | **없음** (FENCE-02 Step 2 적용 검증) | A5-EVENTLOG 2~4주 · C-2/MDD5%/live 🔴 |
-| 마지막 갱신 | 2026-09-27 | FENCE-02 slice 1.5G/1.2G 적용 · 실스캔 cgroup 16:01 UTC |
+| **다음 Handoff** | CAT-L-FENCE-02 **Step 4(긴급, 펜스 소실 복구)** — A 진단→B 커밋+푸시→C 게이트 수정→D 재검증→E 재설치 | A5-EVENTLOG 서버반영 미확인 · C-2/MDD5%/live 🔴 |
+| 마지막 갱신 | 2026-09-29 | Step 4 진행 · 설치 금지 · 기본값=수동 wrapper 미적용 |
 
 ---
 
@@ -41,7 +41,7 @@
 | paper 신호 신뢰 | C-1 **Claude OK** · C-1b 집계 구현 | `06` skip률 관측 (`skip_rate_pct` v1 null) | 🟡 2 |
 | paper PnL 현실 | funding 미차감 | **C-2 defer** (close PnL 오염) | 🔴 3 |
 | 서버 디스크/백업 | L-1/L-2 **서버 설치 확인** 2026-09-14 | df 38% · logrotate+backup.timer 실측 | ① 디렉터 |
-| 4GB RAM | L-3a OK · FENCE-02 **Phase 0** | cron 직행 26 scan + audit/weekly still `cron.service` | Claude Phase 1 |
+| 4GB RAM | L-3a OK · FENCE-02 Step 3 **A persist** | 런타임 펜스+생성기 동기 · B 실스캔 미캡처 | WAIT_CURSOR_VPS |
 | cutover | **FAIL 유지** (`BITGET_PIPELINE_SSOT` 없음=0) 09-26 실측 | ASYNC=1 · main 없음 · factory active · **1로 안 올림** | Claude 4 참고 |
 | 실전 | OFF | exit·parity·P2-5 | 🔴 금지 |
 
@@ -49,7 +49,7 @@
 
 | Layer | 내용 | paper 중 |
 |-------|------|----------|
-| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · FENCE-02 Phase 0 · **WAIT_CLAUDE_OK** |
+| **1** | L-1/L-2 설치 · MemoryMax · paper 배포 확인 · cutover env | I-GMM 배포✅ · FENCE-02 Step 3 A · **WAIT_CURSOR_VPS** |
 | **2** | **C-1** → **D-1~D-3** · P0-6 / P1-7 설계 | D 트랙 ✅ · **POST_DEPLOY_OBS** · overseer❓ |
 | **3** | MDD 5% · B-2 live · B-3 block · B-4b · **C-2/C-3** · 실전 | `06` / Go-No-Go **후** |
 
@@ -157,6 +157,8 @@
 
 | 이름 | 뜻 | 만든 Phase | 파일 |
 |------|-----|-----------|------|
+| `bitget-cron-heavy.slice` | HEAVY cron 합산 울타리 High=1.2G Max=1.5G | CAT-L-FENCE-02 | `bitget/deploy/systemd/bitget-cron-heavy.slice` |
+| `CAT-L-FENCE-02` | cron 직행 scan을 slice+scope로 가둠 · Step3=생성기 영속화 | CAT-L-FENCE-02 | `generate_bitget_crontab.py` |
 | `14_UNIVERSE-BT_구조생존검증.md` | L0 구조생존 R&D SSOT · U0~U3 · Track B 병렬 독립 | UNIVERSE-BT-U0 | `docs/work_phases/` |
 | `UNIVERSE-BT-U0` | 스냅샷·지표5·L0 Kill 문서화 (코드 비접촉) | UNIVERSE-BT-U0 | work_phases |
 | `UNIVERSE-BT-U1` | read-only 리플레이 하니스 · C3(지표4 보류) | UNIVERSE-BT-U1 | `analysis/universe_bt/` |

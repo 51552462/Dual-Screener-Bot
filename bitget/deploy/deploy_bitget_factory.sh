@@ -34,6 +34,12 @@ done
 
 
 
+SLICE_UNIT="${SCRIPT_DIR}/systemd/bitget-cron-heavy.slice"
+if [[ -f "${SLICE_UNIT}" ]]; then
+  sudo install -m 0644 "${SLICE_UNIT}" /etc/systemd/system/bitget-cron-heavy.slice
+  echo "  installed /etc/systemd/system/bitget-cron-heavy.slice"
+fi
+
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/bitget.sh"
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/update_bitget.sh"
 sudo chmod +x "${INSTALL_ROOT}/bitget/deploy/deploy_bitget_factory.sh"

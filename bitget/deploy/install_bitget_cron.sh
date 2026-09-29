@@ -18,6 +18,19 @@ if [[ "${EUID:-0}" -ne 0 ]]; then
   exit 1
 fi
 
+echo "=== CAT-L-FENCE-02 slice (idempotent) ==="
+SLICE_SRC="${REPO_ROOT}/bitget/deploy/systemd/bitget-cron-heavy.slice"
+SLICE_DEST="/etc/systemd/system/bitget-cron-heavy.slice"
+if [[ ! -f "${SLICE_SRC}" ]]; then
+  echo "ERROR: ${SLICE_SRC} missing" >&2
+  exit 1
+fi
+install -m 0644 "${SLICE_SRC}" "${SLICE_DEST}"
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+fi
+echo "✓ ${SLICE_DEST} MemoryHigh=1288490188 MemoryMax=1610612736"
+
 echo "=== Generate Bitget cron from bitget_scan_schedule.py (SSOT) ==="
 GEN_PY="${REPO_ROOT}/bitget/deploy/generate_bitget_crontab.py"
 if [[ ! -f "${GEN_PY}" ]]; then
@@ -62,6 +75,10 @@ fi
 
 if ! grep -q 'bitget.sh --post-deploy-obs-digest' "${DEST}"; then
   echo "ERROR: ${DEST} missing --post-deploy-obs-digest (coin north star)" >&2
+  exit 1
+fi
+if ! grep -q 'slice=bitget-cron-heavy.slice' "${DEST}"; then
+  echo "ERROR: ${DEST} missing CAT-L-FENCE-02 systemd-run wrapper" >&2
   exit 1
 fi
 

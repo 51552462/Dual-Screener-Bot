@@ -7,6 +7,63 @@
 
 ---
 
+## CAT-L-FENCE-02 — 펜스 소실 회귀 발견 및 복구 착수 [2026-09-29] · REGRESSED · Step 4 진행
+
+Step 3 S0 서버 재검증(확인본) 결과: `S2_EMPTY_DIFF=yes`였으나 **생성기·라이브 둘 다 wrapper 0줄**로 일치한 것 — 원래 게이트가 "비교 대상 자체가 사라진 경우"를 PASS로 오판정.
+확인된 사실: 서버 HEAD=1e38166, FENCE-02 생성기 커밋이 origin에 없음(Step 3 A는 로컬/미푸시 상태였던 것으로 추정) · `GIT_CLEAN=no`(deploy 10파일 dirty) · 라이브 cron.d systemd-run 0줄 · 실행 중 스캔 2개(`scan_spot_master`·`scan_futures_shadow`) 전부 `cron.service` · slice 유닛은 살아있으나 소속 프로세스 없음 · `oom_kill=0`, 커널 OOM grep 공백(활성 사고 아님) · Step 2 첫스캔 캡처 `TIMEOUT_NO_ema5_r2`.
+**현재 상태: 3회 OOM 재발과 동일 무방비 상태로 복귀. 활성 사고는 아니나 즉시 복구 착수.**
+Step 4 착수: (A) dirty 10파일 진단(백업 후 읽기) (B) FENCE-02 코드 커밋+푸시 (C) S0 게이트에 WRAPPED_COUNT 검증 추가(diff 공집합만으로는 불충분함이 이번에 실증됨) (D) 서버 재검증 (E) 재설치+즉시 28줄 확인.
+디렉터 결정 대기: 임시 수동 재적용 여부(기본값=미적용, Step 4 정식 경로로 진행).
+
+## CAT-L-FENCE-02 S1→S0→B 서버 실측 [2026-09-29 08:01 UTC] · **WAIT_CLAUDE_OK** · 설치기 미실행
+
+- S1: `git pull --ff-only` **Already up to date** HEAD `1e38166`. 들어올 커밋 0.
+- S0: `S2_EMPTY_DIFF=yes` `S2_ENV_SAME=yes` **`GIT_CLEAN=no`**
+- B: 스캔 cgroup=`cron.service`. cron.d wrapper **0**. slice High/Max 유지, oom_kill=0, peak=783949824. cap `TIMEOUT_NO_ema5_r2`.
+- 원문: `snapshots/CAT-L-FENCE-02_S1S0B_20260929.md`
+
+## CAT-L-FENCE-02 Step 3 잔여 — S0/C/D 확인 [2026-09-28] · Claude 조건부 확인 · S1~S4 서버 결과 대기
+
+Claude 확인: S0/B 명령이 읽기전용이며 설치기·`update_bitget.sh`를 실행하지 않음을 확인. 서버 실행 전 보완 3건 → 확인본 블록(`CAT-L-FENCE-02_server_blocks_Claude.md`)으로 교체:
+1. `set -eu`가 대화형 셸에 남아 이후 명령(빈 grep)에서 SSH 세션을 끊을 수 있음 → 서브셸로 격리
+2. 비교에서 `SHELL=`/`PATH=`/`CRON_TZ=` 줄 제외 → 설치기가 이 줄을 바꿔도 S2 PASS 가능 → 환경 줄 diff를 `S2_ENV_SAME`으로 별도 판정
+3. 빈 결과끼리 diff=PASS 가능성, 생성기 import의 추적 파일 쓰기 여부 → 줄 수 검증 + `GIT_CLEAN`
+S1: pull 전 들어올 커밋 목록·HEAD 전후 기록(서버 반영 상태 파악용).
+B: `/tmp/fence02_first_scan.cap` 추가, journalctl 접근 불가 시 가짜 "OOM 없음" 방지, `sqlite3 -readonly`.
+C/D 문서: Cursor 보고 기준. Claude가 열람한 사본에는 아직 반영이 보이지 않아 다음 열람 시 재확인.
+S3(`update_bitget.sh`/설치기)는 S0의 `S2_EMPTY_DIFF=yes` · `S2_ENV_SAME=yes` · `GIT_CLEAN=yes` 세 개 + Claude 확인 후.
+
+## CAT-L-FENCE-02 Step 3 A — 생성기·설치기 영속화 [2026-09-28] · Claude OK(A) · B/서버 diff 대기
+
+**Claude OK (A): 2026-09-28** — 스펙 일치. 생성기(HEAVY 28줄 root+wrapper, enqueue/OPS ubuntu, `\%`), `_HEAVY_PREFIXES` 읽기 import + 패리티 테스트, 설치기(slice 멱등 설치+daemon-reload, post-deploy-obs 검증 유지, wrapper grep), `update_bitget.sh`가 설치기 호출함을 발견·반영. 테스트 21 passed. 슬라이스 수치·CAT-A 변경 0.
+
+**미완 (Done 보류)**
+1. 서버 실파일 vs 생성기 diff(S2) — 지금 공집합은 Step 2 캡처 스냅샷 기준. 공집합 확인 전 설치기·`update_bitget.sh` 실행 금지
+2. 실스캔 소급 캡처(B 9항목, 글로벌 OOM 소급 포함) — SSH 키 없음으로 미캡처
+- 3단계(효과 검증): 판정 예정일 2026-10-11 (`track_b_06` 행 등록됨)
+- 잔여 문서: STRUCT `--use-queue` 주의 · CAT-L cron SSOT 1줄 · S0 명령 OUTBOX
+
+## CAT-L-FENCE-02 Step 3 [2026-09-28] · **A 코드 완료 · B VPS 캡처 대기 · WAIT_CURSOR_VPS**
+
+- 생성기: HEAVY 직행 28줄 = root+Step2 동일 wrapper. enqueue/OPS(ubuntu) 유지. `_HEAVY_PREFIXES` 읽기 import. pytest 21 passed. 생성 결과 == `CAT-L-FENCE-02_cron_step2_LIVE_20260927.cron`
+- 설치기: slice 유닛 멱등 설치 + daemon-reload. post-deploy-obs 검증 유지. `update_bitget.sh`가 installer 호출 → 그 경로 포함. `bitget.sh`는 미호출
+- **서버 재설치 안 함.** 이 에이전트 SSH `ubuntu@3.36.90.195` = publickey denied
+- 비접촉: CAT-A 로직 · 슬라이스 수치 · C-2/MDD5%/live
+
+## CAT-L-FENCE-02 Step 2 — 슬라이스 + cron wrapper 적용 [2026-09-28] · 조건부 OK · Done 보류
+
+**Claude 조건부 OK: 2026-09-28** — 메커니즘 확인(프로브 cgroup = `/bitget.slice/bitget-cron.slice/bitget-cron-heavy.slice/`, `cron.service` 아님).
+슬라이스 MemoryHigh=1288490188 / MemoryMax=1610612736 확정값 그대로. (b) enqueue 1줄·(c) OPS 9줄 비접촉.
+(a) 28줄만 cron user=root + `systemd-run --uid=ubuntu --scope --slice=bitget-cron-heavy.slice`. 사유(ubuntu는 polkit상 system slice 불가) 타당. `CPUQuota=80\%` 이스케이프.
+
+**Done 보류 사유 / 조건**
+1. Step 3 — 생성기(`generate_bitget_crontab.py`)·설치기(`install_bitget_cron.sh`) 미반영 → 재설치 시 wrapper 증발. 반영 전 서버 재설치 금지.
+2. 프로브는 sleep — 실스캔(16:01 UTC `scan_spot_ema5_r2`)의 cgroup·정상완주·환경(HOME/USER)·로그 소유권·CPUQuota 유효성 미검증.
+3. 28줄 정적 strip-diff, 슬라이스 속성(`systemctl show`) 캡처 미확인.
+4. wrapped 스캔이 LIFECAP 감시 대상으로 계속 잡히는지 미확인.
+- 롤백: `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`
+- 후속 관측 의무: 3-way 겹침 실측 2~3회 후 슬라이스 수치 재확정(그 전 임의 변경 금지)
+
 ## CAT-L-FENCE-02 Step 2 [2026-09-27] · **APPLIED · WAIT_CLAUDE_OK**
 
 - slice `bitget-cron-heavy.slice` Max=1610612736 High=1288490188. (a) 28줄 root+systemd-run. (b) enqueue 1줄·(c) ubuntu 유지
@@ -53,15 +110,15 @@
 
 ---
 
-## A5-EVENTLOG-01 — A-1~A-5 ops_events 계측 [2026-09-26] · DEPLOYED · WAIT_2~4W_ACCUMULATION
+## A5-EVENTLOG-01 — A-1~A-5 ops_events 계측 [2026-09-26] · 구현 OK · 서버 반영 확인 대기
 
 **Claude OK: 2026-09-26** — 스펙 일치 · 회귀 42 passed + 신규 6 passed · 게이트/threshold/EFFECTVERIFY 집계 비접촉 확인.
 A-3 `symbol=null` 편차 수용(재조회 금지 원칙 우선 — `resolve_max_leverage`에 symbol 인자 없음).
 
 - 이벤트 5종: `portfolio_mdd_tier_transition`(전이분만, 스팸방지 확인) · `tail_fund_debit` · `leverage_clamped` · `gross_notional_blocked` · `config_write_rejected`
 - 롤백: `A1A5_EVENT_LOG_ENABLED=false` (판정·logger는 그대로)
-- 배포 직후 0건 = 정상(kv 현재 TIER=NORMAL, 전이 나기 전까지 A-1 무적재)
-- 잔여: **2~4주 적재 후 A-EFFECTVERIFY-01 재실행** → `06` 3단계(유지/롤백/추가조정) 재판정
+- 배포 직후 0건 = 정상(kv 현재 TIER=NORMAL, 전이 나기 전까지 A-1 무적재) — **단 서버 pull/재시작 기록 없음. 적재 2~4주 시계는 서버 반영 확인일부터.**
+- 잔여: **서버 반영 확인 후** 2~4주 적재 → A-EFFECTVERIFY-01 재실행 → `06` 3단계 재판정
 - 비접촉: 게이트 로직 · threshold · 반환값 · C-2 · MDD5% · live
 
 ---

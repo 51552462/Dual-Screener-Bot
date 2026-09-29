@@ -1,3 +1,263 @@
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 4 (긴급 — 펜스 소실 복구)
+
+> **작성**: Claude Pro (Architect) · 2026-09-29
+> **선행**: Step 3 S0(확인본) 서버 실행 결과 — `S2_EMPTY_DIFF=yes`지만 **생성기·라이브 둘 다 wrapper 0줄**로 일치한 것. 즉 진짜 비교 대상이 없었다. `GIT_CLEAN=no`(deploy 10파일 dirty). 서버 HEAD=1e38166, FENCE-02 생성기 커밋이 origin에 없음.
+> **CAT**: CAT-L 🔴 (현재 무방비 상태 — Critical 취급, 단 신규 Ask 아님. FENCE-02/옵션 A는 이미 승인됨. 이번은 그 복구)
+> **구현**: Cursor only. CAT-A 비접촉.
+
+---
+
+## 지금 상태 (1줄)
+**cron 펜스가 꺼져 있습니다.** `scan_spot_master`·`scan_futures_shadow`가 지금 `cron.service`에서 돕니다(3회 OOM 때와 동일 무방비). 다만 `oom_kill=0`·커널 OOM grep 공백이라 활성 사고는 아닙니다 — 서두르되 검증 없이 되돌리지 않습니다.
+
+## 왜 이렇게 됐는지 (Cursor 데이터 기준 추정, 확정 아님)
+Step 3 A(생성기·설치기 영속화, 21 tests passed)는 origin에 **푸시되지 않았습니다.** 서버가 그 사이 어떤 경로로든(설치기·`update_bitget.sh`·또는 다른 절차) cron.d를 재생성했다면, 서버가 받는 코드는 여전히 FENCE-02 이전(wrapper 없음) 버전이라 결과적으로 펜스가 사라집니다. **이건 추정입니다 — Step 4A에서 실제 경로를 확인하기 전까지 다른 원인(수동 롤백 등)도 배제하지 않습니다.**
+
+## 지금 하지 말 것 (Step 4A 전)
+- `git checkout` / `git reset --hard` / `git clean` — dirty 10파일에 무엇이 들어있는지 모릅니다. FENCE-02 작업의 흔적일 수 있습니다. **읽기만.**
+- 설치기 · `update_bitget.sh` 재실행
+
+---
+
+## Step 4A — dirty 10파일 진단 (읽기전용, 안전한 곳에 백업)
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+mkdir -p /tmp/fence02_dirty_backup
+git status --short --untracked-files=no
+git diff > /tmp/fence02_dirty_backup/dirty_$(date -u +%Y%m%d%H%M%S).diff
+wc -l /tmp/fence02_dirty_backup/dirty_*.diff
+git diff --stat
+```
+
+이 diff 원문을 OUTBOX에 그대로 첨부. 판단 기준:
+- diff에 `systemd-run`/`bitget-cron-heavy.slice`/`_HEAVY_PREFIXES` 관련 내용이 있으면 → **이게 FENCE-02 Step 3 A 작업 그 자체일 가능성** → Step 4B에서 이걸 커밋
+- 무관한 내용이면 → 왜 dirty한지 별도 확인(누가 언제 수정했는지 `git log -1 -- <파일>` 등), 이번 Handoff 범위에서 판단 보류 가능(디렉터에 별도 보고)
+
+## Step 4B — FENCE-02 코드 소재 확인 + origin 반영
+
+1. FENCE-02 Step 3 A 코드(생성기 root+wrapper 로직, slice 파일, 설치기 수정, 21개 테스트)가 **어느 워크스페이스/브랜치**에 있는지 보고(Cursor의 로컬 개발 환경, 아니면 Step 4A의 dirty 파일 자체인지)
+2. 그 코드 기준으로 로컬에서 21개 테스트 전부 다시 통과 확인
+3. `git add`(대상 파일만, dirty 10개 중 무관한 것 제외) → 커밋 → **`git push`**
+4. 커밋 해시를 OUTBOX에 명시
+
+## Step 4C — S0 게이트 결함 수정 (이번 사고의 근본 원인)
+
+기존 S0는 "diff가 비었나"만 봤습니다. **둘 다 wrapper 없이 일치해도 PASS로 나온다는 결함**이 이번에 실제로 발생했습니다. `generate_bitget_crontab.py` 검증 스크립트(또는 별도 체크)에 다음을 추가:
+
+```
+WRAPPED_COUNT = 생성 결과에서 systemd-run 줄 수
+EXPECTED_WRAPPED = 28  # Phase 0 (a) 분류 수, _HEAVY_PREFIXES 기준으로 동적 계산 가능하면 더 좋음
+```
+
+판정을 아래로 변경:
+| 상태 | 조건 |
+|---|---|
+| `FENCE_OK` | diff 공집합 **AND** `WRAPPED_COUNT == EXPECTED_WRAPPED`(28) |
+| `FENCE_MISSING` | diff 공집합 **AND** `WRAPPED_COUNT == 0` — **이번에 실제 발생한 케이스**, 이전엔 이것도 "PASS"로 잘못 표기됨 |
+| `DRIFTED` | diff 비공집합 |
+
+이 로직은 이번 Step 4에서 임시 스크립트로만 써도 되고, FENCE-03(drift guard)의 상태 판정과 합치면 더 좋음 — 합칠지는 Cursor 판단, 이번 Step 4는 최소 `FENCE_OK`/`FENCE_MISSING` 구분만 있으면 충분.
+
+## Step 4D — 서버 재검증
+
+```bash
+# S1: pull (Step 4B 커밋이 origin에 있어야 함)
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+git log -1 --format='%h %ad %s' --date=iso   # before
+git pull --ff-only
+git log -1 --format='%h %ad %s' --date=iso   # after — Step 4B 커밋 해시와 일치해야 함
+```
+이후 Step 4C가 반영된 S0을 재실행. 이번엔 **`FENCE_OK`가 나와야 정상**(생성기가 이제 28줄 wrapped를 만들고, 라이브는 여전히 0줄이라 diff는 **비공집합**이 정상 — 즉 이번엔 diff가 있어야 펜스를 복원할 이유가 있는 것). OUTBOX에 새 WRAPPED_COUNT·diff 원문 첨부.
+
+## Step 4E — 설치 (재검증 통과 후에만, Claude 확인 후)
+
+Step 4D가 "생성기=28줄 wrapped, 라이브=0줄"을 확인하면 Claude가 S3(설치기 또는 `update_bitget.sh`) 실행을 허용. 실행 **직후** 다음을 즉시 재확인해 OUTBOX 첨부(이번엔 지연 없이):
+
+```bash
+grep -c systemd-run /etc/cron.d/dual-screener-bitget   # 28 기대
+systemctl show bitget-cron-heavy.slice -p ActiveState -p MemoryHigh -p MemoryMax
+```
+28이 아니면 즉시 `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`으로 원복하고 중단, Claude에 보고.
+
+## 디렉터 결정 필요 — 임시 조치 여부
+
+Step 4A~E는 순서대로 하면 며칠 걸릴 수 있습니다(제대로 하려면). 그동안 프로덕션은 무방비입니다(3-way 겹침 월 1회 안팎, 지금 당장 사고는 아님). 두 선택지:
+
+- **(권장) 그대로 Step 4 순서대로** — 근본 원인(git 미푸시)까지 고치고 감. 조금 느림.
+- **(대안) Step 2와 동일한 수동 wrapper를 지금 바로 재적용**(Step 2 때 썼던 명령 그대로) — 빠르게 방어선만 복구, 단 이번 사고와 똑같이 "라이브에만 있고 저장소엔 없는" 상태를 또 만드는 것이라 **임시**로만 쓰고 Step 4B 커밋 완료 즉시 정식 배포로 교체 필요. 쓸 경우 `snapshots/`에 재적용 시각·명령 기록 필수.
+
+디렉터가 정하지 않으면 기본값은 **권장(그대로 진행)**입니다.
+
+## 인접 CAT
+CAT-A 비접촉.
+
+## 롤백
+Step 4B 커밋: revert. Step 4E 설치: `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron` 원복.
+
+## 완료 정의
+- Step 4A diff 원문 확보(데이터 손실 없음 확인)
+- Step 4B 커밋+푸시, 해시 기록
+- Step 4C 게이트 결함 수정(코드 또는 최소 스크립트)
+- Step 4D 재검증 `FENCE_OK` 도달 경로 확인(생성기=28 wrapped)
+- Step 4E 설치 후 즉시 28줄 확인
+- `05_진행로그.md`(이번 회귀를 별도 절로 기록, 기존 Step 3 절과 병합하지 말 것) · `00_전체현황판.md` · `CURSOR_TO_CLAUDE.md` · `NEXT_ACTION.md` 갱신
+- 「로컬 구조 스냅샷」에 dirty 파일 정체·근본 원인·게이트 수정 diff 포함
+
+## 금지 (재확인)
+Step 4A 전 dirty 파일 건드리기 · Step 4B 커밋·푸시 전 설치기 실행 · CAT-A 로직 변경 · (b)/(c) 줄 변경 · 슬라이스 수치 변경 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Step 4 — 긴급)
+
+---
+
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 3 잔여
+
+> **작성**: Claude Pro (Architect) · 2026-09-28
+> **선행**: Step 3 A(생성기·설치기 영속화) OUTBOX 검증 완료. B(실스캔 캡처)는 SSH publickey denied로 미캡처.
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(읽기전용)
+> **구현**: Cursor(코드/문서) + SSH 가능한 주체(디렉터 또는 키 보유 세션)가 서버 명령 실행. CAT-A 비접촉.
+
+---
+
+## Claude 판정 — A: OK
+
+- 생성기: HEAVY 직행 28줄만 root+wrapper, enqueue/OPS는 ubuntu 유지, `\%` 이스케이프, `_HEAVY_PREFIXES`는 읽기 import + 패리티 테스트 — 스펙 일치.
+- 설치기: slice 설치 + `daemon-reload` 멱등, post-deploy-obs 검증 유지, wrapper grep 추가. `update_bitget.sh`가 설치기를 호출함을 발견·반영(스펙 A-5 충족). `bitget.sh`·`deploy_bitget_factory.sh`는 미호출 확인.
+- 테스트 21 passed: wrapped=28, unwrap==P0 100%, 패리티, 생성기==LIVE 스냅샷.
+- 편차 없음. 슬라이스 수치 변경 0, CAT-A 수정 0.
+
+**비차단 관찰 3건**
+1. "생성기==LIVE" 공집합은 **Step 2 시점에 캡처한 스냅샷** 기준이다. 서버 실파일 대비 검증은 아직 없음 → 아래 S2 필수.
+2. `update_bitget.sh`가 설치기를 자동 호출하므로, "재설치 금지"는 **표준 업데이트 절차(`update_bitget.sh`) 자체를 포함**한다. 코드만 받으려면 `git pull`만 사용.
+3. `test_generator_matches_live_snapshot`은 스냅샷을 정답으로 쓴다. 잡을 정당하게 추가/변경하면 테스트가 깨지는 것이 정상 — 실패 메시지에 "스냅샷 갱신 절차"를 한 줄 안내하면 좋음(권장).
+
+## 서버 절차 (순서 고정)
+
+**S0 (Cursor, 지금)** — OUTBOX 상단에 서버에서 그대로 복붙할 **검증 명령**을 기재: 생성기 출력 vs `/etc/cron.d/dual-screener-bitget` diff(헤더/타임스탬프 제외). 코드 변경 없음, 명령만.
+
+**S1 (서버)** — 코드 반영은 `git pull`만. `update_bitget.sh`·설치기 실행 금지.
+
+**S2 (서버)** — S0 명령으로 diff 실행 → 원문을 OUTBOX에 첨부. **공집합이면 S3, 아니면 즉시 중단하고 diff만 회신**(설치기 실행 금지).
+
+**S3 (서버, S2 공집합 후에만)** — 이후 `update_bitget.sh`/설치기는 정상 사용 가능(no-op 기대). 최초 1회는 실행 전후 `md5sum /etc/cron.d/dual-screener-bitget`이 같음을 확인.
+
+**S4 (서버)** — 아래 B 캡처.
+
+## B. 실스캔 캡처 — 소급 방식
+
+wrapper는 2026-09-27 오후부터 라이브라 첫 슬롯(16:01 UTC)은 이미 지났다. **특정 시각을 기다리지 말고 지금 쌓인 로그·프로세스로 확인한다.**
+
+| # | 항목 | 기대 결과 |
+|---|------|-----------|
+| 1 | 실행 중 (a) 스캔의 cgroup | `bitget-cron-heavy.slice` 소속 (`cron.service` 아님) |
+| 2 | wrapper 이후 정상 완주 | 스케줄이 도래한 (a) 줄의 로그가 끝까지 기록, wrapper 시작 실패 흔적 없음 |
+| 3 | 실행 중 environ (HOME/USER/LOGNAME/PATH/PWD) | wrapper 없는 ubuntu 잡(예: OPS)과 비교해 동작에 영향 주는 차이 없음 |
+| 4 | 로그 파일 소유권 | wrapper 이후 새로 생긴 로그가 ubuntu 잡·logrotate 쓰기에 지장 없음 |
+| 5 | 스코프 CPUQuota | 80%(`CPUQuotaPerSecUSec`=800ms)로 유효 적용 |
+| 6 | slice 속성 + 부모 slice | High=1288490188 / Max=1610612736, 부모(`bitget.slice`, `bitget-cron.slice`) 상한 유무 |
+| 7 | 28줄 중 wrapper 이후 한 번도 안 돈 줄 | 스케줄이 도래했는데 로그 mtime이 갱신 안 된 줄 0개(줄별 오타 소급 탐지). 주간/일간 등 아직 도래 안 한 줄은 제외 |
+| 8 | LIFECAP watchdog | wrapped 스캔이 watchdog 로그(파일)에서 감시 대상으로 잡힘(cap 분류 라인) |
+| 9 | **글로벌 OOM 소급** | Step 2 적용 시점 이후 커널 로그에 OOM/`Killed process` 없음(있다면 cgroup 경로가 slice 내부인지 글로벌인지 구분) |
+
+예시 명령(환경에 맞게 Cursor가 확정):
+
+```bash
+ps -eo pid,user,etime,cgroup,cmd | grep -E 'scan_|daily_audit|weekly_evolution' | grep -v grep
+systemctl show bitget-cron-heavy.slice -p ActiveState -p MemoryHigh -p MemoryMax -p MemoryCurrent
+systemctl show bitget.slice bitget-cron.slice -p MemoryHigh -p MemoryMax
+systemctl list-units --type=scope | grep -i run-        # 실행 중 scope 이름 확인 후
+systemctl show <scope> -p CPUQuotaPerSecUSec -p MemoryMax
+tr '\0' '\n' < /proc/<pid>/environ | grep -E '^(HOME|USER|LOGNAME|PATH|PWD)='
+journalctl -u cron --utc --since "2026-09-27 13:55" | grep -Ei 'error|failed|systemd-run'
+journalctl -k --utc --since "2026-09-27 13:55" | grep -Ei 'out of memory|oom|killed process'
+```
+
+`memory.events`/`memory.peak`(cgroup v2, 커널 지원 시)가 slice에 남아 있으면 함께 캡처 — 3-way 재관측(상한 재확정)의 공짜 데이터. 없어도 실패 아님.
+
+## C. 문서 (Cursor, 문서만)
+- `STRUCT_한미코인_100퍼센트가동_점검_및_수정필요사항.md` 88행 `--use-queue` 재설치 절차에 주의 1줄: "설치기 재설치는 생성기(HEAVY wrapper 포함) 반영 상태에서만. 서버 수동 수정본은 재설치 시 사라진다."
+- `CAT-L_인프라배포.md`에 1줄: "`/etc/cron.d/dual-screener-bitget`의 SSOT는 `generate_bitget_crontab.py`. 서버 수동 편집 금지(편집하면 다음 설치에서 소실)."
+
+## D. 3단계 효과검증 등록 (Cursor, 문서)
+`06_검증체크리스트_및_실패기록.md` 「효과 검증 기록표」에 `CAT-L-FENCE-02_Step3_records.md`의 [3] 행을 추가. **판정 예정일 2026-10-11**(적용 후 2주), 판정 주체 디렉터+Claude. 이번 건은 A-1~A-5처럼 "(대기)"로 방치되지 않게 날짜를 박아 둔다.
+
+## 완료 정의
+- S0~S4 완료, S2 diff 공집합 원문 확보, B 9항목 캡처(미해당은 사유 명시)
+- `05_진행로그.md` · `00_전체현황판.md` · `CURSOR_TO_CLAUDE.md` · `NEXT_ACTION.md`(→`WAIT_CLAUDE_OK`) 갱신
+- 통과 시 Claude가 **SUB_DONE** 판정(1~2단계). 3단계(효과)는 2026-10-11 판정.
+
+## 롤백
+서버 cron.d 원복: `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`. 코드는 커밋 revert. 이번 잔여 Step은 서버 변경이 없음(읽기전용 확인 + 조건부 no-op 설치).
+
+## 금지
+S2 공집합 확인 전 설치기·`update_bitget.sh` 실행 · 슬라이스 수치 변경(3-way 재관측 전 고정) · CAT-A 로직 변경 · (b)/(c) 줄 변경 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Step 3 잔여)
+
+---
+
+# CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 3
+
+> **작성**: Claude Pro (Architect) · 2026-09-28
+> **선행**: Step 2 적용 완료(슬라이스 1.5G/1.2G, (a) 28줄 root+`--uid=ubuntu` wrapper, 프로브 cgroup=`/bitget.slice/bitget-cron.slice/bitget-cron-heavy.slice/`). Cursor 자진 보고: `generate_bitget_crontab.py` / `install_bitget_cron.sh` 미변경 → 재설치 시 wrapper 증발.
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(읽기전용), CAT-MAP §3
+> **구현**: Cursor only. CAT-A 로직 비접촉.
+
+---
+
+## 목적
+Step 2는 **런타임(서버의 cron.d)에만** 적용됐다. 생성기(SSOT)가 모르는 상태라, 다음 `install_bitget_cron.sh` 재실행·재배포·`--use-queue` 재생성 때 펜스가 **경고 없이 사라진다**(OOM 노출 원복). 이 Step은 (1) 생성기·설치기에 wrapper와 slice 유닛을 반영해 재설치해도 유지되게 하고, (2) 프로브(sleep)가 못 본 실스캔 동작을 검증한다.
+
+## A. 영속화 (코드/배포 스크립트)
+
+1. `bitget/deploy/generate_bitget_crontab.py`
+   - HEAVY 직행 줄(= `_HEAVY_PREFIXES` 해당, enqueue 아님)만 `root` + Step 2와 **동일한 wrapper 문자열**로 생성. enqueue/OPS 줄은 기존대로 `ubuntu`.
+   - `%` 이스케이프(`CPUQuota=80\%`) 포함. `--use-queue` 모드에서 enqueue로 바뀐 줄은 wrapper 대상 아님(이미 factory cgroup).
+2. slice 유닛 `bitget-cron-heavy.slice`(MemoryHigh=1288490188 / MemoryMax=1610612736)를 `deploy/systemd/` 템플릿으로 추가, `install_bitget_cron.sh`가 설치 + `daemon-reload` (멱등).
+3. `install_bitget_cron.sh`의 기존 검증(post-deploy-obs 줄 필수)은 유지.
+4. `_HEAVY_PREFIXES` 분류: 가능하면 CAT-A 상수를 **읽기 import**(side-effect 없을 때). 불가하면 생성기에 복제하고 **패리티 테스트**(생성기 목록 == `job_lifetime_cap._HEAVY_PREFIXES`)로 드리프트 방지. CAT-A 코드 수정 금지.
+5. 어떤 스크립트가 `install_bitget_cron.sh`를 호출하는지 grep해 OUTBOX에 회신(`update_bitget.sh` / `deploy_bitget_factory.sh` / `bitget.sh`). 호출한다면 그 경로도 이번 Step 반영 대상.
+
+**테스트(최소)**: (a) 생성 결과의 wrapped 줄 수 = 현재 28, wrapper 제거 시 Phase 0 스냅샷의 원 명령과 100% 동일 (b) 패리티 테스트 (c) 멱등성 — 생성기 결과 vs 현재 라이브 `/etc/cron.d/dual-screener-bitget` diff = 비어야 함(헤더 타임스탬프 제외). **diff가 비기 전에는 서버에서 재설치 금지**(재설치가 no-op임을 증명한 뒤에만).
+
+## B. 실스캔 검증 (프로브가 못 본 것)
+
+첫 실제 (a) 슬롯 16:01 UTC `scan_spot_ema5_r2` 이후, 다음을 OUTBOX에 캡처:
+
+| # | 항목 | 확인 내용 |
+|---|---|---|
+| 1 | cgroup | `ps -o pid,cgroup`로 `bitget-cron-heavy.slice` 소속 |
+| 2 | 정상 완주 | 로그 끝까지·exit 정상, 산출물(DB/후보) 이전과 동일 형식 |
+| 3 | 환경 | 실행 중 `/proc/<pid>/environ`의 HOME/USER/PATH/PWD를 **wrapper 없는 ubuntu 잡**과 비교(root cron 전환 부작용 점검) |
+| 4 | 로그 소유권 | 리다이렉션이 있으면 셸이 root로 파일을 연다 — 새로 생긴 로그 파일 소유자가 ubuntu 잡·logrotate 쓰기에 지장 없는지 |
+| 5 | CPUQuota | 스코프의 실제 CPUQuota가 80%로 적용됐는지(`systemctl show <scope>` — `\%` 이스케이프가 유효한 값으로 전달됐는지) |
+| 6 | 슬라이스 속성 | `systemctl show bitget-cron-heavy.slice -p MemoryHigh -p MemoryMax` + 부모 `bitget.slice`/`bitget-cron.slice` 상한 유무 |
+| 7 | 정적 점검 | 28줄 전부 wrapper 제거 후 Phase 0 스냅샷과 diff 비어있음(줄별 오타·누락 사전 차단) |
+| 8 | watchdog | 다음 watchdog tick 로그에 wrapped 스캔이 LIFECAP 감시 대상으로 잡히는지 1줄(cap 분류 로그) — CAT-A 코드 조사 아님, 로그 확인만 |
+
+## 인접 CAT
+CAT-A 비접촉(읽기전용 참조). CAT-N/F 비접촉.
+
+## 롤백
+생성기·설치기 변경은 커밋 revert. 라이브 cron.d는 이번 Step에서 재설치하지 않으면 그대로. 라이브 원복은 `snapshots/CAT-L-FENCE-02_cron_p0_20260927.cron`.
+
+## 운영 주의 (디렉터 전달)
+Step 3 완료 전까지 서버에서 `install_bitget_cron.sh` · `generate_bitget_crontab.py` 기반 재설치 · `--use-queue` 재생성을 **하지 말 것**. 부득이한 재배포가 끼면 끝난 뒤 Step 2 wrapper를 OUTBOX 절차대로 수동 재적용하고 알릴 것.
+
+## 금지
+CAT-A 로직 변경 · (b)/(c) 줄 변경 · 슬라이스 수치 변경(3-way 재관측 전 고정) · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## 완료 정의
+A+B 완료, `05_진행로그.md` · `00_전체현황판.md` · `CURSOR_TO_CLAUDE.md` · `NEXT_ACTION.md`(→`WAIT_CLAUDE_OK`) 갱신, 「로컬 구조 스냅샷」에 생성기 변경 diff 요약 포함.
+
+## sub-phase ID
+`CAT-L-FENCE-02` (Step 3)
+
+---
+
 # CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 2 (최종 확정 · 적용 승인)
 
 > **작성**: Claude Pro (Architect) · 2026-09-27
