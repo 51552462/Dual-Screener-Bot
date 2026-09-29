@@ -1,6 +1,267 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-27 · **CAT-L-FENCE-02 Step 2 APPLIED · WAIT_CLAUDE_OK** (첫 (a) 실스캔 cgroup은 16:01 UTC 슬롯)
+> **갱신**: 2026-09-29 · **CAT-L-FENCE-02 Step 4 A/B/C** · 커밋 `35f9da9` · **E 설치 금지**
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 4 · 2026-09-29
+
+**4A (읽기전용, Bot-2 `ubuntu@3.36.90.195`)**  
+백업: `/tmp/fence02_dirty_backup/dirty_20260929091506.diff` (`wc -l` = **30**).  
+`git reset`/`checkout`/`clean` **안 함**. `GIT_CLEAN=no` 10파일은 **내용 0줄** (mode-only, `git diff --stat` insertions/deletions 0).  
+`systemd-run` / `bitget-cron-heavy` / `_HEAVY_PREFIXES` **GREP_HITS=0**.  
+→ **서버 dirty는 FENCE-02 Step 3 A가 아님.** 펜스 코드는 Cursor 로컬 워크스페이스에만 있었음. 이번 Handoff에서 서버 10파일은 판단 보류(건드리지 않음).
+
+**4B**  
+소재: Cursor 로컬 `main` (서버 HEAD `1e38166`에는 생성기 wrapper 없음).  
+테스트: `bitget/tests/test_cat_l_fence02_crontab.py` **6 passed** (wrapped=28, unwrap=P0, FENCE_OK/MISSING/DRIFTED).  
+커밋: **`35f9da9`** `fix(bitget): persist CAT-L-FENCE-02 cron fence and FENCE_MISSING S0 gate`  
+포함: 생성기 root+systemd-run, 설치기 slice, factory slice 복사, `--fence-check`, crontab example, Step4 문서.  
+**푸시 해시는 이 블록 아래 4B-push 줄.**
+
+**4C**  
+`generate_bitget_crontab.py`: `WRAPPED_COUNT` / `EXPECTED_WRAPPED=28` / `classify_fence` → `FENCE_OK` | `FENCE_MISSING` | `DRIFTED`.  
+CLI: `python bitget/deploy/generate_bitget_crontab.py --fence-check /etc/cron.d/dual-screener-bitget`  
+`fence02_S0.sh`에 동일 호출 추가. **4D 기대(설치 전):** 생성기 wrapped=28, 라이브=0 → **`FENCE_STATUS=DRIFTED`** (비공집합이 정상). 둘 다 0이면 예전처럼 PASS가 아니라 **`FENCE_MISSING`**.
+
+**4E** 미실행. 수동 Step2 wrapper 재적용 **안 함**(기본값).
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 S1/S0/B 서버 원문 · 2026-09-29 08:01 UTC
+
+**SSH:** `ubuntu@3.36.90.195` (`ip-172-26-7-213`) Lightsail pem. 확인본 서브셸. **설치기/`update_bitget.sh` 0.**
+
+| 플래그 | 값 |
+|--------|-----|
+| S2_EMPTY_DIFF | **yes** (jobs 38=38, env 3=3) |
+| S2_ENV_SAME | **yes** |
+| GIT_CLEAN | **no** (deploy 스크립트 10파일 dirty) |
+
+중단 규칙: 세 yes가 아니므로 **S3 설치 금지 유지**.
+
+**의미:** origin 들어올 커밋 **없음**. HEAD=`1e38166` (Track A KRX 문서). 라이브 cron `systemd-run` **0줄**. 실행 스캔 2개는 **`cron.service`**. slice 유닛은 살아 있음(High/Max 확정값, Current≈1.5MB, peak≈784MB, oom_kill=0). journal `systemd-run` 이력 13줄 vs 현재 cron 0줄 → Step 2 런타임 펜스가 cron 재생성으로 증발한 상태와 정합. S2 yes는 **무펜스 생성기 = 무펜스 라이브** 공집합.
+
+A5: S1 들어올 커밋 공집합 → 이 HEAD 기준으로 **추가 EVENTLOG 커밋 pull 없음**. 서버 반영은 여전히 커밋 목록으로만 판단.
+
+원문 파일: `snapshots/CAT-L-FENCE-02_S1S0B_20260929.md`
+
+B 요약: first_scan.cap `TIMEOUT_NO_ema5_r2`. CPUQuota 스코프 없음(wrapper 없음). OOM grep 빈칸 · JOURNAL_K_OK. LIFECAP에 master/shadow pid 등록. environ은 `--scan-` pgrep 미스(러너는 `--mode scan_*`).
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 3 잔여 · 2026-09-28 (Claude 확인본)
+
+**SSOT 실행 블록:** snapshots/CAT-L-FENCE-02_server_blocks_Claude.md (Cursor 원본 set -eu 블록 폐기).
+
+## 순서
+
+1. **S1** 실행 (코드 반영은 `git pull`만)
+2. **S0** 실행 (생성기 vs 라이브 cron.d 비교)
+3. **B** 실행 (같은 세션에서 이어서 가능)
+4. 세 출력 파일 내용을 Claude에게 그대로 회신
+   ```bash
+   cat /tmp/fence02_S1.out /tmp/fence02_S0.out /tmp/fence02_B.out
+   ```
+
+**중단 규칙**
+- S1에서 pull이 실패하면(로컬 변경, fast-forward 불가) 거기서 멈추고 출력만 회신
+- S0에서 `S2_EMPTY_DIFF=yes` · `S2_ENV_SAME=yes` · `GIT_CLEAN=yes` **세 개가 모두 나오지 않으면** 설치 금지, 출력만 회신
+- 세 개가 모두 yes여도 **`update_bitget.sh`·설치기는 Claude 확인 뒤에** 실행 (S3)
+
+## 바뀐 점 (Cursor 원본 대비)
+
+| # | 변경 | 이유 |
+|---|------|------|
+| 1 | `set -eu`를 `bash <<'…'` 서브셸 안으로 격리 | 대화형 SSH 셸에 `set -e`가 남으면 이후 빈 `grep` 하나로 세션이 끊길 수 있음. 같은 세션에서 B를 이어 돌릴 예정이라 실제 위험 |
+| 2 | 비교에서 `SHELL=`/`PATH=`/`CRON_TZ=` 줄을 빼지 않고 **환경 줄 diff를 따로 판정**(`S2_ENV_SAME`) | 이 줄들은 모든 잡의 동작(PATH, 스케줄 시간대)에 영향. 제외하면 설치기가 값을 바꿔도 S2가 PASS할 수 있음 |
+| 3 | 줄 수 출력 + 빈 결과끼리는 PASS 불가, `GIT_CLEAN` 확인 | 빈 출력==빈 출력이 PASS로 보이는 것 방지. 생성기 import가 추적 파일(`bitget.crontab.example`)을 건드렸다면 다음 `git pull --ff-only`가 막힘 |
+| 4 | Python 안의 경로를 하드코딩 대신 `INSTALL_ROOT`에서 읽음 | 셸과 Python이 다른 경로를 볼 가능성 제거 |
+| 5 | S1에서 pull 전 **들어올 커밋 목록·HEAD 전후** 출력 | 서버가 현재 어느 커밋인지, 무엇이 새로 들어오는지 기록이 없음(아래 A5-EVENTLOG-01 확인용) |
+| 6 | B에 `/tmp/fence02_first_scan.cap` 추가 | Step 2 때 서버에 걸어 둔 16:01 UTC 첫 스캔 캡처. Step 3 B 블록에서 빠져 있었음 |
+| 7 | B: journalctl 접근 가능 여부 사전 확인, `2>/dev/null`로 오류를 숨기지 않음 | 접근이 안 되면 "OOM 없음"이 가짜로 나옴. OOM 소급은 이번 수정의 결과 지표라 오탐이 치명적 |
+| 8 | B: OOM 패턴을 `oom`에서 `out of memory`/`oom-kill`/`killed process`로 | 다른 단어에 걸리는 오탐 방지 |
+| 9 | B: `sqlite3 -readonly`, `find`에 `TZ=UTC`, `sudo` 제거, PID 자동 선택(`pgrep -u ubuntu`) | 읽기전용 보장, 서버 시간대와 무관하게 UTC 기준, 수동 PID 입력 제거 |
+
+## S1 — 코드 반영 (pull만)
+
+```bash
+bash <<'S1' 2>&1 | tee /tmp/fence02_S1.out
+# CAT-L-FENCE-02 · S1 — 코드 반영은 git pull 만. update_bitget.sh / 설치기 실행 금지.
+set -u
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}" || exit 1
+echo "HEAD(before): $(git log -1 --format='%h %ad %s' --date=iso)"
+git fetch --quiet && {
+  echo "== 들어올 커밋 =="; git log --format='%h %ad %s' --date=short 'HEAD..@{u}'
+  echo "== 변경 요약 =="; git diff --stat 'HEAD..@{u}' | tail -40
+}
+git pull --ff-only && echo "HEAD(after): $(git log -1 --format='%h %ad %s' --date=iso)"
+S1
+```
+
+## S0 — 생성기 vs 라이브 (읽기전용)
+
+```bash
+bash <<'S0' 2>&1 | tee /tmp/fence02_S0.out
+# CAT-L-FENCE-02 · S0/S2 (Claude 확인본) — 읽기전용. 설치기/update_bitget.sh 실행 아님.
+set -u
+INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"; export INSTALL_ROOT
+LIVE=/etc/cron.d/dual-screener-bitget
+PY="$INSTALL_ROOT/venv/bin/python"; [ -x "$PY" ] || PY=python3
+cd "$INSTALL_ROOT" || { echo "S2_EMPTY_DIFF=no (INSTALL_ROOT 없음)"; exit 1; }
+export PYTHONPATH="$INSTALL_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+if ! "$PY" - >"$T/gen.raw" <<'PY'
+import os
+from importlib.util import spec_from_file_location, module_from_spec
+from pathlib import Path
+root = Path(os.environ["INSTALL_ROOT"])
+spec = spec_from_file_location("gen_cron", root / "bitget" / "deploy" / "generate_bitget_crontab.py")
+mod = module_from_spec(spec); spec.loader.exec_module(mod)
+print(mod.render_bitget_crontab(str(root)), end="")
+PY
+then echo "S2_EMPTY_DIFF=no (generator 실행 실패)"; exit 1; fi
+[ -r "$LIVE" ] || { echo "S2_EMPTY_DIFF=no (live 읽기 불가)"; exit 1; }
+body() { grep -vE '^[[:space:]]*(#|$)' "$1" | sed 's/[[:space:]]*$//'; }
+envs() { grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$1"; }
+jobs() { grep -vE '^[A-Za-z_][A-Za-z0-9_]*=' "$1"; }
+body "$T/gen.raw" >"$T/gen.all"; body "$LIVE" >"$T/live.all"
+envs "$T/gen.all" >"$T/gen.env"; envs "$T/live.all" >"$T/live.env"
+jobs "$T/gen.all" >"$T/gen.job"; jobs "$T/live.all" >"$T/live.job"
+echo "줄 수 — jobs: gen=$(wc -l <"$T/gen.job") live=$(wc -l <"$T/live.job") / env: gen=$(wc -l <"$T/gen.env") live=$(wc -l <"$T/live.env")"
+echo "=== JOB diff (live → gen) · 비어 있으면 PASS ==="
+if [ -s "$T/gen.job" ] && [ -s "$T/live.job" ] && diff -u "$T/live.job" "$T/gen.job"; then echo "S2_EMPTY_DIFF=yes"; else echo "S2_EMPTY_DIFF=no"; fi
+echo "=== ENV diff (SHELL/PATH/CRON_TZ 등) ==="
+if diff -u "$T/live.env" "$T/gen.env"; then echo "S2_ENV_SAME=yes"; else echo "S2_ENV_SAME=no"; fi
+echo "=== git ==="
+echo "HEAD=$(git rev-parse --short HEAD)"
+git status --short --untracked-files=no | head -20
+[ -z "$(git status --short --untracked-files=no)" ] && echo "GIT_CLEAN=yes" || echo "GIT_CLEAN=no"
+S0
+```
+
+## B — 실스캔 소급 캡처 (읽기전용)
+
+```bash
+bash <<'B' 2>&1 | tee /tmp/fence02_B.out
+# CAT-L-FENCE-02 · S4/B (Claude 확인본) — 읽기전용
+set -u
+INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+SINCE='2026-09-27 13:55'
+date -u
+echo '--- 0. Step 2 때 걸어 둔 첫 스캔 캡처 ---'
+cat /tmp/fence02_first_scan.cap 2>/dev/null || echo 'NO_FIRST_SCAN_CAP'
+echo '--- 1. 실행 중 스캔의 cgroup ---'
+ps -eo pid,user,etime,cgroup:90,cmd | grep -E 'scan_|daily_audit|weekly_evolution|--scan-|systemd-run' | grep -v grep || echo 'NO_SCAN_RUNNING_NOW'
+echo '--- 6. slice / 부모 slice ---'
+systemctl show bitget-cron-heavy.slice -p ActiveState -p MemoryHigh -p MemoryMax -p MemoryCurrent -p MemoryAccounting
+systemctl show bitget.slice bitget-cron.slice -p MemoryHigh -p MemoryMax -p MemoryAccounting
+echo '--- 5. 실행 중 scope (CPUQuota) ---'
+for u in $(systemctl list-units --type=scope --no-legend | awk '/run-/{print $1}'); do
+  echo "[$u]"; systemctl show "$u" -p Slice -p CPUQuotaPerSecUSec -p MemoryHigh -p MemoryMax
+done
+echo '--- 3. environ (실행 중인 ubuntu 스캔이 있을 때만) ---'
+for p in $(pgrep -u ubuntu -f -- '--scan-' | head -3); do
+  echo "[pid=$p] $(ps -o user=,cgroup= -p "$p")"
+  tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -E '^(HOME|USER|LOGNAME|PATH|PWD)='
+done
+echo "(참고) 현재 셸: HOME=$HOME USER=${USER:-} LOGNAME=${LOGNAME:-}"
+echo '--- 4. 로그 소유권 (wrapper 이후 새 로그) ---'
+TZ=UTC find "$INSTALL_ROOT" -name '*.log' -newermt "$SINCE" -printf '%TY-%Tm-%Td %TH:%TM %u:%g %p\n' 2>/dev/null | head -80
+ls -l /var/log/bitget 2>/dev/null || true
+echo '--- 2. cron / systemd-run ---'
+journalctl -u cron -n1 --no-pager >/dev/null 2>&1 && echo 'JOURNAL_CRON_OK' || echo 'JOURNAL_CRON_UNREADABLE → 아래 결과 신뢰 불가(sudo로 재시도)'
+echo "systemd-run 실행 라인 수: $(journalctl -u cron --utc --since "$SINCE" --no-pager 2>/dev/null | grep -c 'systemd-run')"
+journalctl -u cron --utc --since "$SINCE" --no-pager 2>/dev/null | grep -Ei 'error|failed' | tail -40 || true
+echo '--- 9. 커널 OOM 소급 ---'
+journalctl -k -n1 --no-pager >/dev/null 2>&1 && echo 'JOURNAL_K_OK' || echo 'JOURNAL_K_UNREADABLE → 아래 OOM 결과 신뢰 불가(sudo로 재시도)'
+journalctl -k --utc --since "$SINCE" --no-pager 2>/dev/null | grep -Ei 'out of memory|oom-kill|oom_reaper|killed process' || echo 'OOM_GREP_EMPTY'
+echo '--- slice memory.events / peak (slice가 활성일 때만 존재) ---'
+CG=/sys/fs/cgroup/bitget.slice/bitget-cron.slice/bitget-cron-heavy.slice
+cat "$CG/memory.events" 2>/dev/null || echo 'NO_MEMORY_EVENTS'
+cat "$CG/memory.peak" 2>/dev/null || echo 'NO_MEMORY_PEAK'
+echo '--- 8. LIFECAP ---'
+sqlite3 -readonly /var/lib/quant-bitget/data/bitget_job_lifetime.sqlite 'SELECT mode,pid,started_utc FROM job_starts;' 2>&1 | head -20
+grep -RniE 'lifecap skip|LIFECAP WOULD_KILL|LIFECAP ENFORCE' "$INSTALL_ROOT/bitget" --include='*.log' 2>/dev/null | tail -20 || true
+echo '--- 7. cron.d wrapper 줄 (28 기대) ---'
+grep -c 'systemd-run' /etc/cron.d/dual-screener-bitget
+grep -E 'systemd-run' /etc/cron.d/dual-screener-bitget | grep -oE -- '--(scan-[^ ]+|daily-audit|weekly-evolution)' | sort
+B
+```
+
+
+### C/D 문서 (이 세션 적용)
+
+- `docs/한미코인_100퍼센트가동_점검_및_수정필요사항.md` §4 권장1 주의 1줄
+- `bitget/docs/claude_project/CAT-L_인프라배포.md` cron SSOT 1줄
+- `track_b_06` 효과표 행 · 판정 예정 **2026-10-11**
+- 스냅샷 테스트 실패 메시지에 갱신 절차 1줄 (비차단 관찰 3)
+
+### 이 에이전트 S1~S4
+
+SSH `ubuntu@3.36.90.195` 이전 세션 publickey denied. **원문 없음.** 설치기 미실행.
+
+**금지 준수:** 설치기/`update_bitget.sh` 0 · 슬라이스 수치 0 · CAT-A 0 · live 0.
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 3 · 2026-09-28
+
+**엔지니어:** HEAVY 분류는 CAT-A `_HEAVY_PREFIXES` **읽기 import**. wrapper 문자열은 Step 2 LIVE와 바이트 일치(테스트 `test_generator_matches_live_snapshot`). 서버 재설치 **안 함**.
+
+### A. 영속화
+
+| 파일 | 변경 |
+|------|------|
+| `bitget/deploy/generate_bitget_crontab.py` | (a) 28줄 root+systemd-run. enqueue/OPS ubuntu. `CPUQuota=80\%` |
+| `bitget/deploy/systemd/bitget-cron-heavy.slice` | 기존 유지 Max=1610612736 High=1288490188 |
+| `bitget/deploy/install_bitget_cron.sh` | slice `install -m 0644` + `daemon-reload` 멱등. post-deploy-obs 검증 유지. wrapper grep 추가 |
+| `bitget/deploy/deploy_bitget_factory.sh` | 동일 slice 파일 복사(유닛 설치 경로). **installer 호출은 없음** |
+| `bitget/deploy/bitget.crontab.example` | 생성기 재기록 |
+
+**테스트:** `pytest bitget/tests/test_cat_l_fence02_crontab.py bitget/tests/test_bitget_staggered_schedule.py bitget/tests/test_cli_logging_bitget.py` → **21 passed**  
+(a) wrapped=28, unwrap==P0 28 HEAVY 명령 100% · (b) 패리티 `_HEAVY_PREFIXES` · (c) 생성기 vs LIVE 스냅샷 **diff 공집합**
+
+### install_bitget_cron.sh 호출 경로 (grep)
+
+| 경로 | 호출? | Step 3 반영 |
+|------|-------|-------------|
+| `bitget/deploy/update_bitget.sh` | **예** (`bash install_bitget_cron.sh`) | installer 수정으로 포함 |
+| `bitget/deploy/deploy_bitget_factory.sh` | 아니오 (chmod만) | slice 복사 추가 |
+| `bitget/deploy/bitget.sh` | **아니오** | — |
+| `diagnose_coin_digest.sh` / `audit_bitget_stack.sh` / `bitget_schedule_guard.py` | 안내 문자열만 | — |
+| `docs/한미코인_100퍼센트가동_점검_및_수정필요사항.md` §88 | `--use-queue` 후 installer | 문서 주의는 Mirror 제안#2, 이번 미착수 |
+
+### B. 실스캔 검증
+
+이 세션 `ssh ubuntu@3.36.90.195` → host key accept 후 **Permission denied (publickey)**. 캡처 원문 없음.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | cgroup | **미캡처** (SSH 키 없음) |
+| 2 | 정상 완주 | 미캡처 |
+| 3 | HOME/USER/PATH/PWD | 미캡처 |
+| 4 | 로그 소유권 | 미캡처 |
+| 5 | CPUQuota 80% | 미캡처 |
+| 6 | slice `systemctl show` + 부모 상한 | 미캡처 |
+| 7 | 28줄 unwrap vs P0 | **로컬 PASS** (LIVE 스냅샷 = 생성기) |
+| 8 | LIFECAP watchdog 1줄 | 미캡처 |
+
+**재설치 금지 유지** until 서버에서 `generate_bitget_crontab.py` 출력 vs `/etc/cron.d/dual-screener-bitget` 헤더 제외 diff 공집합 확인. 이 코드가 VPS에 올라간 뒤에만 installer가 no-op.
+
+### 로컬 구조 스냅샷
+
+- `_job_line`이 HEAVY면 root+`_SYSTEMD_RUN`, 아니면 ubuntu. enqueue는 `--enqueue` 토큰으로 제외.
+- CAT-A `job_lifetime_cap.py` **수정 0**.
+- 슬라이스 수치 변경 0.
+
+**금지 준수:** CAT-A 로직 0 · (b)/(c) 의미 0 · 수치 0 · C-2/MDD5%/live 0.
+
+디렉터: Bot-2에서 Step 3 B 8항목 캡처(또는 SSH 에이전트 키로 재세션). Claude: A 스펙은 파일 검증 가능, B는 캡처 후.
+
+---
+
+## OUTBOX — CAT-L-FENCE-02 Step 2 · 2026-09-27 · 적용됨
 
 ---
 
