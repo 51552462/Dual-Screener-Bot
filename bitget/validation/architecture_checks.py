@@ -12,6 +12,12 @@ from typing import Any, Callable, Dict, List, Tuple
 
 _BITGET_ROOT = Path(__file__).resolve().parents[1]
 
+# CAT-L-CUTOVER-01 Phase 0c — invariants (subset + min length, not exact count)
+_DAILY_AUDIT_MIN_STEPS = 19
+_WEEKLY_TERMINAL_STEPS = frozenset({"weekly_action_plan", "weekly_executive_summary"})
+_DAILY_AUDIT_GUARD_FN = "_bitget_live_daily_audit_lines"
+_DAILY_AUDIT_HELPER_CALL = 'other_daily="$(_bitget_live_daily_audit_lines)"'
+
 _SATELLITE_SOURCES = (
     "supernova_hunter.py",
     "master_scanner.py",
@@ -95,7 +101,7 @@ def check_pipeline_structure() -> Dict[str, Any]:
     daily_pre_ok, daily_pre_msg = _check_prefix(daily, _DAILY_PRELUDE)
     scan_pre_ok, scan_pre_msg = _check_prefix(scan, _SCAN_PRELUDE)
     daily_body_ok = all(k in daily for k in _DAILY_BODY_KEYS)
-    daily_count_ok = len(daily) == 19
+    daily_count_ok = len(daily) >= _DAILY_AUDIT_MIN_STEPS
     track_ok = track == ["config_bootstrap", "artifact_guard", "track_spot", "track_futures"]
 
     ok = daily_pre_ok and scan_pre_ok and daily_body_ok and daily_count_ok and track_ok
@@ -109,6 +115,7 @@ def check_pipeline_structure() -> Dict[str, Any]:
         "scan_prelude": scan_pre_msg,
         "daily_body_keys": daily_body_ok,
         "daily_count_ok": daily_count_ok,
+        "daily_min_steps": _DAILY_AUDIT_MIN_STEPS,
         "message": "pipeline SSOT structure ok" if ok else "pipeline structure drift",
     }
 
@@ -324,25 +331,48 @@ def check_scan_schedule_ssot() -> Dict[str, Any]:
 
 
 def check_bitget_shell_daily_audit_guard() -> Dict[str, Any]:
-    """Phase 2 — bitget.sh daily_audit pgrep 중복 가드 (주식 factory.sh 패리티)."""
+    """daily_audit duplicate-run guard: pgrep helper on the live daily_audit path.
+
+    Legacy self-pid compare (`[[ "$pid" -eq "$$" ]]`) is not required — it was
+    retired as a false-positive against the wrapper PID. Classification:
+    missing = helper/pgrep gone; relocated_disconnected = helper exists but
+    daily_audit case does not invoke it.
+    """
     path = _BITGET_ROOT / "deploy" / "bitget.sh"
     if not path.is_file():
         return {"ok": False, "message": "bitget.sh missing"}
     text = path.read_text(encoding="utf-8", errors="replace")
-    required = (
-        "_bitget_live_daily_audit_lines",
-        "runner --mode daily_audit",
-        "SKIP: another daily_audit job is already running",
-        '[[ "$pid" -eq "$$" ]]',
-        "exit 0",
-    )
-    missing = [s for s in required if s not in text]
-    ok = not missing
+    has_fn = _DAILY_AUDIT_GUARD_FN in text
+    has_pgrep = "pgrep -af" in text and "--mode daily_audit" in text
+    has_skip = "SKIP: another daily_audit job is already running" in text
+    has_call = _DAILY_AUDIT_HELPER_CALL in text
+    has_exit = "exit 0" in text
+    legacy_pid_eq = '[[ "$pid" -eq "$$" ]]' in text
+    if not has_fn or not has_pgrep:
+        classification = "missing"
+    elif not has_call:
+        classification = "relocated_disconnected"
+    else:
+        classification = "ok"
+    ok = classification == "ok" and has_skip and has_exit
+    missing: List[str] = []
+    if not has_fn:
+        missing.append(_DAILY_AUDIT_GUARD_FN)
+    if not has_pgrep:
+        missing.append("pgrep --mode daily_audit")
+    if not has_call:
+        missing.append(_DAILY_AUDIT_HELPER_CALL)
+    if not has_skip:
+        missing.append("SKIP: another daily_audit job is already running")
+    if not has_exit:
+        missing.append("exit 0")
     return {
         "ok": ok,
+        "classification": classification,
+        "legacy_self_pid_eq_present": legacy_pid_eq,
         "missing": missing,
         "path": str(path.relative_to(_BITGET_ROOT.parent)),
-        "message": "daily_audit shell guard ok" if ok else f"missing: {missing}",
+        "message": "daily_audit shell guard ok" if ok else f"daily_audit guard {classification}: {missing}",
     }
 
 
@@ -351,11 +381,14 @@ def check_weekly_evolution_pipeline() -> Dict[str, Any]:
     from bitget.pipelines.bitget_pipelines import get_pipeline
 
     names = [s.name for s in get_pipeline("weekly_evolution")]
-    expected_tail = ("weekly_evolution", "weekly_flow_master")
-    tail_ok = len(names) >= 2 and names[-2:] == list(expected_tail)
+    expected_critical = ("weekly_evolution", "weekly_flow_master")
+    tail_ok = bool(names) and (
+        names[-1] in _WEEKLY_TERMINAL_STEPS
+        or _WEEKLY_TERMINAL_STEPS.issubset(set(names))
+    )
     steps = {s.name: s for s in get_pipeline("weekly_evolution")}
     critical_ok = all(
-        steps.get(n) and steps[n].critical for n in expected_tail
+        steps.get(n) and steps[n].critical for n in expected_critical
     )
     ok = tail_ok and critical_ok
     return {
@@ -799,7 +832,8 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
         "tail_risk_size_mult",
         "doomsday_size_mult",
         "def evaluate_price_sanity_gate",
-        "portfolio_nav_snapshot",
+        "def get_portfolio_mdd_snap_cached",
+        "get_portfolio_mdd_snap_cached(",
         "no auto-flatten",
     )
     details["execution_safety"] = {
@@ -926,7 +960,7 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
     }
 
     _, lev = _file_text("trading/leverage_manager.py")
-    lev_req = ("max_leverage_cap",)
+    lev_req = ("from bitget.trading.execution_safety import resolve_max_leverage",)
     details["leverage_manager"] = {
         "ok": bool(lev) and not _require_all(lev, lev_req),
         "missing": _require_all(lev, lev_req)
@@ -941,6 +975,18 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
         "missing": _require_all(nav, nav_req)
         if nav
         else ["live_nav_manager.py missing"],
+    }
+
+    snap_import = "from bitget.live_nav_manager import portfolio_nav_snapshot"
+    wiring_via_safety = snap_import in safety
+    wiring_via_gates = snap_import in tail or snap_import in conc
+    details["snapshot_wiring"] = {
+        "ok": wiring_via_safety or wiring_via_gates,
+        "via_execution_safety": wiring_via_safety,
+        "via_entry_gates": wiring_via_gates,
+        "missing": []
+        if (wiring_via_safety or wiring_via_gates)
+        else [snap_import],
     }
 
     _, pol = _file_text("infra/memory_policy.py")
@@ -999,12 +1045,12 @@ def check_portfolio_nav_risk_ssot() -> Dict[str, Any]:
 
     _, led = _file_text("forward/ledger.py")
     led_req = (
-        "gross_entry_blocked",
+        "evaluate_gross_notional_gate",
         "명목노출 상한",
         "evaluate_nav_risk_gate",
         "NAV 드로다운",
         "nav_size_mult",
-        "max_leverage_cap",
+        "from bitget.trading.execution_safety import",
         "tail_risk_entry_blocked",
         "테일리스크",
         "doomsday_long_entry_blocked",
