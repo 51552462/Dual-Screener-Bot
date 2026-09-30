@@ -7,6 +7,18 @@
 
 ---
 
+## CAT-L-FENCE-03 drift guard — Claude OK · SUB_DONE [2026-09-30]
+
+코드 `c1ffe3f` · OUTBOX `eb80c58`. `--fence-check`를 `--diff-live`에 통합(스펙 개선, 승인).
+마커=`generator=`+`body-sha256`(주석·공백 제외). DRIFTED/UNMARKED+diff → exit 3 + `/var/backups/bitget-cron/` 백업. 무인자 기본 LIVE 경로. `update_bitget.sh`는 pull 전 상태 확인 후 중단(20/30/2).
+테스트 32 passed. 부트스트랩: UNMARKED(본문 동일) → 마커만 채택 → PRISTINE, 해시 `f36f7224…266b21dd` 불변, `FENCE_OK` 28 — Spec 3 UNMARKED 경로를 프로덕션에서 실증.
+비차단 확인 2건 회신 대기: (1) 회귀 테스트 2종(주석 면역·UNMARKED+diff 재현) 이름 확인 (2) 종료코드 전체 표 스냅샷 포함 여부.
+슬라이스 수치·CAT-A 비접촉.
+
+## CAT-L-CUTOVER-01 Phase 0 사전점검 [2026-09-30] · **WAIT_CLAUDE_OK** · `--start-parallel` 미실행
+
+원문 `snapshots/CAT-L-CUTOVER-01_P0_20260930.md`. `passed=false` (SSOT 미설정·parallel 미시작). `architecture_ok=false` (failed 4: pipeline_structure, bitget_shell_daily_audit_guard, weekly_evolution_pipeline, portfolio_nav_risk_ssot). 레거시 pgrep 없음. ASYNC=1 · WATCHDOG_COMPONENT=bitget_auto_pilot · SSOT 줄 없음. `--start-parallel`은 JSON 창만(HEAVY 스캔 추가 없음). bitget.sh cutover-check **timeout 124**.
+
 ## CAT-L-FENCE-03 drift guard [2026-09-30] · **WAIT_CLAUDE_OK**
 
 생성기 헤더 마커 2줄(`generator=` + `body-sha256`, 동작 줄 해시·주석 제외). 설치기: ABSENT/PRISTINE 통과, UNMARKED+동일은 마커 채택, DRIFTED·UNMARKED+diff는 exit 3 (`--force-overwrite-drift`). 백업 `/var/backups/bitget-cron/`. `--diff-live` 무인자 기본 LIVE. `update_bitget.sh`는 pull **전** 20/30/2면 중단. 테스트 32 passed (기존 22 + FENCE-03 10). 슬라이스 수치·CAT-A 변경 0.

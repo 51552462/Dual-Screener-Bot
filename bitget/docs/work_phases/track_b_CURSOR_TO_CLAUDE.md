@@ -1,6 +1,42 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-30 · **CAT-L-FENCE-03** · WAIT_CLAUDE_OK
+> **갱신**: 2026-09-30 · **CAT-L-CUTOVER-01 Phase 0** · WAIT_CLAUDE_OK · FENCE-03 SUB_DONE
+
+---
+
+## OUTBOX — CAT-L-FENCE-03 종결 비차단 2건
+
+(1) 회귀 테스트 이름: `test_comment_systemd_run_does_not_change_hash_or_wrap` (주석에 systemd-run · 해시/wrap 불변) · `test_unmarked_unequal_blocks_step4_pattern` (P0 생성 vs wrapped 라이브 UNMARKED+diff → 차단·exit 30).
+(2) 종료코드 표: `bitget/docs/claude_project/CAT-L_인프라배포.md` cron SSOT 절 — 0/10/20/30/40/2 · 설치기 3.
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0 · 2026-09-30 06:49–06:53 UTC
+
+읽기전용. `--start-parallel` 0. `.env` 쓰기 0. `BITGET_PIPELINE_SSOT` 변경 0. HEAD 당시 `c1ffe3f`.
+원문: `snapshots/CAT-L-CUTOVER-01_P0_20260930.md` (`bitget.sh --cutover-check` **timeout RC=124** · JSON dump는 완료).
+
+**Step 1 checks**
+```
+passed: false
+pipeline_ssot_env: false
+parallel_run_ready: false
+no_legacy_main_process: true
+async_telegram: true
+architecture_ok: false
+architecture.failed: pipeline_structure, bitget_shell_daily_audit_guard, weekly_evolution_pipeline, portfolio_nav_risk_ssot
+watchdog_component: ok · component=bitget_auto_pilot
+parallel_run.active: false
+legacy_main_running: false
+```
+`passed=false`는 SSOT=1이 아니라 HIST상 정상(Phase 0은 스위치를 올리지 않음). **architecture_ok=False** → Handoff 판정문상 Phase 1 보류 후보.
+
+**Step 2** `.env` / `bitget/.env` 둘 다: `BITGET_PIPELINE_SSOT` **줄 없음**(=0). `BITGET_ASYNC_TELEGRAM=1`. `BITGET_WATCHDOG_HEARTBEAT_COMPONENT=bitget_auto_pilot`.  
+watchdog 체크는 **unset도 bitget.main만 아니면 ok** (`check_watchdog_component_env`). 지금은 권장값으로 설정됨 · cutover-check 실패 사유 아님.
+
+**Step 3** `pgrep bitget.main` / `factory_launcher` **없음**. systemd: factory/async/queue-worker/ws/overseer **active**. `dante-bitget-backup.service` **failed**, `dante-bitget-snapshot.service` **failed**, watchdog **activating**. 레거시 프로세스는 아님(별도 관측).
+
+**Step 4** `--start-parallel`은 `validation/cutover.py:start_parallel_run`이 **`parallel_run_state.json`만 기록**. HEAVY cron 28줄과 **별 프로세스 추가 없음**. 슬라이스 부하 재평가 불필요(관측 창 플래그만).
 
 ---
 

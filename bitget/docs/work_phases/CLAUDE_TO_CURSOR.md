@@ -1,3 +1,59 @@
+# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0 (사전점검, 48h parallel 착수 전)
+
+> **작성**: Claude Pro (Architect) · 2026-09-30
+> **CAT**: CAT-L 🟡 Medium(운영 플래그) · also_load: CAT-A(`BITGET_PIPELINE_SSOT=1` cutover 조건, 읽기전용 참조만) · CAT-MAP §3(never_with: CAT-A/CAT-L deploy paths 동시 설계 — 이번은 설계 아닌 기존 플래그·기존 검증 하네스 운영이라 해당 없음)
+> **근거**: `HIST_06/07/08/09_...cutover...md` — 프로젝트 자체가 "리스크: 높음 — 잘못된 cutover 시 이중 실행·텔레그램 폭주"로 명시. 알려진 안티패턴: "`BITGET_PIPELINE_SSOT=1`만 설정하고 완료로 간주 — parallel 48h·async_telegram·서버 프로세스 미검증". 이번 Phase 0는 그 안티패턴을 피하기 위한 순서.
+> **구현**: 서버 접속 가능한 주체. 이번 Phase는 **읽기전용 진단만** — `--start-parallel`·`.env` 변경·`BITGET_PIPELINE_SSOT` 값 변경 전부 금지.
+
+---
+
+## 목적
+09-26 마지막 실측 이후(FENCE-02/03, A5-EVENTLOG-01, RUN-2 등 여러 변경 발생) cutover 전제조건이 여전히 유효한지 재확인 없이 48h parallel을 시작하지 않는다. HIST 문서의 표준 절차는 (1) `--cutover-check`로 현재 상태 확인 (2) `--start-parallel`로 48h 병렬 관측 시작 (3) 48h 후 재확인 (4) 통과 시에만 `BITGET_PIPELINE_SSOT=1`. Phase 0은 (1)만 한다.
+
+## Step 1 — 현재 cutover 상태 (읽기전용)
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+./bitget/deploy/bitget.sh --cutover-check
+```
+전체 JSON(`passed`·`checks={...}`·`architecture_passed`·`failed=[...]`) 원문 그대로 OUTBOX 첨부. `architecture_ok`뿐 아니라 다른 sub-check가 있으면 전부.
+
+## Step 2 — HIST가 요구하는 추가 env 확인
+
+`.env` 또는 실행 환경에서:
+```bash
+grep -E '^BITGET_PIPELINE_SSOT|^BITGET_ASYNC_TELEGRAM|^BITGET_WATCHDOG_HEARTBEAT_COMPONENT' .env 2>/dev/null || echo 'NOT_SET (해당 줄 없음)'
+```
+`BITGET_WATCHDOG_HEARTBEAT_COMPONENT=bitget_auto_pilot`는 이전 세션에서 확인된 적이 없다 — 설정돼 있는지, 없다면 무슨 영향이 있는지(watchdog 하트비트 컴포넌트 누락이 cutover-check 실패 사유가 되는지) 회신.
+
+## Step 3 — 레거시 프로세스 재확인 (09-26 이후 재검증)
+
+```bash
+pgrep -f bitget.main; pgrep -f factory_launcher
+systemctl list-units --type=service | grep -i bitget
+```
+09-26엔 없었음(레거시 미실행) — 그 사이 FENCE-02/03·A5-EVENTLOG 작업 중 우연히 뭔가 켜졌을 가능성 배제 목적.
+
+## Step 4 — CAT-L-FENCE-02/03과의 상호작용 확인 (읽기전용)
+
+cutover 48h parallel이 시작되면 파이프라인 두 경로(레거시 판정용 vs SSOT)가 동시에 관측 대상 스캔을 늘릴 수 있는지 확인:
+- `--start-parallel`이 (a) 28줄 HEAVY 직행 cron과 별개의 새 프로세스를 띄우는지, 아니면 기존 스캔 결과를 재사용/비교만 하는지 1줄 회신 (메모리 슬라이스 부하 재평가 필요 여부 판단용)
+
+## 판정 (Claude, Step 1~4 회신 후)
+- `architecture_ok=True` **AND** Step 2/3 이상 없음 **AND** Step 4가 슬라이스 부하를 유의미하게 늘리지 않음 → Phase 1(`--start-parallel`, 48h 관측) Handoff 발행
+- 하나라도 미충족 → 그 항목만 먼저 해소, Phase 1 보류
+
+## 금지 (이번 Phase)
+`--start-parallel` 실행 · `.env`의 `BITGET_PIPELINE_SSOT` 변경 · CAT-A 로직 변경 · 슬라이스 수치 변경 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## 완료 정의
+Step 1~4 원문 확보, Claude 판정 회신. `05_진행로그.md`·`00_전체현황판.md`·`CURSOR_TO_CLAUDE.md`·`NEXT_ACTION.md` 갱신(Phase 0 결과만, Done 아님).
+
+## sub-phase ID
+`CAT-L-CUTOVER-01` (Phase 0)
+
+---
+
 # CLAUDE → CURSOR · CAT-L-FENCE-03 (drift guard) — 착수 승인
 
 > **작성**: Claude Pro (Architect) · 2026-09-30
