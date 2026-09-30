@@ -1,6 +1,55 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-30 · **CAT-L-CUTOVER-01 Phase 0** · WAIT_CLAUDE_OK · FENCE-03 SUB_DONE
+> **갱신**: 2026-09-30 · **CAT-L-CUTOVER-01 Phase 0b 진단** · Claude 판정 대기 · 코드 수정 0
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0b · 2026-09-30
+
+진단 전용. architecture_checks / execution_safety / pipelines **수정 없음**. `--start-parallel` 0. SSOT 플래그 0.
+
+### Step 1 — 실패 상세 (원문: `snapshots/CAT-L-CUTOVER-01_P0_20260930.md`)
+
+재실행 `run_architecture_checks()` 전체는 Phase 0와 동일 HEAD 계열(기능 코드 `c1ffe3f`)이라 **그 JSON을 SSOT로 사용**. 4개만 발췌:
+
+| 체크 | 기대 vs 실제 |
+|------|----------------|
+| `pipeline_structure` | `len(daily)==19` → **20**. prelude/body_keys/track **ok**. 추가 스텝=`genesis_radar_daily`. message=`pipeline structure drift` |
+| `bitget_shell_daily_audit_guard` | 파일에 부분문자열 `[[ "$pid" -eq "$$" ]]` 필요 → **missing 그 1개**. 가드 자체는 `_bitget_live_daily_audit_lines` + `runner --mode daily_audit` + SKIP 문구 + `exit 0` **있음** (자기 pid 비교를 pgrep 러너 전용으로 교체) |
+| `weekly_evolution_pipeline` | 끝 2스텝 = `(weekly_evolution, weekly_flow_master)` → **tail_ok=false**. 실제 끝=`weekly_action_plan`,`weekly_executive_summary`. `weekly_flow_master`는 리스트 중간. `critical_ok=true` |
+| `portfolio_nav_risk_ssot` | failed=`execution_safety` missing **`portfolio_nav_snapshot`** · `leverage_manager` missing **`max_leverage_cap`** · `paper_ledger_gross` (`forward/ledger.py`) missing **`gross_entry_blocked`**, **`max_leverage_cap`**. `evaluate_nav_risk_gate` / `gross_entry_blocked` / `max_leverage_cap`는 **execution_safety.py에 존재**. `live_nav_manager` 서브체크는 **ok**(그 파일에 `def portfolio_nav_snapshot`) |
+
+### Step 2 — 체크가 보는 것
+
+- `pipeline_structure`: `get_pipeline("daily_audit"|"scan_spot"|"track_positions")` **스텝 이름 리스트** (크론/wrapper 무관).
+- `bitget_shell_daily_audit_guard`: `bitget/deploy/bitget.sh` **부분문자열 5개**.
+- `weekly_evolution_pipeline`: `get_pipeline("weekly_evolution")` **이름·critical 플래그**.
+- `portfolio_nav_risk_ssot`: `execution_safety.py` 등 **고정 토큰 목록** (`_require_all`). cron 무관.
+
+### Step 3 — 겹침
+
+`git log --since=2026-09-26` crontab: `35f9da9` `c1ffe3f` `eb80c58`. `1e38166..002c612` deploy는 생성기/설치기/example — **bitget.sh·pipelines·execution_safety 없음**.
+
+A5 커밋 검색: 메시지 `EVENTLOG-01` 단독 히트 없음. **`e3c0c45`** `feat(bitget): fence HEAVY cron in a 1.5G slice and log A-1~A-5 ops events` 가 `bitget/infra/a1_a5_event_log.py` + **`execution_safety.py`** + tests.
+
+| 체크 | 관련 커밋(추정) | 겹침 | 근거 |
+|------|-----------------|------|------|
+| `bitget_shell_daily_audit_guard` | FENCE-02 생성기 **아님**. `bitget.sh` 가드 리라이트(날짜는 이번 FENCE 푸시 밖) | 없음 | 검사 파일=`bitget.sh`; 35f9da9/c1ffe3f는 crontab |
+| `weekly_evolution_pipeline` | FENCE **아님**. weekly 리포트 스텝 추가(`28734e0` I-GMM-DNA 등) | 없음 | 검사=`bitget_pipelines.py` weekly 리스트 |
+| `portfolio_nav_risk_ssot` | **`e3c0c45` execution_safety.py** (A-1~A-5 ops 계측과 같은 커밋) | 있음(토큰) | 서브스트링 `portfolio_nav_snapshot`이 safety에서 빠지고 `live_nav_manager`에 있음 |
+| `pipeline_structure` | FENCE 아님. `genesis_radar_daily` (`92e74c0`/`996086f`) | 없음 | daily 길이 20 vs 고정 19 |
+
+### Step 4 — Cursor 소견 (Claude 최종)
+
+| 체크 | (a)/(b) | 한 줄 |
+|------|---------|--------|
+| `pipeline_structure` | **(b)** | 기능 스텝 추가 vs 하드코드 `==19` |
+| `bitget_shell_daily_audit_guard` | **(b)** | 중복 가드는 살아 있고, 금지한 자기-`$$` 비교를 의도적으로 뺌 |
+| `weekly_evolution_pipeline` | **(b)** | `weekly_flow_master` 뒤에 주간 리포트가 더 붙음. tail 가정만 낡음 |
+| `portfolio_nav_risk_ssot` | **(b) 우세, (a) 배제 못 함** | 게이트 심볼은 safety에 남아 있고 체크가 **파일별 토큰 위치**를 강제. `e3c0c45`가 safety를 만져서 Claude가 CAT-F Critical로 볼 여지. **이번 세션 미수정** |
+
+### Step 5
+Phase 0 JSON의 출처는 **`python check_cutover_readiness()` dump**. `bitget.sh --cutover-check`는 **timeout 124**라 그 JSON을 못 냄.
 
 ---
 

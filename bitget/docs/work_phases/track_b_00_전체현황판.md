@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | CAT-L-CUTOVER-01 **Phase 0** 사전점검 (`--cutover-check`만) · FENCE-03 **SUB_DONE** · FENCE-02 3단계 **2026-10-13** | A5-EVENTLOG 서버반영 미확인 · C-2/MDD5%/live 🔴 |
-| 마지막 갱신 | 2026-09-30 | FENCE-03 Claude OK · CUTOVER-01 Phase 0 |
+| **다음 Handoff** | CAT-L-CUTOVER-01 **Phase 0b Claude 판정** (체크 갱신 vs CAT-F Critical) · Phase 1 금지 | A5 서버반영 미확인 · C-2/MDD5%/live 🔴 |
+| 마지막 갱신 | 2026-09-30 | CUTOVER-01 Phase 0b 진단 · 수정 없음 |
 
 ---
 

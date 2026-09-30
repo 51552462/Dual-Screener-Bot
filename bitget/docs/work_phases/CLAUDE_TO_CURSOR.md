@@ -1,3 +1,84 @@
+# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0b (진단 전용 — 수정 금지)
+
+> **작성**: Claude Pro (Architect) · 2026-09-30
+> **선행**: Phase 0 — `architecture_ok=false`, failed=[`pipeline_structure`, `bitget_shell_daily_audit_guard`, `weekly_evolution_pipeline`, `portfolio_nav_risk_ssot`]. SSOT 기록(`00_전체현황판.md`·`05_진행로그.md` 과거분)엔 `architecture_checks PASS`로 남아 있어 **회귀로 판단**.
+> **CAT**: CAT-L(진단, 비접촉) · also_load: **CAT-F 🔴**(portfolio_nav_risk_ssot 관련 파일일 가능성), CAT-A(pipeline_structure 관련 가능성) — 이번 Phase는 **읽기전용 진단만, 어떤 파일도 수정하지 않는다.**
+> **구현**: Cursor only.
+
+---
+
+## 목적
+Phase 1(48h parallel) 착수 전, 4개 architecture check 실패가 (a) 최근 변경(FENCE-02 cron wrapper, A5-EVENTLOG-01 게이트 계측)으로 인한 **실제 기능 회귀**인지, 아니면 (b) 그 변경이 기능적으로는 옳은데 **체크 자체의 패턴 가정이 낡아서** 오탐하는 것인지 구분한다. 이번 Handoff는 **진단만** — 어느 쪽이든 수정은 다음 Handoff에서, 특히 (a)이고 CAT-F 관련이면 별도 Critical 검토를 거친다.
+
+## Step 1 — 실패 원문 확보 (읽기전용)
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+python3 -c "
+from bitget.validation.architecture_checks import run_architecture_checks
+import json
+r = run_architecture_checks()
+print(json.dumps(r, indent=2, default=str))
+"
+```
+4개 각각의 **구체적 에러 메시지/기대값 vs 실제값**(단순 True/False 말고 상세)을 OUTBOX에 그대로 첨부. 코드 수정 없음, 실행만.
+
+## Step 2 — 각 체크가 보는 파일 확인 (읽기전용)
+
+```bash
+grep -n "pipeline_structure\|bitget_shell_daily_audit_guard\|weekly_evolution_pipeline\|portfolio_nav_risk_ssot" bitget/validation/architecture_checks.py
+```
+각 체크 함수가 실제로 어떤 파일·패턴을 검사하는지(예: 정규식으로 cron.d 라인 형태를 보는지, 함수 시그니처를 보는지, import 구조를 보는지) 함수 본문 요약해 회신.
+
+## Step 3 — 최근 변경과의 상관관계 (읽기전용, git만)
+
+```bash
+# FENCE-02가 건드린 파일들과 체크 대상 파일 겹침 확인
+git log --oneline --since="2026-09-26" -- bitget/deploy/generate_bitget_crontab.py bitget/deploy/install_bitget_cron.sh
+git diff 1e38166..002c612 -- bitget/deploy/ | head -100
+
+# A5-EVENTLOG-01이 건드린 파일들
+git log --oneline --grep="A5-EVENTLOG\|EVENTLOG-01" --all
+git show --stat <A5-EVENTLOG-01 커밋 해시>   # 해시는 위 log 결과에서
+```
+Step 2에서 확인한 "체크가 보는 파일"과 이 diff들이 겹치는지 표로 정리:
+
+| 체크 | 관련 커밋(추정) | 겹침 여부 | 근거 |
+|---|---|---|---|
+| `bitget_shell_daily_audit_guard` | FENCE-02(35f9da9/002c612)? | | |
+| `weekly_evolution_pipeline` | FENCE-02? | | |
+| `portfolio_nav_risk_ssot` | A5-EVENTLOG-01? | | |
+| `pipeline_structure` | 미상 | | |
+
+## Step 4 — (a)/(b) 분류 (Cursor 소견, 최종 판단은 Claude)
+
+Step 1~3 근거로 각 체크에 대해:
+- **(a) 실제 회귀**: 변경이 실제로 그 체크가 보장하려던 불변식을 깼다
+- **(b) 체크 노후화**: 변경은 기능적으로 옳고, 체크의 패턴 가정만 새 형태(wrapper, 계측 삽입)를 못 알아본다
+
+소견만 제시. **이번 Handoff에서 어느 쪽이든 코드 수정 금지.**
+
+## Step 5 — `bitget.sh --cutover-check` timeout (참고, 낮은 우선순위)
+Step 1의 직접 python 호출과 `bitget.sh --cutover-check`(timeout 124) 중 어느 쪽이 이번 JSON의 실제 출처인지 1줄 확인.
+
+## 금지
+- 4개 체크 중 **어느 것도 이번에 고치지 않음**(진단 전용)
+- `portfolio_nav_risk_ssot` 관련 파일(execution_safety.py/tail_risk_gate.py 등) **읽기만**, 수정 금지 — (a)로 판명되면 별도 Critical Handoff
+- `--start-parallel` · `BITGET_PIPELINE_SSOT` 변경
+- CAT-A/CAT-F 로직 변경 · 슬라이스 수치 변경 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## 완료 정의
+Step 1~5 원문 + (a)/(b) 표 확보. `05_진행로그.md`·`CURSOR_TO_CLAUDE.md`·`NEXT_ACTION.md` 갱신(진단 결과만, 수정 없음이므로 Done/SUB_DONE 표기 없음 — "진단 완료, Claude 판정 대기"로 표기).
+
+## 다음 (이번 범위 아님, 예고만)
+- 전부 (b)면: 체크 패턴 갱신 Handoff(낮은 위험) → 재확인 → Phase 1
+- `portfolio_nav_risk_ssot`가 (a)면: CAT-F 전용 세션으로 분리, Critical 검토 후 수정 → 재확인 → Phase 1. **이 경우 cutover는 그 수정이 끝날 때까지 전체 보류.**
+
+## sub-phase ID
+`CAT-L-CUTOVER-01` (Phase 0b)
+
+---
+
 # CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0 (사전점검, 48h parallel 착수 전)
 
 > **작성**: Claude Pro (Architect) · 2026-09-30

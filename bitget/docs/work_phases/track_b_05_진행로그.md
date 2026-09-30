@@ -15,6 +15,10 @@
 비차단 확인 2건 회신 대기: (1) 회귀 테스트 2종(주석 면역·UNMARKED+diff 재현) 이름 확인 (2) 종료코드 전체 표 스냅샷 포함 여부.
 슬라이스 수치·CAT-A 비접촉.
 
+## CAT-L-CUTOVER-01 Phase 0b 진단 [2026-09-30] · **진단 완료, Claude 판정 대기** · 코드 수정 없음
+
+4실패 상세는 Phase 0 JSON. Cursor 소견: 3개는 체크 노후화(b). `portfolio_nav_risk_ssot`는 토큰 위치 이슈+(e3c0c45가 safety를 만짐) → (b) 우세·(a)는 Claude. Phase 1 미착수.
+
 ## CAT-L-CUTOVER-01 Phase 0 사전점검 [2026-09-30] · **WAIT_CLAUDE_OK** · `--start-parallel` 미실행
 
 원문 `snapshots/CAT-L-CUTOVER-01_P0_20260930.md`. `passed=false` (SSOT 미설정·parallel 미시작). `architecture_ok=false` (failed 4: pipeline_structure, bitget_shell_daily_audit_guard, weekly_evolution_pipeline, portfolio_nav_risk_ssot). 레거시 pgrep 없음. ASYNC=1 · WATCHDOG_COMPONENT=bitget_auto_pilot · SSOT 줄 없음. `--start-parallel`은 JSON 창만(HEAVY 스캔 추가 없음). bitget.sh cutover-check **timeout 124**.
