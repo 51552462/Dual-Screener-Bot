@@ -343,7 +343,7 @@ def format_install_plan(
         f"FORCE={'yes' if force else 'no'}",
         f"GEN_BODY_SHA={body_sha256(gen_text)}",
         f"LIVE_BODY_SHA={body_sha256(live_text) if live_text is not None else ''}",
-        f"MARKER_SHA={live_marker_sha(live_text) if live_text else ''}",
+        f"MARKER_SHA={live_marker_sha(live_text) or ''}",
         f"BODIES_EQUAL={'yes' if live_text is not None and bodies_equal(gen_text, live_text) else 'n/a'}",
         f"DIFF_ADDED={added} DIFF_REMOVED={removed} DIFF_CHANGED={changed}",
     ]

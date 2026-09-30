@@ -16,7 +16,7 @@
 
 **테스트:** `test_cat_l_fence02_crontab.py` + `test_cat_l_fence03_drift.py` + staggered + cli_logging → **32 passed**.
 
-**부트스트랩:** 아래 블록(서버 pull 후 `--diff-live` → 설치기 1회). 운영 cron에 가짜 드리프트 없음.
+**부트스트랩 (Bot-2, 2026-09-30 06:00 UTC):** pull `c1ffe3f`. PRE `--diff-live` SOURCE_STATE=**UNMARKED** BODIES_EQUAL=yes WRAP=28 SHA=`f36f722489ce082a661f04bcb0bd59c8ef21fb846b9704be8718a5fa266b21dd` exit **0**. 설치기 ACTION=install (exit 3 아님). 백업 ` /var/backups/bitget-cron/dual-screener-bitget.20260930T060051Z`. POST SOURCE_STATE=**PRISTINE** 동일 SHA · `--diff-live` 0 · `--fence-check` 무인자 FENCE_OK. 동작 줄 해시 전후 **동일**. 가짜 드리프트 시험 없음. `update_bitget.sh` 미실행.
 
 ---
 
