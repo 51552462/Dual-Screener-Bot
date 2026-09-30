@@ -1,6 +1,22 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-29 · **CAT-L-FENCE-02 Step 3 B 재개** · WAIT_CLAUDE_OK · Step 4 종결 기록됨
+> **갱신**: 2026-09-30 · **CAT-L-FENCE-03** · WAIT_CLAUDE_OK
+
+---
+
+## OUTBOX — CAT-L-FENCE-03 drift guard · 2026-09-30
+
+**로컬 구조 스냅샷**
+- 마커: `# CAT-L-FENCE-03 generator=…` + `# CAT-L-FENCE-03 body-sha256=<hex>` (SHELL= 직전). 해시=주석·공백 제외 본문 SHA-256.
+- `--diff-live` 종료: **0** 동일 · **10** PRISTINE+생성≠라이브 · **20** DRIFTED · **30** UNMARKED+diff · **40** ABSENT · **2** 읽기 실패. 무인자 LIVE=`/etc/cron.d/dual-screener-bitget`.
+- `--fence-check`도 무인자 시 동일 LIVE 기본.
+- 설치기 차단 **exit 3**. 백업 **`/var/backups/bitget-cron/dual-screener-bitget.<UTC>`**. `--force-overwrite-drift`.
+- `update_bitget.sh`: `set -euo pipefail`. 설치기 실패 시 즉시 중단. **[0/7]** `--diff-live`를 backup/pull **이전**에 실행, 20/30/2면 종료(풀·재시작 없음).
+- 슬라이스 수치 변경 0. CAT-A 0.
+
+**테스트:** `test_cat_l_fence02_crontab.py` + `test_cat_l_fence03_drift.py` + staggered + cli_logging → **32 passed**.
+
+**부트스트랩:** 아래 블록(서버 pull 후 `--diff-live` → 설치기 1회). 운영 cron에 가짜 드리프트 없음.
 
 ---
 

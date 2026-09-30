@@ -39,6 +39,20 @@ if [[ -z "${DANTE_PY:-}" ]]; then
 fi
 echo "[update_bitget] INSTALL_ROOT=$INSTALL_ROOT venv=$DANTE_PY DEPLOY_USER=$DEPLOY_USER"
 
+export PYTHONPATH="${INSTALL_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+echo "[0/7] CAT-L-FENCE-03 --diff-live (before backup/pull/restart)"
+set +e
+"$DANTE_PY" "${SCRIPT_DIR}/generate_bitget_crontab.py" --install-root "$INSTALL_ROOT" --diff-live
+DIFF_LIVE_RC=$?
+set -e
+echo "DIFF_LIVE_EXIT=${DIFF_LIVE_RC}"
+# 20=DRIFTED, 30=UNMARKED+diff, 2=fail-closed — stop before any mutation.
+# 0=same, 10=PRISTINE+repo diff (install later), 40=ABSENT — continue.
+if [[ "${DIFF_LIVE_RC}" -eq 20 || "${DIFF_LIVE_RC}" -eq 30 || "${DIFF_LIVE_RC}" -eq 2 ]]; then
+  echo "abort: live cron SOURCE_STATE blocks update (no pull/restart). Fold edits or --force-overwrite-drift on installer only after review." >&2
+  exit "${DIFF_LIVE_RC}"
+fi
+
 _bitget_pre_update_backup() {
   if [[ "${BITGET_SKIP_PREUPDATE_BACKUP:-0}" == "1" ]]; then
     echo "[update_bitget] backup skipped (BITGET_SKIP_PREUPDATE_BACKUP=1)"

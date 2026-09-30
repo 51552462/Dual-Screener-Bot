@@ -23,8 +23,8 @@
 | Group MDD (legacy) | −30% per group | 5% 달성 시 함께 조임 예정 |
 | 실전 전환 | **금지** (P2-5 전) | |
 | **B0 단계** | **4-track 관측** · 수익 % 목표 없음 | `06` 2~4주 |
-| **다음 Handoff** | CAT-L-FENCE-02 **Step 3 B Claude 검증** (실스캔 cgroup=heavy.slice · FENCE_OK) · 3단계 판정일 **2026-10-13** | A5-EVENTLOG 서버반영 미확인 · C-2/MDD5%/live 🔴 |
-| 마지막 갱신 | 2026-09-29 | Step 4 Claude OK 기록 · B 재개 캡처 · 효과검증 시작점 09-29 |
+| **다음 Handoff** | CAT-L-FENCE-03 **Claude 검증** (마커·차단·`--diff-live`) · FENCE-02 3단계 **2026-10-13** | A5-EVENTLOG 서버반영 미확인 · C-2/MDD5%/live 🔴 |
+| 마지막 갱신 | 2026-09-30 | FENCE-03 구현 · WAIT_CLAUDE_OK |
 
 ---
 

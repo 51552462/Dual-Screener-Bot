@@ -18,6 +18,13 @@ if [[ "${EUID:-0}" -ne 0 ]]; then
   exit 1
 fi
 
+FORCE_OVERWRITE_DRIFT=0
+for _arg in "$@"; do
+  if [[ "${_arg}" == "--force-overwrite-drift" ]]; then
+    FORCE_OVERWRITE_DRIFT=1
+  fi
+done
+
 echo "=== CAT-L-FENCE-02 slice (idempotent) ==="
 SLICE_SRC="${REPO_ROOT}/bitget/deploy/systemd/bitget-cron-heavy.slice"
 SLICE_DEST="/etc/systemd/system/bitget-cron-heavy.slice"
@@ -38,13 +45,53 @@ if [[ ! -f "${GEN_PY}" ]]; then
   exit 1
 fi
 if [[ -x "${INSTALL_ROOT}/venv/bin/python" ]]; then
-  "${INSTALL_ROOT}/venv/bin/python" "${GEN_PY}" --install-root "${INSTALL_ROOT}"
+  PY="${INSTALL_ROOT}/venv/bin/python"
 elif command -v python3 >/dev/null 2>&1; then
-  python3 "${GEN_PY}" --install-root "${INSTALL_ROOT}"
+  PY=python3
 else
   echo "ERROR: python3 required" >&2
   exit 1
 fi
+export PYTHONPATH="${INSTALL_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
+echo "=== CAT-L-FENCE-03 install-plan ==="
+set +e
+PLAN_CMD=("$PY" "$GEN_PY" --install-root "$INSTALL_ROOT" --install-plan --live "$DEST")
+if [[ "${FORCE_OVERWRITE_DRIFT}" == "1" ]]; then
+  PLAN_CMD+=(--force-overwrite-drift)
+fi
+PLAN="$("${PLAN_CMD[@]}")"
+PLAN_RC=$?
+set -e
+if [[ "${PLAN_RC}" -eq 2 ]]; then
+  echo "ERROR: fail-closed — cannot read ${DEST}" >&2
+  exit 2
+fi
+if [[ "${PLAN_RC}" -ne 0 ]]; then
+  echo "ERROR: install-plan rc=${PLAN_RC}" >&2
+  exit "${PLAN_RC}"
+fi
+printf '%s\n' "$PLAN"
+ACTION="$(printf '%s\n' "$PLAN" | sed -n 's/^ACTION=//p' | head -1)"
+if [[ "${ACTION}" == "block" ]]; then
+  echo "=== CAT-L-FENCE-03 BLOCKED ===" >&2
+  echo "Resolve: (1) fold the live edit into generate_bitget_crontab.py and commit, then re-run" >&2
+  echo "      or (2) sudo bash bitget/deploy/install_bitget_cron.sh --force-overwrite-drift" >&2
+  "$PY" "$GEN_PY" --install-root "$INSTALL_ROOT" --diff-live "$DEST" || true
+  exit 3
+fi
+
+if [[ -f "${DEST}" ]]; then
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p /var/backups/bitget-cron
+  install -m 0644 "${DEST}" "/var/backups/bitget-cron/dual-screener-bitget.${stamp}"
+  echo "backup /var/backups/bitget-cron/dual-screener-bitget.${stamp}"
+fi
+if [[ -f "${SLICE_DEST}" ]] && ! cmp -s "${SLICE_SRC}" "${SLICE_DEST}"; then
+  echo "SLICE_WARN: installed unit != template; installer will overwrite (numbers unchanged in this Handoff)"
+fi
+
+"$PY" "$GEN_PY" --install-root "${INSTALL_ROOT}"
 
 if [[ ! -f "${TEMPLATE}" ]]; then
   echo "템플릿 없음: ${TEMPLATE}" >&2

@@ -11,6 +11,8 @@
 #
 # user/path: ubuntu · /home/ubuntu/dante_bots/Dual-Screener-Bot
 
+# CAT-L-FENCE-03 generator=bitget/deploy/generate_bitget_crontab.py
+# CAT-L-FENCE-03 body-sha256=f36f722489ce082a661f04bcb0bd59c8ef21fb846b9704be8718a5fa266b21dd
 SHELL=/bin/bash
 CRON_TZ=UTC
 PATH=/usr/local/bin:/usr/bin:/bin

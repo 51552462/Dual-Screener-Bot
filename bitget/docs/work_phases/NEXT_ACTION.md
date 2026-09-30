@@ -5,7 +5,7 @@
 | 레인 | sub-phase | status | 창이 쓸 파일 |
 |------|-----------|--------|--------------|
 | **CAT-A (공용)** | A-LIFECAP-01 | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용·레인 아님)** | CAT-L-FENCE-02 Step 3 B 재개 | **WAIT_CLAUDE_OK** (B 원문 · 1~2단계 통과 후보 · 3단계 2026-10-13) | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
+| **CAT-L (공용·레인 아님)** | CAT-L-FENCE-03 | **WAIT_CLAUDE_OK** (drift guard · 부트스트랩 후) | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | A5-EVENTLOG-01 | **구현 OK · 서버 반영 확인 대기** (적재 시계는 반영 확인일부터) | `track_b_*` |
 | **CAT-L (에스컬레이션)** | FENCE-02 | **WAIT_CLAUDE_OK** | live FENCE_OK · 실스캔 cgroup=heavy.slice |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |

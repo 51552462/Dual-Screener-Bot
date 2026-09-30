@@ -10,10 +10,13 @@ bitget_scan_schedule.py → bitget/deploy/bitget.crontab.example
 from __future__ import annotations
 
 import argparse
+import difflib
+import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BITGET_ROOT = _REPO_ROOT / "bitget"
@@ -33,6 +36,18 @@ from bitget.infra.job_lifetime_cap import _HEAVY_PREFIXES  # noqa: E402
 from bitget.infra.logging_setup import get_logger  # noqa: E402
 
 DEFAULT_INSTALL_ROOT = "/home/ubuntu/dante_bots/Dual-Screener-Bot"
+DEFAULT_LIVE_CRON = "/etc/cron.d/dual-screener-bitget"
+MARKER_GEN_LINE = (
+    "# CAT-L-FENCE-03 generator=bitget/deploy/generate_bitget_crontab.py"
+)
+MARKER_HASH_PREFIX = "# CAT-L-FENCE-03 body-sha256="
+EXIT_DIFF_SAME = 0
+EXIT_DIFF_PRISTINE_CHANGED = 10
+EXIT_DIFF_DRIFTED = 20
+EXIT_DIFF_UNMARKED_CHANGED = 30
+EXIT_DIFF_ABSENT = 40
+EXIT_FAIL_CLOSED = 2
+BACKUP_CRON_DIR = "/var/backups/bitget-cron"
 CRON_USER = "ubuntu"
 CRON_USER_HEAVY = "root"
 FENCE_MEMORY_MAX = "1610612736"
@@ -142,6 +157,195 @@ def fence_check_report(gen_text: str, live_text: str) -> str:
         f"GEN_JOBS={len(g_jobs)} LIVE_JOBS={len(l_jobs)}",
         f"ENV_SAME={'yes' if g_env == l_env else 'no'}",
         f"JOBS_SAME={'yes' if g_jobs == l_jobs else 'no'}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def body_canonical(text: str) -> str:
+    lines = cron_body_lines(text)
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def body_sha256(text: str) -> str:
+    return hashlib.sha256(body_canonical(text).encode("utf-8")).hexdigest()
+
+
+def live_marker_sha(text: str) -> Optional[str]:
+    for raw in text.splitlines():
+        s = raw.strip()
+        if s.startswith(MARKER_HASH_PREFIX):
+            return s[len(MARKER_HASH_PREFIX) :].strip() or None
+    return None
+
+
+def classify_source_state(live_text: Optional[str]) -> str:
+    if live_text is None:
+        return "ABSENT"
+    marker = live_marker_sha(live_text)
+    if not marker:
+        return "UNMARKED"
+    if body_sha256(live_text) == marker:
+        return "PRISTINE"
+    return "DRIFTED"
+
+
+def attach_fence03_markers(text: str) -> str:
+    digest = body_sha256(text)
+    out: List[str] = []
+    inserted = False
+    for ln in text.splitlines():
+        if not inserted and ln.startswith("SHELL="):
+            out.append(MARKER_GEN_LINE)
+            out.append(f"{MARKER_HASH_PREFIX}{digest}")
+            inserted = True
+        out.append(ln)
+    if not inserted:
+        out.insert(0, MARKER_GEN_LINE)
+        out.insert(1, f"{MARKER_HASH_PREFIX}{digest}")
+    return "\n".join(out) + "\n"
+
+
+def bodies_equal(a: str, b: str) -> bool:
+    return body_canonical(a) == body_canonical(b)
+
+
+def install_should_block(
+    state: str, gen_text: str, live_text: Optional[str], *, force: bool
+) -> bool:
+    if force:
+        return False
+    if state in ("ABSENT", "PRISTINE"):
+        return False
+    if state == "DRIFTED":
+        return True
+    if state == "UNMARKED":
+        if live_text is None:
+            return True
+        return not bodies_equal(gen_text, live_text)
+    return True
+
+
+def diff_live_exit_code(state: str, gen_text: str, live_text: Optional[str]) -> int:
+    if state == "ABSENT" or live_text is None:
+        return EXIT_DIFF_ABSENT
+    equal = bodies_equal(gen_text, live_text)
+    if state == "DRIFTED":
+        return EXIT_DIFF_DRIFTED
+    if state == "UNMARKED":
+        return EXIT_DIFF_SAME if equal else EXIT_DIFF_UNMARKED_CHANGED
+    if state == "PRISTINE":
+        return EXIT_DIFF_SAME if equal else EXIT_DIFF_PRISTINE_CHANGED
+    return EXIT_FAIL_CLOSED
+
+
+def unified_body_diff(live_text: str, gen_text: str) -> str:
+    live_lines = body_canonical(live_text).splitlines(keepends=True)
+    gen_lines = body_canonical(gen_text).splitlines(keepends=True)
+    return "".join(
+        difflib.unified_diff(
+            live_lines, gen_lines, fromfile="live", tofile="generator", lineterm=""
+        )
+    )
+
+
+def body_diff_counts(live_text: str, gen_text: str) -> Tuple[int, int, int]:
+    live_set = cron_body_lines(live_text)
+    gen_set = cron_body_lines(gen_text)
+    live_s, gen_s = set(live_set), set(gen_set)
+    added = len(gen_s - live_s)
+    removed = len(live_s - gen_s)
+    changed = min(added, removed)
+    return added, removed, changed
+
+
+def slice_report(*, repo_root: Path | None = None) -> str:
+    root = repo_root or _REPO_ROOT
+    tmpl = root / "bitget" / "deploy" / "systemd" / "bitget-cron-heavy.slice"
+    dest = Path("/etc/systemd/system/bitget-cron-heavy.slice")
+    lines = [
+        f"SLICE_TEMPLATE={tmpl}",
+        f"SLICE_UNIT={dest}",
+        f"SLICE_TEMPLATE_HIGH={FENCE_MEMORY_HIGH}",
+        f"SLICE_TEMPLATE_MAX={FENCE_MEMORY_MAX}",
+    ]
+    if tmpl.is_file() and dest.is_file():
+        same = tmpl.read_text(encoding="utf-8") == dest.read_text(encoding="utf-8")
+        lines.append(f"SLICE_FILE_SAME={'yes' if same else 'no'}")
+        if not same:
+            lines.append("SLICE_WARN=template and installed unit file differ (install will overwrite)")
+    elif dest.is_file():
+        lines.append("SLICE_FILE_SAME=no")
+        lines.append("SLICE_WARN=unit present, template missing in repo")
+    else:
+        lines.append("SLICE_FILE_SAME=n/a")
+    try:
+        out = subprocess.check_output(
+            [
+                "systemctl",
+                "show",
+                "bitget-cron-heavy.slice",
+                "-p",
+                "MemoryHigh",
+                "-p",
+                "MemoryMax",
+                "-p",
+                "ActiveState",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        lines.append("SLICE_RUNTIME=")
+        lines.append(out.rstrip())
+        if f"MemoryHigh={FENCE_MEMORY_HIGH}" not in out or f"MemoryMax={FENCE_MEMORY_MAX}" not in out:
+            lines.append("SLICE_WARN=systemctl MemoryHigh/Max != template constants")
+    except (OSError, subprocess.CalledProcessError):
+        lines.append("SLICE_RUNTIME=unavailable")
+    return "\n".join(lines) + "\n"
+
+
+def format_diff_live_report(
+    gen_text: str, live_text: Optional[str], *, repo_root: Path | None = None
+) -> str:
+    state = classify_source_state(live_text)
+    parts = [
+        f"SOURCE_STATE={state}",
+        f"GEN_WRAPPED_COUNT={wrapped_count(gen_text)}",
+        f"LIVE_WRAPPED_COUNT={wrapped_count(live_text or '')}",
+        f"EXPECTED_WRAPPED={EXPECTED_WRAPPED}",
+        f"GEN_BODY_SHA={body_sha256(gen_text)}",
+    ]
+    if live_text is not None:
+        parts.append(f"LIVE_BODY_SHA={body_sha256(live_text)}")
+        parts.append(f"MARKER_SHA={live_marker_sha(live_text) or ''}")
+        parts.append(f"BODIES_EQUAL={'yes' if bodies_equal(gen_text, live_text) else 'no'}")
+        diff = unified_body_diff(live_text, gen_text)
+        parts.append("=== unified diff (body, comments excluded) ===")
+        parts.append(diff if diff else "(empty)")
+    parts.append("=== slice ===")
+    parts.append(slice_report(repo_root=repo_root).rstrip())
+    return "\n".join(parts) + "\n"
+
+
+def format_install_plan(
+    gen_text: str, live_text: Optional[str], *, force: bool
+) -> str:
+    state = classify_source_state(live_text)
+    block = install_should_block(state, gen_text, live_text, force=force)
+    action = "block" if block else "install"
+    added = removed = changed = 0
+    if live_text is not None:
+        added, removed, changed = body_diff_counts(live_text, gen_text)
+    lines = [
+        f"SOURCE_STATE={state}",
+        f"ACTION={action}",
+        f"FORCE={'yes' if force else 'no'}",
+        f"GEN_BODY_SHA={body_sha256(gen_text)}",
+        f"LIVE_BODY_SHA={body_sha256(live_text) if live_text is not None else ''}",
+        f"MARKER_SHA={live_marker_sha(live_text) if live_text else ''}",
+        f"BODIES_EQUAL={'yes' if live_text is not None and bodies_equal(gen_text, live_text) else 'n/a'}",
+        f"DIFF_ADDED={added} DIFF_REMOVED={removed} DIFF_CHANGED={changed}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -262,7 +466,7 @@ def render_bitget_crontab(install_root: str, *, use_queue: bool = False) -> str:
     lines.append(f"# {CRON_USER}  cd {install_root} && TZ={tz} {bg} --scan-all")
     lines.append("")
     lines.append(f"# SSOT: bitget/bitget_scan_schedule.py ({len(ALL_SCAN_SLOTS)} staggered modes)")
-    return "\n".join(lines) + "\n"
+    return attach_fence03_markers("\n".join(lines) + "\n")
 
 
 def _deploy_path(repo_root: Path) -> Path:
@@ -315,8 +519,34 @@ def main(argv: List[str] | None = None) -> int:
     )
     parser.add_argument(
         "--fence-check",
+        nargs="?",
+        const=DEFAULT_LIVE_CRON,
+        default=None,
         metavar="LIVE_CRON",
-        help="Print FENCE_OK / FENCE_MISSING / DRIFTED vs a live cron.d file (read-only).",
+        help="Print FENCE_OK / FENCE_MISSING / DRIFTED (default LIVE=/etc/cron.d/dual-screener-bitget).",
+    )
+    parser.add_argument(
+        "--diff-live",
+        nargs="?",
+        const=DEFAULT_LIVE_CRON,
+        default=None,
+        metavar="LIVE_CRON",
+        help="CAT-L-FENCE-03 read-only source-state + body diff + wrapped counts + slice report.",
+    )
+    parser.add_argument(
+        "--install-plan",
+        action="store_true",
+        help="Print SOURCE_STATE/ACTION for the installer (does not write files).",
+    )
+    parser.add_argument(
+        "--live",
+        default=DEFAULT_LIVE_CRON,
+        help="Live cron.d path for --install-plan (default /etc/cron.d/dual-screener-bitget).",
+    )
+    parser.add_argument(
+        "--force-overwrite-drift",
+        action="store_true",
+        help="With --install-plan: ACTION=install even if DRIFTED/UNMARKED+diff.",
     )
     args = parser.parse_args(argv)
     if args.fence_check:
@@ -327,6 +557,34 @@ def main(argv: List[str] | None = None) -> int:
         gen = render_bitget_crontab(args.install_root, use_queue=args.use_queue)
         live = live_path.read_text(encoding="utf-8")
         sys.stdout.write(fence_check_report(gen, live))
+        return 0
+    if args.diff_live is not None:
+        live_path = Path(args.diff_live)
+        gen = render_bitget_crontab(args.install_root, use_queue=args.use_queue)
+        if not live_path.exists():
+            sys.stdout.write(format_diff_live_report(gen, None))
+            return EXIT_DIFF_ABSENT
+        try:
+            live = live_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.error("ERROR: cannot read live cron %s: %s", live_path, exc)
+            return EXIT_FAIL_CLOSED
+        sys.stdout.write(format_diff_live_report(gen, live))
+        return diff_live_exit_code(classify_source_state(live), gen, live)
+    if args.install_plan:
+        live_path = Path(args.live)
+        gen = render_bitget_crontab(args.install_root, use_queue=args.use_queue)
+        if not live_path.exists():
+            sys.stdout.write(format_install_plan(gen, None, force=args.force_overwrite_drift))
+            return 0
+        try:
+            live = live_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.error("ERROR: cannot read live cron %s: %s", live_path, exc)
+            return EXIT_FAIL_CLOSED
+        sys.stdout.write(
+            format_install_plan(gen, live, force=args.force_overwrite_drift)
+        )
         return 0
     if args.check:
         return check_template(args.install_root, use_queue=args.use_queue)

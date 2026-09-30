@@ -20,8 +20,16 @@ systemd units, cron, venv, snapshot, watchdog, backup, log rotation, resource li
 | runtime lock | `infra/runtime.py` |
 | ops logger | `ops_logger.py` (Bitget) |
 | logging setup | `infra/logging_setup` (fix: doc 12) |
+| **cron SSOT** | `deploy/generate_bitget_crontab.py` → `/etc/cron.d/dual-screener-bitget` |
 | disk / log | P0-1 target — logrotate / RotatingFileHandler |
 | RUNBOOK | `bitget/RUNBOOK.md` |
+
+`/etc/cron.d/dual-screener-bitget`의 SSOT는 `generate_bitget_crontab.py`. 서버 수동 편집 금지(편집하면 다음 설치에서 소실).
+
+**CAT-L-FENCE-03 drift guard** (주석 마커 + `body-sha256`. 이 장치는 2026-09-29 cron 펜스 소실(FENCE-02)과 같은 패턴을 차단 시점에 잡기 위함.):
+- 상태 4종: `ABSENT` / `PRISTINE`(마커=현재 본문 해시) / `DRIFTED`(수동 편집) / `UNMARKED`(마커 없음).
+- 설치기: `DRIFTED` 또는 `UNMARKED`+생성≠라이브 → **차단 exit 3**. 해결: ① 수동 편집을 생성기에 반영·커밋 후 재실행 ② `--force-overwrite-drift`. 덮어쓰기 전 백업 `/var/backups/bitget-cron/dual-screener-bitget.<UTC>`.
+- 읽기전용: `python bitget/deploy/generate_bitget_crontab.py --diff-live` (무인자 시 LIVE=`/etc/cron.d/dual-screener-bitget`). 종료 0=동일 · 10=PRISTINE+diff · 20=DRIFTED · 30=UNMARKED+diff · 40=ABSENT · 2=읽기 실패. `update_bitget.sh`는 pull 전에 20/30/2면 중단.
 
 ---
 

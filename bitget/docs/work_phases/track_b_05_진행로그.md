@@ -7,6 +7,10 @@
 
 ---
 
+## CAT-L-FENCE-03 drift guard [2026-09-30] · **WAIT_CLAUDE_OK**
+
+생성기 헤더 마커 2줄(`generator=` + `body-sha256`, 동작 줄 해시·주석 제외). 설치기: ABSENT/PRISTINE 통과, UNMARKED+동일은 마커 채택, DRIFTED·UNMARKED+diff는 exit 3 (`--force-overwrite-drift`). 백업 `/var/backups/bitget-cron/`. `--diff-live` 무인자 기본 LIVE. `update_bitget.sh`는 pull **전** 20/30/2면 중단. 테스트 32 passed (기존 22 + FENCE-03 10). 슬라이스 수치·CAT-A 변경 0.
+
 ## CAT-L-FENCE-02 — 펜스 소실 회귀 발견 및 복구 착수 [2026-09-29] · REGRESSED · Step 4 진행
 
 Step 3 S0 서버 재검증(확인본) 결과: `S2_EMPTY_DIFF=yes`였으나 **생성기·라이브 둘 다 wrapper 0줄**로 일치한 것 — 원래 게이트가 "비교 대상 자체가 사라진 경우"를 PASS로 오판정.

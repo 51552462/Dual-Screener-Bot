@@ -1,3 +1,91 @@
+# CLAUDE → CURSOR · CAT-L-FENCE-03 (drift guard) — 착수 승인
+
+> **작성**: Claude Pro (Architect) · 2026-09-30
+> **디렉터 승인**: 2026-09-28 "drift guard 진행" · 2026-09-30 "권장 순서부터 순서대로 가자"(12 우선)
+> **선행 상태**: CAT-L-FENCE-02 전체 SUB_DONE. 라이브 origin=`19d3858`, `FENCE_STATUS=FENCE_OK`, 실스캔 cgroup=`bitget-cron-heavy.slice` 확인됨. 3단계 판정 2026-10-13.
+> **CAT**: CAT-L 🟡 Medium · also_load: CAT-A(비접촉)
+> **구현**: Cursor only. CAT-A 로직·슬라이스 수치·(b)/(c) 줄 의미 변경 금지.
+
+---
+
+## 이게 왜 필요한지 — 방금 겪은 사고와의 관계
+
+CAT-L-FENCE-02 Step 4에서 실제로 벌어진 일: Step 2는 **생성기 없이 라이브 cron.d를 손으로 고친 것**이었고, 그 뒤 FENCE-02 생성기 코드는 로컬에만 있고 origin에 없는 채로 무언가(설치기 또는 유사 경로)가 **구코드로 재생성**해 그 수동 wrapper를 조용히 지웠다. 이번 설계(마커/지문)가 그때 이미 있었다면: Step 2 직후 라이브는 `UNMARKED`(생성기로 안 만들어졌으니), 이후 설치 시도는 "생성 결과(wrapper 없음, 구코드) ≠ 라이브(wrapper 있음)" → **UNMARKED+diff = 차단**되어 사람이 먼저 확인해야 했을 것이다. 즉 이번 회귀는 FENCE-03이 정확히 막도록 설계된 그 패턴이다. 아래 스펙은 그때 정한 원안을 그대로 쓰되, 카운트 방식은 이번 사고에서 확정된 규칙(주석 제외, python 게이트 단일 기준)을 반영한다.
+
+## 설계 원칙
+diff만으로는 "손으로 고침"과 "저장소가 정당하게 바뀜"을 구분 못 한다. **출처 기반**: 설치기가 "내가 마지막으로 쓴 내용의 지문"을 파일에 남기고, 다음 설치 때 지금 파일이 그 지문과 다르면 = 누군가 손댄 것.
+
+## Spec 1 — 마커(지문)
+- 생성기가 만드는 cron.d 헤더에 마커 2줄(주석): 생성기 식별 + `body-sha256`.
+- 해시 대상 = **동작에 영향 주는 줄만**: 주석·공백 제외한 모든 줄(`SHELL=`/`PATH=`/`MAILTO=`/`CRON_TZ=` 포함). 마커 줄 자체는 제외. 줄 끝 공백 정규화. 결정적(재생성해도 동일).
+- **이번 사고에서 확정된 규칙 반영**: 해시·모든 "wrapper 줄 수" 계산은 `grep -v '^\s*#'`로 주석을 제외한 뒤 계산. 셸 `grep -c systemd-run`을 그대로 판정에 쓰지 않는다(헤더 주석에 "systemd-run"이 언급되면 오탐 — 실제로 한 번 겪음).
+- 마커는 주석이라 cron 동작에 영향 없음.
+
+## Spec 2 — 상태 판정 함수 (생성기/설치기 공용)
+| 상태 | 조건 |
+|---|---|
+| `ABSENT` | 라이브 파일 없음 |
+| `PRISTINE` | 마커 있음 + 현재 본문 해시 == 마커 해시 |
+| `DRIFTED` | 마커 있음 + 해시 불일치(수동 편집) |
+| `UNMARKED` | 마커 없음 |
+
+## Spec 3 — 설치기 동작
+| 상태 | 동작 |
+|---|---|
+| `ABSENT` | 정상 설치 |
+| `PRISTINE` | 백업 후 덮어쓰기, 변경 요약(추가/삭제/변경 줄 수) 출력, 막지 않음(정당한 저장소 변경 통과) |
+| `UNMARKED` | 생성 결과 == 라이브(헤더 제외)면 마커만 채택(기능 변화 0). 다르면 `DRIFTED`와 동일 차단 — **이번 사고를 막았을 경로** |
+| `DRIFTED` | **차단**(구분되는 종료 코드, 예: 3). diff 출력 + 해결 2가지: ① 수동 편집을 생성기에 반영·커밋 후 재실행 ② `--force-overwrite-drift`(명시 플래그, 기본 아님)로 폐기 |
+- 모든 덮어쓰기 전 `/etc/cron.d` 밖(예: `/var/backups/bitget-cron/…<UTC>`)에 백업.
+- fail-closed: 라이브 읽기/해시 계산 오류 시 진행하지 않고 차단(`--force-overwrite-drift`로만 우회).
+
+## Spec 4 — `generate_bitget_crontab.py --diff-live` (읽기전용, sudo 불필요)
+출력: (1) 상태(4종) (2) 생성 결과 vs 라이브 unified diff(마커/타임스탬프 제외) (3) **wrapped 줄 수**(주석 제외 카운트, `LIVE_WRAPPED_COUNT`/`GEN_WRAPPED_COUNT` 형태로 사람이 바로 읽게) (4) 슬라이스 보고 — `bitget-cron-heavy.slice` 파일 vs 템플릿, `systemctl show` 유효값(MemoryHigh/Max) vs 템플릿 값(런타임 오버라이드 감지).
+종료 코드 구분(예: 0=동일, 10=PRISTINE+diff, 20=DRIFTED, 30=UNMARKED+diff) — 정확한 값은 Cursor 확정 후 문서화.
+슬라이스 불일치는 경고만(차단 아님): 설치기가 덮어쓰되, 덮어쓰기 전 경고 남김.
+**인자 없이 실행해도 `LIVE=/etc/cron.d/dual-screener-bitget`을 기본값으로 사용**(이번 Step 3 B 재개 때 무인자 실행이 안 돼서 매번 경로를 붙였음 — 이번에 고정).
+
+## Spec 5 — `update_bitget.sh` 사전 점검
+- 변경 작업(pull/재시작 등) **이전**에 `--diff-live` 상태 확인. `DRIFTED`(또는 `UNMARKED`+diff)면 아무것도 바꾸기 전에 중단.
+- 현재 `update_bitget.sh`가 설치기 실패를 어떻게 다루는지(`set -e` 등) 먼저 확인해 OUTBOX 회신.
+
+## Spec 6 — 부트스트랩 (서버, 코드 반영 후 1회)
+서버는 현재 `PRISTINE`에 가까운 상태일 수 있음(FENCE-02 Step 4E 설치가 이미 이번 생성기로 이뤄짐) — 정확한 상태는 부트스트랩 전 `--diff-live`로 먼저 확인. `ABSENT`/`UNMARKED`로 나오면 절차대로, 이미 그 생성기 출력과 라이브가 같다면 마커만 추가(기능 변화 0).
+
+## 테스트 (임시 디렉터리, root 불필요)
+1. 마커 존재, 재생성해도 해시 동일(주석 변경엔 불변)
+2. 상태 4종 판정
+3. 동작 줄 1개 수동 변경 → `DRIFTED`. 헤더 주석에 "systemd-run" 문자열이 있어도 wrapped count·해시에 영향 없음(**이번 사고 재발 방지 회귀 테스트**)
+4. 정당한 저장소 변경(생성기 상수 변경) + `PRISTINE` → 차단 없이 덮어쓰기
+5. `DRIFTED` → 차단·종료 코드, `--force-overwrite-drift` → 진행+백업
+6. `UNMARKED` + 생성==라이브 → 마커 채택, 동작 줄 불변
+7. `UNMARKED` + 생성≠라이브(**Step 4가 실제로 겪은 시나리오 재현**: 구코드 생성 결과 vs Step2식 수동 wrapper 라이브) → 차단
+8. 라이브 읽기 불가 → fail-closed
+9. `--diff-live` 무인자 실행 시 기본 LIVE 경로 사용
+10. `--diff-live` 종료 코드 매트릭스
+11. 기존 FENCE-02 테스트(22개) 회귀 0
+운영 파일에 가짜 드리프트를 만들어 시험하지 말 것. 시뮬레이션은 임시 복사본에서만.
+
+## 인접 CAT
+CAT-A 비접촉. CAT-N/F 비접촉.
+
+## 문서 (Cursor)
+`CAT-L_인프라배포.md`: 마커 방식·상태 4종·차단 시 해결법 2가지·`--diff-live` 사용법(무인자 기본 동작 포함) 각 1~2줄. 이번 사고 한 줄 각주: "이 장치는 2026-09-29 cron 펜스 소실(FENCE-02)과 같은 패턴을 차단 시점에 잡기 위함."
+
+## 롤백
+커밋 revert. 라이브 마커는 주석이라 남아 있어도 무해. 백업 디렉터리 유지.
+
+## 완료 정의
+코드+테스트 all pass(회귀 포함) · 서버 부트스트랩 전후 동작 줄 해시 동일 캡처 · `05`·`00`·`CURSOR_TO_CLAUDE`·`NEXT_ACTION`(→`WAIT_CLAUDE_OK`) 갱신 · 「로컬 구조 스냅샷」에 종료 코드 표·백업 경로 명시.
+
+## 금지
+슬라이스 수치 변경 · CAT-A 로직 변경 · (b)/(c) 의미 변경 · 운영 cron.d에 가짜 드리프트 시험 · C-2/MDD5%/live/`ENABLE_REAL_EXECUTION`
+
+## sub-phase ID
+`CAT-L-FENCE-03`
+
+---
+
 # CLAUDE → CURSOR · CAT-L-FENCE-02 · Step 3 B (재개) + Step 4 종결 기록
 
 > **작성**: Claude Pro (Architect) · 2026-09-29
