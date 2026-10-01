@@ -22,6 +22,13 @@ Phase 1 보류(§9 조건). 신규 등록: CAT-L-SCRIPT-AUDIT-01 · CAT-L-BACKUP
 - root pyc 가설 불일치(mtime 07-02/08-11/09-23). mode 10건 중 8건 = 09-28 02:24 `chmod +x` 일치.
 - W8: `/tmp` 3파일 원본 `snapshots/raw_20260930/` 보존, sha256 V3와 일치. 서버 원본 삭제 안 함. W10(규칙 8)은 디렉터 승인 대기.
 
+### Phase 1 선행 W-블록 회신 · Claude 판정 → X0 + X-블록 + L5–L9 [2026-10-01 저녁] (Handoff `27a14b0`)
+- X0: 비밀 문자열 1줄 = W 스냅샷 172번 줄 `Listening on REST API socket for snapd user session agent.` — 비밀 아님. X 스냅샷도 같은 스캔, 일치는 systemd 메시지뿐.
+- X-블록(48줄·CR 0·sha256 `768a1189…295b21`) 1회 읽기전용, 출력 `snapshots/CAT-L-CUTOVER-01_P1PRE_XBLOCK_20261001.md`(sha256 `137A1E91…89E0E`). 서버 변경 0.
+- X1: 부팅 0 = 09-26 08:52 UTC 이후 OOM 0. 그러나 부팅 경계 3개(09-13 ~15:00 · 09-22 05:49→06:25 · 09-26 08:50→08:52) 존재 — 원인 미확인(Y1 제안). X2: cron RELOAD `Sep 28 02:25:01` = 09-28 설치기 종료 직후(cron 파일 변경 직접 증거). X2b: 02:24 `update_bitget.sh`→pull→유닛 10개 덮어쓰기→daemon-reload→타이머 2개 재시작 순서 확정. X2c: 사전 백업 3개 모두 `bitget_system_config.sqlite` 12288B뿐(시장 DB 없음 — 사전 백업 경로 의심). X3: `head -800`에 오래된 0바이트 로그만 채워져 점유표 작성 불가(Y2 제안). X3b: `scan_spot_ema5` 05:20:01→06:52:12 UTC LIFECAP 강제 종료(age 5517/cap 5400) = 09-30 cutover_check 124의 락 보유 후보. X4: 백업 성공 0/실패 27(09-08~), L-2 결과물 없음, 디스크 42G 여유, 가용 메모리 ≈2.6GB. X4b: 스냅샷 최장 공백 14563s(09-24 23:48→09-25 03:51 UTC).
+- L5 UI 퇴역 = 의도(4GB 보호, `b7370ad`) · L6 `deploy_bitget_factory.sh` +6줄(slice 설치)뿐, systemd 템플릿 변경 0 · L7 스냅샷 읽기측 = master_scanner·dashboard·heatmap 등(`market_db_read_path`), 리포트는 메인 DB 고정 · L8 `git restore .` diff 미보관, 실행자 ubuntu · L9 09-26 05:26:50 async 재시작은 TTY 없음 → watchdog 자동 쪽 유력(확정 불가).
+- 문서: NEXT_ACTION(CUTOVER·BACKUP-01·신규 CAT-L-QW-RESTART-01) · CAT-L 규칙 4 주의 1줄 · 06 실패기록 FENCE-02 회귀 1줄(X2 확정 후) · 09 · NEXT_STEP · SYNC §3. Phase 1·BACKUP-01 착수 보류(Claude 판정 대기).
+
 ## CAT-L-CUTOVER-01 Phase 0c — 스크립트 3건 원문 줄 단위 검토 [2026-10-01] · Claude 판정
 원문: `track_b_CURSOR_TO_CLAUDE.md` 상단 3건. 위험 동작(설치기·update_bitget.sh·--start-parallel·SSOT 플래그·.env 쓰기·restart·sudo) 본문 0 — 확인.
 서버 상태 변경: p0c_deploy.sh의 git pull(c1ffe3f→8a6da21) 1건. 미확정 1건: p0.sh의 `bitget.sh --cutover-check`(timeout 120 → RC 124) 내부 동작.

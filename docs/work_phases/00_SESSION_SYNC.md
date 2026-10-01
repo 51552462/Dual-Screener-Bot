@@ -45,9 +45,9 @@
 | 필드 | 값 |
 |------|-----|
 | **앵커 ID** | `SYNC-2026-09-30-BG-CUTOVER0C-BOT2` |
-| **마지막 갱신** | 2026-10-01 저녁 — Track B CAT-L-CUTOVER-01 Phase 0c SUB_DONE(Claude OK) · Phase 1 선행 W-블록 회신 OUTBOX 제출(Handoff `f7f767e`, 서버 읽기전용 2회). Bot-2 `8a6da21` 불변. Phase 1 보류 |
+| **마지막 갱신** | 2026-10-01 저녁 — Track B CAT-L-CUTOVER-01 Phase 0c SUB_DONE(Claude OK) · Phase 1 선행 W-블록 회신 + X0·X-블록·L5–L9 회신 OUTBOX 제출(Handoff `f7f767e`·`27a14b0`, 서버 읽기전용 3회). Bot-2 `8a6da21` 불변. Phase 1 보류 · BACKUP-01 선행 |
 | **활성 트랙** | **BG** |
-| **진행 중 sub-phase** | CAT-L-CUTOVER-01 **Phase 1 선행 점검** · 0c SUB_DONE · W-블록 회신 제출, Claude 판정 대기 (전체 Done 아님) |
+| **진행 중 sub-phase** | CAT-L-CUTOVER-01 **Phase 1 선행 점검** · 0c SUB_DONE · W-블록 + X-블록 회신 제출, Claude 판정 대기 (전체 Done 아님) |
 | **직전 완료** | CAT-L-CUTOVER-01 Phase 0b 진단 (Claude 4건 (b) 판정) |
 | **다음** | Claude가 `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX(V0–V6·L1–L4) 판정. 디렉터: D1(텔레그램)·D2(V5 세션)·D3·D4. Phase 1/`--start-parallel` **자동 허용 아님** |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |

@@ -76,7 +76,7 @@
 
 | 시도한 것 | 왜 실패 | 롤백 | 다음 참고 |
 |-----------|---------|------|-----------|
-| _(없음 — 첫 기록 대기)_ | | | |
+| CAT-L-FENCE-02 회귀(2026-09-28 02:24 UTC) | 장애 대응 중 디렉터 `update_bitget.sh`(TTY pts/0) → `deploy_bitget_factory.sh` → root `install_bitget_cron.sh`가 origin 구 생성기(HEAD `1e38166`)로 cron 재생성 → 수동 적용 wrapper 소실. X2: `Sep 28 02:25:01 cron[404]: (*system*dual-screener-bitget) RELOAD`(설치 종료 직후)로 cron 파일 실제 변경 확인. 근본 원인: 라이브 수동 변경이 SSOT(origin)에 없었음 | FENCE-02 재적용(09-29) | CAT-L-FENCE-03(cron 마커 + pull 전 `--diff-live` 가드). 증거 `snapshots/CAT-L-CUTOVER-01_P1PRE_XBLOCK_20261001.md` |
 
 ---
 

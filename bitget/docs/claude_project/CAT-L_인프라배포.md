@@ -113,6 +113,7 @@ Handoff에 명시되지 않은 스크립트·wrapper를 Bot-2에서 실행할 �
 2. 로컬 미커밋 파일을 ssh로 파이프해 실행 금지 — 실행본 증명 불가, CR 혼입 실증(2026-09-30 `$'\r'`).
 3. 상태를 바꾸는 명령(pull/merge · 설치기 · restart · `.env`/DB/state 파일 쓰기 · `bitget.sh --start-parallel` 등)에 `timeout`을 씌우지 않는다. 오래 걸리면 끊지 말고 원인(락 대기 등)부터 회신.
 4. 서버 코드 이동은 두 경로만: 전체 배포 = `update_bitget.sh`(pre-pull `--diff-live` 내장) / 코드만 이동 = 아래 표준 pull 레시피. **맨 `git pull` 금지.**
+   - 주의(2026-10-01): `update_bitget.sh`는 서버 작업트리의 tracked 변경을 `git restore .`로 경고 없이 버린다(2026-09-28 실증; 코드 `update_bitget.sh:206–215` — 경고 1줄만 출력, diff 보관 없음). 서버에서 직접 고친 파일이 있으면 먼저 저장소로 옮긴 뒤 실행.
 5. 진단용 일회성 실행에서 `.env` 전체 source 금지 — 필요한 키만 grep. 러너와 같은 env 조건이 필요하면 러너 경로(`runner --mode … --skip-telegram`)를 Handoff에 명시.
 6. (Claude 의무) 서버 명령이 들어간 Handoff는 요약이 아니라 **전문**을 `CLAUDE_TO_CURSOR.md`에 둔다. `Downloads/` 원문만 있는 상태 금지.
 7. (2026-10-01 디렉터 보충) Handoff 명령은 그대로 실행한다. 더 나은 방법·위험·대안이 보이면 **실행 전** OUTBOX에 '의견'으로 제시하고, 반영 결정 뒤에 바꾼다. 조용한 변경 금지. 실행 **수단만** 바꾸고 내용 바이트가 같다면 해시 증명과 함께 같은 회신에서 공개하면 된다.
