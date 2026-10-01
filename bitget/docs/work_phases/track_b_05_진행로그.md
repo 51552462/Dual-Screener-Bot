@@ -7,6 +7,21 @@
 
 ---
 
+## CAT-L-CUTOVER-01 Phase 0c · **SUB_DONE (Claude OK 2026-10-01)**
+V-블록 실행본 = Handoff 원문(Claude 재계산 sha256 9879eb2b… 일치). V0 HEAD 8a6da21·worktree 수정 0 · V1 PRISTINE 28/28 · L2 런타임 0 · V3 재실행 0 · L4 순수 읽기.
+이관: 124 원인(W4) · 09-28 02:24 서비스 재시작 = 디렉터 장애 복구(정정 진술) → 실행 명령(W1–W3)·장애 원인(W3b) 확인 · backup 127/snapshot 1 반복 실패(W5) · root pyc 13·mode 10(W6·W7).
+Claude 정정: C-5 `bitget.sh --cutover-check`는 읽기전용 아님 · C-6 ROOT_OWNED 기대값 · C-7 FENCE-02 근거=CLAUDE_TO_CURSOR FENCE-03 선행 상태 줄, RUN-2 동기화 지시 철회(LANE_FULLBT 창에서).
+D2 정정(10-01): 09-28 오전은 디렉터 직접 복구(서버 장애), 그 외 세션은 Cursor. D3: B 유지 + 09-28 명령·장애 원인만 앞당김. D4 승인 → 규칙 7 추가.
+Phase 1 보류(§9 조건). 신규 등록: CAT-L-SCRIPT-AUDIT-01 · CAT-L-BACKUP-01.
+
+### Cursor 측 기록 [2026-10-01 19:30 KST] — Phase 1 선행 W-블록 회신 (Handoff `f7f767e`)
+- W-블록(sha256 `bbf39d61…0433e5`) + W3b(`0e5a8482…00023c`) 각 1회 읽기전용 실행, 출력 전문 `snapshots/CAT-L-CUTOVER-01_P1PRE_WBLOCK_20261001.md`. 서버 변경 0.
+- **09-28 02:24 사건 확정**: 디렉터가 `sudo bash update_bitget.sh`(TTY=pts/0) 3회(01:48·01:54·02:24). 02:24는 `deploy_bitget_factory.sh`(유닛 10개 덮어쓰기·dashboard/heatmap disable) + root `install_bitget_cron.sh`까지 수행 → 당시 HEAD `1e38166`(FENCE-02 생성기 origin에 없음)로 cron 재생성 → wrapper 소실 = FENCE-02 회귀 원인(강하게 시사). 장애 원인은 로그에 OOM/유닛 크래시 없음(증상 1줄 필요).
+- **backup 장애 확정**: `backup_bitget_db.sh:32 python: command not found` → exit 127, 매일 00:30 UTC 반복(조회 가능 최초 09-23). snapshot "실패" 대부분은 `pipeline writer active` 이연(exit 1), 오늘 09:35·09:40·09:45 성공.
+- 124(W4): 로그 0바이트(무쓰기). 락 보유 후보 조회는 UTC/KST 파일명 패턴 오류로 무효 → 재조회 필요(의견 1).
+- root pyc 가설 불일치(mtime 07-02/08-11/09-23). mode 10건 중 8건 = 09-28 02:24 `chmod +x` 일치.
+- W8: `/tmp` 3파일 원본 `snapshots/raw_20260930/` 보존, sha256 V3와 일치. 서버 원본 삭제 안 함. W10(규칙 8)은 디렉터 승인 대기.
+
 ## CAT-L-CUTOVER-01 Phase 0c — 스크립트 3건 원문 줄 단위 검토 [2026-10-01] · Claude 판정
 원문: `track_b_CURSOR_TO_CLAUDE.md` 상단 3건. 위험 동작(설치기·update_bitget.sh·--start-parallel·SSOT 플래그·.env 쓰기·restart·sudo) 본문 0 — 확인.
 서버 상태 변경: p0c_deploy.sh의 git pull(c1ffe3f→8a6da21) 1건. 미확정 1건: p0.sh의 `bitget.sh --cutover-check`(timeout 120 → RC 124) 내부 동작.

@@ -115,6 +115,9 @@ Handoff에 명시되지 않은 스크립트·wrapper를 Bot-2에서 실행할 �
 4. 서버 코드 이동은 두 경로만: 전체 배포 = `update_bitget.sh`(pre-pull `--diff-live` 내장) / 코드만 이동 = 아래 표준 pull 레시피. **맨 `git pull` 금지.**
 5. 진단용 일회성 실행에서 `.env` 전체 source 금지 — 필요한 키만 grep. 러너와 같은 env 조건이 필요하면 러너 경로(`runner --mode … --skip-telegram`)를 Handoff에 명시.
 6. (Claude 의무) 서버 명령이 들어간 Handoff는 요약이 아니라 **전문**을 `CLAUDE_TO_CURSOR.md`에 둔다. `Downloads/` 원문만 있는 상태 금지.
+7. (2026-10-01 디렉터 보충) Handoff 명령은 그대로 실행한다. 더 나은 방법·위험·대안이 보이면 **실행 전** OUTBOX에 '의견'으로 제시하고, 반영 결정 뒤에 바꾼다. 조용한 변경 금지. 실행 **수단만** 바꾸고 내용 바이트가 같다면 해시 증명과 함께 같은 회신에서 공개하면 된다.
+
+실행 수단 표준: 커밋된 Handoff blob에서 블록을 바이트 그대로 추출 → 줄 수·CR 0·sha256 공개 → ssh stdin(바이너리) `bash -s`. 도구 `vb_run.py`(로컬 전용, 서버 미배포, `bitget/docs/work_phases/tools/vb_run.py`).
 
 **표준 pull 레시피** (코드만 이동 — 설치기·재시작 없음. 이 레시피도 Handoff 인라인으로만 실행):
 

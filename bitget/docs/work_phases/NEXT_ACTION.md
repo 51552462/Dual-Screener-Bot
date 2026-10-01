@@ -6,9 +6,11 @@
 |------|-----------|--------|--------------|
 | **CAT-A (공용)** | A-LIFECAP-01 | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-L (공용·레인 아님)** | CAT-L-FENCE-03 | **SUB_DONE** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **원문 검토 완료 · 확정 대기**(V-블록/L-항목 회신 + 디렉터 D1–D4 회신 완료: D3=B · D4 승인) · Phase 1 보류 · 서버 실행 = Handoff V-블록만 | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
+| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **Phase 0c SUB_DONE** · Phase 1 보류 · 선행 W-블록(읽기전용) 회신 제출 → Claude 판정 대기 | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | A5-EVENTLOG-01 | **구현 OK · 서버 반영 확인 대기** (적재 시계는 반영 확인일부터) | `track_b_*` |
-| **CAT-L (에스컬레이션)** | FENCE-02 | **WAIT_CLAUDE_OK** | live FENCE_OK · 실스캔 cgroup=heavy.slice |
+| **CAT-L (에스컬레이션)** | FENCE-02 | **SUB_DONE (1–2단계) · 3단계 판정 2026-10-13** (근거: CLAUDE_TO_CURSOR FENCE-03 Handoff 선행 상태 줄, Claude C-7) | live FENCE_OK · 실스캔 cgroup=heavy.slice |
+| **CAT-L (공용)** | CAT-L-SCRIPT-AUDIT-01 | 등록 · Phase 1과 병행 · 대기 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-BACKUP-01 | 등록 · W5 진단(`python: command not found`) 반영, 착수 판단 대기 | `track_b_*` |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
 | **LANE_FULLBT** | FULL-BT-FUT-RUN-2 | **WAIT_CLAUDE_OK** (RUN-2 실런 OUTBOX) | `lanes/LANE_FULLBT/*` |
