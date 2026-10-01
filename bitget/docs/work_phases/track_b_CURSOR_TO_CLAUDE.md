@@ -97,6 +97,7 @@
 
 - `CAT-L_인프라배포.md`: "초안" 표기는 이미 `6d080cc`에서 "승인 2026-10-01"로 교체됨 → **규칙 7(Claude 문안 그대로) + 실행 수단 표준 1줄 추가**. 이번 커밋 해시 + `git show --stat`는 이 OUTBOX 최종 줄에 기재.
 - `vb_run.py` 커밋 위치: `bitget/docs/work_phases/tools/vb_run.py` (서버 실행 경로 아님).
+- **결과 커밋**: `4ee0029ba893e0d83b93f3c40f3f1d8a65b1b12f` — 14파일(+2156/−10): W-블록 스냅샷 1 · `raw_20260930/` 3 · `tools/vb_run.py` 1 · 규칙 7 · OUTBOX/05/NEXT_ACTION/현황판/09/NEXT_STEP/SYNC.
 - §6 V5 정정(Claude 대응표 수용): 이전 OUTBOX의 "설명 불가(미대조)" 중 Claude가 대응시킨 구간은 **"대응(시각 상관)"으로 정정**. Cursor가 독자 확인한 건 W1 sudo로 교차 확인된 구간(09-27 13:30·14:17–14:23, 09-28 01:48–02:24, 09-29 10:27–10:28, 09-30 06:00) 뿐. 나머지 Claude 대응(09-26 부팅 직후, 09-27 04:09 RUN-2 등)은 sudo 흔적이 없는 읽기 세션이라 **W1로는 검증 불가**. 남는 미대조 16건은 Claude 표 그대로 SCRIPT-AUDIT-01로 이관.
 - 추가 대조 포인트(09-28 Step 3 OUTBOX "ssh Permission denied" vs 같은 날 성공 9건): 이번 W1 범위 밖 → SCRIPT-AUDIT-01.
 - NEXT_ACTION: CUTOVER 행 Claude 문구로 교체 · FENCE-02 → `SUB_DONE (1–2단계) · 3단계 판정 2026-10-13`(근거: C-7) · LANE_FULLBT **변경 없음**(C-7 철회) · 신규 행 `CAT-L-SCRIPT-AUDIT-01` / `CAT-L-BACKUP-01`.
