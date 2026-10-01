@@ -1,7 +1,7 @@
 # 세션 동기화 앵커 (멀티 채널 · 멀티 창 SSOT)
 
 > **새 Claude Pro 창 · 새 Cursor 채팅 · 텔레그램 회신 붙여넣기 전 — 이 파일을 먼저 읽는다.**  
-> **갱신**: 2026-09-29 · **앵커 ID**: `SYNC-2026-09-29-CHAMPION-TAIL`
+> **갱신**: 2026-09-30 · **앵커 ID**: `SYNC-2026-09-30-BG-CUTOVER0C-BOT2`
 
 ### 상시 HOLD (Cursor·Claude 세션 응답 **마지막 줄**, 해제 전까지)
 
@@ -44,12 +44,12 @@
 
 | 필드 | 값 |
 |------|-----|
-| **앵커 ID** | `SYNC-2026-09-29-CHAMPION-TAIL` |
-| **마지막 갱신** | 2026-09-29 — 관제탑 허위동결 문구 정정 + 리스크 대시보드 라벨. kv 무변경. DASH RO CLOSED |
-| **활성 트랙** | **KR/US** |
-| **진행 중 sub-phase** | CHAMPION-INSIGHT-TAIL-FIX-01 · DASHBOARD-LABEL-01 **WAIT_CLAUDE_OK** |
-| **직전 완료** | DASHBOARD-NUMBER-CONSISTENCY-RO-01 CLOSED (Claude OK 2026-09-26) |
-| **다음** | Claude 검증 후 배포. C(VPS 타임스탬프) 잔여 |
+| **앵커 ID** | `SYNC-2026-09-30-BG-CUTOVER0C-BOT2` |
+| **마지막 갱신** | 2026-10-01 — Track B CAT-L-CUTOVER-01 Phase 0c 확정 심사: V-블록(읽기전용 1회)+L1–L4 OUTBOX 제출(Handoff 커밋 `aca1508`). Bot-2 `8a6da21` 불변. Phase 1 보류 |
+| **활성 트랙** | **BG** |
+| **진행 중 sub-phase** | CAT-L-CUTOVER-01 **Phase 0c** · **원문 검토 완료 · 확정 대기** (Claude 판정 전 Done 아님) |
+| **직전 완료** | CAT-L-CUTOVER-01 Phase 0b 진단 (Claude 4건 (b) 판정) |
+| **다음** | Claude가 `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX(V0–V6·L1–L4) 판정. 디렉터: D1(텔레그램)·D2(V5 세션)·D3·D4. Phase 1/`--start-parallel` **자동 허용 아님** |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |
 | **Handoff SSOT** | `docs/work_phases/CLAUDE_TO_CURSOR.md` |
 | **North Star 원장 SSOT** | VPS `/var/lib/quant-factory/data/dual_north_star_ledger.json` |
@@ -92,6 +92,7 @@
 [KR/US] DSR-MINIMAL-DEPLOY-CHECK-01 · **CLOSED 2026-09-26** · `e6c1eef` · dsr_warn_count는 다음 meta_governor 사이클(지금 0 정상)
 [KR/US] KR-CANDLE-HEALTH-RED-RO · **CLOSED 2026-09-26** · KOSPI 9/24–25 결측 · SCORE오염 아님 · 급하지 않음
 [KR/US] PHASE0-GOVERNANCE-04 · **Claude OK: 2026-09-26** · 승격 4단계 SSOT `04_묶음D_작업지시서.md`
+[Bitget] CAT-L-CUTOVER-01 Phase 0c · **배포 완료 · WAIT_CLAUDE_OK** · Bot-2 `8a6da21` · architecture PASS · Phase 1 미허용
 [Bitget] CAT-L-FENCE-02 · **S1/S0/B 실측 · WAIT_CLAUDE_OK** · HEAD `1e38166` · GIT_CLEAN=no · live wrapper 0 · 설치기 안 돌림
 [KR/US] CAT-H-OBSERVATION-01 · **달력** · 게이트 false · 다음 장부 **10/3** · KR macro n **10/11**
 [KR/US] CAT-H-ERROR-SIGNATURE-CHECK-01 · **CLOSED 2026-09-27** · Claude OK: 2026-09-26 · 순수 타이밍 · Popen=확정

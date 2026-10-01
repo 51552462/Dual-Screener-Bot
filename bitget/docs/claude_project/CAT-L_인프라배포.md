@@ -95,3 +95,40 @@ systemd units, cron, venv, snapshot, watchdog, backup, log rotation, resource li
 ## 9. Resource Limits
 
 4GB OOM motivation — global flock (CAT-A), MemoryMax in systemd
+
+---
+
+## 운영 규칙 — 서버 실행 스크립트 공개 의무 (2026-09-30 신설)
+
+Handoff에 명시되지 않은 스크립트·wrapper를 Bot-2에서 실행할 경우, 실행과 동시에(사후 요약 아님) 그 원문을 OUTBOX에 포함한다. 결과 요약만으로 실행 사실을 대체할 수 없다. 위반 시 해당 검증 결과는 원문 확인 전까지 잠정 상태로만 인정된다.
+
+## 운영 규칙 — 서버 실행 경로 (2026-10-01, 공개 의무 규칙 보강)
+
+> 출처: `CLAUDE_TO_CURSOR.md` 2026-10-01 Handoff §5 문구 그대로. **디렉터 D4 승인 전 초안** — 승인되면 이 줄을 "승인"으로 갱신.
+
+1. Bot-2에서 실행 가능한 것은 둘뿐:
+   (a) Handoff(`CLAUDE_TO_CURSOR.md`)에 원문으로 적힌 명령·블록 — 내용 바이트 동일. 한 줄이라도 고쳤으면 고친 줄을 OUTBOX에.
+   (b) 커밋·push되어 서버에 pull된 스크립트를 **서버 디스크에서** 실행 — 실행 직전 `git rev-parse HEAD` + `sha256sum <스크립트>` 출력을 OUTBOX에.
+2. 로컬 미커밋 파일을 ssh로 파이프해 실행 금지 — 실행본 증명 불가, CR 혼입 실증(2026-09-30 `$'\r'`).
+3. 상태를 바꾸는 명령(pull/merge · 설치기 · restart · `.env`/DB/state 파일 쓰기 · `bitget.sh --start-parallel` 등)에 `timeout`을 씌우지 않는다. 오래 걸리면 끊지 말고 원인(락 대기 등)부터 회신.
+4. 서버 코드 이동은 두 경로만: 전체 배포 = `update_bitget.sh`(pre-pull `--diff-live` 내장) / 코드만 이동 = 아래 표준 pull 레시피. **맨 `git pull` 금지.**
+5. 진단용 일회성 실행에서 `.env` 전체 source 금지 — 필요한 키만 grep. 러너와 같은 env 조건이 필요하면 러너 경로(`runner --mode … --skip-telegram`)를 Handoff에 명시.
+6. (Claude 의무) 서버 명령이 들어간 Handoff는 요약이 아니라 **전문**을 `CLAUDE_TO_CURSOR.md`에 둔다. `Downloads/` 원문만 있는 상태 금지.
+
+**표준 pull 레시피** (코드만 이동 — 설치기·재시작 없음. 이 레시피도 Handoff 인라인으로만 실행):
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}" || exit 1
+EXPECT=<Handoff가 지정한 40자 전체 SHA>
+[ -z "$(git -c core.fileMode=false status --porcelain --untracked-files=no)" ] || { echo "STOP: worktree dirty"; exit 1; }
+PYTHONPATH="$PWD" python3 bitget/deploy/generate_bitget_crontab.py --diff-live; R=$?; [ "$R" -eq 0 ] || { echo "STOP: pre diff-live RC=$R"; exit 1; }
+git fetch origin || { echo "STOP: fetch"; exit 1; }
+U="$(git rev-parse '@{u}')"; [ "$U" = "$EXPECT" ] || { echo "STOP: upstream=$U expected=$EXPECT"; exit 1; }
+git merge --ff-only "$EXPECT" || { echo "STOP: merge"; exit 1; }
+[ "$(git rev-parse HEAD)" = "$EXPECT" ] || { echo "STOP: HEAD mismatch"; exit 1; }
+PYTHONPATH="$PWD" python3 bitget/deploy/generate_bitget_crontab.py --diff-live; echo "POST_DIFF_LIVE_RC=$?"
+```
+
+- 핵심: **고정(SHA 비교)이 이동보다 먼저**, 비교는 전체 SHA.
+- `POST_DIFF_LIVE_RC`가 0이 아니면(생성기 출력이 바뀐 pull) 설치하지 말고 보고 — 설치는 별도 Handoff.
+- 재시작이 필요한 변경이면 이 레시피가 아니라 `update_bitget.sh` 경로 + 별도 Handoff.

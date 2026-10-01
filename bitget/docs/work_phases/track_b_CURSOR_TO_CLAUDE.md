@@ -1,10 +1,735 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-09-30 · **CAT-L-CUTOVER-01 Phase 0b 진단** · Claude 판정 대기 · 코드 수정 0
+> **갱신**: 2026-10-01 · **Phase 0c 확정 심사 OUTBOX(V-블록+L1–L4)** 최상단 · 서버 추가 실행 0 · Phase 1 보류
 
 ---
 
-## OUTBOX — CAT-L-CUTOVER-01 Phase 0b · 2026-09-30
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0c 확정 심사 (V-블록 + L1–L4) · 2026-10-01
+
+**Handoff 커밋**: `aca1508bf4d461a2dae88d2f1d019565bc2a090c` (2026-10-01 16:43:40 +0900, `CLAUDE_TO_CURSOR.md` 1파일, 전문 기록) — V-블록 실행 **전** push 완료.
+**서버 명령**: V-블록 1회(읽기전용, `sudo` 0, `set -e` 0, pull/설치기/restart/`--cutover-check` 재실행 0). 코드 변경 0. 로컬 문서 + 증거물 커밋만.
+
+### 0. 실행 수단 (Handoff §4-0 대비 — 먼저 공개)
+
+- Handoff는 Git Bash 따옴표 heredoc을 지정. 이 환경의 셸은 PowerShell이라 heredoc 직접 사용 불가.
+- 대신 **push된 커밋 `aca1508`의 blob에서 V-블록(§4-1 코드펜스 내부)을 바이트 그대로 추출**해 ssh stdin(바이너리, CRLF 변환 없음)으로 `bash -s`에 전달.
+  추출 결과: **38줄 · CR 0바이트 · sha256 `9879eb2b07e7496c94ce92f188932b3fed46230f826b462a771277ba6c5393e1`**.
+- 한 줄도 수정하지 않음(고친 줄 없음). 서버 stderr 0바이트, `$'\r'` 오류 0, SSH_RC=0.
+- 추출·전송 도우미(`vb_run.py`)는 로컬 임시 폴더에만 있고 서버로 가지 않음. 이것 역시 "Handoff 밖 도구"이므로 공개함. 필요하면 파일 본문을 다음 회신에 첨부 가능.
+- 이전 사고(CRLF 파이프)와 달리 입력이 **커밋된 Handoff blob**이라 실행본 = Handoff 원문이 해시로 증명됨.
+
+### 1. V-블록 출력 전문 (요약 없음)
+
+```text
+== V-BLOCK START 2026-10-01T07:45:38Z user=ubuntu ==
+== V0 HEAD / worktree / owner ==
+8a6da21b31df318634b203452423bd6365ea5ebd
+PORCELAIN_ALL=26 PORCELAIN_CONTENT=16
+?? ai_cache.sqlite
+?? bitget/analysis/universe_bt/reports/u3_live-20260823T092525Z.md
+?? bitget/analysis/universe_bt/reports/u3_live-20260823T110428Z.md
+?? bitget/analysis/universe_bt/reports/u3_live-20260823T110717Z.md
+?? bitget/analysis/universe_bt/reports/u3_live-20260823T112223Z.md
+?? bitget/analysis/universe_bt/reports/u3_live-20260823T114203Z.md
+?? bitget/analysis/universe_bt/reports/u3_live-20260823T121158Z.md
+?? bitget_meta_governor_state_backup.json
+?? deploy_watch_latest.json
+?? dual_north_star_ledger.json
+?? llm_call_cache.sqlite
+?? market_data.sqlite
+?? message_queue.sqlite
+?? message_queue.sqlite-shm
+?? message_queue.sqlite-wal
+?? ops_events.sqlite
+ubuntu 2026-09-30 09:42:43.489641148 +0000 .git/ORIG_HEAD
+ubuntu 2026-09-30 09:42:43.478641100 +0000 .git/FETCH_HEAD
+ubuntu 2026-09-30 09:42:43.498641186 +0000 bitget/validation/architecture_checks.py
+ROOT_OWNED_IN_REPO:
+./bitget/pipelines/__pycache__/__init__.cpython-310.pyc
+./bitget/forward/__pycache__/__init__.cpython-310.pyc
+./bitget/forward/__pycache__/_core.cpython-310.pyc
+./bitget/infra/__pycache__/data_paths.cpython-310.pyc
+./bitget/__pycache__/__init__.cpython-310.pyc
+./bitget/__pycache__/symbol_utils.cpython-310.pyc
+./bitget/__pycache__/env.cpython-310.pyc
+./bitget/governance/__pycache__/__init__.cpython-310.pyc
+./__pycache__/sqlite_schema_guard.cpython-310.pyc
+./__pycache__/factory_scan_schedule.cpython-310.pyc
+./__pycache__/low_ram_sqlite_pragmas.cpython-310.pyc
+./__pycache__/telegram_env.cpython-310.pyc
+./reports/__pycache__/__init__.cpython-310.pyc
+== V1 cron drift guard ==
+SOURCE_STATE=PRISTINE
+GEN_WRAPPED_COUNT=28
+LIVE_WRAPPED_COUNT=28
+EXPECTED_WRAPPED=28
+GEN_BODY_SHA=f36f722489ce082a661f04bcb0bd59c8ef21fb846b9704be8718a5fa266b21dd
+LIVE_BODY_SHA=f36f722489ce082a661f04bcb0bd59c8ef21fb846b9704be8718a5fa266b21dd
+MARKER_SHA=f36f722489ce082a661f04bcb0bd59c8ef21fb846b9704be8718a5fa266b21dd
+BODIES_EQUAL=yes
+=== unified diff (body, comments excluded) ===
+(empty)
+=== slice ===
+SLICE_TEMPLATE=/home/ubuntu/dante_bots/Dual-Screener-Bot/bitget/deploy/systemd/bitget-cron-heavy.slice
+SLICE_UNIT=/etc/systemd/system/bitget-cron-heavy.slice
+SLICE_TEMPLATE_HIGH=1288490188
+SLICE_TEMPLATE_MAX=1610612736
+SLICE_FILE_SAME=yes
+SLICE_RUNTIME=
+MemoryHigh=1288490188
+MemoryMax=1610612736
+ActiveState=active
+DIFF_LIVE_RC=0
+== V2 heavy slice ==
+MemoryHigh=1288490188
+MemoryMax=1610612736
+ActiveState=active
+== V3 /tmp evidence ==
+-rw-rw-r-- 1 ubuntu ubuntu 14657 2026-09-30 06:52:15.306142532 +0000 /tmp/cutover01_p0.out
+-rw-rw-r-- 1 ubuntu ubuntu 11722 2026-09-30 09:19:10.546523741 +0000 /tmp/cutover01_p0c_arch.out
+-rw-rw-r-- 1 ubuntu ubuntu 12747 2026-09-30 09:42:44.963647487 +0000 /tmp/cutover01_p0c_deploy.out
+38d18d65a72a1b51606be3b9612b42c94a6cc62b65c2b00e9e39bb34d5c15322  /tmp/cutover01_p0.out
+07b5e70ab123a4aa2c5eeb3f74151d3bf4a324b77ed6d19ec418e035a9dcc687  /tmp/cutover01_p0c_arch.out
+4a583ef780a2c788fa2dc6e3b2a1c659228fef3f7f811f69a7441e2dab316f33  /tmp/cutover01_p0c_deploy.out
+/tmp/cutover01_p0.out:1:=== TS 2026-09-30T06:49:53Z HEAD=c1ffe3f ===
+/tmp/cutover01_p0.out:2:=== Step 1 bitget.sh --cutover-check ===
+/tmp/cutover01_p0.out:4:CUTOVER_CHECK_RC=124
+/tmp/cutover01_p0.out:5:=== Step 1 JSON dump ===
+/tmp/cutover01_p0.out:470:JSON_DUMP_RC=0
+/tmp/cutover01_p0.out:471:=== Step 2 env keys ===
+/tmp/cutover01_p0.out:476:=== Step 3 processes ===
+/tmp/cutover01_p0.out:488:=== DONE (no start-parallel, no env write) ===
+/tmp/cutover01_p0.out:489:WROTE /tmp/cutover01_p0.out
+/tmp/cutover01_p0c_arch.out:1:=== TS 2026-09-30T09:19:08Z ===
+/tmp/cutover01_p0c_arch.out:2:HEAD=c1ffe3f 2026-09-30 14:59:31 +0900 feat(bitget): CAT-L-FENCE-03 cron drift guard with body-sha256 markers
+/tmp/cutover01_p0c_arch.out:3:=== architecture_checks.py mtime ===
+/tmp/cutover01_p0c_arch.out:450:JSON_DUMP_RC=0
+/tmp/cutover01_p0c_arch.out:451:WROTE /tmp/cutover01_p0c_arch.out
+/tmp/cutover01_p0c_deploy.out:1:=== TS 2026-09-30T09:42:40Z ===
+/tmp/cutover01_p0c_deploy.out:2:BEFORE: c1ffe3f 2026-09-30 14:59:31 +0900 feat(bitget): CAT-L-FENCE-03 cron drift guard with body-sha256 markers
+/tmp/cutover01_p0c_deploy.out:24:PULL_RC=0
+/tmp/cutover01_p0c_deploy.out:25:AFTER: 8a6da21 2026-09-30 18:40:07 +0900 CAT-L-CUTOVER-01 Phase 0c: architecture_checks 4건 갱신(위치→연결 검증 등), 게이트 로직 비접촉
+/tmp/cutover01_p0c_deploy.out:462:JSON_DUMP_RC=0
+/tmp/cutover01_p0c_deploy.out:463:WROTE /tmp/cutover01_p0c_deploy.out
+== V4 kernel OOM 2026-09-30 06:45-10:00 UTC ==
+KLINES=2
+Sep 30 07:34:13 ip-172-26-7-213 kernel: workqueue: psi_avgs_work hogged CPU for >10000us 512 times, consider switching to WQ_UNBOUND
+Sep 30 07:39:00 ip-172-26-7-213 kernel: workqueue: key_garbage_collector hogged CPU for >10000us 4 times, consider switching to WQ_UNBOUND
+OOM_HITS=0
+== V5 ssh accepted since 2026-09-26 UTC ==
+SSH_ACCEPTED_COUNT=79
+Sep 26 08:54:06 ip-172-26-7-213 sshd[844]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 08:54:33 ip-172-26-7-213 sshd[934]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 08:56:49 ip-172-26-7-213 sshd[1072]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 08:57:15 ip-172-26-7-213 sshd[1130]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:12:23 ip-172-26-7-213 sshd[1358]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:12:49 ip-172-26-7-213 sshd[1423]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:16:59 ip-172-26-7-213 sshd[1540]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:17:01 ip-172-26-7-213 sshd[1599]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:18:43 ip-172-26-7-213 sshd[1670]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:19:19 ip-172-26-7-213 sshd[1728]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 09:19:21 ip-172-26-7-213 sshd[1776]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 12:18:35 ip-172-26-7-213 sshd[3857]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 13:12:14 ip-172-26-7-213 sshd[4392]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 13:12:43 ip-172-26-7-213 sshd[4451]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 13:14:25 ip-172-26-7-213 sshd[4541]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 13:14:48 ip-172-26-7-213 sshd[4601]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:38:32 ip-172-26-7-213 sshd[5545]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:38:59 ip-172-26-7-213 sshd[5634]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:39:25 ip-172-26-7-213 sshd[5683]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:39:52 ip-172-26-7-213 sshd[5741]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:41:08 ip-172-26-7-213 sshd[5812]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:41:37 ip-172-26-7-213 sshd[5870]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 26 14:42:03 ip-172-26-7-213 sshd[5935]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 04:09:22 ip-172-26-7-213 sshd[13665]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 04:09:48 ip-172-26-7-213 sshd[13755]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 04:30:40 ip-172-26-7-213 sshd[14083]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 04:31:03 ip-172-26-7-213 sshd[14151]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 13:29:33 ip-172-26-7-213 sshd[19749]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 13:30:04 ip-172-26-7-213 sshd[19839]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 13:31:20 ip-172-26-7-213 sshd[19970]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 13:32:32 ip-172-26-7-213 sshd[20028]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 13:55:06 ip-172-26-7-213 sshd[20294]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 13:55:28 ip-172-26-7-213 sshd[20367]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:17:33 ip-172-26-7-213 sshd[20704]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:17:55 ip-172-26-7-213 sshd[20759]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:19:46 ip-172-26-7-213 sshd[20836]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:20:11 ip-172-26-7-213 sshd[20904]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:20:33 ip-172-26-7-213 sshd[20961]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:20:54 ip-172-26-7-213 sshd[21009]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:21:29 ip-172-26-7-213 sshd[21136]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:22:51 ip-172-26-7-213 sshd[21234]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:23:18 ip-172-26-7-213 sshd[21293]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:23:31 ip-172-26-7-213 sshd[21295]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 27 14:23:53 ip-172-26-7-213 sshd[21406]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 28 01:48:34 ip-172-26-7-213 sshd[29266]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 28 01:56:07 ip-172-26-7-213 sshd[29508]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 28 01:56:32 ip-172-26-7-213 sshd[29567]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 28 01:57:39 ip-172-26-7-213 sshd[29624]: Accepted publickey for ubuntu from 110.35.116.11
+Sep 28 11:36:01 ip-172-26-7-213 sshd[36285]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 28 11:37:50 ip-172-26-7-213 sshd[36379]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 28 11:37:56 ip-172-26-7-213 sshd[36445]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 28 11:38:21 ip-172-26-7-213 sshd[36510]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 28 11:39:12 ip-172-26-7-213 sshd[36589]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 05:55:39 ip-172-26-7-213 sshd[47739]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 07:59:59 ip-172-26-7-213 sshd[55682]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 08:00:08 ip-172-26-7-213 sshd[55820]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 08:01:08 ip-172-26-7-213 sshd[55921]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 08:01:12 ip-172-26-7-213 sshd[55988]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 08:01:14 ip-172-26-7-213 sshd[56044]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 09:13:29 ip-172-26-7-213 sshd[56804]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 09:15:01 ip-172-26-7-213 sshd[56898]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 09:21:44 ip-172-26-7-213 sshd[57076]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 09:21:45 ip-172-26-7-213 sshd[57146]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 10:27:30 ip-172-26-7-213 sshd[57762]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 10:27:36 ip-172-26-7-213 sshd[57853]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 10:28:28 ip-172-26-7-213 sshd[58048]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 10:28:31 ip-172-26-7-213 sshd[58105]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 11:28:54 ip-172-26-7-213 sshd[59227]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 11:29:01 ip-172-26-7-213 sshd[59316]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 29 11:29:38 ip-172-26-7-213 sshd[59397]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 06:00:26 ip-172-26-7-213 sshd[70660]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 06:00:32 ip-172-26-7-213 sshd[70750]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 06:49:43 ip-172-26-7-213 sshd[71314]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 06:49:52 ip-172-26-7-213 sshd[71383]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 06:51:56 ip-172-26-7-213 sshd[71469]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 06:53:44 ip-172-26-7-213 sshd[71762]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 09:19:07 ip-172-26-7-213 sshd[74021]: Accepted publickey for ubuntu from 175.193.220.230
+Sep 30 09:42:38 ip-172-26-7-213 sshd[74287]: Accepted publickey for ubuntu from 175.193.220.230
+Oct 01 07:45:34 ip-172-26-7-213 sshd[87450]: Accepted publickey for ubuntu from 175.193.220.230
+== V6 units ==
+dante-bitget-backup.service   loaded failed failed Bitget SQLite integrity backup (L-2 P0-5)
+dante-bitget-snapshot.service loaded failed failed Bitget CQRS snapshot (bitget_market_data_snapshot.sqlite)
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Mon 2026-09-28 02:24:33 UTC
+ExecMainStatus=0
+Id=dante-bitget-async.service
+ActiveState=active
+SubState=running
+ActiveEnterTimestamp=Mon 2026-09-28 02:24:33 UTC
+
+Result=exit-code
+NRestarts=0
+ExecMainStartTimestamp=Thu 2026-10-01 00:30:01 UTC
+ExecMainStatus=127
+Id=dante-bitget-backup.service
+ActiveState=failed
+SubState=failed
+ActiveEnterTimestamp=n/a
+
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Mon 2026-09-28 02:24:33 UTC
+ExecMainStatus=0
+Id=dante-bitget-factory.service
+ActiveState=active
+SubState=running
+ActiveEnterTimestamp=Mon 2026-09-28 02:24:33 UTC
+
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Thu 2026-10-01 00:00:02 UTC
+ExecMainStatus=0
+Id=dante-bitget-journal-vacuum.service
+ActiveState=inactive
+SubState=dead
+ActiveEnterTimestamp=n/a
+
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Sat 2026-09-26 08:52:22 UTC
+ExecMainStatus=0
+Id=dante-bitget-overseer.service
+ActiveState=active
+SubState=running
+ActiveEnterTimestamp=Sat 2026-09-26 08:52:22 UTC
+
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Wed 2026-09-30 15:46:35 UTC
+ExecMainStatus=0
+Id=dante-bitget-queue-worker.service
+ActiveState=active
+SubState=running
+ActiveEnterTimestamp=Wed 2026-09-30 15:46:35 UTC
+
+Result=exit-code
+NRestarts=0
+ExecMainStartTimestamp=Thu 2026-10-01 07:41:37 UTC
+ExecMainStatus=1
+Id=dante-bitget-snapshot.service
+ActiveState=failed
+SubState=failed
+ActiveEnterTimestamp=n/a
+
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Thu 2026-10-01 07:41:37 UTC
+ExecMainStatus=0
+Id=dante-bitget-watchdog.service
+ActiveState=inactive
+SubState=dead
+ActiveEnterTimestamp=n/a
+
+Result=success
+NRestarts=0
+ExecMainStartTimestamp=Mon 2026-09-28 02:24:31 UTC
+ExecMainStatus=0
+Id=dante-bitget-ws.service
+ActiveState=active
+SubState=running
+ActiveEnterTimestamp=Mon 2026-09-28 02:24:31 UTC
+
+Result=success
+Id=dante-bitget-backup.timer
+ActiveState=active
+SubState=waiting
+ActiveEnterTimestamp=Sat 2026-09-26 08:52:22 UTC
+
+Result=success
+Id=dante-bitget-journal-vacuum.timer
+ActiveState=active
+SubState=waiting
+ActiveEnterTimestamp=Sat 2026-09-26 08:52:22 UTC
+
+Result=success
+Id=dante-bitget-snapshot.timer
+ActiveState=active
+SubState=waiting
+ActiveEnterTimestamp=Mon 2026-09-28 02:24:37 UTC
+
+Result=success
+Id=dante-bitget-watchdog.timer
+ActiveState=active
+SubState=waiting
+ActiveEnterTimestamp=Mon 2026-09-28 02:24:36 UTC
+
+== V-BLOCK END 2026-10-01T07:45:48Z ==
+
+--STDERR--
+
+SSH_RC=0
+```
+
+### 2. §4-2 기대값 대조 (고친 것 없음 · 보고만)
+
+| 항목 | 기대 | 실측 | 판정 |
+|---|---|---|---|
+| V0 HEAD | `8a6da21` | `8a6da21b31df318634b203452423bd6365ea5ebd` | 일치 |
+| V0 worktree | PORCELAIN_CONTENT의 M/D 0 | CONTENT=16줄 **전부 `??`**(M/D 0). `ai_cache.sqlite`·`market_data.sqlite`·`ops_events.sqlite` 등 런타임 산출물 + `u3_live-*.md` 6건 + state json 3건 | 일치 |
+| V0 부가 | (기대 없음) | `PORCELAIN_ALL=26` vs `CONTENT=16` → **10건은 파일 모드만 다른 변경**(`core.fileMode=false`로 숨겨짐). 어느 파일인지는 V-블록 범위 밖이라 미확인 | **보고(미확인)** |
+| V0 ORIG_HEAD | 소유자 ubuntu · ≈09:42:4x | ubuntu · 09:42:43.489 | 일치 |
+| V0 FETCH_HEAD | 09:42:40 이후면 V5 대조 | 09:42:43.478 — deploy 실행 TS 09:42:40, SSH 세션 09:42:38과 일치(배포 pull의 fetch) | 설명됨 |
+| V0 ROOT_OWNED | 0줄 | **13줄 — 불일치.** 전부 `__pycache__/*.cpython-310.pyc`(소스 파일 아님): `bitget/pipelines`·`bitget/forward`(`__init__`,`_core`)·`bitget/infra/data_paths`·`bitget/__init__`·`symbol_utils`·`env`·`bitget/governance/__init__`, 루트 `sqlite_schema_guard`·`factory_scan_schedule`·`low_ram_sqlite_pragmas`·`telegram_env`, `reports/__init__` | **불일치 — 원인 미확인** |
+| V1 | RC=0 · PRISTINE · BODIES_EQUAL=yes · WRAP=28 · SHA `f36f7224…266b21dd` | 전부 일치 (`GEN/LIVE/MARKER_SHA` 3개 동일, diff 빈 값, `SLICE_FILE_SAME=yes`) | 일치 |
+| V2 | High=1288490188 · Max=1610612736 | 동일 (ActiveState=active) | 일치 |
+| V3 mtime | ≈06:53 / 09:19 / 09:42 UTC | 06:52:15 / 09:19:10 / 09:42:44 — 그 이후 시각 없음(재실행 흔적 없음) | 일치 |
+| V3 p0 | RC=124 · JSON_DUMP_RC=0 · `=== DONE` | `CUTOVER_CHECK_RC=124`, `JSON_DUMP_RC=0`, `=== DONE` 있음 | 일치 |
+| V3 arch | `HEAD=c1ffe3f` | `HEAD=c1ffe3f …`, `JSON_DUMP_RC=0` | 일치 |
+| V3 deploy | `PULL_RC=0` · `AFTER: 8a6da21` · HASH_MISMATCH 없음 | 동일, HASH_MISMATCH 0건 | 일치 |
+| V4 | KLINES≥1 · 권한 오류 없음 · OOM 0 | KLINES=2(둘 다 `workqueue … hogged CPU`, 07:34 / 07:39 UTC), 권한 오류 없음, **OOM_HITS=0** | 일치 |
+| V5 | 자기 세션 포함 | `Oct 01 07:45:34` (= V-블록 START 07:45:38) 포함, COUNT=79 | 일치 → 아래 주석 |
+| V6 | 그대로 보고 | 아래 §2-1 | 보고 |
+
+#### 2-1. V6 판독값 (판정은 Claude)
+
+| 유닛 | ActiveState/SubState | Result | ExecMainStatus | NRestarts | ExecMainStart |
+|---|---|---|---|---|---|
+| dante-bitget-backup.service | failed/failed | exit-code | **127** | 0 | 2026-10-01 00:30:01 UTC |
+| dante-bitget-snapshot.service | failed/failed | exit-code | **1** | 0 | 2026-10-01 07:41:37 UTC |
+| dante-bitget-watchdog.service | **inactive/dead** (activating 아님) | success | 0 | 0 | 2026-10-01 07:41:37 UTC |
+| dante-bitget-journal-vacuum.service | inactive/dead | success | 0 | 0 | 2026-10-01 00:00:02 UTC |
+| dante-bitget-async / factory / ws | active/running | success | 0 | 0 | 09-28 02:24:33 / 02:24:33 / 02:24:31 |
+| dante-bitget-overseer | active/running | success | 0 | 0 | 09-26 08:52:22 |
+| dante-bitget-queue-worker | active/running | success | 0 | 0 | 09-30 15:46:35 |
+| 타이머 4종 (backup·journal-vacuum·snapshot·watchdog) | active/waiting | success | — | — | ActiveEnter 09-26 08:52 ~ 09-28 02:24 |
+
+- 읽은 것만: backup=127(종료코드 127), snapshot=1, 둘 다 NRestarts=0. **두 실패 모두 최근 실행**(backup 오늘 00:30:01, snapshot 오늘 07:41:37 = V-블록 4분 전) → 반복 실패. 원인은 **조회하지 않음**(범위 밖). watchdog은 이번엔 `inactive/dead`·`success`(07:41:37 실행 완료, snapshot과 같은 시각). 출력 블록은 `Result…ExecMainStatus` 뒤에 `Id`가 오는 순서이므로 위 표는 그에 맞춰 대응시킴(원문 §1 참조).
+- 재시작·`reset-failed` 안 함.
+
+#### 2-2. V5 세션 주석 (79건)
+
+IP 마지막 옥텟 가리지 않음(원문 그대로). 시각은 UTC.
+
+| 구간 | 건수 | 출발지 | 내가 대응시킬 수 있는 것 | 판정 |
+|---|---|---|---|---|
+| 09-26 08:54–14:42 | 23 | 110.35.116.11 | 확실한 대응 없음(설치·FENCE 초기 작업 구간으로 보이나 **시각 대조 기록을 이번에 못 찾음**) | **설명 불가(미대조)** |
+| 09-27 04:09–14:23 | 21 | 110.35.116.11 | 동일 | **설명 불가(미대조)** |
+| 09-28 01:48–01:57 | 4 | 110.35.116.11 | 동일 | **설명 불가(미대조)** |
+| 09-28 11:36–11:39 | 5 | **175.193.220.230**(출발지 변경) | 동일 | **설명 불가(미대조)** |
+| 09-29 05:55–11:29 | 17 | 175.193.220.230 | FENCE-02/03 계열 작업 구간. 개별 시각 대조 못 함 | **설명 불가(미대조)** |
+| 09-30 06:00:26, 06:00:32 | 2 | 175.193.220.230 | `fence03_bootstrap.sh` (`eb80c58`, 15:01:22 KST = 06:01 UTC 커밋) | 대응(커밋 시각 근거) |
+| 09-30 06:49:43, 06:49:52 | 2 | 동일 | `cutover01_p0.sh` (스크립트 `TS 06:49:53Z`) — 2세션 중 어느 쪽이 파이프/실행인지는 미구분 | 대응(1건 이상) |
+| 09-30 06:51:56, 06:53:44 | 2 | 동일 | p0 직후. `/tmp/cutover01_p0.out` 마지막 수정 06:52:15. 내용 미기억 — **추정: 결과 회수/상태 확인** | **미확인(추정)** |
+| 09-30 09:19:07 | 1 | 동일 | `cutover01_p0c_arch.sh` (`TS 09:19:08Z`) | 대응 |
+| 09-30 09:42:38 | 1 | 동일 | `cutover01_p0c_deploy.sh` (`TS 09:42:40Z`) | 대응 |
+| 10-01 07:45:34 | 1 | 동일 | **이번 V-블록** | 대응 |
+
+- 위 표의 "설명 불가(미대조)"는 **"수상하다"가 아니라 "이 세션에서 시각-작업 대조를 못 했다"**는 뜻. 근거 없이 "FENCE-02 작업이었을 것"이라고 채우지 않았다.
+- 출발지가 09-28 11:36부터 `110.35.116.11` → `175.193.220.230`로 바뀜. 디렉터 확인 필요(D2).
+- Handoff D3 규칙: "설명 불가가 1건이라도 나오면 자동으로 A". 형식상 **A 발동 조건 충족 상태**. 디렉터 D2 회신 + 필요 시 Claude 지정 대조 후 해제 여부 판정 바람.
+
+### 3. L-항목 (로컬·git만 · 서버 실행 0)
+
+#### L1 — `bitget.sh --cutover-check` 경로
+
+- (a) `bitget.sh:147` `--cutover-check` → `MODE="cutover_check"`. 실행 줄은 `bitget.sh:291` `exec python -m bitget.pipelines.runner --mode "$MODE" "${EXTRA_ARGS[@]}" >>"$LOG_FILE" 2>&1`. **`--skip-telegram` 없음**(p0는 안 넘김; 플래그 자체는 `bitget.sh:157`에서 EXTRA_ARGS로만 추가). `exec`라 timeout의 자식 = python 자체. 로그: `bitget.sh:48,50,247` → `${BITGET_LOG_DIR:-${BITGET_ROOT}/logs}/bitget_cutover_check_<STAMP>.log` (실제: `/var/lib/quant-bitget/logs/bitget_cutover_check_20260930_154953.log`, p0 스냅샷 3행).
+- (b) 락 = Python `fcntl.flock` 폴링: `runtime.py:390 bitget_job_lock(mode, timeout_sec=120.0)`, `:408` deadline = monotonic + timeout, `:451` `time.sleep(1.0)` 반복, 초과 시 `:453 JobSkipError`. 대기 상한 = `resolve_lock_timeout_sec`(`bitget_scan_schedule.py:300–311`): 이 모드는 기본 **120초**. 즉시 skip 아님 — **최대 120초 대기 후 skip**. 락 파일은 전 모드 공용 1개 (`data_paths.job_lock_path → runtime_lock_path`).
+- (c) 파이프라인 `config_bootstrap` + `artifact_guard` + `cutover_check`(`bitget_pipelines.py`, `_with_guard`). 쓰는 것: ① `config_bootstrap`: 설정 보정(쓰기 가능) ② `artifact_guard`: 산출물 점검(DB/파일 heal 가능) ③ `validation/runner.py run_cutover_check` → `ops_logger.record_gauge_snapshot`(ops_events DB 쓰기) ④ `dispatch_bitget_mode` 종료 시 `_record_ops_heartbeat`(`runtime.py:731`) ⑤ 텔레그램: `runtime.py:729–730` — 상태가 `OK`가 아니고 quiet가 아니면 전송. `SKIPPED_LOCK`은 기본 quiet(`:711–713`, `BITGET_ALERT_SKIPPED_LOCK=1`일 때만 예외). `parallel_run_state.json` 쓰기는 `--cutover-check`가 **아님**(`cutover.py:26–35 start_parallel_run`은 `start_parallel` 모드 전용). **결론: 순수 읽기 아님.**
+- (d) `bitget.sh` cutover 경로에 `setsid`/`nohup`/`&` **없음** (파일 grep 결과 해당 모드에서 매칭 0). timeout이 죽이면 python 단독 종료, 고아 자식 가능성은 코드상 낮음(단, `subprocess`를 쓰는 `architecture_checks`의 `generate_bitget_crontab.py --check`는 자식이지만 `capture_output`으로 동기 대기).
+- (e) **결론: 코드만으로 확정 불가.** 124는 `timeout 120`이 SIGTERM을 보낸 시점에 python이 살아 있었다는 뜻일 뿐. 락 대기 상한(120초)과 `timeout 120`이 같은 값이라 "락 대기 중"이 가장 자연스러운 가설이나 "실행 중"(config_bootstrap/artifact_guard의 느린 작업)과 코드로 구분 불가. **판별용 서버 로그 위치만 기록(실행 안 함)**:
+  1. `/var/lib/quant-bitget/logs/bitget_cutover_check_20260930_154953.log` (이 실행 전용 로그 — 락 대기 문구/단계 로그 유무)
+  2. 같은 시각(06:49:53–06:51:53 UTC) 동안 락을 쥔 다른 잡: cron 줄(`generate_bitget_crontab.py`가 만든 시각표) + `bitget_*_20260930_154*` 로그명
+  3. `ops_events.sqlite`의 해당 시각 이벤트
+- (f) `--start-parallel`도 **동일 경로**: `bitget.sh:149` → 같은 `runner`(`:291`) → 같은 `bitget_job_lock` 120초 대기. 단 `start_parallel` 파이프라인은 critical 단계(`start_parallel` 스텝 = `parallel_run_state.json` 쓰기)를 가짐. **설계 입력**: 락이 바쁘면 `SKIPPED_LOCK` → `bitget_exit_code`(`runtime.py:734–740`)가 **0을 반환**(`skipped_lock` 시 무조건 0) + 텔레그램 quiet. 즉 Phase 1을 같은 방식으로 돌리면 **"성공(exit 0)처럼 보이는데 48h 창이 시작 안 된" 상태**가 가능 → 실행 후 `parallel_run_state.json` 존재·`started_at_utc` 확인이 필수 단계여야 함. 또한 `timeout`을 씌우면 안 됨(§5 규칙 3).
+
+#### L2 — pull 범위 `c1ffe3f..8a6da21`
+
+```text
+8a6da21 2026-09-30T18:40:07+09:00 CAT-L-CUTOVER-01 Phase 0c: architecture_checks 4건 갱신(위치→연결 검증 등), 게이트 로직 비접촉
+598282c 2026-09-30T16:29:20+09:00 docs(bitget): CAT-L-CUTOVER-01 Phase 0b architecture-check diagnosis
+29e9c8a 2026-09-30T15:54:44+09:00 docs(bitget): FENCE-03 SUB_DONE and CUTOVER-01 Phase 0 read-only capture
+eb80c58 2026-09-30T15:01:22+09:00 docs(bitget): record CAT-L-FENCE-03 Bot-2 marker bootstrap as PRISTINE
+```
+
+14 files, +1112/−29. 분류:
+
+| 파일 | 분류 |
+|---|---|
+| `bitget/validation/architecture_checks.py` (+84) | 체크 (cutover/validation이 import — cron 잡·상주 서비스 import 경로 아님) |
+| `bitget/tests/test_cat_l_cutover01_phase0c_checks.py` (+184) | 테스트 |
+| **`bitget/deploy/generate_bitget_crontab.py` (1줄)** | **배포도구 — 표시.** `format_install_plan`의 `MARKER_SHA`: `live_marker_sha(live_text) if live_text else ''` → `live_marker_sha(live_text) or ''` (설치기 사전 계획 출력 문자열만; 생성 본문·`--diff-live` 판정 로직 비접촉). 상주 서비스·cron 잡 import 대상 아님 |
+| `snapshots/CAT-L-CUTOVER-01_P0_20260930.md`, `snapshots/cutover01_p0.sh`, `snapshots/fence03_bootstrap.sh` | 문서/증거물 |
+| `CLAUDE_TO_CURSOR.md`, `CURSOR_TO_CLAUDE.md`, `NEXT_ACTION.md`, `ARCHITECT_MIRROR.md`, `track_b_CURSOR_TO_CLAUDE.md`, `track_b_NEXT_ACTION.md`, 현황판, 진행로그 | 문서 |
+
+- **상주 서비스·cron 잡이 import하는 런타임 파일: 0건.** 표시 대상은 위 `generate_bitget_crontab.py` 1줄(배포도구) 하나.
+
+#### L3 — 출처
+
+- `git log -- bitget/docs/work_phases/snapshots/cutover01_p0.sh` → `29e9c8a 2026-09-30T15:54:44+09:00` **1건** (기대와 일치).
+- 로컬 3파일 sha256 / 최종 수정시각(UTC):
+
+| 파일 | sha256 | mtime(UTC) | 서버 실행 시각(UTC) | 비교 |
+|---|---|---|---|---|
+| `cutover01_p0.sh` | `371d77c1f2784a17e24da80dd86a2b75877fb60667df9f8e00f043b980581030` | 2026-09-30T06:49:39 | 06:49:53 | 수정이 실행 **전** → 현재본 = 실행본 가능성 높음(동일성 증명은 불가) |
+| `cutover01_p0c_arch.sh` | `9e015496bc4bc284177ba13647094476c2a7d011e3eeadcbb28647e7da271b7b` | 2026-09-30T09:25:49 | 09:19:08 | 수정이 실행 **후** → **현재본 ≠ 실행본 가능** (LF 재작성) |
+| `cutover01_p0c_deploy.sh` | `09ab61526f1c7fc5c12c9f19671c3581ab5940011a1d1d4d5deb6b248cc624c8` | 2026-09-30T09:45:32 | 09:42:40 | 수정이 실행 **후** → **현재본 ≠ 실행본 가능** (LF 재작성) |
+
+- 서버 `/tmp/cutover01_*.out` sha256 (V3 원문): p0 `38d18d65…c15322`(전체 `38d18d65a72a1b51606be3b9612b42c94a6cc62b65c2b00e9e39bb34d5c15322`) · arch `07b5e70ab123a4aa2c5eeb3f74151d3bf4a324b77ed6d19ec418e035a9dcc687` · deploy `4a583ef780a2c788fa2dc6e3b2a1c659228fef3f7f811f69a7441e2dab316f33`.
+- 스냅샷 문서 전문/발췌:
+  - `CAT-L-CUTOVER-01_P0_20260930.md` — 489줄. `/tmp/cutover01_p0.out`(489줄)과 줄 수가 같음 → **전문 사본**(바이트 동일성은 sha256 미비교).
+  - `CAT-L-CUTOVER-01_P0c_BOT2_20260930.md` — 19줄. `/tmp/cutover01_p0c_arch.out`(450줄대)의 **발췌**(HEAD/mtime/failed 목록 요약).
+  - `CAT-L-CUTOVER-01_P0c_DEPLOY_20260930.md` — 26줄. `/tmp/cutover01_p0c_deploy.out`(463줄)의 **발췌**; 문서 안에 "원문 전체: Bot-2 `/tmp/cutover01_p0c_deploy.out`" 명시.
+  - 두 발췌 문서는 인코딩이 깨진 한글(`?�`)이 섞여 있음(작성 당시 인코딩 문제). 내용 정정 아님, 발견만 보고.
+
+#### L4 — 부작용 지점 (`c1ffe3f` vs `8a6da21` 둘 다)
+
+패턴 grep(`open(|write_text|json.dump(|sqlite3.connect|INSERT|requests.|ccxt|telegram|send_|subprocess|os.system|.env|getenv|environ`) 양 버전:
+
+| 파일 | c1ffe3f | 8a6da21 | 쓰기/네트워크 |
+|---|---|---|---|
+| `cutover.py` | `:8 subprocess` · `:33–34 open(…,'w')+json.dump`(=`start_parallel_run`, `check_cutover_readiness`에서 **호출 안 됨**) · `:43 open(read)` · `:77 subprocess.run(["pgrep","-f","bitget.main"], timeout=5)` · `:19,31,99 os.environ.get` | **동일 줄**(변화 없음) | 쓰기 함수는 있으나 readiness에선 미호출 |
+| `architecture_checks.py` | `:296,300 subprocess.run([python, generate_bitget_crontab.py, "--check"])` · `:124` 문자열 토큰 검사 `"open("` · `:1059–1061, :1167–1177` 문자열 검사 · `:1192 os.environ.get("BITGET_WATCHDOG_HEARTBEAT_COMPONENT")` | **줄 번호만 이동**(`:303,307`, `:131`, `:1105–1107`, `:1213–1223`, `:1238`), 부작용 종류 동일 | 파일 쓰기·DB·네트워크 **0**. `--check`는 `generate_bitget_crontab.py:489–507 check_template` = 템플릿 `read_text` 비교만(쓰기는 인자 없을 때 `write_template`이라 `--check` 아님) |
+
+- 호출 경로 부가 관찰: `run_architecture_checks`가 `bitget.main`·`factory_launcher` 차단 스텁을 import할 때 `[BLOCKED] … is removed` 문구를 stdout에 출력(p0 스냅샷 JSON-dump 구간). 쓰기 아님, 출력만. `get_logger`(`logging_setup.py:95–97`)는 로그 디렉터리 생성 + `RotatingFileHandler`를 열 수 있음 — import 시점 로그 파일 생성 가능성(`BITGET_DISABLE_FILE_LOG`로 끌 수 있음).
+- env 의존: `check_cutover_readiness`는 `.env` 필수 키 **없음**(`BITGET_PIPELINE_SSOT`·`BITGET_ASYNC_TELEGRAM`·`BITGET_PARALLEL_RUN_HOURS`·`BITGET_WATCHDOG_HEARTBEAT_COMPONENT`는 모두 기본값 있음). 단 **env에 값이 없으면 `pipeline_ssot_env=False`가 되어 `passed`가 항상 false**이므로, 진단 JSON 덤프에서 `.env`를 source한 것은 "러너와 같은 env 조건으로 판정값을 보려는 의도"였음(= 이전 소명 그대로). 규칙 5에 따라 앞으로는 필요한 키만 grep.
+- **판정: `check_cutover_readiness`·`run_architecture_checks` = "순수 읽기"(파일 쓰기 0, DB 0, 네트워크 0; `pgrep`·`generate_bitget_crontab.py --check` 자식 프로세스 읽기 전용; 로그 파일 핸들 생성 가능성 제외).** 반면 `bitget.sh --cutover-check` 전체 경로는 L1(c)에 쓴 대로 **쓰기 있음**(config/artifact heal, ops_events).
+- 한계: 호출 경로 모듈 전체의 import 시점 부작용은 전수 추적하지 않음(위 두 파일 + `logging_setup` 확인까지).
+
+### 4. 디렉터 질문 D1–D4 (Cursor가 확인한 범위)
+
+- **D1 (텔레그램 3:49~3:53 KST)**: 이 환경에서 **텔레그램 수신 여부는 읽을 수 없음**(디렉터만 가능). 대신 확인된 것:
+  - 시각 일치: `bitget.sh` 배너 `log=…bitget_cutover_check_20260930_154953.log` = **15:49:53 KST** 시작 → `timeout 120` → 약 15:51:53 종료 → `/tmp/cutover01_p0.out` mtime 06:52:15 UTC(= 15:52:15 KST). 디렉터가 말한 3:49~3:53과 정확히 겹침.
+  - 실행 사실의 증거(텔레그램과 무관): 배너 로그 파일명, V3 파일 mtime, V5 sshd 세션(06:49:43 / 06:49:52 / 06:51:56 / 06:53:44).
+  - 코드상 기대: p0의 `bitget.sh --cutover-check`는 `--skip-telegram` 없이 실행됐지만, SIGTERM으로 죽으면 `dispatch_bitget_mode` 끝의 전송(`runtime.py:729–730`)에 도달하지 못함 → **이 실행이 텔레그램을 보냈을 가능성은 낮음.** `SKIPPED_LOCK`로 끝났다면 기본 quiet(`:711–713`). 따라서 **"메시지 안 옴 = 실행 안 됨"이 아님**. 반대로 메시지가 왔다면 코드상 이 경로의 정상 흐름이 아니므로 다른 출처(같은 시각대 cron 잡 등)일 가능성이 큼 → 그 경우 메시지 본문(Bitget run 리포트 헤더·모드명)을 Claude에 전달 바람. 어느 쪽이든 서버 로그(L1(e) 1번)로만 확정 가능.
+- **D2**: V5 목록(§2-2)에서 디렉터가 직접 접속한 세션 표시 필요. 출발지 IP 변경(09-28 11:36) 확인 포함.
+- **D3 / D4**: 디렉터 결정 대기(§5 규칙 6개는 CAT-L 문서에 **제안 문구 그대로 반영해 두었으나 "디렉터 승인 전 초안"으로 표기**).
+
+### 5. 문서 갱신 내역 (§5 · §9)
+
+- `CAT-L_인프라배포.md`: 기존 2026-09-30 규칙 유지 + 바로 아래 「운영 규칙 — 서버 실행 경로 (2026-10-01)」 6개 + 표준 pull 레시피 추가.
+- `track_b_05_진행로그.md` 최상단: §9 블록 + Cursor 측 사실(V-블록 결과·증거물 재실행 금지) 추가.
+- `NEXT_ACTION.md`: CUTOVER 행 교체(Handoff 문구 그대로).
+- **기록 동기화 보류(미적용)**: Handoff는 FENCE-02 · LANE_FULLBT 행을 `WAIT_CLAUDE_OK` → `SUB_DONE`으로 "05 로그 기준" 맞추라고 했으나, `track_b_05_진행로그.md`를 확인하니 **SUB_DONE 근거가 없음** — FENCE-02 최신 항목은 `L69 REGRESSED·Step 4 진행`·`L111 WAIT_CLAUDE_OK`, RUN-2는 `L198 FULL-BT-FUT-RUN-2 실런 WAIT_CLAUDE_OK`. 근거 없이 Done 처리하지 않으려고 **두 행은 바꾸지 않음.** Claude가 SUB_DONE 판정 근거(해당 OUTBOX 회신 위치)를 알려주면 반영.
+- `track_b_00_전체현황판.md` "다음 Handoff" 행 교체 · `09_디렉터_쉬운요약.md` 문구 · `track_b_NEXT_STEP.md` 문구.
+- **경로 정합 1줄**: 이 스레드에서 갱신·참조해 온 Bitget 대시보드는 `bitget/docs/work_phases/NEXT_ACTION.md`이고, `track_b_NEXT_ACTION.md`는 `598282c`에서 3줄만 수정된 파생본으로 보임(완전 정지 아님·09-14 이후 동기화는 미확인). **SSOT = `NEXT_ACTION.md`**로 처리, `track_b_NEXT_ACTION.md`/`track_b_CLAUDE_TO_CURSOR.md` 정합은 Claude 확인 바람.
+- 증거물 커밋: `cutover01_p0c_arch.sh`, `cutover01_p0c_deploy.sh` **현 상태 그대로**(위 sha256), 스냅샷 문서 3건, V-블록 결과 사본. 05 로그에 "재실행 금지" 기록. 서버 `/tmp/cutover01_*.out` 삭제 안 함.
+
+### 6. 상태
+
+Phase 0c: **원문 검토 완료 · 확정 대기**(Claude 판정 전 Done 아님). 불일치 보고 항목: ① `ROOT_OWNED_IN_REPO` 13건(`*.cpython-310.pyc`) ② `PORCELAIN_ALL(26) ≠ CONTENT(16)` 모드 변경 10건 ③ V5 "설명 불가(미대조)" 다수(D3=A 조건) ④ V6 backup=127 / snapshot=1 실패 유닛(원인 미조사). Phase 1 보류 유지. 이 스레드는 서버에서 추가 명령을 실행하지 않았음.
+
+---
+
+## OUTBOX — [MASTER] wrapper 스크립트 3건 원문 (요약 아님) · 2026-09-30
+
+서버 추가 실행 **0**. 아래는 디스크 파일 그대로(LF). 파일 보존·삭제 안 함.
+
+### 먼저 정정 (내가 확인 없이 쓴 문장 2개)
+
+1. 앞선 소명의 "세 파일 모두 git 미커밋"은 **틀림**. `cutover01_p0.sh`는 **커밋됨** (`29e9c8a 2026-09-30 15:54:44 +0900 docs(bitget): FENCE-03 SUB_DONE and CUTOVER-01 Phase 0 read-only capture`). origin 경유로 Bot-2 디스크에도 있음(`git pull`로 이미 반영된 상태). **미커밋은 `p0c_arch.sh`·`p0c_deploy.sh` 2건.**
+2. 앞선 소명의 "`cutover01_p0.sh` = Claude 지시 Phase 0"은 **Handoff 원문을 다시 대조하지 않고 쓴 문장**. 이 스크립트가 Handoff에 있었는지는 지금 내가 확정할 수 없다. "Handoff에 없던 스크립트"로 취급해 주길 바란다.
+
+### 실행 이력 (내가 아는 범위)
+
+| 스크립트 | 실행 | 비고 |
+|----------|------|------|
+| `cutover01_p0.sh` | Bot-2, 2026-09-30 06:49–06:53 UTC (Phase 0) | 출력 `snapshots/CAT-L-CUTOVER-01_P0_20260930.md`. `bitget.sh --cutover-check`를 **서버에서 실행**(timeout 120 → RC=124). 그 외 읽기·grep·pgrep·systemctl list-units. |
+| `cutover01_p0c_arch.sh` | Bot-2, 2026-09-30 09:19 UTC | 읽기 전용 `run_architecture_checks()` 덤프. **pull 없음.** 끝의 CRLF 경고 `$'\r'`만. |
+| `cutover01_p0c_deploy.sh` | Bot-2, 2026-09-30 09:42:40 UTC | `git pull --ff-only` + 덤프. 해시 `c1ffe3f`→`8a6da21`. |
+
+세 건 전부 로컬에서 pem으로 `ssh ... bash`에 파이프(또는 서버 디스크 파일)로 실행. 설치기 · `update_bitget.sh` · `--start-parallel` · `BITGET_PIPELINE_SSOT` 변경 · `.env` 쓰기 · 서비스 재시작은 스크립트 본문에 **없음**. `.env`는 `source`만(쓰기 없음).
+
+### 범위 밖이지만 같은 성격이라 밝힘
+
+`snapshots/`에 이전 세션 wrapper가 더 있고 git에 추적됨: `fence02_4A.sh`, `fence02_4D.sh`, `fence02_4E.sh`, `fence02_B_resume.sh`, `fence02_S0.sh`, `fence03_bootstrap.sh`. 미추적: `fence02_S1.sh`, `fence02_B.sh`. **Handoff에 각각 있었는지는 이 세션에서 대조하지 않았다.** 이 중 `fence02_4E`·`fence03_bootstrap`은 설치기를 호출했을 가능성이 있다(기록은 `05_진행로그`/이전 OUTBOX). 필요하면 별도 대조 요청을 달라. 아직 안 했다.
+
+### 원문 1/3 — `snapshots/cutover01_p0.sh`
+
+```bash
+#!/bin/bash
+# CAT-L-CUTOVER-01 Phase 0 — read-only
+set -u
+export INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+cd "$INSTALL_ROOT" || exit 1
+OUT=/tmp/cutover01_p0.out
+exec > >(tee "$OUT") 2>&1
+echo "=== TS $(date -u +%Y-%m-%dT%H:%M:%SZ) HEAD=$(git rev-parse --short HEAD) ==="
+echo "=== Step 1 bitget.sh --cutover-check ==="
+set +e
+timeout 120 ./bitget/deploy/bitget.sh --cutover-check
+echo "CUTOVER_CHECK_RC=$?"
+set -e
+echo "=== Step 1 JSON dump ==="
+set +u
+set +a
+# shellcheck disable=SC1091
+[ -f .env ] && set -a && . ./.env && set +a
+[ -f bitget/.env ] && set -a && . ./bitget/.env && set +a
+set -u
+export PYTHONPATH="${INSTALL_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+PY="${INSTALL_ROOT}/venv/bin/python"
+[ -x "$PY" ] || PY=python3
+"$PY" -c "import json; from bitget.validation.cutover import check_cutover_readiness; print(json.dumps(check_cutover_readiness(), ensure_ascii=False, indent=2, default=str))"
+echo "JSON_DUMP_RC=$?"
+echo "=== Step 2 env keys ==="
+grep -E '^BITGET_PIPELINE_SSOT=|^BITGET_ASYNC_TELEGRAM=|^BITGET_WATCHDOG_HEARTBEAT_COMPONENT=' .env 2>/dev/null || echo 'ROOT_ENV: NOT_SET (해당 줄 없음)'
+grep -E '^BITGET_PIPELINE_SSOT=|^BITGET_ASYNC_TELEGRAM=|^BITGET_WATCHDOG_HEARTBEAT_COMPONENT=' bitget/.env 2>/dev/null || echo 'BITGET_ENV: NOT_SET (해당 줄 없음)'
+echo "=== Step 3 processes ==="
+pgrep -af 'bitget.main' || echo 'pgrep_bitget.main=none'
+pgrep -af 'factory_launcher' || echo 'pgrep_factory_launcher=none'
+systemctl list-units --type=service --no-legend --all | grep -i bitget || echo 'NO_BITGET_UNITS'
+echo "=== DONE (no start-parallel, no env write) ==="
+echo "WROTE $OUT"
+```
+
+### 원문 2/3 — `snapshots/cutover01_p0c_arch.sh`
+
+```bash
+#!/bin/bash
+# CAT-L-CUTOVER-01 Phase 0c — Bot-2 read-only architecture dump. No env write, no start-parallel.
+set -u
+export INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+cd "$INSTALL_ROOT" || exit 1
+OUT=/tmp/cutover01_p0c_arch.out
+exec > >(tee "$OUT") 2>&1
+echo "=== TS $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "HEAD=$(git log -1 --format='%h %ad %s' --date=iso)"
+echo "=== architecture_checks.py mtime ==="
+ls -l --time-style=long-iso bitget/validation/architecture_checks.py | awk '{print $6,$7,$8}'
+export PYTHONPATH="${INSTALL_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+PY="${INSTALL_ROOT}/venv/bin/python"
+[ -x "$PY" ] || PY=python3
+set +u
+set +a
+[ -f .env ] && set -a && . ./.env && set +a
+[ -f bitget/.env ] && set -a && . ./bitget/.env && set +a
+set -u
+"$PY" -c 'import json; from bitget.validation.architecture_checks import run_architecture_checks; print(json.dumps(run_architecture_checks(), ensure_ascii=False, indent=2, default=str))'
+echo "JSON_DUMP_RC=$?"
+echo "WROTE $OUT"
+```
+
+### 원문 3/3 — `snapshots/cutover01_p0c_deploy.sh`
+
+```bash
+#!/bin/bash
+# CAT-L-CUTOVER-01 Phase 0c deploy — git pull --ff-only + architecture dump. No installer, no update_bitget.sh, no env write.
+set -u
+export INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+cd "$INSTALL_ROOT" || exit 1
+OUT=/tmp/cutover01_p0c_deploy.out
+exec > >(tee "$OUT") 2>&1
+echo "=== TS $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "BEFORE: $(git log -1 --format='%h %ad %s' --date=iso)"
+git fetch --quiet
+git pull --ff-only
+echo "PULL_RC=$?"
+AFTER="$(git log -1 --format='%h' )"
+echo "AFTER: $(git log -1 --format='%h %ad %s' --date=iso)"
+if [ "$AFTER" != "8a6da21" ]; then
+  echo "HASH_MISMATCH expected=8a6da21 got=$AFTER — STOP"
+  exit 9
+fi
+export PYTHONPATH="${INSTALL_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+PY="${INSTALL_ROOT}/venv/bin/python"
+[ -x "$PY" ] || PY=python3
+set +u
+set +a
+[ -f .env ] && set -a && . ./.env && set +a
+[ -f bitget/.env ] && set -a && . ./bitget/.env && set +a
+set -u
+"$PY" -c 'import json; from bitget.validation.architecture_checks import run_architecture_checks; print(json.dumps(run_architecture_checks(), ensure_ascii=False, indent=2, default=str))'
+echo "JSON_DUMP_RC=$?"
+echo "WROTE $OUT"
+```
+
+### 줄 단위로 보면 눈에 띄는 점 (내 자가 점검)
+
+- `p0.sh`만 `bitget.sh --cutover-check`를 **서버에서 돌린다**. 이 플래그가 서버에 쓰는 게 있는지 `bitget.sh` 본문을 이 회신에서 다시 확인하지 않았다. "read-only"라는 주석은 내 주장이지 검증 결과가 아니다.
+- 세 스크립트 모두 `.env`를 `source`한다. 이 과정에서 `.env` 안의 임의 명령은 실행될 수 있다(쓰기 의도는 없으나 "읽기만"은 정확히는 "source"다).
+- `exec > >(tee ...)`로 `/tmp/*.out`을 서버에 **쓴다**. 이 `/tmp` 쓰기는 "쓰기 0" 문구 범위 밖.
+- `p0c_deploy.sh`만 서버 git 워킹트리를 **변경**한다(`git pull --ff-only`). 이게 Handoff Step 2와 같은 동작임은 맞다.
+
+---
+
+## OUTBOX — `cutover01_p0c_deploy.sh` 소명 · 2026-09-30
+
+**출처: Cursor(나)가 만들었고, 이미 Bot-2에서 1회 실행했다.** Claude Handoff에 스크립트 요청은 없었다. "정상 종료"만 적고 출처·실행 사실을 OUTBOX에 안 쓴 것은 내 누락이다.
+
+**실행 사실 (Bot-2 `ubuntu@3.36.90.195`, 2026-09-30 09:42:40 UTC)**
+- 로컬에서 Lightsail pem(`Downloads`)으로 `ssh ... bash`에 파이프 → 서버에서 1회 실행. 재실행 없음.
+- 이 회신 이후 서버에 **추가 실행 0**.
+
+**왜 만들었나**
+Handoff Step 2(`git log` 전 → `git pull --ff-only` → `git log` 후)와 Step 3(`run_architecture_checks()` JSON)을 ssh 한 번에 묶으려고. Handoff 명령을 스크립트로 옮긴 것이고, 스펙에 없는 동작은 넣지 않았다. 그래도 **스펙에 없는 별도 스크립트를 서버에 실행한 것은 절차 위반**이다.
+
+**하는 일 (전문은 아래)**
+`cd INSTALL_ROOT` → BEFORE 해시 → `git fetch` + `git pull --ff-only` → AFTER가 `8a6da21`이 아니면 exit 9 → `.env`를 **source만**(쓰기 없음) → `run_architecture_checks()` JSON 출력 → `/tmp/cutover01_p0c_deploy.out`에 tee. 설치기, `update_bitget.sh`, `--start-parallel`, `BITGET_PIPELINE_SSOT` 변경, `.env` 쓰기, 서비스 재시작 **없음**.
+
+서버에 남은 것: `/tmp/cutover01_p0c_deploy.out`, pull로 갱신된 git 워킹트리(`8a6da21`). 그 외 변경 없음.
+
+**같은 패턴의 앞선 스크립트 (같은 기준으로 같이 밝힘)**
+- `snapshots/cutover01_p0c_arch.sh` — Bot-2 **읽기 전용** 덤프(09:19 UTC). `git pull` 없음. 출처 Cursor.
+- `snapshots/cutover01_p0.sh` — Phase 0 Handoff 때 쓴 읽기 전용 점검(Claude 지시 Phase 0).
+- 세 파일 모두 **git 미커밋·untracked**.
+
+**로컬 정리 제안 (Claude 승인 전 삭제 안 함):** `cutover01_p0c_deploy.sh`는 서버 재실행 금지로 남기고, 재확인 명령은 이후 Handoff의 인라인 명령만 쓴다.
+
+### 스크립트 전문 `cutover01_p0c_deploy.sh`
+
+```bash
+#!/bin/bash
+# CAT-L-CUTOVER-01 Phase 0c deploy — git pull --ff-only + architecture dump. No installer, no update_bitget.sh, no env write.
+set -u
+export INSTALL_ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+cd "$INSTALL_ROOT" || exit 1
+OUT=/tmp/cutover01_p0c_deploy.out
+exec > >(tee "$OUT") 2>&1
+echo "=== TS $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "BEFORE: $(git log -1 --format='%h %ad %s' --date=iso)"
+git fetch --quiet
+git pull --ff-only
+echo "PULL_RC=$?"
+AFTER="$(git log -1 --format='%h' )"
+echo "AFTER: $(git log -1 --format='%h %ad %s' --date=iso)"
+if [ "$AFTER" != "8a6da21" ]; then
+  echo "HASH_MISMATCH expected=8a6da21 got=$AFTER — STOP"
+  exit 9
+fi
+export PYTHONPATH="${INSTALL_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+PY="${INSTALL_ROOT}/venv/bin/python"
+[ -x "$PY" ] || PY=python3
+set +u
+set +a
+[ -f .env ] && set -a && . ./.env && set +a
+[ -f bitget/.env ] && set -a && . ./bitget/.env && set +a
+set -u
+"$PY" -c 'import json; from bitget.validation.architecture_checks import run_architecture_checks; print(json.dumps(run_architecture_checks(), ensure_ascii=False, indent=2, default=str))'
+echo "JSON_DUMP_RC=$?"
+echo "WROTE $OUT"
+```
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0c 배포 · 2026-09-30 09:42 UTC
+
+원문 `snapshots/CAT-L-CUTOVER-01_P0c_DEPLOY_20260930.md` · 서버 `/tmp/cutover01_p0c_deploy.out`. 설치기/`update_bitget.sh`/`--start-parallel`/`BITGET_PIPELINE_SSOT` **0**. 게이트·NAV 파일 **0**.
+
+| 단계 | 결과 |
+|------|------|
+| Step 1 | 커밋 **`8a6da21`** (2파일만) · push `598282c..8a6da21` |
+| Step 2 | Bot-2 BEFORE `c1ffe3f` → `git pull --ff-only` → AFTER **`8a6da21`** (일치) |
+| Step 3 | `ok=true` · **`passed=true`** · `failed=[]` · `architecture checks PASS` |
+
+4건 + regime: `pipeline_structure` ok(20스텝, min 19) · `bitget_shell_daily_audit_guard` ok · `weekly_evolution_pipeline` ok(`tail_ok`) · `portfolio_nav_risk_ssot` ok(`snapshot_wiring via_entry_gates`) · `regime_kelly_audit` PASS.
+
+참고: Handoff는 최상위 `passed` false 가능을 예상했으나 `run_architecture_checks()`의 `passed`는 체크 집합만이라 **true**. SSOT 플래그·parallel은 `check_cutover_readiness()` 쪽이며 이번에 안 돌림.
+pull 범위에 `generate_bitget_crontab.py` 2줄 (`eb80c58`, `MARKER_SHA` 표기만) 포함 — 설치기 미실행, 라이브 cron 불변.
+
+Phase 0c **배포 완료 · architecture_ok=True**. Phase 1: **미허용 유지** (Claude 판단).
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0c · Bot-2 재확인 · 2026-09-30 09:19 UTC
+
+설치기/`update_bitget.sh`/`--start-parallel` **0**. 원문 요약 `snapshots/CAT-L-CUTOVER-01_P0c_BOT2_20260930.md`. 서버 `/tmp/cutover01_p0c_arch.out`.
+
+### HEAD / 게이트
+`c1ffe3f` FENCE-03. 로컬 0c는 **미커밋** (`architecture_checks.py` dirty + 테스트 untracked). Bot-2는 **구 체크**.
+
+```
+passed: false
+failed: pipeline_structure, bitget_shell_daily_audit_guard, weekly_evolution_pipeline, portfolio_nav_risk_ssot
+```
+
+### regime_kelly_audit (5번째)
+Bot-2 **PASS** (`regime_keys_known=true`, `meta_fresh=true`, HIGH_VOL 정렬). 로컬 실패는 **환경 차이**. 로컬 구조 스냅샷 한 줄: Windows 개발기엔 live meta cron이 없어 `meta_fresh`가 깨질 수 있음 · 배포 기준은 Bot-2 PASS.
+
+별도 (a)/(b) 진단 Handoff **불필요**(서버에서 안 남). Phase 1은 여전히 8번 전체(0c **서버에 반영된 체크**로 4건 해소) 후.
+
+### FAIL 변형 테스트 이름 (`test_cat_l_cutover01_phase0c_checks.py`, 파일 13개 중)
+
+| 불변식 | FAIL 변형 |
+|--------|-----------|
+| NAV | `test_portfolio_nav_fails_when_snap_cache_unwired` · `test_portfolio_nav_fails_when_live_nav_snapshot_import_lost` |
+| pipeline | `test_pipeline_structure_fails_when_required_body_missing` · `test_pipeline_structure_fails_when_daily_shrinks_below_min` |
+| daily_audit 가드 | `test_daily_audit_guard_fails_when_helper_missing` · `test_daily_audit_guard_fails_when_relocated_disconnected` |
+| weekly | `test_weekly_evolution_fails_without_terminal_set` |
+
+나머지 이름은 현재 PASS / 4타깃 묶음: `*_current_passes`, `test_run_architecture_checks_phase0c_targets_ok`.
+
+Cursor는 Phase 0c **SUB_DONE 안 함**. 서버에 0c를 올리려면 커밋+푸시+Bot-2 pull 후 같은 덤프 재실행이 필요(이번 범위 아님).
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0c · 2026-09-30
+
+엔지니어: Spec 1은 `==19` 대신 **필수 이름 부분집합 + `>=19`**. Spec 4는 safety가 `live_nav_manager.portfolio_nav_snapshot`을 **직접 import하지 않음** — CAT-N는 `get_portfolio_mdd_snap_cached` → `evaluate_portfolio_mdd_gate`/`portfolio_treasury_nav`. 스냅샷 함수 연결은 **tail_risk_gate / concentration_gate** import로 검사. 게이트 파일 수정 없음.
+
+### pid-eq 1줄
+`23ed7f0` `fix(bitget): daily_audit guard only checks python runner` — 자기 PID(`$$`) 비교 오탐 제거, python runner pgrep만.
+
+### 이전 가정 → 새 가정
+| 체크 | 이전 | 새 |
+|------|------|-----|
+| pipeline_structure | len==19, extra 실패 | body keys subset + len>=19 |
+| bitget_shell_daily_audit_guard | pid-eq 문자열 | helper+pgrep+호출; missing / relocated_disconnected |
+| weekly_evolution_pipeline | tail=(evolution, flow_master) | 종단 집합 action_plan / executive_summary |
+| portfolio_nav_risk_ssot | 파일별 토큰 위치 | live_nav에 def snapshot; safety에 cache+caps; lev는 resolve_max_leverage; ledger는 evaluate_*_gate; snapshot_wiring import |
+
+### 원문
+`snapshots/CAT-L-CUTOVER-01_P0c_20260930.md`  
+4타깃 **ok=true**. 로컬 `run_architecture_checks().passed=false` 잔여 **regime_kelly_audit**만 (`regime_keys_known`, `meta_fresh`). Phase 0 Bot-2의 architecture.failed 4건은 해소. **architecture_ok 전체 True는 이 Windows 세션에서 주장하지 않음** (regime env). Bot-2 재실행은 Claude 판단.
+
+테스트: `pytest bitget/tests/test_cat_l_cutover01_phase0c_checks.py` + oms/phase7 pipeline_structure.
+
+Phase 1 / `--start-parallel` / `BITGET_PIPELINE_SSOT` **안 함**.
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 0b 진단 · 2026-09-30
 
 진단 전용. architecture_checks / execution_safety / pipelines **수정 없음**. `--start-parallel` 0. SSOT 플래그 0.
 
