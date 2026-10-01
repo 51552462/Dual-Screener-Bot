@@ -1,3 +1,312 @@
+# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · W-블록 회신 판정 + X-블록(읽기전용, 잔여 확인)
+
+> **작성**: Claude Pro (Architect) · 2026-10-01
+> **입력**: `track_b_CURSOR_TO_CLAUDE.md` 맨 위 「Phase 1 선행 W-블록 회신 (Handoff v2)」 + 「디렉터 추가 회신 19:48 KST」 — Claude 스냅샷(2026-10-01 10:53 UTC 갱신분)
+> **CAT**: CAT-L 🟡 (deep) · CAT-A 읽기 참조(락·queue-worker) · 코드 변경 0 · 서버 변경 0 · Critical 해당 없음(단 §2 X0 결과에 따라 즉시 에스컬레이션)
+> **이 파일**: `CLAUDE_TO_CURSOR.md` 상단에 **전문** → 커밋·push → **X0(로컬) 먼저** → §8 X-블록
+> **시각**: UTC (KST는 괄호)
+
+---
+
+## 0. 결론 (디렉터용)
+
+1. **실행본 = Handoff 원문 다시 증명.** Claude가 v2 원문에서 직접 계산한 해시 `bbf39d61…`(W-블록)·`0e5a8482…`(W3b)가 Cursor 보고와 **일치**. CAT-L 규칙 1–7 반영도 원문과 일치.
+2. **9/28 펜스 소실 원인 = 사실상 확정.** 디렉터님이 터미널에서 업데이트 스크립트를 3번 돌렸고(10:48·10:54·11:24 KST), 마지막 회차가 예약작업 설치기를 다시 실행했다. 그때 서버 코드는 펜스가 없는 옛 판이었다. **복구 행동이 잘못된 게 아니라, 펜스 코드가 공식 저장소에 아직 없었던 게 근본 원인**이다. 지금은 FENCE-03 장치가 같은 경로를 막는다. 직접 증거 한 줄(cron 파일 갱신 기록)만 X2로 받는다.
+3. **"서버가 터졌다"는 흔적은 로그에 없다.** 09-26 17:52 KST 이후 서버 재시작 0, 확인한 구간의 메모리 부족(OOM) 0. 디렉터님 기억의 "stop 후 start"는 로그상 마지막 재시작인 **09-26 오후**일 가능성이 크다. 무엇을 보고 "터졌다"고 느끼셨는지 한 줄이 남은 단서다.
+4. **자동 백업은 진짜 고장**: 스크립트가 `python`이라는 명령을 찾지 못해 최소 09-23부터 매일 실패. → **`CAT-L-BACKUP-01`을 Phase 1보다 먼저** 한다(§4).
+5. **새로 발견**: 대기열 작업자(queue-worker)가 **매일 00:44–00:46 KST에 watchdog에 의해 강제 재시작**된다. 매일 00:07 KST에 넣는 선물 스캔이 그 재시작으로 중간에 끊기고 있을 수 있다 → 조사 항목 등록(§5).
+6. 오늘 접속 실패: 같은 시간대에 Cursor는 `3.36.90.195`로 정상 접속·실행했다 → **서버는 살아 있었다.** 접속 주소·키 쪽 문제일 가능성(§10 쉬운요약 팁).
+
+---
+
+## 1. Claude 독립 검증
+
+| 항목 | 방법 | 결과 |
+|---|---|---|
+| §8-1 W-블록 실행본 | v2 원문 코드펜스 추출 재계산 | 38줄 · `bbf39d61001cb033839851730cee17b9cfc8f6a8659a26a98283a0b79e0433e5` **일치** |
+| §8-1b W3b 실행본 | 동일 | 10줄 · `0e5a8482181f70d2205625573f2c622b9ae6715c37c3d5d8f55395f97100023c` **일치** |
+| CAT-L 규칙 1–7 + 실행 수단 표준 + pull 레시피 | 스냅샷 `CAT-L_인프라배포.md` L105–138 대조 | Handoff 문안과 **일치** |
+| NEXT_ACTION · 05 | 스냅샷 대조 | 신규 행 2개·D2 정정 줄 반영 확인 |
+| W-블록 출력 전문(`snapshots/…P1PRE_WBLOCK…md`) | — | **내 스냅샷에 없음** → OUTBOX 인용 줄만으로 판정(한계) |
+
+---
+
+## 2. 항목별 판정
+
+| 항목 | 판정 | 메모 |
+|---|---|---|
+| **비밀 문자열 1줄** | ❌ **불수용 → X0 즉시** | "어느 줄인지 특정 못 함"은 받을 수 없다. 해당 md는 **이미 커밋·push됨**(`4ee0029`). 로컬 `grep -n` 한 번이면 특정된다. 비밀값이면 키 교체 + git 이력 정리 = **Critical, 디렉터 즉시 보고** |
+| W1 | ✅ | 74건·가시성 OK. 분류 수용. 09-26 05:26:50 `restart dante-bitget-async`(접속 세션 없음, 이전 부팅) → 해당 줄의 `TTY`/`PWD` 회신 — watchdog 자동 복구면 queue-worker와 같은 패턴(§5) |
+| W2 | ✅ | 핵심 확인. 추가 관찰: 01:48·01:54 `update_bitget.sh`는 **HEAD를 못 움직였고**, 01:57:45 수동 `pull`이 움직임 → 앞의 두 회차가 pull 단계 전후에서 실패했을 가능성(원인은 SCRIPT-AUDIT) |
+| W3 | ⚠️ 부분 | 02:24:10 이후가 `head -200`에 잘림(내 설계 결함, §6 C-9) → X2 |
+| W3b | ✅ | 커널 OOM 0 · 상주 유닛 크래시 0. 09-27 15:46 queue-worker `KILL`은 매일 반복되는 watchdog 재시작의 일부(§5). `swapfile.swap Duplicate entry in /etc/fstab` 2줄은 FENCE-02 `daemon-reload` 시각에 나온 무해 경고(스왑 줄 중복) — 비차단 기록 |
+| W4 | 판정 유보 → 대체 | 0바이트 = "아무것도 쓰지 못하고 종료". 락 대기와 부합하지만, 파이썬은 파일로 내보내는 출력을 버퍼에 모았다가 쓰므로 **SIGTERM으로 죽으면 출력이 유실될 수 있다** → 대기/실행 단정 불가. 내 조회식은 시간대 오류(§6 C-8). **124의 정밀 원인은 더 파지 않는다** — Phase 1에 필요한 건 "락이 언제 비는가"이므로 X3(락 점유 시각표)로 대체 |
+| W5 | ✅ 원인 / ⚠️ 시작 시점 | backup 원인 확정(`line 32: python: command not found`, `User=root`). `SQLITE3_CLI=yes`라 내 가설(sqlite3 부재) 기각. "언제부터"는 `tail -20` 한계(§6 C-9) → X4 |
+| W6 | ✅ 설명됨 | 8건 = 09-28 02:24 `deploy_bitget_factory.sh`의 `sudo chmod +x`. 나머지 2건은 ubuntu가 자기 파일에 `chmod`하면 sudo 기록이 안 남으므로 **의심 사유 아님**. 근본: 저장소 모드 `100644` vs 서버 `+x` → 영구 dirty(그리고 `update_bitget.sh`의 `git restore .`가 되돌리고 배포가 다시 `+x` 하는 순환). 처방(별도): 저장소에 실행 모드를 커밋. `uninstall_stock_north_star_cron.sh`는 주식 쪽 파일 — **범위 밖, 손대지 않음** |
+| W7 | ✅ Cursor 판정 수용 | 내 시각 가설 틀림(§6 C-6 갱신). 메커니즘은 "root로 도는 파이썬이 저장소 모듈을 import": 09-23 10:11 1건은 pull(10:10:53) 직후 = `update_bitget.sh`의 root 사전 백업 파이썬과 같은 패턴. 조치 불필요 |
+| W8 | ✅ | sha256 3건 일치. 매칭 줄은 키 *이름*·PASS 메시지 → 비밀 아님 |
+
+---
+
+## 3. 09-28 사건 종합 판정
+
+| UTC (KST) | 사건 | 근거 |
+|---|---|---|
+| 09-27 14:20:57 | FENCE-02 wrapper 수동 적용(라이브만, 생성기는 Cursor 로컬) | W1 · OUTBOX |
+| 09-28 01:47:02 | `scan_spot_nulrim`가 heavy slice 안에서 시작 | W3 |
+| 01:48:52 (10:48) | `update_bitget.sh` #1 — `git restore .` · `pull --ff-only` · HEAD 안 움직임 | W1 · W2 |
+| 01:54:10 (10:54) | `update_bitget.sh` #2 — HEAD 안 움직임 | W1 · W2 |
+| 01:57:45 (10:57) | 수동 `pull` → `1e38166`(origin에 펜스 생성기 없음) | W2 |
+| 02:24:09 (11:24) | `update_bitget.sh` #3 → 02:24:11 `deploy_bitget_factory.sh`(유닛 파일 10개 덮어씀 · `chmod +x` 18 · enable/**disable dashboard·heatmap** · `reset-failed`) → **02:24:22 `install_bitget_cron.sh`(root)** | W1 |
+| 09-29 08:01 | 라이브 wrapper 0줄 발견 | 05 |
+
+**판정**
+- **FENCE-02 회귀 원인 = 09-28 02:24:22 설치기 재실행(구 생성기)** — 현재 등급 "강하게 시사". X2(cron 파일 갱신 기록 · 사전 백업 안의 cron 사본)로 **"확정"**으로 올린다.
+- **근본 원인(06 실패기록용 문구)**: "라이브 수동 변경(Step 2)이 SSOT(origin 생성기)에 없던 상태에서, 정상 배포 도구가 SSOT대로 되돌렸다." 재발 방지 = FENCE-03(라이브 ≠ 생성기면 `update_bitget.sh` [0/7]에서 중단) — **이미 적용됨.**
+- **신원·의도 = 해소.** 디렉터 진술(서버 장애 대응)과 TTY=`pts/0`(사람이 터미널에서 직접)이 일치. 추가 추궁 불필요.
+- **디렉터 기억 정합**: "stop 후 start, 그때마다 IP가 바뀜" ↔ 로그상 마지막 VM 재시작은 **09-26 08:49–08:52 UTC(17:49–17:52 KST, `last -x` 기록)**. 09-28은 VM 재시작이 아니라 업데이트 스크립트 실행. 두 날의 기억이 합쳐진 것으로 보는 게 자연스럽다. 접속 기록의 IP는 디렉터 쪽 네트워크라 서버 IP와 별개라는 Cursor 설명이 맞다.
+
+**부수 영향 3건** (이번 회신으로 새로 보임)
+1. **dashboard·heatmap 유닛이 09-28부터 disable 상태** — 의도된 퇴역인지, 배포 스크립트의 부작용인지 미상(L5). 디렉터가 이 화면을 쓰고 있었다면 "서버가 안 된다"는 체감의 후보.
+2. **라이브 유닛 파일 10개 = `1e38166` 시점 템플릿.** 이후 저장소 템플릿이 바뀌었다면 라이브가 저장소와 어긋나 있다(L6).
+3. **`update_bitget.sh`의 `git restore .`** — 서버에서 직접 고친 tracked 파일을 경고 없이 버린다(01:48 실증, 무엇이 버려졌는지 미상). → CAT-L 규칙 4에 주의 1줄(§11) + 설계 개선은 SCRIPT-AUDIT.
+
+---
+
+## 4. backup · snapshot 판정
+
+**`CAT-L-BACKUP-01` → Phase 1 선행으로 승격.**
+- 근거: (a) cutover는 프로젝트 문서가 "리스크 높음 — 이중 실행·텔레그램 폭주"로 적은 작업 (b) 무결성 백업이 최소 9일(아마 그 이상) 미작동 (c) 원인이 분명하고 수정 규모가 작다.
+- 단 **"1줄 고치고 끝"으로 하지 않는다.** 고치는 순간 **처음으로 실제 도는 백업**이 4GB 서버에서 root로, 메모리 펜스 밖에서, 00:30 UTC(09:30 KST)에 돈다. 이 서버는 OOM 이력이 3회다. → 첫 실행 자원 계획(DB 크기 · 예상 소요 · 메모리 상한 · 시간대 · 수동 1회 관찰)이 Handoff에 들어가야 한다. X4로 입력을 모으고, **BACKUP-01 Handoff는 다음 창(그 sub-phase 단독)**에서 발행.
+- Critical 사전 판단: 데이터 로직(CAT-B) 변경 아님 · 운영 자원 위험 → 🟡. 확정은 BACKUP-01 Handoff에서.
+
+**snapshot — 비차단 후보, X4·L7로 판정**
+- 실패의 대부분은 "긴 스캔이 쓰기 중이라 이번 회차는 양보" → exit 1. **의도된 양보를 실패 코드로 내는 설계**라 `systemctl --failed`가 오염되고, 이번처럼 "반복 고장"으로 읽힌다.
+- Cursor 의견 4(exit 0) **수정 채택**: exit 0이면 양보 횟수가 사라진다. **전용 코드(예: 75) + 유닛 `SuccessExitStatus=75`** 권고 — 진짜 실패(1)와 양보를 구분하면서 기록은 남는다. 코드 변경이므로 별도 sub-phase.
+- 비차단 여부: 성공 사이 **최대 공백**(X4)과 이 DB를 **누가 읽는지**(L7). 스캔 입력이면 CAT-B 영향 → Phase 1 전 처리.
+
+---
+
+## 5. 신규 등록 — queue-worker 매일 강제 재시작 (`CAT-L-QW-RESTART-01`, 조사)
+
+| 근거 | 출처 |
+|---|---|
+| `sudo systemctl restart dante-bitget-queue-worker`가 **매일 15:44–15:46 UTC(00:44–00:46 KST)**, TTY 없음 → watchdog 자동 복구(`watchdog.py:280`) | W1 (7일 연속) |
+| 09-27 15:46:24 queue-worker `status=9/KILL` → `Failed with result 'timeout'`(정지 대기 시간 초과로 강제 종료) | W3b |
+| 매일 15:07 UTC `--enqueue --scan-futures-ema5-r2`(L-3b canary)가 queue-worker에서 실행 | FENCE-02 Phase 0 기록 |
+| 09-14 15:22 UTC queue-worker `status=143` 재시작 | FENCE-02 Phase 0 기록 |
+
+- **가설**: 15:07에 넣은 긴 스캔이 도는 동안 워커 하트비트가 "멈춤"으로 판정 → 약 37–39분 뒤 watchdog이 강제 재시작 → **canary 선물 스캔이 매일 중간에 끊길 수 있다.** 데이터 공백 문제일 수 있어 무겁게 본다.
+- Phase 1과의 관계: 비차단. 다만 48h 창에 2회 발생 예정 → Phase 1 설계에서 "예정된 재시작"으로 관측 노이즈에서 분리.
+- 인접: CAT-A(대기열·오케스트레이션) · CAT-L(watchdog P1-7). 조사는 다음 창, 읽기전용부터.
+
+---
+
+## 6. Claude 측 정정
+
+| # | 정정 |
+|---|---|
+| C-6 (갱신) | root pyc 시각 가설(09-29·30 설치기) **틀림**. 메커니즘 범주(root 파이썬의 import)만 유효 |
+| C-8 | W4 조회식이 로그 이름의 시간대 혼재(cron 실행 = UTC 스탬프, systemd·수동 실행 = KST 스탬프)를 몰라 **무효** |
+| C-9 | W3 `head -200`·W5 `tail -20` — 기간 전체를 못 덮는 출력 상한을 내가 넣어 02:24 이후 잘림·시작 시점 미상. 앞으로는 **"처음·끝 + 총개수"** 형태로 설계 |
+
+---
+
+## 7. Cursor 의견 1–5 처리
+
+| # | 처리 |
+|---|---|
+| 1 W4 mtime 기준 재조회 | **채택** → X3(시각표 전체) · X3b(09-30 06:30–06:56 창 + `watchdog_20260930_155209` 열람) |
+| 2 backup 별도 sub-phase | **채택 + 강화**: Phase 1 선행, 첫 실행 자원 계획 포함(§4) |
+| 3 W3 재조회 | **채택** → X2 + cron 갱신 기록·사전 백업 사본으로 직접 증거 |
+| 4 snapshot exit 0 | **수정 채택** → 전용 코드 + `SuccessExitStatus`(§4) |
+| 5 root pyc 조치 불필요 | **동의** |
+| (Cursor 판단) 근거 없는 Done 미처리 · `vb_run.py` 표준화 · 미대조를 추측으로 채우지 않음 | 모두 맞다. 유지 |
+
+---
+
+## 8. X0(로컬, 최우선) · X-블록(서버, 읽기전용) · L-항목(로컬)
+
+### 8-0. X0 — 비밀 문자열 1줄 특정 (서버 아님, **다른 것보다 먼저**)
+
+```text
+grep -n -i -E 'KEY|SECRET|TOKEN|PASSWORD|PASSWD|API' bitget/docs/work_phases/snapshots/CAT-L-CUTOVER-01_P1PRE_WBLOCK_20261001.md
+```
+- 결과 줄을 **줄 번호와 함께**, 값으로 보이는 부분만 `***`로 가려 OUTBOX에.
+- 비밀값이면 **즉시 중단** → 디렉터 보고(키 교체 + git 이력 정리, Critical). X-블록 실행 보류.
+
+### 8-1. X-블록 실행 규칙
+
+- 실행 수단 표준(규칙 · `vb_run.py`). 추출 줄 수·CR·sha256 공개. `set -e` 없음 · `sudo` 0.
+- 출력 전문은 `snapshots/CAT-L-CUTOVER-01_P1PRE_XBLOCK_20261001.md`, OUTBOX엔 경로 + sha256 + 판정에 쓴 줄 원문. **커밋 전 X0과 같은 grep으로 자기 점검.**
+- 권한 거부(`Permission denied`)가 난 항목은 "거부"로 보고 — `sudo`로 우회 금지.
+
+### 8-2. X-블록
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}" || exit 1
+echo "== X-BLOCK START $(date -u +%Y-%m-%dT%H:%M:%SZ) user=$(id -un) =="
+
+echo "== X1 boots / kernel OOM since current boot =="
+journalctl --list-boots --no-pager 2>&1 | tail -5
+uptime -s
+K="$(TZ=UTC journalctl --utc -k -b 0 --no-pager 2>&1)"
+echo "KLINES_BOOT0=$(printf '%s\n' "$K" | wc -l)"; printf '%s\n' "$K" | head -1
+echo "OOM_HITS_BOOT0=$(printf '%s\n' "$K" | grep -c -i -E 'out of memory|oom-kill')"
+printf '%s\n' "$K" | grep -i -E 'out of memory|oom-kill|killed process|blocked for more than' | head -20
+
+echo "== X2 cron.d reload timeline since 2026-09-26 UTC =="
+TZ=UTC journalctl --utc -t cron -t CRON --since '2026-09-26 00:00:00' --no-pager 2>&1 | grep -E 'RELOAD|dual-screener-bitget' | head -60
+echo "== X2b 2026-09-28 02:24-02:30 UTC systemd/sudo =="
+TZ=UTC journalctl --utc --since '2026-09-28 02:24:00' --until '2026-09-28 02:30:00' --no-pager -t systemd -t sudo 2>&1 | grep -v -E 'Started Session|session-[0-9]+\.scope|run-[a-z0-9]+\.scope|user@[0-9]+\.service' | head -150
+echo "X2b_TOTAL_LINES=$(TZ=UTC journalctl --utc --since '2026-09-28 02:24:00' --until '2026-09-28 02:30:00' --no-pager -t systemd -t sudo 2>/dev/null | wc -l)"
+echo "== X2c pre-update backups 2026-09-28 =="
+ls -la --time-style=full-iso /var/backups/bitget-pre-update/ 2>&1 | grep -E '20260928|total|denied' | head -10
+for d in /var/backups/bitget-pre-update/20260928_*; do echo "-- $d"; ls -la "$d" 2>&1 | head -20; for f in "$d"/*cron* "$d"/*/*cron*; do [ -f "$f" ] && echo "CRONCOPY $f WRAP_NONCOMMENT=$(grep -v '^[[:space:]]*#' "$f" | grep -c systemd-run)"; done; done
+
+echo "== X3 bitget logs by mtime since 2026-09-29 00:00 UTC (lock occupancy input) =="
+TZ=UTC find /var/lib/quant-bitget/logs -maxdepth 1 -name 'bitget_*.log' -newermt '2026-09-29 00:00:00' -printf '%TY-%Tm-%TdT%TT %s %f\n' 2>/dev/null | sort | head -800
+echo "X3_COUNT=$(TZ=UTC find /var/lib/quant-bitget/logs -maxdepth 1 -name 'bitget_*.log' -newermt '2026-09-29 00:00:00' 2>/dev/null | wc -l)"
+echo "== X3b 2026-09-30 06:30-06:56 UTC window =="
+TZ=UTC find /var/lib/quant-bitget/logs -maxdepth 1 -name 'bitget_*.log' -newermt '2026-09-30 06:30:00' ! -newermt '2026-09-30 06:56:00' -printf '%TY-%Tm-%TdT%TT %s %f\n' 2>/dev/null | sort
+echo "-- bitget_watchdog_20260930_155209.log --"
+head -40 /var/lib/quant-bitget/logs/bitget_watchdog_20260930_155209.log 2>&1
+
+echo "== X4 backup history / targets / sizes =="
+B="$(TZ=UTC journalctl --utc -u dante-bitget-backup.service --no-pager 2>&1)"
+echo "BACKUP_FIRST_ENTRY: $(printf '%s\n' "$B" | head -1)"
+echo "BACKUP_SUCCESS_COUNT=$(printf '%s\n' "$B" | grep -c -E 'Deactivated successfully|Succeeded')"
+echo "BACKUP_FAIL_COUNT=$(printf '%s\n' "$B" | grep -c 'Failed with result')"
+printf '%s\n' "$B" | grep -E 'Deactivated successfully|Succeeded' | tail -2
+printf '%s\n' "$B" | grep -E 'Failed with result' | head -1
+BS="$(find bitget -name backup_bitget_db.sh 2>/dev/null | head -1)"; echo "BACKUP_SCRIPT=$BS"
+[ -n "$BS" ] && grep -n -E 'BACKUP|DEST|/var/backups|python|sqlite' "$BS" | head -30
+ls -la --time-style=full-iso /var/backups/ 2>&1 | head -30
+ls -la --time-style=full-iso /var/lib/quant-bitget/data/ 2>&1 | grep -E '\.sqlite$|total' | head -40
+du -sh /var/lib/quant-bitget/data 2>&1
+df -h / 2>&1
+free -m 2>&1
+echo "== X4b snapshot success gaps since 2026-09-24 UTC =="
+S="$(TZ=UTC journalctl --utc -u dante-bitget-snapshot.service --since '2026-09-24 00:00:00' --no-pager -o short-unix 2>/dev/null | grep 'Deactivated successfully' | cut -d' ' -f1 | cut -d. -f1)"
+echo "SNAP_SUCCESS_SINCE_0924=$(printf '%s\n' "$S" | grep -c .)"
+printf '%s\n' "$S" | awk 'NR>1{g=$1-p; if(g>m){m=g; a=p}} {p=$1} END{print "SNAP_MAX_GAP_SEC=" m " GAP_START_UNIX=" a}'
+
+echo "== X-BLOCK END $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+```
+
+### 8-3. 기대값 / 볼 것
+
+| 항목 | 기대 / 볼 것 | 주의 |
+|---|---|---|
+| X1 | 현재 부팅 시작 ≈ 2026-09-26 08:52 UTC · `KLINES_BOOT0 ≥ 1` · `OOM_HITS_BOOT0=0`이면 **09-26 이후 OOM·재부팅 없음 확정** | 0을 해석하기 전 가시성 확인 |
+| X2 | `dual-screener-bitget` RELOAD가 **09-27 14:21 무렵 · 09-28 02:24 무렵 · 09-29 10:27–10:28 · 09-30 06:00 무렵**에 찍히는지. 09-28 02:24 RELOAD = 설치기가 cron 파일을 실제로 바꾼 직접 증거 | 시각만 대조, 해석은 Claude |
+| X2b | 02:24 이후 `Stopping/Started`·`Reloading` 순서, `X2b_TOTAL_LINES`(잘림 여부 판단용) | |
+| X2c | 사전 백업 안에 cron 사본이 있으면 `WRAP_NONCOMMENT=28`(02:24 직전 펜스 존재 증거). 권한 거부·사본 없음도 그대로 보고 | 주석 제외 개수만 근거(교훈 3) |
+| X3 | 로그 목록(로컬에서 "파일명 시작시각(UTC/KST 구분) ~ mtime" → 점유 구간표로 가공). **Phase 1 실행 가능 창(락 비는 시간대) 후보 3개** 제안 | 이름 스탬프 시간대 혼재 주의(C-8) |
+| X3b | 06:30–06:56 창에 끝난 잡 = 09-30 06:49 락 보유 후보. watchdog 로그 내용 | 열람만 |
+| X4 | 백업 **마지막 성공 시각(없으면 "기록 범위 내 성공 0")** · 처음 보이는 기록 시각(journal 보존 한계일 수 있음) · 백업 대상·저장 위치 · DB 크기 합계 · 디스크 여유 · 메모리 | 백업 수동 실행 금지 |
+| X4b | `SNAP_MAX_GAP_SEC`(스냅샷 최장 공백, 초) | |
+
+### 8-4. L-항목 (로컬 코드·git만)
+
+| # | 내용 |
+|---|---|
+| L5 | `deploy_bitget_factory.sh`가 dashboard·heatmap을 `disable` + `reset-failed` 하는 줄과 그 이유(주석·커밋 메시지). 의도된 퇴역인지 1줄 결론 |
+| L6 | `git diff --stat 1e38166 8a6da21 -- bitget/deploy/systemd/ bitget/deploy/deploy_bitget_factory.sh` → 라이브 유닛(09-28 설치)이 현재 저장소와 어긋나는지 |
+| L7 | `bitget_market_data_snapshot.sqlite`를 **읽는** 모듈 목록(파일:줄) — 스캔 입력인지, 대시보드·리포트용인지 |
+| L8 | `update_bitget.sh`의 `git restore .` 줄과 조건, 버리기 전에 diff를 어디 남기는지(없으면 "없음"). git을 어느 사용자로 실행하는지 |
+| L9 | W1의 09-26 05:26:50 `restart dante-bitget-async` 줄의 `TTY`/`PWD` 원문 · `watchdog.py`의 자동 재시작 대상 목록 |
+
+---
+
+## 9. Phase 1 착수 조건 (갱신)
+
+| # | 조건 | 상태 |
+|---|---|---|
+| 1 | Phase 0c SUB_DONE | ✅ |
+| 2 | 락 점유 시각표 → Phase 1 실행 창 · SKIPPED_LOCK 처리 · `timeout` 금지 · 완료 확인(`parallel_run_state.json`·`started_at_utc`) | X3 |
+| 3 | 09-28: 명령 ✅ 확정 · 원인 직접 증거 X2 · 장애 원인 = 로그 근거 없음 → X1 + 디렉터 증상 1줄로 재발성 판정 | X1·X2 + 디렉터 |
+| 4 | **`CAT-L-BACKUP-01` 완료**(승격) · snapshot은 X4b·L7로 비차단 여부 판정 | 다음 창 |
+| 5 | X0 비밀 문자열 해소 | 최우선 |
+| 6 | queue-worker 일일 재시작 → Phase 1 설계에 "예정된 재시작"으로 반영(조사 결과는 비차단) | 등록 |
+
+**작업 순서(제안)**: X0 → X-블록 + L5–L9 → Claude 판정 → `CAT-L-BACKUP-01`(다음 창) → Phase 1 Handoff. 큐 원칙 유지: 11번 대형 백필은 8번(cutover) 종결 후.
+
+---
+
+## 10. 출력 형식 체크
+
+- **SSOT 변경**: `CAT-L_인프라배포.md` 규칙 4 주의 1줄(§11) · 05 · NEXT_ACTION · 06 실패기록(X2 확정 후) · 09 · NEXT_STEP · 신규 등록 `CAT-L-QW-RESTART-01`
+- **SSOT 비변경**: 코드 0 · 서버 0(X-블록 읽기전용) · 게이트·NAV·CAT-F/G/I/N/B/D 0 · cron·slice·유닛·`.env`·`BITGET_PIPELINE_SSOT` 0 · `ENABLE_REAL_EXECUTION` OFF
+- **SPOT/FUT**: 해당 없음(운영 절차). 단 §5의 canary는 FUT 스캔 — 조사 시 FUT 분기로 다룸
+- **인접 CAT**: CAT-A(락·queue-worker) · CAT-B(snapshot 소비자, L7 결과에 따라) · CAT-F(A5 — 범위 밖)
+- **롤백**: 문서 커밋 revert. 서버 변경 없음
+- **Critical**: 현재 없음. **X0이 비밀값이면 즉시 Critical**
+
+---
+
+## 11. 문서 갱신 (붙여넣을 문구)
+
+**`05_진행로그.md` 최상단**
+```markdown
+## CAT-L-CUTOVER-01 Phase 1 선행 W-블록 회신 · Claude 판정 [2026-10-01]
+실행본=Handoff v2 원문(Claude 재계산: W bbf39d61… · W3b 0e5a8482… 일치). CAT-L 규칙 1–7 원문 일치.
+09-28: 디렉터가 터미널에서 update_bitget.sh 3회(01:48·01:54·02:24 UTC). 02:24 → deploy_bitget_factory → install_bitget_cron(root, HEAD 1e38166 구 생성기) = FENCE-02 회귀 원인(강하게 시사, X2로 확정 예정). 근본 원인 = 라이브 수동 변경이 SSOT에 없던 상태. FENCE-03이 재발 차단.
+로그상 09-26 08:52 UTC 이후 VM 재시작 0 · 확인 구간 OOM 0 → "서버 터짐" 근거 없음(디렉터 증상 1줄 대기).
+backup = python 미존재로 최소 09-23부터 매일 실패 → CAT-L-BACKUP-01을 Phase 1 선행으로 승격. snapshot = 의도된 양보가 exit 1(비차단 후보).
+신규 등록: CAT-L-QW-RESTART-01(queue-worker 매일 15:44–15:46 UTC watchdog 재시작, canary 스캔 중단 가능성).
+비밀 문자열 1줄 미특정 → X0 즉시. Claude 정정 C-6 갱신·C-8·C-9.
+Phase 1 보류.
+```
+
+**`NEXT_ACTION.md`**
+- CUTOVER 행: `Phase 0c SUB_DONE · Phase 1 보류 · X0 → X-블록(읽기전용) 대기 · 선행: CAT-L-BACKUP-01`
+- BACKUP-01 행: `등록 · **Phase 1 선행** · 원인 확정(python 미존재) · Handoff는 X4 회신 후 다음 창`
+- 신규: `CAT-L-QW-RESTART-01 | 등록 · 조사(읽기전용부터) · Phase 1 비차단`
+
+**`CAT-L_인프라배포.md` 규칙 4 아래 주의 1줄**
+```markdown
+   - 주의(2026-10-01): `update_bitget.sh`는 서버 작업트리의 tracked 변경을 `git restore .`로 경고 없이 버린다(2026-09-28 실증). 서버에서 직접 고친 파일이 있으면 먼저 저장소로 옮긴 뒤 실행.
+```
+
+**`06_검증체크리스트_및_실패기록.md`** — **X2로 확정된 뒤에만** 추가:
+```markdown
+- CAT-L-FENCE-02 회귀(2026-09-28 02:24 UTC): 장애 대응 중 update_bitget.sh → install_bitget_cron.sh(root)가 origin 구 생성기로 cron 재생성 → 수동 적용 wrapper 소실. 근본 원인: 라이브 수동 변경이 SSOT에 없었음. 재발 방지: CAT-L-FENCE-03(마커 + pull 전 가드).
+```
+
+**`09_디렉터_쉬운요약.md`**
+```markdown
+✅ Cursor가 서버에서 돌린 확인이 Claude가 쓴 내용과 정확히 같은 것으로 다시 증명됐어요.
+🔍 9/28 안전장치가 사라진 이유를 거의 찾았어요. 디렉터님이 서버를 살리려고 업데이트를 돌렸을 때, 서버에 있던 코드가 안전장치가 없는 옛날 판이었어요. 디렉터님 잘못이 아니라, 안전장치 코드가 아직 공식 저장소에 안 올라가 있었던 게 원인이에요. 지금은 이런 일이 생기면 자동으로 멈추는 장치가 있어요.
+🩺 기록상 9/26 오후 이후 서버가 꺼졌다 켜지거나 메모리가 터진 흔적은 없어요. 그래서 "터졌다"고 느끼신 순간 무엇을 보셨는지가 중요해요.
+🔴 자동 백업은 진짜로 매일 실패하고 있었어요(필요한 프로그램 이름을 못 찾음). 48시간 관찰보다 백업 고치기를 먼저 해요.
+💡 팁: ① 서버가 이상할 때 '업데이트 스크립트'는 고치는 도구가 아니라 새 코드를 까는 도구예요. 장애 때는 Lightsail에서 재시작만 하고 알려 주세요. ② 서버 주소는 지금 3.36.90.195예요. Lightsail에서 '고정 IP'를 붙여 두면 껐다 켜도 주소가 안 바뀌어요(인스턴스에 붙어 있는 동안 무료).
+```
+
+**`NEXT_STEP`**
+```markdown
+다음 할 일: Cursor가 ① 비밀 문자열 1줄 확인(X0, 컴퓨터 안에서만) ② 서버 "보기만" 확인(X-블록) ③ 코드 읽기 5가지(L5~L9). 그다음 백업 고치기(BACKUP-01) → 48시간 관찰(Phase 1).
+디렉터: 질문 1개 — "서버가 터졌다 / 접속이 안 된다"고 느끼신 순간 화면에 보인 것 한 줄.
+```
+
+---
+
+## 금지 (이번)
+
+X-블록 외 서버 명령 일체 · `sudo` · 백업/스냅샷 수동 실행 · 백업 스크립트 수정 · dashboard·heatmap enable · 유닛 재설치 · 서버에서 `chmod`/`git update-index`/`git restore` · pyc 삭제 · `--cutover-check`·`--start-parallel` · `.env` 수정 · LANE_FULLBT 파일 · 주식 쪽 파일 · `BITGET_PIPELINE_SSOT` · C-2 · MDD5% · live · `ENABLE_REAL_EXECUTION`
+
+## 완료 정의
+
+X0 결과(먼저) + 이 Handoff 커밋 해시 + X-블록 추출 sha256 + 출력(스냅샷 경로·해시·판정 줄 원문) + L5–L9 + §11 문서 갱신 → `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX. Claude 판정 전 Phase 1·BACKUP-01 착수 금지.
+
+## sub-phase ID
+
+`CAT-L-CUTOVER-01` (Phase 1 선행 점검 — 잔여)
+
+---
+
+# ARCHIVE (이전 Handoff · P0c확정/P1선행 W-블록)
+
 # CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0c 판정(SUB_DONE) + Phase 1 선행 W-블록(읽기전용)
 
 > **작성**: Claude Pro (Architect) · 2026-10-01
