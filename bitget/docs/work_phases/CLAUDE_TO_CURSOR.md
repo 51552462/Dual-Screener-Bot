@@ -1,4 +1,371 @@
-# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0b (진단 전용 — 수정 금지)
+# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0c 확정 심사 — 스크립트 3건 줄 단위 검토 + V-블록(읽기전용)
+
+> **작성**: Claude Pro (Architect) · 2026-10-01
+> **입력**: `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX「[MASTER] wrapper 스크립트 3건 원문」 — Claude 프로젝트 스냅샷(2026-09-30 12:09 기준)에서 원문 3건 확인
+> **대조한 Handoff**: `CLAUDE_TO_CURSOR.md`「Phase 0(사전점검)」 전문 · 「Phase 0c(checks 갱신)」 요약본. **Phase 0c 배포 Handoff 원문은 스냅샷에 없음**(§3 C-1)
+> **CAT**: CAT-L 🟡 (deep) · CAT-A 읽기 참조만(runtime lock) · 코드 변경 0 · 서버 변경 0 · Critical 해당 없음
+> **이 파일**: `bitget/docs/work_phases/CLAUDE_TO_CURSOR.md` 상단에 **전문** 붙여넣기(요약 금지 — §5 규칙 6). 커밋·push 후 그 해시를 OUTBOX에 적고 나서 §4 V-블록 실행.
+> **시각 표기**: 전부 UTC (KST는 괄호)
+
+---
+
+## 0. 결론 (디렉터용)
+
+1. 3건 원문에서 **위험 동작은 0** — 설치기 · `update_bitget.sh` · `--start-parallel` · `BITGET_PIPELINE_SSOT` 변경 · `.env` 쓰기 · 서비스 재시작 · `sudo` 전부 본문에 없음. Cursor의 서술은 본문 대조로 사실. **Phase 0c 결과(Bot-2 `8a6da21` architecture PASS)를 무효화할 사유 없음.**
+2. 대신 **결함 3건**: ① deploy가 pull **전** cron 안전장치(`--diff-live`) 확인을 건너뜀 ② "8a6da21 맞나" 확인이 pull **후**(순서 역전) ③ p0가 `bitget.sh --cutover-check`를 120초에 강제 종료 — **대기 중이었는지 실행 중이었는지 미확정**(이번 검토의 유일한 미확정).
+3. 상태: Phase 0c **원문 검토 완료 · 확정 대기** — §4 V-블록(서버 읽기전용) + L-항목(로컬) 회신 → Claude OK → SUB_DONE. **Phase 1 보류 유지.**
+
+---
+
+## 1. 판정 요약
+
+| 스크립트 | 실행 (UTC) | 서버 상태 변경 | Handoff 대조 | 판정 |
+|---|---|---|---|---|
+| `cutover01_p0.sh` (커밋 `29e9c8a`) | 09-30 06:49–06:53 | 본문상 없음(`/tmp` 제외). **단 11행 `bitget.sh --cutover-check` 내부 동작 미확정** | 명령 = Phase 0 Handoff Step 1–3 그대로. 추가(Handoff 밖) = `timeout 120` · `.env` source + `check_cutover_readiness()` 직접 호출 · `/tmp` tee | **수용** — L1·D1로 1건 종결 필요 |
+| `cutover01_p0c_arch.sh` (미커밋) | 09-30 09:19 | 없음(`/tmp` 제외) | 스냅샷에 지시 근거 없음(0c 요약본에 서버 실행 지시 없음, 당시 OUTBOX "Bot-2 재실행은 Claude 판단") → **Handoff 밖으로 기록** | **수용** |
+| `cutover01_p0c_deploy.sh` (미커밋) | 09-30 09:42:40 | **git 워킹트리 `c1ffe3f`→`8a6da21`** (3건 중 유일) | 명령 구조(커밋→push→pull→덤프)는 배포 Handoff 유래 정황 인정(배포 OUTBOX의 Step 1/2/3 구성·"Handoff는 최상위 passed false 가능을 예상" 문구). 원문 대조는 불가(§3 C-1). 파일화·tee·`.env` source = Handoff 밖 | **수용** — 결함 2건 사후확인(V0·V1·L2) |
+
+`cutover01_p0.sh`의 "Claude 지시 여부"는 이제 판정 가능: **명령은 Handoff, 스크립트 파일과 3개 추가 동작은 Handoff 밖.** Cursor 정정("Handoff에 없던 것으로 취급")은 실제보다 보수적이며, 위 분류로 기록할 것.
+
+---
+
+## 2. 줄 단위 검토
+
+줄 번호 = OUTBOX에 붙인 각 스크립트의 1행 기준.
+
+### 2-1. `cutover01_p0.sh` (34줄)
+
+| 줄 | 내용 | 판정 | 메모 |
+|---|---|---|---|
+| 1–2 | shebang · 주석 "read-only" | 주장 | 11행 확인 전까지 사실인 범위는 "본문에 쓰기 명령 없음"까지 |
+| 3 | `set -u` | OK | |
+| 4–5 | `INSTALL_ROOT` · `cd` | OK | 기본 경로 = Handoff와 동일 |
+| 6–7 | `/tmp/cutover01_p0.out` tee | 서버 쓰기 1 | 증거물 — 보존(§4-4) |
+| 8 | TS · `git rev-parse --short HEAD` | OK | 읽기 |
+| 10–12 | `set +e` · **`timeout 120 ./bitget/deploy/bitget.sh --cutover-check`** · RC 출력 | ★ **미확정** | 명령 = Handoff Step 1. `timeout`은 Handoff 밖. RC=124 = 120초 시점 SIGTERM. CAT-A상 `bitget.sh` 모드는 **Bitget runtime lock 직렬** → "락 대기 중 종료" 가설 유력(09-26 MASTER 6에도 "로그 비어 있는 채 지연" — 같은 증상 2회째). "실행 중 종료"였다면 러너 `cutover_check` 모드가 텔레그램 전송(`--skip-telegram` 미지정 시)·실행 기록 쓰기를 하던 중 끊겼을 수 있음. GNU `timeout`은 기본(`--foreground` 없음) 프로세스 그룹 전체에 SIGTERM → 고아 프로세스 가능성 낮음, 단 `setsid`/백그라운드 자식은 예외 → **L1·D1** |
+| 13 | `set -e` | **결함** | 복원이 아니라 errexit **신규 활성**(3행에서 안 켰음). 이후 24행 python이 실패하면 25행 전에 종료 → `JSON_DUMP_RC`는 **0만 찍힐 수 있는 줄**. 완주 증거는 33행 `=== DONE` 출력 존재(V3) |
+| 15–20 | `set +u`·`set +a`·`.env`/`bitget/.env` source(`set -a`)·`set -u` | Handoff 밖 | 쓰기 아님. 단 source = `.env`를 셸 코드로 실행 + 모든 키(API 키 포함) export. 러너의 env 로딩(파이썬)과 따옴표·`$` 해석이 다를 수 있음 — 이번 판정 키 3개는 단순값이라 **판정 영향 없음**. 16행 `set +a`는 중복(무해) |
+| 21–23 | PYTHONPATH · venv python | OK | |
+| 24 | `check_cutover_readiness()` 직접 호출 | Handoff 밖(대체 경로) | **Phase 0 판정 JSON의 실제 출처.** Phase 0 OUTBOX엔 "JSON dump는 완료"뿐, 출처가 이 경로라는 건 Phase 0b Step 5(Claude 질문 후)에 명시 — 공개 지연. 부작용 여부 → **L4** |
+| 25 | `JSON_DUMP_RC=$?` | 증거력 없음 | 13행 때문 |
+| 26–28 | env 3키 grep (`.env`, `bitget/.env`) | OK | Handoff Step 2 + `bitget/.env` 확장. 비밀값 출력 없음 |
+| 29–32 | `pgrep` 2 · `systemctl list-units` | OK | Handoff Step 3. **32행 출력의 `dante-bitget-backup`/`-snapshot` failed · watchdog activating은 Claude가 Phase 0 판정에서 누락**(§3 C-3) |
+| 33–34 | DONE · WROTE | OK | 33행 문구는 본문상 사실 |
+
+출처 정황: 커밋 `29e9c8a` 시각 06:54:44 UTC(15:54:44 KST) = 실행 종료 약 1분 뒤 → **실행본 = 커밋본 정황 강함.** L3로 이후 수정 없음만 확인.
+
+### 2-2. `cutover01_p0c_arch.sh` (22줄)
+
+| 줄 | 내용 | 판정 | 메모 |
+|---|---|---|---|
+| 1–2 | 주석 | 주장 | |
+| 3 | `set -u` (errexit 없음) | OK | 21행 RC가 정확함(2-1과 대조) |
+| 4–7 | 경로 · `/tmp` tee | OK / 서버 쓰기 1 | 보존 |
+| 8–9 | TS · HEAD | OK | 실행 당시 HEAD=`c1ffe3f` → **구버전 체크**가 돌았음 |
+| 10–11 | `architecture_checks.py` mtime 출력 | 좋음 | "어느 버전 코드가 돌았나"를 남기는 습관. 이후 표준으로 |
+| 12–14 | PYTHONPATH · python | OK | |
+| 15–19 | `.env` source | 불필요 | 구조 검사에 env 전체가 필요할 이유 없음. 특정 키 의존이 있으면 L4에서 밝힐 것. 쓰기 아님 |
+| 20 | `run_architecture_checks()` (c1ffe3f판) | 읽기 추정 | **L4**(c1ffe3f판) |
+| 21–22 | RC · WROTE | OK | |
+| (실행 흔적) | 끝의 `$'\r'` 경고 | ★ **출처** | 디스크 파일은 LF인데 실행 스트림 끝에 CR이 섞였음 = **실행된 바이트 ≠ 디스크 파일**의 실증. 이번엔 빈 줄이라 무해. 로컬 파이프 실행 금지 근거(§5 규칙 2) |
+
+### 2-3. `cutover01_p0c_deploy.sh` (29줄)
+
+| 줄 | 내용 | 판정 | 메모 |
+|---|---|---|---|
+| 1–2 | 주석 "No installer, no update_bitget.sh" | 사실 | 단 `update_bitget.sh`를 안 거치면서 그 [0/7] **pull 전 `--diff-live`도 함께 빠짐** |
+| 3 | `set -u` | OK | 12·28행 RC 정확 |
+| 4–9 | 경로 · `/tmp` tee · TS · BEFORE | OK / 서버 쓰기 1 | |
+| (9–10 사이, 부재) | pull 전 `--diff-live` · `git status` | ★ **결함** | FENCE-03 Spec 4("변경 작업(pull/재시작 등) **이전**에 `--diff-live`") 위반. pull 범위에 생성기 변경(`eb80c58`)이 들어 있었는데 가드 미확인. 원인 일부는 Claude(§3 C-2). 사후 확인 = **V1** |
+| 10 | `git fetch --quiet` | 경미 | RC 미기록(11행 실패로 드러나므로 영향 작음) |
+| 11 | `git pull --ff-only` | ★ **서버 변경** | 3건 중 유일한 상태 변경. upstream tip으로 이동 — **대상 SHA 고정 아님** |
+| 12 | `PULL_RC` | OK | |
+| 13 | `AFTER=$(git log -1 --format='%h')` | 경미 결함 | 짧은 해시는 저장소가 커지면 7→8자 이상으로 늘 수 있음 → 오탐 STOP. 전체 SHA로 비교 |
+| 14–18 | 8a6da21 비교 → 불일치 시 `exit 9` | ★ **결함(순서)** | 고정이 **이동 후**. origin에 8a6da21 이후 커밋이 있었다면 서버는 미검토 커밋에 머문 채 "STOP"만 함(되돌림 없음). 이번엔 일치라 실해 없음. 올바른 순서는 §5 레시피 |
+| (부재) | 서비스 재시작 없음 | 범위상 정당 | 결과: 상주 서비스 = `c1ffe3f` 코드(메모리), cron이 새로 띄우는 잡 = `8a6da21` 코드 → **혼합 버전**. `8a6da21` 커밋은 2파일이지만 **pull 범위 `c1ffe3f..8a6da21`**엔 `29e9c8a`·`eb80c58` 등이 포함 → **L2**로 런타임 코드 포함 여부 확인 |
+| 19–21 | PYTHONPATH · python | OK | |
+| 22–26 | `.env` source | 불필요 | 2-2와 동일 |
+| 27 | `run_architecture_checks()` (8a6da21판) → `passed=true` | **유효** | 해시 일치 확인 뒤 실행이라 결과 신뢰 가능. **L4**(8a6da21판) |
+| 28–29 | RC · WROTE | OK | |
+
+### 2-4. Cursor 자가점검 4건 + Claude 추가 발견
+
+Cursor 4건 — **전부 동의.**
+1. `--cutover-check` 쓰기 여부 미확인 → 이번 검토의 유일한 미확정. L1·D1.
+2. `.env` source → 맞음. 이번 판정값엔 영향 없음.
+3. `/tmp` 쓰기 → 맞음. 증거물로 보존.
+4. deploy만 워킹트리 변경 → 맞음.
+
+Claude 추가 발견(Cursor 미기재): p0 13행 errexit로 RC 무력화 · deploy pull 전 가드 생략 · 해시 고정이 pull 후 · 짧은 해시 비교 · pull 범위 ≠ 커밋 범위(혼합 버전) · CR 경고 = 실행본≠디스크본 실증 · Phase 0 Step 3 failed unit 미처리.
+
+---
+
+## 3. Claude 측 누락 — 자기 정정
+
+| # | 누락 | 결과 | 조치 |
+|---|---|---|---|
+| C-1 | Phase 0c **배포 Handoff를 `CLAUDE_TO_CURSOR.md`에 전문으로 남기지 않음**(현재 파일엔 checks 갱신 요약 + `Downloads/` 원문 포인터뿐) | p0c_deploy 명령이 Handoff와 같았는지 원문 대조 불가 | §5 규칙 6 |
+| C-2 | 배포 단계에 **pull 전 `--diff-live`가 빠짐.** 이 규칙은 내가 하루 전 FENCE-03 Spec 4로 정한 것 | 배포 Handoff가 맨 `git pull --ff-only`였다면 **내 Handoff 결함**(C-1 때문에 확정 불가 — 양쪽 다 고침) | V1 사후 확인 · §5 레시피 |
+| C-3 | Phase 0 Step 3 출력의 `dante-bitget-backup`/`dante-bitget-snapshot` **failed**, watchdog **activating**을 판정에 반영 안 함(기준이 "Step 3 이상 없음"이었는데 레거시 프로세스만 봄) | 미처리로 떨어져 있었음 | V6 · Phase 1 착수 조건 |
+| C-4 | `--cutover-check` RC=124를 Phase 0b에서 "참고, 낮은 우선순위"로 내림 | 같은 지연 2회째(09-26·09-30). HIST 절차의 Phase 1(`--start-parallel`)·Phase 3(48h 후 `--cutover-check`)이 같은 `bitget.sh` 경로를 씀 | **Phase 1 착수 조건으로 격상** · L1 |
+
+---
+
+## 4. 확정 심사 — V-블록(서버, 읽기전용) + L-항목(로컬)
+
+### 4-0. 실행 규칙 (이번 V-블록)
+
+- 이 Handoff를 먼저 커밋·push. **V-블록은 아래 텍스트를 바이트 그대로** 실행. 수단은 Git Bash(LF)에서 `ssh <bot2> 'bash -s' <<'EOF'` … `EOF`(따옴표 EOF로 로컬 확장 차단) 또는 인터랙티브 붙여넣기.
+- `set -e` 넣지 말 것(한 줄 실패가 나머지를 막지 않게). **`$'\r'` 오류가 한 줄이라도 나오면 즉시 중단·보고.**
+- 따옴표 문제로 한 줄이라도 고쳤으면 고친 줄을 출력과 함께 OUTBOX에.
+- 출력은 **요약 없이 전문** OUTBOX. 해석은 출력 아래 별도 칸.
+- V-블록 외 서버 명령 0. `sudo` 0.
+
+### 4-1. V-블록
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}" || exit 1
+echo "== V-BLOCK START $(date -u +%Y-%m-%dT%H:%M:%SZ) user=$(id -un) =="
+
+echo "== V0 HEAD / worktree / owner =="
+git rev-parse HEAD
+echo "PORCELAIN_ALL=$(git status --porcelain | wc -l) PORCELAIN_CONTENT=$(git -c core.fileMode=false status --porcelain | wc -l)"
+git -c core.fileMode=false status --porcelain | head -20
+TZ=UTC stat -c '%U %y %n' .git/ORIG_HEAD .git/FETCH_HEAD bitget/validation/architecture_checks.py
+echo "ROOT_OWNED_IN_REPO:"; find . -xdev -path ./venv -prune -o -user root -print 2>/dev/null | head -20
+
+echo "== V1 cron drift guard =="
+PYTHONPATH="$PWD" python3 bitget/deploy/generate_bitget_crontab.py --diff-live; echo "DIFF_LIVE_RC=$?"
+
+echo "== V2 heavy slice =="
+systemctl show bitget-cron-heavy.slice -p ActiveState -p MemoryHigh -p MemoryMax --no-pager
+
+echo "== V3 /tmp evidence =="
+ls -l --time-style=full-iso /tmp/cutover01_*.out
+sha256sum /tmp/cutover01_*.out
+grep -n -E '^=== |_RC=|^HEAD=|^BEFORE:|^AFTER:|HASH_MISMATCH|^WROTE ' /tmp/cutover01_*.out
+
+echo "== V4 kernel OOM 2026-09-30 06:45-10:00 UTC =="
+K="$(TZ=UTC journalctl -k --since '2026-09-30 06:45:00' --until '2026-09-30 10:00:00' --no-pager 2>&1)"
+echo "KLINES=$(printf '%s\n' "$K" | wc -l)"; printf '%s\n' "$K" | head -3
+echo "OOM_HITS=$(printf '%s\n' "$K" | grep -c -i -E 'out of memory|oom-kill')"
+
+echo "== V5 ssh accepted since 2026-09-26 UTC =="
+S="$(TZ=UTC journalctl --utc -t sshd -t sshd-session --since '2026-09-26 00:00:00' --no-pager 2>&1 | grep -o -E '^.*Accepted (publickey|password) for [^ ]+ from [^ ]+')"
+echo "SSH_ACCEPTED_COUNT=$(printf '%s' "$S" | grep -c .)"
+printf '%s\n' "$S"
+
+echo "== V6 units =="
+systemctl --failed --no-legend --plain
+for u in $(systemctl list-units --all --no-legend --plain 'dante-bitget-*' | cut -d' ' -f1); do
+  systemctl show "$u" -p Id -p ActiveState -p SubState -p Result -p ExecMainStatus -p NRestarts -p ActiveEnterTimestamp -p ExecMainStartTimestamp --no-pager; echo
+done
+
+echo "== V-BLOCK END $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+```
+
+### 4-2. 기대값 (Cursor 1차 대조 → 불일치는 고치지 말고 보고)
+
+| 항목 | 기대값 | 불일치 시 |
+|---|---|---|
+| V0 | HEAD가 `8a6da21`로 시작(09-30 이후 서버 pull 없음) · `PORCELAIN_CONTENT`의 수정(M)·삭제(D) 0 (`??` 추적 안 되는 파일은 목록만) · `.git/ORIG_HEAD` 소유자 `ubuntu`, 시각 ≈ 09-30 09:42:4x · `ROOT_OWNED_IN_REPO` 0줄 | `FETCH_HEAD`가 09:42:40 이후면 V5 세션과 대조해 설명 |
+| V1 | `DIFF_LIVE_RC=0` · `PRISTINE` · `BODIES_EQUAL=yes` · `WRAP=28` · SHA가 부트스트랩 기록 `f36f722489ce…66b21dd`와 동일 | 보고만. **설치기 실행 금지** |
+| V2 | `MemoryHigh=1288490188` · `MemoryMax=1610612736` (ActiveState는 참고) | 보고만 |
+| V3 | 3파일 존재 · mtime ≈ 06:53 / 09:19 / 09:42 UTC (**그 이후 시각이면 재실행 흔적**) · p0: `CUTOVER_CHECK_RC=124`·`JSON_DUMP_RC=0`·`=== DONE` 포함 · arch: `HEAD=c1ffe3f` · deploy: `PULL_RC=0`·`AFTER: 8a6da21`, `HASH_MISMATCH` 없음 | 파일이 없으면 "없음" + 재부팅 여부 |
+| V4 | `KLINES ≥ 1`이고 head 3줄에 권한 오류 문구 없음 · `OOM_HITS=0` | 권한 오류면 **"0"을 안전으로 해석 금지**(교훈 2) |
+| V5 | `SSH_ACCEPTED_COUNT ≥ 1` — **V-블록 세션 자신이 반드시 포함**(0이면 가시성 실패로 보고). 각 줄 옆에 Cursor가 "무엇을 했나(Handoff 절 / 공개된 스크립트명)" 주석. IP 마지막 옥텟은 가려도 됨 | 설명 못 하는 줄은 지우지 말고 **"설명 불가"**로 |
+| V6 | backup·snapshot 실패의 `Result`/`ExecMainStatus`, watchdog의 `SubState`·`NRestarts` 그대로 | 판정은 Claude. 재시작·reset-failed 금지 |
+
+### 4-3. L-항목 (로컬 코드·git만 — 서버 실행 0)
+
+**L1 — `bitget.sh --cutover-check` 경로** (코드 읽기, 파일:줄로)
+- (a) 그 분기가 실제 실행하는 명령(러너 `--mode cutover_check`? `--skip-telegram` 여부)
+- (b) Bitget runtime lock 방식(flock fd / `flock -w` / PID 파일), 대기 vs 즉시 skip, 대기 상한
+- (c) 그 모드가 쓰는 것: 텔레그램 전송 · DB insert(ops_events·실행 기록) · 파일(`parallel_run_state.json` 등)
+- (d) `setsid`/백그라운드로 프로세스 그룹을 벗어나는 자식 유무
+- (e) 결론 1줄: 06:49–06:51 RC=124가 "락 대기 중 종료"인지 "실행 중 종료"인지. 코드만으로 확정 불가면 **판별에 필요한 서버 로그 위치만 적고 실행하지 말 것**(다음 Handoff에서 Claude가 명령 지정)
+- (f) `--start-parallel`도 같은 락 경로인지 1줄 — Phase 1 설계 입력
+
+**L2 — pull 범위**
+```bash
+git log --format='%h %ad %s' --date=iso-strict c1ffe3f..8a6da21
+git diff --stat c1ffe3f 8a6da21
+```
+파일마다 분류: 런타임(상주 서비스·cron 잡이 import) / 체크·테스트 / 문서 / 배포도구. **런타임 1건이라도 있으면 표시.**
+
+**L3 — 출처**
+- `git log --format='%h %ad' --date=iso-strict -- bitget/docs/work_phases/snapshots/cutover01_p0.sh` → `29e9c8a` 1건이어야
+- 로컬 3파일 `sha256sum` + 최종 수정시각(UTC). arch/deploy 수정시각이 실행 시각(09:19 / 09:42:40) **이후**면 "현재본 ≠ 실행본 가능" 명시
+- `snapshots/CAT-L-CUTOVER-01_P0_` / `_P0c_BOT2_` / `_P0c_DEPLOY_20260930.md`가 `/tmp` 출력의 **전문인지 발췌인지** 각 1줄
+
+**L4 — 부작용 지점**
+- 대상: `check_cutover_readiness`(`bitget/validation/cutover.py`), `run_architecture_checks`(`bitget/validation/architecture_checks.py`) — **c1ffe3f판과 8a6da21판 둘 다**(`git show c1ffe3f:<path>`). 09:19엔 구판, 09:42엔 신판이 돌았음
+- 찾을 것: 파일 쓰기(`open(...,'w'/'a')`·`write_text`·파일로 `json.dump`) · DB(`sqlite3.connect`·`INSERT`) · 네트워크(`requests`·`ccxt`·telegram·`send_`) · `subprocess` · 호출 경로 모듈의 import 시점 부작용
+- env 의존: `.env`가 필요한 키가 있는지(왜 source했는지의 답)
+- 결과: 파일:줄 목록 + "순수 읽기 / 쓰기 있음" 판정 1줄
+
+### 4-4. 증거물 보존
+
+- 로컬 `cutover01_p0c_arch.sh`·`cutover01_p0c_deploy.sh`: **삭제·수정 금지.** L3 sha256 기록 후 **현 상태 그대로** `snapshots/`에 커밋(증거물). "재실행 금지"는 파일 본문이 아니라 05 로그에 적는다(해시 보존).
+- 서버 `/tmp/cutover01_*.out`: **삭제 금지**(V3 sha256 기록). `/tmp`는 재부팅 등으로 사라질 수 있으니 V-블록을 미루지 말 것. 정리 여부는 Phase 0c 확정 때 Claude가 지정.
+
+---
+
+## 5. SSOT 변경 Spec — `CAT-L_인프라배포.md` 운영 규칙 보강
+
+기존 「서버 실행 스크립트 공개 의무(2026-09-30 신설)」는 **유지**하고 바로 아래에 추가.
+
+```markdown
+## 운영 규칙 — 서버 실행 경로 (2026-10-01, 공개 의무 규칙 보강)
+
+1. Bot-2에서 실행 가능한 것은 둘뿐:
+   (a) Handoff(`CLAUDE_TO_CURSOR.md`)에 원문으로 적힌 명령·블록 — 내용 바이트 동일. 한 줄이라도 고쳤으면 고친 줄을 OUTBOX에.
+   (b) 커밋·push되어 서버에 pull된 스크립트를 **서버 디스크에서** 실행 — 실행 직전 `git rev-parse HEAD` + `sha256sum <스크립트>` 출력을 OUTBOX에.
+2. 로컬 미커밋 파일을 ssh로 파이프해 실행 금지 — 실행본 증명 불가, CR 혼입 실증(2026-09-30 `$'\r'`).
+3. 상태를 바꾸는 명령(pull/merge · 설치기 · restart · `.env`/DB/state 파일 쓰기 · `bitget.sh --start-parallel` 등)에 `timeout`을 씌우지 않는다. 오래 걸리면 끊지 말고 원인(락 대기 등)부터 회신.
+4. 서버 코드 이동은 두 경로만: 전체 배포 = `update_bitget.sh`(pre-pull `--diff-live` 내장) / 코드만 이동 = 아래 표준 pull 레시피. **맨 `git pull` 금지.**
+5. 진단용 일회성 실행에서 `.env` 전체 source 금지 — 필요한 키만 grep. 러너와 같은 env 조건이 필요하면 러너 경로(`runner --mode … --skip-telegram`)를 Handoff에 명시.
+6. (Claude 의무) 서버 명령이 들어간 Handoff는 요약이 아니라 **전문**을 `CLAUDE_TO_CURSOR.md`에 둔다. `Downloads/` 원문만 있는 상태 금지.
+```
+
+**표준 pull 레시피** (코드만 이동 — 설치기·재시작 없음. 이 레시피도 Handoff 인라인으로만 실행):
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}" || exit 1
+EXPECT=<Handoff가 지정한 40자 전체 SHA>
+[ -z "$(git -c core.fileMode=false status --porcelain --untracked-files=no)" ] || { echo "STOP: worktree dirty"; exit 1; }
+PYTHONPATH="$PWD" python3 bitget/deploy/generate_bitget_crontab.py --diff-live; R=$?; [ "$R" -eq 0 ] || { echo "STOP: pre diff-live RC=$R"; exit 1; }
+git fetch origin || { echo "STOP: fetch"; exit 1; }
+U="$(git rev-parse '@{u}')"; [ "$U" = "$EXPECT" ] || { echo "STOP: upstream=$U expected=$EXPECT"; exit 1; }
+git merge --ff-only "$EXPECT" || { echo "STOP: merge"; exit 1; }
+[ "$(git rev-parse HEAD)" = "$EXPECT" ] || { echo "STOP: HEAD mismatch"; exit 1; }
+PYTHONPATH="$PWD" python3 bitget/deploy/generate_bitget_crontab.py --diff-live; echo "POST_DIFF_LIVE_RC=$?"
+```
+
+- 핵심: **고정(SHA 비교)이 이동보다 먼저**, 비교는 전체 SHA.
+- `POST_DIFF_LIVE_RC`가 0이 아니면(생성기 출력이 바뀐 pull) 설치하지 말고 보고 — 설치는 별도 Handoff.
+- 재시작이 필요한 변경이면 이 레시피가 아니라 `update_bitget.sh` 경로 + 별도 Handoff.
+
+---
+
+## 6. 디렉터 확인·결정
+
+| # | 종류 | 내용 | Claude 권고 |
+|---|---|---|---|
+| D1 | 사실 확인(디렉터만 가능) | **9/30(수) 오후 3:49~3:53 KST**에 텔레그램으로 cutover·점검 결과 류 메시지가 왔는지 | 왔다면 `--cutover-check`가 실제 실행 중이었다는 확증 → 쓰기 경로 점검 필요. 안 왔다면 판별은 L1 코드로 |
+| D2 | 사실 확인 | V5 결과가 오면, 목록 중 디렉터가 **직접** 접속한 세션 표시(없으면 "없음") | — |
+| D3 | 결정 | `snapshots/`의 fence02/03 스크립트 **8건**(추적 6: `4A`·`4D`·`4E`·`B_resume`·`S0`·`fence03_bootstrap` / 미추적 2: `S1`·`B`) 원문·Handoff 대조 시점 — **A** Phase 1 전 / **B** Phase 1과 병행, 별도 sub-phase `CAT-L-SCRIPT-AUDIT-01` | **B.** 그 스크립트들이 만든 결과 상태(cron 28줄·마커·slice 값)는 V1·V2로 직접 확인되고, Phase 1의 서버 변경은 `parallel_run_state.json` 1파일. 단 **V5에 "설명 불가" 세션이 1건이라도 나오면 자동으로 A** |
+| D4 | 승인(에스컬레이션 회신) | "동일 이슈 3회"(FENCE-02 생성기 미푸시 회귀 · A5 서버 반영 미확인 · 미공개 스크립트)의 공통 원인 = **로컬↔서버 경로가 통제·기록되지 않음.** 양쪽 책임: Claude(Handoff 전문 미기록, 검증 명령 오류 — `grep -c` 29, `pgrep` 패턴) / Cursor(미공개 실행, 확인 안 한 서술 2건) | OUTBOX 파이프라인 전면 재설계보다 **§5 규칙 6개 승인**을 권고. 다음 재발 시 재평가 |
+
+---
+
+## 7. 상태 전이 · 다음 단계
+
+- **Phase 0c**: 잠정 SUB_DONE → **원문 검토 완료 · 확정 대기**. V0·V1·V3 + L2·L3·L4 기대값 일치 → Claude OK → **SUB_DONE**.
+- **Phase 1**: **보류 유지.** 아래 전부 충족 시 Claude가 Phase 1 Handoff 별도 발행.
+  1. Phase 0c SUB_DONE
+  2. L1: 124 원인 확정 + `--start-parallel` 락 경로 → Phase 1 실행 방식(시점·대기 처리) 설계 입력
+  3. V6: backup/snapshot 실패 · watchdog activating 설명 — cutover 체크가 watchdog component를 보므로, 관측 창 동안 watchdog이 불안정하면 48h 결과를 해석할 수 없음
+  4. V4 OOM 0(가시성 확인 포함) · V5 세션 전부 설명됨
+  5. D3 결정 · D4 승인
+- **큐 순서 불변**: 11번(CAT-B 갭#4 프로덕션 백필)은 8번 완전 종결 후.
+- **A5-EVENTLOG-01**: 이 Handoff 범위 밖(별도 sub-phase). V6의 서비스 기동 시각(`ActiveEnterTimestamp`)은 그때 재사용 — 이번엔 판정 안 함.
+
+---
+
+## 8. 출력 형식 체크
+
+- **SSOT 변경**: `CAT-L_인프라배포.md` 운영 규칙 보강(§5, 문서만) · 05/NEXT_ACTION/00/09/NEXT_STEP 상태 갱신(§9)
+- **SSOT 비변경**: 코드 0 · 서버 0(V-블록 읽기전용) · 게이트·NAV·CAT-F/G/I/N/B/D 0 · cron·slice·`.env`·`BITGET_PIPELINE_SSOT` 0 · `ENABLE_REAL_EXECUTION` OFF 유지
+- **SPOT/FUT 분기**: 해당 없음 — 배포·검증 절차, `market_type` 무관(V-블록·레시피에 분기 없음)
+- **인접 CAT**: CAT-A(runtime lock — L1 읽기 참조만, 설계 변경 없음. CAT-MAP never_with「CAT-A/CAT-L deploy paths 동시 설계」 해당 없음) · CAT-F(A5-EVENTLOG-01 — 범위 밖, 메모만)
+- **롤백**: 이번 산출물은 문서 규칙 → 해당 커밋 revert. 09-30 pull(`8a6da21`) 되돌림은 현재 불필요 판단. V0·V1·L2에서 이상이 나와도 **Cursor는 아무것도 바꾸지 말고 보고** — 되돌림 방법은 Claude가 지정(사전 승인 없음)
+- **Critical**: 해당 없음
+
+---
+
+## 9. 문서 갱신 (붙여넣을 문구)
+
+**`05_진행로그.md` 최상단**
+```markdown
+## CAT-L-CUTOVER-01 Phase 0c — 스크립트 3건 원문 줄 단위 검토 [2026-10-01] · Claude 판정
+원문: `track_b_CURSOR_TO_CLAUDE.md` 상단 3건. 위험 동작(설치기·update_bitget.sh·--start-parallel·SSOT 플래그·.env 쓰기·restart·sudo) 본문 0 — 확인.
+서버 상태 변경: p0c_deploy.sh의 git pull(c1ffe3f→8a6da21) 1건. 미확정 1건: p0.sh의 `bitget.sh --cutover-check`(timeout 120 → RC 124) 내부 동작.
+결함: deploy pull 전 `--diff-live` 생략(FENCE-03 Spec 4) · 해시 고정이 pull 후 · p0 `set -e`로 RC 무력화 · 짧은 해시 비교.
+p0.sh 지시 여부 판정: 명령=Phase 0 Handoff Step 1–3 / 파일·timeout·.env source+직접 python·tee = Handoff 밖.
+Claude 자기 정정 4건: 배포 Handoff 전문 미기록 · pre-pull 가드 누락 · Phase 0 failed unit 누락 · 124 우선순위 하향.
+증거물: cutover01_p0c_arch.sh·p0c_deploy.sh 현 상태 그대로 커밋(sha256 L3), 재실행 금지. 서버 /tmp/cutover01_*.out 삭제 금지.
+상태: Phase 0c 원문 검토 완료 · 확정 대기(V0–V6 · L1–L4). Phase 1 보류. 서버 실행 = CLAUDE_TO_CURSOR.md V-블록만.
+```
+
+**`NEXT_ACTION.md`** — CUTOVER 행 교체:
+`| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **원문 검토 완료 · 확정 대기**(V-블록/L-항목 회신) · Phase 1 보류 · 서버 실행 = Handoff V-블록만 | track_b_* · OUTBOX=track_b_CURSOR_TO_CLAUDE.md |`
+
+기록 동기화(판정 변경 아님 — 05 로그 기준으로 맞추기): FENCE-02 행 `WAIT_CLAUDE_OK` → `SUB_DONE`(3단계 판정일 2026-10-13) · LANE_FULLBT RUN-2 행 `WAIT_CLAUDE_OK` → `SUB_DONE`.
+경로 정합 1줄 회신: `track_b_NEXT_ACTION.md`(09-14 동기화에서 멈춤)와 `NEXT_ACTION.md` 중 어느 쪽이 SSOT인지. 같은 맥락으로 현재 Handoff 스택은 `CLAUDE_TO_CURSOR.md`이고 `track_b_CLAUDE_TO_CURSOR.md`는 08-20에서 멈춤 — 다음 세션 연속성 팩의 경로 표기를 이에 맞출 것.
+
+**`00_전체현황판.md`** — "다음 Handoff" 행: `CAT-L-CUTOVER-01 Phase 0c 확정 심사(V-블록 읽기전용) · Phase 1 보류`
+
+**`09_디렉터_쉬운요약.md`**
+```markdown
+🔍 지난번 보고 없이 서버에서 돌았던 점검 프로그램 3개를 Claude가 한 줄씩 전부 읽었어요.
+✅ 위험한 일은 없었어요 — 설정 바꾸기, 자동매매 스위치, 프로그램 재시작, 관리자 권한 사용 모두 0.
+⚠️ 고칠 점 3가지: ① 업데이트 직전에 "예약작업 안전장치가 그대로인지" 확인을 건너뜀 ② "정확히 이 버전으로 업데이트" 확인을 업데이트 뒤에 함(순서가 거꾸로) ③ 점검 하나를 2분 만에 강제로 끊었는데, 그때 그냥 기다리던 중이었는지 뭔가 하던 중이었는지 아직 몰라요.
+➡️ 서버를 "보기만" 하는 확인을 한 번 요청했어요. 깨끗하게 오면 이번 단계는 확정, 그다음 "48시간 비교 관찰"을 열지 정해요. 그 전까지 서버에서는 아무것도 바꾸지 않아요.
+```
+
+**`NEXT_STEP`**
+```markdown
+다음 할 일: Cursor가 Claude가 준 "보기만 하는 확인 목록"(V0~V6)을 서버에서 그대로 한 번 실행하고 결과를 고치지 않고 붙여넣기 + 컴퓨터 안에서만 하는 확인 4가지(L1~L4).
+디렉터: 질문 1개(9/30 오후 3:49~3:53 텔레그램 메시지 여부) · 결정 2개(D3 fence 스크립트 감사 시점, D4 규칙 승인).
+```
+
+---
+
+## 금지 (이번)
+
+V-블록 외 서버 명령 일체(pull · 설치기 · restart · `reset-failed` · `--start-parallel` · **`--cutover-check` 재실행** · `.env` 수정 · `sudo`) · 로컬 스크립트 파이프 실행 · 증거물(`/tmp` 3파일, 로컬 2스크립트) 삭제·수정 · fence02/03 스크립트 재실행 · `BITGET_PIPELINE_SSOT` · C-2 · MDD5% · live · `ENABLE_REAL_EXECUTION`
+
+## 완료 정의
+
+이 Handoff 커밋 해시 + V-블록 출력 전문 + L1–L4 + §9 문서 갱신을 `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX에. Claude 판정 회신 전 **Done 아님**.
+
+## sub-phase ID
+
+`CAT-L-CUTOVER-01` (Phase 0c 확정 심사)
+
+---
+
+# ARCHIVE (이전 Handoff)
+
+# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · Phase 0c (architecture_checks 갱신)
+
+> **작성**: Claude Pro (Architect) · 2026-09-30  
+> **선행**: Phase 0b 진단 완료, 4건 전부 (b) 체크 노후화로 Claude 판정.  
+> **범위**: 오직 `validation/architecture_checks.py` (+ 테스트). 게이트/NAV 파일 비접촉.  
+> **원문**: `Downloads/CAT-L-CUTOVER-01_Phase0c_checks_update_Handoff.md`
+
+## 원칙
+게이트 로직·NAV 계산 코드는 1바이트도 안 건드린다. 체크를 무력화하지 않는다 — 지금 구조를 정확히 검증하는 새 기준.
+
+## Spec 1 — pipeline_structure
+필수 단계 이름 **부분집합** + 길이 `>= 19` (권장). 향후 정당한 단계 추가가 또 실패로 뜨지 않게.
+
+## Spec 2 — bitget_shell_daily_audit_guard
+`[[ "$pid" -eq "$$" ]]` 대신 pgrep 가드가 daily_audit 경로에 걸려 있는지. missing vs relocated 구분.
+
+## Spec 3 — weekly_evolution_pipeline
+종단 집합 `{weekly_action_plan, weekly_executive_summary}` — 끝이 집합 중 하나이거나 집합을 포함.
+
+## Spec 4 — portfolio_nav_risk_ssot
+`portfolio_nav_snapshot`은 live_nav_manager, `max_leverage_cap`/`gross_entry_blocked`는 execution_safety를 정답으로. 위치 토큰이 아니라 **연결**(스냅샷 import/호출 + CAT-N `get_portfolio_mdd_snap_cached`).
+
+## 테스트
+각 체크 PASS(현재) + FAIL(불변식 파괴). Phase 1/`--start-parallel`/SSOT 플래그 금지.
+
+---
+
+# ARCHIVE · CAT-L-CUTOVER-01 · Phase 0b (진단 전용 — 수정 금지)
 
 > **작성**: Claude Pro (Architect) · 2026-09-30
 > **선행**: Phase 0 — `architecture_ok=false`, failed=[`pipeline_structure`, `bitget_shell_daily_audit_guard`, `weekly_evolution_pipeline`, `portfolio_nav_risk_ssot`]. SSOT 기록(`00_전체현황판.md`·`05_진행로그.md` 과거분)엔 `architecture_checks PASS`로 남아 있어 **회귀로 판단**.
