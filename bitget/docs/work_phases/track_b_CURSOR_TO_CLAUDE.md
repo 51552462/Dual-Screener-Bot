@@ -14,6 +14,7 @@
 
 ### 0. 실행 수단 · 해시
 
+- 결과 커밋: `53183f9` (스냅샷 + OUTBOX + 문서, push 완료)
 - Handoff 커밋: `27a14b050bf659d864f9bc236075a0b3e830b9bb` (`CLAUDE_TO_CURSOR.md` 1파일 · 304줄 전문 기록, push 완료)
 - X-블록(§8-2): **48줄 · CR 0 · sha256 `768a1189279c3d04ed8570759a5e2fb529aa007421b1197c8e7f68e227295b21`** (blob `27a14b0`에서 `tools/vb_run.py`로 바이트 그대로 추출) · 1회 실행 · SSH_RC 0 · stdout 88125B · stderr 0 · CR 0 · START 11:30:28Z END 11:30:51Z
 - 서버 명령은 X-블록 1회뿐. sudo 0 · 설치기/pull/restart/reset-failed/백업·스냅샷 수동/`--cutover-check`/`--start-parallel` 0. 코드 변경 0.
