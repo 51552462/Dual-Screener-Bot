@@ -23,6 +23,7 @@ Claude 자기 정정 4건: 배포 Handoff 전문 미기록 · pre-pull 가드 �
 - L1: 124 원인은 코드만으로 확정 불가(락 대기 120s = timeout 120). 판별 로그 위치 기록. `--start-parallel`은 동일 락 경로 + SKIPPED_LOCK 시 exit 0 → 실행 후 `parallel_run_state.json` 확인 필수.
 - 증거물 `cutover01_p0c_arch.sh`(sha256 `9e015496…271b7b`) · `cutover01_p0c_deploy.sh`(`09ab6152…4c8`) 현 상태 그대로 커밋. **재실행 금지.**
 - 서버 `/tmp/cutover01_*.out` 삭제 안 함.
+- 디렉터 회신 [2026-10-01 18:30 KST]: D1 텔레그램 안 옴 · D2 접속은 Cursor 자체 검사, IP 변경은 서버 장애 중단 후 네트워크 변경(진술) · D3 B · D4 승인(+보충: 명령은 그대로 실행, 더 나은 안은 의견으로 제시·반영). Claude 판정 대기.
 
 ## CAT-L-CUTOVER-01 Phase 0c — undisclosed 스크립트 3건 발견·소명 [2026-09-30]
 
