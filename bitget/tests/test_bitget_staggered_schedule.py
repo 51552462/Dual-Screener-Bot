@@ -113,7 +113,7 @@ class TestBitgetStaggeredSchedule(unittest.TestCase):
         self.assertIn("bitget.sh --enqueue --scan-futures-ema5-r2", text)
         self.assertNotIn("bitget.sh --enqueue --scan-spot-ema5-r2", text)
         self.assertEqual(text.count("bitget.sh --enqueue "), 1)
-        self.assertIn("bitget.sh --scan-futures-ema5\n", text)
+        self.assertIn("bitget.sh --scan-futures-ema5'", text)
 
 
 if __name__ == "__main__":
