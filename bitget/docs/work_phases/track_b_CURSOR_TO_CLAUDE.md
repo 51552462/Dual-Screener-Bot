@@ -12,7 +12,15 @@
 - Cursor 로컬 확인(로그인 안 함): 이 PC → `52.79.114.70:22` `TcpTestSucceeded=True`. 서버 명령 0.
 - 영향: 서버 접속 도구 `tools/vb_run.py`는 환경변수 `BOT2_HOST`로 대상 변경 가능(기본값 코드 수정 안 함). 다음 서버 작업은 `BOT2_HOST=ubuntu@52.79.114.70`. 호스트 키 변경 시 `known_hosts` 경고 가능(진짜 서버 확인 후 처리). 과거 문서의 `3.36.90.195`는 당시 기록이라 그대로 둠.
 - 효과: 복구 가능한 사본 문제(X4: 시장 DB 사본 없음 가능성)가 **인스턴스 스냅샷으로 부분 해소**(시점 사본). 단 DB 파일 단위 무결성 백업(CAT-L-BACKUP-01)은 여전히 필요. 스냅샷 시점 DB가 쓰기 중이었는지는 미확인(크래시-일관성 수준).
-- 남은 제안: 고정 IP 부착(이번에도 주소 변경됨) · Y1 승인.
+- 남은 제안: 고정 IP 부착(이번에도 주소 변경됨) (Claude: 디렉터 핀 확인 전 보류) · Y1 승인.
+
+### 주소 변경 부록(Handoff `…주소변경_Y실행전확인_20261002`) ① 호스트 키 대조 결과 · 2026-10-02 20:3x KST
+
+- `ssh-keygen -l -F 3.36.90.195` → `# Host 3.36.90.195 found: line 9` / **`ED25519 SHA256:HkXnpIQ6vc542Q9cn+WosM5UuivXhhdwlyeJ6yzIVuM`**
+- 지시된 `ssh-keyscan 52.79.114.70 | ssh-keygen -lf -`는 **이 PC의 ssh-keyscan이 서버 KEX(`sntrup761x25519-sha512@openssh.com`)를 지원 안 해** `choose_kex: unsupported KEX method` / `(stdin) is not a public key file`로 **실패**(서버 배너 `SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.17`은 수신).
+- 대체 수단(공개 · 규칙 7: 같은 목적, 로그인 없음): `ssh -v -o UserKnownHostsFile=NUL -o StrictHostKeyChecking=yes -o BatchMode=yes -o PreferredAuthentications=none ubuntu@52.79.114.70` → 인증 단계 전에 `Host key verification failed`로 중단됨(로그인·서버 명령 0). 원문: `debug1: Server host key: ssh-ed25519 SHA256:HkXnpIQ6vc542Q9cn+WosM5UuivXhhdwlyeJ6yzIVuM` / `No ED25519 host key is known for 52.79.114.70 and you have requested strict checking.`
+- **판정: 지문 일치 = 같은 서버.** 검사를 끄지 않았고, 옛 주소 항목(known_hosts 9번 줄)의 ssh-ed25519 키를 그대로 복사해 `52.79.114.70`을 `known_hosts` 10번 줄로 추가(`ssh-keygen -l -F 52.79.114.70` 확인).
+- ②(Y-블록 실행): 본 부록은 「앞 Handoff `X회신판정_Y블록_20261002`」를 참조하지만 **그 파일이 전달되지 않음**(Downloads에도 없음, 부록만 있음) → Y-블록 내용·sha256(`b64e3ac2…`)을 blob에서 추출할 수 없어 **미실행**. 서버 명령 0.
 
 ---
 

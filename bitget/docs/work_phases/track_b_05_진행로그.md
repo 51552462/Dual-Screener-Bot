@@ -22,6 +22,10 @@ Phase 1 보류(§9 조건). 신규 등록: CAT-L-SCRIPT-AUDIT-01 · CAT-L-BACKUP
 - root pyc 가설 불일치(mtime 07-02/08-11/09-23). mode 10건 중 8건 = 09-28 02:24 `chmod +x` 일치.
 - W8: `/tmp` 3파일 원본 `snapshots/raw_20260930/` 보존, sha256 V3와 일치. 서버 원본 삭제 안 함. W10(규칙 8)은 디렉터 승인 대기.
 
+### 2026-10-02 디렉터 회신 반영
+- 2026-10-02 디렉터: 터질 때마다 SSH 불응 → Lightsail Stop/Start 복구(부팅 경계 3건과 정렬). Lightsail 수동 스냅샷 1건 + 자동 스냅샷 활성화(서버 밖 첫 사본, 시점 사본) · 주소 52.79.114.70.
+- 주소 변경 부록 ① 호스트 키 대조: 옛/새 주소 ED25519 `SHA256:HkXnpIQ6…IVuM` 일치(ssh-keyscan은 KEX 미지원으로 실패 → `ssh -v` strict 대체, 로그인 0). known_hosts에 새 주소 추가. Y-블록 본 Handoff 파일 미수신 → Y 미실행.
+
 ### Phase 1 선행 W-블록 회신 · Claude 판정 → X0 + X-블록 + L5–L9 [2026-10-01 저녁] (Handoff `27a14b0`)
 - X0: 비밀 문자열 1줄 = W 스냅샷 172번 줄 `Listening on REST API socket for snapd user session agent.` — 비밀 아님. X 스냅샷도 같은 스캔, 일치는 systemd 메시지뿐.
 - X-블록(48줄·CR 0·sha256 `768a1189…295b21`) 1회 읽기전용, 출력 `snapshots/CAT-L-CUTOVER-01_P1PRE_XBLOCK_20261001.md`(sha256 `137A1E91…89E0E`). 서버 변경 0.
