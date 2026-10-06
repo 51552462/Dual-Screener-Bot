@@ -7,6 +7,10 @@
 
 ---
 
+## CAT-L-CUTOVER-01 Y-블록 회신 · Claude 판정 [2026-10-06]
+2026-10-06 Claude 판정(Y-블록): 해시 일치·읽기전용 준수 수용. OOM 09-25 14:42 UTC 확정(cron.service python, 펜스 전). OOM→Stop 인과 미확정(18h 간격). 09-13/09-22 미확정 종결. Y2 "164/184 ≥5400s" 해석 보류(246h > 237.6h). 텔레그램 토큰 평문 로그 → SECRET-01 등록. 규칙 8 신설.
+Cursor L13–L16 로컬 완료(서버 0). Phase 1 보류. 순서 SECRET-01 → BACKUP-01 → Phase 1.
+
 ## CAT-L-CUTOVER-01 Phase 0c · **SUB_DONE (Claude OK 2026-10-01)**
 V-블록 실행본 = Handoff 원문(Claude 재계산 sha256 9879eb2b… 일치). V0 HEAD 8a6da21·worktree 수정 0 · V1 PRISTINE 28/28 · L2 런타임 0 · V3 재실행 0 · L4 순수 읽기.
 이관: 124 원인(W4) · 09-28 02:24 서비스 재시작 = 디렉터 장애 복구(정정 진술) → 실행 명령(W1–W3)·장애 원인(W3b) 확인 · backup 127/snapshot 1 반복 실패(W5) · root pyc 13·mode 10(W6·W7).
@@ -23,6 +27,14 @@ Phase 1 보류(§9 조건). 신규 등록: CAT-L-SCRIPT-AUDIT-01 · CAT-L-BACKUP
 - W8: `/tmp` 3파일 원본 `snapshots/raw_20260930/` 보존, sha256 V3와 일치. 서버 원본 삭제 안 함. W10(규칙 8)은 디렉터 승인 대기.
 
 ## CAT-L-CUTOVER-01 Phase 1 선행 X-블록 회신 · Claude 판정 [2026-10-02]
+X-블록 실행본 일치(768a1189…). X0 비밀 아님(snapd "REST API" 문구).
+FENCE-02 회귀 원인 = 확정(cron RELOAD 09-28 02:25:01). 124 원인 = scan_spot_ema5(05:20~06:52, LIFECAP 강제 종료)가 전역 락 보유 — timeout 없었어도 SKIPPED_LOCK.
+부팅 경계 3건(09-13·09-22·09-26) = 디렉터 stop→start, 기록된 OOM(09-07·09-14·09-25)과 정렬. 현재 부팅 6일 재시작 0·OOM 0. 원인 확정은 Y1.
+🔴 데이터 보호 공백: L-2 백업 성공 0/27(09-08~), 업데이트 전 백업 12KB 빈 파일. → BACKUP-01 최우선, 디렉터에 Lightsail 스냅샷 권고.
+종결: snapshot(스캔 비차단) · dashboard/heatmap(의도된 퇴역) · 유닛 어긋남 없음 · L9.
+QW-RESTART-01 범위 확장: watchdog의 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP).
+Claude 정정 C-10(출력 절단 재발). Phase 1 보류.
+
 X-블록 실행본 일치(768a1189…). X0 비밀 아님(snapd "REST API" 문구).
 FENCE-02 회귀 원인 = 확정(cron RELOAD 09-28 02:25:01). 124 원인 = scan_spot_ema5(05:20~06:52, LIFECAP 강제 종료)가 전역 락 보유 — timeout 없었어도 SKIPPED_LOCK.
 부팅 경계 3건(09-13·09-22·09-26) = 디렉터 stop→start, 기록된 OOM(09-07·09-14·09-25)과 정렬. 현재 부팅 6일 재시작 0·OOM 0. 원인 확정은 Y1.

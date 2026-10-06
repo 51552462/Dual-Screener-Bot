@@ -46,9 +46,9 @@
 |------|-----|
 | **앵커 ID** | `SYNC-2026-09-30-BG-CUTOVER0C-BOT2` |
 | **현재 Bot-2 주소** | `52.79.114.70` (2026-10-02~, 이전 `3.36.90.195`) · 정적 IP 여부: 디렉터 확인 대기 · 호스트 키 일치 확인 완료 |
-| **마지막 갱신** | 2026-10-06 — Y-블록 읽기전용 실행·회신 제출(Handoff `bcdca77`, 주소 `52.79.114.70`, BOOT_GUARD=OK). Phase 1 보류 · BACKUP-01 최우선 대기. |
+| **마지막 갱신** | 2026-10-06 저녁 — Y-판정 Handoff `caf2cf6` · L13–L16 로컬 회신. Phase 1 보류 · 다음 SECRET-01. |
 | **활성 트랙** | **BG** |
-| **진행 중 sub-phase** | CAT-L-CUTOVER-01 **Phase 1 선행 점검** · 0c SUB_DONE · Y-블록 회신 제출, Claude 판정 대기 (전체 Done 아님) |
+| **진행 중 sub-phase** | CAT-L-CUTOVER-01 **Phase 1 선행 점검** · 0c SUB_DONE · L13–L16 로컬 회신 제출, SECRET-01 Handoff 대기 (전체 Done 아님) |
 | **직전 완료** | CAT-L-CUTOVER-01 Phase 0b 진단 (Claude 4건 (b) 판정) |
 | **다음** | Claude가 `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX(V0–V6·L1–L4) 판정. 디렉터: D1(텔레그램)·D2(V5 세션)·D3·D4. Phase 1/`--start-parallel` **자동 허용 아님** |
 | **VPS 배포 SSOT** | KR/US: `18_디렉터_VPS_원클릭.md` |

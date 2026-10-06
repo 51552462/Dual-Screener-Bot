@@ -117,6 +117,7 @@ Handoff에 명시되지 않은 스크립트·wrapper를 Bot-2에서 실행할 �
 5. 진단용 일회성 실행에서 `.env` 전체 source 금지 — 필요한 키만 grep. 러너와 같은 env 조건이 필요하면 러너 경로(`runner --mode … --skip-telegram`)를 Handoff에 명시.
 6. (Claude 의무) 서버 명령이 들어간 Handoff는 요약이 아니라 **전문**을 `CLAUDE_TO_CURSOR.md`에 둔다. `Downloads/` 원문만 있는 상태 금지.
 7. (2026-10-01 디렉터 보충) Handoff 명령은 그대로 실행한다. 더 나은 방법·위험·대안이 보이면 **실행 전** OUTBOX에 '의견'으로 제시하고, 반영 결정 뒤에 바꾼다. 조용한 변경 금지. 실행 **수단만** 바꾸고 내용 바이트가 같다면 해시 증명과 함께 같은 회신에서 공개하면 된다.
+8. (2026-10-06 신설 · 즉시 시행) 서버에서 journal·로그·환경 관련 출력을 내는 모든 Handoff 블록은 **서버 측에서** 최종 출력 직전에 토큰 패턴(`[0-9]{6,}:[A-Za-z0-9_-]{30,}`)을 가린다(블록 전체를 `{ …; } 2>&1 | sed -E 's#[0-9]{6,}:[A-Za-z0-9_-]{30,}#[REDACTED]#g'`로 감싼다). 로컬 원문은 커밋 금지·작업 종료 시 삭제. 새 토큰·키는 어떤 채팅·Handoff·OUTBOX에도 붙이지 않는다.
 
 실행 수단 표준: 커밋된 Handoff blob에서 블록을 바이트 그대로 추출 → 줄 수·CR 0·sha256 공개 → ssh stdin(바이너리) `bash -s`. 도구 `vb_run.py`(로컬 전용, 서버 미배포, `bitget/docs/work_phases/tools/vb_run.py`).
 

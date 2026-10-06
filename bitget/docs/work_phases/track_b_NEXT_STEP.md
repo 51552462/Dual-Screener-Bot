@@ -4,6 +4,6 @@
 
 | 레인 | 다음 한 걸음 |
 |------|--------------|
-| **CAT-L (공용)** | 다음 할 일: Y-블록+L10–L12 회신 제출 완료(2026-10-06) → Claude 판정 → BACKUP-01(최우선) → Phase 1. 디렉터: Telegram 봇 토큰 재발급. 스냅샷·자동 스냅샷 완료. 정적 IP 핀 확인 대기(재제안 안 함). |
+| **CAT-L (공용)** | 다음: ① Cursor 로컬 확인 L13–L16 **제출 완료** → ② Claude 창: SECRET-01 → ③ BACKUP-01 → ④ Phase 1·48시간 비교. 새 토큰은 채팅에 붙이지 말 것. |
 | FASTCHECK | Claude OK |
 | HIST3FIX | VPS dry→10×2 → 7키 |

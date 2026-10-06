@@ -7,12 +7,15 @@
 |------|-----------|--------|--------------|
 | **CAT-A (공용)** | A-LIFECAP-01 | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-L (공용·레인 아님)** | CAT-L-FENCE-03 | **SUB_DONE** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **Phase 0c SUB_DONE** · Phase 1 보류 · Y-블록(읽기전용) 회신 제출 → Claude 판정 대기 · 선행: CAT-L-BACKUP-01(최우선) | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
+| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **Phase 0c SUB_DONE** · Y-블록 회신 Claude 수용(조건부) · L13–L16 로컬 확인 제출 · Phase 1 보류 · 순서: SECRET-01 → BACKUP-01 → Phase 1 | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | A5-EVENTLOG-01 | **구현 OK · 서버 반영 확인 대기** (적재 시계는 반영 확인일부터) | `track_b_*` |
 | **CAT-L (에스컬레이션)** | FENCE-02 | **SUB_DONE (1–2단계) · 3단계 판정 2026-10-13** (근거: CLAUDE_TO_CURSOR FENCE-03 Handoff 선행 상태 줄, Claude C-7) | live FENCE_OK · 실스캔 cgroup=heavy.slice |
 | **CAT-L (공용)** | CAT-L-SCRIPT-AUDIT-01 | 등록 · Phase 1과 병행 · 대기 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-BACKUP-01 | **최우선** · Phase 1 선행 · 원인 확정(python 부재, 성공 0/27) · 사전 백업 공백(Y4: 키는 .env에 있음·프로세스 미전달) · Handoff는 Y-블록 회신 후 다음 창 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-BACKUP-01 | 2순위 · 입력 정리 완료(Y-판정 §5) · Handoff는 SECRET-01 다음 창 | `track_b_*` |
 | **CAT-L (공용)** | CAT-L-QW-RESTART-01 | 범위 확장: watchdog 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP) · 조사 대기 · Phase 1 비차단 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-SECRET-01 | 등록 · **다음 Claude 창 1순위** · 토큰 교체(디렉터 TTY) + 규칙 8 시행 확인 | `track_b_*` |
+| **CAT-M (공용)** | CAT-M-TOKENLOG-01 | 등록 · 비차단 · URL이 예외 문구로 로그에 남는 경로 | `track_b_*` |
+| **CAT-A (공용)** | CAT-A-LIFECAP-02 | 등록 · 비차단 · 스캔 실제 소요·kill 48회·부분 기록 감사(spot/fut 분리) | `track_b_*` |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
 | **LANE_FULLBT** | FULL-BT-FUT-RUN-2 | **WAIT_CLAUDE_OK** (RUN-2 실런 OUTBOX) | `lanes/LANE_FULLBT/*` |

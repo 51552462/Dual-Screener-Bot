@@ -1,6 +1,54 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-10-06 · **Y-블록 회신 OUTBOX** 최상단 (Handoff `bcdca77`) · Phase 0c SUB_DONE · Phase 1 보류 · BACKUP-01 착수 전 Claude 판정 대기
+> **갱신**: 2026-10-06 저녁 · **Y-판정 L13–L16 로컬 회신** 최상단 (Handoff `caf2cf6`) · Phase 1 보류 · 순서 SECRET-01 → BACKUP-01 → Phase 1
+
+---
+
+## OUTBOX — CAT-L-CUTOVER-01 Y-블록 판정 · L13–L16 (로컬, 서버 0) · 2026-10-06
+
+Handoff 커밋 `caf2cf6`. 서버 접속·명령 0. 코드 변경 0. 고친 것 없음.
+
+### L13 비밀 전수 스캔 (내용 미출력)
+
+- 작업트리 `bitget/docs/work_phases/snapshots/` : `/bot[0-9]+:` 및 `[0-9]{8,12}:[A-Za-z0-9_-]{30,}` **HIT 0** (Y 가림본의 `[REDACTED_TELEGRAM_BOT_TOKEN]`은 패턴 불일치 → 비밀 원문 아님).
+- 저장소 전체(동일 패턴, md/txt/out/log/json/py/sh): **HIT 0**.
+- git history `git log --all -G "/bot[0-9]{6,}:" --name-only -- snapshots/`: **커밋 0**. 첫 유입 커밋 없음. GitHub에 토큰 원문 **미푸시**.
+- 로컬 `%TEMP%\y_out.txt`: 존재했음(58617B, sha256 `8b7f043a9a27aa9a380aef7f13899028db08d52419ad44db99a9f4e01b6ae98e`) — HIT는 이전 Y 실행에서 확인한 journal URL 12건. **원문 삭제 완료**(가림본은 이미 `…YBLOCK_20261002.md`). 공개 범위: 원격은 public GitHub이나 해당 원문은 미커밋.
+
+### L14 Y2·Y1 정합 (`y_out.txt` 원문, 삭제 전)
+
+| # | 원문·수치 | Cursor 한 줄 |
+|---|---|---|
+| (a) | 정의 줄 181: `== Y2 transient scope durations since 2026-09-29 10:30 UTC (start_utc dur_sec description) ==` · `Y2_PAIRS=184 Y2_OPEN=2` · 첫 쌍 `2026-09-29T10:40:01Z` dur 5681 `--scan-spot-supernova-r2` · 마지막 닫힌 쌍 `2026-10-06T04:27:01Z` dur 5600 · 구간 09-29 10:30 → Y END 10-06 06:27:23 = **590243s (163.96h)** | Handoff Y2 파이썬이 Started→Stopped 시각 차. 설명은 `d[:160]` 절단(일부 모드명 잘림). |
+| (b) | 일자별 쌍: 09-29=14, 09-30=27, 10-01=27, 10-02=27, 10-03=27, 10-04=27, 10-05=28, 10-06=7 | 펜스 이후 매일 ~27 스코프. |
+| (c) | 동시 열린 최대 **3** @ `2026-10-05T00:30:02Z`(그 시각 `--weekly-evolution` 144s가 긴 스캔 2개와 겹침). 예시2: `2026-09-29T11:33:02Z` 동시 2 = `--scan-spot-supernova-r2`(10:40:01, 5681s) + `--scan-futures-nulrim-r2`(11:33:02, 5560s). OPEN 2건(10-06 05:20 spot-ema5 · 06:13 futures-ema5)도 겹침 | **단일 flock과 불일치 → Y2 소요 ≠ 락 점유.** D-3 후보 (A)대기포함/(C)scope 잔류 쪽. |
+| (d) | ≥5400: **164** (스캔 모드가 전부, 일자당 약 7회 반복). <1800: **20** = daily-audit 7 + scan-*-shadow 12 + weekly-evolution 1 | 짧은 잡은 감사·shadow. 긴 164는 스캔 이름. |
+| (e) | Y3 ENFORCE 48건 파싱. 시작≈kill-age로 Y2 쌍에 ±180s 매칭 **22/48** | 빈도 164와 kill 48은 다른 시계. Y2로 kill 빈도를 세면 안 됨. |
+| (f) | 합계 소요 926969s / 구간 590243s = **비율 1.57** (합계>벽시계) | Phase 1 창을 Y2로 짜면 안 됨(D-3 유지). |
+| (g) | boot -1 시간대 줄 39–41: `163 2026-09-25T14` / `      7              ` / `533 2026-09-25T14` | `cut -c1-13`이 일부 줄에서 시각 키를 빈 칸으로 잘라 **같은 시간대가 두 버킷+빈 키**로 보임. T14 합 163+533(+7)≈703. "폭락" 근거 아님(D-2). |
+
+### L15 사전 백업 경로 (코드)
+
+- (a) `update_bitget.sh` `_bitget_pre_update_backup` :73–82 `sudo -E -u "$DEPLOY_USER" env INSTALL_ROOT=… PYTHONPATH=… _BG_BACKUP_DEST=… "$DANTE_PY" -c` → `bitget_data_dir()` (`data_paths.py:40`, env `BITGET_DB_STORAGE_PATH` 없으면 json/레거시). **`BITGET_DB_STORAGE_PATH`를 env로 넘기지 않음.** `.env` source 없음.
+- (b) 사전 백업: root가 `sudo -u ubuntu`로 venv python. L-2 타이머: `dante-bitget-backup.service.in:7–12` **User=root** · EnvironmentFile 두 `.env` · `ExecStart=backup_bitget_db.sh`.
+- (c) 12KB 재현: 프로세스에 저장 경로 키가 없으면 `bitget_data_dir()`가 레거시/빈 설정 DB만 봄 → `bitget_system_config.sqlite` 12288B만 복사. X2c와 **코드상 재현 가능**.
+- (d) `backup_bitget_db.sh:10–22`는 `.env`를 source 함. `:32` **`python -m bitget.infra.integrity_backup_l2`** (venv 경로 아님). root PATH에 `python` 없으면 exit 127. 사전 백업은 venv(`$DANTE_PY`)라 이 실패와 별개.
+
+### L16 backup API
+
+- `institutional_db_backup.py:92–105`: `src.backup(dst)` — **pages 인자 없음**(CPython 기본 pages=0). 소스 `file:?mode=ro` + `busy_timeout`. 대상은 기본 `sqlite3.connect`(명시 cache_size 없음).
+- tar.gz: `:200–203` `tarfile.open(..., "w:gz"); tar.add(staging)` — **sqlite를 스트리밍하지 않음**. 스테이징 파일을 만든 뒤 디렉터리 압축.
+- 동시 실행: 스크립트에 flock/slice 없음. 온라인 backup API라 writer와 병행 가능하나 **root·무제한** 타이머.
+- 가장 큰 sqlite(Y5): `bitget_market_data.sqlite` 541679616B ≈517M (snapshot 동일).
+- D-4: "버퍼 ≈ 소스 전체"는 **이 코드만으로는 증명 안 됨**(페이지 단위 API). "4GB root 무제한은 위험"은 OOM 이력으로 유지.
+
+### 10-02 OUTBOX 항목 ②
+
+`(대체됨: 2026-10-06 실행, 797017e)` — Y-블록은 이후 실행됨.
+
+### 상태
+
+SECRET-01 미착수(Handoff 대기). BACKUP-01·Phase 1 미착수. 규칙 8은 CAT-L SSOT에 기록.
 
 ---
 
