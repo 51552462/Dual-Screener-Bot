@@ -1,3 +1,293 @@
+# CLAUDE → CURSOR · CAT-L-CUTOVER-01 · X-블록 회신 판정 + Y-블록(읽기전용)
+
+> **작성**: Claude Pro (Architect) · 2026-10-02
+> **입력**: `track_b_CURSOR_TO_CLAUDE.md` 맨 위 「디렉터 회신 — "터졌을 때" 증상 (10-02 15:53 KST)」 + 「X0 + X-블록 + L5–L9 회신」 — Claude 스냅샷(2026-10-02 09:26 UTC 갱신분)
+> **CAT**: CAT-L 🟡 (deep) · CAT-A 읽기 참조(락·watchdog) · 코드 변경 0 · 서버 변경 0 · Critical 해당 없음
+> **이 파일**: `CLAUDE_TO_CURSOR.md` 상단에 **전문** → 커밋·push → §7 Y-블록
+> **시각**: UTC (KST는 괄호)
+
+---
+
+## 0. 결론 (디렉터용)
+
+1. **실행본 일치**: X-블록 해시 `768a1189…` = Claude가 낸 값. 비밀 문자열 1줄은 `snapd`의 "REST **API** socket" 문구 — 비밀 아님, 종결.
+2. **9/28 펜스 소실 원인 = 확정.** cron 파일이 **02:25:01**에 실제로 바뀐 기록(cron RELOAD)이 나왔다. 업데이트 스크립트 3회차가 옛 생성기로 예약작업을 다시 깔았다. 06 실패기록에 반영 완료.
+3. **9/30 점검이 2분 만에 끊긴 이유 = 확인.** 그 시간에 현물 스캔(`scan_spot_ema5`)이 **92분째** 전역 락을 쥐고 있었고, 그 스캔은 끊긴 지 19초 뒤 watchdog의 90분 상한에 걸려 강제 종료됐다. 우리가 끊지 않았어도 점검은 "조용히 건너뜀"으로 끝났을 것이다.
+4. **"서버가 터졌다"의 실체가 보인다.** 지난 19일 동안 서버가 **세 번** 꺼졌다 켜졌다(9/13, 9/22, 9/26 — 디렉터님의 stop→start). 기록된 메모리 부족 사고(9/7·9/14·9/25)와 시각이 맞물린다. **9/26 이후 6일 동안은 재시작 0·메모리 부족 0** — 펜스가 복구된 9/29 이후 구간을 포함한다. 각 사건의 직접 원인은 Y1로 확정한다.
+5. **가장 무거운 발견 — 복구 가능한 DB 사본이 서버에 없다.** 정기 백업은 기록이 남은 9/8 이후 **27번 시도 27번 실패(성공 0)**, 업데이트 전 백업은 매번 **빈 12KB 파일 하나**만 저장했다. 그런데 장애 때마다 강제로 껐다 켰다. → **지금 Lightsail 콘솔에서 스냅샷을 찍어 두시길 권한다**(§6, 서버를 건드리지 않는 임시 보험).
+6. Phase 1: **보류 유지.** 남은 조건은 Y-블록(읽기전용)과 `CAT-L-BACKUP-01`(다음 창).
+
+---
+
+## 1. Claude 독립 검증
+
+| 항목 | 방법 | 결과 |
+|---|---|---|
+| X-블록 실행본 | 내가 낸 원문 해시와 대조 | 48줄 · `768a1189279c3d04ed8570759a5e2fb529aa007421b1197c8e7f68e227295b21` **일치** |
+| X4b 시각 환산 | 재계산 | `1790293708` = 2026-09-24 23:48:28 UTC, +14563초 = 09-25 03:51:11 UTC **일치** |
+| scan_spot_ema5 길이 | 05:20:01 → 06:52:12 | 5531초. watchdog `age=5517`(프로세스 시작이 수 초 늦음)과 정합, `cap 5400 + grace 60 = 5460` 초과 후 첫 점검에서 종료 **정합** |
+| 부팅 경계 vs 기록된 OOM | X1 · `track_b_06` 효과검증표 | 09-07(부팅 -3 시작 08:18) · 09-14 KST(부팅 -2 시작 09-13 15:03 UTC = 09-14 00:03 KST) · 09-25(부팅 0 시작 09-26 08:52) **정렬**. 09-22 05:49→06:25(36분)은 기록된 OOM 없음 |
+| 출력 전문 스냅샷 md | — | 내 스냅샷에 없음 → OUTBOX 인용 줄로 판정(한계) |
+
+---
+
+## 2. 항목별 판정
+
+| 항목 | 판정 | 메모 |
+|---|---|---|
+| X0 | ✅ 종결 | 비밀 아님 |
+| X1 | ✅ | 현재 부팅(09-26 08:52) 이후 재시작 0 · 커널 OOM 0 **확정**. 이전 부팅 3개는 Y1 |
+| X2 | ✅ **확정** | RELOAD 5건이 예상 시각과 전부 일치. **09-28 02:25:01 = 설치기가 cron 파일을 실제로 바꾼 직접 증거** → FENCE-02 회귀 원인 등급 "강하게 시사" → **"확정"** |
+| X2b | ✅ (일부 잘림) | 순서 확정. `head -150`이 162줄 중 12줄을 자름 — **내 설계 결함 재발**(§5 C-10). W1의 02:24:22 `install_bitget_cron.sh` sudo 줄 + X2 RELOAD로 결론에는 지장 없음 |
+| X2c | ✅ / 🔴 새 발견 | cron 사본 없음(사전 백업은 cron을 안 담음). **3개 디렉터리 모두 12288B 1파일** → §3-2 |
+| X3 | ❌ 무효 | `head -800`이 09-29 00:00:21에 일괄 갱신된 0바이트 옛 로그로 소진 — **내 설계 결함**(C-10). Y2로 대체(작업 시작·종료를 systemd 기록에서 직접) |
+| X3b | ✅ **124 원인 확인** | `cutover_check`(06:49:53, 0B)는 `scan_spot_ema5`(05:20:01 시작, 06:52:12 강제 종료) 한가운데. CAT-A상 `bitget.sh` 모드는 전역 락 직렬 → **락 보유자 = scan_spot_ema5.** 러너의 락 대기 상한(120초)은 06:51:55경 만료 → `timeout`이 없었어도 **SKIPPED_LOCK(exit 0, 무음)** 이었다. L1(f)에서 Cursor가 짚은 함정의 실례 |
+| X4 | ✅ / 🔴 | 백업 **성공 0 · 실패 27**(journal 보존 범위 09-08~). 디스크 여유 42G · 가용 메모리 약 2.6G(평시) · 데이터 폴더 26G(sqlite 파일만 약 2.1G — 나머지 구성은 Y5) |
+| X4b | ✅ 비차단 | 최장 공백 4시간 3분은 **09-24 23:48 → 09-25 03:51 = 09-25 장애 구간**(현재 부팅 이전). 09-26 이후 4시간급 공백 없음 |
+| L5 | ✅ 종결 | dashboard·heatmap 꺼짐 = **의도된 퇴역**(4GB 메모리 보호, `b7370ad`). 버그 아님 |
+| L6 | ✅ 종결 | `systemd/` 템플릿 변경 0 → 라이브 유닛 = 저장소. slice 존재·값은 V2에서 이미 확인 |
+| L7 | ✅ 종결 | 스캔은 스냅샷이 1800초 이내일 때만 쓰고 아니면 메인 DB로 폴백 → **snapshot 양보(exit 1)는 스캔 비차단.** exit 코드 정리(전용 코드 + `SuccessExitStatus`)는 백로그 |
+| L8 | ✅ | `git restore .`가 diff를 어디에도 안 남김 — CAT-L 규칙 4 주의 문구 반영 확인. 설계 개선은 SCRIPT-AUDIT |
+| L9 | ✅ 수용 | 09-26 05:26:50 async 재시작 = TTY 없음 · watchdog 자동 재시작 형태(`:291`)와 일치 → "watchdog 자동 재시작 추정"으로 종결 |
+
+---
+
+## 3. 종합 판정
+
+### 3-1. "서버가 터진다" — 패턴은 보이고, 원인 확정은 Y1
+
+| 부팅 | 기간(UTC) | 끝난 방식 | 기록된 OOM |
+|---|---|---|---|
+| -3 | 09-07 08:18 → 09-13 14:56 | 6분 뒤 재기동 | 09-07 |
+| -2 | 09-13 15:03 → 09-22 05:49 | **36분** 뒤 재기동 | 09-14 (KST) |
+| -1 | 09-22 06:25 → 09-26 08:50 | 2분 뒤 재기동 | **09-25**(→ 다음날 아침에야 재기동) |
+| 0 | 09-26 08:52 → 현재 | — | **0** (6일, FENCE_OK 09-29~ 포함) |
+
+- 디렉터 진술("터지면 SSH 접속 불가 → AWS 콘솔에서 stop→start, 그때마다 IP 바뀜")과 부팅 경계가 일치한다. 서버 공인 IP가 바뀐 건 **정적 IP가 없어서**다(접속 기록의 IP 변화는 디렉터 쪽 네트워크 — 둘 다 맞는 이야기).
+- 해석 가설: 메모리 고갈 → 스왑 과다(스래싱)로 응답 불능 → 강제 재기동. 이 경우 OOM-killer 기록이 안 남을 수도 있어 **이전 부팅의 마지막 몇 시간 기록량**(Y1의 시간대별 줄 수)이 핵심 단서다. 기록이 끊긴 공백이 있으면 "멈춤", 폭증하면 "스래싱".
+- 09-22는 기록된 OOM이 없다 → 다른 원인 후보. Y1로 본다.
+- **10-01 접속 실패는 장애가 아니었다**: 그 시각 전후로 재부팅 0, Cursor는 정상 접속. 원인은 접속 주소·키·네트워크 쪽(미확정). 정적 IP를 붙이면 이 혼란이 사라진다(§6).
+- FENCE-02 3단계(10-13) 입력: 현재 부팅 6일 무사고는 펜스 효과와 **부합하는 정황**. 단 §3-3의 부작용 가능성을 함께 본다.
+
+### 3-2. 데이터 보호 공백 — 🔴 가장 무거운 발견
+
+- 정기 백업(L-2): 기록 범위 09-08~ **성공 0**. 원인 = `python` 명령 부재.
+- 업데이트 전 백업: 49개 디렉터리가 모두 빈 설정 DB 12KB뿐일 가능성. Cursor 가설(사전 백업이 `BITGET_DB_STORAGE_PATH`를 넘겨받지 못해 옛 경로를 봄)은 코드와 X2c 크기가 일치 — **Y4로 확정.**
+- 그런데 장애 때마다 **강제 재기동**(전원 차단에 준함)을 해 왔다. SQLite는 대체로 견디지만 쓰기 설정(`synchronous`)에 따라 손상 위험이 달라진다 → L10.
+- 서버 밖 사본(Lightsail 스냅샷 등)은 **미확인**.
+- 판정: `CAT-L-BACKUP-01`은 이미 Phase 1 선행이며 **최우선**. BACKUP-01이 끝나기 전 공백을 줄이려고 **디렉터 콘솔 조치(스냅샷)를 지금 권고**(§6). 서버를 건드리지 않으므로 Handoff 규칙과 충돌 없음.
+
+### 3-3. 긴 스캔이 락을 오래 쥔다 — Phase 1 설계 + FENCE-02 판정 입력
+
+- `scan_spot_ema5`가 92분 동안 전역 락을 쥐다 90분 상한에 걸려 **강제 종료**됐다. 그동안 canary 등 다른 잡은 건너뛰었을 것(Y3로 canary 로그 확인).
+- 두 가지가 걸린다: ① 이 스캔이 **매일 상한에 걸려 결과를 못 내고 있는지**(Y3 횟수) ② **펜스(1.2G 메모리 상한에서의 감속)가 무거운 스캔을 느리게 만들어 상한에 걸리게 했을 가능성** — 펜스는 OOM을 막았지만 대가가 있을 수 있다. ②는 가설이며 **10-13 FENCE-02 3단계 판정에서 펜스 전후 소요시간으로 판정**한다(Y2는 펜스 이후분만 정확히 준다).
+- 처리: `CAT-L-QW-RESTART-01`의 범위를 **"watchdog이 긴 작업을 끊는 문제(queue-worker 일일 재시작 + LIFECAP 강제 종료)"**로 넓힌다. 새 ID를 만들지 않는다.
+
+---
+
+## 4. Phase 1 착수 조건 (갱신)
+
+| # | 조건 | 상태 |
+|---|---|---|
+| 1 | Phase 0c SUB_DONE | ✅ |
+| 2 | 124 원인 | ✅ 락 보유자 = scan_spot_ema5 |
+| 2' | 락 점유 시각표 → Phase 1 실행 창 · SKIPPED_LOCK 처리 · `timeout` 금지 · 완료 확인(`parallel_run_state.json`·`started_at_utc`) | Y2·Y3 |
+| 3 | 09-28 원인 | ✅ 확정(X2) |
+| 3' | 과거 "터짐" 원인 → 재발 위험 판정 | Y1 |
+| 4 | `CAT-L-BACKUP-01` 완료 (+ 디렉터 스냅샷 권고) | 다음 창 · 입력 Y4·Y5·L10·L11 |
+| 5 | X0 | ✅ |
+| 6 | watchdog 장시간 잡 종료 문제 → Phase 1 설계에 "예정된 재시작·상한 종료" 반영 | 등록(범위 확장) · Y3·L12 |
+| — | snapshot · dashboard/heatmap · 유닛 어긋남 | ✅ 비차단 종결 |
+
+---
+
+## 5. Claude 측 정정
+
+| # | 정정 |
+|---|---|
+| C-10 | **같은 날 같은 실수를 두 번 더 했다**: X2b `head -150`(162줄 중 12줄 잘림), X3 `head -800`(전부 옛 로그로 소진). C-9에서 "처음·끝 + 총개수"로 하겠다고 해 놓고 지키지 않았다. Y-블록은 시간순 목록에 **절단 없음**, 잘라야 할 때는 **총개수를 먼저 찍고 무엇을 잘랐는지 이름표**를 붙였다. |
+
+---
+
+## 6. 디렉터 콘솔 조치 권고 (서버 변경 아님 · 순서대로)
+
+1. **지금: Lightsail 수동 스냅샷 1회 + 자동 스냅샷 켜기.** 복구 가능한 DB 사본이 서버에 없을 가능성이 높아서, BACKUP-01이 끝날 때까지의 임시 보험이다. 실행 중 스냅샷은 "그 순간 전원이 나간 상태"와 같은 사본이라 완벽하진 않지만, 없는 것보다 훨씬 낫다. 비용은 저장 용량에 따라 소액 — 콘솔 표시 금액 확인.
+2. **그다음: 정적 IP 붙이기.** 붙이는 순간 서버 주소가 **한 번** 새 주소로 바뀌고, 이후에는 stop→start를 해도 안 바뀐다(인스턴스에 붙어 있는 동안 무료). 붙이기 전에 **Bitget API 키에 IP 제한을 걸어 두셨는지** 확인하고, 걸려 있다면 새 주소로 바꿔야 한다. 붙인 뒤 새 주소를 Cursor에 알려 주시면 된다.
+3. **앞으로 "터졌을 때"**: stop→start는 지금처럼 하셔도 된다. 다만 **재기동 후 업데이트 스크립트는 돌리지 마시고**(새 코드를 까는 도구라 장애 복구용이 아님) 시각만 알려 주시면 된다.
+
+---
+
+## 7. Y-블록 (서버, 읽기전용)
+
+### 7-0. 실행 규칙
+
+- 실행 수단 표준(`vb_run.py`). 추출 줄 수·CR·sha256 공개. `set -e` 없음 · `sudo` 0.
+- **첫 줄 가드**: 현재 부팅 시작이 `2026-09-26 08:52:17`이 아니면(그 사이 재부팅) 블록이 스스로 멈춘다 — 부팅 번호(-1·-2·-3)가 밀리기 때문. 멈추면 그대로 보고.
+- 출력 전문은 `snapshots/CAT-L-CUTOVER-01_P1PRE_YBLOCK_20261002.md`, OUTBOX엔 경로 + sha256 + 판정에 쓴 줄 원문. 커밋 전 X0과 같은 grep으로 자기 점검.
+- 권한 거부는 "거부"로 보고, `sudo` 우회 금지.
+- 시간이 몇 분 걸릴 수 있다(이전 부팅 기록을 읽음). 중간에 끊지 말 것(규칙 3과 같은 취지).
+
+### 7-1. Y-블록
+
+```bash
+cd "${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}" || exit 1
+echo "== Y-BLOCK START $(date -u +%Y-%m-%dT%H:%M:%SZ) user=$(id -un) =="
+
+echo "== Y0 boot guard =="
+TZ=UTC journalctl --utc --list-boots --no-pager 2>&1
+B0="$(TZ=UTC journalctl --utc --list-boots --no-pager 2>/dev/null | awk '$1=="0"')"
+case "$B0" in *"2026-09-26 08:52:17"*) echo "BOOT_GUARD=OK";; *) echo "BOOT_GUARD=CHANGED - STOP"; exit 1;; esac
+
+echo "== Y1 previous boots: kernel distress / hourly volume / pre-shutdown lines =="
+for spec in "-1|2026-09-24 20:00:00" "-2|2026-09-21 00:00:00" "-3|2026-09-12 09:00:00"; do
+  b="${spec%%|*}"; since="${spec#*|}"
+  echo "---- boot $b (window since $since UTC) ----"
+  TZ=UTC journalctl --utc --list-boots --no-pager 2>/dev/null | awk -v b="$b" '$1==b'
+  K="$(TZ=UTC journalctl --utc -k -b "$b" --no-pager 2>&1)"
+  echo "KLINES=$(printf '%s\n' "$K" | wc -l) OOM_HITS=$(printf '%s\n' "$K" | grep -c -i -E 'out of memory|oom-kill') HUNG_HITS=$(printf '%s\n' "$K" | grep -c -i -E 'blocked for more than|hung_task')"
+  echo "-- distress lines: first 3 (of total above) --"
+  printf '%s\n' "$K" | grep -i -E 'out of memory|oom-kill|killed process|blocked for more than' | head -3
+  echo "-- distress lines: last 3 --"
+  printf '%s\n' "$K" | grep -i -E 'out of memory|oom-kill|killed process|blocked for more than' | tail -3
+  echo "-- hourly journal line counts (all sources, full window) --"
+  TZ=UTC journalctl --utc -b "$b" --since "$since" -o short-iso --no-pager 2>/dev/null | cut -c1-13 | uniq -c
+  echo "-- 25 lines before first shutdown marker --"
+  TZ=UTC journalctl --utc -b "$b" --since "$since" -o short-iso --no-pager 2>/dev/null | awk '/Power key pressed|System is powering down|Powering off/{for(i=NR-25;i<NR;i++) if(i>0) print buf[i%25]; print; f=1; exit} {buf[NR%25]=$0} END{if(!f) print "NO_SHUTDOWN_MARKER"}'
+  echo "-- last 5 lines of boot --"
+  TZ=UTC journalctl --utc -b "$b" -n 5 -o short-iso --no-pager 2>/dev/null
+done
+
+echo "== Y2 transient scope durations since 2026-09-29 10:30 UTC (start_utc dur_sec description) =="
+TZ=UTC journalctl --utc -t systemd --since '2026-09-29 10:30:00' -o json --no-pager 2>/dev/null | python3 -c '
+import sys, json, datetime as D
+def ts(s): return D.datetime.fromtimestamp(s, D.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+st = {}; n = 0
+for line in sys.stdin:
+    try: j = json.loads(line)
+    except Exception: continue
+    u = j.get("UNIT") or ""; m = j.get("MESSAGE")
+    if not isinstance(m, str) or not u.endswith(".scope") or u.startswith("session-") or u == "init.scope": continue
+    t = int(j.get("__REALTIME_TIMESTAMP", "0")) // 1000000
+    if m.startswith("Started "): st[u] = (t, m[8:].rstrip("."))
+    elif ("Deactivated successfully" in m or "Failed with result" in m or m.startswith("Stopped ")) and u in st:
+        s, d = st.pop(u); n += 1; print(ts(s), t - s, d[:160])
+for u, (s, d) in st.items(): print("OPEN", ts(s), d[:160])
+print("Y2_PAIRS=%d Y2_OPEN=%d" % (n, len(st)))
+'
+echo "== Y2b bitget logs named 20260929..20261002, size>0, excluding watchdog (name size mtime_utc) =="
+LG="$(TZ=UTC find /var/lib/quant-bitget/logs -maxdepth 1 -type f -size +0 -regextype posix-extended -regex '.*/bitget_.*_(20260929|20260930|20261001|20261002)_[0-9]{6}\.log' ! -name 'bitget_watchdog_*' -printf '%f %s %TY-%Tm-%TdT%TT\n' 2>/dev/null | sort)"
+echo "Y2B_COUNT=$(printf '%s\n' "$LG" | grep -c .)"
+printf '%s\n' "$LG"
+
+echo "== Y3 watchdog LIFECAP enforcement (all retained watchdog logs) =="
+LC="$(grep -h 'LIFECAP ENFORCE' /var/lib/quant-bitget/logs/bitget_watchdog_*.log 2>/dev/null | sort)"
+echo "LIFECAP_COUNT=$(printf '%s\n' "$LC" | grep -c .)"
+printf '%s\n' "$LC" | grep -o 'mode=[A-Za-z0-9_]*' | sort | uniq -c
+printf '%s\n' "$LC"
+echo "WATCHDOG_LOGS_NONEMPTY=$(find /var/lib/quant-bitget/logs -maxdepth 1 -name 'bitget_watchdog_*.log' -size +0 2>/dev/null | wc -l)"
+echo "-- canary 20260930_063002 / 064501 --"
+cat /var/lib/quant-bitget/logs/bitget_canary_20260930_063002.log /var/lib/quant-bitget/logs/bitget_canary_20260930_064501.log 2>&1
+
+echo "== Y4 BITGET_DB_STORAGE_PATH key presence (key counts only, no values) =="
+for f in .env bitget/.env; do [ -f "$f" ] && echo "$f KEY_LINES=$(grep -c -E '^[[:space:]]*(export[[:space:]]+)?BITGET_DB_STORAGE_PATH[[:space:]]*=' "$f" 2>&1)"; done
+systemctl show dante-bitget-factory.service dante-bitget-backup.service -p Id -p User -p EnvironmentFiles --no-pager
+for p in $(systemctl show -p EnvironmentFiles --value dante-bitget-factory.service dante-bitget-backup.service 2>/dev/null | grep -o '/[^ ]*' | sort -u); do echo "$p KEY_LINES=$(grep -c -E '^[[:space:]]*(export[[:space:]]+)?BITGET_DB_STORAGE_PATH[[:space:]]*=' "$p" 2>&1)"; done
+
+echo "== Y5 data dir composition =="
+echo "DATA_ENTRIES=$(ls -1A /var/lib/quant-bitget/data 2>/dev/null | wc -l)"
+echo "-- largest 20 entries by size (ascending) --"
+du -sh /var/lib/quant-bitget/data/* /var/lib/quant-bitget/data/.[!.]* 2>/dev/null | sort -h | tail -20
+echo "-- sqlite main/wal/shm files --"
+ls -la --time-style=full-iso /var/lib/quant-bitget/data/ 2>&1 | grep -E '\.sqlite(-wal|-shm)?$'
+
+echo "== Y-BLOCK END $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+```
+
+### 7-2. 기대값 / 볼 것
+
+| 항목 | 볼 것 | 주의 |
+|---|---|---|
+| Y0 | `BOOT_GUARD=OK` | CHANGED면 블록이 멈춘 그대로 보고 |
+| Y1 | 창: 부팅 -1은 09-24 20:00부터(스냅샷 최장 공백 09-24 23:48 시작을 포함), -2·-3은 종료 전 약 30시간 · 부팅별 OOM·멈춤 줄 수와 처음/끝 3줄 · **종료 직전 몇 시간의 시간대별 줄 수**(공백 = 응답 불능, 폭증 = 스래싱) · 종료 표시 직전 25줄 · 09-22(부팅 -2)는 OOM 없는 사례라 특히 | 해석은 Claude. "OOM 0"을 "문제없음"으로 읽지 말 것 |
+| Y2 | 펜스 이후 무거운 잡(일시 scope)별 시작·소요초·명령. 같은 모드 반복 소요, 5400초 근처 잡, `OPEN`(종료 기록 없음) | 펜스 전 비교는 10-13 판정에서 |
+| Y2b | 비경량 잡 로그 목록 + 총개수(이름 스탬프 시간대 혼재 주의: cron=UTC, systemd·수동=KST) | 로컬 가공 시 시간대 구분 표기 |
+| Y3 | LIFECAP 총 횟수 · 모드별 횟수 · 전 목록 · 비어있지 않은 watchdog 로그 수(보존 범위 판단용) · canary 2개 내용(락 건너뜀 문구인지) | |
+| Y4 | 키 **개수만**. 서비스·백업 유닛이 읽는 env 파일 경로 | 값 출력 금지 |
+| Y5 | 26G의 구성(상위 20개 + 총 항목 수) · sqlite 본파일/wal/shm 크기 | BACKUP-01 용량 설계 입력 |
+
+### 7-3. L-항목 (로컬 코드만)
+
+| # | 내용 |
+|---|---|
+| L10 | SQLite 쓰기 설정: `low_ram_sqlite_pragmas.py` 등에서 `journal_mode`·`synchronous` 값과 적용 범위(파일:줄). 강제 재기동(전원 차단에 준함) 시 손상 위험 한 줄 평가 |
+| L11 | `integrity_backup_l2.py`: 대상 DB 목록(:30)·저장 위치·방식(SQLite 백업 API / 파일 복사 / VACUUM INTO)·`integrity_check` 수행 여부·보관 개수·`BITGET_BACKUP_ENABLED` 기본값 → 1회 실행 시 디스크·메모리·시간 예상 |
+| L12 | watchdog LIFECAP: 모드별 상한 설정 위치·값, `scan_spot_ema5`의 정상 소요 기대치(문서·코드 근거), 상한 종료 시 락 해제·부분 결과 처리 |
+
+---
+
+## 8. 출력 형식 체크
+
+- **SSOT 변경**: 05 · NEXT_ACTION(BACKUP-01 최우선 표기, QW-RESTART-01 범위 확장) · 09 · NEXT_STEP. 코드·규칙 문서 변경 없음
+- **SSOT 비변경**: 코드 0 · 서버 0(Y-블록 읽기전용) · 게이트·NAV·CAT-F/G/I/N/B/D 0 · cron·slice·유닛·`.env`·`BITGET_PIPELINE_SSOT` 0 · `ENABLE_REAL_EXECUTION` OFF
+- **SPOT/FUT**: 해당 없음(운영). §3-3의 `scan_spot_ema5`는 SPOT 스캔 — 조사 시 SPOT 분기로 다룸
+- **인접 CAT**: CAT-A(전역 락 · LIFECAP) · CAT-B(백업 대상 DB · `synchronous` 설정, L10 결과에 따라) · CAT-F(A5 — 범위 밖)
+- **롤백**: 문서 커밋 revert. 서버 변경 없음
+- **Critical**: 현재 없음. L10에서 `synchronous=OFF`류가 확인되면 BACKUP-01과 묶어 Critical 판정
+
+---
+
+## 9. 문서 갱신 (붙여넣을 문구)
+
+**`05_진행로그.md` 최상단**
+```markdown
+## CAT-L-CUTOVER-01 Phase 1 선행 X-블록 회신 · Claude 판정 [2026-10-02]
+X-블록 실행본 일치(768a1189…). X0 비밀 아님(snapd "REST API" 문구).
+FENCE-02 회귀 원인 = 확정(cron RELOAD 09-28 02:25:01). 124 원인 = scan_spot_ema5(05:20~06:52, LIFECAP 강제 종료)가 전역 락 보유 — timeout 없었어도 SKIPPED_LOCK.
+부팅 경계 3건(09-13·09-22·09-26) = 디렉터 stop→start, 기록된 OOM(09-07·09-14·09-25)과 정렬. 현재 부팅 6일 재시작 0·OOM 0. 원인 확정은 Y1.
+🔴 데이터 보호 공백: L-2 백업 성공 0/27(09-08~), 업데이트 전 백업 12KB 빈 파일. → BACKUP-01 최우선, 디렉터에 Lightsail 스냅샷 권고.
+종결: snapshot(스캔 비차단) · dashboard/heatmap(의도된 퇴역) · 유닛 어긋남 없음 · L9.
+QW-RESTART-01 범위 확장: watchdog의 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP).
+Claude 정정 C-10(출력 절단 재발). Phase 1 보류.
+```
+
+**`NEXT_ACTION.md`**
+- CUTOVER 행: `Phase 0c SUB_DONE · Phase 1 보류 · Y-블록(읽기전용) 대기 · 선행: CAT-L-BACKUP-01(최우선)`
+- BACKUP-01 행: `**최우선** · Phase 1 선행 · 원인 확정(python 부재, 성공 0/27) · 사전 백업 공백(Y4) · Handoff는 Y-블록 회신 후 다음 창`
+- QW-RESTART-01 행: `범위 확장: watchdog 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP) · 조사 대기 · Phase 1 비차단`
+
+**`09_디렉터_쉬운요약.md`**
+```markdown
+✅ 9/28 안전장치가 사라진 원인이 확정됐어요(예약작업 파일이 그 시각에 바뀐 기록 발견). 지금은 재발 방지 장치가 있어요.
+✅ 9/30 점검이 끊긴 이유도 찾았어요. 다른 스캔이 92분 동안 자리를 차지하고 있었어요.
+🩺 "서버가 터졌다"는 건 지난 3주간 세 번(9/13·9/22·9/26) 있었고, 메모리 부족 사고와 시기가 맞아요. 9/26 이후 6일 동안은 한 번도 안 터졌어요. 정확한 원인은 서버 기록을 "보기만" 해서 확인 중이에요.
+🔴 중요: 서버 데이터의 백업 사본이 사실상 없어요. 자동 백업이 한 번도 성공하지 못했어요.
+👉 디렉터님께 부탁: ① 지금 Lightsail 콘솔에서 스냅샷을 한 번 찍고 자동 스냅샷을 켜 주세요. ② 그다음 정적 IP를 붙여 주세요(주소가 한 번 바뀌고 그 뒤로는 안 바뀌어요 — Bitget API 키에 IP 제한을 걸어 두셨다면 그것도 새 주소로). ③ 서버가 또 멈추면 stop→start만 하시고, 업데이트 스크립트는 돌리지 말고 알려 주세요.
+```
+
+**`NEXT_STEP`**
+```markdown
+다음 할 일: Cursor가 서버 "보기만" 확인(Y-블록) + 코드 읽기 3가지(L10~L12). 그다음 백업 고치기(BACKUP-01, 최우선) → 48시간 관찰(Phase 1).
+디렉터: Lightsail 스냅샷 찍기 + 자동 스냅샷 켜기 → 정적 IP 붙이고 새 주소를 Cursor에 알려 주기.
+```
+
+---
+
+## 금지 (이번)
+
+Y-블록 외 서버 명령 일체 · `sudo` · 백업/스냅샷 서비스 수동 실행 · 백업 스크립트·유닛 수정 · watchdog/LIFECAP 설정 변경 · 로그 삭제·정리 · `--cutover-check`·`--start-parallel` · `.env` 수정(정적 IP 반영 포함 — 주소 변경은 Cursor 쪽 접속 설정만, 서버 변경 아님) · LANE_FULLBT·주식 쪽 파일 · `BITGET_PIPELINE_SSOT` · C-2 · MDD5% · live · `ENABLE_REAL_EXECUTION`
+
+## 완료 정의
+
+이 Handoff 커밋 해시 + Y-블록 추출 sha256 + 출력(스냅샷 경로·해시·판정 줄 원문) + L10–L12 + §9 문서 갱신 → `track_b_CURSOR_TO_CLAUDE.md` 상단 OUTBOX. 디렉터 스냅샷·정적 IP 조치 여부도 1줄. Claude 판정 전 Phase 1·BACKUP-01 착수 금지.
+
+## sub-phase ID
+
+`CAT-L-CUTOVER-01` (Phase 1 선행 점검 — 원인 확정 단계)
+
+---
+
+# ARCHIVE (부록 · 주소변경_Y실행전확인)
+
 # CLAUDE → CURSOR · CAT-L-CUTOVER-01 · 주소 변경 판정 + Y-블록 실행 전 확인 (부록)
 
 > **작성**: Claude Pro (Architect) · 2026-10-02
