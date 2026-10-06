@@ -22,11 +22,28 @@ Phase 1 보류(§9 조건). 신규 등록: CAT-L-SCRIPT-AUDIT-01 · CAT-L-BACKUP
 - root pyc 가설 불일치(mtime 07-02/08-11/09-23). mode 10건 중 8건 = 09-28 02:24 `chmod +x` 일치.
 - W8: `/tmp` 3파일 원본 `snapshots/raw_20260930/` 보존, sha256 V3와 일치. 서버 원본 삭제 안 함. W10(규칙 8)은 디렉터 승인 대기.
 
+## CAT-L-CUTOVER-01 Phase 1 선행 X-블록 회신 · Claude 판정 [2026-10-02]
+X-블록 실행본 일치(768a1189…). X0 비밀 아님(snapd "REST API" 문구).
+FENCE-02 회귀 원인 = 확정(cron RELOAD 09-28 02:25:01). 124 원인 = scan_spot_ema5(05:20~06:52, LIFECAP 강제 종료)가 전역 락 보유 — timeout 없었어도 SKIPPED_LOCK.
+부팅 경계 3건(09-13·09-22·09-26) = 디렉터 stop→start, 기록된 OOM(09-07·09-14·09-25)과 정렬. 현재 부팅 6일 재시작 0·OOM 0. 원인 확정은 Y1.
+🔴 데이터 보호 공백: L-2 백업 성공 0/27(09-08~), 업데이트 전 백업 12KB 빈 파일. → BACKUP-01 최우선, 디렉터에 Lightsail 스냅샷 권고.
+종결: snapshot(스캔 비차단) · dashboard/heatmap(의도된 퇴역) · 유닛 어긋남 없음 · L9.
+QW-RESTART-01 범위 확장: watchdog의 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP).
+Claude 정정 C-10(출력 절단 재발). Phase 1 보류.
+
+### Cursor 측 기록 [2026-10-06] — Y-블록 회신 (Handoff `bcdca77` · 주소 `52.79.114.70`)
+- Y-블록 sha256 `b64e3ac2…ed62e2` 일치, 1회 읽기전용, BOOT_GUARD=OK(09-26 08:52 부팅 유지, 스냅샷/주소변경으로 재기동 없음).
+- Y1 boot -1: 09-25 14:42 UTC `cron.service` python pid=44321 글로벌 OOM 3줄 확정 → 09-26 08:49 Power key(디렉터 Stop). boot -2/-3 커널 로그 거의 없음.
+- Y2: 184쌍 중 164건 ≥5400s. Y3 LIFECAP ENFORCE 48. Y4 `.env`에 BITGET_DB_STORAGE_PATH 키 1줄(값 미출력). Y5 charts 24G가 데이터 폴더 대부분.
+- 스냅샷 md는 Telegram 봇 토큰 12건 가림 후 커밋. 원문 미커밋. 디렉터 토큰 재발급 필요.
+- L10 WAL+NORMAL(OFF 아님). L11 online backup API + integrity_check, 기본 enabled. L12 heavy 5400s, 락은 프로세스 종료 시 해제.
+- Phase 1·BACKUP-01 착수 안 함.
+
 ### 2026-10-02 디렉터 회신 반영
 - 2026-10-02 디렉터: 터질 때마다 SSH 불응 → Lightsail Stop/Start 복구(부팅 경계 3건과 정렬). Lightsail 수동 스냅샷 1건 + 자동 스냅샷 활성화(서버 밖 첫 사본, 시점 사본) · 주소 52.79.114.70.
-- 주소 변경 부록 ① 호스트 키 대조: 옛/새 주소 ED25519 `SHA256:HkXnpIQ6…IVuM` 일치(ssh-keyscan은 KEX 미지원으로 실패 → `ssh -v` strict 대체, 로그인 0). known_hosts에 새 주소 추가. Y-블록 본 Handoff 파일 미수신 → Y 미실행.
+- 주소 변경 부록 ① 호스트 키 대조: 옛/새 주소 ED25519 `SHA256:HkXnpIQ6…IVuM` 일치(ssh-keyscan은 KEX 미지원으로 실패 → `ssh -v` strict 대체, 로그인 0). known_hosts에 새 주소 추가. Y-블록은 2026-10-06 실행(`bcdca77`).
 
-### Phase 1 선행 W-블록 회신 · Claude 판정 → X0 + X-블록 + L5–L9 [2026-10-01 저녁] (Handoff `27a14b0`)
+### Cursor 측 기록 [2026-10-01 저녁] — X0 + X-블록 + L5–L9
 - X0: 비밀 문자열 1줄 = W 스냅샷 172번 줄 `Listening on REST API socket for snapd user session agent.` — 비밀 아님. X 스냅샷도 같은 스캔, 일치는 systemd 메시지뿐.
 - X-블록(48줄·CR 0·sha256 `768a1189…295b21`) 1회 읽기전용, 출력 `snapshots/CAT-L-CUTOVER-01_P1PRE_XBLOCK_20261001.md`(sha256 `137A1E91…89E0E`). 서버 변경 0.
 - X1: 부팅 0 = 09-26 08:52 UTC 이후 OOM 0. 그러나 부팅 경계 3개(09-13 ~15:00 · 09-22 05:49→06:25 · 09-26 08:50→08:52) 존재 — 원인 미확인(Y1 제안). X2: cron RELOAD `Sep 28 02:25:01` = 09-28 설치기 종료 직후(cron 파일 변경 직접 증거). X2b: 02:24 `update_bitget.sh`→pull→유닛 10개 덮어쓰기→daemon-reload→타이머 2개 재시작 순서 확정. X2c: 사전 백업 3개 모두 `bitget_system_config.sqlite` 12288B뿐(시장 DB 없음 — 사전 백업 경로 의심). X3: `head -800`에 오래된 0바이트 로그만 채워져 점유표 작성 불가(Y2 제안). X3b: `scan_spot_ema5` 05:20:01→06:52:12 UTC LIFECAP 강제 종료(age 5517/cap 5400) = 09-30 cutover_check 124의 락 보유 후보. X4: 백업 성공 0/실패 27(09-08~), L-2 결과물 없음, 디스크 42G 여유, 가용 메모리 ≈2.6GB. X4b: 스냅샷 최장 공백 14563s(09-24 23:48→09-25 03:51 UTC).

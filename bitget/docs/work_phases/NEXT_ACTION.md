@@ -7,12 +7,12 @@
 |------|-----------|--------|--------------|
 | **CAT-A (공용)** | A-LIFECAP-01 | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-L (공용·레인 아님)** | CAT-L-FENCE-03 | **SUB_DONE** | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **Phase 0c SUB_DONE** · Phase 1 보류 · X0 해소 + X-블록(읽기전용) + L5–L9 회신 제출 → Claude 판정 대기 · 선행: CAT-L-BACKUP-01 | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
+| **CAT-L (공용·레인 아님)** | CAT-L-CUTOVER-01 Phase 0c | **Phase 0c SUB_DONE** · Phase 1 보류 · Y-블록(읽기전용) 회신 제출 → Claude 판정 대기 · 선행: CAT-L-BACKUP-01(최우선) | `track_b_*` · OUTBOX=`track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | A5-EVENTLOG-01 | **구현 OK · 서버 반영 확인 대기** (적재 시계는 반영 확인일부터) | `track_b_*` |
 | **CAT-L (에스컬레이션)** | FENCE-02 | **SUB_DONE (1–2단계) · 3단계 판정 2026-10-13** (근거: CLAUDE_TO_CURSOR FENCE-03 Handoff 선행 상태 줄, Claude C-7) | live FENCE_OK · 실스캔 cgroup=heavy.slice |
 | **CAT-L (공용)** | CAT-L-SCRIPT-AUDIT-01 | 등록 · Phase 1과 병행 · 대기 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-BACKUP-01 | 등록 · **Phase 1 선행** · 원인 확정(python 미존재 · X4: 성공 0/실패 27) · 사전 백업 경로 의심(X2c 12KB만) 포함 · Handoff는 Claude 판정 후 다음 창 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-QW-RESTART-01 | 등록 · 조사(읽기전용부터) · Phase 1 비차단 (queue-worker 일일 재시작·scan_spot_ema5 LIFECAP 92분 점유 포함) | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-BACKUP-01 | **최우선** · Phase 1 선행 · 원인 확정(python 부재, 성공 0/27) · 사전 백업 공백(Y4: 키는 .env에 있음·프로세스 미전달) · Handoff는 Y-블록 회신 후 다음 창 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-QW-RESTART-01 | 범위 확장: watchdog 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP) · 조사 대기 · Phase 1 비차단 | `track_b_*` |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |
 | **LANE_HIST3FIX** | FULL-BT-HIST-3-FIX | **DONE** | `lanes/LANE_HIST3FIX/*` |
 | **LANE_FULLBT** | FULL-BT-FUT-RUN-2 | **WAIT_CLAUDE_OK** (RUN-2 실런 OUTBOX) | `lanes/LANE_FULLBT/*` |

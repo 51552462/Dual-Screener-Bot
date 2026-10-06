@@ -1,8 +1,59 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-10-01 저녁 · **X0 + X-블록 + L5–L9 회신 OUTBOX** 최상단 (Handoff `27a14b0`) · Phase 0c SUB_DONE · Phase 1 보류 · BACKUP-01 착수 전 Claude 판정 대기
+> **갱신**: 2026-10-06 · **Y-블록 회신 OUTBOX** 최상단 (Handoff `bcdca77`) · Phase 0c SUB_DONE · Phase 1 보류 · BACKUP-01 착수 전 Claude 판정 대기
 
 ---
+
+## OUTBOX — CAT-L-CUTOVER-01 Phase 1 선행 · Y-블록(읽기전용) + L10–L12 · 2026-10-06
+
+### 0. 실행 수단 · 해시 · 주소
+
+- Handoff 커밋: `bcdca776ac67fc87a248279dc1e02f9866bfa30f` (`CLAUDE_TO_CURSOR.md`에 `X회신판정_Y블록_20261002` 전문 기록, push 완료). 부록(주소변경)은 이미 `84c8a15`에 기록됨.
+- Y-블록(§7-1): **71줄 · CR 0 · sha256 `b64e3ac2edcd39b39d3c5149102287a7f0457071a0069a5538bcea9bd6ed62e2`** = Claude가 부록에 적은 값 **일치**. `vb_run.py` blob 추출 1회. `BOT2_HOST=ubuntu@52.79.114.70`.
+- SSH_RC 0 · stdout 58581B · stderr 0 · CR 0 · START `2026-10-06T06:26:38Z` END `06:27:23Z`. sudo 0 · 그 외 서버 명령 0.
+- 부록 ① 호스트 키: 이미 일치(`ED25519 SHA256:HkXnpIQ6vc542Q9cn+WosM5UuivXhhdwlyeJ6yzIVuM`). 이번 실행은 추가 검사 없이 그 기록으로 접속.
+- 디렉터 스냅샷·자동 스냅샷: 완료(10-02 진술). 정적 IP 핀: **확인 대기**(재제안 안 함).
+
+### 0b. 🔴 비밀 문자열 (커밋 전 자기점검)
+
+- 원문 journal에 Telegram `getUpdates` URL이 **실제 봇 토큰 12회** 포함됨(Y1 종료 직전 25줄·부팅 -2 마지막 줄, `python[405]` proposal poll 실패 로그).
+- **원문 파일은 커밋하지 않음.** 스냅샷은 `/bot…/` 구간만 `[REDACTED_TELEGRAM_BOT_TOKEN]`으로 치환. 경로 `snapshots/CAT-L-CUTOVER-01_P1PRE_YBLOCK_20261002.md` · 파일 sha256 `256B2A09FF1CDA9583F41606DD961E0D2B99F97CB846BAD51988AA1CE660683`(머리말 포함).
+- **디렉터 즉시 조치:** 해당 Telegram 봇 토큰 재발급(BotFather). 재발급 전 이 토큰이 git history에 들어간 커밋은 없음(로컬 `%TEMP%\y_out.txt`에만 원문).
+- 코드/서버는 이번 창에서 수정하지 않음(금지). 로그가 토큰을 URL에 남기는 것은 Claude 판정 후 별도.
+
+### 1. 항목별 결과 (고친 것 없음)
+
+| 항목 | 결과(원문) | Cursor 한 줄 |
+|---|---|---|
+| Y0 | 부팅 0 = `Sat 2026-09-26 08:52:17 UTC—Tue 2026-10-06 06:26:33 UTC` · **`BOOT_GUARD=OK`** | 스냅샷·주소 변경 이후에도 **재기동 없음**. 부팅 번호 유효. |
+| Y1 boot -1 | `KLINES=221 OOM_HITS=3 HUNG_HITS=0` · 처음=끝 3줄 동일: `Sep 25 14:42:07 … snapd invoked oom-killer` / `task_memcg=/system.slice/cron.service,task=python,pid=44321` / `Out of memory: Killed process 44321 (python) total-vm:2162580kB`. 시간대별 줄: 09-25T13=888 → **T14=163 후 빈 칸 7줄 → T14=533** → T15~T07 ≈400. 종료 표시: `2026-09-26T08:49:39 systemd-logind: Power key pressed.` 직전 줄은 DNS 실패(telegram·ws.bitget.com). last 5: `08:50:08 System Power Off` | **09-25 14:42 UTC cron python 글로벌 OOM 확정.** 직후 한 시간 로그 폭락=응답 저하. 그다음 날 아침 08:49 `Power key` = 디렉터 Lightsail Stop과 정합. SSH 불응 체감은 종료 직전 DNS 실패와도 맞음. |
+| Y1 boot -2 | `KLINES=1 OOM_HITS=0 HUNG_HITS=0` · distress 0 · `NO_SHUTDOWN_MARKER` · 시간대별 ~200/h, 마지막 `T05=155` · last 5는 05:44–05:45 UTC DNS 실패 후 끊김 | 커널 로그가 거의 없음(보존 한계). OOM 증거 없음. 종료 마커 없이 잘림 = 강제 Stop 정황. |
+| Y1 boot -3 | 동일하게 `KLINES=1 OOM_HITS=0` · `NO_SHUTDOWN_MARKER` · last 5는 user systemd `Closed REST API socket for snapd…` `14:56:48` | 커널 OOM 증거 없음(잔존 journal만). |
+| Y2 | `Y2_PAIRS=184 Y2_OPEN=2` · 소요≥5400초 **164/184** · max 5764s · OPEN: `2026-10-06T05:20:01Z … --scan-spot-ema5` , `2026-10-06T06:13:01Z … --scan-futures-ema5` | 펜스 이후 **무거운 스캔이 거의 매일 90분 상한 근처에서 끝남**(완주가 아니라 상한). 실행 중 OPEN 2건 = 락 점유 진행 중. |
+| Y2b | `Y2B_COUNT=0` | 09-29~10-02 이름·size>0 비watchdog 로그 **0**. 보존/로테이트로 사라졌거나 이름이 UTC 날짜와 불일치. 점유표는 Y2(systemd scope)가 SSOT. |
+| Y3 | `LIFECAP_COUNT=48` · 모드 합계(원문 uniq): data_refresh 4 · 다수 scan_* (spot_ema5 2, ema5_r2 1, ema5_r3 3 포함) · `WATCHDOG_LOGS_NONEMPTY=716` · canary 두 파일: 헤더 다음 빈 줄 → **내용 0(파일 없음/빈 파일)** | LIFECAP 강제 종료가 **반복**(48). canary 09-30 내용은 확인 불가. |
+| Y4 | `.env KEY_LINES=1` · `bitget/.env KEY_LINES=1` · factory User=ubuntu EnvironmentFiles=그 두 경로 · backup User=**root** 같은 EnvironmentFiles | **키는 파일에 있다.** 사전 백업 12KB는 `update_bitget.sh`가 `.env`를 source하지 않고 `BITGET_DB_STORAGE_PATH`를 안 넘긴 것과 정합. backup 유닛이 root인 점도 `python: command not found`와 정합. |
+| Y5 | `DATA_ENTRIES=50` · 상위: **charts 24G** · backups 1.2G · market_data 517M · snapshot 517M · snapshot.tmp.88861 451M · snapshot.tmp.57637 250M · ops_events 379M · message_queue 17M | 26G의 대부분은 **charts 24G**. sqlite 본파일 ≈1.5G. snapshot `.tmp.*` 유령 700M. backups 1.2G는 L-2 서비스 성공 0과 모순처럼 보이므로 Claude가 구성 확인. |
+
+### 2. L10–L12 (로컬 코드만)
+
+| # | 결과 |
+|---|---|
+| L10 | 코인 SSOT `bitget/infra/shared_db_connector.py:10–11,63–64` = `journal_mode=WAL` + **`synchronous=NORMAL`**(OFF 아님) + `apply_oom_safe_pragmas`. `low_ram_sqlite_pragmas.py:55–62`도 wal=True일 때 동일. `task_orchestrator.py:153–154` 동일. `ops_logger.py:54`는 WAL만(synchronous 줄 없음 → 연결 기본). **강제 재기동 손상 위험:** WAL+NORMAL은 커밋 직후 fsync를 건너뛰므로 전원 차단 시 **마지막 몇 트랜잭션 손실 가능**, DB 파일 전체 파손은 드묾. `synchronous=OFF` 아님 → 이번 Critical 해당 없음. 그래도 09-26 Stop은 쓰기 중 스냅샷/스캔과 겹칠 수 있음. |
+| L11 | 대상: `discover_bitget_storage_sqlite_files` = data_root 아래 `bitget_*.sqlite`(WAL/SHM 제외, 주식 파일명 거부 `:30`). 저장: `bitget_backup_dir()` = `BITGET_BACKUP_DIR` 또는 `{data}/backups/db`. 방식: `online_backup`(SQLite backup API, `institutional_db_backup.py:92`) + `integrity_check` 후 `tar.gz`. 실패 시 staging 삭제. 보관: daily 7 + weekly 4(`memory_policy.py:293–295`). `BITGET_BACKUP_ENABLED` 기본 **True**. 1회 예상: sqlite 합계 ≈1.5G 복사+압축, charts 24G는 후보 아님. 메모리: backup API는 소스와 비슷한 버퍼 — 4GB 호스트에서 **root·fence 없이** 돌리면 OOM 위험(BACKUP-01 설계 입력). 현재 서비스는 `python` 미존재로 성공 0. |
+| L12 | 상한: `job_lifetime_cap.py` `_HEAVY_PREFIXES=("scan_","daily_audit","weekly_evolution")` → `BITGET_JOB_HEAVY_CAP_SEC` 기본 **5400**, 그 외 `OPS` **1800**, grace **60**. `scan_spot_ema5`는 heavy. 정상 소요 기대: 코드에 명시 초 없음. 과거 OUTBOX(A-LIFECAP)는 “정상 12분 스캔 vs 좀비”. **현재 Y2는 펜스 이후 스캔이 5400s 근처가 기본** — 기대치가 바뀐 상태. 종료: watchdog `sweep_expired_jobs` → SIGTERM+grace+SIGKILL(`terminate_job`) → `record_job_failure` → `unregister_job`. 전역 락은 프로세스 종료 시 flock fd 해제(`runtime.py` LOCK_UN/프로세스 종료). **부분 결과 커밋/롤백 전용 로직은 없음**(죽은 시점까지 DB에 쓰인 것은 남음). |
+
+### 3. 디렉터 스냅샷·주소
+
+- Lightsail 수동 스냅샷 1 + 자동 스냅샷 ON (10-02). Y0 재기동 0 → 스냅샷/주소 변경이 Stop/Start를 유발하지 않음.
+- 정적 IP 핀: 미확인. 재제안 안 함.
+
+### 4. 상태 한 줄
+
+Y-블록 실행본 일치 · BOOT_GUARD=OK · 09-25 cron python OOM 확정 · 펜스 이후 스캔 90분 상한 반복(Y2 164/184) · `.env`에 DB 경로 키 존재(사전 백업 미전달 설 강화) · Phase 1·BACKUP-01 착수 금지(Claude 판정 대기). **텔레그램 봇 토큰 재발급 필요.**
+
+---
+
 
 ## 디렉터 회신 — 스냅샷·자동 스냅샷·새 주소 · 2026-10-02 20:02 KST
 
