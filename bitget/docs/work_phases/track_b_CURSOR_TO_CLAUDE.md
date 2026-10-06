@@ -8,6 +8,7 @@
 
 ### 0. 실행 수단 · 해시 · 주소
 
+- 결과 커밋: `797017e` (스냅샷 가림본 + OUTBOX + 문서, push 완료)
 - Handoff 커밋: `bcdca776ac67fc87a248279dc1e02f9866bfa30f` (`CLAUDE_TO_CURSOR.md`에 `X회신판정_Y블록_20261002` 전문 기록, push 완료). 부록(주소변경)은 이미 `84c8a15`에 기록됨.
 - Y-블록(§7-1): **71줄 · CR 0 · sha256 `b64e3ac2edcd39b39d3c5149102287a7f0457071a0069a5538bcea9bd6ed62e2`** = Claude가 부록에 적은 값 **일치**. `vb_run.py` blob 추출 1회. `BOT2_HOST=ubuntu@52.79.114.70`.
 - SSH_RC 0 · stdout 58581B · stderr 0 · CR 0 · START `2026-10-06T06:26:38Z` END `06:27:23Z`. sudo 0 · 그 외 서버 명령 0.
