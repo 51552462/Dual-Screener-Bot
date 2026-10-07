@@ -1,3 +1,479 @@
+# CLAUDE → CURSOR · CAT-L-SECRET-01 · 텔레그램 토큰 교체 (L17·L18 판정 포함)
+
+> **작성**: Claude Pro (Architect) · 2026-10-07
+> **입력**: `track_b_CURSOR_TO_CLAUDE.md` 맨 위 「L17·L18 로컬 회신」(Handoff `cefec75` · 결과 `50a4a96`) — Claude 스냅샷
+> **CAT**: CAT-L 🟡 (secret 취급) · 인접 CAT-M(proposal poll·digest가 토큰을 쓰는 곳) · 코드 변경 0 · 서버 변경은 **S3 한 곳뿐**(.env 값 교체는 디렉터 본인) · Critical 해당 없음 · `ENABLE_REAL_EXECUTION` 불변(OFF, 블록이 매번 확인)
+> **이 파일**: `CLAUDE_TO_CURSOR.md` 상단에 **전문** 기록 → 커밋·push → §3 L19(로컬) → §4 S1(서버, 읽기전용)부터 순서대로.
+> **발행 경위**: 디렉터가 같은 창에서 발행을 지시했다(한 대화=sub-phase 1개 원칙의 1회 예외, 기록용). 이후 sub-phase는 다시 새 창.
+> **시각**: UTC (KST 괄호) · 서버 Bot-2 `52.79.114.70`
+
+---
+
+## 0. 결론 (디렉터용)
+
+1. **L17·L18 수용(보완 2건).** 토큰이 어디서 읽히는지는 코드로 확인됐다. 다만 **L17이 놓친 곳이 둘** 있다(§1). 둘 다 서버에서 읽기만 해서 확정한다(S1).
+2. **교체는 디렉터님이 서버 화면에서 직접 한다. 새 토큰은 Cursor·Claude·채팅 어디에도 가지 않는다.** Cursor는 값을 못 보는 검사 블록(S1·S2·S3·S4)만 돌린다. 출력은 서버 쪽에서 토큰 모양을 가려서 나오고, 값 대신 "같은 봇인가/옛 값인가/유효한가"만 나온다.
+3. **알림이 끊기는 시간은 약 10~20분**이다(BotFather에서 옛 토큰을 폐기하는 순간부터 서버 재시작 완료까지). 20:00 KST 일일 요약(11:00 UTC) 전후 15분은 피한다.
+4. **토큰 교체만으로 새는 구조는 안 막힌다.** 폴링 실패 때 URL이 로그에 남는 경로는 그대로라, 새 토큰도 같은 일이 생기면 로그에 다시 남는다. S3·S4가 **재발 여부를 숫자로 확인**한다. 재발하면 `CAT-M-TOKENLOG-01`을 앞당긴다. 그동안 방어선은 규칙 8(서버 측 마스킹)이다.
+5. **공개 GitHub 저장소 문제는 따로 간다**(`CAT-L-REPO-EXPOSURE-01`, 등록만). 저장소를 private으로 돌리면 **서버가 GitHub에서 코드를 받는 경로가 막힐 수 있어서** 순서가 중요하다(§1·§9).
+
+---
+
+## 1. Claude 독립 검증 (L17·L18)
+
+| 항목 | 판정 | 메모 |
+|---|---|---|
+| L17 표(어디서 읽는가) | ✅ 수용 | 근거 줄 번호가 구체적이고 이름만 인용했다. 교체 후 재시작이 필요한 쪽(async·factory)과 필요 없는 쪽(watchdog 틱·digest cron)을 나눈 것도 맞다. 스캔 경로가 `BITGET_SKIP_INLINE_TELEGRAM=1`이라 queue-worker는 직접 보내지 않는다는 해석도 받아들인다 |
+| **L17 보완 1** | ⚠️ 누락 가능 | 프로젝트 문서 `POST_DEPLOY_OBS_체크리스트`(2026-08-18 서버 확정)에 **`dante-bitget-overseer.service`**(AI 감사관 상시 루프, `python -m bitget.ai_overseer`, 두 `.env` 로드, Restart=always)가 있다. L17은 poll을 factory 안의 `ai_overseer` hook으로만 적었다. overseer 유닛이 지금도 살아 있으면 **그 프로세스도 `REPORT_BOT_TOKEN`을 들고 있고 재시작 대상**이다. 두 곳이 같은 토큰으로 getUpdates를 부르면 텔레그램 409 충돌도 난다. → S1이 존재·환경을 확정, S3가 있으면 재시작 |
+| **L17 보완 2** | ⚠️ 중요 | `get_report_token()`은 `REPORT_BOT_TOKEN`이 **비어 있으면** `TELEGRAM_TOKEN_MAIN → TELEGRAM_TOKEN → TELEGRAM_BOT_TOKEN → MAIN_BOT_TOKEN` 순으로 넘어간다. 프로젝트 문서에 Bot-2의 `bitget/.env`를 **Bot-1(주식)에서 복사**하라는 절차가 있다. 즉 로그에 새어 나간 토큰이 **주식 봇 토큰**일 수 있다. 그 경우 폐기하면 **Bot-1 주식 알림도 같이 죽는다**. 이 프로젝트 범위 밖이므로 S1이 **정지 조건**으로 걸러낸다(§4) |
+| L18 건수 | ✅ 수용 | 내용 미출력 원칙을 지켰다. 해석만 정정: sshd 인증 줄 162건·외부 IPv4 181건이 **공개 저장소 문서·스냅샷에 이미 있다.** 토큰이 없어도 노출이다(디렉터 접속 IP가 섞여 있을 수 있고, 서버 공격 표면을 알려 준다). `vb_run.py:18`의 PEM 경로도 공개돼 있다(키 파일 자체가 아니라 경로) |
+| L13 후속 한 줄 | ✅ 수용 | 경로 제한 없는 이력 전수 확인은 L19(a)로 닫는다 |
+
+---
+
+## 2. 순서 (한눈에)
+
+| 단계 | 누가 | 무엇 | 서버 변경 |
+|---|---|---|---|
+| L19 | Cursor | 로컬 이력 확인 3건 | 없음 |
+| S1 | Cursor | 서버 읽기전용 인벤토리(어느 파일 몇 번째 줄이 어느 봇인지, 새어 나간 건 어느 쪽인지) | 없음 |
+| D | **디렉터** | 복사본 만들기 → BotFather에서 폐기·새 토큰 → 서버 화면에서 줄 교체 | **.env 값 교체**(디렉터) |
+| S2 | Cursor | 읽기전용 검증(모양·옛 값 잔존·텔레그램 유효성) | 없음 |
+| S3 | Cursor | 관문 재확인 → 서비스 재시작 → 사후 확인 → 복사본 삭제 | 재시작(`sudo -n`) |
+| S4 | Cursor | 다음 날 읽기전용 확인 | 없음 |
+
+작업 전제(디렉터, 30초): Lightsail 콘솔 스냅샷 목록에서 **가장 최근 자동 스냅샷이 24시간 이내**인지 확인(아니면 수동 1건). 이번 sub-phase는 BACKUP-01 이전이라 수동 스냅샷 의무 대상은 아니다.
+
+---
+
+## 3. 로컬 확인 L19 (서버 접속 0 · 토큰 값 접촉 0)
+
+**(a)** 경로 제한 없는 이력 확인: `git log --all -G'[0-9]{8,12}:[A-Za-z0-9_-]{35}' --format=%h` — **커밋 개수만** 보고(0이어야 한다). 0이 아니면 해시와 파일 경로만(내용 금지) 보고하고 **멈춘다**.
+**(b)** `.env` 계열 파일이 이력에 한 번이라도 들어간 적이 있는지: `git log --all --name-only --format= -- '*.env' '.env*' | sort -u` — 파일 이름만. 있으면 멈추고 보고.
+**(c)** 블록 해시 대조: 이 파일의 S1~S4 코드펜스에서 **줄바꿈 `\n` 결합 + 맨 끝 `\n` 1개** 기준으로 sha256을 계산해 각 블록 머리말의 값과 대조한다. **다르면 실행하지 말고** 어떤 처리(줄 끝 등) 때문인지부터 보고.
+출력은 OUTBOX 맨 위 한 블록에 "원문 · Cursor 한 줄".
+
+---
+
+## 4. S1 — 서버 인벤토리 (읽기전용)
+
+**하는 일**: 두 `.env`의 토큰 줄을 **이름·줄 번호·모양·같은 봇 묶음(CLASS)**으로만 출력, 로그에 새어 나간 토큰과 대조(`IN_JOURNAL`), 각 봇의 공개 이름(`getMe`, 부작용 없음), `dante-bitget*` 유닛과 프로세스 환경의 토큰 키 이름, 실전 스위치 값, git 원격 주소 형태(비밀번호 부분 가림).
+**하지 않는 일**: 값 출력·`.env` 전체 열람·`getUpdates`·`sendMessage`·sudo·쓰기.
+
+*73줄 · CR 0 · sha256 `b2e3cb02a2bbfcff6ff7356431dff7b9f62112abd76b6052c0a09e16e0f46051`*
+
+```bash
+{
+set -u
+ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+FILES="$ROOT/.env $ROOT/bitget/.env"
+TOK='[0-9]{8,12}:[A-Za-z0-9_-]{35}'
+STOCK=" TELEGRAM_BOT_TOKEN TELEGRAM_TOKEN TELEGRAM_TOKEN_MAIN MAIN_BOT_TOKEN "
+declare -A H J E K T; ng=0; CLS=0; BAD=""; WARN=""
+cls(){ local h; h=$(printf %s "$1" | sha256sum | cut -d' ' -f1); [ -n "${H[$h]:-}" ] || { ng=$((ng+1)); H[$h]=$ng; }; CLS=${H[$h]}; }
+tl(){ awk '{cr=($0 ~ /\r$/); sub(/\r$/,""); x=$0; sub(/^[[:space:]]*(export[[:space:]]+)?/,"",x); k=x; sub(/[[:space:]]*=.*/,"",k)} k ~ /^[A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*$/ && x ~ /=/ {v=x; sub(/^[^=]*=/,"",v); print FNR "|" cr "|" k "|" v}' "$1"; }
+echo "== S1 $(date -u +%FT%TZ) HEAD=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null) =="
+echo "== journal: Telegram-token-shaped strings (counts only) =="
+JT=""
+for b in 0 -1 -2 -3; do
+  t=$(nice -n 19 journalctl -b "$b" --no-pager -o cat 2>/dev/null | grep -aoE "$TOK")
+  echo "JOURNAL boot=$b token_matches=$(printf '%s' "$t" | grep -c .)"
+  JT="$JT"$'\n'"$t"
+done
+while IFS= read -r t; do [ -n "$t" ] || continue; cls "$t"; J[$CLS]=1; done < <(printf '%s\n' "$JT" | sort -u)
+echo "JOURNAL_DISTINCT_TOKENS=${#J[@]}"
+echo "== env files: token lines (names only) =="
+for f in $FILES; do
+  n="${f#$ROOT/}"
+  if [ ! -f "$f" ]; then echo "FILE=$n MISSING"; continue; fi
+  tr=$(git -C "$ROOT" ls-files -- "$n" | wc -l)
+  echo "FILE=$n MODE=$(stat -c %a "$f") OWNER=$(stat -c %U "$f") LINES=$(wc -l <"$f") GIT_TRACKED=$tr"
+  [ "$(stat -c %a "$f")" = 600 ] || WARN="$WARN mode_not_600:$n"
+  [ "$tr" = 0 ] || BAD="$BAD env_file_tracked_by_git:$n"
+  grep -aqiE '^[[:space:]]*(export[[:space:]]+)?ENABLE_REAL_EXECUTION=["'"'"']?true' "$f" && BAD="$BAD ENABLE_REAL_EXECUTION_true:$n"
+  while IFS='|' read -r ln cr key raw; do
+    st=plain; case "$raw" in \"*) st=dq;; \'*) st=sq;; esac
+    v="${raw#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"
+    fl=""; [ "$cr" = 1 ] && fl="$fl CR"; [[ "$raw" =~ [[:space:]]$ ]] && fl="$fl trailing_space"; [[ "$raw" == *" #"* ]] && fl="$fl inline_comment"; [ -z "$v" ] && fl="$fl EMPTY"
+    c=-; inj=-; fmt=other
+    if [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]]; then fmt=telegram; cls "$v"; c=$CLS; T[$c]="$v"; E[$c]=1; K[$c]="${K[$c]:-} $key"; inj=no; [ -n "${J[$c]:-}" ] && inj=yes; fi
+    echo "  LINE=$ln KEY=$key STYLE=$st FORMAT=$fmt CLASS=$c IN_JOURNAL=$inj FLAGS=${fl# }"
+  done < <(tl "$f")
+done
+echo "== classes (same class = same bot token value) =="
+for c in "${!E[@]}"; do
+  inj=no; [ -n "${J[$c]:-}" ] && inj=yes
+  sf=no; for k in ${K[$c]}; do case "$STOCK" in *" $k "*) sf=yes;; esac; done
+  echo "CLASS=$c KEYS=$(printf '%s\n' ${K[$c]} | sort -u | paste -sd,) IN_JOURNAL=$inj STOCK_FAMILY_KEY=$sf"
+  [ "$inj" = yes ] && [ "$sf" = yes ] && BAD="$BAD stock_family_key_in_leaked_class"
+done
+for c in "${!J[@]}"; do [ -n "${E[$c]:-}" ] || BAD="$BAD journal_token_not_found_in_env_files"; done
+[ "${#J[@]}" -gt 0 ] || BAD="$BAD no_token_found_in_journal"
+echo "== getMe on each env token class (public bot name only; no side effects) =="
+for c in "${!E[@]}"; do
+  r=$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "${T[$c]}" | curl -sS --max-time 15 -K - 2>&1 | head -c 800 | python3 -c 'import sys,json
+s=sys.stdin.read()
+try:
+ d=json.loads(s); print("ok=%s username=%s" % (d.get("ok"), (d.get("result") or {}).get("username")))
+except Exception:
+ print("ok=ERR")' 2>&1)
+  echo "CLASS=$c $r"
+done
+echo "== units (dante-bitget*.service) =="
+for u in $(systemctl list-units 'dante-bitget*' --all --no-legend --plain 2>/dev/null | awk '{print $1}' | grep '\.service$'); do
+  pid=$(systemctl show -p MainPID --value "$u"); pk=unreadable
+  if [ "${pid:-0}" -gt 0 ] && [ -r "/proc/$pid/environ" ]; then pk=$(tr '\0' '\n' <"/proc/$pid/environ" | sed 's/=.*//' | grep TOKEN | sort -u | paste -sd,); fi
+  echo "UNIT=$u ACTIVE=$(systemctl show -p ActiveState --value "$u") PID=$pid STARTED='$(systemctl show -p ExecMainStartTimestamp --value "$u")' USER=$(systemctl show -p User --value "$u") PROC_ENV_TOKEN_KEYS=${pk:--}"
+done
+echo "== non-secret flags (value shown) =="
+for k in ENABLE_REAL_EXECUTION REAL_EXECUTION_DRY_RUN BITGET_PIPELINE_SSOT BITGET_ASYNC_TELEGRAM BITGET_SKIP_INLINE_TELEGRAM; do
+  for f in $FILES; do [ -f "$f" ] && grep -aE "^[[:space:]]*(export[[:space:]]+)?$k=" "$f" | tr -d '\r' | sed "s#^#${f#$ROOT/}: #"; done
+done
+echo "== git (credentials in URL masked) =="
+git -C "$ROOT" remote -v | sed -E 's#(://)[^/@ ]*@#\1[USERINFO]@#'
+echo "TRACKED_CHANGES=$(git -C "$ROOT" status --porcelain --untracked-files=no | wc -l)"
+echo "== S1 RESULT =="
+[ -z "$WARN" ] || echo "S1_WARN:$WARN"
+if [ -z "$BAD" ]; then echo "S1_RESULT=PROCEED"; else echo "S1_RESULT=STOP reasons:$BAD"; fi
+} 2>&1 | sed -E 's#[0-9]{6,}:[A-Za-z0-9_-]{30,}#[REDACTED]#g'
+```
+
+
+**진행·정지 규칙 (Cursor가 판단, 애매하면 멈추고 Claude에게)**
+- `S1_RESULT=PROCEED` → 아래 §5로 디렉터에게 "봇 N개(@이름), 바꿀 줄 목록"만 전한다. 토큰·값은 없다.
+- `S1_RESULT=STOP` → **디렉터 작업을 시작하지 않는다.** 사유별 처리:
+  - `stock_family_key_in_leaked_class`: 유출 토큰이 주식 계열 키(`TELEGRAM_BOT_TOKEN` 등)의 값이다. 폐기하면 Bot-1이 죽는다 → 보고만. (해법 후보: Bot-2 전용 REPORT 봇을 새로 만들고 `REPORT_BOT_TOKEN`에 넣기 — 별도 판정)
+  - `journal_token_not_found_in_env_files`: 로그에 나온 토큰이 두 `.env` 어디에도 없다(다른 곳에서 읽었거나 이미 바뀜) → 보고만.
+  - `no_token_found_in_journal`: 로그에 토큰 모양이 없다(이미 순환됐거나 로그가 정리됨) → 보고만.
+  - `env_file_tracked_by_git` / `ENABLE_REAL_EXECUTION_true`: **즉시 보고(에스컬레이션)**. 후자는 디렉터 Critical 사항.
+- `S1_WARN`은 정지 사유 아님(예: 파일 모드가 600이 아님 → 보고만, 임의 변경 금지).
+- 한 파일에 같은 키가 2번 나오거나 두 파일에 같은 키가 있으면 **그 줄을 전부 같은 새 토큰으로** 바꾼다(S1 출력의 LINE 목록이 그대로 작업표).
+- 출력 전문을 `snapshots/CAT-L-SECRET-01_S1_<날짜>.md`로 저장(이미 마스킹됨), OUTBOX에는 PROCEED/STOP·CLASS 줄·UNIT 줄만 요약.
+
+---
+
+## 5. D — 디렉터 작업 (서버 화면에서 직접 · Cursor 입력 금지)
+
+> Cursor가 S1 결과로 **"이 줄을 바꾼다" 목록**(파일·줄 번호·키 이름·STYLE)과 **봇 @이름**을 디렉터에게 전한다. 아래 순서를 그대로 안내한다. **새 토큰은 절대 채팅·Cursor·메모·스크린샷에 붙이지 않는다.** 터미널 명령 줄에도 쓰지 않는다(명령 기록에 남는다) — 반드시 편집기(nano) 안에서만 붙여넣는다.
+
+1. **시간 잡기**: 알림이 10~20분 끊겨도 되는 때. 20:00 KST 전후 15분 제외. Cursor에게 "지금 시작" 한마디.
+2. **복사본 만들기** (폐기 **전에**, 서버 터미널):
+   ```
+   cd /home/ubuntu/dante_bots/Dual-Screener-Bot
+   cp -p .env .env.bak_SECRET01
+   cp -p bitget/.env bitget/.env.bak_SECRET01
+   ```
+   (S1이 `MISSING`이라고 한 파일은 건너뛴다.)
+3. **BotFather에서 폐기·새 토큰**: 텔레그램 → `@BotFather` → `/mybots` → **S1이 알려준 @이름의 봇만** → `API Token` → `Revoke current token` → 새 토큰이 대화에 나온다. 복사하고, 붙여넣기 끝나면 BotFather 대화에서 그 메시지를 삭제. (이 순간부터 옛 토큰은 죽는다 = 알림 중단 시작.)
+4. **서버에서 줄 교체** (Cursor가 준 목록의 줄마다):
+   - `nano +<줄번호> <파일>` 로 연다 → 커서가 그 줄에 놓인다.
+   - `Ctrl+K`로 그 줄을 지운다.
+   - 같은 키 이름으로 새로 적는다: `키이름=` 를 치고 새 토큰을 **붙여넣기**. STYLE이 `dq`면 따옴표 안에 `키이름="붙여넣은값"`. 끝에 공백·따옴표 하나 더 붙지 않게 주의.
+   - 저장 `Ctrl+O` → `Enter` → 나가기 `Ctrl+X`.
+   - 같은 봇의 모든 줄(두 파일 포함)에 **같은 새 토큰**. 봇이 둘이면 3~4를 봇마다 한 번씩.
+5. **화면 정리**: 터미널에서 `clear`. 그리고 Cursor에게 **"수정 끝"** 한마디만.
+6. Cursor가 §6 S2를 돌린다. FAIL이면 출력의 **이유(줄 위치)**만 보고 그 줄만 다시 고친다(복사본은 그대로 둔다).
+7. S3까지 끝나면 다음 일정 알림(또는 서버 점검 알림)이 텔레그램에 오는지만 확인해서 알려 준다.
+
+---
+
+## 6. S2 — 읽기전용 검증 (재시작 전)
+
+**검사**: 복사본 대비 줄 수·모드·소유자 동일 / **바뀐 줄은 토큰 줄뿐**(키 이름까지 같음) / 새 값 모양 / 따옴표·줄끝(CRLF) 형태 유지 / 공백·주석 혼입 없음 / **옛 값과 달라짐** / 같은 옛 봇은 같은 새 값, 다른 옛 봇은 다른 새 값 / **옛 값이 어디에도 안 남음** / 로그에 나온 유출 토큰이 **모두 교체됨** / 새 값이 텔레그램에서 유효(`getMe`, 최대 3회) — 값은 출력하지 않고 CLASS 번호와 `ok`·@이름만.
+
+*76줄 · CR 0 · sha256 `34827055567db4cbc8aa5639e1c4b8895c22544a0a22f8321cadf215431ad25f`*
+
+```bash
+{
+set -u
+ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+FILES="$ROOT/.env $ROOT/bitget/.env"
+TOK='[0-9]{8,12}:[A-Za-z0-9_-]{35}'
+declare -A H J T OLD OKEY OCLS OCR NKEY NCLS NCR NFL NST OST PN RV; ng=0; CLS=0; BAD=""
+cls(){ local h; h=$(printf %s "$1" | sha256sum | cut -d' ' -f1); [ -n "${H[$h]:-}" ] || { ng=$((ng+1)); H[$h]=$ng; }; CLS=${H[$h]}; }
+tl(){ awk '{cr=($0 ~ /\r$/); sub(/\r$/,""); x=$0; sub(/^[[:space:]]*(export[[:space:]]+)?/,"",x); k=x; sub(/[[:space:]]*=.*/,"",k)} k ~ /^[A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*$/ && x ~ /=/ {v=x; sub(/^[^=]*=/,"",v); print FNR "|" cr "|" k "|" v}' "$1"; }
+unq(){ local v="$1"; v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"; printf %s "$v"; }
+sty(){ case "$1" in \"*) echo dq;; \'*) echo sq;; *) echo plain;; esac; }
+echo "== S2 $(date -u +%FT%TZ) (read-only verify before restart) =="
+JT=""; for b in 0 -1 -2 -3; do JT="$JT"$'\n'"$(nice -n 19 journalctl -b "$b" --no-pager -o cat 2>/dev/null | grep -aoE "$TOK")"; done
+while IFS= read -r t; do [ -n "$t" ] || continue; cls "$t"; J[$CLS]=1; done < <(printf '%s\n' "$JT" | sort -u)
+for f in $FILES; do
+  n="${f#$ROOT/}"; b="$f.bak_SECRET01"
+  [ -f "$f" ] || { echo "FILE=$n MISSING"; continue; }
+  [ -f "$b" ] || { BAD="$BAD no_backup_copy:$n"; continue; }
+  [ "$(wc -l <"$f")" = "$(wc -l <"$b")" ] || BAD="$BAD line_count_changed:$n"
+  [ "$(stat -c '%a %U' "$f")" = "$(stat -c '%a %U' "$b")" ] || BAD="$BAD mode_or_owner_differs:$n"
+  chg=$(awk 'FNR==NR{a[FNR]=$0;next} a[FNR]!=$0{printf "%s ",FNR}' "$b" "$f")
+  echo "FILE=$n CHANGED_LINES=${chg:-none}"
+  while IFS='|' read -r ln cr key raw; do
+    v=$(unq "$raw"); id="$n:$ln"; OKEY[$id]="$key"; OCR[$id]="$cr"; OST[$id]=$(sty "$raw")
+    if [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]]; then cls "$v"; OCLS[$id]=$CLS; OLD[$CLS]=1; fi
+  done < <(tl "$b")
+  while IFS='|' read -r ln cr key raw; do
+    v=$(unq "$raw"); id="$n:$ln"; NKEY[$id]="$key"; NCR[$id]="$cr"; NST[$id]=$(sty "$raw")
+    fl=""; [[ "$raw" =~ [[:space:]]$ ]] && fl="$fl trailing_space"; [[ "$raw" == *" #"* ]] && fl="$fl inline_comment"
+    NFL[$id]="${fl# }"
+    if [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]]; then cls "$v"; NCLS[$id]=$CLS; T[$CLS]="$v"; fi
+  done < <(tl "$f")
+  for ln in $chg; do
+    id="$n:$ln"
+    [ -n "${NKEY[$id]:-}" ] && [ "${NKEY[$id]:-}" = "${OKEY[$id]:-}" ] || { BAD="$BAD changed_line_is_not_a_token_line_or_key_differs:$id"; continue; }
+    [ -n "${NCLS[$id]:-}" ] || { BAD="$BAD new_value_not_telegram_format:$id"; continue; }
+    [ "${NST[$id]}" = "${OST[$id]:-}" ] || BAD="$BAD quote_style_changed:$id"
+    [ "${NCR[$id]}" = "${OCR[$id]:-0}" ] || BAD="$BAD line_ending_style_changed:$id"
+    case "${NFL[$id]}" in *trailing_space*|*inline_comment*) BAD="$BAD bad_chars_on_line:$id(${NFL[$id]})";; esac
+    oc="${OCLS[$id]:-0}"; nc="${NCLS[$id]}"
+    [ "$oc" = 0 ] || [ "$oc" != "$nc" ] || BAD="$BAD value_unchanged:$id"
+    [ -z "${OLD[$nc]:-}" ] || BAD="$BAD new_value_equals_an_old_value:$id"
+    PN[$oc]="${PN[$oc]:-} $nc"
+    echo "  LINE=$ln KEY=${NKEY[$id]} OLD_CLASS=$oc NEW_CLASS=$nc STYLE=${NST[$id]} FLAGS=${NFL[$id]:--}"
+  done
+done
+echo "== old -> new mapping =="
+for oc in "${!PN[@]}"; do
+  u=$(printf '%s\n' ${PN[$oc]} | sort -u); cnt=$(printf '%s\n' $u | wc -l)
+  echo "MAP old_class=$oc -> new_class=$(printf '%s' "$u" | paste -sd,)"
+  [ "$cnt" = 1 ] || BAD="$BAD one_old_value_became_several_new_values:old$oc"
+  [ -z "${RV[$u]:-}" ] || BAD="$BAD two_old_bots_got_the_same_new_value"
+  RV[$u]=$oc
+done
+[ "${#PN[@]}" -gt 0 ] || BAD="$BAD nothing_was_changed"
+for id in "${!NCLS[@]}"; do
+  [ -z "${PN[${NCLS[$id]}]:-}" ] || BAD="$BAD old_value_still_present_on_line:$id"
+done
+for c in "${!J[@]}"; do [ -z "${OLD[$c]:-}" ] || [ -n "${PN[$c]:-}" ] || BAD="$BAD leaked_token_not_rotated"; done
+echo "== getMe on each new token (public bot name only) =="
+for c in $(printf '%s\n' "${PN[@]:-}" | tr ' ' '\n' | grep . | sort -un); do
+  r="ok=ERR"
+  for try in 1 2 3; do
+    r=$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "${T[$c]}" | curl -sS --max-time 15 -K - 2>&1 | head -c 800 | python3 -c 'import sys,json
+s=sys.stdin.read()
+try:
+ d=json.loads(s); print("ok=%s username=%s" % (d.get("ok"), (d.get("result") or {}).get("username")))
+except Exception:
+ print("ok=ERR")' 2>&1)
+    case "$r" in ok=True*) break;; esac; sleep 4
+  done
+  echo "NEW_CLASS=$c $r"
+  case "$r" in ok=True*) ;; ok=False*) BAD="$BAD new_token_rejected_by_telegram:class$c";; *) BAD="$BAD getMe_inconclusive:class$c";; esac
+done
+echo "== S2 RESULT =="
+if [ -z "$BAD" ]; then echo "S2_RESULT=PASS"; else echo "S2_RESULT=FAIL reasons:$BAD"; fi
+} 2>&1 | sed -E 's#[0-9]{6,}:[A-Za-z0-9_-]{30,}#[REDACTED]#g'
+```
+
+
+`S2_RESULT=PASS`일 때만 S3. FAIL이면 §5-6으로 돌아간다. **S2·S3 사이에 디렉터가 다른 걸 건드리지 않게 한다.**
+
+---
+
+## 7. S3 — 관문 · 재시작 · 사후 확인 (상태 변경: `sudo -n systemctl restart`)
+
+- **재시작 대상(고정 목록, 이 순서)**: `dante-bitget-async` → `dante-bitget-factory` → `dante-bitget-overseer`(있고 active일 때만). **queue-worker·ws·watchdog·snapshot은 건드리지 않는다**(스캔을 끊지 않기 위해). queue-worker는 매일 00:44 KST watchdog 재시작 때 새 값을 받는다 → S4에서 확인.
+- 규칙 3: **`timeout`을 씌우지 않는다.** 중간 실패 시 이후 유닛은 재시작하지 않고 멈춘다.
+- 관문이 실패하면(`ABORT_BEFORE_RESTART`) **아무것도 재시작하지 않는다.**
+- 사후 확인: 유닛 active·새 PID·**프로세스 환경의 값이 새 값과 같은가**·재시작 이후 401/409/충돌 줄 수·**로그에 토큰 모양이 또 찍혔는가** 개수·실전 스위치 값. 전부 정상이면 복사본(옛 폐기 토큰 + 다른 키가 든 파일)을 **자동 삭제**한다.
+- sudo 비밀번호를 요구하면 실패로 끝난다. 그 경우 디렉터가 터미널에서 같은 유닛을 직접 `sudo systemctl restart <유닛>`으로 순서대로 재시작하고 Cursor가 S3 사후 확인만 별도로 보고(블록 수정 금지, Claude에 문의).
+
+*78줄 · CR 0 · sha256 `4ff65b0d196d5808ba4392e147dd5b91d5df90958cba229cf8458e8418812ae1`*
+
+```bash
+{
+set -u
+ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+FILES="$ROOT/.env $ROOT/bitget/.env"
+TOK='[0-9]{8,12}:[A-Za-z0-9_-]{35}'
+SC=/usr/bin/systemctl
+declare -A H T OLD ORW RKC OP; ng=0; CLS=0; BAD=""; BAD2=""
+cls(){ local h; h=$(printf %s "$1" | sha256sum | cut -d' ' -f1); [ -n "${H[$h]:-}" ] || { ng=$((ng+1)); H[$h]=$ng; }; CLS=${H[$h]}; }
+tl(){ awk '{cr=($0 ~ /\r$/); sub(/\r$/,""); x=$0; sub(/^[[:space:]]*(export[[:space:]]+)?/,"",x); k=x; sub(/[[:space:]]*=.*/,"",k)} k ~ /^[A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*$/ && x ~ /=/ {v=x; sub(/^[^=]*=/,"",v); print FNR "|" cr "|" k "|" v}' "$1"; }
+unq(){ local v="$1"; v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"; printf %s "$v"; }
+echo "== S3 $(date -u +%FT%TZ) (gate, then restart, then post-check) =="
+echo "-- gate --"
+for f in $FILES; do
+  n="${f#$ROOT/}"; b="$f.bak_SECRET01"
+  [ -f "$f" ] && [ -f "$b" ] || { BAD="$BAD missing_file_or_backup:$n"; continue; }
+  grep -aqiE '^[[:space:]]*(export[[:space:]]+)?ENABLE_REAL_EXECUTION=["'"'"']?true' "$f" && BAD="$BAD ENABLE_REAL_EXECUTION_true:$n"
+  while IFS='|' read -r ln cr key raw; do
+    v=$(unq "$raw"); if [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]]; then cls "$v"; OLD[$CLS]=1; fi; ORW["$n:$ln"]="$raw"
+  done < <(tl "$b")
+  while IFS='|' read -r ln cr key raw; do
+    id="$n:$ln"; [ "${ORW[$id]:-}" != "$raw" ] || continue
+    v=$(unq "$raw")
+    if [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]]; then cls "$v"; else BAD="$BAD changed_value_not_telegram_format:$id"; continue; fi
+    [ -z "${OLD[$CLS]:-}" ] || BAD="$BAD new_value_equals_old_value:$id"
+    T[$CLS]="$v"; RKC[$key]="${RKC[$key]:-} $CLS"
+  done < <(tl "$f")
+done
+[ "${#T[@]}" -gt 0 ] || BAD="$BAD no_rotated_lines_found"
+for c in "${!T[@]}"; do
+  r="ok=ERR"
+  for try in 1 2 3; do
+    r=$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "${T[$c]}" | curl -sS --max-time 15 -K - 2>&1 | head -c 800 | python3 -c 'import sys,json
+s=sys.stdin.read()
+try:
+ d=json.loads(s); print("ok=%s username=%s" % (d.get("ok"), (d.get("result") or {}).get("username")))
+except Exception:
+ print("ok=ERR")' 2>&1)
+    case "$r" in ok=True*) break;; esac; sleep 4
+  done
+  echo "GATE getMe new_class=$c $r"; case "$r" in ok=True*) ;; *) BAD="$BAD getMe_not_ok:class$c";; esac
+done
+echo "GATE rotated_keys=$(printf '%s\n' "${!RKC[@]}" | sort | paste -sd,)"
+if [ -n "$BAD" ]; then echo "S3_RESULT=ABORT_BEFORE_RESTART (nothing restarted) reasons:$BAD"; exit 1; fi
+echo "-- restart (no timeout; stop on first failure) --"
+START=$(date -u '+%Y-%m-%d %H:%M:%S'); DONE=""
+for u in dante-bitget-async dante-bitget-factory dante-bitget-overseer; do
+  if ! $SC cat "$u.service" >/dev/null 2>&1; then echo "UNIT=$u ABSENT"; continue; fi
+  if [ "$($SC is-active "$u")" != active ]; then echo "UNIT=$u NOT_ACTIVE (left alone)"; continue; fi
+  OP[$u]=$($SC show -p MainPID --value "$u")
+  if sudo -n $SC restart "$u"; then echo "RESTART=$u OK old_pid=${OP[$u]}"; DONE="$DONE $u"; else echo "RESTART=$u FAILED"; BAD2="$BAD2 restart_failed:$u"; break; fi
+  sleep 15
+done
+sleep 45
+echo "-- post-check --"
+for u in $DONE; do
+  pid=$($SC show -p MainPID --value "$u"); act=$($SC show -p ActiveState --value "$u")
+  echo "POST UNIT=$u ACTIVE=$act NEW_PID=$pid OLD_PID=${OP[$u]} STARTED='$($SC show -p ExecMainStartTimestamp --value "$u")'"
+  [ "$act" = active ] && [ "${pid:-0}" -gt 0 ] && [ "$pid" != "${OP[$u]}" ] || BAD2="$BAD2 not_running_or_pid_unchanged:$u"
+  for k in "${!RKC[@]}"; do
+    st=absent
+    if [ -r "/proc/$pid/environ" ]; then
+      pv=$(tr '\0' '\n' <"/proc/$pid/environ" | awk -v k="$k" 'index($0,k"=")==1{print substr($0,length(k)+2); exit}')
+      if [ -n "$pv" ]; then cls "$pv"; st=no; [[ " ${RKC[$k]} " == *" $CLS "* ]] && st=yes; fi
+    else st=unreadable; fi
+    echo "  PROC_ENV $k matches_new_file_value=$st"
+    [ "$st" != no ] || BAD2="$BAD2 process_holds_old_value:$u:$k"
+  done
+  jl(){ journalctl -u "$u" --since "$START UTC" --no-pager -o cat 2>/dev/null; }
+  ea=$(jl | grep -aicE 'unauthori|401|conflict|409')
+  ee=$(jl | grep -aicE 'error|traceback|exception')
+  et=$(jl | grep -acE "$TOK")
+  echo "  JOURNAL_SINCE_RESTART auth_or_conflict_lines=$ea error_like_lines=$ee token_shaped_lines=$et"
+  [ "$ea" = 0 ] || BAD2="$BAD2 auth_or_conflict_seen:$u"
+  jl | grep -aiE 'unauthori|401|conflict|409|traceback|exception|error' | tail -5 | cut -c1-160 | sed 's/^/    | /'
+done
+for f in $FILES; do grep -aE '^[[:space:]]*(export[[:space:]]+)?ENABLE_REAL_EXECUTION=' "$f" 2>/dev/null | tr -d '\r' | sed "s#^#FLAG ${f#$ROOT/}: #"; done
+if [ -z "$BAD2" ]; then rm -f "$ROOT/.env.bak_SECRET01" "$ROOT/bitget/.env.bak_SECRET01"; echo "BAK_REMOVED=yes"; echo "S3_RESULT=OK restarted:$DONE"; else echo "BAK_REMOVED=no (kept for investigation)"; echo "S3_RESULT=REVIEW restarted:$DONE reasons:$BAD2"; fi
+} 2>&1 | sed -E 's#[0-9]{6,}:[A-Za-z0-9_-]{30,}#[REDACTED]#g'
+```
+
+
+`S3_RESULT=OK` → 완료. `REVIEW` → 복사본이 남아 있다. **되돌리기 시도 금지**(옛 토큰은 이미 죽었다). 사유를 그대로 OUTBOX에 올리고 Claude 판정.
+
+---
+
+## 8. S4 — 다음 날 확인 (읽기전용, 00:44~00:46 KST 이후)
+
+queue-worker의 일일 재시작이 새 토큰으로 돌았는지, 24시간 동안 401/409가 없었는지, **새 토큰이 로그에 다시 새지 않았는지** 본다. `current_token_leaked_again…`가 나오면 `CAT-M-TOKENLOG-01`을 앞당긴다(소규모 코드 변경 → 별도 Handoff).
+
+*33줄 · CR 0 · sha256 `32ee57031052897a221aa593704b3c5fa206b2b463f2e8ff58d169ee9369f59e`*
+
+```bash
+{
+set -u
+ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+FILES="$ROOT/.env $ROOT/bitget/.env"
+TOK='[0-9]{8,12}:[A-Za-z0-9_-]{35}'
+SC=/usr/bin/systemctl
+declare -A H E; ng=0; CLS=0; BAD=""
+cls(){ local h; h=$(printf %s "$1" | sha256sum | cut -d' ' -f1); [ -n "${H[$h]:-}" ] || { ng=$((ng+1)); H[$h]=$ng; }; CLS=${H[$h]}; }
+echo "== S4 $(date -u +%FT%TZ) (read-only, last 24h) =="
+for u in dante-bitget-async dante-bitget-factory dante-bitget-overseer dante-bitget-queue-worker dante-bitget-ws; do
+  if ! $SC cat "$u.service" >/dev/null 2>&1; then echo "UNIT=$u ABSENT"; continue; fi
+  jl(){ journalctl -u "$u" --since "24 hours ago" --no-pager -o cat 2>/dev/null; }
+  act=$($SC show -p ActiveState --value "$u"); ea=$(jl | grep -aicE 'unauthori|401|conflict|409')
+  echo "UNIT=$u ACTIVE=$act STARTED='$($SC show -p ExecMainStartTimestamp --value "$u")' auth_or_conflict_lines=$ea token_shaped_lines=$(jl | grep -acE "$TOK") start_events_24h=$(jl | grep -c 'Started ')"
+  [ "$act" = active ] || BAD="$BAD not_active:$u"
+  [ "$ea" = 0 ] || BAD="$BAD auth_or_conflict_seen:$u"
+  jl | grep -aiE 'unauthori|401|conflict|409' | tail -3 | cut -c1-160 | sed 's/^/    | /'
+done
+for f in $FILES; do
+  [ -f "$f" ] || continue
+  while IFS= read -r v; do
+    v="${v%$'\r'}"; v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"
+    [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]] && { cls "$v"; E[$CLS]=1; }
+  done < <(grep -aE '^[[:space:]]*(export[[:space:]]+)?[A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*=' "$f" | sed -E 's/^[^=]*=//')
+done
+leak=no; n=0
+while IFS= read -r t; do [ -n "$t" ] || continue; n=$((n+1)); cls "$t"; [ -z "${E[$CLS]:-}" ] || leak=yes; done < <(journalctl --since "24 hours ago" --no-pager -o cat 2>/dev/null | grep -aoE "$TOK" | sort -u)
+echo "JOURNAL_24H distinct_token_shaped_strings=$n CURRENT_ENV_TOKEN_SEEN_IN_JOURNAL=$leak"
+[ "$leak" = no ] || BAD="$BAD current_token_leaked_again_to_journal(CAT-M-TOKENLOG-01 becomes urgent)"
+for f in $FILES; do grep -aE '^[[:space:]]*(export[[:space:]]+)?ENABLE_REAL_EXECUTION=' "$f" 2>/dev/null | tr -d '\r' | sed "s#^#FLAG ${f#$ROOT/}: #"; done
+echo "BACKUP_COPIES_LEFT=$(ls "$ROOT"/.env.bak_SECRET01 "$ROOT"/bitget/.env.bak_SECRET01 2>/dev/null | wc -l)"
+if [ -z "$BAD" ]; then echo "S4_RESULT=OK"; else echo "S4_RESULT=REVIEW reasons:$BAD"; fi
+} 2>&1 | sed -E 's#[0-9]{6,}:[A-Za-z0-9_-]{30,}#[REDACTED]#g'
+```
+
+
+---
+
+## 9. 등록 · 결정 요청
+
+| 항목 | 내용 | 차단 |
+|---|---|---|
+| `CAT-L-REPO-EXPOSURE-01` (신규 등록) | 공개 저장소의 서버 IP·sshd 인증 줄·경로 정리. **사전 확인**: S1의 `git remote -v` 형태(공개 HTTPS로 받는지/자격증명이 있는지). 공개 HTTPS면 **private 전환 전에 서버에 읽기 전용 접근 수단(deploy key 등)을 먼저 설치**해야 서버 업데이트(`git fetch`)가 안 끊긴다. 이력 정리(force push)는 SHA가 바뀌므로 별도 Critical 판단 | SECRET-01 비차단, **Phase 1 전 결정** |
+| `CAT-M-TOKENLOG-01` | S3·S4 재발 수치로 우선순위 판단 | 비차단 |
+| **디렉터 결정 요청 1** | 저장소를 private으로 돌릴 의향이 있는가(예/아니오/공개 유지 필요) — 이번 창에서 바꾸지 않는다 | — |
+| **디렉터 결정 요청 2** | S1이 `stock_family_key…`로 멈추면: 주식 프로젝트와 같은 봇을 쓰고 있다는 뜻 → Bot-2 전용 봇을 새로 만들지 | S1 결과 시 |
+
+---
+
+## 10. 합격 기준 (Claude OK 조건)
+
+1. L19 (a)(b)(c) 결과 + 블록 해시 일치 보고.
+2. S1 `PROCEED` 원문(마스킹됨) 저장, 봇 @이름·교체 줄 목록 확인.
+3. S2 `PASS` → S3 `OK`(재시작 유닛 목록, 프로세스 환경 일치, 401/409 0, 복사본 삭제 `yes`, 실전 스위치 `false`).
+4. 디렉터 확인: 텔레그램 알림 수신.
+5. S4 `OK` (다음 날).
+6. 새 토큰이 어떤 채팅·파일·커밋·스크린샷에도 없음을 Cursor가 로컬 전수 패턴 검사(L13과 동일 방식)로 재확인.
+7. §11 문서 갱신 + 09_쉬운요약·NEXT_STEP(비개발 언어). **Claude OK 전 Done 금지.**
+
+---
+
+## 11. 문서 갱신 (붙여넣을 문구)
+
+**CAT-L 운영 규칙 9 (신설, SSOT 변경)**: 토큰·키·비밀번호의 **교체·입력은 디렉터가 서버 화면에서 직접** 한다(편집기 안에서만 붙여넣기, 명령 줄·채팅·Handoff·OUTBOX·커밋·스크린샷 금지). Cursor·Claude는 값을 읽지 않는다 — 검증은 **서버 측에서 값을 가리고 불리언·번호만 출력하는 블록**으로만 한다. 교체 전 복사본(`.bak_<sub-phase>`)을 만들고, 성공 확인 뒤 삭제한다. 폐기(옛 값 무효화)는 새 값의 서버 반영 준비가 끝난 때에 맞춘다.
+
+**NEXT_ACTION**
+- `CAT-L-SECRET-01`: `Handoff 발행(2026-10-07) · L19 → S1 → 디렉터 교체 → S2 → S3 → S4 · 서버 변경은 S3만 · 정지 조건: 주식 계열 키 혼입`
+- `CAT-L-CUTOVER-01`: `Phase 1 보류 · 순서: SECRET-01 → BACKUP-01 → LIFECAP-02(1단계) → Phase 1`
+- 신규 `CAT-L-REPO-EXPOSURE-01`: `등록 · 디렉터 결정 대기(private 전환 vs 공개 유지) · Phase 1 전 결정`
+
+**05_진행로그**: `2026-10-07 Claude 판정(L17·L18): L17 수용·보완 2(overseer 유닛 누락 가능, REPORT 토큰 fallback이 주식 계열 키로 이어질 수 있음). L18 수용: 공개 저장소에 sshd 줄 162·IPv4 181 존재 → REPO-EXPOSURE-01 등록. SECRET-01 Handoff 발행(규칙 9 신설).`
+
+**06_검증체크리스트_및_실패기록**: `CAT-L 비밀 노출: 서버 journal에 텔레그램 getUpdates URL(토큰 포함) 12건(09-25~10-06). 원인=poll 실패 시 URL을 로그에 남기는 경로(CAT-M, 코드 확인 전). 방어=규칙 8·9. 재발 여부는 SECRET-01 S3·S4 수치.`
+
+**09_쉬운요약 (비개발 언어)**:
+> 이번 순서. ① 먼저 서버 기록에 남은 텔레그램 열쇠가 **어느 봇의 것인지** 서버에서 읽기만 해서 확인합니다(열쇠 값은 아무도 안 봅니다). ② 그 봇의 열쇠를 텔레그램 BotFather에서 새로 받고, **디렉터님이 서버 화면에서 직접** 파일의 해당 줄을 바꿔 넣습니다. 새 열쇠는 Cursor·채팅·화면 캡처 어디에도 보이지 마세요. ③ 바꾼 뒤 서버 프로그램 2~3개를 껐다 켭니다. 이때 알림이 10~20분 끊깁니다. 20:00 요약 알림 전후는 피합니다. ④ 다음 날 "새 열쇠가 기록에 또 남지 않았는지" 한 번 더 확인합니다. 또 남으면 그 자체를 고치는 작업을 앞당깁니다. ⑤ 깃허브가 **공개**라서 서버 주소·접속 기록이 보이는 문제는 따로, 서버가 코드를 받는 길을 먼저 확보한 다음에 비공개로 돌립니다.
+
+**NEXT_STEP**: `다음: ① Cursor L19(로컬) → ② S1 → ③ 디렉터 교체 → ④ S2 → ⑤ S3 → ⑥ 다음 날 S4 → ⑦ Claude 새 창: BACKUP-01. 새 토큰은 어디에도 붙이지 말 것.`
+
+---
+
+## 12. SPOT/FUT · 인접 CAT · 롤백 · 테스트 범위
+
+- **SPOT/FUT**: 해당 없음(인프라 비밀). `market_type` 혼입 없음. 실전 스위치는 매 블록이 읽어 `false`임을 확인하고 `true`면 정지.
+- **인접 CAT**: CAT-M(`proposal_approval_poll_bg`·`post_deploy_obs_digest_bg`가 토큰 사용 — 코드 변경 없음) · CAT-A(queue-worker 비접촉) · CAT-K(.env 키 목록은 SSOT 아님, 변경 없음).
+- **롤백**: 값 교체는 **되돌릴 수 없다**(옛 토큰은 폐기됨). 앞으로만 고친다 — 편집 실수는 복사본으로 줄 단위 복구, 서비스 이상은 watchdog 재시작, 최악은 Lightsail 스냅샷 복원(콘솔). 문서 변경은 `git revert`.
+- **테스트 범위(정직한 한계)**: 네 블록은 **가짜 `.env`·가짜 `systemctl`/`journalctl`/`curl` 스텁**으로 정상·일부만 수정·오타·무효 토큰·주식 계열 키 혼입·실전 스위치 켜짐·git 추적·프로세스가 옛 값을 쥔 경우를 시험했다(bash·mawk). **실제 서버(Ubuntu, bash 5.1)에서는 아직 실행 전**이다. 첫 실행에서 문법·환경 차이로 실패하면 **고쳐서 돌리지 말고** 출력 그대로 보고(규칙 7).
+
+---
+
+## 금지 (이번)
+
+토큰·키 값의 출력·붙여넣기·기록(로컬 파일 포함) · `.env` 전체 열람·`source` · 블록에 없는 서버 명령 · `getUpdates`·`sendMessage` 등 상태를 건드리는 텔레그램 호출 · queue-worker·ws·watchdog·snapshot 재시작 · 코드 수정 · 저장소 공개 범위·이력 변경 · `timeout`으로 S3 감싸기 · S3 실패 후 임의 재시도 · BACKUP-01·LIFECAP-02·Phase 1 착수(Handoff 없이)
+
+## 완료 정의
+
+OUTBOX 최상단에 L19·S1~S3 결과(마스킹본) + 문서 갱신 커밋 SHA. S4는 다음 날 별도 회신. 09_쉬운요약·NEXT_STEP 갱신(비개발 언어) 확인. **Claude OK 전 Done 금지.**
+
+## sub-phase ID
+
+`CAT-L-SECRET-01` (비밀 교체 — Phase 1 선행)
+
+---
+
 # CLAUDE → CURSOR · CAT-L-CUTOVER-01 · L13–L16 판정 + Y-블록 단계 종결 (서버 0 · 코드 0)
 
 > **작성**: Claude Pro (Architect) · 2026-10-07
