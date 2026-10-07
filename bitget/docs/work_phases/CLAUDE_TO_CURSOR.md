@@ -1,3 +1,184 @@
+# CLAUDE → CURSOR · CAT-L-SECRET-01 · 부록 1 — L19(a) STOP 판정 · S1 진행 허용 · S1b 추가
+
+> **S1 진행 여부: 허용(조건부).** 순서는 **S1 → S1b → (S1 PROCEED & S1b CLEAR일 때만) D → S2 → S3 → S4.** 디렉터 작업(D)은 S1b가 끝나기 전에 시작하지 않는다.
+> **작성**: Claude Pro (Architect) · 2026-10-07 · 코드 변경 0 · 서버 변경 0(S1b는 읽기전용) · Critical 해당 없음 · `ENABLE_REAL_EXECUTION` 불변(OFF)
+> **입력**: `track_b_CURSOR_TO_CLAUDE.md` 맨 위 「L19 STOP」(Handoff `268ef6c` · 회신 `28e894c`)
+> **이 파일**: 앞의 SECRET-01 Handoff 위에 **부록으로 `CLAUDE_TO_CURSOR.md` 상단에 전문 기록** → 커밋·push. 앞 Handoff의 S1~S4 블록·해시는 **그대로 유효**(바뀐 것 없음).
+> **CAT**: CAT-L 🟡 · 인접 CAT-M · (주식 프로젝트는 범위 밖, 통지만)
+
+---
+
+## 0. 결론
+
+1. **Cursor는 정확히 했다.** 해시 4개 일치·`.env` 이력 0 확인, 정지 문구를 우회하지 않고 멈췄으며, 내용을 열지 않았다. 의견 (1)(2)도 방향이 맞다.
+2. **L19(a) 관문의 설계 결함은 Claude 몫이다(C-13).** "저장소 전체 이력에서 토큰 모양 0"은 주식 스크립트 이력까지 포함해서 **Bot-2와 무관하게 통과할 수 없는 관문**이었다. 이 관문이 알고 싶었던 것은 *"Bot-2의 토큰이 공개 이력에 있는가"*다. 그 질문으로 바꾼다 → S1b.
+3. **S1은 허용한다.** 읽기전용이고 Bot-2 `.env`의 인벤토리다. 이력 문제와 축이 다르다는 의견이 맞다. 다만 **교체(D)는 S1b 판정 뒤**에 한다 — S1b가 "있음"이면 교체 범위가 바뀌기 때문이다.
+4. **Track A(주식) 이력의 토큰 모양 문자열은 이 프로젝트에서 처리하지 않는다.** 단 **디렉터에게 통지**한다(§4). 진짜 토큰이면 공개 저장소에서 누구나 쓸 수 있는 상태일 수 있다.
+
+---
+
+## 1. 판정 표
+
+| 항목 | 판정 | 메모 |
+|---|---|---|
+| L19(c) 해시 | ✅ | S1~S4 4건 일치(73/76/78/33줄, CR 0) |
+| L19(b) `.env` 이력 | ✅ | 파일 0 — `.env`가 git에 들어간 적 없음 |
+| L19(a) STOP | ✅ 수용 | 커밋 192·파일 21(주식 루트 `.py`, `bitget/` 0). 작업트리 L13은 0이므로 **과거 diff**에만 있다. 내용 미열람 유지 |
+| 의견 (1) S1 진행 허용 | ✅ **허용** | 위 0-3 |
+| 의견 (2) Track A 이력 | ✅ 별 축 | 이 프로젝트 범위 밖. 통지(§4) + `CAT-L-REPO-EXPOSURE-01`에 항목만 기록 |
+| 정지 규칙 자체 | 유지 | 앞으로의 "0이어야 한다" 관문은 **Bot-2에 한정**해 설계한다 |
+
+**모양만으로는 진짜인지 모른다.** `-G`는 diff 줄이 토큰 *모양*이면 잡는다. 옛 하드코딩일 수도, 예시·문서 문구일 수도 있다. 이 프로젝트에서 값을 열어 확인하거나, 그 값을 텔레그램에 시험 호출(`getMe` 포함)하지 않는다. S1b가 값 없이 **통계(예시처럼 보이는 것 / 무작위로 보이는 것의 개수)**만 낸다.
+
+---
+
+## 2. S1b — 서버: Bot-2 `.env` 토큰이 이 클론의 git 이력에 있는가 (읽기전용)
+
+**하는 일**: 서버의 저장소 클론에서 이력 전체(`--all`)의 토큰 모양 문자열을 모아 **개수·통계만** 출력하고, Bot-2 `.env`의 각 토큰 줄이 그 집합에 있는지 **줄 번호·키 이름·yes/no**로만 보고. 값 출력 없음. 얕은 클론(shallow)이면 이력이 불완전하므로 정지. git 명령이 실패하면 "없음"으로 오판하지 않고 정지.
+**하지 않는 일**: 쓰기·sudo·텔레그램 호출·값 출력·`.env` 전체 열람.
+**부하**: `nice` 적용. 이력 전체 diff를 한 번 훑으므로 수십 초~수 분 걸릴 수 있다. **중간에 끊지 말고 최대 10분 기다린다**(읽기전용이지만 끊으면 판정이 무효). 10분을 넘기면 끊지 말고 경과를 보고.
+
+*58줄 · CR 0 · sha256 `bfb87883ea397d178bcdd6d1aa504707c03e4ab6d1b41b5d2b82a0c080d5c59a`*
+
+```bash
+{
+set -u
+ROOT="${INSTALL_ROOT:-/home/ubuntu/dante_bots/Dual-Screener-Bot}"
+FILES="$ROOT/.env $ROOT/bitget/.env"
+TOK='[0-9]{8,12}:[A-Za-z0-9_-]{35}'
+BAD=""
+tl(){ awk '{cr=($0 ~ /\r$/); sub(/\r$/,""); x=$0; sub(/^[[:space:]]*(export[[:space:]]+)?/,"",x); k=x; sub(/[[:space:]]*=.*/,"",k)} k ~ /^[A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*$/ && x ~ /=/ {v=x; sub(/^[^=]*=/,"",v); print FNR "|" cr "|" k "|" v}' "$1"; }
+unq(){ local v="$1"; v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"; printf %s "$v"; }
+echo "== S1b $(date -u +%FT%TZ) (read-only: is any Bot-2 env token present in this clone's git history?) =="
+cd "$ROOT" || { echo "S1B_RESULT=STOP reasons: no_repo_dir"; exit 1; }
+T0=$(date +%s)
+SH=$(git rev-parse --is-shallow-repository)
+echo "REPO shallow=$SH commits_all=$(git rev-list --all --count) head=$(git rev-parse --short=12 HEAD)"
+[ "$SH" = false ] || BAD="$BAD clone_is_shallow_history_incomplete"
+HT=$(set -o pipefail; nice -n 19 git log --all -G"$TOK" -p -U0 --no-renames --no-color --format= 2>/dev/null | { grep -aoE "$TOK" || true; } | sort -u); GRC=$?
+[ "$GRC" = 0 ] || BAD="$BAD history_scan_failed_rc$GRC"
+echo "HISTORY_ELAPSED_SEC=$(( $(date +%s) - T0 ))"
+echo "HISTORY_DISTINCT_TOKEN_SHAPED_STRINGS=$(printf '%s\n' "$HT" | grep -c .)"
+printf '%s\n' "$HT" | python3 -c '
+import sys, math, collections
+ss = [l.strip() for l in sys.stdin if l.strip()]
+ph = rd = ot = 0
+ids = set()
+for s in ss:
+    idp, tail = s.split(":", 1)
+    ids.add(idp)
+    c = collections.Counter(tail)
+    n = len(tail)
+    ent = -sum(v / n * math.log2(v / n) for v in c.values())
+    seq = sum(1 for a, b in zip(tail, tail[1:]) if abs(ord(b) - ord(a)) == 1) / (n - 1)
+    cls = sum([any(ch.isupper() for ch in tail), any(ch.islower() for ch in tail), any(ch.isdigit() for ch in tail)])
+    if len(c) <= 8 or seq > 0.5 or tail.upper().count("X") >= 8:
+        ph += 1
+    elif ent >= 4.2 and seq < 0.3 and cls >= 3:
+        rd += 1
+    else:
+        ot += 1
+print("HISTORY_STATS placeholder_like=%d random_like=%d other=%d distinct_numeric_ids=%d" % (ph, rd, ot, len(ids)))
+' 2>&1
+echo "== Bot-2 env token lines vs history (values never printed) =="
+for f in $FILES; do
+  n="${f#$ROOT/}"
+  [ -f "$f" ] || { echo "FILE=$n MISSING"; continue; }
+  while IFS='|' read -r ln cr key raw; do
+    v=$(unq "$raw")
+    if [[ "$v" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{35}$ ]]; then
+      nv=$'\n'"$v"$'\n'; inh=no
+      [[ $'\n'"$HT"$'\n' == *"$nv"* ]] && inh=yes
+      echo "FILE=$n LINE=$ln KEY=$key IN_GIT_HISTORY=$inh"
+      [ "$inh" = no ] || BAD="$BAD env_token_found_in_git_history:$n:$ln:$key"
+    else
+      echo "FILE=$n LINE=$ln KEY=$key FORMAT=not_telegram_shaped"
+    fi
+  done < <(tl "$f")
+done
+echo "== S1b RESULT =="
+if [ -z "$BAD" ]; then echo "S1B_RESULT=CLEAR"; else echo "S1B_RESULT=STOP reasons:$BAD"; fi
+} 2>&1 | sed -E 's#[0-9]{6,}:[A-Za-z0-9_-]{30,}#[REDACTED]#g'
+```
+
+**진행·정지 규칙**
+- `S1B_RESULT=CLEAR` **그리고** S1이 `PROCEED` → 앞 Handoff §5(D)로 간다.
+- `S1B_RESULT=STOP reasons: env_token_found_in_git_history:…` → **D 시작 금지.** Bot-2 토큰 하나가 공개 이력에 있다는 뜻이다. 해당 줄(파일·줄·키)만 OUTBOX에 보고. Claude가 교체 범위를 확장한 Handoff를 낸다(폐기·교체 대상에 그 봇 추가, S2 판정 보강). 값은 보지 않는다.
+- `clone_is_shallow_history_incomplete` → 이력이 불완전. 보고만(서버 클론 상태 변경 금지).
+- `history_scan_failed_rc…` → git 오류. 출력 그대로 보고(고쳐서 재실행 금지).
+- `HISTORY_STATS`의 숫자는 **보고만**(판단 근거: Track A 이력의 성격 파악). `random_like`가 0이 아니어도 S1b 판정에는 영향 없다.
+- 출력 전문을 `snapshots/CAT-L-SECRET-01_S1b_<날짜>.md`로 저장(마스킹됨). **공개 저장소에 push되는 OUTBOX에는 개수·yes/no 요약만** 쓴다(§5).
+
+---
+
+## 3. 갱신된 순서
+
+| 단계 | 상태 |
+|---|---|
+| L19 (a)(b)(c) | (c)(b) ✅ · (a)는 이 부록으로 **S1b로 대체** |
+| S1 | **허용** (앞 Handoff 그대로) |
+| S1b | **신규** (이 부록) |
+| D → S2 → S3 → S4 | S1 PROCEED & S1b CLEAR일 때만 (앞 Handoff 그대로) |
+
+앞 Handoff의 "L19(a) 0이 아니면 멈춘다" 문구는 이 부록으로 **S1b가 대체**한다. 나머지 정지 조건은 그대로다.
+
+---
+
+## 4. 디렉터 통지 (주식 쪽 · 이 프로젝트에서는 처리하지 않음)
+
+- 공개 GitHub 저장소의 **과거 기록**에 텔레그램 토큰 *모양* 문자열이 있다(커밋 192개, 파일 21개 — 알림을 보내는 주식 스크립트들 포함). **진짜 토큰이었는지, 지금도 유효한지는 모릅니다**(이 프로젝트에서는 열어 보지 않습니다).
+- 진짜였고 아직 유효하다면, 저장소를 비공개로 돌려도 **이미 복사됐을 수 있어** 기록은 지워지지 않습니다. 확실한 조치는 **그 봇의 토큰을 새로 받아 바꾸는 것(폐기)** 뿐입니다.
+- 권장: **주식 프로젝트 창에서** 같은 방식(규칙 9: 디렉터가 서버 화면에서 직접, 값은 아무에게도 안 보임)으로 주식 봇 토큰 교체를 검토하세요. 지금 하실 일은 없고, Bitget SECRET-01을 막지도 않습니다.
+- Bitget 쪽 영향은 S1b가 확정합니다(Bot-2 토큰이 공개 기록에 있는지).
+
+---
+
+## 5. 정정 · 규칙 보충
+
+- **C-13**: L19(a)를 저장소 전체 패턴 0으로 설계한 것은 Claude의 결함. 통과 불가능한 관문이었다. 관문은 "Bot-2 토큰 ∈ 이력?"이어야 했다(S1b).
+- **공개 저장소에 올라간 보고(OUTBOX)에 커밋 해시 192개·파일 21개 목록이 들어간 것**: 이 목록은 누구나 같은 `git log -G`로 얻을 수 있어 새 정보는 아니다. 되돌려도 이력에 남으므로 **되돌리지 않는다**. 그러나 내가 "해시와 파일 경로만 보고"라고 지시한 것이 공개 저장소에서는 비밀 후보의 **위치 지도**가 될 수 있었다.
+- **CAT-L 운영 규칙 9 보충(SSOT 변경)**: 공개 저장소로 push되는 보고(OUTBOX 등)에는 비밀 후보의 **위치 목록(커밋 해시·줄 번호)을 쓰지 않는다.** 개수와 파일 단위 요약만. 상세 목록이 필요하면 로컬 파일에만 두고 push하지 않는다.
+- **REPO-EXPOSURE-01 항목 추가**: 공개 이력의 토큰 모양 문자열(커밋 192·파일 21, 주식 스크립트) — 통지 완료, 처리는 주식 프로젝트.
+
+---
+
+## 6. 문서 갱신 (붙여넣을 문구)
+
+**NEXT_ACTION `CAT-L-SECRET-01` 행**: `L19(a) STOP → 부록1: S1 허용 · S1b 추가(Bot-2 env 토큰 ∈ git 이력?) · D는 S1b CLEAR 후 · Track A 이력은 범위 밖(통지)`
+
+**05_진행로그**: `2026-10-07 Claude 판정(L19 STOP): 정지 수용·정확. L19(a) 관문 설계 결함(C-13)·S1 진행 허용·S1b 신설. 주식 스크립트 이력의 토큰 모양(커밋 192·파일 21)은 범위 밖 → 디렉터 통지. 규칙 9 보충(공개 저장소 보고에 위치 목록 금지).`
+
+**06_검증체크리스트_및_실패기록**: `CAT-L 공개 이력: 주식 루트 스크립트 21개 파일·192 커밋의 과거 diff에 텔레그램 토큰 모양 문자열(진위 미확인). 작업트리 0. Bot-2 토큰 포함 여부는 SECRET-01 S1b.`
+
+**09_쉬운요약 (비개발 언어)**:
+> 깃허브의 **옛 기록**(주식 쪽 파일들)에 텔레그램 열쇠처럼 생긴 글자가 있는 것이 발견되어 SECRET-01을 잠시 멈췄습니다. 진짜 열쇠인지는 아무도 열어 보지 않았습니다. Bitget 서버의 열쇠가 그 기록에 들어 있는지만 서버 안에서 값을 안 보고 확인합니다(S1b). 그 결과가 "없음"이면 예정대로 열쇠를 바꿉니다. 주식 쪽 열쇠는 주식 프로젝트에서 같은 방식으로 바꾸시길 권합니다 — 지금 하실 일은 없습니다.
+
+**NEXT_STEP**: `다음: ① Cursor S1 → ② S1b → ③ 둘 다 통과 시 디렉터 교체(D) → S2 → S3 → S4. 주식 쪽 열쇠는 주식 프로젝트에서. 새 토큰은 어디에도 붙이지 말 것.`
+
+---
+
+## 7. SPOT/FUT · 인접 CAT · 롤백 · 테스트 범위
+
+- **SPOT/FUT**: 해당 없음. **인접 CAT**: CAT-M(토큰 사용 경로, 코드 변경 없음). 주식 코드는 참조하지 않음.
+- **롤백**: 문서만 → `git revert`. 서버 변경 없음.
+- **테스트 범위**: S1b는 가짜 저장소 3종(Bot-2 토큰이 이력에 있음 / 무관한 문자열만 있음 / 매치 없음)과 `git log` 실패 상황에서 시험했다. 실제 서버(Ubuntu, git 2.34, bash 5.1)에서는 **아직 실행 전**. 실패하면 고치지 말고 출력 그대로 보고(규칙 7).
+
+---
+
+## 금지 (이번)
+
+토큰·키 값의 출력·열람·시험 호출(`getMe` 포함 — 단, 앞 Handoff의 S1·S2·S3가 **Bot-2 자신의 현재 토큰**에 쓰는 것은 그대로 허용) · 주식 스크립트의 내용 열람 · 서버 쓰기·sudo · 서버 클론 변경(fetch/pull 포함) · S1b 중간에 끊기 · D 시작 · 커밋 해시·줄 번호 목록의 공개 저장소 push
+
+## 완료 정의
+
+OUTBOX 최상단에 S1 요약 + S1b 결과(개수·yes/no, **위치 목록 없음**) + 문서 갱신 커밋 SHA. S1·S1b 둘 다 통과한 경우에만 디렉터에게 D 안내. **Claude OK 전 Done 금지.**
+
+## sub-phase ID
+
+`CAT-L-SECRET-01` (부록 1 — L19 판정 · S1b)
+
+---
+
 # CLAUDE → CURSOR · CAT-L-SECRET-01 · 텔레그램 토큰 교체 (L17·L18 판정 포함)
 
 > **작성**: Claude Pro (Architect) · 2026-10-07
