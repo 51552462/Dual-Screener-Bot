@@ -11,9 +11,10 @@
 | **CAT-F (공용)** | A5-EVENTLOG-01 | **구현 OK · 서버 반영 확인 대기** (적재 시계는 반영 확인일부터) | `track_b_*` |
 | **CAT-L (에스컬레이션)** | FENCE-02 | **SUB_DONE (1–2단계) · 3단계 판정 2026-10-13** (근거: CLAUDE_TO_CURSOR FENCE-03 Handoff 선행 상태 줄, Claude C-7) | live FENCE_OK · 실스캔 cgroup=heavy.slice |
 | **CAT-L (공용)** | CAT-L-SCRIPT-AUDIT-01 | 등록 · Phase 1과 병행 · 대기 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-BACKUP-01 | 2순위 · 입력 정리 완료(Y-판정 §5) · Handoff는 SECRET-01 다음 창 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-BACKUP-01 | 3순위 · SECRET-01 다음 창 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-REPO-EXPOSURE-01 | 등록 · 디렉터 결정 대기(private 전환 vs 공개 유지) · Phase 1 전 결정 · private 전에 서버 fetch 경로 확보 | `track_b_*` |
 | **CAT-L (공용)** | CAT-L-QW-RESTART-01 | 범위 확장: watchdog 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP) · 조사 대기 · Phase 1 비차단 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-SECRET-01 | 다음 Claude 창 · 범위: 토큰 교체(디렉터 TTY) + 공개 저장소 노출 점검 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-SECRET-01 | **L19(a) STOP** (Handoff `268ef6c`) · `-G` 커밋 192·파일 21(주식 루트 py) · S1 미실행 · Claude 판정 대기 | `track_b_*` |
 | **CAT-M (공용)** | CAT-M-TOKENLOG-01 | 등록 · 비차단 · URL이 예외 문구로 로그에 남는 경로 | `track_b_*` |
 | **CAT-A (공용)** | CAT-A-LIFECAP-02 | 등록 · **1단계(읽기전용 · 스캔 정상 완료 여부)는 Phase 1 선행** · FENCE-02 3단계 판정(10-13) 입력 | `track_b_*` |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |

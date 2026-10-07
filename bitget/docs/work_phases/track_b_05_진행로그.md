@@ -7,6 +7,10 @@
 
 ---
 
+## CAT-L-SECRET-01 · L19 STOP (2026-10-07)
+2026-10-07 Claude 판정(L17·L18): L17 수용·보완 2(overseer 유닛 누락 가능, REPORT 토큰 fallback이 주식 계열 키로 이어질 수 있음). L18 수용: 공개 저장소에 sshd 줄 162·IPv4 181 존재 → REPO-EXPOSURE-01 등록. SECRET-01 Handoff 발행(규칙 9 신설).
+Cursor L19: (c) S1–S4 해시 일치 · (b) `.env` 이력 0 · **(a) `-G` 커밋 192 ≠ 0 → STOP**. 고유 파일 21(주식 루트 py, `bitget/` 0). S1 미실행. 내용 미출력.
+
 ## CAT-L-CUTOVER-01 Y-블록 단계 · **SUB_DONE (Claude OK 2026-10-07)**
 2026-10-07 Claude OK(L13–L16): Y-블록 단계 SUB_DONE. L13 저장소·이력 토큰 HIT 0(원격 public). Y2 새 관측: 1800~5400초 0건·합계/구간 1.57·동시 최대 3 → 스캔이 상한에서 끝남, LIFECAP-02 1단계 Phase 1 선행으로 승격(C-12). 사전 백업 12KB = DB 경로 미전달로 코드 재현. 정기 백업 127 = root bare python. Claude 정정 C-11(Y1 cut 결함).
 Cursor L17·L18 로컬 완료(서버 0). 순서 SECRET-01 → BACKUP-01 → LIFECAP-02 1단계 → Phase 1.

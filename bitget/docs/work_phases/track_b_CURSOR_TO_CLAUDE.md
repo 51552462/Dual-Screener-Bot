@@ -1,6 +1,44 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-10-07 · **L17·L18 로컬 회신** 최상단 (Handoff `cefec75`) · Y-블록 단계 SUB_DONE · 다음 SECRET-01
+> **갱신**: 2026-10-07 · **CAT-L-SECRET-01 L19 STOP** (Handoff `268ef6c`) · S1 미실행
+
+---
+
+## OUTBOX — CAT-L-SECRET-01 L19 (로컬) · 2026-10-07 · **STOP → S1 안 함**
+
+Handoff 커밋 `268ef6c`. 서버 접속·명령 0. `.env` 미열람. 토큰 값 0. 코드 변경 0.
+
+### L19(c) 블록 해시 (Downloads 원문 = 커밋 blob `vb_run.py` 추출)
+
+| 블록 | 줄 | CR | sha256 | 머리말 |
+|---|---|---|---|---|
+| S1 | 73 | 0 | `b2e3cb02a2bbfcff6ff7356431dff7b9f62112abd76b6052c0a09e16e0f46051` | 일치 |
+| S2 | 76 | 0 | `34827055567db4cbc8aa5639e1c4b8895c22544a0a22f8321cadf215431ad25f` | 일치 |
+| S3 | 78 | 0 | `4ff65b0d196d5808ba4392e147dd5b91d5df90958cba229cf8458e8418812ae1` | 일치 |
+| S4 | 33 | 0 | `32ee57031052897a221aa593704b3c5fa206b2b463f2e8ff58d169ee9369f59e` | 일치 |
+
+### L19(b) `.env` 이력
+
+원문: `git log --all --name-only --format= -- '*.env' '.env*'` → **파일 0**. 정지 사유 아님.
+
+### L19(a) 경로 제한 없는 `-G` (커밋 개수·경로만, 내용 0)
+
+원문: `git log --all -G'[0-9]{8,12}:[A-Za-z0-9_-]{35}' --format=%h` (Python subprocess, PowerShell `[]` glob 우회).
+
+- **커밋 192** (0이어야 함 → **STOP**)
+- **고유 파일 21** — 전부 레포 루트 주식 스크립트. `bitget/` 0.
+
+파일:
+`ai_overseer.py` · `ai_overseer.py.txt` · `ai_secretary.py` · `auto_forward_tester.py` · `dante_krx_reverse_breakout_screener.py` · `ema5.py` · `korea_ema224_signal_screener.py` · `kr.py` · `master.py` · `nasdaq_all_ema224_signal_screener.py` · `nasdaq_dante_reverse_breakout_screener.py` · `nulrim.py` · `nulusa.py` · `ohdole.py` · `supernova_hunter.py` · `system_auto_pilot.py` · `system_auto_pilot.py.txt` · `us_5ema.py` · `us_5ema.py.txt` · `us_master.py` · `usa.py`
+
+커밋(짧은 해시 192):
+ccd77c6 84d21a6 4743f1c e3aef3a 301c6d3 d13429c 70086e2 dfa6c70 7f8bd26 843cdc1 1c59fa5 f3818c5 ec56ddd f936204 b1fcd92 4c18288 fd49867 dbaa054 a02d93a f3a1c66 1b9c4d5 2ba5721 17d861d 3d3a013 b4425e3 e074f6f d54201b bec2d65 73fa6d8 79ef713 25fffde 7da46d1 404a2cf 1b061f5 1bd98a2 8a86f43 1251bce 630e012 6f49d69 ba15cb0 7c2e5cd 494e4fd 4c4619f 85d2de6 5fb7b23 359bb43 52894b4 e7b05cc 9e66930 2b36749 6312eba 37823db 17a7e9c 1b6f548 ee06784 41616fe c8eba68 e63de0c ef9f73f 77e19da 2bb61ac a0c2b23 dc96ed4 f69fd9d 14accc9 a943fb1 9590576 6b32304 9b76dd9 584a85c 9131cea 2626560 6067f2b 991349a 1f5cf3d a42e739 add866b cc26390 3030b31 e7b4a0d 2cf3aed c938793 03157d2 62a70dc 4d52ea0 37f9e52 84f35c8 8fa0ec3 25f9a02 075cea7 8c891a8 5ff68e7 f5e6228 bc9a860 5a1c65e 2be0ec2 63822be 3c58a8f e92f417 4f8ebc5 b083634 7a9fe02 7e7915e 57fa3c1 577ef98 7118465 4d7e49c a86ff9c 9710e39 18cdf1a 2263ff0 2612c84 c3b57a9 2205ec4 9e63762 1f46f37 7c848af 554e1e4 bf4708a 1858263 f14c333 171b8c9 843054e 937fcea 37a6b47 804e1ba 7cf33bc 350a1f6 1d6bd1a 076547c 1744ecc 49e960b c9f5eb9 ba55286 20158a2 64f4844 8c212bf 7375e84 b1702d8 80211cf 3a41e92 538956d d23f3df 9bbfba0 b4b63e0 66152fd 7ebcf27 ab9f417 129cd19 5accbf2 aa26a48 de52792 1aab846 66b9a56 3cae041 f48de2c 5d68d3a 4b68a0a 959503b ec6f402 0014ae2 6cac107 896c73f d359f45 db8b7db dbb7416 aaa9126 a0d0202 02984da 8d0f7e9 d47779f 3b42058 64ee023 706008e 2502fc8 91f022c 0ab4715 67049c6 1986356 7d2273b 78c9a9f d473e85 4e0dfe8 723a497 849e2db a49d013 50f4599 08bb8a7 b03d31d 610d81d ae3c8df a061968
+
+Cursor 한 줄: L19(c)(b) 통과. L19(a)≠0이라 Handoff대로 **S1·D·S2·S3 전부 미실행**. 작업트리 전수(L13)는 HIT 0이었음 — 현재 blob이 아니라 **과거 diff**.
+
+### 의견 (규칙 7 · 실행하지 않음)
+
+히트 파일이 전부 Track A(주식) 루트 `.py`이고 `bitget/`·`.env`가 없다. `-G`는 패치 한 줄이 토큰 *모양*이면 잡히므로, 옛 하드코딩·예시·로그 URL 잔여일 수 있다. 내용을 열어보지 않았다. **S1은 Bot-2 `.env` 인벤토리라 이력 누출과 별 축**이지만, 정지 문구가 명확해서 우회하지 않았다. Claude: (1) S1 진행 허용 여부 (2) Track A 이력은 REPO-EXPOSURE/별 sub-phase인지.
 
 ---
 
