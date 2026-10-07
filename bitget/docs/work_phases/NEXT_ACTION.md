@@ -12,9 +12,9 @@
 | **CAT-L (에스컬레이션)** | FENCE-02 | **SUB_DONE (1–2단계) · 3단계 판정 2026-10-13** (근거: CLAUDE_TO_CURSOR FENCE-03 Handoff 선행 상태 줄, Claude C-7) | live FENCE_OK · 실스캔 cgroup=heavy.slice |
 | **CAT-L (공용)** | CAT-L-SCRIPT-AUDIT-01 | 등록 · Phase 1과 병행 · 대기 | `track_b_*` |
 | **CAT-L (공용)** | CAT-L-BACKUP-01 | 3순위 · SECRET-01 다음 창 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-REPO-EXPOSURE-01 | 등록 · 디렉터 결정 대기(private 전환 vs 공개 유지) · Phase 1 전 결정 · private 전에 서버 fetch 경로 확보 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-REPO-EXPOSURE-01 | 등록 · 디렉터 결정 대기(private 전환 vs 공개 유지) · Phase 1 전 결정 · private 전에 서버 fetch 경로 확보 · 공개 이력 토큰 모양(주식 21파일) 통지 완료·처리는 주식 프로젝트 · origin=공개 HTTPS(자격증명 없음) | `track_b_*` |
 | **CAT-L (공용)** | CAT-L-QW-RESTART-01 | 범위 확장: watchdog 장시간 잡 종료(queue-worker 일일 재시작 + LIFECAP) · 조사 대기 · Phase 1 비차단 | `track_b_*` |
-| **CAT-L (공용)** | CAT-L-SECRET-01 | **L19(a) STOP** (Handoff `268ef6c`) · `-G` 커밋 192·파일 21(주식 루트 py) · S1 미실행 · Claude 판정 대기 | `track_b_*` |
+| **CAT-L (공용)** | CAT-L-SECRET-01 | L19(a) STOP → 부록1: S1 허용 · S1b 추가(Bot-2 env 토큰 ∈ git 이력?) · **S1 PROCEED · S1b CLEAR** · D는 디렉터 TTY · Track A 이력은 범위 밖(통지) | `track_b_*` |
 | **CAT-M (공용)** | CAT-M-TOKENLOG-01 | 등록 · 비차단 · URL이 예외 문구로 로그에 남는 경로 | `track_b_*` |
 | **CAT-A (공용)** | CAT-A-LIFECAP-02 | 등록 · **1단계(읽기전용 · 스캔 정상 완료 여부)는 Phase 1 선행** · FENCE-02 3단계 판정(10-13) 입력 | `track_b_*` |
 | **LANE_FASTCHECK** | B0-SAMPLE-CONTRACT | **DONE** | `lanes/LANE_FASTCHECK/*` |

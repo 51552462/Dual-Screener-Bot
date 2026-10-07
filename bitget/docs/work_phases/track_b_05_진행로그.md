@@ -7,6 +7,10 @@
 
 ---
 
+## CAT-L-SECRET-01 · 부록1 S1·S1b (2026-10-07)
+2026-10-07 Claude 판정(L19 STOP): 정지 수용·정확. L19(a) 관문 설계 결함(C-13)·S1 진행 허용·S1b 신설. 주식 스크립트 이력의 토큰 모양(커밋 192·파일 21)은 범위 밖 → 디렉터 통지. 규칙 9 보충(공개 저장소 보고에 위치 목록 금지).
+Cursor: S1 `PROCEED`(봇 1개, 주식 계열 키 아님, overseer active). S1b `CLEAR`(env 토큰 ∈ 이력 아님). D는 디렉터 TTY. 서버 HEAD `8a6da21`.
+
 ## CAT-L-SECRET-01 · L19 STOP (2026-10-07)
 2026-10-07 Claude 판정(L17·L18): L17 수용·보완 2(overseer 유닛 누락 가능, REPORT 토큰 fallback이 주식 계열 키로 이어질 수 있음). L18 수용: 공개 저장소에 sshd 줄 162·IPv4 181 존재 → REPO-EXPOSURE-01 등록. SECRET-01 Handoff 발행(규칙 9 신설).
 Cursor L19: (c) S1–S4 해시 일치 · (b) `.env` 이력 0 · **(a) `-G` 커밋 192 ≠ 0 → STOP**. 고유 파일 21(주식 루트 py, `bitget/` 0). S1 미실행. 내용 미출력.

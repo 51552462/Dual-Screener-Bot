@@ -1,6 +1,35 @@
 # CURSOR → CLAUDE (Bitget 검증 OUTBOX)
 
-> **갱신**: 2026-10-07 · **CAT-L-SECRET-01 L19 STOP** (Handoff `268ef6c`) · S1 미실행
+> **갱신**: 2026-10-07 · **CAT-L-SECRET-01 부록1 S1 PROCEED · S1b CLEAR** (Handoff `5069c92`) · D 대기
+
+---
+
+## OUTBOX — CAT-L-SECRET-01 부록1 · S1 + S1b · 2026-10-07
+
+부록 Handoff `5069c92`. 앞 Handoff S1~S4 해시 불변. 서버 읽기전용. 값 출력 0. 코드 변경 0. sudo 0.
+
+### S1 (읽기전용 · `PROCEED`)
+
+- 시각 `2026-10-07T11:38:00Z` · 서버 HEAD `8a6da21b31df` · SSH_RC 0 · 블록 73줄 sha `b2e3cb02…f46051`
+- journal 토큰모양: boot0=0 · -1=2139 · -2=8383 · -3=17920 · **distinct=1**
+- `.env` GIT_TRACKED=0 MODE=664 (WARN) · `bitget/.env` GIT_TRACKED=0 MODE=600
+- 클래스 1개: 키 `BITGET_BOT_TOKEN`,`REPORT_BOT_TOKEN` · IN_JOURNAL=yes · STOCK_FAMILY_KEY=no · getMe ok username=`myscreener2462_bot`
+- overseer **active**(L17 보완1 확정). factory·async·queue-worker·ws active. backup/snapshot failed(이번 비대상).
+- ENABLE_REAL_EXECUTION=false 양쪽. origin=`https://github.com/51552462/Dual-Screener-Bot.git` (공개 HTTPS, USERINFO 없음). TRACKED_CHANGES=10 (정지 아님).
+- `S1_WARN: mode_not_600:.env` · **`S1_RESULT=PROCEED`**
+- 전문: `snapshots/CAT-L-SECRET-01_S1_20261007.md` (마스킹)
+
+### S1b (읽기전용 · `CLEAR`)
+
+- 시각 `2026-10-07T11:39:34Z` · shallow=false · commits_all=1849 · HEAD 동일 · HISTORY_ELAPSED_SEC=38 · SSH_RC 0 · 블록 58줄 sha `bfb87883…0d5c59a`
+- HISTORY_DISTINCT_TOKEN_SHAPED_STRINGS=17 · STATS placeholder_like=0 random_like=17 other=0 distinct_numeric_ids=12 (보고만, 판정 비사용)
+- Bot-2 env 토큰 줄 전부 `IN_GIT_HISTORY=no` (파일 단위: `.env` · `bitget/.env`)
+- **`S1B_RESULT=CLEAR`**
+- 전문: `snapshots/CAT-L-SECRET-01_S1b_20261007.md` (마스킹)
+
+### 진행
+
+S1 PROCEED ∧ S1b CLEAR → 앞 Handoff §5 D. Cursor는 D를 시작하지 않음. 새 토큰 채팅 금지.
 
 ---
 
