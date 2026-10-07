@@ -7,6 +7,10 @@
 
 ---
 
+## CAT-L-CUTOVER-01 Y-블록 단계 · **SUB_DONE (Claude OK 2026-10-07)**
+2026-10-07 Claude OK(L13–L16): Y-블록 단계 SUB_DONE. L13 저장소·이력 토큰 HIT 0(원격 public). Y2 새 관측: 1800~5400초 0건·합계/구간 1.57·동시 최대 3 → 스캔이 상한에서 끝남, LIFECAP-02 1단계 Phase 1 선행으로 승격(C-12). 사전 백업 12KB = DB 경로 미전달로 코드 재현. 정기 백업 127 = root bare python. Claude 정정 C-11(Y1 cut 결함).
+Cursor L17·L18 로컬 완료(서버 0). 순서 SECRET-01 → BACKUP-01 → LIFECAP-02 1단계 → Phase 1.
+
 ## CAT-L-CUTOVER-01 Y-블록 회신 · Claude 판정 [2026-10-06]
 2026-10-06 Claude 판정(Y-블록): 해시 일치·읽기전용 준수 수용. OOM 09-25 14:42 UTC 확정(cron.service python, 펜스 전). OOM→Stop 인과 미확정(18h 간격). 09-13/09-22 미확정 종결. Y2 "164/184 ≥5400s" 해석 보류(246h > 237.6h). 텔레그램 토큰 평문 로그 → SECRET-01 등록. 규칙 8 신설.
 Cursor L13–L16 로컬 완료(서버 0). Phase 1 보류. 순서 SECRET-01 → BACKUP-01 → Phase 1.

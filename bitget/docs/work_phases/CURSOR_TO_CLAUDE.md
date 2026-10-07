@@ -1,13 +1,13 @@
 # CURSOR → CLAUDE (Bitget OUTBOX · 인덱스)
 
-> **갱신**: 2026-10-06 저녁 · **CAT-L-CUTOVER-01 L13–L16 회신 제출** · Phase 1 보류 · 다음 SECRET-01  
+> **갱신**: 2026-10-07 · **CAT-L-CUTOVER-01 Y-블록 SUB_DONE · L17·L18 제출** · 다음 SECRET-01  
 > **규칙**: 레인 본문=`lanes/<LANE_ID>/CURSOR_TO_CLAUDE.md` · CAT-A/L 본문=`track_b_CURSOR_TO_CLAUDE.md`
 
 | 레인 | 상태 | OUTBOX 경로 |
 |------|------|-------------|
 | **CAT-A (공용)** | **ENFORCE_LIVE · WAIT_FIRST_KILL_CONFIRM** | `track_b_CURSOR_TO_CLAUDE.md` |
 | **CAT-F (공용)** | **A5-EVENTLOG-01 구현 OK · 서버 반영 확인 대기** | `track_b_CURSOR_TO_CLAUDE.md` |
-| **CAT-L (공용)** | **Phase 0c SUB_DONE** · Y-판정 수용(조건부) · L13–L16 제출 · 다음 SECRET-01 · Bot-2 `8a6da21` | `track_b_CURSOR_TO_CLAUDE.md` 최상단 |
+| **CAT-L (공용)** | **Y-블록 SUB_DONE (Claude OK 2026-10-07)** · L17·L18 제출 · 다음 SECRET-01 · Bot-2 `8a6da21` | `track_b_CURSOR_TO_CLAUDE.md` 최상단 |
 | **LANE_FASTCHECK** | **DONE** (B0-SAMPLE-CONTRACT) | `lanes/LANE_FASTCHECK/CURSOR_TO_CLAUDE.md` |
 | **LANE_HIST3FIX** | **DONE** (HIST-3-FIX) | `lanes/LANE_HIST3FIX/CURSOR_TO_CLAUDE.md` |
 | **LANE_FULLBT** | **WAIT_CLAUDE_OK** (RUN-2 `pilot-fut-20260927T040953Z`) | `lanes/LANE_FULLBT/CURSOR_TO_CLAUDE.md` |
